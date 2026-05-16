@@ -62,9 +62,11 @@ export function PreviewStage({
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center">
+    <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
-        className={`relative mx-auto bg-black rounded-[40px] border border-[#1A1A1A] overflow-hidden shadow-2xl group ${isFullscreen ? 'fixed inset-0 z-[5000] !rounded-none !max-w-none !w-screen !h-screen flex items-center justify-center bg-black' : 'transition-all duration-500 ' + (isMidView ? 'aspect-video w-[900px] h-auto' : 'aspect-video max-w-5xl w-full h-auto')}`}
+        className={isFullscreen
+          ? 'fixed inset-0 z-[5000] flex items-center justify-center bg-black overflow-hidden'
+          : `relative mx-auto bg-black rounded-[40px] border border-[#1A1A1A] overflow-hidden shadow-2xl group transition-all duration-500 ${isMidView ? 'aspect-video w-[900px] h-auto' : 'aspect-video max-w-5xl w-full h-auto'}`}
       >
         {/* Floating Controls */}
         <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
