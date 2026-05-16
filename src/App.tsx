@@ -253,7 +253,7 @@ const DEFAULT_PROJECT: Project = {
   hideAllText: true,
   globalOverlayConfig: {
     color: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: '#000000',
     fontFamily: 'Inter',
   },
 };
@@ -1195,7 +1195,7 @@ export default function App() {
                       segments: prev.segments.map((seg, i) => {
                         if (i !== idx) return seg;
                         const base = { ...prev.globalOverlayConfig };
-                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: 'rgba(0,0,0,0.8)', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
                         if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
                         return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
                       }),
@@ -1203,7 +1203,7 @@ export default function App() {
                     onAddExtraOverlay={(idx) => setProject(prev => ({
                       ...prev,
                       segments: prev.segments.map((seg, i) =>
-                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.5)', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
                       ),
                     }))}
                   />
