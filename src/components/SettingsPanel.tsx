@@ -1,7 +1,7 @@
 import React from 'react';
 import { Project, TransitionType, AnimationType } from '../types';
 import { FILTERS, FONT_FAMILIES } from '../constants';
-import { RefreshCw, Sparkles, Layers } from 'lucide-react';
+import { RefreshCw, Sparkles, Layers, Trash2 } from 'lucide-react';
 
 interface Props {
   project: Project;
@@ -11,6 +11,7 @@ interface Props {
   onApplyFilterToAll: () => void;
   onExportScenesJson: () => void;
   onImportScenesJson: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onNewProject: () => void;
 }
 
 export function SettingsPanel({
@@ -21,6 +22,7 @@ export function SettingsPanel({
   onApplyFilterToAll,
   onExportScenesJson,
   onImportScenesJson,
+  onNewProject,
 }: Props): React.ReactElement {
   return (
     <div className="space-y-8">
@@ -160,6 +162,15 @@ export function SettingsPanel({
             </label>
           </div>
         </div>
+        <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">
+          <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-red-500">Danger Zone</h3>
+          <button
+            onClick={onNewProject}
+            className="w-full bg-transparent border border-red-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-all flex items-center justify-center gap-2"
+          >
+            <Trash2 size={12} /> New Project
+          </button>
+        </section>
       </section>
     </div>
   );

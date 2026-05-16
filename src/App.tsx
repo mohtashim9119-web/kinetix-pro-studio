@@ -47,8 +47,8 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
-import { putAsset, deleteAsset, getAllAssets } from './services/assetStore';
-import { loadProject } from './services/projectStore';
+import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
+import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { StockSearchModal } from './components/StockSearchModal';
@@ -239,24 +239,26 @@ const parseProjectData = async (
 };
 
 
+const DEFAULT_PROJECT: Project = {
+  id: '1',
+  name: 'KINETIX STUDIO',
+  script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
+  sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
+  segments: [],
+  assets: [],
+  globalTransition: TransitionType.NONE,
+  globalTransitionDuration: 0.5,
+  globalAnimation: AnimationType.NONE,
+  hideAllText: true,
+  globalOverlayConfig: {
+    color: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    fontFamily: 'Inter',
+  },
+};
+
 export default function App() {
-  const [project, setProject] = useState<Project>({
-    id: '1',
-    name: 'KINETIX STUDIO',
-    script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
-    sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
-    segments: [],
-    assets: [],
-    globalTransition: TransitionType.NONE,
-    globalTransitionDuration: 0.5,
-    globalAnimation: AnimationType.NONE,
-    hideAllText: true,
-    globalOverlayConfig: {
-      color: '#FFFFFF',
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      fontFamily: 'Inter'
-    }
-  });
+  const [project, setProject] = useState<Project>(DEFAULT_PROJECT);
 
   const [isHydrating, setIsHydrating] = useState(true);
   const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
@@ -931,6 +933,22 @@ export default function App() {
     mirror();
   }, [isExporting]);
 
+  const handleNewProject = async () => {
+    const confirmed = window.confirm(
+      'Discard this project? This will permanently delete your script, segments, and all uploaded assets from this browser. This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+    clearProject();
+    try {
+      await clearAllAssets();
+    } catch (err) {
+      console.error('Failed to clear IndexedDB assets:', err);
+    }
+    setProject(DEFAULT_PROJECT);
+  };
+
   if (isHydrating) {
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
@@ -1163,6 +1181,7 @@ export default function App() {
                     onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
                     onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                     onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
+                    onNewProject={handleNewProject}
                     onExportScenesJson={() => {
                       const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
