@@ -45,7 +45,8 @@ import {
   AnimationType,
   TextOverlay,
 } from './types';
-import { searchAllStock, StockResult } from './services/stockService';
+import { StockResult } from './services/stockService';
+import { StockSearchModal } from './components/StockSearchModal';
 
 interface RawSegment {
   text: string;
@@ -445,27 +446,9 @@ export default function App() {
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
-  const [stockSearchQuery, setStockSearchQuery] = useState('');
-  const [isStockSearching, setIsStockSearching] = useState(false);
-  const [stockResults, setStockResults] = useState<StockResult[]>([]);
-  const [stockType, setStockType] = useState<'video' | 'image'>('video');
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Real API Search
-  useEffect(() => {
-    if (!showStockSearch) return;
-    const delayDebounceFn = setTimeout(async () => {
-      if (stockSearchQuery.length > 2) {
-        setIsStockSearching(true);
-        const results = await searchAllStock(stockSearchQuery, stockType);
-        setStockResults(results);
-        setIsStockSearching(false);
-      }
-    }, 1000);
-
-    return () => clearTimeout(delayDebounceFn);
-  }, [stockSearchQuery, stockType, showStockSearch]);
 
   const autoMatchAssets = () => {
     setProject(prev => {
@@ -2529,130 +2512,27 @@ export default function App() {
       {/* Stock Media Search Modal */}
       <AnimatePresence>
         {showStockSearch && (
-          <div className="fixed inset-0 z-[100] flex items-center justify-center p-8">
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }}
-              onClick={() => setShowStockSearch(false)}
-              className="absolute inset-0 bg-black/90 backdrop-blur-xl"
-            />
-            <motion.div 
-              initial={{ scale: 0.9, y: 20, opacity: 0 }}
-              animate={{ scale: 1, y: 0, opacity: 1 }}
-              exit={{ scale: 0.9, y: 20, opacity: 0 }}
-              className="relative w-full max-w-4xl bg-[#0A0A0A] border border-[#1A1A1A] rounded-[40px] shadow-2xl overflow-hidden flex flex-col h-[80vh]"
-            >
-              <div className="p-8 border-b border-[#1A1A1A] flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <div className="w-10 h-10 bg-blue-500 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-500/20">
-                    <Video size={20} className="text-white" />
-                  </div>
-                  <div>
-                    <h2 className="text-xl font-bold tracking-tight">Stock Library</h2>
-                    <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Pexels & Pixabay Integration</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setShowStockSearch(false)}
-                  className="p-3 hover:bg-[#1A1A1A] rounded-2xl transition-colors text-gray-500 hover:text-white"
-                >
-                  <Plus size={24} className="rotate-45" />
-                </button>
-              </div>
-              
-              <div className="p-8 space-y-8 flex-1 overflow-y-auto custom-scrollbar">
-                <div className="relative group">
-                  <input 
-                    type="text" 
-                    value={stockSearchQuery}
-                    onChange={(e) => {
-                      setStockSearchQuery(e.target.value);
-                      setIsStockSearching(true);
-                      setTimeout(() => setIsStockSearching(false), 500);
-                    }}
-                    placeholder="Search high-quality stock footage (e.g. 'abstract technology', 'nature 4k')..."
-                    className="w-full bg-[#121212] border border-[#282828] p-6 rounded-[24px] text-lg font-medium outline-none focus:border-blue-500/50 transition-all shadow-inner"
-                  />
-                  <div className="absolute right-4 top-1/2 -translate-y-1/2 p-3 bg-blue-500 text-white rounded-xl">
-                    {isStockSearching ? <RefreshCw size={20} className="animate-spin" /> : <Plus size={20} className="rotate-45" />}
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <button 
-                    onClick={() => setStockType('video')}
-                    className={`p-4 rounded-2xl border transition-all flex items-center justify-center gap-3 ${stockType === 'video' ? 'bg-blue-500 border-blue-400 font-bold' : 'bg-[#1A1A1A] border-white/5 text-gray-400'}`}
-                  >
-                    <Video size={18} />
-                    Videos
-                  </button>
-                  <button 
-                    onClick={() => setStockType('image')}
-                    className={`p-4 rounded-2xl border transition-all flex items-center justify-center gap-3 ${stockType === 'image' ? 'bg-blue-500 border-blue-400 font-bold' : 'bg-[#1A1A1A] border-white/5 text-gray-400'}`}
-                  >
-                    <ImageIcon size={18} />
-                    Images
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-3 gap-6">
-                  {stockResults.length > 0 ? stockResults.map(stock => (
-                    <div 
-                      key={stock.id} 
-                      className="group relative aspect-video rounded-3xl overflow-hidden border border-[#1A1A1A] cursor-pointer hover:border-blue-500 transition-all bg-black"
-                      onClick={() => {
-                        const newAsset: Asset = {
-                          id: crypto.randomUUID(),
-                          name: stock.name,
-                          url: stock.url,
-                          type: stock.type,
-                        };
-                        setProject(p => ({
-                          ...p,
-                          assets: [...p.assets, newAsset],
-                          segments: p.segments.map(s =>
-                            s.id === stockTarget
-                              ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
-                              : s
-                          ),
-                        }));
-                         setShowStockSearch(false);
-                      }}
-                    >
-                      {stock.type === 'video' ? (
-                        <div className="w-full h-full relative">
-                          <video 
-                            src={stock.url} 
-                            className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" 
-                            muted 
-                            loop 
-                            onMouseOver={(e) => (e.target as HTMLVideoElement).play()} 
-                            onMouseOut={(e) => { (e.target as HTMLVideoElement).pause(); (e.target as HTMLVideoElement).currentTime = 0; }} 
-                          />
-                          <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 rounded text-[8px] font-bold text-white uppercase">{stock.provider}</div>
-                        </div>
-                      ) : (
-                        <div className="w-full h-full relative">
-                          <img src={stock.url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
-                          <div className="absolute top-2 right-2 px-1.5 py-0.5 bg-black/60 rounded text-[8px] font-bold text-white uppercase">{stock.provider}</div>
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent p-4 flex flex-col justify-end opacity-0 group-hover:opacity-100 transition-opacity">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-white">{stock.name}</span>
-                        <span className="text-[8px] text-blue-400 font-bold uppercase tracking-wide">Add to Scene</span>
-                      </div>
-                    </div>
-                  )) : (
-                    <div className="col-span-3 py-20 text-center space-y-4">
-                       <AlertCircle size={32} className="mx-auto text-gray-800" />
-                       <p className="text-gray-500 uppercase text-[10px] font-black tracking-widest">No stock media found for "{stockSearchQuery}"</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </div>
+          <StockSearchModal
+            targetSegmentId={stockTarget}
+            onClose={() => setShowStockSearch(false)}
+            onSelect={(stock, targetId) => {
+              const newAsset: Asset = {
+                id: crypto.randomUUID(),
+                name: stock.name,
+                url: stock.url,
+                type: stock.type,
+              };
+              setProject(p => ({
+                ...p,
+                assets: [...p.assets, newAsset],
+                segments: p.segments.map(s =>
+                  s.id === targetId
+                    ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
+                    : s
+                ),
+              }));
+            }}
+          />
         )}
       </AnimatePresence>
 
