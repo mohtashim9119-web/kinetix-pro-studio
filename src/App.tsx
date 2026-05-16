@@ -47,6 +47,7 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
+import { putAsset, deleteAsset } from './services/assetStore';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { StockSearchModal } from './components/StockSearchModal';
 import { SyncReviewModal } from './components/SyncReviewModal';
@@ -617,20 +618,26 @@ export default function App() {
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
         if (!fileData || fileData.dir) return;
-        {
-          const blob = await fileData.async('blob');
-          let type: Asset['type'] = 'image';
-          if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-          else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-          
-          newAssets.push({
-            id: crypto.randomUUID(),
-            name: filename.split('/').pop() || filename,
-            url: URL.createObjectURL(blob),
-            type: type,
-            file: new File([blob], filename)
-          });
+        const blob = await fileData.async('blob');
+        let type: Asset['type'] = 'image';
+        if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
+        else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
+
+        const id = crypto.randomUUID();
+        const name = filename.split('/').pop() || filename;
+        try {
+          await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
+        } catch (err) {
+          console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
+          return;
         }
+        newAssets.push({
+          id,
+          name,
+          url: URL.createObjectURL(blob),
+          type,
+          file: new File([blob], filename),
+        });
       });
       
       await Promise.all(filePromises);
@@ -646,7 +653,7 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -681,17 +688,20 @@ export default function App() {
       else if (file.type.startsWith('audio/')) detectedType = 'audio';
       else if (file.type.startsWith('image/')) detectedType = 'image';
 
-      const newAsset: Asset = {
-        id: crypto.randomUUID(),
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: detectedType,
-        file
-      };
+      const id = crypto.randomUUID();
+      const url = URL.createObjectURL(file);
+      try {
+        await putAsset(id, file, { name: file.name, mimeType: file.type });
+      } catch (err) {
+        console.error('Failed to persist asset to IndexedDB, skipping:', file.name, err);
+        URL.revokeObjectURL(url);
+        return;
+      }
+      const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
       setProject(prev => ({
         ...prev,
         assets: [...prev.assets, newAsset],
-        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId
+        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
       }));
     }
   };
@@ -1007,8 +1017,14 @@ export default function App() {
                             )}
                             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center p-4">
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
-                              <button 
-                                onClick={() => setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }))}
+                              <button
+                                onClick={() => {
+                                  setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }));
+                                  URL.revokeObjectURL(asset.url);
+                                  deleteAsset(asset.id).catch(err =>
+                                    console.error('Failed to delete asset from IndexedDB:', err)
+                                  );
+                                }}
                                 className="p-2 bg-red-500/20 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors"
                               >
                                 <Trash2 size={16} />
@@ -1271,11 +1287,25 @@ export default function App() {
           <StockSearchModal
             targetSegmentId={stockTarget}
             onClose={() => setShowStockSearch(false)}
-            onSelect={(stock, targetId) => {
+            onSelect={async (stock, targetId) => {
+              let blob: Blob;
+              try {
+                blob = await fetch(stock.url).then(r => r.blob());
+              } catch (err) {
+                console.error('Failed to fetch stock asset blob, skipping:', stock.url, err);
+                return;
+              }
+              const id = crypto.randomUUID();
+              try {
+                await putAsset(id, blob, { name: stock.name, mimeType: blob.type });
+              } catch (err) {
+                console.error('Failed to persist stock asset to IndexedDB, skipping:', stock.name, err);
+                return;
+              }
               const newAsset: Asset = {
-                id: crypto.randomUUID(),
+                id,
                 name: stock.name,
-                url: stock.url,
+                url: URL.createObjectURL(blob),
                 type: stock.type,
               };
               setProject(p => ({
