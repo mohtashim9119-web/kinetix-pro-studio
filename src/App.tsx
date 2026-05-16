@@ -58,6 +58,7 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
+import { renderSegmentFrame } from './services/frameRenderer';
 
 interface RawSegment {
   text: string;
@@ -289,6 +290,7 @@ export default function App() {
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [testFrameUrl, setTestFrameUrl] = useState<string | null>(null);
 
 
   const autoMatchAssets = () => {
@@ -769,6 +771,38 @@ export default function App() {
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
+  const handleRenderTestFrame = async () => {
+    const seg = currentSegment ?? project.segments[0];
+    if (!seg) return;
+    const W = 1920, H = 1080;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const asset = project.assets.find(a => a.id === seg.assetId);
+    await renderSegmentFrame({
+      segment: seg,
+      asset,
+      timeInSegment: Math.max(0, currentTime - seg.startTime),
+      ctx,
+      width: W,
+      height: H,
+      global: {
+        overlayConfig: project.globalOverlayConfig,
+        hideAllText: project.hideAllText ?? false,
+        globalOverlayFilter: project.globalOverlayFilter,
+      },
+    });
+    setTestFrameUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    canvas.toBlob(blob => {
+      if (blob) setTestFrameUrl(URL.createObjectURL(blob));
+    }, 'image/png');
+  };
+
   // Constrain segments to match audio duration perfectly
   useEffect(() => {
     if (isSynced && voiceover && audioRef.current?.duration) {
@@ -1191,6 +1225,7 @@ export default function App() {
                       a.click();
                     }}
                     onImportScenesJson={(e) => handleFileUpload(e, 'story')}
+                    onRenderTestFrame={import.meta.env.DEV ? handleRenderTestFrame : undefined}
                   />
                 )}
               </div>
@@ -1555,6 +1590,18 @@ export default function App() {
            </div>
         )}
       </AnimatePresence>
+
+      {/* Dev-only: frame renderer test output */}
+      {import.meta.env.DEV && testFrameUrl && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm" onClick={() => setTestFrameUrl(null)}>
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <p className="text-[9px] font-black uppercase tracking-[0.3em] text-yellow-500 mb-2">
+              Frame Renderer Output — 1920×1080 — click outside to dismiss
+            </p>
+            <img src={testFrameUrl} alt="Rendered frame" className="w-full h-auto rounded-xl border border-yellow-900" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
