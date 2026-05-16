@@ -807,7 +807,7 @@ export default function App() {
           else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
           
           newAssets.push({
-            id: Math.random().toString(36).substr(2, 9),
+            id: crypto.randomUUID(),
             name: filename.split('/').pop() || filename,
             url: URL.createObjectURL(blob),
             type: type,
@@ -865,7 +865,7 @@ export default function App() {
       else if (file.type.startsWith('image/')) detectedType = 'image';
 
       const newAsset: Asset = {
-        id: Math.random().toString(36).substr(2, 9),
+        id: crypto.randomUUID(),
         name: file.name,
         url: URL.createObjectURL(file),
         type: detectedType,
@@ -1299,7 +1299,7 @@ export default function App() {
                       <button 
                         onClick={() => {
                           const newSeg: VideoSegment = {
-                            id: Math.random().toString(36).substr(2, 9),
+                            id: crypto.randomUUID(),
                             text: 'New Scene Text',
                             startTime: (() => { const last = project.segments[project.segments.length - 1]; return last ? last.startTime + last.duration : 0; })(),
                             duration: 5,
