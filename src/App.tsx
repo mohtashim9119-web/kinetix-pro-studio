@@ -36,15 +36,29 @@ import {
   Info,
   X
 } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Project, 
-  VideoSegment, 
-  Asset, 
-  TransitionType, 
-  AnimationType 
+import { motion, AnimatePresence, type Transition } from 'motion/react';
+import {
+  Project,
+  VideoSegment,
+  Asset,
+  TransitionType,
+  AnimationType,
+  TextOverlay,
 } from './types';
 import { searchAllStock, StockResult } from './services/stockService';
+
+interface RawSegment {
+  text: string;
+  heading?: string;
+  assetId?: string;
+  transition: TransitionType;
+  animation: AnimationType;
+  playbackSpeed: number;
+  trimStart: number;
+  isMuted: boolean;
+  extraOverlays: TextOverlay[];
+  sourceDuration?: number;
+}
 
 const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number> => {
   return new Promise((resolve) => {
@@ -93,59 +107,48 @@ const findAssetByContext = (text: string, assets: Asset[]) => {
 
 // Enhanced parser that handles heading-voiceover logic
 const parseProjectData = async (
-  script: string, 
+  script: string,
   sceneDetails: string,
-  assets: Asset[], 
+  assets: Asset[],
   voiceoverDuration: number = 0,
-  storyMap?: any
 ): Promise<VideoSegment[]> => {
-  // Normalize newline characters
   const rawDetails = sceneDetails.split(/\r?\n\r?\n/).filter(block => block.trim() !== '');
   const scriptLines = script.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-  
-  // Group details: A scene is defined as a block separated by double newline.
-  // Each block should start with a tag [asset_name] and optionally have text below it.
+
   const scenes: { tag: string; description: string }[] = [];
 
   rawDetails.forEach(block => {
     const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-    if (lines.length > 0) {
-      // First line is the tag
-      const tag = lines[0];
-      // Remaining lines form the description (script for this scene)
-      const description = lines.slice(1).join(' ');
-      scenes.push({ tag, description });
+    const tag = lines[0];
+    if (tag !== undefined) {
+      scenes.push({ tag, description: lines.slice(1).join(' ') });
     }
   });
 
-  // If no scenes found, fallback to block-by-block parsing as a safety net
   if (scenes.length === 0) {
     const backupBlocks = sceneDetails.split(/\r?\n\r?\n/).map(l => l.trim()).filter(l => l !== '');
     backupBlocks.forEach(block => {
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-      if (lines.length > 0) {
-        const tag = lines[0];
-        if (tag.startsWith('[') && tag.endsWith(']')) {
-          scenes.push({ tag, description: lines.slice(1).join(' ') });
-        } else {
-          scenes.push({ tag: `[${tag}]`, description: lines.slice(1).join(' ') });
-        }
+      const tag = lines[0];
+      if (tag !== undefined) {
+        scenes.push({
+          tag: tag.startsWith('[') && tag.endsWith(']') ? tag : `[${tag}]`,
+          description: lines.slice(1).join(' '),
+        });
       }
     });
   }
 
-  const rawSegments: any[] = [];
+  const rawSegments: RawSegment[] = [];
   const sceneCount = scenes.length;
   const usedAssetIdsTotal = new Set<string>();
-  
-  for (let idx = 0; idx < scenes.length; idx++) {
-    const scene = scenes[idx];
+
+  for (const [idx, scene] of scenes.entries()) {
     let text = scene.description.trim();
 
-    // If no description in the scene block, attempt to pull from script based on index mapping
     if (!text) {
       if (scriptLines.length === sceneCount) {
-        text = scriptLines[idx];
+        text = scriptLines[idx] ?? '';
       } else if (scriptLines.length > 0) {
         const startIdx = Math.floor((idx / sceneCount) * scriptLines.length);
         const endIdx = Math.floor(((idx + 1) / sceneCount) * scriptLines.length);
@@ -153,46 +156,42 @@ const parseProjectData = async (
       }
     }
 
-    let current: any = {
-      text: text,
+    const current: RawSegment = {
+      text,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
       playbackSpeed: 1,
       trimStart: 0,
       isMuted: true,
-      extraOverlays: []
+      extraOverlays: [],
     };
 
     let name = '';
     const detail = scene.tag;
-    
-    // Support [HEADING: Title] or just [Asset Name]
+
     const specificMatch = detail.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
     if (specificMatch) {
-       if (detail.toUpperCase().includes('HEADING')) {
-         current.heading = specificMatch[1];
-       } else {
-         name = specificMatch[1];
-       }
+      if (detail.toUpperCase().includes('HEADING')) {
+        current.heading = specificMatch[1] ?? '';
+      } else {
+        name = specificMatch[1] ?? '';
+      }
     } else {
       const simpleMatch = detail.match(/\[(.*?)\]/);
-      if (simpleMatch) name = simpleMatch[1];
-      else name = detail; // Fallback if no brackets
+      if (simpleMatch) name = simpleMatch[1] ?? '';
+      else name = detail;
     }
 
     if (name) {
-      // Find asset by name, prioritizing unused ones
       const matchingAssets = assets.filter(a => isFuzzyMatch(name, a.name));
       const unusedAsset = matchingAssets.find(a => !usedAssetIdsTotal.has(a.id));
-      const asset = unusedAsset || matchingAssets[0];
-      
+      const asset = unusedAsset ?? matchingAssets[0];
       if (asset) {
         current.assetId = asset.id;
         usedAssetIdsTotal.add(asset.id);
       }
     }
 
-    // Contextual fallback ONLY if no asset matched and text exists, and avoid reuse rigorously
     if (!current.assetId && text) {
       const availableAssets = assets.filter(a => !usedAssetIdsTotal.has(a.id) && a.type !== 'audio');
       const contextualAsset = findAssetByContext(text, availableAssets.length > 0 ? availableAssets : assets);
@@ -210,61 +209,55 @@ const parseProjectData = async (
   const voDuration = voiceoverDuration > 0 ? voiceoverDuration : rawSegments.length * 5;
 
   let currentTimeAccumulator = 0;
-  const finalSegments = [];
+  const finalSegments: VideoSegment[] = [];
 
-  for (let i = 0; i < rawSegments.length; i++) {
-    const s = rawSegments[i];
+  for (const [i, s] of rawSegments.entries()) {
     let targetDuration = 0;
-    
+
     if (textSegments.length > 0) {
-      const weight = (s.text?.length || 0) / totalTextLength;
+      const weight = s.text.length / totalTextLength;
       targetDuration = weight * voDuration;
     } else {
       targetDuration = voDuration / Math.max(1, rawSegments.length);
     }
-    
+
     targetDuration = Math.max(targetDuration, 0.5);
 
     const asset = assets.find(a => a.id === s.assetId);
     let playbackSpeed = 1;
+    let sourceDuration: number | undefined;
 
-    if (asset && asset.type === 'video') {
-      const sourceDuration = await getMediaDuration(asset.url, 'video');
-      s.sourceDuration = sourceDuration;
-      
-      if (sourceDuration > 0) {
-        if (targetDuration > sourceDuration) {
-          playbackSpeed = sourceDuration / targetDuration;
-        } else {
-          playbackSpeed = 1;
-        }
+    if (asset?.type === 'video') {
+      sourceDuration = await getMediaDuration(asset.url, 'video');
+      if (sourceDuration > 0 && targetDuration > sourceDuration) {
+        playbackSpeed = sourceDuration / targetDuration;
       }
     }
 
-    const segment = {
+    const segment: VideoSegment = {
       ...s,
-      id: Math.random().toString(36).substr(2, 9),
+      id: crypto.randomUUID(),
       startTime: Number(currentTimeAccumulator.toFixed(3)),
       duration: Number(targetDuration.toFixed(3)),
       trimStart: 0,
-      playbackSpeed: playbackSpeed,
+      playbackSpeed,
       order: i,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
       showOverlay: false,
-      extraOverlays: []
+      extraOverlays: [],
+      sourceDuration,
     };
 
-    // Ensure total duration doesn't overrun the voiceover at the very end
     if (i === rawSegments.length - 1 && voiceoverDuration > 0) {
-       segment.duration = Math.max(0.1, Number((voiceoverDuration - segment.startTime).toFixed(3)));
+      segment.duration = Math.max(0.1, Number((voiceoverDuration - segment.startTime).toFixed(3)));
     }
 
     finalSegments.push(segment);
     currentTimeAccumulator += segment.duration;
   }
 
-  return finalSegments as VideoSegment[];
+  return finalSegments;
 };
 
 const FONT_FAMILIES = [
@@ -343,8 +336,8 @@ const getMotionProps = (animation: string) => {
     case 'zoom-out': return { initial: { opacity: 0, scale: 3 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 0 } };
     case 'blur': return { initial: { opacity: 0, filter: 'blur(30px)' }, animate: { opacity: 1, filter: 'blur(0px)' }, exit: { opacity: 0, filter: 'blur(30px)' } };
     case 'rotate': return { initial: { opacity: 0, rotate: -360 }, animate: { opacity: 1, rotate: 0 }, exit: { opacity: 0, rotate: 360 } };
-    case 'bounce': return { initial: { opacity: 0, y: -300 }, animate: { opacity: 1, y: 0 }, transition: { type: 'spring', bounce: 0.7 } };
-    case 'typewriter': return { initial: { clipPath: 'inset(0 100% 0 0)' }, animate: { clipPath: 'inset(0 0 0 0)' }, transition: { duration: 1.5, ease: "steps(40)" } };
+    case 'bounce': return { initial: { opacity: 0, y: -300 }, animate: { opacity: 1, y: 0 }, transition: { type: 'spring' as const, bounce: 0.7 } };
+    case 'typewriter': return { initial: { clipPath: 'inset(0 100% 0 0)' }, animate: { clipPath: 'inset(0 0 0 0)' }, transition: { duration: 1.5, ease: 'linear' as const } };
     case 'skew': return { initial: { skewX: 45, opacity: 0 }, animate: { skewX: 0, opacity: 1 }, exit: { skewX: -45, opacity: 0 } };
     case 'glitch': return { 
       animate: { 
@@ -356,7 +349,7 @@ const getMotionProps = (animation: string) => {
       transition: { duration: 0.3, repeat: Infinity } 
     };
     case 'pulse': return { animate: { scale: [1, 1.05, 1] }, transition: { duration: 1, repeat: Infinity } };
-    case 'float': return { animate: { y: [0, -20, 0] }, transition: { duration: 3, repeat: Infinity, ease: "easeInOut" } };
+    case 'float': return { animate: { y: [0, -20, 0] }, transition: { duration: 3, repeat: Infinity, ease: "easeInOut" as const } };
     case 'shake': return { animate: { x: [-10, 10, -10, 10, 0] }, transition: { duration: 0.4, repeat: Infinity } };
     case 'neon-flicker': return { 
       animate: { 
@@ -373,12 +366,12 @@ const getMotionProps = (animation: string) => {
     case 'wobble': return { animate: { rotate: [-5, 5, -5, 5, 0] }, transition: { duration: 1, repeat: Infinity } };
     case 'flip-x': return { initial: { rotateX: 90, opacity: 0 }, animate: { rotateX: 0, opacity: 1 }, exit: { rotateX: -90, opacity: 0 } };
     case 'flip-y': return { initial: { rotateY: 90, opacity: 0 }, animate: { rotateY: 0, opacity: 1 }, exit: { rotateY: -90, opacity: 0 } };
-    case 'reveal-horizontal': return { initial: { width: 0 }, animate: { width: 'auto' }, transition: { duration: 0.8, ease: "circOut" } };
-    case 'reveal-vertical': return { initial: { height: 0 }, animate: { height: 'auto' }, transition: { duration: 0.8, ease: "circOut" } };
+    case 'reveal-horizontal': return { initial: { width: 0 }, animate: { width: 'auto' }, transition: { duration: 0.8, ease: "circOut" as const } };
+    case 'reveal-vertical': return { initial: { height: 0 }, animate: { height: 'auto' }, transition: { duration: 0.8, ease: "circOut" as const } };
     case 'crossfade': return { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.5 } };
     case 'pixelate': return { initial: { filter: 'blur(20px) contrast(200%)' }, animate: { filter: 'blur(0px) contrast(100%)' }, transition: { duration: 0.8 } };
-    case 'shimmer': return { animate: { backgroundPosition: ['-200% 0', '200% 0'] }, transition: { duration: 2, repeat: Infinity, ease: "linear" } };
-    case 'elastic-pop': return { initial: { scale: 0 }, animate: { scale: 1 }, transition: { type: 'spring', damping: 10, stiffness: 100 } };
+    case 'shimmer': return { animate: { backgroundPosition: ['-200% 0', '200% 0'] }, transition: { duration: 2, repeat: Infinity, ease: "linear" as const } };
+    case 'elastic-pop': return { initial: { scale: 0 }, animate: { scale: 1 }, transition: { type: 'spring' as const, damping: 10, stiffness: 100 } };
     case 'zigzag': return { animate: { x: [0, 20, -20, 20, 0], y: [0, -10, 10, -10, 0] }, transition: { duration: 2, repeat: Infinity } };
     default: return { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
   }
@@ -483,7 +476,7 @@ export default function App() {
         // Look for bracketed name in heading or text
         const bracketMatch = (s.heading + s.text).match(/\[(.*?):?\s*(.*?)\]/);
         if (bracketMatch) {
-          const name = bracketMatch[2].trim();
+          const name = (bracketMatch[2] ?? '').trim();
           const asset = prev.assets.find(a => isFuzzyMatch(name, a.name));
           if (asset) return { ...s, assetId: asset.id };
         }
@@ -503,6 +496,35 @@ export default function App() {
       autoMatchAssets();
     }
   }, [project.assets.length]);
+
+  const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
+    setProject(prev => ({
+      ...prev,
+      segments: prev.segments.map((s, i) => i === idx ? { ...s, ...updates } : s),
+    }));
+  };
+
+  const updateSegmentOverlay = (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>): void => {
+    setProject(prev => ({
+      ...prev,
+      segments: prev.segments.map((s, i) =>
+        i === idx
+          ? { ...s, overlayConfig: { ...(s.overlayConfig ?? prev.globalOverlayConfig), ...updates } }
+          : s
+      ),
+    }));
+  };
+
+  const updateExtraOverlay = (segIdx: number, oIdx: number, updates: Partial<TextOverlay>): void => {
+    setProject(prev => ({
+      ...prev,
+      segments: prev.segments.map((s, i) =>
+        i === segIdx
+          ? { ...s, extraOverlays: s.extraOverlays?.map((o, j) => j === oIdx ? { ...o, ...updates } : o) }
+          : s
+      ),
+    }));
+  };
 
   // Validation report
   const validationReport = useMemo(() => {
@@ -576,10 +598,10 @@ export default function App() {
       let name = '';
       const specificMatch = line.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
       if (specificMatch) {
-        if (!line.toUpperCase().includes('HEADING')) name = specificMatch[1];
+        if (!line.toUpperCase().includes('HEADING')) name = specificMatch[1] ?? '';
       } else {
         const simpleMatch = line.match(/\[(.*?)\]/);
-        if (simpleMatch) name = simpleMatch[1];
+        if (simpleMatch) name = simpleMatch[1] ?? '';
       }
 
       if (name) {
@@ -609,7 +631,7 @@ export default function App() {
   const finalizeSync = async () => {
     setIsProcessing(true);
     const audioDuration = audioRef.current?.duration || 0;
-    const segments = await parseProjectData(project.script, project.sceneDetails, project.assets, audioDuration, storyMap);
+    const segments = await parseProjectData(project.script, project.sceneDetails, project.assets, audioDuration);
     
     // Ensure accurate start times
     let acc = 0;
@@ -663,16 +685,20 @@ export default function App() {
         }
         
         const audioTracks = audioDestRef.current!.stream.getAudioTracks();
-        if (audioTracks.length > 0) {
-          combinedTracks.push(audioTracks[0]);
+        const firstTrack = audioTracks[0];
+        if (firstTrack) {
+          combinedTracks.push(firstTrack);
         }
       } catch (err) {
         console.warn("Audio capture via Web Audio failed, using fallback:", err);
-        // @ts-ignore
-        const audioStream = audioRef.current.captureStream?.() || audioRef.current.mozCaptureStream?.();
+        const el = audioRef.current as HTMLAudioElement & {
+          captureStream?: () => MediaStream;
+          mozCaptureStream?: () => MediaStream;
+        };
+        const audioStream = el.captureStream?.() ?? el.mozCaptureStream?.();
         if (audioStream) {
-          const audioTracks = audioStream.getAudioTracks();
-          if (audioTracks.length > 0) combinedTracks.push(audioTracks[0]);
+          const fallbackTrack = audioStream.getAudioTracks()[0];
+          if (fallbackTrack) combinedTracks.push(fallbackTrack);
         }
       }
     }
@@ -773,7 +799,8 @@ export default function App() {
       
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
-        if (!fileData.dir) {
+        if (!fileData || fileData.dir) return;
+        {
           const blob = await fileData.async('blob');
           let type: Asset['type'] = 'image';
           if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
@@ -1274,7 +1301,7 @@ export default function App() {
                           const newSeg: VideoSegment = {
                             id: Math.random().toString(36).substr(2, 9),
                             text: 'New Scene Text',
-                            startTime: project.segments.length > 0 ? project.segments[project.segments.length - 1].startTime + project.segments[project.segments.length - 1].duration : 0,
+                            startTime: (() => { const last = project.segments[project.segments.length - 1]; return last ? last.startTime + last.duration : 0; })(),
                             duration: 5,
                             order: project.segments.length,
                             transition: TransitionType.FADE,
@@ -1320,15 +1347,11 @@ export default function App() {
                                 value={s.duration}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value) || 0.1;
-                                  const newSegs = [...project.segments];
-                                  newSegs[idx].duration = val;
-                                  // Recalculate startTimes
-                                  let currentStart = 0;
-                                  for (let k = 0; k < newSegs.length; k++) {
-                                    newSegs[k].startTime = currentStart;
-                                    currentStart += newSegs[k].duration;
-                                  }
-                                  setProject(p => ({ ...p, segments: newSegs }));
+                                  setProject(prev => {
+                                    const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
+                                    let acc = 0;
+                                    return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
+                                  });
                                 }}
                                 className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26]"
                               />
@@ -1338,11 +1361,7 @@ export default function App() {
                               <input 
                                 placeholder="Scene Heading"
                                 value={s.heading || ''}
-                                onChange={(e) => {
-                                  const newSegs = [...project.segments];
-                                  newSegs[idx].heading = e.target.value;
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onChange={(e) => updateSegment(idx, { heading: e.target.value })}
                                 className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
                               />
                             </div>
@@ -1350,11 +1369,7 @@ export default function App() {
                               <textarea 
                                 placeholder="Scene Script Text"
                                 value={s.text}
-                                onChange={(e) => {
-                                  const newSegs = [...project.segments];
-                                  newSegs[idx].text = e.target.value;
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onChange={(e) => updateSegment(idx, { text: e.target.value })}
                                 className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[11px] h-20 outline-none focus:border-[#F27D26] resize-none"
                               />
                             </div>
@@ -1364,11 +1379,7 @@ export default function App() {
                             <div className="flex-1">
                               <select 
                                 value={s.assetId || ''}
-                                onChange={(e) => {
-                                  const newSegs = [...project.segments];
-                                  newSegs[idx].assetId = e.target.value;
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onChange={(e) => updateSegment(idx, { assetId: e.target.value })}
                                 className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none"
                               >
                                 <option value="">No Visual Asset</option>
@@ -1388,14 +1399,12 @@ export default function App() {
                               <Video size={14} />
                             </button>
                              <button 
-                                onClick={() => {
-                                  const newSegs = [...project.segments];
-                                  newSegs[idx].showOverlay = !newSegs[idx].showOverlay;
-                                  if (!newSegs[idx].overlayConfig) {
-                                    newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                  }
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onClick={() => setProject(prev => ({
+                                  ...prev,
+                                  segments: prev.segments.map((seg, i) =>
+                                    i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
+                                  ),
+                                }))}
                                 className={`p-2 rounded-lg border transition-all ${s.showOverlay ? 'bg-[#F27D26] border-[#F27D26] text-white' : 'bg-[#121212] border-[#282828] text-gray-500'}`}
                                 title="Toggle Main Text Overlay"
                               >
@@ -1411,12 +1420,7 @@ export default function App() {
                                     <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
                                     <select 
                                       value={s.overlayConfig?.fontFamily || project.globalOverlayConfig.fontFamily}
-                                      onChange={(e) => {
-                                        const newSegs = [...project.segments];
-                                        if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                        newSegs[idx].overlayConfig!.fontFamily = e.target.value;
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onChange={(e) => updateSegmentOverlay(idx, { fontFamily: e.target.value })}
                                       className="w-full bg-[#050505] p-1 rounded text-[10px]"
                                     >
                                       {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
@@ -1427,12 +1431,7 @@ export default function App() {
                                     <input 
                                       type="number" 
                                       value={s.overlayConfig?.fontSize || 60}
-                                      onChange={(e) => {
-                                        const newSegs = [...project.segments];
-                                        if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                        newSegs[idx].overlayConfig!.fontSize = parseInt(e.target.value);
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onChange={(e) => updateSegmentOverlay(idx, { fontSize: parseInt(e.target.value) })}
                                       className="w-full bg-[#050505] p-1 rounded text-[10px]"
                                     />
                                   </div>
@@ -1440,12 +1439,7 @@ export default function App() {
                                     <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
                                     <select 
                                       value={s.overlayConfig?.fontWeight || 'bold'}
-                                      onChange={(e) => {
-                                        const newSegs = [...project.segments];
-                                        if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                        newSegs[idx].overlayConfig!.fontWeight = e.target.value;
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onChange={(e) => updateSegmentOverlay(idx, { fontWeight: e.target.value })}
                                       className="w-full bg-[#050505] p-1 rounded text-[10px]"
                                     >
                                       <option value="normal">Normal</option>
@@ -1457,23 +1451,13 @@ export default function App() {
                                     <label className="text-[7px] uppercase font-bold text-gray-600">Style</label>
                                     <div className="flex gap-1">
                                       <button 
-                                        onClick={() => {
-                                          const newSegs = [...project.segments];
-                                          if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                          newSegs[idx].overlayConfig!.fontStyle = newSegs[idx].overlayConfig!.fontStyle === 'italic' ? 'normal' : 'italic';
-                                          setProject(p => ({ ...p, segments: newSegs }));
-                                        }}
+                                        onClick={() => updateSegmentOverlay(idx, { fontStyle: s.overlayConfig?.fontStyle === 'italic' ? 'normal' : 'italic' })}
                                         className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.fontStyle === 'italic' ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
                                       >IT</button>
                                       <input 
                                         type="color"
                                         value={s.overlayConfig?.color || '#FFFFFF'}
-                                        onChange={(e) => {
-                                          const newSegs = [...project.segments];
-                                          if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                          newSegs[idx].overlayConfig!.color = e.target.value;
-                                          setProject(p => ({ ...p, segments: newSegs }));
-                                        }}
+                                        onChange={(e) => updateSegmentOverlay(idx, { color: e.target.value })}
                                         className="flex-1 h-5 bg-transparent"
                                       />
                                     </div>
@@ -1482,23 +1466,13 @@ export default function App() {
                                     <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
                                     <div className="flex gap-2">
                                       <button 
-                                        onClick={() => {
-                                          const newSegs = [...project.segments];
-                                          if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                          newSegs[idx].overlayConfig!.textShadow = newSegs[idx].overlayConfig!.textShadow ? '' : '0 4px 15px rgba(0,0,0,1)';
-                                          setProject(p => ({ ...p, segments: newSegs }));
-                                        }}
+                                        onClick={() => updateSegmentOverlay(idx, { textShadow: s.overlayConfig?.textShadow ? '' : '0 4px 15px rgba(0,0,0,1)' })}
                                         className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.textShadow ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
                                       >ENABLED</button>
                                       <input 
                                         type="color"
                                         value="#000000"
-                                        onChange={(e) => {
-                                          const newSegs = [...project.segments];
-                                          if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                          newSegs[idx].overlayConfig!.textShadow = `0 4px 15px ${e.target.value}`;
-                                          setProject(p => ({ ...p, segments: newSegs }));
-                                        }}
+                                        onChange={(e) => updateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
                                         className="h-5 flex-1 bg-transparent"
                                       />
                                     </div>
@@ -1507,12 +1481,7 @@ export default function App() {
                                     <label className="text-[7px] uppercase font-bold text-gray-600">Animation Preset</label>
                                     <select 
                                       value={s.overlayConfig?.animation || 'fade'}
-                                      onChange={(e) => {
-                                        const newSegs = [...project.segments];
-                                        if (!newSegs[idx].overlayConfig) newSegs[idx].overlayConfig = { ...project.globalOverlayConfig };
-                                        newSegs[idx].overlayConfig!.animation = e.target.value as any;
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onChange={(e) => updateSegmentOverlay(idx, { animation: e.target.value })}
                                       className="w-full bg-[#050505] p-1 rounded text-[10px] uppercase font-bold"
                                     >
                                       {TEXT_ANIMATIONS.map(a => <option key={a} value={a}>{a.replace('-', ' ')}</option>)}
@@ -1524,58 +1493,28 @@ export default function App() {
 
                            <div className="grid grid-cols-3 gap-2 pt-2">
                              <button 
-                               onClick={() => {
-                                 const newSegs = [...project.segments];
-                                 newSegs[idx].overlayConfig = { 
-                                   ...project.globalOverlayConfig, 
-                                   color: '#00FF00', 
-                                   backgroundColor: 'rgba(0,0,0,0.8)', 
-                                   fontFamily: 'Bangers',
-                                   fontSize: 80,
-                                   textShadow: '0 0 20px #00FF00',
-                                   animation: 'glitch' as any
-                                 };
-                                 newSegs[idx].showOverlay = true;
-                                 setProject(p => ({ ...p, segments: newSegs }));
-                               }}
+                               onClick={() => setProject(prev => ({
+                                 ...prev,
+                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: '#00FF00', backgroundColor: 'rgba(0,0,0,0.8)', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } } : seg),
+                               }))}
                                className="p-1.5 bg-green-500/10 border border-green-500/20 text-green-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-all"
                              >
                                Cyber Bold
                              </button>
                              <button 
-                               onClick={() => {
-                                 const newSegs = [...project.segments];
-                                 newSegs[idx].overlayConfig = { 
-                                   ...project.globalOverlayConfig, 
-                                   color: '#FF00FF', 
-                                   backgroundColor: 'white', 
-                                   fontFamily: 'Monoton',
-                                   fontSize: 70,
-                                   textShadow: '0 0 10px #FF00FF',
-                                   animation: 'neon-flicker' as any
-                                 };
-                                 newSegs[idx].showOverlay = true;
-                                 setProject(p => ({ ...p, segments: newSegs }));
-                               }}
+                               onClick={() => setProject(prev => ({
+                                 ...prev,
+                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } } : seg),
+                               }))}
                                className="p-1.5 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-pink-500 hover:text-white transition-all"
                              >
                                Retro Neon
                              </button>
                              <button 
-                               onClick={() => {
-                                 const newSegs = [...project.segments];
-                                 newSegs[idx].overlayConfig = { 
-                                   ...project.globalOverlayConfig, 
-                                   color: 'black', 
-                                   backgroundColor: '#F27D26', 
-                                   fontFamily: 'Anton',
-                                   fontSize: 90,
-                                   fontWeight: 900,
-                                   animation: 'slide-up' as any
-                                 };
-                                 newSegs[idx].showOverlay = true;
-                                 setProject(p => ({ ...p, segments: newSegs }));
-                               }}
+                               onClick={() => setProject(prev => ({
+                                 ...prev,
+                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } } : seg),
+                               }))}
                                className="p-1.5 bg-orange-500/10 border border-orange-500/20 text-[#F27D26] rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-black transition-all"
                              >
                                Brutal Bold
@@ -1590,12 +1529,7 @@ export default function App() {
                                 <input 
                                   type="range" min="0.1" max="3" step="0.1"
                                   value={s.playbackSpeed || 1}
-                                  onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    const newSegs = [...project.segments];
-                                    newSegs[idx].playbackSpeed = val;
-                                    setProject(p => ({ ...p, segments: newSegs }));
-                                  }}
+                                  onChange={(e) => updateSegment(idx, { playbackSpeed: parseFloat(e.target.value) })}
                                   className="w-full accent-[#F27D26]"
                                 />
                              </div>
@@ -1607,12 +1541,7 @@ export default function App() {
                                 <input 
                                   type="range" min="0" max={s.sourceDuration || 60} step="0.5"
                                   value={s.trimStart || 0}
-                                  onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    const newSegs = [...project.segments];
-                                    newSegs[idx].trimStart = val;
-                                    setProject(p => ({ ...p, segments: newSegs }));
-                                  }}
+                                  onChange={(e) => updateSegment(idx, { trimStart: parseFloat(e.target.value) })}
                                   className="w-full accent-blue-500"
                                 />
                              </div>
@@ -1621,11 +1550,7 @@ export default function App() {
                           <div className="flex items-center justify-between pt-1">
                              <div className="flex items-center gap-2">
                                 <button 
-                                  onClick={() => {
-                                    const newSegs = [...project.segments];
-                                    newSegs[idx].isMuted = !newSegs[idx].isMuted;
-                                    setProject(p => ({ ...p, segments: newSegs }));
-                                  }}
+                                  onClick={() => updateSegment(idx, { isMuted: !s.isMuted })}
                                   className={`p-1.5 rounded text-[8px] uppercase font-black tracking-widest flex items-center gap-1 ${s.isMuted ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}
                                 >
                                   {s.isMuted ? <Music size={10} className="line-through" /> : <Music size={10} />}
@@ -1633,20 +1558,12 @@ export default function App() {
                                 </button>
                              </div>
                              <button 
-                                onClick={() => {
-                                  const newSegs = [...project.segments];
-                                  if (!newSegs[idx].extraOverlays) newSegs[idx].extraOverlays = [];
-                                  newSegs[idx].extraOverlays?.push({
-                                    id: Math.random().toString(36).substr(2, 9),
-                                    text: 'New Text',
-                                    color: '#FFFFFF',
-                                    backgroundColor: 'rgba(0,0,0,0.5)',
-                                    fontFamily: 'Inter',
-                                    fontSize: 24,
-                                    position: { x: 50, y: 50 }
-                                  });
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onClick={() => setProject(prev => ({
+                                  ...prev,
+                                  segments: prev.segments.map((seg, i) =>
+                                    i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.5)', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                                  ),
+                                }))}
                                 className="p-1.5 bg-[#1A1A1A] text-gray-500 rounded-lg hover:border-[#F27D26] border border-transparent transition-all flex items-center gap-1 text-[8px] uppercase font-bold"
                               >
                                 <Plus size={10} /> Overlay
@@ -1659,11 +1576,7 @@ export default function App() {
                               <div className="flex justify-between items-center">
                                 <span className="text-[8px] font-black text-gray-700 uppercase tracking-widest">Overlay #{oIdx + 1}</span>
                                 <button 
-                                  onClick={() => {
-                                    const newSegs = [...project.segments];
-                                    newSegs[idx].extraOverlays = newSegs[idx].extraOverlays?.filter(o => o.id !== overlay.id);
-                                    setProject(p => ({ ...p, segments: newSegs }));
-                                  }}
+                                  onClick={() => updateSegment(idx, { extraOverlays: s.extraOverlays?.filter(o => o.id !== overlay.id) })}
                                   className="text-red-900 hover:text-red-500"
                                 >
                                   <Trash2 size={10} />
@@ -1671,11 +1584,7 @@ export default function App() {
                               </div>
                               <input 
                                 value={overlay.text}
-                                onChange={(e) => {
-                                  const newSegs = [...project.segments];
-                                  if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].text = e.target.value;
-                                  setProject(p => ({ ...p, segments: newSegs }));
-                                }}
+                                onChange={(e) => updateExtraOverlay(idx, oIdx, { text: e.target.value })}
                                 className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[10px] outline-none"
                               />
                               <div className="grid grid-cols-2 gap-2">
@@ -1683,11 +1592,7 @@ export default function App() {
                                   <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
                                   <select 
                                     value={overlay.fontFamily}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].fontFamily = e.target.value;
-                                      setProject(p => ({ ...p, segments: newSegs }));
-                                    }}
+                                    onChange={(e) => updateExtraOverlay(idx, oIdx, { fontFamily: e.target.value })}
                                     className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[10px]"
                                   >
                                     {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
@@ -1700,8 +1605,7 @@ export default function App() {
                                     value={overlay.color}
                                     onChange={(e) => {
                                       const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].color = e.target.value;
-                                      setProject(p => ({ ...p, segments: newSegs }));
+                                      updateExtraOverlay(idx, oIdx, { color: e.target.value });
                                     }}
                                     className="w-full h-6 bg-transparent"
                                   />
@@ -1713,8 +1617,7 @@ export default function App() {
                                     value={overlay.backgroundColor}
                                     onChange={(e) => {
                                       const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].backgroundColor = e.target.value;
-                                      setProject(p => ({ ...p, segments: newSegs }));
+                                      updateExtraOverlay(idx, oIdx, { backgroundColor: e.target.value });
                                     }}
                                     className="w-full h-6 bg-transparent"
                                   />
@@ -1726,8 +1629,7 @@ export default function App() {
                                     value={overlay.fontSize}
                                     onChange={(e) => {
                                       const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].fontSize = parseInt(e.target.value);
-                                      setProject(p => ({ ...p, segments: newSegs }));
+                                      updateExtraOverlay(idx, oIdx, { fontSize: parseInt(e.target.value) });
                                     }}
                                     className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]"
                                   />
@@ -1738,8 +1640,7 @@ export default function App() {
                                     value={overlay.fontWeight || 'normal'}
                                     onChange={(e) => {
                                       const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].fontWeight = e.target.value;
-                                      setProject(p => ({ ...p, segments: newSegs }));
+                                      updateExtraOverlay(idx, oIdx, { fontWeight: e.target.value });
                                     }}
                                     className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]"
                                   >
@@ -1754,8 +1655,7 @@ export default function App() {
                                     value={overlay.animation || 'fade'}
                                     onChange={(e) => {
                                       const newSegs = [...project.segments];
-                                      if (newSegs[idx].extraOverlays) newSegs[idx].extraOverlays[oIdx].animation = e.target.value as any;
-                                      setProject(p => ({ ...p, segments: newSegs }));
+                                      updateExtraOverlay(idx, oIdx, { animation: e.target.value });
                                     }}
                                     className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[8px] uppercase font-bold"
                                   >
@@ -1766,25 +1666,13 @@ export default function App() {
                                   <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
                                   <div className="flex gap-1">
                                     <button 
-                                      onClick={() => {
-                                        const newSegs = [...project.segments];
-                                        if (newSegs[idx].extraOverlays) {
-                                          newSegs[idx].extraOverlays[oIdx].textShadow = overlay.textShadow ? '' : '0 2px 10px rgba(0,0,0,1)';
-                                        }
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onClick={() => updateExtraOverlay(idx, oIdx, { textShadow: overlay.textShadow ? '' : '0 2px 10px rgba(0,0,0,1)' })}
                                       className={`flex-1 text-[7px] p-1 rounded font-bold ${overlay.textShadow ? 'bg-[#F27D26]' : 'bg-[#121212]'}`}
                                     >SH</button>
                                     <input 
                                       type="color"
                                       value="#000000"
-                                      onChange={(e) => {
-                                        const newSegs = [...project.segments];
-                                        if (newSegs[idx].extraOverlays) {
-                                          newSegs[idx].extraOverlays[oIdx].textShadow = `0 2px 10px ${e.target.value}`;
-                                        }
-                                        setProject(p => ({ ...p, segments: newSegs }));
-                                      }}
+                                      onChange={(e) => updateExtraOverlay(idx, oIdx, { textShadow: `0 2px 10px ${e.target.value}` })}
                                       className="flex-1 h-5 bg-transparent"
                                     />
                                   </div>
@@ -1795,13 +1683,7 @@ export default function App() {
                                     {['left', 'center', 'right'].map(align => (
                                       <button
                                         key={align}
-                                        onClick={() => {
-                                          const newSegs = [...project.segments];
-                                          if (newSegs[idx].extraOverlays) {
-                                            newSegs[idx].extraOverlays[oIdx].textAlign = align as any;
-                                          }
-                                          setProject(p => ({ ...p, segments: newSegs }));
-                                        }}
+                                        onClick={() => updateExtraOverlay(idx, oIdx, { textAlign: align as TextOverlay['textAlign'] })}
                                         className={`flex-1 text-[7px] uppercase font-bold p-1 rounded ${
                                           overlay.textAlign === align 
                                             ? 'bg-[#F27D26] text-white' 
@@ -2299,30 +2181,21 @@ export default function App() {
                          const seg = project.segments.find(s => s.id === resizingId);
                          if (!seg) return;
                          
-                         const newSegs = [...project.segments];
-                         const idx = newSegs.findIndex(s => s.id === resizingId);
-                         if (idx === -1) return;
-
-                         if (resizingType === 'end') {
-                           const newDuration = Math.max(0.1, (x / pixelsPerSecond) - seg.startTime);
-                           newSegs[idx].duration = newDuration;
-                         } else if (resizingType === 'start') {
-                           const timelineX = x / pixelsPerSecond;
-                           const delta = timelineX - seg.startTime;
-                           const newDuration = Math.max(0.1, seg.duration - delta);
-                           const newTrimStart = Math.max(0, (seg.trimStart || 0) + delta);
-                           
-                           newSegs[idx].duration = newDuration;
-                           newSegs[idx].trimStart = newTrimStart;
-                         }
-
-                         // Recalculate startTimes for all
-                         let currentStart = 0;
-                         for (let k = 0; k < newSegs.length; k++) {
-                           newSegs[k].startTime = currentStart;
-                           currentStart += newSegs[k].duration;
-                         }
-                         setProject(p => ({ ...p, segments: newSegs }));
+                         setProject(prev => {
+                           const target = prev.segments.find(s => s.id === resizingId);
+                           if (!target) return prev;
+                           const updated = prev.segments.map(s => {
+                             if (s.id !== resizingId) return s;
+                             if (resizingType === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
+                             if (resizingType === 'start') {
+                               const delta = (x / pixelsPerSecond) - target.startTime;
+                               return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
+                             }
+                             return s;
+                           });
+                           let acc = 0;
+                           return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
+                         });
                        }}
                        onMouseUp={() => {
                          setResizingId(null);
@@ -2399,14 +2272,10 @@ export default function App() {
                                        const maxTrim = Math.max(0, (s.sourceDuration || 60) - s.duration);
                                        const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
                                        
-                                       setProject(prev => {
-                                          const newSegs = [...prev.segments];
-                                          const idx = newSegs.findIndex(seg => seg.id === s.id);
-                                          if (idx !== -1) {
-                                            newSegs[idx] = { ...newSegs[idx], trimStart: newTrim };
-                                          }
-                                          return { ...prev, segments: newSegs };
-                                       });
+                                       setProject(prev => ({
+                                         ...prev,
+                                         segments: prev.segments.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg),
+                                       }));
                                      };
                                      
                                      const handleMouseUp = () => {
@@ -2741,23 +2610,20 @@ export default function App() {
                       className="group relative aspect-video rounded-3xl overflow-hidden border border-[#1A1A1A] cursor-pointer hover:border-blue-500 transition-all bg-black"
                       onClick={() => {
                         const newAsset: Asset = {
-                          id: Math.random().toString(36).substr(2, 9),
+                          id: crypto.randomUUID(),
                           name: stock.name,
                           url: stock.url,
-                          type: stock.type as any
+                          type: stock.type,
                         };
-                        setProject(p => {
-                          const updatedAssets = [...p.assets, newAsset];
-                          const updatedSegments = [...p.segments];
-                          const targetIdx = updatedSegments.findIndex(s => s.id === stockTarget);
-                          if (targetIdx !== -1) {
-                            updatedSegments[targetIdx].assetId = newAsset.id;
-                            updatedSegments[targetIdx].playbackSpeed = 1;
-                            updatedSegments[targetIdx].trimStart = 0;
-                            updatedSegments[targetIdx].isMuted = true;
-                          }
-                          return { ...p, assets: updatedAssets, segments: updatedSegments };
-                         });
+                        setProject(p => ({
+                          ...p,
+                          assets: [...p.assets, newAsset],
+                          segments: p.segments.map(s =>
+                            s.id === stockTarget
+                              ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
+                              : s
+                          ),
+                        }));
                          setShowStockSearch(false);
                       }}
                     >
@@ -2828,7 +2694,7 @@ export default function App() {
                       const tag = lines[0] || 'Scene';
                       const desc = lines.slice(1).join(' ');
                       const nameMatch = tag.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i) || tag.match(/\[(.*?)\]/);
-                      const name = nameMatch ? nameMatch[1] : 'Unknown';
+                      const name = nameMatch?.[1] ?? 'Unknown';
                       
                       // In pre-sync review, we might not have segments yet, so we use logic similar to parseProjectData
                       const matchedAsset = project.assets.find(a => isFuzzyMatch(name, a.name));
@@ -3097,9 +2963,7 @@ export default function App() {
                               onChange={(e) => {
                                 const newAssetId = e.target.value;
                                 setProject(prev => {
-                                  const newSegs = [...prev.segments];
-                                  newSegs[i] = { ...newSegs[i], assetId: newAssetId };
-                                  return { ...prev, segments: newSegs };
+                                  return { ...prev, segments: prev.segments.map((s, j) => j === i ? { ...s, assetId: newAssetId } : s) };
                                 });
                               }}
                             >
