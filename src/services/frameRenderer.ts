@@ -51,16 +51,34 @@ function getOrCreateVideo(url: string): HTMLVideoElement {
   return el;
 }
 
-async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
-  // Always seek — never skip based on currentTime proximity. A freshly created
-  // video element may report currentTime=0 but have no decoded frame yet; the
-  // early-return optimisation caused intermittent black frames on first render.
-  console.debug(
-    `[seek] target=${time.toFixed(3)}s videoDuration=${el.duration}s` +
-    ` readyState=${el.readyState} networkState=${el.networkState}` +
-    ` src=${el.src.slice(0, 80)}`,
-  );
+/** Wait for readyState >= HAVE_METADATA (1) and a non-NaN duration. */
+async function ensureMetadata(el: HTMLVideoElement): Promise<void> {
+  if (el.readyState >= 1 && !isNaN(el.duration)) return;
   await new Promise<void>((resolve, reject) => {
+    const cleanup = () => {
+      el.removeEventListener('loadedmetadata', onMeta);
+      el.removeEventListener('error', onErr);
+      clearTimeout(timer);
+    };
+    const onMeta = () => { cleanup(); resolve(); };
+    const onErr = () => { cleanup(); reject(new Error('video metadata load error')); };
+    const timer = setTimeout(() => {
+      cleanup();
+      console.warn('[seek] metadata wait timed out — proceeding anyway');
+      resolve(); // non-fatal: proceed and let seeked handle it
+    }, 5000);
+    el.addEventListener('loadedmetadata', onMeta);
+    el.addEventListener('error', onErr);
+  });
+
+  if (el.duration === 0 || isNaN(el.duration)) {
+    console.warn(`[seek] videoDuration=${el.duration} after metadata wait — video may be empty or unreadable`);
+  }
+}
+
+/** Await the `seeked` event with a 5s timeout. */
+function awaitSeeked(el: HTMLVideoElement, targetForLog: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
     const start = Date.now();
     const cleanup = () => {
       el.removeEventListener('seeked', onSeeked);
@@ -74,16 +92,45 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
       const elapsed = Date.now() - start;
       console.error(
         `[seek] TIMEOUT after ${elapsed}ms —` +
-        ` target=${time.toFixed(3)}s currentTime=${el.currentTime.toFixed(3)}s` +
+        ` target=${targetForLog.toFixed(3)}s currentTime=${el.currentTime.toFixed(3)}s` +
         ` videoDuration=${el.duration}s readyState=${el.readyState}` +
         ` networkState=${el.networkState} src=${el.src.slice(0, 80)}`,
       );
-      reject(new Error('video seek timeout (2s)'));
-    }, 2000);
+      reject(new Error('video seek timeout (5s)'));
+    }, 5000);
     el.addEventListener('seeked', onSeeked);
     el.addEventListener('error', onError);
-    el.currentTime = time;
   });
+}
+
+async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
+  // Step 1: ensure metadata is ready so duration is known.
+  await ensureMetadata(el);
+
+  // Step 2: clamp seek beyond duration (handles stretched segments).
+  let target = time;
+  if (el.duration > 0 && !isNaN(el.duration) && target > el.duration) {
+    target = Math.max(0, el.duration - 0.05);
+    console.debug(`[seek] clamped ${time.toFixed(3)}s → ${target.toFixed(3)}s (duration=${el.duration}s)`);
+  }
+
+  console.debug(
+    `[seek] target=${target.toFixed(3)}s videoDuration=${el.duration}s` +
+    ` readyState=${el.readyState} networkState=${el.networkState}` +
+    ` src=${el.src.slice(0, 80)}`,
+  );
+
+  // Step 3: if already exactly at target, nudge first so `seeked` fires.
+  // A seek to the current position is a no-op — the browser never fires `seeked`.
+  if (Math.abs(el.currentTime - target) < 0.001) {
+    const nudge = target > 0.001 ? target - 0.001 : target + 0.001;
+    el.currentTime = nudge;
+    await awaitSeeked(el, nudge);
+  }
+
+  // Step 4: seek to actual target.
+  el.currentTime = target;
+  await awaitSeeked(el, target);
 }
 
 // ---------------------------------------------------------------------------
