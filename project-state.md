@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-05-16 |
-| Current phase | Phase 2 complete — ready for Phase 3 planning |
+| Last updated | 2026-05-17 |
+| Current phase | Phase 3 — export pipeline (ffmpeg.wasm) |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -21,12 +21,13 @@
 
 | Phase | Description | Status |
 |---|---|---|
-| Phase 0 | Audit & baseline — understand the codebase, establish conventions, git setup | ✅ Complete |
-| Phase 1 | Foundation refactor — component decomposition, strict TS, immutable updates, UUID swap | ✅ Complete |
-| Phase 2 | Persistence — localStorage for project state, IndexedDB for binary assets | ✅ Complete |
-| Phase 3 | Export pipeline rebuild — replace broken MediaRecorder approach with proper render | ⬜ Not started |
-| Phase 4 | Polish — implement missing filters/transitions, Safari compat, API proxy, error handling | ⬜ Not started |
-| Phase 5 | Production hardening — auth, tests, accessibility, responsive design | ⬜ Not started |
+| Phase 0 | Audit & baseline | ✅ Complete |
+| Phase 1 | Foundation refactor | ✅ Complete |
+| Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
+| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ⬜ In progress |
+| Phase 4 | Polish — filters, transitions, Safari, error handling | ⬜ Not started |
+| Phase 5 | Production hardening — tests, accessibility, responsive | ⬜ Not started |
+| Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
 
 ---
 
@@ -52,7 +53,8 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 |---|---|
 | 2026-05-16 | **Hosting:** Cloudflare Pages for frontend. Free tier, edge CDN, unlimited bandwidth. Render backend deferred to Phase 3. |
 | 2026-05-16 | **Target users:** YouTube creators. Initial private use across 5–10 channels owned by user's team. |
-| 2026-05-16 | **Export approach:** TBD in Phase 3. Options on the table: Remotion, custom canvas/WebGL renderer, server-side ffmpeg worker. |
+| 2026-05-16 | **Export approach:** ffmpeg.wasm in browser for Phase 3. Slower than native (3-5×) but $0 infra, works offline, no server. Pipeline code will port to native ffmpeg in Phase 6 with minimal changes. |
+| 2026-05-16 | **Long-term distribution:** Desktop app via Tauri (Phase 6). Web app remains the development target through Phases 3-5; desktop wrap converts the same codebase. Native ffmpeg replaces ffmpeg.wasm for full-speed renders. |
 | 2026-05-16 | **Branch strategy:** `main` is the stable branch. Feature work goes on short-lived branches, merged via PR. |
 | 2026-05-16 | **Output format:** MP4 required for YouTube upload. Current WebM output is unacceptable for production — this is a Phase 3 blocker. |
 
@@ -60,8 +62,6 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 
 ## Open Questions
 
-- [ ] Export rendering approach — Remotion vs custom canvas/WebGL vs server-side ffmpeg worker
-- [ ] Render backend host — Railway, Fly.io, Hetzner, Remotion Lambda (decide in Phase 3 planning)
 - [ ] Multi-user support — team accounts in v1, or stay single-user through Phase 5?
 - [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
 - [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 3 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
