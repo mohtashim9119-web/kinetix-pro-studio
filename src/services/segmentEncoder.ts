@@ -45,11 +45,22 @@ export async function encodeSegment(
   const totalFrames = Math.max(1, Math.round(segment.duration * fps));
   const writtenFiles: string[] = [];
 
+  // Surface ffmpeg's internal log to the browser console for diagnostics.
+  const ffmpegLogHandler = ({ message }: { message: string }) => {
+    console.debug('[ffmpeg]', message);
+  };
+  ffmpeg.on('log', ffmpegLogHandler);
+
   // -------------------------------------------------------------------------
   // Render and write frames
   // -------------------------------------------------------------------------
   for (let i = 0; i < totalFrames; i++) {
     const timeInSegment = i / fps;
+
+    console.debug(
+      `[encode] frame ${i + 1}/${totalFrames} time=${timeInSegment.toFixed(3)}s` +
+      ` asset=${asset ? `${asset.type}:${asset.name}` : 'none'}`,
+    );
 
     await renderSegmentFrame({
       segment,
@@ -97,6 +108,7 @@ export async function encodeSegment(
       : new TextEncoder().encode(fileData as string);
 
   await cleanupFiles(ffmpeg, writtenFiles);
+  ffmpeg.off('log', ffmpegLogHandler);
 
   return mp4Bytes;
 }

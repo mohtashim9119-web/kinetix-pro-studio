@@ -55,7 +55,13 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
   // Always seek — never skip based on currentTime proximity. A freshly created
   // video element may report currentTime=0 but have no decoded frame yet; the
   // early-return optimisation caused intermittent black frames on first render.
+  console.debug(
+    `[seek] target=${time.toFixed(3)}s videoDuration=${el.duration}s` +
+    ` readyState=${el.readyState} networkState=${el.networkState}` +
+    ` src=${el.src.slice(0, 80)}`,
+  );
   await new Promise<void>((resolve, reject) => {
+    const start = Date.now();
     const cleanup = () => {
       el.removeEventListener('seeked', onSeeked);
       el.removeEventListener('error', onError);
@@ -63,7 +69,17 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
     };
     const onSeeked = () => { cleanup(); resolve(); };
     const onError = () => { cleanup(); reject(new Error('video seek failed')); };
-    const timer = setTimeout(() => { cleanup(); reject(new Error('video seek timeout (2s)')); }, 2000);
+    const timer = setTimeout(() => {
+      cleanup();
+      const elapsed = Date.now() - start;
+      console.error(
+        `[seek] TIMEOUT after ${elapsed}ms —` +
+        ` target=${time.toFixed(3)}s currentTime=${el.currentTime.toFixed(3)}s` +
+        ` videoDuration=${el.duration}s readyState=${el.readyState}` +
+        ` networkState=${el.networkState} src=${el.src.slice(0, 80)}`,
+      );
+      reject(new Error('video seek timeout (2s)'));
+    }, 2000);
     el.addEventListener('seeked', onSeeked);
     el.addEventListener('error', onError);
     el.currentTime = time;
