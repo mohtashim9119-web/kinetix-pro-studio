@@ -51,24 +51,21 @@ function getOrCreateVideo(url: string): HTMLVideoElement {
   return el;
 }
 
-async function ensureVideoMetadata(el: HTMLVideoElement): Promise<void> {
-  if (el.readyState >= 1) return; // HAVE_METADATA
-  await new Promise<void>((resolve, reject) => {
-    const onMeta = () => { el.removeEventListener('loadedmetadata', onMeta); el.removeEventListener('error', onErr); resolve(); };
-    const onErr = () => { el.removeEventListener('loadedmetadata', onMeta); el.removeEventListener('error', onErr); reject(new Error('video metadata load error')); };
-    el.addEventListener('loadedmetadata', onMeta);
-    el.addEventListener('error', onErr);
-  });
-}
-
 async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
-  await ensureVideoMetadata(el);
-  if (Math.abs(el.currentTime - time) < 0.04) return;
+  // Always seek — never skip based on currentTime proximity. A freshly created
+  // video element may report currentTime=0 but have no decoded frame yet; the
+  // early-return optimisation caused intermittent black frames on first render.
   await new Promise<void>((resolve, reject) => {
-    const onSeeked = () => { el.removeEventListener('seeked', onSeeked); el.removeEventListener('error', onErr); resolve(); };
-    const onErr = () => { el.removeEventListener('seeked', onSeeked); el.removeEventListener('error', onErr); reject(new Error('video seek error')); };
+    const cleanup = () => {
+      el.removeEventListener('seeked', onSeeked);
+      el.removeEventListener('error', onError);
+      clearTimeout(timer);
+    };
+    const onSeeked = () => { cleanup(); resolve(); };
+    const onError = () => { cleanup(); reject(new Error('video seek failed')); };
+    const timer = setTimeout(() => { cleanup(); reject(new Error('video seek timeout (2s)')); }, 2000);
     el.addEventListener('seeked', onSeeked);
-    el.addEventListener('error', onErr);
+    el.addEventListener('error', onError);
     el.currentTime = time;
   });
 }
@@ -140,7 +137,9 @@ function clearShadow(ctx: CanvasRenderingContext2D): void {
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 0;
   ctx.shadowBlur = 0;
-  ctx.shadowColor = 'transparent';
+  // 'transparent' is rejected by some Chromium canvas implementations;
+  // 'rgba(0,0,0,0)' is unambiguous and universally accepted.
+  ctx.shadowColor = 'rgba(0,0,0,0)';
 }
 
 async function ensureFont(family: string, sizePx: number): Promise<void> {
