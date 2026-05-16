@@ -201,12 +201,13 @@ vite            — listed in both deps and devDeps (remove from deps)
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Not started | |
-| Extract `useExport.ts` hook | ⬜ Not started | |
+| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 2 | Playback interval + audio sync still in App.tsx; deferred to avoid scope creep |
+| Extract `useExport.ts` hook | ⬜ Deferred — Phase 2 | Canvas capture + MediaRecorder still in App.tsx; deferred to avoid scope creep |
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → 1,449 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
 | Fix `togglePlay` stale closure | ✅ Done — 2026-05-16 | Uses functional updater setIsPlaying(p => !p) |
 | Fix export file extension (.webm) | ✅ Done — 2026-05-16 | |
 | Replace Math.random IDs | ✅ Done — 2026-05-16 | All IDs use crypto.randomUUID() |
+| Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix (pre-existing bug) |
 | Add project persistence | ⬜ Not started | Phase 2 |
 | Fix canvas export to include overlays | ⬜ Not started | Major effort — Phase 3 |
