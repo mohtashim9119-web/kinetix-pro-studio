@@ -47,8 +47,10 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
+import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { StockSearchModal } from './components/StockSearchModal';
 import { SyncReviewModal } from './components/SyncReviewModal';
+import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 
 interface RawSegment {
   text: string;
@@ -229,122 +231,6 @@ const parseProjectData = async (
   return finalSegments;
 };
 
-const FONT_FAMILIES = [
-  'Inter', 'Anton', 'Space Grotesk', 'JetBrains Mono', 'Playfair Display', 'Outfit', 
-  'Bebas Neue', 'Montserrat', 'Oswald', 'Roboto', 'Poppins', 'Lato', 'Open Sans', 
-  'Raleway', 'Nunito', 'Ubuntu', 'Merriweather', 'Lora', 'Libre Baskerville', 
-  'Dancing Script', 'Pacifico', 'Shadows Into Light', 'Indie Flower', 'Amatic SC', 
-  'Caveat', 'Satisfy', 'Courgette', 'Righteous', 'Lobster', 'Fredoka One', 
-  'Luckiest+Guy', 'Permanent Marker', 'Special Elite', 'Cormorant Garamond', 'Cinzel', 
-  'Marcellus', 'Alumni Sans Collegiate One', 'Bungee', 'Monoton', 'Press Start 2P', 
-  'Staatliches', 'Teko', 'Kanit', 'Heebo', 'Arimo', 'Titillium Web', 'Exo 2', 
-  'Fira Sans', 'Josefin Sans', 'Quicksand', 'Varela Round'
-];
-
-const FILTERS = [
-  'none', 'vintage', 'noir', 'warm', 'cool', 'dramatic', 'vivid', 'cinematic',
-  'sepia', 'grayscale', 'invert', 'hue-rotate-90', 'hue-rotate-180', 'hue-rotate-270',
-  'blur-sm', 'blur-md', 'blur-lg', 'brightness-50', 'brightness-150', 'contrast-50', 'contrast-150',
-  'saturate-0', 'saturate-200', 'vignette', 'scanlines', 'film-grain', 'technicolor',
-  'kodachrome', 'polaroid', 'instant', 'cross-process', 'bleach-bypass', 'fuji', 'agfa',
-  'lofi', '8mm', '16mm', 'crt', 'glitch-static', 'noise', 'dust', 'light-leak',
-  'retro', 'cyberpunk', 'vaporwave', 'halftone', 'pixel-art', 'edge-detect', 'emboss',
-  'sharpen', 'gaussian', 'midnight', 'sunset', 'aurora', 'sepia-high', 'pop-art'
-];
-
-const getFilterStyle = (filter?: string) => {
-  switch (filter) {
-    case 'vintage': return 'sepia(0.5) contrast(1.1) brightness(0.9) saturate(0.8)';
-    case 'noir': return 'grayscale(1) contrast(1.5) brightness(0.8)';
-    case 'warm': return 'sepia(0.2) saturate(1.4) hue-rotate(-10deg)';
-    case 'cool': return 'saturate(1.2) hue-rotate(10deg) brightness(1.1)';
-    case 'dramatic': return 'contrast(1.6) brightness(0.9) saturate(0.6)';
-    case 'vivid': return 'saturate(2) contrast(1.2) brightness(1.1)';
-    case 'cinematic': return 'contrast(1.2) brightness(0.9) saturate(0.9) sepia(0.1)';
-    case 'sepia': return 'sepia(1)';
-    case 'grayscale': return 'grayscale(1)';
-    case 'invert': return 'invert(1)';
-    case 'hue-rotate-90': return 'hue-rotate(90deg)';
-    case 'hue-rotate-180': return 'hue-rotate(180deg)';
-    case 'hue-rotate-270': return 'hue-rotate(270deg)';
-    case 'blur-sm': return 'blur(4px)';
-    case 'blur-md': return 'blur(8px)';
-    case 'blur-lg': return 'blur(16px)';
-    case 'brightness-50': return 'brightness(0.5)';
-    case 'brightness-150': return 'brightness(1.5)';
-    case 'contrast-50': return 'contrast(0.5)';
-    case 'contrast-150': return 'contrast(1.5)';
-    case 'saturate-0': return 'saturate(0)';
-    case 'saturate-200': return 'saturate(2)';
-    case 'technicolor': return 'contrast(1.4) saturate(1.8) hue-rotate(-5deg)';
-    case 'bleach-bypass': return 'contrast(1.5) saturate(0.4) brightness(1.1)';
-    case 'lofi': return 'contrast(1.2) saturate(0.8) sepia(0.2) brightness(1.1)';
-    default: return 'none';
-  }
-};
-const TEXT_ANIMATIONS = [
-  'fade', 'slide-up', 'slide-down', 'slide-left', 'slide-right', 
-  'scale', 'zoom-in', 'zoom-out', 'blur', 'rotate', 
-  'typewriter', 'bounce', 'skew', 'reveal-horizontal', 'reveal-vertical', 
-  'glitch', 'neon-flicker', 'bounce-in', 'elastic-pop', 'jello',
-  'swing', 'wobble', 'pulse', 'shake', 'float', 'heartbeat',
-  'flip-x', 'flip-y', 'roll-in', 'roll-out', 'spiral-in', 'spiral-out',
-  'blur-reveal', 'shimmer', 'rainbow', 'fire', 'ice', 'ghost',
-  'shadow-pop', 'stretch-horizontal', 'stretch-vertical', 'squish',
-  '3d-rotate', 'wave', 'zigzag', 'confetti', 'explosion', 'implosion'
-];
-
-const getMotionProps = (animation: string) => {
-  switch (animation) {
-    case 'slide-up': return { initial: { opacity: 0, y: 100 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: -100 } };
-    case 'slide-down': return { initial: { opacity: 0, y: -100 }, animate: { opacity: 1, y: 0 }, exit: { opacity: 0, y: 100 } };
-    case 'slide-left': return { initial: { opacity: 0, x: 100 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: -100 } };
-    case 'slide-right': return { initial: { opacity: 0, x: -100 }, animate: { opacity: 1, x: 0 }, exit: { opacity: 0, x: 100 } };
-    case 'scale': return { initial: { opacity: 0, scale: 0.2 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 2 } };
-    case 'zoom-in': return { initial: { opacity: 0, scale: 0 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 3 } };
-    case 'zoom-out': return { initial: { opacity: 0, scale: 3 }, animate: { opacity: 1, scale: 1 }, exit: { opacity: 0, scale: 0 } };
-    case 'blur': return { initial: { opacity: 0, filter: 'blur(30px)' }, animate: { opacity: 1, filter: 'blur(0px)' }, exit: { opacity: 0, filter: 'blur(30px)' } };
-    case 'rotate': return { initial: { opacity: 0, rotate: -360 }, animate: { opacity: 1, rotate: 0 }, exit: { opacity: 0, rotate: 360 } };
-    case 'bounce': return { initial: { opacity: 0, y: -300 }, animate: { opacity: 1, y: 0 }, transition: { type: 'spring' as const, bounce: 0.7 } };
-    case 'typewriter': return { initial: { clipPath: 'inset(0 100% 0 0)' }, animate: { clipPath: 'inset(0 0 0 0)' }, transition: { duration: 1.5, ease: 'linear' as const } };
-    case 'skew': return { initial: { skewX: 45, opacity: 0 }, animate: { skewX: 0, opacity: 1 }, exit: { skewX: -45, opacity: 0 } };
-    case 'glitch': return { 
-      animate: { 
-        x: [0, -5, 5, -2, 2, 0], 
-        y: [0, 2, -2, 1, -1, 0],
-        opacity: [1, 0.8, 1, 0.9, 1],
-        filter: ['blur(0px)', 'blur(2px)', 'blur(0px)']
-      }, 
-      transition: { duration: 0.3, repeat: Infinity } 
-    };
-    case 'pulse': return { animate: { scale: [1, 1.05, 1] }, transition: { duration: 1, repeat: Infinity } };
-    case 'float': return { animate: { y: [0, -20, 0] }, transition: { duration: 3, repeat: Infinity, ease: "easeInOut" as const } };
-    case 'shake': return { animate: { x: [-10, 10, -10, 10, 0] }, transition: { duration: 0.4, repeat: Infinity } };
-    case 'neon-flicker': return { 
-      animate: { 
-        opacity: [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9],
-        textShadow: [
-          '0 0 10px #fff, 0 0 20px #fff, 0 0 40px #f0f',
-          '0 0 5px #fff, 0 0 10px #fff, 0 0 20px #f0f',
-          '0 0 10px #fff, 0 0 20px #fff, 0 0 40px #f0f'
-        ]
-      }, 
-      transition: { duration: 2, repeat: Infinity } 
-    };
-    case 'heartbeat': return { animate: { scale: [1, 1.2, 1, 1.1, 1] }, transition: { duration: 1.5, repeat: Infinity } };
-    case 'wobble': return { animate: { rotate: [-5, 5, -5, 5, 0] }, transition: { duration: 1, repeat: Infinity } };
-    case 'flip-x': return { initial: { rotateX: 90, opacity: 0 }, animate: { rotateX: 0, opacity: 1 }, exit: { rotateX: -90, opacity: 0 } };
-    case 'flip-y': return { initial: { rotateY: 90, opacity: 0 }, animate: { rotateY: 0, opacity: 1 }, exit: { rotateY: -90, opacity: 0 } };
-    case 'reveal-horizontal': return { initial: { width: 0 }, animate: { width: 'auto' }, transition: { duration: 0.8, ease: "circOut" as const } };
-    case 'reveal-vertical': return { initial: { height: 0 }, animate: { height: 'auto' }, transition: { duration: 0.8, ease: "circOut" as const } };
-    case 'crossfade': return { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 }, transition: { duration: 0.5 } };
-    case 'pixelate': return { initial: { filter: 'blur(20px) contrast(200%)' }, animate: { filter: 'blur(0px) contrast(100%)' }, transition: { duration: 0.8 } };
-    case 'shimmer': return { animate: { backgroundPosition: ['-200% 0', '200% 0'] }, transition: { duration: 2, repeat: Infinity, ease: "linear" as const } };
-    case 'elastic-pop': return { initial: { scale: 0 }, animate: { scale: 1 }, transition: { type: 'spring' as const, damping: 10, stiffness: 100 } };
-    case 'zigzag': return { animate: { x: [0, 20, -20, 20, 0], y: [0, -10, 10, -10, 0] }, transition: { duration: 2, repeat: Infinity } };
-    default: return { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
-  }
-};
 
 export default function App() {
   const [project, setProject] = useState<Project>({
@@ -1228,427 +1114,47 @@ export default function App() {
                 )}
 
                 {activeTab === 'editor' && (
-                  <div className="space-y-6">
-                    <div className="space-y-3">
-                      <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F27D26]">Script Context</h3>
-                      <div className="p-4 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl max-h-40 overflow-y-auto custom-scrollbar text-[11px] font-mono text-gray-500 leading-relaxed">
-                        {project.script.split('\n').map((line, idx) => (
-                          <div key={idx} className={line.startsWith('[') ? 'text-[#F27D26] mt-2' : ''}>{line}</div>
-                        ))}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F27D26]">Scene Editor</h2>
-                      <button 
-                        onClick={() => {
-                          const newSeg: VideoSegment = {
-                            id: crypto.randomUUID(),
-                            text: 'New Scene Text',
-                            startTime: (() => { const last = project.segments[project.segments.length - 1]; return last ? last.startTime + last.duration : 0; })(),
-                            duration: 5,
-                            order: project.segments.length,
-                            transition: TransitionType.FADE,
-                            animation: AnimationType.KEN_BURNS,
-                            showOverlay: false,
-                            extraOverlays: []
-                          };
-                          setProject(prev => ({ ...prev, segments: [...prev.segments, newSeg] }));
-                        }}
-                        className="p-2 bg-[#F27D26]/10 text-[#F27D26] rounded-lg hover:bg-[#F27D26] hover:text-white transition-all flex items-center gap-2 text-[10px] uppercase font-black"
-                      >
-                        <Plus size={14} /> Add Scene
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      {project.segments.map((s, idx) => (
-                        <div key={s.id} className="p-4 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl space-y-4 group hover:border-[#F27D26]/30 transition-all">
-                          <div className="flex justify-between items-center">
-                            <span className="text-[9px] font-black text-gray-600 uppercase tracking-widest">Scene #{idx + 1}</span>
-                            <div className="flex gap-2">
-                              <button 
-                                onClick={() => setEditingSegment(s)}
-                                className="p-1.5 text-gray-700 hover:text-blue-500 transition-colors"
-                                title="Expand to Full Edit Mode"
-                              >
-                                <Maximize size={12} />
-                              </button>
-                              <button 
-                                onClick={() => setProject(p => ({ ...p, segments: p.segments.filter(seg => seg.id !== s.id) }))}
-                                className="p-1.5 text-gray-700 hover:text-red-500 transition-colors"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </div>
-                          
-                          <div className="grid grid-cols-2 gap-3">
-                            <div className="space-y-1">
-                              <label className="text-[7px] uppercase font-bold text-gray-500">Duration (s)</label>
-                              <input 
-                                type="number"
-                                step="0.1"
-                                value={s.duration}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value) || 0.1;
-                                  setProject(prev => {
-                                    const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
-                                    let acc = 0;
-                                    return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
-                                  });
-                                }}
-                                className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26]"
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className="text-[7px] uppercase font-bold text-gray-500">Heading</label>
-                              <input 
-                                placeholder="Scene Heading"
-                                value={s.heading || ''}
-                                onChange={(e) => updateSegment(idx, { heading: e.target.value })}
-                                className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
-                              />
-                            </div>
-                            <div className="col-span-2">
-                              <textarea 
-                                placeholder="Scene Script Text"
-                                value={s.text}
-                                onChange={(e) => updateSegment(idx, { text: e.target.value })}
-                                className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[11px] h-20 outline-none focus:border-[#F27D26] resize-none"
-                              />
-                            </div>
-                          </div>
-
-                          <div className="flex items-center gap-4">
-                            <div className="flex-1">
-                              <select 
-                                value={s.assetId || ''}
-                                onChange={(e) => updateSegment(idx, { assetId: e.target.value })}
-                                className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none"
-                              >
-                                <option value="">No Visual Asset</option>
-                                {project.assets.filter(a => a.type !== 'audio').map(a => (
-                                  <option key={a.id} value={a.id}>{a.name}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <button 
-                              onClick={() => {
-                                setStockTarget(s.id);
-                                setShowStockSearch(true);
-                              }}
-                              className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"
-                              title="Search Stock Media"
-                            >
-                              <Video size={14} />
-                            </button>
-                             <button 
-                                onClick={() => setProject(prev => ({
-                                  ...prev,
-                                  segments: prev.segments.map((seg, i) =>
-                                    i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
-                                  ),
-                                }))}
-                                className={`p-2 rounded-lg border transition-all ${s.showOverlay ? 'bg-[#F27D26] border-[#F27D26] text-white' : 'bg-[#121212] border-[#282828] text-gray-500'}`}
-                                title="Toggle Main Text Overlay"
-                              >
-                                <Type size={14} />
-                              </button>
-                            </div>
-
-                            {s.showOverlay && (
-                              <div className="p-3 bg-[#111] rounded-xl border border-[#222] space-y-3">
-                                <p className="text-[7px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Styling</p>
-                              <div className="grid grid-cols-2 gap-3">
-                                  <div className="space-y-1">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
-                                    <select 
-                                      value={s.overlayConfig?.fontFamily || project.globalOverlayConfig.fontFamily}
-                                      onChange={(e) => updateSegmentOverlay(idx, { fontFamily: e.target.value })}
-                                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
-                                    >
-                                      {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
-                                    </select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Font Size</label>
-                                    <input 
-                                      type="number" 
-                                      value={s.overlayConfig?.fontSize || 60}
-                                      onChange={(e) => updateSegmentOverlay(idx, { fontSize: parseInt(e.target.value) })}
-                                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
-                                    />
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
-                                    <select 
-                                      value={s.overlayConfig?.fontWeight || 'bold'}
-                                      onChange={(e) => updateSegmentOverlay(idx, { fontWeight: e.target.value })}
-                                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
-                                    >
-                                      <option value="normal">Normal</option>
-                                      <option value="bold">Bold</option>
-                                      <option value="900">Black</option>
-                                    </select>
-                                  </div>
-                                  <div className="space-y-1">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Style</label>
-                                    <div className="flex gap-1">
-                                      <button 
-                                        onClick={() => updateSegmentOverlay(idx, { fontStyle: s.overlayConfig?.fontStyle === 'italic' ? 'normal' : 'italic' })}
-                                        className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.fontStyle === 'italic' ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
-                                      >IT</button>
-                                      <input 
-                                        type="color"
-                                        value={s.overlayConfig?.color || '#FFFFFF'}
-                                        onChange={(e) => updateSegmentOverlay(idx, { color: e.target.value })}
-                                        className="flex-1 h-5 bg-transparent"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="space-y-1 col-span-2">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
-                                    <div className="flex gap-2">
-                                      <button 
-                                        onClick={() => updateSegmentOverlay(idx, { textShadow: s.overlayConfig?.textShadow ? '' : '0 4px 15px rgba(0,0,0,1)' })}
-                                        className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.textShadow ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
-                                      >ENABLED</button>
-                                      <input 
-                                        type="color"
-                                        value="#000000"
-                                        onChange={(e) => updateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
-                                        className="h-5 flex-1 bg-transparent"
-                                      />
-                                    </div>
-                                  </div>
-                                  <div className="space-y-1 col-span-2">
-                                    <label className="text-[7px] uppercase font-bold text-gray-600">Animation Preset</label>
-                                    <select 
-                                      value={s.overlayConfig?.animation || 'fade'}
-                                      onChange={(e) => updateSegmentOverlay(idx, { animation: e.target.value })}
-                                      className="w-full bg-[#050505] p-1 rounded text-[10px] uppercase font-bold"
-                                    >
-                                      {TEXT_ANIMATIONS.map(a => <option key={a} value={a}>{a.replace('-', ' ')}</option>)}
-                                    </select>
-                                  </div>
-                                </div>
-                              </div>
-                            )}
-
-                           <div className="grid grid-cols-3 gap-2 pt-2">
-                             <button 
-                               onClick={() => setProject(prev => ({
-                                 ...prev,
-                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: '#00FF00', backgroundColor: 'rgba(0,0,0,0.8)', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } } : seg),
-                               }))}
-                               className="p-1.5 bg-green-500/10 border border-green-500/20 text-green-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-all"
-                             >
-                               Cyber Bold
-                             </button>
-                             <button 
-                               onClick={() => setProject(prev => ({
-                                 ...prev,
-                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } } : seg),
-                               }))}
-                               className="p-1.5 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-pink-500 hover:text-white transition-all"
-                             >
-                               Retro Neon
-                             </button>
-                             <button 
-                               onClick={() => setProject(prev => ({
-                                 ...prev,
-                                 segments: prev.segments.map((seg, i) => i === idx ? { ...seg, showOverlay: true, overlayConfig: { ...prev.globalOverlayConfig, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } } : seg),
-                               }))}
-                               className="p-1.5 bg-orange-500/10 border border-orange-500/20 text-[#F27D26] rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-black transition-all"
-                             >
-                               Brutal Bold
-                             </button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3 pt-2">
-                             <div className="space-y-1">
-                                <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
-                                  <span>Playback Speed</span>
-                                  <span className="text-[#F27D26]">{s.playbackSpeed?.toFixed(2)}x</span>
-                                </label>
-                                <input 
-                                  type="range" min="0.1" max="3" step="0.1"
-                                  value={s.playbackSpeed || 1}
-                                  onChange={(e) => updateSegment(idx, { playbackSpeed: parseFloat(e.target.value) })}
-                                  className="w-full accent-[#F27D26]"
-                                />
-                             </div>
-                             <div className="space-y-1">
-                                <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
-                                  <span>Trim Start (s)</span>
-                                  <span className="text-blue-400">{s.trimStart?.toFixed(1)}s</span>
-                                </label>
-                                <input 
-                                  type="range" min="0" max={s.sourceDuration || 60} step="0.5"
-                                  value={s.trimStart || 0}
-                                  onChange={(e) => updateSegment(idx, { trimStart: parseFloat(e.target.value) })}
-                                  className="w-full accent-blue-500"
-                                />
-                             </div>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-1">
-                             <div className="flex items-center gap-2">
-                                <button 
-                                  onClick={() => updateSegment(idx, { isMuted: !s.isMuted })}
-                                  className={`p-1.5 rounded text-[8px] uppercase font-black tracking-widest flex items-center gap-1 ${s.isMuted ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}
-                                >
-                                  {s.isMuted ? <Music size={10} className="line-through" /> : <Music size={10} />}
-                                  {s.isMuted ? 'Muted' : 'Audio On'}
-                                </button>
-                             </div>
-                             <button 
-                                onClick={() => setProject(prev => ({
-                                  ...prev,
-                                  segments: prev.segments.map((seg, i) =>
-                                    i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.5)', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
-                                  ),
-                                }))}
-                                className="p-1.5 bg-[#1A1A1A] text-gray-500 rounded-lg hover:border-[#F27D26] border border-transparent transition-all flex items-center gap-1 text-[8px] uppercase font-bold"
-                              >
-                                <Plus size={10} /> Overlay
-                              </button>
-                            </div>
-                          
-                          {/* Extra Overlays Editor */}
-                          {s.extraOverlays && s.extraOverlays.map((overlay, oIdx) => (
-                            <div key={overlay.id} className="p-3 bg-[#050505] border border-[#1A1A1A] rounded-xl space-y-3">
-                              <div className="flex justify-between items-center">
-                                <span className="text-[8px] font-black text-gray-700 uppercase tracking-widest">Overlay #{oIdx + 1}</span>
-                                <button 
-                                  onClick={() => updateSegment(idx, { extraOverlays: s.extraOverlays?.filter(o => o.id !== overlay.id) })}
-                                  className="text-red-900 hover:text-red-500"
-                                >
-                                  <Trash2 size={10} />
-                                </button>
-                              </div>
-                              <input 
-                                value={overlay.text}
-                                onChange={(e) => updateExtraOverlay(idx, oIdx, { text: e.target.value })}
-                                className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[10px] outline-none"
-                              />
-                              <div className="grid grid-cols-2 gap-2">
-                                <div className="space-y-1 col-span-2">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
-                                  <select 
-                                    value={overlay.fontFamily}
-                                    onChange={(e) => updateExtraOverlay(idx, oIdx, { fontFamily: e.target.value })}
-                                    className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[10px]"
-                                  >
-                                    {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
-                                  </select>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Text</label>
-                                  <input 
-                                    type="color"
-                                    value={overlay.color}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      updateExtraOverlay(idx, oIdx, { color: e.target.value });
-                                    }}
-                                    className="w-full h-6 bg-transparent"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Back</label>
-                                  <input 
-                                    type="color"
-                                    value={overlay.backgroundColor}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      updateExtraOverlay(idx, oIdx, { backgroundColor: e.target.value });
-                                    }}
-                                    className="w-full h-6 bg-transparent"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Size</label>
-                                  <input 
-                                    type="number"
-                                    value={overlay.fontSize}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      updateExtraOverlay(idx, oIdx, { fontSize: parseInt(e.target.value) });
-                                    }}
-                                    className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]"
-                                  />
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
-                                  <select 
-                                    value={overlay.fontWeight || 'normal'}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      updateExtraOverlay(idx, oIdx, { fontWeight: e.target.value });
-                                    }}
-                                    className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]"
-                                  >
-                                    <option value="normal">Normal</option>
-                                    <option value="bold">Bold</option>
-                                    <option value="900">Black</option>
-                                  </select>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Animation</label>
-                                  <select 
-                                    value={overlay.animation || 'fade'}
-                                    onChange={(e) => {
-                                      const newSegs = [...project.segments];
-                                      updateExtraOverlay(idx, oIdx, { animation: e.target.value });
-                                    }}
-                                    className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[8px] uppercase font-bold"
-                                  >
-                                    {TEXT_ANIMATIONS.map(a => <option key={a} value={a}>{a.replace('-', ' ')}</option>)}
-                                  </select>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
-                                  <div className="flex gap-1">
-                                    <button 
-                                      onClick={() => updateExtraOverlay(idx, oIdx, { textShadow: overlay.textShadow ? '' : '0 2px 10px rgba(0,0,0,1)' })}
-                                      className={`flex-1 text-[7px] p-1 rounded font-bold ${overlay.textShadow ? 'bg-[#F27D26]' : 'bg-[#121212]'}`}
-                                    >SH</button>
-                                    <input 
-                                      type="color"
-                                      value="#000000"
-                                      onChange={(e) => updateExtraOverlay(idx, oIdx, { textShadow: `0 2px 10px ${e.target.value}` })}
-                                      className="flex-1 h-5 bg-transparent"
-                                    />
-                                  </div>
-                                </div>
-                                <div className="space-y-1">
-                                  <label className="text-[7px] uppercase font-bold text-gray-600">Align</label>
-                                  <div className="flex gap-1">
-                                    {['left', 'center', 'right'].map(align => (
-                                      <button
-                                        key={align}
-                                        onClick={() => updateExtraOverlay(idx, oIdx, { textAlign: align as TextOverlay['textAlign'] })}
-                                        className={`flex-1 text-[7px] uppercase font-bold p-1 rounded ${
-                                          overlay.textAlign === align 
-                                            ? 'bg-[#F27D26] text-white' 
-                                            : 'bg-[#121212] text-gray-500'
-                                        }`}
-                                      >
-                                        {align.charAt(0).toUpperCase()}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <SegmentEditorPanel
+                    script={project.script}
+                    segments={project.segments}
+                    assets={project.assets}
+                    globalOverlayConfig={project.globalOverlayConfig}
+                    onAddSegment={(seg) => setProject(prev => ({ ...prev, segments: [...prev.segments, seg] }))}
+                    onDeleteSegment={(id) => setProject(p => ({ ...p, segments: p.segments.filter(seg => seg.id !== id) }))}
+                    onEditSegment={setEditingSegment}
+                    onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
+                    onUpdateSegment={updateSegment}
+                    onUpdateSegmentOverlay={updateSegmentOverlay}
+                    onUpdateExtraOverlay={updateExtraOverlay}
+                    onSegmentDurationChange={(idx, val) => setProject(prev => {
+                      const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
+                      let acc = 0;
+                      return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
+                    })}
+                    onToggleOverlay={(idx) => setProject(prev => ({
+                      ...prev,
+                      segments: prev.segments.map((seg, i) =>
+                        i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
+                      ),
+                    }))}
+                    onSetOverlayPreset={(idx, preset) => setProject(prev => ({
+                      ...prev,
+                      segments: prev.segments.map((seg, i) => {
+                        if (i !== idx) return seg;
+                        const base = { ...prev.globalOverlayConfig };
+                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: 'rgba(0,0,0,0.8)', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                        if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
+                        return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
+                      }),
+                    }))}
+                    onAddExtraOverlay={(idx) => setProject(prev => ({
+                      ...prev,
+                      segments: prev.segments.map((seg, i) =>
+                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.5)', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                      ),
+                    }))}
+                  />
                 )}
-
-
                 {activeTab === 'settings' && (
                   <div className="space-y-8">
                     <section className="space-y-4">
