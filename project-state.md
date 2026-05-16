@@ -22,7 +22,7 @@
 | Phase | Description | Status |
 |---|---|---|
 | Phase 0 | Audit & baseline — understand the codebase, establish conventions, git setup | ✅ Complete |
-| Phase 1 | Foundation refactor — component decomposition, strict TS, immutable updates, UUID swap | 🔄 Steps 1-4 done, Step 5 pending |
+| Phase 1 | Foundation refactor — component decomposition, strict TS, immutable updates, UUID swap | ✅ Complete |
 | Phase 2 | Persistence — localStorage for project state, IndexedDB for binary assets | ⬜ Not started |
 | Phase 3 | Export pipeline rebuild — replace broken MediaRecorder approach with proper render | ⬜ Not started |
 | Phase 4 | Polish — implement missing filters/transitions, Safari compat, API proxy, error handling | ⬜ Not started |
@@ -32,7 +32,7 @@
 
 ## Current Sprint
 
-Phase 1 Steps 1–4 complete. Awaiting approval before Step 5 (component decomposition).
+Phase 1 complete. Next: Phase 2 (persistence).
 
 | Step | Description | Status |
 |---|---|---|
@@ -40,7 +40,7 @@ Phase 1 Steps 1–4 complete. Awaiting approval before Step 5 (component decompo
 | Step 2 | crypto.randomUUID() replacing Math.random IDs | ✅ Done |
 | Step 3 | Known bug fixes (stale closure, dead branch, export filename, title, vite cleanup) | ✅ Done |
 | Step 4 | Dead dependency removal + dep placement fixes | ✅ Done |
-| Step 5 | Component decomposition (StockSearchModal, SyncReviewModal, SegmentEditor) | ⏸ Blocked — needs approval |
+| Step 5 | Component decomposition — all 7 components extracted | ✅ Done |
 
 ---
 
@@ -81,6 +81,7 @@ Phase 1 Steps 1–4 complete. Awaiting approval before Step 5 (component decompo
 | 2026-05-16 | **Phase 1 Step 2:** Replaced all Math.random().toString(36) IDs with crypto.randomUUID(). |
 | 2026-05-16 | **Phase 1 Step 3:** Fixed stale closure in keyboard listener, dead audio sync branch, .mp4→.webm export, index.html title, stripped AI Studio artifacts from vite.config.ts, removed unused storyMap state. |
 | 2026-05-16 | **Phase 1 Step 4:** Removed dead deps (@google/genai, express, dotenv, tsx, @types/express). Moved @types/jszip, vite, @tailwindcss/vite, @vitejs/plugin-react to devDependencies. |
+| 2026-05-16 | **Phase 1 Step 5:** Extracted 7 components from App.tsx: StockSearchModal, SyncReviewModal, SegmentEditorPanel, Timeline, PreviewStage, SyncWizard, SettingsPanel. Also extracted syncEngine.ts and constants.ts. App.tsx reduced from 3,167 → 1,449 LOC. 0 tsc errors throughout. |
 
 ---
 
@@ -88,7 +89,7 @@ Phase 1 Steps 1–4 complete. Awaiting approval before Step 5 (component decompo
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 3,167 |
+| `src/App.tsx` LOC | 1,449 (was 3,167 — 54% reduction) |
 | Total dependencies | 20 (12 prod + 8 dev) |
 | Dead dependencies identified | 5 (`@google/genai`, `express`, `dotenv`, `tsx`, `vite` duplicated in prod deps) |
 | Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
