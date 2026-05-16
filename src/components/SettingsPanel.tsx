@@ -14,6 +14,8 @@ interface Props {
   onNewProject: () => void;
   /** Dev-only: renders the current frame to a visible canvas for visual diffing. */
   onRenderTestFrame?: () => void;
+  /** Dev-only: encodes the current segment to MP4 and triggers download. */
+  onEncodeTestSegment?: () => void;
 }
 
 export function SettingsPanel({
@@ -26,6 +28,7 @@ export function SettingsPanel({
   onImportScenesJson,
   onNewProject,
   onRenderTestFrame,
+  onEncodeTestSegment,
 }: Props): React.ReactElement {
   return (
     <div className="space-y-8">
@@ -165,15 +168,25 @@ export function SettingsPanel({
             </label>
           </div>
         </div>
-        {import.meta.env.DEV && onRenderTestFrame && (
+        {import.meta.env.DEV && (onRenderTestFrame ?? onEncodeTestSegment) && (
           <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">
             <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-yellow-600">Dev Tools</h3>
-            <button
-              onClick={onRenderTestFrame}
-              className="w-full bg-[#1A1A1A] border border-yellow-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-yellow-600 hover:bg-yellow-600 hover:text-black hover:border-yellow-600 transition-all"
-            >
-              Render Current Frame to Canvas
-            </button>
+            {onRenderTestFrame && (
+              <button
+                onClick={onRenderTestFrame}
+                className="w-full bg-[#1A1A1A] border border-yellow-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-yellow-600 hover:bg-yellow-600 hover:text-black hover:border-yellow-600 transition-all"
+              >
+                Render Current Frame to Canvas
+              </button>
+            )}
+            {onEncodeTestSegment && (
+              <button
+                onClick={onEncodeTestSegment}
+                className="w-full bg-[#1A1A1A] border border-yellow-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-yellow-600 hover:bg-yellow-600 hover:text-black hover:border-yellow-600 transition-all"
+              >
+                Encode Current Segment → MP4
+              </button>
+            )}
           </section>
         )}
         <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">

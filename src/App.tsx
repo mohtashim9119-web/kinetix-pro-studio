@@ -59,6 +59,8 @@ import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { renderSegmentFrame } from './services/frameRenderer';
+import { encodeSegment } from './services/segmentEncoder';
+import { loadFFmpeg } from './services/ffmpegLoader';
 
 interface RawSegment {
   text: string;
@@ -803,6 +805,39 @@ export default function App() {
     }, 'image/png');
   };
 
+  const handleEncodeTestSegment = async () => {
+    const seg = currentSegment ?? project.segments[0];
+    if (!seg) { alert('No segment to encode'); return; }
+    const asset = project.assets.find(a => a.id === seg.assetId);
+    console.time('[encodeTest] total');
+    try {
+      const ffmpeg = await loadFFmpeg();
+      const bytes = await encodeSegment(seg, asset, ffmpeg, {
+        overlayConfig: project.globalOverlayConfig,
+        hideAllText: project.hideAllText ?? false,
+        globalOverlayFilter: project.globalOverlayFilter,
+      }, {
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        onProgress: (done, total) => console.log(`[encodeTest] frame ${done}/${total}`),
+      });
+      console.timeEnd('[encodeTest] total');
+      console.log(`[encodeTest] output size: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB`);
+      const blob = new Blob([bytes], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `segment_test_${seg.id}.mp4`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      console.timeEnd('[encodeTest] total');
+      console.error('[encodeTest] failed:', err);
+      alert(`Encode failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   // Constrain segments to match audio duration perfectly
   useEffect(() => {
     if (isSynced && voiceover && audioRef.current?.duration) {
@@ -1226,6 +1261,7 @@ export default function App() {
                     }}
                     onImportScenesJson={(e) => handleFileUpload(e, 'story')}
                     onRenderTestFrame={import.meta.env.DEV ? handleRenderTestFrame : undefined}
+                    onEncodeTestSegment={import.meta.env.DEV ? handleEncodeTestSegment : undefined}
                   />
                 )}
               </div>
