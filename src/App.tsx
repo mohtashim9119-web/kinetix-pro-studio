@@ -47,6 +47,9 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
+import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
+import { loadProject, clearProject } from './services/projectStore';
+import { usePersistProject } from './hooks/usePersistProject';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { StockSearchModal } from './components/StockSearchModal';
 import { SyncReviewModal } from './components/SyncReviewModal';
@@ -236,25 +239,28 @@ const parseProjectData = async (
 };
 
 
-export default function App() {
-  const [project, setProject] = useState<Project>({
-    id: '1',
-    name: 'KINETIX STUDIO',
-    script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
-    sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
-    segments: [],
-    assets: [],
-    globalTransition: TransitionType.NONE,
-    globalTransitionDuration: 0.5,
-    globalAnimation: AnimationType.NONE,
-    hideAllText: true,
-    globalOverlayConfig: {
-      color: '#FFFFFF',
-      backgroundColor: 'rgba(0,0,0,0.5)',
-      fontFamily: 'Inter'
-    }
-  });
+const DEFAULT_PROJECT: Project = {
+  id: '1',
+  name: 'KINETIX STUDIO',
+  script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
+  sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
+  segments: [],
+  assets: [],
+  globalTransition: TransitionType.NONE,
+  globalTransitionDuration: 0.5,
+  globalAnimation: AnimationType.NONE,
+  hideAllText: true,
+  globalOverlayConfig: {
+    color: '#FFFFFF',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    fontFamily: 'Inter',
+  },
+};
 
+export default function App() {
+  const [project, setProject] = useState<Project>(DEFAULT_PROJECT);
+
+  const [isHydrating, setIsHydrating] = useState(true);
   const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -313,6 +319,57 @@ export default function App() {
       autoMatchAssets();
     }
   }, [project.assets.length]);
+
+  // Rehydrate persisted project on mount
+  useEffect(() => {
+    (async () => {
+      const saved = loadProject();
+      if (!saved) {
+        setIsHydrating(false);
+        return;
+      }
+
+      const storedAssets = await getAllAssets();
+      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
+
+      const droppedIds = new Set<string>();
+      const rehydratedAssets = saved.project.assets
+        .map(asset => {
+          const stored = blobMap.get(asset.id);
+          if (!stored) {
+            console.warn(`[kinetix] Dropping orphaned asset on load — id: ${asset.id}, name: ${asset.name}`);
+            droppedIds.add(asset.id);
+            return null;
+          }
+          return { ...asset, url: URL.createObjectURL(stored.blob) };
+        })
+        .filter((a): a is NonNullable<typeof a> => a !== null);
+
+      const rehydratedSegments = saved.project.segments.map(seg => {
+        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+          console.warn(`[kinetix] Clearing assetId on segment "${seg.id}" — referenced asset was dropped`);
+          return { ...seg, assetId: undefined };
+        }
+        return seg;
+      });
+
+      let rehydratedVoiceoverId = saved.project.voiceoverId;
+      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
+        console.warn(`[kinetix] Clearing voiceoverId — referenced asset was dropped`);
+        rehydratedVoiceoverId = undefined;
+      }
+
+      setProject({
+        ...saved.project,
+        assets: rehydratedAssets,
+        segments: rehydratedSegments,
+        voiceoverId: rehydratedVoiceoverId,
+      });
+      setIsHydrating(false);
+    })();
+  }, []);
+
+  usePersistProject(project, !isHydrating);
 
   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
     setProject(prev => ({
@@ -617,20 +674,26 @@ export default function App() {
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
         if (!fileData || fileData.dir) return;
-        {
-          const blob = await fileData.async('blob');
-          let type: Asset['type'] = 'image';
-          if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-          else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-          
-          newAssets.push({
-            id: crypto.randomUUID(),
-            name: filename.split('/').pop() || filename,
-            url: URL.createObjectURL(blob),
-            type: type,
-            file: new File([blob], filename)
-          });
+        const blob = await fileData.async('blob');
+        let type: Asset['type'] = 'image';
+        if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
+        else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
+
+        const id = crypto.randomUUID();
+        const name = filename.split('/').pop() || filename;
+        try {
+          await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
+        } catch (err) {
+          console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
+          return;
         }
+        newAssets.push({
+          id,
+          name,
+          url: URL.createObjectURL(blob),
+          type,
+          file: new File([blob], filename),
+        });
       });
       
       await Promise.all(filePromises);
@@ -646,7 +709,7 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
+  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -681,17 +744,20 @@ export default function App() {
       else if (file.type.startsWith('audio/')) detectedType = 'audio';
       else if (file.type.startsWith('image/')) detectedType = 'image';
 
-      const newAsset: Asset = {
-        id: crypto.randomUUID(),
-        name: file.name,
-        url: URL.createObjectURL(file),
-        type: detectedType,
-        file
-      };
+      const id = crypto.randomUUID();
+      const url = URL.createObjectURL(file);
+      try {
+        await putAsset(id, file, { name: file.name, mimeType: file.type });
+      } catch (err) {
+        console.error('Failed to persist asset to IndexedDB, skipping:', file.name, err);
+        URL.revokeObjectURL(url);
+        return;
+      }
+      const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
       setProject(prev => ({
         ...prev,
         assets: [...prev.assets, newAsset],
-        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId
+        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
       }));
     }
   };
@@ -867,6 +933,30 @@ export default function App() {
     mirror();
   }, [isExporting]);
 
+  const handleNewProject = async () => {
+    const confirmed = window.confirm(
+      'Discard this project? This will permanently delete your script, segments, and all uploaded assets from this browser. This cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+    clearProject();
+    try {
+      await clearAllAssets();
+    } catch (err) {
+      console.error('Failed to clear IndexedDB assets:', err);
+    }
+    setProject(DEFAULT_PROJECT);
+  };
+
+  if (isHydrating) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
+        <span className="text-[#E4E3E0] text-sm font-mono tracking-widest uppercase">Loading…</span>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden">
       {/* Sidebar Navigation */}
@@ -1007,8 +1097,14 @@ export default function App() {
                             )}
                             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center p-4">
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
-                              <button 
-                                onClick={() => setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }))}
+                              <button
+                                onClick={() => {
+                                  setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }));
+                                  URL.revokeObjectURL(asset.url);
+                                  deleteAsset(asset.id).catch(err =>
+                                    console.error('Failed to delete asset from IndexedDB:', err)
+                                  );
+                                }}
                                 className="p-2 bg-red-500/20 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors"
                               >
                                 <Trash2 size={16} />
@@ -1085,6 +1181,7 @@ export default function App() {
                     onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
                     onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                     onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
+                    onNewProject={handleNewProject}
                     onExportScenesJson={() => {
                       const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
@@ -1271,11 +1368,25 @@ export default function App() {
           <StockSearchModal
             targetSegmentId={stockTarget}
             onClose={() => setShowStockSearch(false)}
-            onSelect={(stock, targetId) => {
+            onSelect={async (stock, targetId) => {
+              let blob: Blob;
+              try {
+                blob = await fetch(stock.url).then(r => r.blob());
+              } catch (err) {
+                console.error('Failed to fetch stock asset blob, skipping:', stock.url, err);
+                return;
+              }
+              const id = crypto.randomUUID();
+              try {
+                await putAsset(id, blob, { name: stock.name, mimeType: blob.type });
+              } catch (err) {
+                console.error('Failed to persist stock asset to IndexedDB, skipping:', stock.name, err);
+                return;
+              }
               const newAsset: Asset = {
-                id: crypto.randomUUID(),
+                id,
                 name: stock.name,
-                url: stock.url,
+                url: URL.createObjectURL(blob),
                 type: stock.type,
               };
               setProject(p => ({

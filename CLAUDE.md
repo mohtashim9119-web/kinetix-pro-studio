@@ -20,14 +20,28 @@ No server. No AI calls. Fully client-side.
 
 ```
 src/
-  App.tsx            # ~2,900 lines — entire app in one monolithic component (REFACTOR TARGET)
+  App.tsx            # ~1,560 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
+  constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
   services/
+    assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
+    projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
+    syncEngine.ts    # parseProjectData(), isFuzzyMatch(), findAssetByContext()
+  hooks/
+    usePersistProject.ts  # Debounced (500ms) project save; accepts enabled flag to gate hydration
+  components/
+    PreviewStage.tsx      # Video/image display + overlay rendering
+    SegmentEditorPanel.tsx # Segment list + per-segment controls
+    SettingsPanel.tsx     # Global aesthetics, export/import JSON, "New Project" reset
+    StockSearchModal.tsx  # Pexels/Pixabay search modal
+    SyncReviewModal.tsx   # Sync mapping review modal
+    SyncWizard.tsx        # 3-step sync header buttons + validation
+    Timeline.tsx          # Scrollable track + playhead + zoom
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
-index.html           # Title still says "My Google AI Studio App" — fix this
-vite.config.ts       # Has AI Studio artifacts (DISABLE_HMR logic, Gemini key baked in define)
+index.html           # Title: "Kinetix Pro Studio"
+vite.config.ts       # Clean Vite config (AI Studio artifacts removed)
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
@@ -47,11 +61,15 @@ project: Project {
 }
 ```
 
-`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. Lives in `App.tsx` (should be extracted to `src/services/syncEngine.ts`).
+`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. Extracted to `src/services/syncEngine.ts`.
 
 Playback is driven by a `setInterval` (100ms tick) that advances `currentTime`, which `currentSegment` is derived from via `useMemo`.
 
 Export: `canvas.captureStream(30)` → `MediaRecorder` → `.webm` blob. **Canvas only captures raw video/image pixels — not CSS overlays, filters, or transitions.**
+
+### Persistence Model
+
+localStorage (key `kinetix:project:v1`, versioned for future migrations) holds the JSON project state with asset `url` and `file` fields stripped — blob URLs are ephemeral and cannot survive a reload. IndexedDB (`kinetix-assets` database, `assets` object store, keyPath `id`) holds the raw blobs keyed by asset id. On app load, the mount effect in `App.tsx` reads localStorage first; if a saved project exists, it fetches all blobs from IndexedDB, builds a `Map<id, StoredAsset>`, and reconstructs each asset's `url` via `URL.createObjectURL(blob)`. Assets whose id is in localStorage but whose blob is missing from IndexedDB are dropped with a `console.warn`, and any segment `assetId` or top-level `voiceoverId` referencing a dropped asset is set to `undefined` — the segment itself is preserved so the timeline is not disturbed. Any future code that **adds** an asset to `project.assets` MUST call `putAsset` before setting project state (if `putAsset` throws, do not add the asset — a phantom asset that vanishes on reload is worse than no asset). Any future code that **removes** an asset MUST call `deleteAsset` and `URL.revokeObjectURL` after the state update.
 
 ---
 
@@ -127,6 +145,7 @@ App.tsx                    — top-level state + orchestration only
 | Label export file `.mp4` | Container is WebM — mislabeled files break some players |
 | Add features to App.tsx without extracting a component first | Makes the monolith worse |
 | Put secret API keys in `vite.config.ts` `define` | Baked into client bundle, publicly visible |
+| Add an asset to `project.assets` without calling `putAsset` first | Blob URL dies with the tab — asset vanishes on reload |
 | `useEffect` with missing dependencies | Causes stale closures — use `useCallback` + correct dep arrays |
 | Recreating functions inside render without `useCallback` | Causes spurious effect re-runs (see `togglePlay` keyboard listener bug) |
 | Filters in the `FILTERS` array without a `getFilterStyle` case | Shows in dropdown, applies nothing — either implement or remove |
@@ -151,8 +170,8 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 | Limitation | Impact | Future Fix |
 |---|---|---|
 | Export misses CSS overlays, filters, transitions | Exported video is "bare" | Server-side ffmpeg render or full canvas draw pipeline |
-| No project persistence | Refresh loses everything | localStorage (text state) + IndexedDB (blobs) |
 | Safari export broken | `captureStream` + `MediaRecorder` WebM unsupported | Requires ffmpeg.wasm or server-side rendering |
+| Segments referencing a deleted asset are not cleaned up until next page reload | Segment renders as unassigned only after refresh; mid-session it holds a dead `assetId` | Phase 3 — clean up at delete time, or document and rely on hydration-time cleanup |
 | Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint |
 | No authentication | Open access | Add auth layer when persistence is added |
 | ~35 of 57 `TransitionType` values unmapped in `getMotionProps` | Transitions silently fall to default fade | Implement or prune the enum |
@@ -209,5 +228,5 @@ vite            — listed in both deps and devDeps (remove from deps)
 | Fix export file extension (.webm) | ✅ Done — 2026-05-16 | |
 | Replace Math.random IDs | ✅ Done — 2026-05-16 | All IDs use crypto.randomUUID() |
 | Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix (pre-existing bug) |
-| Add project persistence | ⬜ Not started | Phase 2 |
+| Add project persistence | ✅ Done — 2026-05-16 | localStorage + IndexedDB; single-project; "New Project" reset |
 | Fix canvas export to include overlays | ⬜ Not started | Major effort — Phase 3 |
