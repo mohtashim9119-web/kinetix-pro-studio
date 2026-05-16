@@ -444,7 +444,6 @@ export default function App() {
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
-  const [storyMap, setStoryMap] = useState<any>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockSearchQuery, setStockSearchQuery] = useState('');
   const [isStockSearching, setIsStockSearching] = useState(false);
@@ -728,7 +727,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${project.name.replace(/\s+/g, '_')}_master.mp4`; 
+      a.download = `${project.name.replace(/\s+/g, '_')}_master.webm`;
       a.click();
       
       if (audioRef.current) {
@@ -851,7 +850,7 @@ export default function App() {
             setProject(prev => ({ ...prev, segments: data }));
             setIsSynced(true);
           } else {
-            setStoryMap(data);
+            // Story map format not yet implemented
           }
         } catch {
           console.error("Invalid JSON for story map");
@@ -931,12 +930,7 @@ export default function App() {
             if (audioRef.current.paused) {
               audioRef.current.play().catch(() => {});
             }
-            // Strict sync
-            if (Math.abs(audioRef.current.currentTime - currentTime) > 0.2) {
-               setCurrentTime(audioRef.current.currentTime);
-            } else {
-               setCurrentTime(audioRef.current.currentTime);
-            }
+            setCurrentTime(audioRef.current.currentTime);
           } else {
             // Manual advancement if no audio or in a heading (heading pauses script voiceover)
             if (audioRef.current && !isExporting && inHeading) audioRef.current.pause();
@@ -971,22 +965,21 @@ export default function App() {
     return () => clearInterval(interval);
   }, [isPlaying, voiceover, project.segments, currentSegment, isExporting, globalPlaybackSpeed]);
 
-  const togglePlay = () => setIsPlaying(!isPlaying);
+  const togglePlay = () => setIsPlaying(p => !p);
 
   // Add spacebar play/pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        // Prevent scrolling if on the editor
         if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
           e.preventDefault();
-          togglePlay();
+          setIsPlaying(p => !p);
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, togglePlay]);
+  }, []);
 
   // Auto-scroll timeline to keep playhead in view during playback
   useEffect(() => {
