@@ -64,6 +64,8 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 - [ ] Render backend host — Railway, Fly.io, Hetzner, Remotion Lambda (decide in Phase 3 planning)
 - [ ] Multi-user support — team accounts in v1, or stay single-user through Phase 5?
 - [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
+- [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 3 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
+- [ ] Bundle splitting — main chunk is ~521 kB. Candidates for lazy-loading: SegmentEditorPanel, StockSearchModal, SyncReviewModal. Defer to Phase 4 (polish).
 - [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 4?
 
 ---

@@ -171,6 +171,7 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 |---|---|---|
 | Export misses CSS overlays, filters, transitions | Exported video is "bare" | Server-side ffmpeg render or full canvas draw pipeline |
 | Safari export broken | `captureStream` + `MediaRecorder` WebM unsupported | Requires ffmpeg.wasm or server-side rendering |
+| Segments referencing a deleted asset are not cleaned up until next page reload | Segment renders as unassigned only after refresh; mid-session it holds a dead `assetId` | Phase 3 — clean up at delete time, or document and rely on hydration-time cleanup |
 | Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint |
 | No authentication | Open access | Add auth layer when persistence is added |
 | ~35 of 57 `TransitionType` values unmapped in `getMotionProps` | Transitions silently fall to default fade | Implement or prune the enum |
