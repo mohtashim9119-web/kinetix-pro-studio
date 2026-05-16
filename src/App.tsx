@@ -47,7 +47,9 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
-import { putAsset, deleteAsset } from './services/assetStore';
+import { putAsset, deleteAsset, getAllAssets } from './services/assetStore';
+import { loadProject } from './services/projectStore';
+import { usePersistProject } from './hooks/usePersistProject';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { StockSearchModal } from './components/StockSearchModal';
 import { SyncReviewModal } from './components/SyncReviewModal';
@@ -256,6 +258,7 @@ export default function App() {
     }
   });
 
+  const [isHydrating, setIsHydrating] = useState(true);
   const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -314,6 +317,57 @@ export default function App() {
       autoMatchAssets();
     }
   }, [project.assets.length]);
+
+  // Rehydrate persisted project on mount
+  useEffect(() => {
+    (async () => {
+      const saved = loadProject();
+      if (!saved) {
+        setIsHydrating(false);
+        return;
+      }
+
+      const storedAssets = await getAllAssets();
+      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
+
+      const droppedIds = new Set<string>();
+      const rehydratedAssets = saved.project.assets
+        .map(asset => {
+          const stored = blobMap.get(asset.id);
+          if (!stored) {
+            console.warn(`[kinetix] Dropping orphaned asset on load — id: ${asset.id}, name: ${asset.name}`);
+            droppedIds.add(asset.id);
+            return null;
+          }
+          return { ...asset, url: URL.createObjectURL(stored.blob) };
+        })
+        .filter((a): a is NonNullable<typeof a> => a !== null);
+
+      const rehydratedSegments = saved.project.segments.map(seg => {
+        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+          console.warn(`[kinetix] Clearing assetId on segment "${seg.id}" — referenced asset was dropped`);
+          return { ...seg, assetId: undefined };
+        }
+        return seg;
+      });
+
+      let rehydratedVoiceoverId = saved.project.voiceoverId;
+      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
+        console.warn(`[kinetix] Clearing voiceoverId — referenced asset was dropped`);
+        rehydratedVoiceoverId = undefined;
+      }
+
+      setProject({
+        ...saved.project,
+        assets: rehydratedAssets,
+        segments: rehydratedSegments,
+        voiceoverId: rehydratedVoiceoverId,
+      });
+      setIsHydrating(false);
+    })();
+  }, []);
+
+  usePersistProject(project, !isHydrating);
 
   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
     setProject(prev => ({
@@ -876,6 +930,14 @@ export default function App() {
     };
     mirror();
   }, [isExporting]);
+
+  if (isHydrating) {
+    return (
+      <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
+        <span className="text-[#E4E3E0] text-sm font-mono tracking-widest uppercase">Loading…</span>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden">
