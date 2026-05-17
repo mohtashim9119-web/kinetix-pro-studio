@@ -17,6 +17,29 @@ export type ExportStage =
 
 export type ProgressCallback = (stage: ExportStage) => void;
 
+export type ExportErrorKind =
+  | 'ffmpeg_load'
+  | 'encode'
+  | 'concat'
+  | 'mux'
+  | 'asset_missing'
+  | 'unknown';
+
+export interface ExportError {
+  kind: ExportErrorKind;
+  message: string;
+  segmentIndex?: number;
+  cause?: string;
+}
+
+export type ExportResult =
+  | { ok: true; blob: Blob }
+  | { ok: false; error: ExportError };
+
+function causeString(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Full export pipeline:
  *   1. Accepts a pre-loaded FfmpegLike instance (direct FFmpeg or Comlink worker proxy).
@@ -24,13 +47,15 @@ export type ProgressCallback = (stage: ExportStage) => void;
  *   3. Write a concat manifest and run ffmpeg concat demuxer to join them.
  *   4. Mux in the voiceover audio (AAC) if present.
  *   5. Output a single MP4 blob.
+ *
+ * Returns ExportResult — never throws. All stage failures are mapped to typed errors.
  */
 export async function exportProject(
   project: Project,
   ffmpeg: FfmpegLike,
   options: ExportOptions = {},
   onProgress: ProgressCallback = () => undefined,
-): Promise<Blob> {
+): Promise<ExportResult> {
   const fps = options.fps ?? 30;
   const width = options.width ?? 1920;
   const height = options.height ?? 1080;
@@ -50,6 +75,23 @@ export async function exportProject(
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     if (!segment) continue;
+
+    // Check for missing asset blob before attempting encode
+    if (segment.assetId) {
+      const asset = assetMap.get(segment.assetId);
+      if (!asset?.url) {
+        return {
+          ok: false,
+          error: {
+            kind: 'asset_missing',
+            message: `Asset for segment ${i + 1} could not be found. It may have been deleted.`,
+            segmentIndex: i,
+            cause: `assetId=${segment.assetId}`,
+          },
+        };
+      }
+    }
+
     const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
     const nextSegment = segments[i + 1];
     const nextAsset = nextSegment?.assetId ? assetMap.get(nextSegment.assetId) : undefined;
@@ -66,32 +108,42 @@ export async function exportProject(
       totalFrames: Math.round(segment.duration * fps),
     });
 
-    const mp4Bytes = await encodeSegment(
-      segment,
-      asset,
-      ffmpeg,
-      globalConfig,
-      {
-        fps,
-        width,
-        height,
-        nextSegment,
-        nextAsset,
-        globalTransitionDuration: project.globalTransitionDuration,
-        onProgress: (frame, totalFrames) => {
-          onProgress({
-            type: 'encoding_segment',
-            index: i,
-            total: segments.length,
-            frame,
-            totalFrames,
-          });
+    try {
+      const mp4Bytes = await encodeSegment(
+        segment,
+        asset,
+        ffmpeg,
+        globalConfig,
+        {
+          fps,
+          width,
+          height,
+          nextSegment,
+          nextAsset,
+          globalTransitionDuration: project.globalTransitionDuration,
+          onProgress: (frame, totalFrames) => {
+            onProgress({
+              type: 'encoding_segment',
+              index: i,
+              total: segments.length,
+              frame,
+              totalFrames,
+            });
+          },
         },
-      },
-    );
-
-    // Write encoded segment into ffmpeg FS under a stable name for concat
-    await ffmpeg.writeFile(segFile, mp4Bytes);
+      );
+      await ffmpeg.writeFile(segFile, mp4Bytes);
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          kind: 'encode',
+          message: `Failed to encode segment ${i + 1}.`,
+          segmentIndex: i,
+          cause: causeString(err),
+        },
+      };
+    }
   }
 
   // ── 2. Concatenate segments ────────────────────────────────────────────────
@@ -100,27 +152,35 @@ export async function exportProject(
   let finalVideoFile: string;
 
   if (segmentFiles.length === 1) {
-    // Single segment — use directly (voiceover mux step below handles audio)
     finalVideoFile = segmentFiles[0]!;
   } else {
-    // Build concat manifest
     const concatManifest = segmentFiles.map(f => `file '${f}'`).join('\n');
     const manifestFile = 'concat_list.txt';
     const manifestBytes = new TextEncoder().encode(concatManifest);
-    await ffmpeg.writeFile(manifestFile, manifestBytes);
     allTempFiles.push(manifestFile);
-
     finalVideoFile = 'concat_video.mp4';
     allTempFiles.push(finalVideoFile);
 
-    await ffmpeg.exec([
-      '-f', 'concat',
-      '-safe', '0',
-      '-i', manifestFile,
-      '-c', 'copy',
-      '-y',
-      finalVideoFile,
-    ]);
+    try {
+      await ffmpeg.writeFile(manifestFile, manifestBytes);
+      await ffmpeg.exec([
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', manifestFile,
+        '-c', 'copy',
+        '-y',
+        finalVideoFile,
+      ]);
+    } catch (err) {
+      return {
+        ok: false,
+        error: {
+          kind: 'concat',
+          message: 'Failed to concatenate segments.',
+          cause: causeString(err),
+        },
+      };
+    }
   }
 
   // ── 3. Mux voiceover audio ──────────────────────────────────────────────────
@@ -129,46 +189,65 @@ export async function exportProject(
 
   const voiceoverAsset = project.voiceoverId ? assetMap.get(project.voiceoverId) : undefined;
 
-  if (voiceoverAsset?.url) {
-    const audioFile = 'voiceover_audio';
-    allTempFiles.push(audioFile);
-
-    // Fetch the blob URL into ffmpeg FS
-    const audioBytes = await fetchFile(voiceoverAsset.url);
-    await ffmpeg.writeFile(audioFile, audioBytes);
-
-    await ffmpeg.exec([
-      '-i', finalVideoFile,
-      '-i', audioFile,
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-shortest',
-      '-movflags', '+faststart',
-      '-y',
-      outputFile,
-    ]);
-  } else {
-    // No voiceover — just copy video to output
-    await ffmpeg.exec([
-      '-i', finalVideoFile,
-      '-c', 'copy',
-      '-movflags', '+faststart',
-      '-y',
-      outputFile,
-    ]);
+  try {
+    if (voiceoverAsset?.url) {
+      const audioFile = 'voiceover_audio';
+      allTempFiles.push(audioFile);
+      const audioBytes = await fetchFile(voiceoverAsset.url);
+      await ffmpeg.writeFile(audioFile, audioBytes);
+      await ffmpeg.exec([
+        '-i', finalVideoFile,
+        '-i', audioFile,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '192k',
+        '-shortest',
+        '-movflags', '+faststart',
+        '-y',
+        outputFile,
+      ]);
+    } else {
+      await ffmpeg.exec([
+        '-i', finalVideoFile,
+        '-c', 'copy',
+        '-movflags', '+faststart',
+        '-y',
+        outputFile,
+      ]);
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: 'mux',
+        message: 'Failed to mux audio into the final video.',
+        cause: causeString(err),
+      },
+    };
   }
 
   // ── 4. Read output and clean up ──────────────────────────────────────────────
-  const fileData = await ffmpeg.readFile(outputFile);
-  const mp4Bytes =
-    fileData instanceof Uint8Array
-      ? fileData
-      : new TextEncoder().encode(fileData as string);
+  let mp4Bytes: Uint8Array;
+  try {
+    const fileData = await ffmpeg.readFile(outputFile);
+    mp4Bytes =
+      fileData instanceof Uint8Array
+        ? fileData
+        : new TextEncoder().encode(fileData as string);
+  } catch (err) {
+    return {
+      ok: false,
+      error: {
+        kind: 'unknown',
+        message: 'Failed to read the exported file from the ffmpeg virtual filesystem.',
+        cause: causeString(err),
+      },
+    };
+  }
 
   await Promise.allSettled(allTempFiles.map(f => ffmpeg.deleteFile(f)));
 
   const blob = new Blob([mp4Bytes], { type: 'video/mp4' });
   onProgress({ type: 'done', bytes: mp4Bytes });
-  return blob;
+  return { ok: true, blob };
 }

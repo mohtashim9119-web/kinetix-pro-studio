@@ -62,7 +62,8 @@ import * as Comlink from 'comlink';
 import { renderSegmentFrame } from './services/frameRenderer';
 import { encodeSegment } from './services/segmentEncoder';
 import { type FfmpegWorkerService } from './workers/exportWorker';
-import { exportProject, type ExportStage } from './services/exportPipeline';
+import { exportProject, type ExportStage, type ExportError } from './services/exportPipeline';
+import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 
 interface RawSegment {
   text: string;
@@ -531,6 +532,7 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportStageLabel, setExportStageLabel] = useState('');
+  const [exportError, setExportError] = useState<ExportError | null>(null);
   /** '1080p' | '4k' */
   const [exportResolution, setExportResolution] = useState<'1080p' | '4k'>('1080p');
   /** frames per second */
@@ -541,6 +543,7 @@ export default function App() {
     if (!isSynced) return;
 
     setIsExporting(true);
+    setExportError(null);
     setExportProgress(0);
     setExportStageLabel('Loading ffmpeg…');
 
@@ -552,50 +555,62 @@ export default function App() {
 
     try {
       await svc.load();
-
-      const resWidth = exportResolution === '4k' ? 3840 : 1920;
-      const resHeight = exportResolution === '4k' ? 2160 : 1080;
-
-      const blob = await exportProject(
-        project,
-        svc,
-        { fps: exportFps, width: resWidth, height: resHeight },
-        (stage: ExportStage) => {
-          if (stage.type === 'loading_ffmpeg') {
-            setExportStageLabel('Loading ffmpeg…');
-            setExportProgress(0);
-          } else if (stage.type === 'encoding_segment') {
-            const segPct = stage.total > 0
-              ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
-              : 0;
-            setExportProgress(Math.round(segPct * 90));
-            setExportStageLabel(`Encoding segment ${stage.index + 1} / ${stage.total}`);
-          } else if (stage.type === 'muxing') {
-            setExportProgress(93);
-            setExportStageLabel('Muxing & packaging…');
-          } else if (stage.type === 'done') {
-            setExportProgress(100);
-            setExportStageLabel('Done!');
-          }
-        },
-      );
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      a.download = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
     } catch (err) {
-      console.error('[export] failed:', err);
-      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
       worker.terminate();
       setIsExporting(false);
+      setExportError({
+        kind: 'ffmpeg_load',
+        message: 'Failed to load the ffmpeg engine. Check your network connection and try again.',
+        cause: err instanceof Error ? err.message : String(err),
+      });
+      return;
     }
+
+    const resWidth = exportResolution === '4k' ? 3840 : 1920;
+    const resHeight = exportResolution === '4k' ? 2160 : 1080;
+
+    const result = await exportProject(
+      project,
+      svc,
+      { fps: exportFps, width: resWidth, height: resHeight },
+      (stage: ExportStage) => {
+        if (stage.type === 'loading_ffmpeg') {
+          setExportStageLabel('Loading ffmpeg…');
+          setExportProgress(0);
+        } else if (stage.type === 'encoding_segment') {
+          const segPct = stage.total > 0
+            ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
+            : 0;
+          setExportProgress(Math.round(segPct * 90));
+          setExportStageLabel(`Encoding segment ${stage.index + 1} / ${stage.total}`);
+        } else if (stage.type === 'muxing') {
+          setExportProgress(93);
+          setExportStageLabel('Muxing & packaging…');
+        } else if (stage.type === 'done') {
+          setExportProgress(100);
+          setExportStageLabel('Done!');
+        }
+      },
+    );
+
+    worker.terminate();
+
+    if (!result.ok) {
+      setIsExporting(false);
+      setExportError(result.error);
+      return;
+    }
+
+    const url = URL.createObjectURL(result.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    a.download = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setIsExporting(false);
   };
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -980,6 +995,11 @@ export default function App() {
 
         <div className="flex-1 flex overflow-hidden">
           {/* Left Panel */}
+          <ErrorBoundary fallback={(err, reset) => (
+            <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
+              <PanelFallback label="Left panel" error={err} reset={reset} />
+            </div>
+          )}>
           <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
             <div className="p-8 h-full flex flex-col">
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
@@ -1159,21 +1179,29 @@ export default function App() {
               </div>
             </div>
           </div>
+          </ErrorBoundary>
                 {/* Right Panel: Preview & Sequence */}
           <div className="flex-1 flex flex-col bg-[#020202] relative p-8 gap-8 overflow-hidden">
              {/* Main Stage */}
-             <PreviewStage
-               currentSegment={currentSegment ?? undefined}
-               currentTime={currentTime}
-               globalPlaybackSpeed={globalPlaybackSpeed}
-               globalTransition={project.globalTransition}
-               globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
-               globalOverlayConfig={project.globalOverlayConfig}
-               hideAllText={project.hideAllText ?? false}
-               assets={project.assets}
-             />
+             <ErrorBoundary fallback={(err, reset) => (
+               <PanelFallback label="Preview" error={err} reset={reset} />
+             )}>
+               <PreviewStage
+                 currentSegment={currentSegment ?? undefined}
+                 currentTime={currentTime}
+                 globalPlaybackSpeed={globalPlaybackSpeed}
+                 globalTransition={project.globalTransition}
+                 globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
+                 globalOverlayConfig={project.globalOverlayConfig}
+                 hideAllText={project.hideAllText ?? false}
+                 assets={project.assets}
+               />
+             </ErrorBoundary>
 
              {/* Professional Sequence Timeline */}
+             <ErrorBoundary fallback={(err, reset) => (
+               <PanelFallback label="Timeline" error={err} reset={reset} />
+             )}>
              <Timeline
                segments={project.segments}
                assets={project.assets}
@@ -1220,6 +1248,7 @@ export default function App() {
                onSetTrimmingSegment={setTrimmingSegmentId}
                onSetAdjustingTrim={setIsAdjustingTrim}
              />
+             </ErrorBoundary>
         </div>
       </div>
       </main>
@@ -1266,55 +1295,117 @@ export default function App() {
         }
       `}</style>
       
-      {/* Export Progress Overlay */}
+      {/* Export Progress / Error Overlay */}
       <AnimatePresence>
-        {isExporting && (
+        {(isExporting || exportError !== null) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
           >
-            <div className="w-full max-w-md text-center space-y-8">
-              <div className="relative inline-block">
-                <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
-                  <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
+            {exportError !== null ? (
+              /* ── Error view ── */
+              <div className="w-full max-w-md text-center space-y-6">
+                <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto">
+                  <span className="text-2xl">✕</span>
                 </div>
-                <motion.div
-                  className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                />
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
+                  <p className="text-sm text-gray-300 mb-1">
+                    {exportError.kind === 'asset_missing'
+                      ? `An asset used by segment ${(exportError.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`
+                      : exportError.kind === 'ffmpeg_load'
+                      ? 'Failed to load the ffmpeg engine. Check your network connection and try again.'
+                      : exportError.kind === 'encode'
+                      ? `Failed to encode segment ${(exportError.segmentIndex ?? 0) + 1}.`
+                      : exportError.kind === 'concat'
+                      ? 'Failed to concatenate segments into a single video.'
+                      : exportError.kind === 'mux'
+                      ? 'Failed to mux the audio track into the final video.'
+                      : 'An unexpected error occurred during export.'}
+                  </p>
+                  <p className="text-xs text-gray-600">{exportError.message}</p>
+                </div>
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={() => {
+                      const diagnostics = {
+                        error: exportError,
+                        projectMeta: {
+                          segmentCount: project.segments.length,
+                          hasVoiceover: !!project.voiceoverId,
+                          exportResolution,
+                          exportFps,
+                          ts: new Date().toISOString(),
+                        },
+                      };
+                      navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
+                    }}
+                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                  >
+                    Copy diagnostics
+                  </button>
+                  <button
+                    onClick={() => {
+                      setExportError(null);
+                      void handleExport();
+                    }}
+                    className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={() => setExportError(null)}
+                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
+            ) : (
+              /* ── Progress view ── */
+              <div className="w-full max-w-md text-center space-y-8">
+                <div className="relative inline-block">
+                  <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
+                    <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
+                  </div>
+                  <motion.div
+                    className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  />
+                </div>
 
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportStageLabel}</p>
-                <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
-              </div>
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
+                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportStageLabel}</p>
+                  <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
+                </div>
 
-              <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
-                  style={{ width: `${exportProgress}%` }}
-                />
-              </div>
+                <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
+                    style={{ width: `${exportProgress}%` }}
+                  />
+                </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Codec</p>
-                  <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
-                </div>
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
-                  <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
-                </div>
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
-                  <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Codec</p>
+                    <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
+                  </div>
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
+                    <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
+                  </div>
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
+                    <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
