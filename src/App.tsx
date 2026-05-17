@@ -1076,8 +1076,15 @@ export default function App() {
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
                               <button
                                 onClick={() => {
-                                  setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }));
                                   URL.revokeObjectURL(asset.url);
+                                  setProject(p => ({
+                                    ...p,
+                                    assets: p.assets.filter(a => a.id !== asset.id),
+                                    voiceoverId: p.voiceoverId === asset.id ? undefined : p.voiceoverId,
+                                    segments: p.segments.map(s =>
+                                      s.assetId === asset.id ? { ...s, assetId: undefined } : s
+                                    ),
+                                  }));
                                   deleteAsset(asset.id).catch(err =>
                                     console.error('Failed to delete asset from IndexedDB:', err)
                                   );
