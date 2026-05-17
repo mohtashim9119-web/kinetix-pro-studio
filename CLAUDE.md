@@ -239,7 +239,7 @@ App.tsx                    — top-level state + orchestration only
 - **`togglePlay` in keyboard effect**: `togglePlay` is recreated each render → listener attaches/detaches constantly. Wrap in `useCallback` or use a ref
 - **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI
 - **`storyMap` parameter in `parseProjectData`**: declared but body never uses it
-- **`autoMatchAssets` in effect at line ~501**: runs on every `project.assets.length` change with `autoMatchAssets` not in the dep array — stale closure
+- **`autoMatchAssets` effect at `App.tsx:350–355`**: depends on `project.assets.length`, so it fires on both asset *addition* and asset *deletion*. On deletion, `handleDeleteAsset` correctly sets `segment.assetId = undefined`, but `autoMatchAssets` immediately re-fills it by fuzzy-matching the segment text against remaining assets — negating the cleanup within the same render cycle. Additionally, `autoMatchAssets` is not in the effect's dep array (stale closure). Fix: gate the effect to fire only when `assets.length` increases, or refactor to an imperative call triggered only on upload.
 
 ---
 

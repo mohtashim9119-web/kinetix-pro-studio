@@ -53,6 +53,18 @@ Phase 4 complete. Next: Phase 5 (production hardening — tests, accessibility, 
 
 **Bundle size:** 542 kB → 433 kB main (−109 kB / −28 kB gzip) via lazy-loading jszip, StockSearchModal, SyncReviewModal.
 
+### Smoke Test Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Test 1 — `crossOriginIsolated` | ✅ PASS | `true` in both Chrome and Safari; `SharedArrayBuffer` available; COOP/COEP headers correct |
+| Test 2 — Console hygiene | ✅ PASS | ffmpeg stderr routed to `console.debug`; no spurious `console.error` from pipeline |
+| Test 3 — Lazy modal loading | ✅ PASS | `StockSearchModal-*.js` loaded on demand; no lazy chunks in initial network request |
+| Test 4 — Dangling asset cleanup | ⚠️ PARTIAL | `c7515e5` clears `assetId` correctly; `autoMatchAssets` re-assigns immediately (pre-existing bug, deferred to Phase 5) |
+| Test 5 — `asset_missing` error path | ⚠️ NOT REACHED via reload | Hydration cleanup clears orphaned `assetId`s before export; `ExportError` infrastructure verified by code review; deeper trigger deferred |
+| Test 6 — Fade transition | ⬜ PENDING | User execution pending |
+| Safari validation | ✅ PASS | `crossOriginIsolated=true`, full export, MP4 plays in VLC with H.264/AAC |
+
 ---
 
 ## Previous Sprint
@@ -116,6 +128,8 @@ Phase 3 steps:
 - **Accessibility audit** — no ARIA labels, focus traps, or keyboard nav beyond spacebar. Required before public launch.
 - **Responsive layout** — layout assumes ≥1280px width. Mobile/tablet breakpoints not addressed.
 - **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
+- **`autoMatchAssets` re-assignment on delete** — the `useEffect` at `App.tsx:350–355` depends on `project.assets.length`, so it fires on every asset deletion. `autoMatchAssets` then immediately re-fills segments whose `assetId` was just cleared by `handleDeleteAsset` (Phase 4 Step 3). The immutable clear in `c7515e5` is correct but is negated within the same render cycle by this pre-existing effect. Fix options: gate `autoMatchAssets` to fire only when `assets.length` increases (addition only), refactor to an imperative call on upload, or remove fuzzy auto-match in favour of explicit user action. See also CLAUDE.md Known Bugs.
+- **`asset_missing` ExportError path is defense-in-depth only** — hydration-time cleanup (`App.tsx` mount effect) clears orphaned `assetId`s on reload, and `autoMatchAssets` re-fills cleared `assetId`s mid-session, making `exportPipeline.ts:80–93` unreachable via normal user actions. The other `ExportErrorKind` values (`ffmpeg_load`, `encode`, `concat`, `mux`) remain reachable and the modal error UI is verified. `asset_missing` is triggerable in-session only by deleting an IndexedDB row via DevTools without reloading. Worth keeping for defense-in-depth; no action needed unless the `autoMatchAssets` bug is fixed.
 
 ---
 
