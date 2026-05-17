@@ -1,6 +1,16 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from './frameRenderer';
+
+/**
+ * Minimal ffmpeg FS/exec interface.  Both a direct `FFmpeg` instance and the
+ * Comlink-proxied `FfmpegWorkerService` satisfy this contract.
+ */
+export interface FfmpegLike {
+  writeFile(path: string, data: Uint8Array): Promise<boolean | void>;
+  exec(args: string[]): Promise<number>;
+  readFile(path: string): Promise<Uint8Array | string>;
+  deleteFile(path: string): Promise<boolean | void>;
+}
 
 export interface EncodeSegmentOptions {
   fps?: number;
@@ -31,7 +41,7 @@ export interface EncodeSegmentOptions {
 export async function encodeSegment(
   segment: VideoSegment,
   asset: Asset | undefined,
-  ffmpeg: FFmpeg,
+  ffmpeg: FfmpegLike,
   globalConfig: FrameGlobalConfig,
   options: EncodeSegmentOptions = {},
 ): Promise<Uint8Array> {
@@ -71,12 +81,6 @@ export async function encodeSegment(
 
   const totalFrames = Math.max(1, Math.round(segment.duration * fps));
   const writtenFiles: string[] = [];
-
-  // Surface ffmpeg's internal log to the browser console for diagnostics.
-  const ffmpegLogHandler = ({ message }: { message: string }) => {
-    console.debug('[ffmpeg]', message);
-  };
-  ffmpeg.on('log', ffmpegLogHandler);
 
   // -------------------------------------------------------------------------
   // Render and write frames
@@ -164,7 +168,6 @@ export async function encodeSegment(
       : new TextEncoder().encode(fileData as string);
 
   await cleanupFiles(ffmpeg, writtenFiles);
-  ffmpeg.off('log', ffmpegLogHandler);
 
   return mp4Bytes;
 }
@@ -185,6 +188,6 @@ function canvasToPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   });
 }
 
-async function cleanupFiles(ffmpeg: FFmpeg, files: string[]): Promise<void> {
+async function cleanupFiles(ffmpeg: FfmpegLike, files: string[]): Promise<void> {
   await Promise.allSettled(files.map(f => ffmpeg.deleteFile(f)));
 }

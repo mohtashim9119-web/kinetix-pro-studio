@@ -1,8 +1,6 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile } from '@ffmpeg/util';
 import { Project, Asset } from '../types';
-import { loadFFmpeg } from './ffmpegLoader';
-import { encodeSegment } from './segmentEncoder';
+import { encodeSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
 
 export interface ExportOptions {
@@ -21,7 +19,7 @@ export type ProgressCallback = (stage: ExportStage) => void;
 
 /**
  * Full export pipeline:
- *   1. Load ffmpeg.wasm (cached after first call).
+ *   1. Accepts a pre-loaded FfmpegLike instance (direct FFmpeg or Comlink worker proxy).
  *   2. Encode each segment to an intermediate MP4 (H.264).
  *   3. Write a concat manifest and run ffmpeg concat demuxer to join them.
  *   4. Mux in the voiceover audio (AAC) if present.
@@ -29,6 +27,7 @@ export type ProgressCallback = (stage: ExportStage) => void;
  */
 export async function exportProject(
   project: Project,
+  ffmpeg: FfmpegLike,
   options: ExportOptions = {},
   onProgress: ProgressCallback = () => undefined,
 ): Promise<Blob> {
@@ -42,16 +41,12 @@ export async function exportProject(
     globalOverlayFilter: project.globalOverlayFilter,
   };
 
-  // ── 1. Load ffmpeg ─────────────────────────────────────────────────────────
-  onProgress({ type: 'loading_ffmpeg' });
-  const ffmpeg = await loadFFmpeg();
-
   const assetMap = new Map<string, Asset>(project.assets.map(a => [a.id, a]));
   const segments = project.segments;
   const segmentFiles: string[] = [];
   const allTempFiles: string[] = [];
 
-  // ── 2. Encode each segment ──────────────────────────────────────────────────
+  // ── 1. Encode each segment ──────────────────────────────────────────────────
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
     if (!segment) continue;
@@ -99,21 +94,20 @@ export async function exportProject(
     await ffmpeg.writeFile(segFile, mp4Bytes);
   }
 
-  // ── 3. Concatenate segments ────────────────────────────────────────────────
+  // ── 2. Concatenate segments ────────────────────────────────────────────────
   onProgress({ type: 'muxing' });
 
   let finalVideoFile: string;
 
-  if (segmentFiles.length === 1 && !project.voiceoverId) {
-    // Single segment, no audio — just pass through
-    finalVideoFile = segmentFiles[0]!;
-  } else if (segmentFiles.length === 1) {
+  if (segmentFiles.length === 1) {
+    // Single segment — use directly (voiceover mux step below handles audio)
     finalVideoFile = segmentFiles[0]!;
   } else {
     // Build concat manifest
     const concatManifest = segmentFiles.map(f => `file '${f}'`).join('\n');
     const manifestFile = 'concat_list.txt';
-    await ffmpeg.writeFile(manifestFile, concatManifest);
+    const manifestBytes = new TextEncoder().encode(concatManifest);
+    await ffmpeg.writeFile(manifestFile, manifestBytes);
     allTempFiles.push(manifestFile);
 
     finalVideoFile = 'concat_video.mp4';
@@ -129,7 +123,7 @@ export async function exportProject(
     ]);
   }
 
-  // ── 4. Mux voiceover audio ──────────────────────────────────────────────────
+  // ── 3. Mux voiceover audio ──────────────────────────────────────────────────
   const outputFile = 'export_final.mp4';
   allTempFiles.push(outputFile);
 
@@ -165,7 +159,7 @@ export async function exportProject(
     ]);
   }
 
-  // ── 5. Read output and clean up ──────────────────────────────────────────────
+  // ── 4. Read output and clean up ──────────────────────────────────────────────
   const fileData = await ffmpeg.readFile(outputFile);
   const mp4Bytes =
     fileData instanceof Uint8Array
