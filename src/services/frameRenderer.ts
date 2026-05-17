@@ -1,10 +1,26 @@
-import { VideoSegment, Asset, TextOverlay } from '../types';
+import { VideoSegment, Asset, TextOverlay, TransitionType } from '../types';
 import { getFilterStyle } from '../constants';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string };
   hideAllText: boolean;
   globalOverlayFilter?: string;
+}
+
+/**
+ * Blend parameters for transition compositing.
+ * When present, the adjacent segment's pre-rendered frame is composited
+ * on top of the current frame after all overlays have been drawn.
+ *
+ * alpha=0 → fully current segment; alpha=1 → fully adjacent segment.
+ * This is applied at the OUTGOING end of a segment (the encoder passes
+ * the incoming segment's first frame as adjacentCanvas).
+ */
+export interface TransitionBlendParams {
+  adjacentCanvas: HTMLCanvasElement;
+  /** Blend factor 0..1 (0 = current, 1 = adjacent). */
+  alpha: number;
+  type: TransitionType | string;
 }
 
 export interface FrameRenderParams {
@@ -16,6 +32,8 @@ export interface FrameRenderParams {
   width: number;
   height: number;
   global: FrameGlobalConfig;
+  /** Optional: blend with an adjacent segment's frame for transitions. */
+  transition?: TransitionBlendParams;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,6 +388,116 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       ctx.restore();
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Transition blend (composited last, over all overlays)
+  // -------------------------------------------------------------------------
+  if (params.transition && params.transition.alpha > 0) {
+    applyTransitionBlend(ctx, params.transition, w, h);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Supported transition types for canvas blending.
+// All others fall back to a hard cut (blend params are ignored with a warning).
+// ---------------------------------------------------------------------------
+const SUPPORTED_TRANSITIONS = new Set<string>([
+  TransitionType.FADE,
+  TransitionType.CROSSFADE,
+  TransitionType.DISSOLVE,
+  TransitionType.NONE,
+  TransitionType.SLIDE,
+  TransitionType.SLIDE_UP,
+  TransitionType.SLIDE_DOWN,
+  TransitionType.ZOOM,
+  TransitionType.ZOOM_WIPE,
+  TransitionType.BLUR,
+]);
+
+/**
+ * Composites the adjacent segment's canvas onto the current frame.
+ * Called after all overlays have been drawn for the current frame.
+ *
+ * alpha=0 → fully current; alpha=1 → fully adjacent (incoming segment).
+ */
+function applyTransitionBlend(
+  ctx: CanvasRenderingContext2D,
+  blend: TransitionBlendParams,
+  w: number,
+  h: number,
+): void {
+  const { adjacentCanvas, alpha, type } = blend;
+  if (alpha <= 0) return;
+
+  const t = type as TransitionType;
+
+  if (!SUPPORTED_TRANSITIONS.has(t) && type !== '') {
+    console.warn(`[frameRenderer] unsupported transition "${type}" — using hard cut`);
+    if (alpha >= 0.5) {
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+    }
+    return;
+  }
+
+  ctx.save();
+
+  switch (t) {
+    // ── Cross-dissolve family ──────────────────────────────────────────────
+    case TransitionType.FADE:
+    case TransitionType.CROSSFADE:
+    case TransitionType.DISSOLVE:
+    case TransitionType.NONE: {
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      break;
+    }
+
+    // ── Slide family ───────────────────────────────────────────────────────
+    case TransitionType.SLIDE: {
+      // Adjacent slides in from the right
+      ctx.drawImage(adjacentCanvas, (1 - alpha) * w, 0, w, h);
+      break;
+    }
+    case TransitionType.SLIDE_UP: {
+      // Adjacent slides in from the bottom
+      ctx.drawImage(adjacentCanvas, 0, (1 - alpha) * h, w, h);
+      break;
+    }
+    case TransitionType.SLIDE_DOWN: {
+      // Adjacent slides in from the top
+      ctx.drawImage(adjacentCanvas, 0, -(alpha * h), w, h);
+      break;
+    }
+
+    // ── Zoom family ────────────────────────────────────────────────────────
+    case TransitionType.ZOOM:
+    case TransitionType.ZOOM_WIPE: {
+      const scale = 0.5 + 0.5 * alpha; // 0.5 → 1.0
+      const sw = w * scale;
+      const sh = h * scale;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(adjacentCanvas, (w - sw) / 2, (h - sh) / 2, sw, sh);
+      break;
+    }
+
+    // ── Blur cross-dissolve ────────────────────────────────────────────────
+    case TransitionType.BLUR: {
+      const blurPx = Math.round((1 - alpha) * 20);
+      if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      break;
+    }
+
+    default: {
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+    }
+  }
+
+  ctx.restore();
+  ctx.filter = 'none';
+  ctx.globalAlpha = 1;
 }
 
 /** Purge cached video/image elements (call when assets are deleted). */
