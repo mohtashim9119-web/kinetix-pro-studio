@@ -4,7 +4,6 @@
  */
 
 import { useState, useRef, useEffect, useMemo, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
-import JSZip from 'jszip';
 import { 
   Play, 
   Pause, 
@@ -571,6 +570,14 @@ export default function App() {
     
     setIsProcessing(true);
     try {
+      let JSZip: typeof import('jszip');
+      try {
+        JSZip = (await import('jszip')).default as unknown as typeof import('jszip');
+      } catch (loadErr) {
+        console.error('Failed to load jszip:', loadErr);
+        setIsProcessing(false);
+        return;
+      }
       const zip = new JSZip();
       const content = await zip.loadAsync(file);
       const newAssets: Asset[] = [];
