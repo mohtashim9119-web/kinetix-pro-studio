@@ -24,7 +24,7 @@
 | Phase 0 | Audit & baseline | ✅ Complete |
 | Phase 1 | Foundation refactor | ✅ Complete |
 | Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
-| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete (pending final E2E verification) |
+| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ⬜ Not started |
 | Phase 5 | Production hardening — tests, accessibility, responsive | ⬜ Not started |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
@@ -71,7 +71,7 @@ Phase 3 steps:
 - [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 4 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
 - [ ] Bundle splitting — main chunk is now **537 kB** (up from ~521 kB) due to `@ffmpeg/ffmpeg`. Candidates for lazy-loading: ffmpeg import, SegmentEditorPanel, StockSearchModal, SyncReviewModal. Deferred to Phase 4.
 - [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 4?
-- [ ] **Phase 3 end-to-end export (full UI flow with main Export button) not yet smoke-tested by human.** Dev-button segment encode was verified in Steps 3–4 (single-segment MP4 produced and downloaded successfully). Full multi-segment concat + audio mux path is build-verified only — human E2E test required before merging `phase-3-export` → `main`.
+- [x] **Phase 3 end-to-end export verified — 2026-05-17.** Multi-segment + voiceover + FADE transition + main Export button + VLC playback confirmed H.264/AAC. Verified before `phase-3-export` merged to `main`.
 
 ---
 
