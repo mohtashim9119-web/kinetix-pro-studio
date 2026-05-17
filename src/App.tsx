@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useMemo, ChangeEvent } from 'react';
+import { useState, useRef, useEffect, useMemo, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import JSZip from 'jszip';
 import { 
   Play, 
@@ -51,9 +51,13 @@ import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
-import { StockSearchModal } from './components/StockSearchModal';
-import { SyncReviewModal } from './components/SyncReviewModal';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
+const StockSearchModal = lazy(() =>
+  import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
+);
+const SyncReviewModal = lazy(() =>
+  import('./components/SyncReviewModal').then(m => ({ default: m.SyncReviewModal }))
+);
 import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
@@ -260,6 +264,14 @@ const DEFAULT_PROJECT: Project = {
     fontFamily: 'Inter',
   },
 };
+
+function ModalLoadingFallback(): ReactElement {
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+    </div>
+  );
+}
 
 function getExportErrorSummary(error: ExportError): string {
   switch (error.kind) {
@@ -1345,8 +1357,9 @@ export default function App() {
       </AnimatePresence>
 
       {/* Stock Media Search Modal */}
-      <AnimatePresence>
-        {showStockSearch && (
+      {showStockSearch && (
+        <Suspense fallback={<ModalLoadingFallback />}>
+        <AnimatePresence>
           <StockSearchModal
             targetSegmentId={stockTarget}
             onClose={() => setShowStockSearch(false)}
@@ -1382,12 +1395,14 @@ export default function App() {
               }));
             }}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>
+        </Suspense>
+      )}
 
       {/* Sync Review Modals */}
-      <AnimatePresence>
-        {showSyncDetails && (
+      {showSyncDetails && (
+        <Suspense fallback={<ModalLoadingFallback />}>
+        <AnimatePresence>
           <SyncReviewModal
             sceneDetails={project.sceneDetails}
             segments={project.segments}
@@ -1407,8 +1422,9 @@ export default function App() {
               }));
             }}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>
+        </Suspense>
+      )}
 
       {/* Double-click Scene Editor Modal */}
       <AnimatePresence>
