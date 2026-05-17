@@ -58,6 +58,11 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
+import * as Comlink from 'comlink';
+import { renderSegmentFrame } from './services/frameRenderer';
+import { encodeSegment } from './services/segmentEncoder';
+import { type FfmpegWorkerService } from './workers/exportWorker';
+import { exportProject, type ExportStage } from './services/exportPipeline';
 
 interface RawSegment {
   text: string;
@@ -252,7 +257,7 @@ const DEFAULT_PROJECT: Project = {
   hideAllText: true,
   globalOverlayConfig: {
     color: '#FFFFFF',
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: '#000000',
     fontFamily: 'Inter',
   },
 };
@@ -289,6 +294,7 @@ export default function App() {
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [testFrameUrl, setTestFrameUrl] = useState<string | null>(null);
 
 
   const autoMatchAssets = () => {
@@ -524,141 +530,72 @@ export default function App() {
 
   const [isExporting, setIsExporting] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
+  const [exportStageLabel, setExportStageLabel] = useState('');
+  /** '1080p' | '4k' */
+  const [exportResolution, setExportResolution] = useState<'1080p' | '4k'>('1080p');
+  /** frames per second */
+  const [exportFps, setExportFps] = useState<24 | 30 | 60>(30);
   const previewRef = useRef<HTMLDivElement>(null);
-  const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
-  
-  // Cache for Web Audio nodes to avoid re-connection errors
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const audioSourceNodeRef = useRef<MediaElementAudioSourceNode | null>(null);
-  const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
   const handleExport = async () => {
     if (!isSynced) return;
-    
+
     setIsExporting(true);
     setExportProgress(0);
-    
-    const canvas = hiddenCanvasRef.current;
-    if (!canvas) {
-       setIsExporting(false);
-       alert("Export failed: System canvas not initialized.");
-       return;
-    }
+    setExportStageLabel('Loading ffmpeg…');
 
-    const canvasStream = canvas.captureStream(30);
-    const combinedTracks = [...canvasStream.getVideoTracks()];
-    
-    if (audioRef.current && voiceover) {
-      try {
-        if (!audioContextRef.current) {
-          audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-          audioDestRef.current = audioContextRef.current.createMediaStreamDestination();
-          audioSourceNodeRef.current = audioContextRef.current.createMediaElementSource(audioRef.current);
-          audioSourceNodeRef.current.connect(audioDestRef.current);
-          audioSourceNodeRef.current.connect(audioContextRef.current.destination);
-        }
-        
-        const audioTracks = audioDestRef.current!.stream.getAudioTracks();
-        const firstTrack = audioTracks[0];
-        if (firstTrack) {
-          combinedTracks.push(firstTrack);
-        }
-      } catch (err) {
-        console.warn("Audio capture via Web Audio failed, using fallback:", err);
-        const el = audioRef.current as HTMLAudioElement & {
-          captureStream?: () => MediaStream;
-          mozCaptureStream?: () => MediaStream;
-        };
-        const audioStream = el.captureStream?.() ?? el.mozCaptureStream?.();
-        if (audioStream) {
-          const fallbackTrack = audioStream.getAudioTracks()[0];
-          if (fallbackTrack) combinedTracks.push(fallbackTrack);
-        }
-      }
-    }
+    const worker = new Worker(
+      new URL('./workers/exportWorker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    const svc = Comlink.wrap<FfmpegWorkerService>(worker);
 
-    const stream = new MediaStream(combinedTracks);
-    const options = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') 
-      ? { mimeType: 'video/webm;codecs=vp9' } 
-      : { mimeType: 'video/webm' };
-    let recorder: MediaRecorder;
-    
     try {
-      recorder = new MediaRecorder(stream, options);
-    } catch (e) {
-      console.error("MediaRecorder error:", e);
-      setIsExporting(false);
-      alert("MP4 Export not supported in this browser environment.");
-      return;
-    }
+      await svc.load();
 
-    const chunks: Blob[] = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
+      const resWidth = exportResolution === '4k' ? 3840 : 1920;
+      const resHeight = exportResolution === '4k' ? 2160 : 1080;
 
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: 'video/webm' });
+      const blob = await exportProject(
+        project,
+        svc,
+        { fps: exportFps, width: resWidth, height: resHeight },
+        (stage: ExportStage) => {
+          if (stage.type === 'loading_ffmpeg') {
+            setExportStageLabel('Loading ffmpeg…');
+            setExportProgress(0);
+          } else if (stage.type === 'encoding_segment') {
+            const segPct = stage.total > 0
+              ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
+              : 0;
+            setExportProgress(Math.round(segPct * 90));
+            setExportStageLabel(`Encoding segment ${stage.index + 1} / ${stage.total}`);
+          } else if (stage.type === 'muxing') {
+            setExportProgress(93);
+            setExportStageLabel('Muxing & packaging…');
+          } else if (stage.type === 'done') {
+            setExportProgress(100);
+            setExportStageLabel('Done!');
+          }
+        },
+      );
+
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${project.name.replace(/\s+/g, '_')}_master.webm`;
+      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+      a.download = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+      document.body.appendChild(a);
       a.click();
-      
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.muted = false;
-      }
-      
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (err) {
+      console.error('[export] failed:', err);
+      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      worker.terminate();
       setIsExporting(false);
-      setIsPlaying(false);
-    };
-
-    // Prepare for capture
-    setCurrentTime(0);
-    setIsPlaying(false); 
-    setExportProgress(0.1); 
-    
-    if (audioRef.current) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.muted = true; // Mute during export to avoid double sound if user plays
-      audioRef.current.play().catch(e => console.warn("Audio play failed during export:", e));
     }
-
-    recorder.start();
-
-    const totalSegmentsDuration = project.segments.reduce((acc, s) => acc + s.duration, 0) || 0.001;
-    const audioDuration = audioRef.current?.duration || 0;
-    const totalDuration = Math.max(totalSegmentsDuration, audioDuration);
-    
-    let exportTime = 0;
-    const frameRate = 30;
-    const intervalTime = 1000 / frameRate;
-    const frameStep = 1 / frameRate;
-
-    const exportLoop = setInterval(() => {
-      if (audioRef.current && !audioRef.current.paused) {
-        // Sync with audio if available
-        exportTime = audioRef.current.currentTime;
-      } else {
-        exportTime += frameStep;
-      }
-      
-      if (exportTime > totalDuration) exportTime = totalDuration;
-      
-      setCurrentTime(exportTime);
-      
-      const progress = Math.min(99, (exportTime / totalDuration) * 100);
-      setExportProgress(progress);
-      
-      if (exportTime >= totalDuration) {
-        clearInterval(exportLoop);
-        setTimeout(() => {
-          recorder.stop();
-          setExportProgress(100);
-        }, 500); 
-      }
-    }, intervalTime);
   };
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -768,6 +705,72 @@ export default function App() {
   }, [currentTime, project.segments]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
+
+  const handleRenderTestFrame = async () => {
+    const seg = currentSegment ?? project.segments[0];
+    if (!seg) return;
+    const W = 1920, H = 1080;
+    const canvas = document.createElement('canvas');
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const asset = project.assets.find(a => a.id === seg.assetId);
+    await renderSegmentFrame({
+      segment: seg,
+      asset,
+      timeInSegment: Math.max(0, currentTime - seg.startTime),
+      ctx,
+      width: W,
+      height: H,
+      global: {
+        overlayConfig: project.globalOverlayConfig,
+        hideAllText: project.hideAllText ?? false,
+        globalOverlayFilter: project.globalOverlayFilter,
+      },
+    });
+    setTestFrameUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    canvas.toBlob(blob => {
+      if (blob) setTestFrameUrl(URL.createObjectURL(blob));
+    }, 'image/png');
+  };
+
+  const handleEncodeTestSegment = async () => {
+    const seg = currentSegment ?? project.segments[0];
+    if (!seg) { alert('No segment to encode'); return; }
+    const asset = project.assets.find(a => a.id === seg.assetId);
+    console.time('[encodeTest] total');
+    try {
+      const { loadFFmpeg } = await import('./services/ffmpegLoader');
+      const ffmpeg = await loadFFmpeg();
+      const bytes = await encodeSegment(seg, asset, ffmpeg, {
+        overlayConfig: project.globalOverlayConfig,
+        hideAllText: project.hideAllText ?? false,
+        globalOverlayFilter: project.globalOverlayFilter,
+      }, {
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        onProgress: (done, total) => console.log(`[encodeTest] frame ${done}/${total}`),
+      });
+      console.timeEnd('[encodeTest] total');
+      console.log(`[encodeTest] output size: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB`);
+      const blob = new Blob([bytes], { type: 'video/mp4' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `segment_test_${seg.id}.mp4`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    } catch (err) {
+      console.timeEnd('[encodeTest] total');
+      console.error('[encodeTest] failed:', err);
+      alert(`Encode failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   // Constrain segments to match audio duration perfectly
   useEffect(() => {
@@ -885,53 +888,7 @@ export default function App() {
     }
   }, [currentTime, isPlaying, zoomLevel]);
 
-  // Mirror DOM preview to canvas for capture
-  useEffect(() => {
-    if (!isExporting || !previewRef.current || !hiddenCanvasRef.current) return;
-    
-    const ctx = hiddenCanvasRef.current.getContext('2d');
-    const source = previewRef.current;
-    
-    const mirror = () => {
-      if (!isExporting) return;
-      if (ctx && source) {
-        const video = source.querySelector('video');
-        const img = source.querySelector('img');
-
-        // Only fill if nothing to draw to avoid gaps
-        if (!video && !img) {
-          ctx.fillStyle = 'black';
-          ctx.fillRect(0, 0, 1280, 720);
-        }
-
-        if (video) {
-           ctx.drawImage(video, 0, 0, 1280, 720);
-        } else if (img) {
-           ctx.drawImage(img, 0, 0, 1280, 720);
-        }
-
-        // Draw simple overlays on canvas for MP4 export
-        if (currentSegment) {
-          ctx.fillStyle = 'rgba(0,0,0,0.3)';
-          ctx.font = 'bold 40px Anton, sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          
-          if (!project.hideAllText || currentSegment.showOverlay) {
-            if (currentSegment.heading) {
-              ctx.fillStyle = project.globalOverlayConfig.backgroundColor;
-              const textWidth = ctx.measureText(currentSegment.heading).width;
-              ctx.fillRect(640 - textWidth/2 - 20, 360 - 60, textWidth + 40, 80);
-              ctx.fillStyle = project.globalOverlayConfig.color;
-              ctx.fillText(currentSegment.heading, 640, 360 - 20);
-            }
-          }
-        }
-      }
-      requestAnimationFrame(mirror);
-    };
-    mirror();
-  }, [isExporting]);
+  // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
   const handleNewProject = async () => {
     const confirmed = window.confirm(
@@ -1161,7 +1118,7 @@ export default function App() {
                       segments: prev.segments.map((seg, i) => {
                         if (i !== idx) return seg;
                         const base = { ...prev.globalOverlayConfig };
-                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: 'rgba(0,0,0,0.8)', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
                         if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
                         return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
                       }),
@@ -1169,7 +1126,7 @@ export default function App() {
                     onAddExtraOverlay={(idx) => setProject(prev => ({
                       ...prev,
                       segments: prev.segments.map((seg, i) =>
-                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: 'rgba(0,0,0,0.5)', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
                       ),
                     }))}
                   />
@@ -1191,6 +1148,12 @@ export default function App() {
                       a.click();
                     }}
                     onImportScenesJson={(e) => handleFileUpload(e, 'story')}
+                    exportResolution={exportResolution}
+                    onExportResolutionChange={setExportResolution}
+                    exportFps={exportFps}
+                    onExportFpsChange={setExportFps}
+                    onRenderTestFrame={import.meta.env.DEV ? handleRenderTestFrame : undefined}
+                    onEncodeTestSegment={import.meta.env.DEV ? handleEncodeTestSegment : undefined}
                   />
                 )}
               </div>
@@ -1303,59 +1266,53 @@ export default function App() {
         }
       `}</style>
       
-      <canvas 
-        ref={hiddenCanvasRef} 
-        width={1280} 
-        height={720} 
-        className="hidden pointer-events-none" 
-      />
-
       {/* Export Progress Overlay */}
       <AnimatePresence>
         {isExporting && (
-          <motion.div 
-            initial={{ opacity: 0 }} 
-            animate={{ opacity: 1 }} 
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
           >
             <div className="w-full max-w-md text-center space-y-8">
               <div className="relative inline-block">
-                 <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
-                    <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
-                 </div>
-                 <motion.div 
-                   className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
-                   animate={{ rotate: 360 }}
-                   transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                 />
+                <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
+                  <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
+                </div>
+                <motion.div
+                  className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                />
               </div>
-              
+
               <div>
                 <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                <p className="text-gray-500 text-sm font-medium">Please do not close this tab. Processing high-quality textures and transitions...</p>
+                <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportStageLabel}</p>
+                <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
               </div>
 
               <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
-                <motion.div 
+                <motion.div
                   className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
                   style={{ width: `${exportProgress}%` }}
                 />
               </div>
 
               <div className="grid grid-cols-3 gap-4">
-                 <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Encoding</p>
-                    <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
-                 </div>
-                 <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Container</p>
-                    <p className="text-[10px] text-white font-bold">MP4 / HEVC</p>
-                 </div>
-                 <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
-                    <p className="text-[10px] text-white font-bold">60 Constant</p>
-                 </div>
+                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Codec</p>
+                  <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
+                </div>
+                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
+                  <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
+                </div>
+                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
+                  <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -1555,6 +1512,18 @@ export default function App() {
            </div>
         )}
       </AnimatePresence>
+
+      {/* Dev-only: frame renderer test output */}
+      {import.meta.env.DEV && testFrameUrl && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm" onClick={() => setTestFrameUrl(null)}>
+          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <p className="text-[9px] font-black uppercase tracking-[0.3em] text-yellow-500 mb-2">
+              Frame Renderer Output — 1920×1080 — click outside to dismiss
+            </p>
+            <img src={testFrameUrl} alt="Rendered frame" className="w-full h-auto rounded-xl border border-yellow-900" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

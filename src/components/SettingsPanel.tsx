@@ -12,6 +12,16 @@ interface Props {
   onExportScenesJson: () => void;
   onImportScenesJson: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onNewProject: () => void;
+  /** Export resolution. Defaults to '1080p'. */
+  exportResolution: '1080p' | '4k';
+  onExportResolutionChange: (r: '1080p' | '4k') => void;
+  /** Export FPS. Defaults to 30. */
+  exportFps: 24 | 30 | 60;
+  onExportFpsChange: (fps: 24 | 30 | 60) => void;
+  /** Dev-only: renders the current frame to a visible canvas for visual diffing. */
+  onRenderTestFrame?: () => void;
+  /** Dev-only: encodes the current segment to MP4 and triggers download. */
+  onEncodeTestSegment?: () => void;
 }
 
 export function SettingsPanel({
@@ -23,6 +33,12 @@ export function SettingsPanel({
   onExportScenesJson,
   onImportScenesJson,
   onNewProject,
+  exportResolution,
+  onExportResolutionChange,
+  exportFps,
+  onExportFpsChange,
+  onRenderTestFrame,
+  onEncodeTestSegment,
 }: Props): React.ReactElement {
   return (
     <div className="space-y-8">
@@ -161,7 +177,58 @@ export function SettingsPanel({
               <input type="file" accept=".json" className="hidden" onChange={onImportScenesJson} />
             </label>
           </div>
+
+          {/* Export quality settings */}
+          <div className="space-y-3 pt-2">
+            <label className="text-[9px] uppercase tracking-widest text-gray-600 font-bold block">Export Quality</label>
+            <div className="flex gap-3">
+              <div className="flex-1 space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-700 font-bold block">Resolution</label>
+                <select
+                  value={exportResolution}
+                  onChange={(e) => onExportResolutionChange(e.target.value as '1080p' | '4k')}
+                  className="w-full bg-[#1A1A1A] border border-[#282828] p-2 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
+                >
+                  <option value="1080p">1080p (1920×1080)</option>
+                  <option value="4k">4K (3840×2160)</option>
+                </select>
+              </div>
+              <div className="flex-1 space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-700 font-bold block">Frame Rate</label>
+                <select
+                  value={exportFps}
+                  onChange={(e) => onExportFpsChange(Number(e.target.value) as 24 | 30 | 60)}
+                  className="w-full bg-[#1A1A1A] border border-[#282828] p-2 rounded-lg text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
+                >
+                  <option value={24}>24 fps</option>
+                  <option value={30}>30 fps</option>
+                  <option value={60}>60 fps</option>
+                </select>
+              </div>
+            </div>
+          </div>
         </div>
+        {import.meta.env.DEV && (onRenderTestFrame ?? onEncodeTestSegment) && (
+          <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">
+            <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-yellow-600">Dev Tools</h3>
+            {onRenderTestFrame && (
+              <button
+                onClick={onRenderTestFrame}
+                className="w-full bg-[#1A1A1A] border border-yellow-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-yellow-600 hover:bg-yellow-600 hover:text-black hover:border-yellow-600 transition-all"
+              >
+                Render Current Frame to Canvas
+              </button>
+            )}
+            {onEncodeTestSegment && (
+              <button
+                onClick={onEncodeTestSegment}
+                className="w-full bg-[#1A1A1A] border border-yellow-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-yellow-600 hover:bg-yellow-600 hover:text-black hover:border-yellow-600 transition-all"
+              >
+                Encode Current Segment → MP4
+              </button>
+            )}
+          </section>
+        )}
         <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">
           <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-red-500">Danger Zone</h3>
           <button

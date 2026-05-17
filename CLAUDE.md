@@ -10,7 +10,7 @@ Browser-based video slideshow compositor. Workflow:
 1. User provides a script (text), scene details (bracketed asset names like `[IMAGE: hero.jpg]`), and a voiceover audio file
 2. A 3-step sync wizard maps script → scenes → uploaded assets, proportioning segment durations to word count
 3. User edits segments on a visual timeline (transitions, overlays, filters, animations)
-4. Exports via `MediaRecorder` + canvas capture → `.webm` file (currently mislabeled `.mp4`)
+4. Exports via ffmpeg.wasm — full H.264/AAC MP4 with overlays, filters, and transitions rendered from canvas
 
 No server. No AI calls. Fully client-side.
 
@@ -20,7 +20,7 @@ No server. No AI calls. Fully client-side.
 
 ```
 src/
-  App.tsx            # ~1,560 lines — top-level state, orchestration, playback, export
+  App.tsx            # ~1,450 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
   services/
@@ -28,12 +28,18 @@ src/
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # parseProjectData(), isFuzzyMatch(), findAssetByContext()
+    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated
+    frameRenderer.ts # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
+    segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array
+    exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob
+  workers/
+    exportWorker.ts  # Comlink-exposed FfmpegWorkerService; owns FFmpeg instance off main thread
   hooks/
     usePersistProject.ts  # Debounced (500ms) project save; accepts enabled flag to gate hydration
   components/
     PreviewStage.tsx      # Video/image display + overlay rendering
     SegmentEditorPanel.tsx # Segment list + per-segment controls
-    SettingsPanel.tsx     # Global aesthetics, export/import JSON, "New Project" reset
+    SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
     StockSearchModal.tsx  # Pexels/Pixabay search modal
     SyncReviewModal.tsx   # Sync mapping review modal
     SyncWizard.tsx        # 3-step sync header buttons + validation
@@ -41,7 +47,9 @@ src/
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
 index.html           # Title: "Kinetix Pro Studio"
-vite.config.ts       # Clean Vite config (AI Studio artifacts removed)
+vite.config.ts       # Vite config — COOP/COEP headers for dev server (required for SharedArrayBuffer)
+public/
+  _headers           # Cloudflare Pages: COOP/COEP headers for production (required for SharedArrayBuffer)
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
@@ -65,11 +73,54 @@ project: Project {
 
 Playback is driven by a `setInterval` (100ms tick) that advances `currentTime`, which `currentSegment` is derived from via `useMemo`.
 
-Export: `canvas.captureStream(30)` → `MediaRecorder` → `.webm` blob. **Canvas only captures raw video/image pixels — not CSS overlays, filters, or transitions.**
+Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3.
 
 ### Persistence Model
 
 localStorage (key `kinetix:project:v1`, versioned for future migrations) holds the JSON project state with asset `url` and `file` fields stripped — blob URLs are ephemeral and cannot survive a reload. IndexedDB (`kinetix-assets` database, `assets` object store, keyPath `id`) holds the raw blobs keyed by asset id. On app load, the mount effect in `App.tsx` reads localStorage first; if a saved project exists, it fetches all blobs from IndexedDB, builds a `Map<id, StoredAsset>`, and reconstructs each asset's `url` via `URL.createObjectURL(blob)`. Assets whose id is in localStorage but whose blob is missing from IndexedDB are dropped with a `console.warn`, and any segment `assetId` or top-level `voiceoverId` referencing a dropped asset is set to `undefined` — the segment itself is preserved so the timeline is not disturbed. Any future code that **adds** an asset to `project.assets` MUST call `putAsset` before setting project state (if `putAsset` throws, do not add the asset — a phantom asset that vanishes on reload is worse than no asset). Any future code that **removes** an asset MUST call `deleteAsset` and `URL.revokeObjectURL` after the state update.
+
+### Export Pipeline
+
+**Requires `crossOriginIsolated = true`** — served with `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` headers (configured in `vite.config.ts` for dev, `public/_headers` for Cloudflare Pages prod). Without these headers `SharedArrayBuffer` is unavailable and ffmpeg.wasm falls back to single-threaded mode (slower but still functional).
+
+Full chain, left to right:
+
+```
+App.tsx handleExport()
+  │
+  ├─ spawns exportWorker.ts Web Worker (Comlink)
+  │     └─ FfmpegWorkerService.load()
+  │           └─ ffmpegLoader.ts  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
+  │
+  └─ exportPipeline.ts  exportProject(project, ffmpegWorkerProxy, options, onProgress)
+        │
+        ├── for each segment:
+        │     segmentEncoder.ts  encodeSegment(segment, asset, ffmpeg, globalConfig, opts)
+        │       ├─ for each frame: frameRenderer.ts  renderSegmentFrame(...)
+        │       │     ├─ draws background (color fill / image drawImage / video seeked drawImage)
+        │       │     ├─ applies CSS filter string via ctx.filter
+        │       │     ├─ draws text overlay + extra overlays
+        │       │     └─ if transition frame: applyTransitionBlend(ctx, blendParams, w, h)
+        │       │           └─ FADE/DISSOLVE: globalAlpha + drawImage
+        │       │           └─ SLIDE/SLIDE_UP: offset drawImage
+        │       │           └─ ZOOM: scale + globalAlpha
+        │       │           └─ BLUR: ctx.filter blur + globalAlpha
+        │       ├─ writes frame_00001.png … frame_NNNNN.png to ffmpeg FS
+        │       └─ ffmpeg exec: libx264 fast crf23 yuv420p → seg_N.mp4
+        │
+        ├── if >1 segment: ffmpeg concat demuxer → concat_video.mp4
+        │
+        ├── if voiceover: ffmpeg mux audio (AAC 192k -shortest) → export_final.mp4
+        │
+        └── readFile → Blob('video/mp4') → download {name}_{timestamp}.mp4
+```
+
+**Key types:**
+- `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`. Both raw `FFmpeg` and the Comlink proxy satisfy this contract.
+- `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal in `App.tsx`.
+- `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
+
+**Performance (Phase 3 baseline):** ~25s wall-clock per 1s of 1080p/30fps output (≈1.35s/frame). 4K is untested. Phase 6 (Tauri + native ffmpeg) will replace this path entirely.
 
 ---
 
@@ -121,13 +172,14 @@ App.tsx                    — top-level state + orchestration only
     stockService.ts        — already extracted ✓
   hooks/
     usePlayback.ts         — playback interval, audio sync, spacebar
-    useExport.ts           — canvas capture + MediaRecorder logic
+    useExport.ts           — export orchestration (currently inline in App.tsx handleExport)
 ```
 **Do not add features to App.tsx as a monolith — extract first, then add.**
 
 ### Export Format
-- Output is WebM. Name the download `.webm`, not `.mp4`
-- Until the canvas rendering pipeline captures DOM overlays, the export is "visuals only" — do not market it as full-fidelity
+- Output is MP4 (H.264 + AAC). Name the download `{name}_{timestamp}.mp4`
+- The canvas render pipeline in `frameRenderer.ts` captures overlays and filters — exports are full-fidelity relative to what the renderer implements
+- Export quality settings (resolution, fps) live in `App.tsx` state (`exportResolution`, `exportFps`) and are surfaced in SettingsPanel
 
 ### Environment Variables
 - Client-safe (Pexels, Pixabay): `VITE_` prefix, `import.meta.env`
@@ -142,7 +194,7 @@ App.tsx                    — top-level state + orchestration only
 | `newSegs[idx].prop = val` before setState | Direct mutation — React may not re-render correctly, causes subtle bugs |
 | `Math.random().toString(36).substr(2,9)` for IDs | `substr` deprecated; collisions possible in bulk imports |
 | `any` type | Defeats type safety; use proper types or `unknown` |
-| Label export file `.mp4` | Container is WebM — mislabeled files break some players |
+| Label export file `.webm` | Container is now real MP4 (H.264/AAC) — use `.mp4` |
 | Add features to App.tsx without extracting a component first | Makes the monolith worse |
 | Put secret API keys in `vite.config.ts` `define` | Baked into client bundle, publicly visible |
 | Add an asset to `project.assets` without calling `putAsset` first | Blob URL dies with the tab — asset vanishes on reload |
@@ -169,8 +221,8 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 
 | Limitation | Impact | Future Fix |
 |---|---|---|
-| Export misses CSS overlays, filters, transitions | Exported video is "bare" | Server-side ffmpeg render or full canvas draw pipeline |
-| Safari export broken | `captureStream` + `MediaRecorder` WebM unsupported | Requires ffmpeg.wasm or server-side rendering |
+| Export fidelity limited to what `frameRenderer.ts` implements | ~42 transition types and ~30 filters not yet mapped to canvas ops — fall back silently | Phase 4 — implement or prune enum values |
+| Safari export untested | `crossOriginIsolated` may be false on Safari due to COOP/COEP handling differences | Phase 4 — test and fix |
 | Segments referencing a deleted asset are not cleaned up until next page reload | Segment renders as unassigned only after refresh; mid-session it holds a dead `assetId` | Phase 3 — clean up at delete time, or document and rely on hydration-time cleanup |
 | Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint |
 | No authentication | Open access | Add auth layer when persistence is added |
@@ -220,13 +272,15 @@ vite            — listed in both deps and devDeps (remove from deps)
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 2 | Playback interval + audio sync still in App.tsx; deferred to avoid scope creep |
-| Extract `useExport.ts` hook | ⬜ Deferred — Phase 2 | Canvas capture + MediaRecorder still in App.tsx; deferred to avoid scope creep |
-| Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → 1,449 LOC |
+| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 4 | Playback interval + audio sync still in App.tsx |
+| Extract `useExport.ts` hook | ⬜ Deferred — Phase 4 | Export logic in App.tsx handleExport; extract when Phase 4 begins |
+| Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
 | Fix `togglePlay` stale closure | ✅ Done — 2026-05-16 | Uses functional updater setIsPlaying(p => !p) |
-| Fix export file extension (.webm) | ✅ Done — 2026-05-16 | |
+| Fix export file extension | ✅ Done — 2026-05-16 / 2026-05-17 | Was .webm mislabeled; now real .mp4 from ffmpeg.wasm |
 | Replace Math.random IDs | ✅ Done — 2026-05-16 | All IDs use crypto.randomUUID() |
-| Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix (pre-existing bug) |
+| Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix |
 | Add project persistence | ✅ Done — 2026-05-16 | localStorage + IndexedDB; single-project; "New Project" reset |
-| Fix canvas export to include overlays | ⬜ Not started | Major effort — Phase 3 |
+| Replace canvas/MediaRecorder export with ffmpeg.wasm | ✅ Done — 2026-05-17 | Full pipeline: frameRenderer → segmentEncoder → exportPipeline → Comlink worker |
+| COOP/COEP headers for SharedArrayBuffer | ✅ Done — 2026-05-17 | vite.config.ts (dev) + public/_headers (Cloudflare Pages prod) |
+| Phase 3 E2E smoke test (human) | ⬜ Pending | Dev-button single-segment encode verified; full UI export path untested |
