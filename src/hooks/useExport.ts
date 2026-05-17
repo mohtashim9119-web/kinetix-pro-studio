@@ -10,6 +10,7 @@ import { type Project } from '../types';
 
 export type ExportResolution = '1080p' | '4k';
 export type ExportFps = 24 | 30 | 60;
+export type { ExportError } from '../services/exportPipeline';
 
 export interface UseExportState {
   isExporting: boolean;

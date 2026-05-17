@@ -61,7 +61,7 @@ import { SettingsPanel } from './components/SettingsPanel';
 import { renderSegmentFrame } from './services/frameRenderer';
 import { encodeSegment } from './services/segmentEncoder';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
-import { useExport, type ExportResolution, type ExportFps } from './hooks/useExport';
+import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 
 interface RawSegment {
   text: string;
@@ -260,6 +260,23 @@ const DEFAULT_PROJECT: Project = {
     fontFamily: 'Inter',
   },
 };
+
+function getExportErrorSummary(error: ExportError): string {
+  switch (error.kind) {
+    case 'asset_missing':
+      return `An asset used by segment ${(error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`;
+    case 'ffmpeg_load':
+      return 'Failed to load the ffmpeg engine. Check your network connection and try again.';
+    case 'encode':
+      return `Failed to encode segment ${(error.segmentIndex ?? 0) + 1}.`;
+    case 'concat':
+      return 'Failed to concatenate segments into a single video.';
+    case 'mux':
+      return 'Failed to mux the audio track into the final video.';
+    case 'unknown':
+      return 'An unexpected error occurred during export.';
+  }
+}
 
 export default function App() {
   const [project, setProject] = useState<Project>(DEFAULT_PROJECT);
@@ -1243,17 +1260,7 @@ export default function App() {
                 <div>
                   <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
                   <p className="text-sm text-gray-300 mb-1">
-                    {exportState.error.kind === 'asset_missing'
-                      ? `An asset used by segment ${(exportState.error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`
-                      : exportState.error.kind === 'ffmpeg_load'
-                      ? 'Failed to load the ffmpeg engine. Check your network connection and try again.'
-                      : exportState.error.kind === 'encode'
-                      ? `Failed to encode segment ${(exportState.error.segmentIndex ?? 0) + 1}.`
-                      : exportState.error.kind === 'concat'
-                      ? 'Failed to concatenate segments into a single video.'
-                      : exportState.error.kind === 'mux'
-                      ? 'Failed to mux the audio track into the final video.'
-                      : 'An unexpected error occurred during export.'}
+                    {getExportErrorSummary(exportState.error)}
                   </p>
                   <p className="text-xs text-gray-600">{exportState.error.message}</p>
                 </div>
