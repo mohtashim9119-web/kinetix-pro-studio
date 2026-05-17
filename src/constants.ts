@@ -172,7 +172,7 @@ export const getMotionProps = (animation: string) => {
 if (import.meta.env.DEV) {
   const NO_OP_FILTER = 'none';
   for (const filter of FILTERS) {
-    if (filter === 'none') continue; // 'none' is intentionally the identity
+    if (filter === 'none') continue; // 'none' is the explicit "no filter" identity value, not a missing implementation
     console.assert(
       getFilterStyle(filter) !== NO_OP_FILTER,
       `[constants] FILTERS contains "${filter}" but getFilterStyle returns no-op. Either implement it or remove it from FILTERS.`,
@@ -193,7 +193,7 @@ if (import.meta.env.DEV) {
   };
 
   for (const animation of TEXT_ANIMATIONS) {
-    if (animation === 'fade') continue; // 'fade' intentionally uses the default fade shape
+    if (animation === 'fade') continue; // 'fade' intentionally uses the default fade shape — the default branch IS its implementation
     console.assert(
       !isDefaultFade(getMotionProps(animation)),
       `[constants] TEXT_ANIMATIONS contains "${animation}" but getMotionProps returns default no-op fade. Either implement it or remove it from TEXT_ANIMATIONS.`,
