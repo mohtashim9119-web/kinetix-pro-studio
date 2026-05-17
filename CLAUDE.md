@@ -28,7 +28,7 @@ src/
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # parseProjectData(), isFuzzyMatch(), findAssetByContext()
-    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated
+    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated. NOTE: only used by the dev-only test buttons (handleRenderTestFrame, handleEncodeTestSegment) on the main thread — NOT used by the production export path, which goes through exportWorker.ts directly.
     frameRenderer.ts # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
     segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array
     exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob
@@ -90,7 +90,9 @@ App.tsx handleExport()
   │
   ├─ spawns exportWorker.ts Web Worker (Comlink)
   │     └─ FfmpegWorkerService.load()
-  │           └─ ffmpegLoader.ts  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
+  │           └─ new FFmpeg() + toBlobURL inline  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
+  │           NOTE: does NOT call ffmpegLoader.ts — the worker owns its FFmpeg instance directly.
+  │           ffmpegLoader.ts is only used by dev test buttons on the main thread.
   │
   └─ exportPipeline.ts  exportProject(project, ffmpegWorkerProxy, options, onProgress)
         │
