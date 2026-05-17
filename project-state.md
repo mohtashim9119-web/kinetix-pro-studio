@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-05-17 |
-| Current phase | Phase 3 — export pipeline (ffmpeg.wasm) |
+| Current phase | Phase 4 — Polish |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -24,7 +24,7 @@
 | Phase 0 | Audit & baseline | ✅ Complete |
 | Phase 1 | Foundation refactor | ✅ Complete |
 | Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
-| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ⬜ In progress |
+| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete (pending final E2E verification) |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ⬜ Not started |
 | Phase 5 | Production hardening — tests, accessibility, responsive | ⬜ Not started |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
@@ -33,17 +33,20 @@
 
 ## Current Sprint
 
-Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
+Phase 3 complete. Next: Phase 4 (polish — filters, transitions, Safari, error handling).
+
+Phase 3 steps:
 
 | Step | Description | Status |
 |---|---|---|
-| Step 1 | IndexedDB asset store service (`assetStore.ts`) | ✅ Done |
-| Step 2 | localStorage project serializer (`projectStore.ts`) | ✅ Done |
-| Step 3 | Debounced save hook (`usePersistProject.ts`) | ✅ Done |
-| Step 4 | Asset blob persistence wiring — uploads and deletes | ✅ Done |
-| Step 5 | Project rehydration on load — blob URL reconstruction | ✅ Done |
-| Step 6 | "New Project" reset action | ✅ Done |
-| Step 7 | Docs + final verification | ✅ Done |
+| Step 1 | Install ffmpeg.wasm, configure COOP/COEP headers (`ffmpegLoader.ts`) | ✅ Done |
+| Step 2 | Frame renderer — pure canvas pipeline for image/video/overlay (`frameRenderer.ts`) | ✅ Done |
+| Step 3 | Segment encoder — render frames → ffmpeg → MP4 (`segmentEncoder.ts`) | ✅ Done |
+| Step 4 | Transition blending — crossfade/slide/zoom at segment boundaries | ✅ Done |
+| Step 5 | Export pipeline — concat demuxer + audio mux (`exportPipeline.ts`) | ✅ Done |
+| Step 6 | Comlink Web Worker wrapper — ffmpeg runs off main thread (`exportWorker.ts`) | ✅ Done |
+| Step 7 | Wire pipeline into UI — remove MediaRecorder, add progress modal + quality settings | ✅ Done |
+| Step 8 | Docs + PR | ✅ Done |
 
 ---
 
@@ -57,6 +60,7 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 | 2026-05-16 | **Long-term distribution:** Desktop app via Tauri (Phase 6). Web app remains the development target through Phases 3-5; desktop wrap converts the same codebase. Native ffmpeg replaces ffmpeg.wasm for full-speed renders. |
 | 2026-05-16 | **Branch strategy:** `main` is the stable branch. Feature work goes on short-lived branches, merged via PR. |
 | 2026-05-16 | **Output format:** MP4 required for YouTube upload. Current WebM output is unacceptable for production — this is a Phase 3 blocker. |
+| 2026-05-17 | **ffmpeg.wasm encode speed:** ~25s wall-clock per 1s of 1080p output (≈1.35s per frame at 30fps). Acceptable for Phase 3 validation; production-grade speed requires Phase 6 native ffmpeg via Tauri. |
 
 ---
 
@@ -64,9 +68,10 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 
 - [ ] Multi-user support — team accounts in v1, or stay single-user through Phase 5?
 - [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
-- [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 3 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
-- [ ] Bundle splitting — main chunk is ~521 kB. Candidates for lazy-loading: SegmentEditorPanel, StockSearchModal, SyncReviewModal. Defer to Phase 4 (polish).
+- [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 4 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
+- [ ] Bundle splitting — main chunk is now **537 kB** (up from ~521 kB) due to `@ffmpeg/ffmpeg`. Candidates for lazy-loading: ffmpeg import, SegmentEditorPanel, StockSearchModal, SyncReviewModal. Deferred to Phase 4.
 - [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 4?
+- [ ] **Phase 3 end-to-end export (full UI flow with main Export button) not yet smoke-tested by human.** Dev-button segment encode was verified in Steps 3–4 (single-segment MP4 produced and downloaded successfully). Full multi-segment concat + audio mux path is build-verified only — human E2E test required before merging `phase-3-export` → `main`.
 
 ---
 
@@ -95,6 +100,19 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 | 2026-05-16 | **Phase 2 Step 5:** Wired rehydration mount effect into `App.tsx`. On load: reads localStorage → fetches all IDB blobs → reconstructs `blob:` URLs. Orphaned assets dropped with `console.warn`; referencing segments and `voiceoverId` cleared. `isHydrating` flag gates UI and suppresses premature saves. (ca7447d) |
 | 2026-05-16 | **Phase 2 Step 6:** Added "New Project" button in Settings panel Danger Zone. Confirm → revoke all blob URLs → clear localStorage → clear IndexedDB → reset React state to `DEFAULT_PROJECT`. Cancel path is a no-op. (b782072) |
 | 2026-05-16 | **Phase 2 complete.** Branch `phase-2-persistence` pushed. `tsc --noEmit` 0 errors, `npm run build` clean. Full smoke test passed: upload → refresh → rehydration → "New Project" → post-reset upload all verified. |
+| 2026-05-17 | **Phase 3 commit `6e06f86`:** Install `@ffmpeg/ffmpeg@0.12.15` + `@ffmpeg/util@0.12.2`; create `ffmpegLoader.ts` (lazy-loads + caches FFmpeg instance, warns if not `crossOriginIsolated`); add COOP/COEP headers to Vite dev server and `public/_headers` for Cloudflare Pages. |
+| 2026-05-17 | **Phase 3 commit `94cb4af`:** Create `src/services/frameRenderer.ts` — pure canvas pipeline that renders one frame for any segment type (image/video/color) with CSS filters, text overlays, and extra overlays applied via 2D context. |
+| 2026-05-17 | **Phase 3 commit `99f8e55`:** Fix video seek race condition (stale `seeked` event) and resolve `rgba()` color warning in `<input type="color">` binding — `shadowColor` set to `rgba(0,0,0,0)` instead of `'transparent'`. |
+| 2026-05-17 | **Phase 3 commit `db02b85`:** Resolve residual `rgba()` console warning in live preview playback path — all three default `backgroundColor` values (`DEFAULT_PROJECT`, extra-overlay default, 'cyber' preset) changed from `rgba(0,0,0,0.5)` to `#000000`. |
+| 2026-05-17 | **Phase 3 commit `95c799b`:** Create `src/services/segmentEncoder.ts` — renders every frame of a segment to PNG via `frameRenderer`, writes frames to ffmpeg virtual FS, encodes with libx264 (fast preset, crf 23, yuv420p, faststart); returns raw MP4 `Uint8Array`. |
+| 2026-05-17 | **Phase 3 commit `40bd5de`:** Add diagnostic logging to seek + encoder paths to diagnose intermittent video seek timeouts observed in checkpoint testing (target/currentTime/readyState/duration printed per seek). |
+| 2026-05-17 | **Phase 3 commit `e884fd0`:** Fix two seek edge cases: (1) `ensureMetadata()` waits for `loadedmetadata` before seeking; (2) nudge pattern avoids browser no-op when target === currentTime; (3) duration clamping for stretched segments; (4) timeout raised to 5s. |
+| 2026-05-17 | **Phase 3 commit `eb9eae7`:** Add transition blending in `segmentEncoder.ts` — for frames in the last `transitionDuration` seconds, the incoming segment's first frame is rendered to a blend canvas; `applyTransitionBlend()` in `frameRenderer.ts` composites FADE/SLIDE/ZOOM/BLUR families via canvas `globalAlpha` + `drawImage`. |
+| 2026-05-17 | **Phase 3 commit `76da1f8`:** Create `src/services/exportPipeline.ts` — orchestrates the full export: encode all segments → concat with ffmpeg concat demuxer → mux voiceover AAC audio → output final MP4 blob. |
+| 2026-05-17 | **Phase 3 commit `65a6dd4`:** Create `src/workers/exportWorker.ts` — Comlink-exposed `FfmpegWorkerService` class; define `FfmpegLike` interface so both direct `FFmpeg` and Comlink proxy satisfy the same contract; update `segmentEncoder` + `exportPipeline` to accept `FfmpegLike`. |
+| 2026-05-17 | **Phase 3 commit `a1e9425`:** Wire new export pipeline into UI — replace MediaRecorder/canvas-stream `handleExport` with Comlink worker spawn + `exportProject()` call; add real-time stage labels and per-segment progress to export modal; add resolution (1080p/4K) and fps (24/30/60) selectors to SettingsPanel; remove hidden canvas, Web Audio node refs, canvas mirror `useEffect`. |
+| 2026-05-17 | **Phase 3 commit `338bb9a`:** Stage orphaned `comlink` entry in `package.json` + `package-lock.json` (was installed to `node_modules` in Step 6 but never committed). |
+| 2026-05-17 | **Phase 3 complete.** Branch `phase-3-export` pushed. `tsc --noEmit` 0 errors, `npm run build` clean (537 kB main bundle). Dev-button segment encode verified; full E2E export pending human smoke test before merge to `main`. |
 
 ---
 
@@ -102,12 +120,15 @@ Phase 2 complete. Next: Phase 3 (export pipeline rebuild).
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 1,560 (was 3,167 — 51% reduction; +111 for persistence wiring) |
+| `src/App.tsx` LOC | ~1,450 (was 3,167 — 54% reduction net of all phases) |
 | localStorage key | `kinetix:project:v1` |
 | IndexedDB store | `kinetix-assets` / `assets` (keyPath: `id`) |
-| Total dependencies | 20 (12 prod + 8 dev) |
-| Dead dependencies identified | 5 (`@google/genai`, `express`, `dotenv`, `tsx`, `vite` duplicated in prod deps) |
+| Total dependencies | 13 prod + 9 dev |
+| Export codec | H.264 video + AAC audio, MP4 container |
+| Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
+| Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
+| Main bundle size | 537 kB minified / 161 kB gzip (`@ffmpeg/ffmpeg` is the dominant dep) |
+| Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
 | Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
-| Export-blocking issues | 2 (canvas misses DOM overlays; `.webm` mislabeled as `.mp4`) |
 | Transition enum values unmapped | ~42 of 57 |
 | Filter names with no style implementation | ~30 of 55 |
