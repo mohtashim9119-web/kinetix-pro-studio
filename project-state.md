@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-05-17 |
-| Current phase | Phase 4 — Polish |
+| Current phase | Phase 5 — Production hardening |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -24,8 +24,8 @@
 | Phase 0 | Audit & baseline | ✅ Complete |
 | Phase 1 | Foundation refactor | ✅ Complete |
 | Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
-| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete (pending final E2E verification) |
-| Phase 4 | Polish — filters, transitions, Safari, error handling | ⬜ Not started |
+| Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
+| Phase 4 | Polish — filters, transitions, Safari, error handling | ✅ Complete |
 | Phase 5 | Production hardening — tests, accessibility, responsive | ⬜ Not started |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
 
@@ -33,7 +33,41 @@
 
 ## Current Sprint
 
-Phase 3 complete. Next: Phase 4 (polish — filters, transitions, Safari, error handling).
+Phase 4 complete. Next: Phase 5 (production hardening — tests, accessibility, responsive layout).
+
+---
+
+## Phase 4 Summary
+
+| Step | Description | Commits |
+|---|---|---|
+| Step 1 | Skipped — Phase 3 E2E already verified before merge | — |
+| Step 2 | Error boundaries + structured export errors | a42ed66, a27efe5 |
+| Step 3 | Dangling asset reference cleanup at delete time | c7515e5 |
+| Step 4 | Extract `useExport` hook + `getExportErrorSummary` | ab8d4d9, e7e0bbc |
+| Step 5 (5+5.1) | Code-split lazy modals; lazy-load jszip | f9704ee, 3e1fd2c |
+| Step 6 (7) | Enum prune — phantom filters/transitions/animations removed from UI | cdb2296, 3a370e6 |
+| Step 7 (8) | Safari validation handoff doc + test run | 97821cd — **PASS** |
+| Step 9 | ffmpeg console noise — handler already at `exportWorker.ts:35`; no commit needed | — |
+| Step 10 | Fade transition global fallback in segment encoder | ea18635 |
+
+**Bundle size:** 542 kB → 433 kB main (−109 kB / −28 kB gzip) via lazy-loading jszip, StockSearchModal, SyncReviewModal.
+
+### Smoke Test Results
+
+| Test | Result | Notes |
+|---|---|---|
+| Test 1 — `crossOriginIsolated` | ✅ PASS | `true` in both Chrome and Safari; `SharedArrayBuffer` available; COOP/COEP headers correct |
+| Test 2 — Console hygiene | ✅ PASS | ffmpeg stderr routed to `console.debug`; no spurious `console.error` from pipeline |
+| Test 3 — Lazy modal loading | ✅ PASS | `StockSearchModal-*.js` loaded on demand; no lazy chunks in initial network request |
+| Test 4 — Dangling asset cleanup | ⚠️ PARTIAL | `c7515e5` clears `assetId` correctly; `autoMatchAssets` re-assigns immediately (pre-existing bug, deferred to Phase 5) |
+| Test 5 — `asset_missing` error path | ⚠️ NOT REACHED via reload | Hydration cleanup clears orphaned `assetId`s before export; `ExportError` infrastructure verified by code review; deeper trigger deferred |
+| Test 6 — Fade transition | ⬜ PENDING | User execution pending |
+| Safari validation | ✅ PASS | `crossOriginIsolated=true`, full export, MP4 plays in VLC with H.264/AAC |
+
+---
+
+## Previous Sprint
 
 Phase 3 steps:
 
@@ -61,6 +95,8 @@ Phase 3 steps:
 | 2026-05-16 | **Branch strategy:** `main` is the stable branch. Feature work goes on short-lived branches, merged via PR. |
 | 2026-05-16 | **Output format:** MP4 required for YouTube upload. Current WebM output is unacceptable for production — this is a Phase 3 blocker. |
 | 2026-05-17 | **ffmpeg.wasm encode speed:** ~25s wall-clock per 1s of 1080p output (≈1.35s per frame at 30fps). Acceptable for Phase 3 validation; production-grade speed requires Phase 6 native ffmpeg via Tauri. |
+| 2026-05-17 | **Safari export verified:** `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264 + AAC. No code changes required for Safari support. |
+| 2026-05-17 | **Global transition fallback:** `segmentEncoder.ts` now falls back to `project.globalTransition` when a segment's own `transition` field is NONE. Per-segment overrides take precedence. "Apply to All" button in Settings still materializes the global value onto segments for per-segment overrides. UX revisit deferred to Phase 5. |
 
 ---
 
@@ -68,10 +104,32 @@ Phase 3 steps:
 
 - [ ] Multi-user support — team accounts in v1, or stay single-user through Phase 5?
 - [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
-- [ ] Dangling segment references on asset delete — segments referencing a deleted asset are cleaned up on reload (hydration unsets `assetId`) but not at delete time. Decide in Phase 4 whether to clean up at delete time or keep the current eventually-consistent behavior. Affects export pipeline.
-- [ ] Bundle splitting — main chunk is now **537 kB** (up from ~521 kB) due to `@ffmpeg/ffmpeg`. Candidates for lazy-loading: ffmpeg import, SegmentEditorPanel, StockSearchModal, SyncReviewModal. Deferred to Phase 4.
-- [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 4?
-- [ ] **Phase 3 end-to-end export (full UI flow with main Export button) not yet smoke-tested by human.** Dev-button segment encode was verified in Steps 3–4 (single-segment MP4 produced and downloaded successfully). Full multi-segment concat + audio mux path is build-verified only — human E2E test required before merging `phase-3-export` → `main`.
+- [x] Dangling segment references on asset delete — **Resolved (Phase 4, Step 3):** cleaned up at delete time via `c7515e5`.
+- [x] Bundle splitting — **Resolved (Phase 4, Step 5):** jszip, StockSearchModal, SyncReviewModal are now lazy-loaded. Main bundle: 542 kB → 433 kB.
+- [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 5?
+- [x] **Phase 3 end-to-end export verified — 2026-05-17.** Multi-segment + voiceover + FADE transition + main Export button + VLC playback confirmed H.264/AAC. Verified before `phase-3-export` merged to `main`.
+
+---
+
+## Known Cosmetic Issues
+
+- **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
+
+---
+
+## Deferred to Phase 5
+
+- **JSZip dynamic-import double-cast** — `as unknown as typeof import('jszip')` workaround for `export =` + ESM dynamic import. Replace with a proper ambient module declaration in `src/types/jszip.d.ts`.
+- **Per-segment vs global transition UX** — now that `segmentEncoder.ts` falls back to `project.globalTransition`, the "Apply Transition to All Scenes" button is partly redundant. Consider removing it or repurposing it for per-segment *overrides* only.
+- **`motion` library bundle weight** — ~264 kB unminified; not easily tree-shaken without switching APIs. Evaluate whether animation features justify the cost or trim to specific motion primitives.
+- **4K export validation** — 1080p verified on Safari and Chrome. 4K path is untested.
+- **Stock API rate-limit handling** — 429s silently return empty results. Add retry-with-backoff + user-visible feedback.
+- **Real mid-export cancellation** — `cancelExport` in `useExport.ts` clears state but does not terminate the in-flight worker. Requires `worker.terminate()` + restart guard (`// TODO: Phase 5`).
+- **Accessibility audit** — no ARIA labels, focus traps, or keyboard nav beyond spacebar. Required before public launch.
+- **Responsive layout** — layout assumes ≥1280px width. Mobile/tablet breakpoints not addressed.
+- **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
+- **`autoMatchAssets` re-assignment on delete** — the `useEffect` at `App.tsx:350–355` depends on `project.assets.length`, so it fires on every asset deletion. `autoMatchAssets` then immediately re-fills segments whose `assetId` was just cleared by `handleDeleteAsset` (Phase 4 Step 3). The immutable clear in `c7515e5` is correct but is negated within the same render cycle by this pre-existing effect. Fix options: gate `autoMatchAssets` to fire only when `assets.length` increases (addition only), refactor to an imperative call on upload, or remove fuzzy auto-match in favour of explicit user action. See also CLAUDE.md Known Bugs.
+- **`asset_missing` ExportError path is defense-in-depth only** — hydration-time cleanup (`App.tsx` mount effect) clears orphaned `assetId`s on reload, and `autoMatchAssets` re-fills cleared `assetId`s mid-session, making `exportPipeline.ts:80–93` unreachable via normal user actions. The other `ExportErrorKind` values (`ffmpeg_load`, `encode`, `concat`, `mux`) remain reachable and the modal error UI is verified. `asset_missing` is triggerable in-session only by deleting an IndexedDB row via DevTools without reloading. Worth keeping for defense-in-depth; no action needed unless the `autoMatchAssets` bug is fixed.
 
 ---
 
@@ -112,7 +170,19 @@ Phase 3 steps:
 | 2026-05-17 | **Phase 3 commit `65a6dd4`:** Create `src/workers/exportWorker.ts` — Comlink-exposed `FfmpegWorkerService` class; define `FfmpegLike` interface so both direct `FFmpeg` and Comlink proxy satisfy the same contract; update `segmentEncoder` + `exportPipeline` to accept `FfmpegLike`. |
 | 2026-05-17 | **Phase 3 commit `a1e9425`:** Wire new export pipeline into UI — replace MediaRecorder/canvas-stream `handleExport` with Comlink worker spawn + `exportProject()` call; add real-time stage labels and per-segment progress to export modal; add resolution (1080p/4K) and fps (24/30/60) selectors to SettingsPanel; remove hidden canvas, Web Audio node refs, canvas mirror `useEffect`. |
 | 2026-05-17 | **Phase 3 commit `338bb9a`:** Stage orphaned `comlink` entry in `package.json` + `package-lock.json` (was installed to `node_modules` in Step 6 but never committed). |
-| 2026-05-17 | **Phase 3 complete.** Branch `phase-3-export` pushed. `tsc --noEmit` 0 errors, `npm run build` clean (537 kB main bundle). Dev-button segment encode verified; full E2E export pending human smoke test before merge to `main`. |
+| 2026-05-17 | **Phase 3 complete.** Branch `phase-3-export` pushed. `tsc --noEmit` 0 errors, `npm run build` clean (537 kB main bundle). E2E export verified: multi-segment + voiceover + FADE transition + main Export button + VLC playback confirmed H.264/AAC. |
+| 2026-05-17 | **Phase 4 commit `ce50e1e`:** Close out Phase 3 E2E verification in project-state.md. |
+| 2026-05-17 | **Phase 4 commit `a42ed66`:** Add `ErrorBoundary` component (class-based, `getDerivedStateFromError`) wrapping left panel, PreviewStage, and Timeline. Structured export errors via `ExportResult` discriminated union in `exportPipeline.ts` — `exportProject()` now returns `ExportResult`, never throws. `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`. |
+| 2026-05-17 | **Phase 4 commit `a27efe5`:** Revert dev-only `ffmpeg_load` throw; correct `CLAUDE.md` export pipeline diagram (ffmpegLoader.ts is dev-only, not in the worker chain). |
+| 2026-05-17 | **Phase 4 commit `c7515e5`:** Clean up dangling asset references at delete time — segments with the deleted `assetId` are immediately unlinked; `voiceoverId` cleared if it matched. Previously relied on hydration-time cleanup only. |
+| 2026-05-17 | **Phase 4 commit `ab8d4d9`:** Extract `useExport` hook — lazy worker lifecycle, snapshot semantics for retry, `ExportSnapshot` frozen at `startExport` time. |
+| 2026-05-17 | **Phase 4 commit `e7e0bbc`:** Extract `getExportErrorSummary` function above `App` component; re-export `ExportError` from `useExport.ts` so App.tsx doesn't import `exportPipeline` directly. |
+| 2026-05-17 | **Phase 4 commit `f9704ee`:** Code-split `StockSearchModal` and `SyncReviewModal` via `React.lazy` + `Suspense`; worker chunk properly isolated. |
+| 2026-05-17 | **Phase 4 commit `3e1fd2c`:** Lazy-load jszip on ZIP upload — dynamic `import('jszip')` inside `handleZipUpload`; jszip (96 kB) removed from main bundle. Main: 542 kB → 433 kB. |
+| 2026-05-17 | **Phase 4 commit `cdb2296`:** Prune phantom filter/transition/animation options from UI — `FILTERS` 57→27, `TEXT_ANIMATIONS` 49→27; add `TRANSITION_OPTIONS` (10 implemented) and `ANIMATION_OPTIONS` (11 implemented); dev-only `console.assert` guards added to `constants.ts`. |
+| 2026-05-17 | **Phase 4 commit `3a370e6`:** Clarify dev guard exclusion comments in `constants.ts` (Step 6 fixup). |
+| 2026-05-17 | **Phase 4 commit `97821cd`:** Add Safari validation test procedure (`docs/phase-4-safari-test.md`). Safari E2E result: **PASS** — `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264/AAC. |
+| 2026-05-17 | **Phase 4 commit `ea18635`:** Fix fade transition global fallback — `segmentEncoder.ts` now uses `project.globalTransition` when a segment's own `transition` field is NONE. Previously, users who set the global transition without clicking "Apply to All" got hard cuts. |
 
 ---
 
@@ -127,8 +197,10 @@ Phase 3 steps:
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
 | Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
-| Main bundle size | 537 kB minified / 161 kB gzip (`@ffmpeg/ffmpeg` is the dominant dep) |
+| Main bundle size | 433 kB minified / 132 kB gzip (down from 542 kB / 161 kB) |
 | Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
+| Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
+| Safari support | ✅ Verified — `crossOriginIsolated=true`, full export works |
 | Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
-| Transition enum values unmapped | ~42 of 57 |
-| Filter names with no style implementation | ~30 of 55 |
+| Transition enum values in UI | 10 (pruned from 51 — only implemented transitions shown) |
+| Filter names in UI | 27 (pruned from 57 — only implemented filters shown) |

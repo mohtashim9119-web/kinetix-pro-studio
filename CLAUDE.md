@@ -22,26 +22,35 @@ No server. No AI calls. Fully client-side.
 src/
   App.tsx            # ~1,450 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
-  constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
+  constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
+                     #   getFilterStyle, getMotionProps + dev-only console.assert guards
   services/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
-    syncEngine.ts    # parseProjectData(), isFuzzyMatch(), findAssetByContext()
-    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated
+    syncEngine.ts    # isFuzzyMatch(), findAssetByContext() — parseProjectData() is still in App.tsx
+    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated.
+                     #   NOTE: only used by dev-only test buttons (handleRenderTestFrame, handleEncodeTestSegment)
+                     #   on the main thread — NOT used by the production export path.
     frameRenderer.ts # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
-    segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array
-    exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob
+    segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array.
+                     #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
+    exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
+                     #   Returns ExportResult (never throws). ExportErrorKind: ffmpeg_load|encode|concat|mux|asset_missing|unknown.
   workers/
-    exportWorker.ts  # Comlink-exposed FfmpegWorkerService; owns FFmpeg instance off main thread
+    exportWorker.ts  # Comlink-exposed FfmpegWorkerService; owns FFmpeg instance off main thread.
+                     #   Registers ffmpeg.on('log', ...) → console.debug to silence ffmpeg stderr noise.
   hooks/
     usePersistProject.ts  # Debounced (500ms) project save; accepts enabled flag to gate hydration
+    useExport.ts          # Export orchestration: lazy worker lifecycle, ExportSnapshot for retry, progress callback.
+                          #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
   components/
+    ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
     PreviewStage.tsx      # Video/image display + overlay rendering
     SegmentEditorPanel.tsx # Segment list + per-segment controls
     SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
-    StockSearchModal.tsx  # Pexels/Pixabay search modal
-    SyncReviewModal.tsx   # Sync mapping review modal
+    StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
+    SyncReviewModal.tsx   # Sync mapping review modal — lazy-loaded via React.lazy
     SyncWizard.tsx        # 3-step sync header buttons + validation
     Timeline.tsx          # Scrollable track + playhead + zoom
   index.css          # Tailwind base + custom scrollbar
@@ -50,6 +59,8 @@ index.html           # Title: "Kinetix Pro Studio"
 vite.config.ts       # Vite config — COOP/COEP headers for dev server (required for SharedArrayBuffer)
 public/
   _headers           # Cloudflare Pages: COOP/COEP headers for production (required for SharedArrayBuffer)
+docs/
+  phase-4-safari-test.md  # Safari validation procedure + decision matrix (result: PASS)
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
@@ -90,7 +101,9 @@ App.tsx handleExport()
   │
   ├─ spawns exportWorker.ts Web Worker (Comlink)
   │     └─ FfmpegWorkerService.load()
-  │           └─ ffmpegLoader.ts  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
+  │           └─ new FFmpeg() + toBlobURL inline  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
+  │           NOTE: does NOT call ffmpegLoader.ts — the worker owns its FFmpeg instance directly.
+  │           ffmpegLoader.ts is only used by dev test buttons on the main thread.
   │
   └─ exportPipeline.ts  exportProject(project, ffmpegWorkerProxy, options, onProgress)
         │
@@ -117,10 +130,25 @@ App.tsx handleExport()
 
 **Key types:**
 - `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`. Both raw `FFmpeg` and the Comlink proxy satisfy this contract.
-- `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal in `App.tsx`.
+- `ExportResult = { ok: true; blob: Blob } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed.
+- `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`.
+- `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
 
 **Performance (Phase 3 baseline):** ~25s wall-clock per 1s of 1080p/30fps output (≈1.35s/frame). 4K is untested. Phase 6 (Tauri + native ffmpeg) will replace this path entirely.
+
+### Transition Handling
+
+`project.globalTransition` is the project-level default. Each `VideoSegment` also carries a `transition` field (defaults to `TransitionType.NONE` when created by `parseProjectData`).
+
+`segmentEncoder.ts` resolves the effective transition as:
+```ts
+const effectiveTransition =
+  segment.transition && segment.transition !== TransitionType.NONE
+    ? segment.transition
+    : (options.globalTransition ?? TransitionType.NONE);
+```
+`exportPipeline.ts` passes `project.globalTransition` as `options.globalTransition`. This means a user can set the global transition in Settings and get it applied without clicking "Apply Transition to All Scenes" — but per-segment overrides always take precedence. The "Apply to All" button materializes the global value onto each segment's own field (useful for subsequent per-segment divergence).
 
 ---
 
@@ -211,7 +239,7 @@ App.tsx                    — top-level state + orchestration only
 - **`togglePlay` in keyboard effect**: `togglePlay` is recreated each render → listener attaches/detaches constantly. Wrap in `useCallback` or use a ref
 - **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI
 - **`storyMap` parameter in `parseProjectData`**: declared but body never uses it
-- **`autoMatchAssets` in effect at line ~501**: runs on every `project.assets.length` change with `autoMatchAssets` not in the dep array — stale closure
+- **`autoMatchAssets` effect at `App.tsx:350–355`**: depends on `project.assets.length`, so it fires on both asset *addition* and asset *deletion*. On deletion, `handleDeleteAsset` correctly sets `segment.assetId = undefined`, but `autoMatchAssets` immediately re-fills it by fuzzy-matching the segment text against remaining assets — negating the cleanup within the same render cycle. Additionally, `autoMatchAssets` is not in the effect's dep array (stale closure). Fix: gate the effect to fire only when `assets.length` increases, or refactor to an imperative call triggered only on upload.
 
 ---
 
@@ -221,29 +249,27 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 
 | Limitation | Impact | Future Fix |
 |---|---|---|
-| Export fidelity limited to what `frameRenderer.ts` implements | ~42 transition types and ~30 filters not yet mapped to canvas ops — fall back silently | Phase 4 — implement or prune enum values |
-| Safari export untested | `crossOriginIsolated` may be false on Safari due to COOP/COEP handling differences | Phase 4 — test and fix |
-| Segments referencing a deleted asset are not cleaned up until next page reload | Segment renders as unassigned only after refresh; mid-session it holds a dead `assetId` | Phase 3 — clean up at delete time, or document and rely on hydration-time cleanup |
-| Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint |
+| ~~Export fidelity limited to what `frameRenderer.ts` implements~~ | ✅ **Resolved Phase 4** — phantom entries pruned from all UI dropdowns; only implemented transitions/filters/animations are shown | — |
+| ~~Safari export untested~~ | ✅ **Resolved Phase 4** — Safari verified 2026-05-17; `crossOriginIsolated=true`, full export works | — |
+| ~~Segments referencing a deleted asset not cleaned up until reload~~ | ✅ **Resolved Phase 4 (c7515e5)** — cleaned up at delete time | — |
+| ~~No error boundaries~~ | ✅ **Resolved Phase 4 (a42ed66)** — `ErrorBoundary` wraps left panel, PreviewStage, Timeline | — |
+| Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint (Phase 5) |
 | No authentication | Open access | Add auth layer when persistence is added |
-| ~35 of 57 `TransitionType` values unmapped in `getMotionProps` | Transitions silently fall to default fade | Implement or prune the enum |
-| ~30 of 50 `AnimationType` values not applied to image/video | Camera dynamics mostly cosmetic | Implement CSS animation per type |
-| ~30 of 50+ filters in `FILTERS` array have no `getFilterStyle` mapping | Filter applies nothing | Implement or remove from list |
+| `AnimationType` values not applied in canvas export | Camera dynamics are live-preview only; export path does not apply AnimationType to frames | Implement per-type canvas animation or document as preview-only |
 | Extra overlays have no drag-to-position UI | Position set as `x: 50, y: 50` always | Add drag handles in preview |
-| No rate-limit handling in stockService | 429s silently return empty results | Retry + user feedback |
-| No error boundaries | Any render crash = blank screen | Add `<ErrorBoundary>` around panels |
+| No rate-limit handling in stockService | 429s silently return empty results | Retry + user feedback (Phase 5) |
+| JSZip dynamic-import double-cast | `as unknown as typeof import('jszip')` workaround for `export =` + ESM | Replace with ambient module declaration in `src/types/jszip.d.ts` (Phase 5) |
+| Real mid-export cancellation not implemented | `cancelExport` clears UI state but does not terminate in-flight worker | `worker.terminate()` + restart guard (Phase 5) |
+| 4K export unvalidated | 1080p verified on Safari + Chrome; 4K path untested | Validate in Phase 5 |
 
 ---
 
 ## Dependencies to Remove
 
+All major dead dependencies removed in Phase 1. Remaining minor items:
+
 ```
-@google/genai   — installed, never imported
-express         — no server file exists
-dotenv          — Vite handles .env natively
-tsx             — no server to run
-vite            — listed in both deps and devDeps (remove from deps)
-@types/jszip    — move from deps to devDeps
+@types/jszip    — still in deps, should be devDeps only (cosmetic; no runtime impact)
 ```
 
 ---
@@ -254,7 +280,7 @@ vite            — listed in both deps and devDeps (remove from deps)
 |---|---|---|
 | `VITE_PEXELS_API_KEY` | `src/services/stockService.ts` | Optional — stock search silently disabled if missing |
 | `VITE_PIXABAY_API_KEY` | `src/services/stockService.ts` | Optional — stock search silently disabled if missing |
-| `GEMINI_API_KEY` | `vite.config.ts` `define` (baked at build) | Not used anywhere — remove the `define` block |
+| ~~`GEMINI_API_KEY`~~ | Removed in Phase 1 — `define` block stripped from `vite.config.ts` | — |
 
 ---
 
@@ -272,8 +298,8 @@ vite            — listed in both deps and devDeps (remove from deps)
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 4 | Playback interval + audio sync still in App.tsx |
-| Extract `useExport.ts` hook | ⬜ Deferred — Phase 4 | Export logic in App.tsx handleExport; extract when Phase 4 begins |
+| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 5 | Playback interval + audio sync still in App.tsx |
+| Extract `useExport.ts` hook | ✅ Done — 2026-05-17 | ab8d4d9 — lazy worker, snapshot semantics, ExportError re-export |
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
 | Fix `togglePlay` stale closure | ✅ Done — 2026-05-16 | Uses functional updater setIsPlaying(p => !p) |
@@ -283,4 +309,11 @@ vite            — listed in both deps and devDeps (remove from deps)
 | Add project persistence | ✅ Done — 2026-05-16 | localStorage + IndexedDB; single-project; "New Project" reset |
 | Replace canvas/MediaRecorder export with ffmpeg.wasm | ✅ Done — 2026-05-17 | Full pipeline: frameRenderer → segmentEncoder → exportPipeline → Comlink worker |
 | COOP/COEP headers for SharedArrayBuffer | ✅ Done — 2026-05-17 | vite.config.ts (dev) + public/_headers (Cloudflare Pages prod) |
-| Phase 3 E2E smoke test (human) | ⬜ Pending | Dev-button single-segment encode verified; full UI export path untested |
+| Phase 3 E2E smoke test (human) | ✅ Done — 2026-05-17 | Multi-segment + voiceover + FADE transition verified in VLC |
+| Add error boundaries | ✅ Done — 2026-05-17 | a42ed66 — ErrorBoundary + PanelFallback, structured ExportResult |
+| Clean up dangling asset refs at delete time | ✅ Done — 2026-05-17 | c7515e5 |
+| Code-split lazy modals + jszip | ✅ Done — 2026-05-17 | f9704ee, 3e1fd2c — main: 542 kB → 433 kB |
+| Prune phantom enum/filter/animation entries | ✅ Done — 2026-05-17 | cdb2296 — FILTERS 57→27, TRANSITION_OPTIONS 10, ANIMATION_OPTIONS 11 |
+| Safari export validation | ✅ Done — 2026-05-17 | 97821cd — PASS; crossOriginIsolated=true, full export works |
+| Global transition fallback in encoder | ✅ Done — 2026-05-17 | ea18635 — effectiveTransition uses project.globalTransition as fallback |
+| Main bundle size | ✅ 433 kB / 132 kB gzip | Down from 542 kB / 161 kB at end of Phase 3 |

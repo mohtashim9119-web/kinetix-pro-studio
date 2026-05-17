@@ -3,8 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useMemo, ChangeEvent } from 'react';
-import JSZip from 'jszip';
+import { useState, useRef, useEffect, useMemo, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -51,18 +50,21 @@ import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
-import { StockSearchModal } from './components/StockSearchModal';
-import { SyncReviewModal } from './components/SyncReviewModal';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
+const StockSearchModal = lazy(() =>
+  import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
+);
+const SyncReviewModal = lazy(() =>
+  import('./components/SyncReviewModal').then(m => ({ default: m.SyncReviewModal }))
+);
 import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
-import * as Comlink from 'comlink';
 import { renderSegmentFrame } from './services/frameRenderer';
 import { encodeSegment } from './services/segmentEncoder';
-import { type FfmpegWorkerService } from './workers/exportWorker';
-import { exportProject, type ExportStage } from './services/exportPipeline';
+import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
+import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 
 interface RawSegment {
   text: string;
@@ -261,6 +263,31 @@ const DEFAULT_PROJECT: Project = {
     fontFamily: 'Inter',
   },
 };
+
+function ModalLoadingFallback(): ReactElement {
+  return (
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-black/80 backdrop-blur-sm">
+      <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
+    </div>
+  );
+}
+
+function getExportErrorSummary(error: ExportError): string {
+  switch (error.kind) {
+    case 'asset_missing':
+      return `An asset used by segment ${(error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`;
+    case 'ffmpeg_load':
+      return 'Failed to load the ffmpeg engine. Check your network connection and try again.';
+    case 'encode':
+      return `Failed to encode segment ${(error.segmentIndex ?? 0) + 1}.`;
+    case 'concat':
+      return 'Failed to concatenate segments into a single video.';
+    case 'mux':
+      return 'Failed to mux the audio track into the final video.';
+    case 'unknown':
+      return 'An unexpected error occurred during export.';
+  }
+}
 
 export default function App() {
   const [project, setProject] = useState<Project>(DEFAULT_PROJECT);
@@ -528,75 +555,14 @@ export default function App() {
     setActiveTab('editor'); 
   };
 
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-  const [exportStageLabel, setExportStageLabel] = useState('');
   /** '1080p' | '4k' */
-  const [exportResolution, setExportResolution] = useState<'1080p' | '4k'>('1080p');
+  const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
   /** frames per second */
-  const [exportFps, setExportFps] = useState<24 | 30 | 60>(30);
+  const [exportFps, setExportFps] = useState<ExportFps>(30);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  const handleExport = async () => {
-    if (!isSynced) return;
-
-    setIsExporting(true);
-    setExportProgress(0);
-    setExportStageLabel('Loading ffmpeg…');
-
-    const worker = new Worker(
-      new URL('./workers/exportWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    const svc = Comlink.wrap<FfmpegWorkerService>(worker);
-
-    try {
-      await svc.load();
-
-      const resWidth = exportResolution === '4k' ? 3840 : 1920;
-      const resHeight = exportResolution === '4k' ? 2160 : 1080;
-
-      const blob = await exportProject(
-        project,
-        svc,
-        { fps: exportFps, width: resWidth, height: resHeight },
-        (stage: ExportStage) => {
-          if (stage.type === 'loading_ffmpeg') {
-            setExportStageLabel('Loading ffmpeg…');
-            setExportProgress(0);
-          } else if (stage.type === 'encoding_segment') {
-            const segPct = stage.total > 0
-              ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
-              : 0;
-            setExportProgress(Math.round(segPct * 90));
-            setExportStageLabel(`Encoding segment ${stage.index + 1} / ${stage.total}`);
-          } else if (stage.type === 'muxing') {
-            setExportProgress(93);
-            setExportStageLabel('Muxing & packaging…');
-          } else if (stage.type === 'done') {
-            setExportProgress(100);
-            setExportStageLabel('Done!');
-          }
-        },
-      );
-
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-      a.download = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch (err) {
-      console.error('[export] failed:', err);
-      alert(`Export failed: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      worker.terminate();
-      setIsExporting(false);
-    }
-  };
+  const exportApi = useExport(project, exportResolution, exportFps);
+  const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -604,6 +570,14 @@ export default function App() {
     
     setIsProcessing(true);
     try {
+      let JSZip: typeof import('jszip');
+      try {
+        JSZip = (await import('jszip')).default as unknown as typeof import('jszip');
+      } catch (loadErr) {
+        console.error('Failed to load jszip:', loadErr);
+        setIsProcessing(false);
+        return;
+      }
       const zip = new JSZip();
       const content = await zip.loadAsync(file);
       const newAssets: Asset[] = [];
@@ -820,7 +794,7 @@ export default function App() {
             setCurrentTime(audioRef.current.currentTime);
           } else {
             // Manual advancement if no audio or in a heading (heading pauses script voiceover)
-            if (audioRef.current && !isExporting && inHeading) audioRef.current.pause();
+            if (audioRef.current && !exportState.isExporting && inHeading) audioRef.current.pause();
             
             setCurrentTime(prev => {
               const next = prev + 0.1 * globalPlaybackSpeed;
@@ -845,12 +819,12 @@ export default function App() {
         }
       }, 100);
     } else {
-      if (!isExporting) {
+      if (!exportState.isExporting) {
         audioRef.current?.pause();
       }
     }
     return () => clearInterval(interval);
-  }, [isPlaying, voiceover, project.segments, currentSegment, isExporting, globalPlaybackSpeed]);
+  }, [isPlaying, voiceover, project.segments, currentSegment, exportState.isExporting, globalPlaybackSpeed]);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -973,13 +947,18 @@ export default function App() {
             onRunStep2={runSyncStep2}
             onRunStep3={runSyncStep3}
             onFinalizeSync={finalizeSync}
-            onExport={handleExport}
+            onExport={startExport}
             onReviewMapping={() => setShowSyncDetails(true)}
           />
         </header>
 
         <div className="flex-1 flex overflow-hidden">
           {/* Left Panel */}
+          <ErrorBoundary fallback={(err, reset) => (
+            <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
+              <PanelFallback label="Left panel" error={err} reset={reset} />
+            </div>
+          )}>
           <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
             <div className="p-8 h-full flex flex-col">
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
@@ -1056,8 +1035,15 @@ export default function App() {
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
                               <button
                                 onClick={() => {
-                                  setProject(p => ({ ...p, assets: p.assets.filter(a => a.id !== asset.id) }));
                                   URL.revokeObjectURL(asset.url);
+                                  setProject(p => ({
+                                    ...p,
+                                    assets: p.assets.filter(a => a.id !== asset.id),
+                                    voiceoverId: p.voiceoverId === asset.id ? undefined : p.voiceoverId,
+                                    segments: p.segments.map(s =>
+                                      s.assetId === asset.id ? { ...s, assetId: undefined } : s
+                                    ),
+                                  }));
                                   deleteAsset(asset.id).catch(err =>
                                     console.error('Failed to delete asset from IndexedDB:', err)
                                   );
@@ -1159,21 +1145,29 @@ export default function App() {
               </div>
             </div>
           </div>
+          </ErrorBoundary>
                 {/* Right Panel: Preview & Sequence */}
           <div className="flex-1 flex flex-col bg-[#020202] relative p-8 gap-8 overflow-hidden">
              {/* Main Stage */}
-             <PreviewStage
-               currentSegment={currentSegment ?? undefined}
-               currentTime={currentTime}
-               globalPlaybackSpeed={globalPlaybackSpeed}
-               globalTransition={project.globalTransition}
-               globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
-               globalOverlayConfig={project.globalOverlayConfig}
-               hideAllText={project.hideAllText ?? false}
-               assets={project.assets}
-             />
+             <ErrorBoundary fallback={(err, reset) => (
+               <PanelFallback label="Preview" error={err} reset={reset} />
+             )}>
+               <PreviewStage
+                 currentSegment={currentSegment ?? undefined}
+                 currentTime={currentTime}
+                 globalPlaybackSpeed={globalPlaybackSpeed}
+                 globalTransition={project.globalTransition}
+                 globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
+                 globalOverlayConfig={project.globalOverlayConfig}
+                 hideAllText={project.hideAllText ?? false}
+                 assets={project.assets}
+               />
+             </ErrorBoundary>
 
              {/* Professional Sequence Timeline */}
+             <ErrorBoundary fallback={(err, reset) => (
+               <PanelFallback label="Timeline" error={err} reset={reset} />
+             )}>
              <Timeline
                segments={project.segments}
                assets={project.assets}
@@ -1220,6 +1214,7 @@ export default function App() {
                onSetTrimmingSegment={setTrimmingSegmentId}
                onSetAdjustingTrim={setIsAdjustingTrim}
              />
+             </ErrorBoundary>
         </div>
       </div>
       </main>
@@ -1266,62 +1261,112 @@ export default function App() {
         }
       `}</style>
       
-      {/* Export Progress Overlay */}
+      {/* Export Progress / Error Overlay */}
       <AnimatePresence>
-        {isExporting && (
+        {(exportState.isExporting || exportState.error !== null) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
           >
-            <div className="w-full max-w-md text-center space-y-8">
-              <div className="relative inline-block">
-                <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
-                  <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
+            {exportState.error !== null ? (
+              /* ── Error view ── */
+              <div className="w-full max-w-md text-center space-y-6">
+                <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto">
+                  <span className="text-2xl">✕</span>
                 </div>
-                <motion.div
-                  className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
-                />
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
+                  <p className="text-sm text-gray-300 mb-1">
+                    {getExportErrorSummary(exportState.error)}
+                  </p>
+                  <p className="text-xs text-gray-600">{exportState.error.message}</p>
+                </div>
+                <div className="flex gap-3 justify-center">
+                  <button
+                    onClick={() => {
+                      const diagnostics = {
+                        error: exportState.error,
+                        projectMeta: {
+                          segmentCount: project.segments.length,
+                          hasVoiceover: !!project.voiceoverId,
+                          exportResolution,
+                          exportFps,
+                          ts: new Date().toISOString(),
+                        },
+                      };
+                      navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
+                    }}
+                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                  >
+                    Copy diagnostics
+                  </button>
+                  <button
+                    onClick={retryExport}
+                    className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
+                  >
+                    Retry
+                  </button>
+                  <button
+                    onClick={cancelExport}
+                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
               </div>
+            ) : (
+              /* ── Progress view ── */
+              <div className="w-full max-w-md text-center space-y-8">
+                <div className="relative inline-block">
+                  <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
+                    <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportState.progress)}%</span>
+                  </div>
+                  <motion.div
+                    className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                  />
+                </div>
 
-              <div>
-                <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportStageLabel}</p>
-                <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
-              </div>
+                <div>
+                  <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
+                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
+                  <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
+                </div>
 
-              <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
-                  style={{ width: `${exportProgress}%` }}
-                />
-              </div>
+                <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
+                    style={{ width: `${exportState.progress}%` }}
+                  />
+                </div>
 
-              <div className="grid grid-cols-3 gap-4">
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Codec</p>
-                  <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
-                </div>
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
-                  <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
-                </div>
-                <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
-                  <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
-                  <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Codec</p>
+                    <p className="text-[10px] text-white font-bold">H.264 / AAC</p>
+                  </div>
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
+                    <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
+                  </div>
+                  <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
+                    <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
+                    <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
 
       {/* Stock Media Search Modal */}
-      <AnimatePresence>
-        {showStockSearch && (
+      {showStockSearch && (
+        <Suspense fallback={<ModalLoadingFallback />}>
+        <AnimatePresence>
           <StockSearchModal
             targetSegmentId={stockTarget}
             onClose={() => setShowStockSearch(false)}
@@ -1357,12 +1402,14 @@ export default function App() {
               }));
             }}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>
+        </Suspense>
+      )}
 
       {/* Sync Review Modals */}
-      <AnimatePresence>
-        {showSyncDetails && (
+      {showSyncDetails && (
+        <Suspense fallback={<ModalLoadingFallback />}>
+        <AnimatePresence>
           <SyncReviewModal
             sceneDetails={project.sceneDetails}
             segments={project.segments}
@@ -1382,8 +1429,9 @@ export default function App() {
               }));
             }}
           />
-        )}
-      </AnimatePresence>
+        </AnimatePresence>
+        </Suspense>
+      )}
 
       {/* Double-click Scene Editor Modal */}
       <AnimatePresence>

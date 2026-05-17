@@ -21,6 +21,8 @@ export interface EncodeSegmentOptions {
   nextAsset?: Asset | undefined;
   /** Global transition duration fallback (seconds). */
   globalTransitionDuration?: number;
+  /** Global transition type fallback — used when the segment's own transition is NONE. */
+  globalTransition?: TransitionType;
   onProgress?: (framesWritten: number, totalFrames: number) => void;
 }
 
@@ -65,12 +67,15 @@ export async function encodeSegment(
   let blendCanvas: HTMLCanvasElement | null = null;
   let blendCtx: CanvasRenderingContext2D | null = null;
 
-  const transition = segment.transition ?? TransitionType.NONE;
+  const effectiveTransition =
+    segment.transition && segment.transition !== TransitionType.NONE
+      ? segment.transition
+      : (options.globalTransition ?? TransitionType.NONE);
   const transitionDuration =
-    transition !== TransitionType.NONE
+    effectiveTransition !== TransitionType.NONE
       ? (segment.transitionDuration ?? globalTransitionDuration)
       : 0;
-  const hasTransition = transition !== TransitionType.NONE && !!options.nextSegment && transitionDuration > 0;
+  const hasTransition = effectiveTransition !== TransitionType.NONE && !!options.nextSegment && transitionDuration > 0;
 
   if (hasTransition) {
     blendCanvas = document.createElement('canvas');
@@ -116,7 +121,7 @@ export async function encodeSegment(
         blendParams = {
           adjacentCanvas: blendCanvas,
           alpha,
-          type: transition,
+          type: effectiveTransition,
         };
       }
     }
