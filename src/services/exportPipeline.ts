@@ -121,6 +121,7 @@ export async function exportProject(
           nextSegment,
           nextAsset,
           globalTransitionDuration: project.globalTransitionDuration,
+          globalTransition: project.globalTransition,
           onProgress: (frame, totalFrames) => {
             onProgress({
               type: 'encoding_segment',
