@@ -1,6 +1,6 @@
 import React from 'react';
 import { Project, TransitionType, AnimationType } from '../types';
-import { FILTERS, FONT_FAMILIES } from '../constants';
+import { FILTERS, FONT_FAMILIES, TRANSITION_OPTIONS, ANIMATION_OPTIONS } from '../constants';
 import { RefreshCw, Sparkles, Layers, Trash2 } from 'lucide-react';
 
 interface Props {
@@ -72,7 +72,7 @@ export function SettingsPanel({
             onChange={(e) => onProjectChange({ globalTransition: e.target.value as TransitionType })}
             className="w-full bg-[#1A1A1A] border border-[#282828] p-4 rounded-xl text-[11px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
           >
-            {Object.values(TransitionType).map(t => (
+            {TRANSITION_OPTIONS.map(t => (
               <option key={t} value={t}>{t === TransitionType.NONE ? 'instant (none)' : t}</option>
             ))}
           </select>
@@ -84,7 +84,7 @@ export function SettingsPanel({
             onChange={(e) => onProjectChange({ globalAnimation: e.target.value as AnimationType })}
             className="w-full bg-[#1A1A1A] border border-[#282828] p-4 rounded-xl text-[11px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
           >
-            {Object.values(AnimationType).map(a => (
+            {ANIMATION_OPTIONS.map(a => (
               <option key={a} value={a}>{a === AnimationType.NONE ? 'static (none)' : a.replace('-', ' ')}</option>
             ))}
           </select>

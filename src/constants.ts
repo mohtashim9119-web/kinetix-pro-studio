@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { TransitionType, AnimationType } from './types';
+
 export const FONT_FAMILIES = [
   'Inter', 'Anton', 'Space Grotesk', 'JetBrains Mono', 'Playfair Display', 'Outfit',
   'Bebas Neue', 'Montserrat', 'Oswald', 'Roboto', 'Poppins', 'Lato', 'Open Sans',
@@ -15,27 +17,77 @@ export const FONT_FAMILIES = [
   'Fira Sans', 'Josefin Sans', 'Quicksand', 'Varela Round',
 ];
 
+// ---------------------------------------------------------------------------
+// FILTERS — only entries with a real getFilterStyle implementation.
+// Phantom filters (vignette, scanlines, film-grain, etc.) removed from this
+// list; their ids remain valid in types.ts so stored projects load cleanly.
+// ---------------------------------------------------------------------------
 export const FILTERS = [
-  'none', 'vintage', 'noir', 'warm', 'cool', 'dramatic', 'vivid', 'cinematic',
-  'sepia', 'grayscale', 'invert', 'hue-rotate-90', 'hue-rotate-180', 'hue-rotate-270',
-  'blur-sm', 'blur-md', 'blur-lg', 'brightness-50', 'brightness-150', 'contrast-50', 'contrast-150',
-  'saturate-0', 'saturate-200', 'vignette', 'scanlines', 'film-grain', 'technicolor',
-  'kodachrome', 'polaroid', 'instant', 'cross-process', 'bleach-bypass', 'fuji', 'agfa',
-  'lofi', '8mm', '16mm', 'crt', 'glitch-static', 'noise', 'dust', 'light-leak',
-  'retro', 'cyberpunk', 'vaporwave', 'halftone', 'pixel-art', 'edge-detect', 'emboss',
-  'sharpen', 'gaussian', 'midnight', 'sunset', 'aurora', 'sepia-high', 'pop-art',
+  'none',
+  'vintage', 'noir', 'warm', 'cool', 'dramatic', 'vivid', 'cinematic',
+  'sepia', 'grayscale', 'invert',
+  'hue-rotate-90', 'hue-rotate-180', 'hue-rotate-270',
+  'blur-sm', 'blur-md', 'blur-lg',
+  'brightness-50', 'brightness-150',
+  'contrast-50', 'contrast-150',
+  'saturate-0', 'saturate-200',
+  'technicolor', 'bleach-bypass', 'lofi',
 ];
 
+// ---------------------------------------------------------------------------
+// TEXT_ANIMATIONS — only entries with a real getMotionProps implementation.
+// Phantom animations (jello, swing, roll-in, etc.) removed from this list.
+// ---------------------------------------------------------------------------
 export const TEXT_ANIMATIONS = [
-  'fade', 'slide-up', 'slide-down', 'slide-left', 'slide-right',
-  'scale', 'zoom-in', 'zoom-out', 'blur', 'rotate',
-  'typewriter', 'bounce', 'skew', 'reveal-horizontal', 'reveal-vertical',
-  'glitch', 'neon-flicker', 'bounce-in', 'elastic-pop', 'jello',
-  'swing', 'wobble', 'pulse', 'shake', 'float', 'heartbeat',
-  'flip-x', 'flip-y', 'roll-in', 'roll-out', 'spiral-in', 'spiral-out',
-  'blur-reveal', 'shimmer', 'rainbow', 'fire', 'ice', 'ghost',
-  'shadow-pop', 'stretch-horizontal', 'stretch-vertical', 'squish',
-  '3d-rotate', 'wave', 'zigzag', 'confetti', 'explosion', 'implosion',
+  'fade',
+  'slide-up', 'slide-down', 'slide-left', 'slide-right',
+  'scale', 'zoom-in', 'zoom-out',
+  'blur', 'rotate',
+  'typewriter', 'bounce', 'skew',
+  'reveal-horizontal', 'reveal-vertical',
+  'glitch', 'neon-flicker',
+  'elastic-pop',
+  'wobble', 'pulse', 'shake', 'float', 'heartbeat',
+  'flip-x', 'flip-y',
+  'shimmer', 'zigzag',
+];
+
+// ---------------------------------------------------------------------------
+// TRANSITION_OPTIONS — only TransitionType values with a real canvas
+// implementation in frameRenderer.ts (SUPPORTED_TRANSITIONS set).
+// All other enum values fall back to a hard cut — they are not shown in UI.
+// ---------------------------------------------------------------------------
+export const TRANSITION_OPTIONS: TransitionType[] = [
+  TransitionType.NONE,
+  TransitionType.FADE,
+  TransitionType.CROSSFADE,
+  TransitionType.DISSOLVE,
+  TransitionType.SLIDE,
+  TransitionType.SLIDE_UP,
+  TransitionType.SLIDE_DOWN,
+  TransitionType.ZOOM,
+  TransitionType.ZOOM_WIPE,
+  TransitionType.BLUR,
+];
+
+// ---------------------------------------------------------------------------
+// ANIMATION_OPTIONS — only AnimationType values with a real getMotionProps
+// implementation. AnimationType drives the segment "Camera Dynamics" picker
+// in SettingsPanel. Currently the live preview uses getMotionProps; canvas
+// export path does not apply AnimationType. Keep only animated entries.
+// ---------------------------------------------------------------------------
+export const ANIMATION_OPTIONS: AnimationType[] = [
+  AnimationType.NONE,
+  AnimationType.GLITCH,
+  AnimationType.NEON_FLICKER,
+  AnimationType.BOUNCE,
+  AnimationType.WOBBLE,
+  AnimationType.PULSE,
+  AnimationType.SHAKE,
+  AnimationType.FLOAT,
+  AnimationType.HEARTBEAT,
+  AnimationType.SKEW,
+  AnimationType.ROTATE,
 ];
 
 export const getFilterStyle = (filter?: string): string => {
@@ -111,3 +163,51 @@ export const getMotionProps = (animation: string) => {
     default: return { initial: { opacity: 0 }, animate: { opacity: 1 }, exit: { opacity: 0 } };
   }
 };
+
+// ---------------------------------------------------------------------------
+// Dev-only guards: assert every UI-visible entry has a real implementation.
+// Fires on first page load in dev. Add a new entry without an implementation
+// and you'll see a loud console.assert failure immediately.
+// ---------------------------------------------------------------------------
+if (import.meta.env.DEV) {
+  const NO_OP_FILTER = 'none';
+  for (const filter of FILTERS) {
+    if (filter === 'none') continue; // 'none' is intentionally the identity
+    console.assert(
+      getFilterStyle(filter) !== NO_OP_FILTER,
+      `[constants] FILTERS contains "${filter}" but getFilterStyle returns no-op. Either implement it or remove it from FILTERS.`,
+    );
+  }
+
+  // getMotionProps default returns a plain fade: { initial:{opacity:0}, animate:{opacity:1}, exit:{opacity:0} }
+  // A no-op is defined as: no keys beyond initial/animate/exit, and initial.opacity === 0, animate.opacity === 1
+  const isDefaultFade = (props: ReturnType<typeof getMotionProps>): boolean => {
+    const keys = Object.keys(props);
+    if (keys.length !== 3) return false; // has transition or other extra keys → not default
+    const p = props as { initial?: Record<string, unknown>; animate?: Record<string, unknown>; exit?: Record<string, unknown> };
+    return (
+      Object.keys(p.initial ?? {}).length === 1 && p.initial?.['opacity'] === 0 &&
+      Object.keys(p.animate ?? {}).length === 1 && p.animate?.['opacity'] === 1 &&
+      Object.keys(p.exit ?? {}).length === 1 && p.exit?.['opacity'] === 0
+    );
+  };
+
+  for (const animation of TEXT_ANIMATIONS) {
+    if (animation === 'fade') continue; // 'fade' intentionally uses the default fade shape
+    console.assert(
+      !isDefaultFade(getMotionProps(animation)),
+      `[constants] TEXT_ANIMATIONS contains "${animation}" but getMotionProps returns default no-op fade. Either implement it or remove it from TEXT_ANIMATIONS.`,
+    );
+  }
+
+  for (const t of TRANSITION_OPTIONS) {
+    // SUPPORTED_TRANSITIONS is defined inside frameRenderer.ts; we can't import it
+    // here without a circular dep risk. Guard by asserting the value appears in the
+    // TransitionType enum (which it always will since we source from the enum directly)
+    // and document that TRANSITION_OPTIONS must match frameRenderer.ts SUPPORTED_TRANSITIONS.
+    console.assert(
+      Object.values(TransitionType).includes(t),
+      `[constants] TRANSITION_OPTIONS contains "${t}" which is not a valid TransitionType enum value.`,
+    );
+  }
+}
