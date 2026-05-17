@@ -58,12 +58,10 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
-import * as Comlink from 'comlink';
 import { renderSegmentFrame } from './services/frameRenderer';
 import { encodeSegment } from './services/segmentEncoder';
-import { type FfmpegWorkerService } from './workers/exportWorker';
-import { exportProject, type ExportStage, type ExportError } from './services/exportPipeline';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
+import { useExport, type ExportResolution, type ExportFps } from './hooks/useExport';
 
 interface RawSegment {
   text: string;
@@ -529,89 +527,14 @@ export default function App() {
     setActiveTab('editor'); 
   };
 
-  const [isExporting, setIsExporting] = useState(false);
-  const [exportProgress, setExportProgress] = useState(0);
-  const [exportStageLabel, setExportStageLabel] = useState('');
-  const [exportError, setExportError] = useState<ExportError | null>(null);
   /** '1080p' | '4k' */
-  const [exportResolution, setExportResolution] = useState<'1080p' | '4k'>('1080p');
+  const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
   /** frames per second */
-  const [exportFps, setExportFps] = useState<24 | 30 | 60>(30);
+  const [exportFps, setExportFps] = useState<ExportFps>(30);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  const handleExport = async () => {
-    if (!isSynced) return;
-
-    setIsExporting(true);
-    setExportError(null);
-    setExportProgress(0);
-    setExportStageLabel('Loading ffmpeg…');
-
-    const worker = new Worker(
-      new URL('./workers/exportWorker.ts', import.meta.url),
-      { type: 'module' },
-    );
-    const svc = Comlink.wrap<FfmpegWorkerService>(worker);
-
-    try {
-      await svc.load();
-    } catch (err) {
-      worker.terminate();
-      setIsExporting(false);
-      setExportError({
-        kind: 'ffmpeg_load',
-        message: 'Failed to load the ffmpeg engine. Check your network connection and try again.',
-        cause: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-
-    const resWidth = exportResolution === '4k' ? 3840 : 1920;
-    const resHeight = exportResolution === '4k' ? 2160 : 1080;
-
-    const result = await exportProject(
-      project,
-      svc,
-      { fps: exportFps, width: resWidth, height: resHeight },
-      (stage: ExportStage) => {
-        if (stage.type === 'loading_ffmpeg') {
-          setExportStageLabel('Loading ffmpeg…');
-          setExportProgress(0);
-        } else if (stage.type === 'encoding_segment') {
-          const segPct = stage.total > 0
-            ? (stage.index + (stage.totalFrames > 0 ? stage.frame / stage.totalFrames : 0)) / stage.total
-            : 0;
-          setExportProgress(Math.round(segPct * 90));
-          setExportStageLabel(`Encoding segment ${stage.index + 1} / ${stage.total}`);
-        } else if (stage.type === 'muxing') {
-          setExportProgress(93);
-          setExportStageLabel('Muxing & packaging…');
-        } else if (stage.type === 'done') {
-          setExportProgress(100);
-          setExportStageLabel('Done!');
-        }
-      },
-    );
-
-    worker.terminate();
-
-    if (!result.ok) {
-      setIsExporting(false);
-      setExportError(result.error);
-      return;
-    }
-
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement('a');
-    a.href = url;
-    const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-    a.download = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    setIsExporting(false);
-  };
+  const exportApi = useExport(project, exportResolution, exportFps);
+  const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -835,7 +758,7 @@ export default function App() {
             setCurrentTime(audioRef.current.currentTime);
           } else {
             // Manual advancement if no audio or in a heading (heading pauses script voiceover)
-            if (audioRef.current && !isExporting && inHeading) audioRef.current.pause();
+            if (audioRef.current && !exportState.isExporting && inHeading) audioRef.current.pause();
             
             setCurrentTime(prev => {
               const next = prev + 0.1 * globalPlaybackSpeed;
@@ -860,12 +783,12 @@ export default function App() {
         }
       }, 100);
     } else {
-      if (!isExporting) {
+      if (!exportState.isExporting) {
         audioRef.current?.pause();
       }
     }
     return () => clearInterval(interval);
-  }, [isPlaying, voiceover, project.segments, currentSegment, isExporting, globalPlaybackSpeed]);
+  }, [isPlaying, voiceover, project.segments, currentSegment, exportState.isExporting, globalPlaybackSpeed]);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -988,7 +911,7 @@ export default function App() {
             onRunStep2={runSyncStep2}
             onRunStep3={runSyncStep3}
             onFinalizeSync={finalizeSync}
-            onExport={handleExport}
+            onExport={startExport}
             onReviewMapping={() => setShowSyncDetails(true)}
           />
         </header>
@@ -1304,14 +1227,14 @@ export default function App() {
       
       {/* Export Progress / Error Overlay */}
       <AnimatePresence>
-        {(isExporting || exportError !== null) && (
+        {(exportState.isExporting || exportState.error !== null) && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
           >
-            {exportError !== null ? (
+            {exportState.error !== null ? (
               /* ── Error view ── */
               <div className="w-full max-w-md text-center space-y-6">
                 <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto">
@@ -1320,25 +1243,25 @@ export default function App() {
                 <div>
                   <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
                   <p className="text-sm text-gray-300 mb-1">
-                    {exportError.kind === 'asset_missing'
-                      ? `An asset used by segment ${(exportError.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`
-                      : exportError.kind === 'ffmpeg_load'
+                    {exportState.error.kind === 'asset_missing'
+                      ? `An asset used by segment ${(exportState.error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`
+                      : exportState.error.kind === 'ffmpeg_load'
                       ? 'Failed to load the ffmpeg engine. Check your network connection and try again.'
-                      : exportError.kind === 'encode'
-                      ? `Failed to encode segment ${(exportError.segmentIndex ?? 0) + 1}.`
-                      : exportError.kind === 'concat'
+                      : exportState.error.kind === 'encode'
+                      ? `Failed to encode segment ${(exportState.error.segmentIndex ?? 0) + 1}.`
+                      : exportState.error.kind === 'concat'
                       ? 'Failed to concatenate segments into a single video.'
-                      : exportError.kind === 'mux'
+                      : exportState.error.kind === 'mux'
                       ? 'Failed to mux the audio track into the final video.'
                       : 'An unexpected error occurred during export.'}
                   </p>
-                  <p className="text-xs text-gray-600">{exportError.message}</p>
+                  <p className="text-xs text-gray-600">{exportState.error.message}</p>
                 </div>
                 <div className="flex gap-3 justify-center">
                   <button
                     onClick={() => {
                       const diagnostics = {
-                        error: exportError,
+                        error: exportState.error,
                         projectMeta: {
                           segmentCount: project.segments.length,
                           hasVoiceover: !!project.voiceoverId,
@@ -1354,16 +1277,13 @@ export default function App() {
                     Copy diagnostics
                   </button>
                   <button
-                    onClick={() => {
-                      setExportError(null);
-                      void handleExport();
-                    }}
+                    onClick={retryExport}
                     className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
                   >
                     Retry
                   </button>
                   <button
-                    onClick={() => setExportError(null)}
+                    onClick={cancelExport}
                     className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
                   >
                     Cancel
@@ -1375,7 +1295,7 @@ export default function App() {
               <div className="w-full max-w-md text-center space-y-8">
                 <div className="relative inline-block">
                   <div className="w-32 h-32 rounded-full border-4 border-gray-800 flex items-center justify-center">
-                    <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportProgress)}%</span>
+                    <span className="text-3xl font-black text-[#F27D26]">{Math.round(exportState.progress)}%</span>
                   </div>
                   <motion.div
                     className="absolute inset-0 rounded-full border-4 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent"
@@ -1386,14 +1306,14 @@ export default function App() {
 
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportStageLabel}</p>
+                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
                   <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
                 </div>
 
                 <div className="h-2 bg-gray-900 rounded-full overflow-hidden">
                   <motion.div
                     className="h-full bg-gradient-to-r from-[#F27D26] to-orange-400"
-                    style={{ width: `${exportProgress}%` }}
+                    style={{ width: `${exportState.progress}%` }}
                   />
                 </div>
 
