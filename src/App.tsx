@@ -883,9 +883,11 @@ export default function App() {
           { id: 'editor', icon: Layout, label: 'Scene Editor' },
           { id: 'settings', icon: Settings, label: 'Config' }
         ].map(tab => (
-          <button 
+          <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
+            aria-label={tab.label}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
             className={`p-3 rounded-xl transition-all duration-300 relative group ${activeTab === tab.id ? 'bg-[#1A1A1A] text-[#F27D26]' : 'text-gray-600 hover:text-white'}`}
           >
             <tab.icon size={20} />
@@ -1016,6 +1018,7 @@ export default function App() {
                             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center p-4">
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
                               <button
+                                aria-label={`Delete asset ${asset.name}`}
                                 onClick={() => {
                                   URL.revokeObjectURL(asset.url);
                                   setProject(p => ({
@@ -1467,7 +1470,7 @@ export default function App() {
                         <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Edit Scene</h3>
                         <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Precise Timing & Visual Controls</p>
                       </div>
-                      <button onClick={() => setEditingSegment(null)} className="p-4 bg-white/5 rounded-2xl hover:bg-red-500 hover:text-white transition-all"><X size={24}/></button>
+                      <button onClick={() => setEditingSegment(null)} aria-label="Close segment editor" className="p-4 bg-white/5 rounded-2xl hover:bg-red-500 hover:text-white transition-all"><X size={24}/></button>
                    </div>
 
                    <div className="space-y-8 flex-1 overflow-y-auto pr-4 custom-scrollbar">

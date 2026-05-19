@@ -61,6 +61,7 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
           </div>
           <button
             onClick={onClose}
+            aria-label="Close stock library"
             className="p-3 hover:bg-[#1A1A1A] rounded-2xl transition-colors text-gray-500 hover:text-white"
           >
             <Plus size={24} className="rotate-45" />

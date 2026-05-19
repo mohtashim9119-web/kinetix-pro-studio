@@ -53,7 +53,7 @@ export function SyncReviewModal({
                 <p className="text-[10px] text-gray-500 font-bold uppercase tracking-[0.2em]">Map assets to scenes and verify script alignment</p>
               </div>
             </div>
-            <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors border border-white/5 p-3 rounded-2xl bg-white/5">
+            <button onClick={onClose} aria-label="Close review" className="text-gray-500 hover:text-white transition-colors border border-white/5 p-3 rounded-2xl bg-white/5">
               <X size={24} />
             </button>
           </div>
@@ -161,6 +161,7 @@ export function SyncReviewModal({
             </div>
             <button
               onClick={onClose}
+              aria-label="Close review"
               className="p-3 bg-[#1A1A1A] rounded-2xl hover:text-red-500 transition-all border border-white/5"
             >
               <X size={20} />

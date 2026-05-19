@@ -72,12 +72,14 @@ export function PreviewStage({
         <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
           <button
             onClick={() => setIsMidView(!isMidView)}
+            aria-label={isMidView ? 'Collapse preview' : 'Expand preview'}
             className="p-3 bg-black/50 backdrop-blur-md rounded-xl text-white border border-white/10 hover:bg-[#F27D26] transition-all"
           >
             <Layout size={20} />
           </button>
           <button
             onClick={toggleNativeFullscreen}
+            aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
             className="p-3 bg-black/50 backdrop-blur-md rounded-xl text-white border border-white/10 hover:bg-[#F27D26] transition-all"
           >
             {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}

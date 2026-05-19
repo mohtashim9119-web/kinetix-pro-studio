@@ -77,12 +77,14 @@ export function Timeline({
           <div className="flex items-center gap-3">
             <button
               onClick={() => onSeek(0)}
+              aria-label="Seek to start"
               className="p-2 text-gray-500 hover:text-white transition-colors"
             >
               <RotateCcw size={16} />
             </button>
             <button
               onClick={onTogglePlay}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
               className="w-12 h-12 bg-[#F27D26] rounded-full text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_20px_rgba(242,125,38,0.3)]"
             >
               {isPlaying ? <Pause size={22} /> : <Play size={22} fill="currentColor" />}

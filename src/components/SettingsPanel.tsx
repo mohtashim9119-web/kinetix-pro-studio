@@ -59,6 +59,8 @@ export function SettingsPanel({
             Hide On-Screen Text
             <button
               onClick={() => onProjectChange({ hideAllText: !project.hideAllText })}
+              aria-label={project.hideAllText ? 'Show on-screen text' : 'Hide on-screen text'}
+              aria-pressed={project.hideAllText}
               className={`w-10 h-5 rounded-full transition-colors relative ${project.hideAllText ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
             >
               <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${project.hideAllText ? 'translate-x-5' : ''}`} />
