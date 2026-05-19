@@ -115,6 +115,8 @@ Phase 3 steps:
 
 - **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
 
+- **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
+
 ---
 
 ## Deferred to Phase 5

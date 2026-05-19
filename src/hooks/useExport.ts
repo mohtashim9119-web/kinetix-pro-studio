@@ -152,6 +152,9 @@ export function useExport(
       },
     );
 
+    // Guard required: worker.terminate() causes Comlink to reject the exportProject
+    // promise with an unknown error. Without this check that rejection would overwrite
+    // the 'cancelled' error state that cancelExport already set.
     if (generationRef.current !== gen) return;
 
     teardownWorker();
