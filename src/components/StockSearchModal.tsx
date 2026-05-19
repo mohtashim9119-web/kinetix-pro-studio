@@ -5,8 +5,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Plus, RefreshCw, Video, Image as ImageIcon, AlertCircle } from 'lucide-react';
-import { searchAllStock, StockResult } from '../services/stockService';
+import { Plus, RefreshCw, Video, Image as ImageIcon, AlertCircle, Clock } from 'lucide-react';
+import { searchAllStock, StockResult, StockSearchResult } from '../services/stockService';
 
 interface Props {
   targetSegmentId: string | null;
@@ -18,19 +18,21 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
   const [query, setQuery] = useState('');
   const [mediaType, setMediaType] = useState<'video' | 'image'>('video');
   const [isSearching, setIsSearching] = useState(false);
-  const [results, setResults] = useState<StockResult[]>([]);
+  const [searchResult, setSearchResult] = useState<StockSearchResult | null>(null);
 
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (query.length > 2) {
         setIsSearching(true);
-        const data = await searchAllStock(query, mediaType);
-        setResults(data);
+        const result = await searchAllStock(query, mediaType);
+        setSearchResult(result);
         setIsSearching(false);
       }
     }, 1000);
     return () => clearTimeout(timer);
   }, [query, mediaType]);
+
+  const results = searchResult?.status === 'ok' ? searchResult.results : [];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-8">
@@ -135,10 +137,30 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
               </div>
             )) : (
               <div className="col-span-3 py-20 text-center space-y-4">
-                <AlertCircle size={32} className="mx-auto text-gray-800" />
-                <p className="text-gray-500 uppercase text-[10px] font-black tracking-widest">
-                  No stock media found for &ldquo;{query}&rdquo;
-                </p>
+                {searchResult?.status === 'rate_limited' ? (
+                  <>
+                    <Clock size={32} className="mx-auto text-yellow-600" />
+                    <p className="text-yellow-500 uppercase text-[10px] font-black tracking-widest">
+                      Rate limited — please try again in a moment
+                    </p>
+                  </>
+                ) : searchResult?.status === 'error' ? (
+                  <>
+                    <AlertCircle size={32} className="mx-auto text-red-800" />
+                    <p className="text-red-500 uppercase text-[10px] font-black tracking-widest">
+                      Search failed — check your connection and try again
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <AlertCircle size={32} className="mx-auto text-gray-800" />
+                    <p className="text-gray-500 uppercase text-[10px] font-black tracking-widest">
+                      {query.length > 2
+                        ? `No stock media found for "${query}"`
+                        : 'Type at least 3 characters to search'}
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
