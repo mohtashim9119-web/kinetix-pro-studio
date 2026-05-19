@@ -266,11 +266,7 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 
 ## Dependencies to Remove
 
-All major dead dependencies removed in Phase 1. Remaining minor items:
-
-```
-@types/jszip    — still in deps, should be devDeps only (cosmetic; no runtime impact)
-```
+All dead dependencies removed. No remaining items.
 
 ---
 

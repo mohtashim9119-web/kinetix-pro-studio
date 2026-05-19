@@ -546,7 +546,7 @@ export default function App() {
     try {
       let JSZip: typeof import('jszip');
       try {
-        JSZip = (await import('jszip')).default as unknown as typeof import('jszip');
+        ({ default: JSZip } = await import('jszip'));
       } catch (loadErr) {
         console.error('Failed to load jszip:', loadErr);
         setIsProcessing(false);
