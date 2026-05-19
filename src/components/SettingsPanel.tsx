@@ -122,7 +122,7 @@ export function SettingsPanel({
               title="Writes the global transition onto every segment's own field, overriding any per-segment choices. Only needed if you want to diverge per-segment after this point — the global transition setting applies automatically without clicking this."
               className="w-full bg-[#1A1A1A] border border-[#282828] p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all flex items-center justify-center gap-2"
             >
-              <RefreshCw size={12} /> Override All Per-Segment Transitions
+              <RefreshCw size={12} /> Override all per-segment transitions
             </button>
             <button
               onClick={onApplyAnimationToAll}
