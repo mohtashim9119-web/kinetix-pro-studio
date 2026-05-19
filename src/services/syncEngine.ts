@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Asset } from '../types';
+import { Asset, VideoSegment } from '../types';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
@@ -33,3 +33,20 @@ export const findAssetByContext = (text: string, assets: Asset[]): Asset | null 
   }
   return null;
 };
+
+export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
+  segments.map(s => {
+    if (s.assetId) return s;
+
+    const bracketMatch = (s.heading + s.text).match(/\[(.*?):?\s*(.*?)\]/);
+    if (bracketMatch) {
+      const name = (bracketMatch[2] ?? '').trim();
+      const asset = assets.find(a => isFuzzyMatch(name, a.name));
+      if (asset) return { ...s, assetId: asset.id };
+    }
+
+    const contextAsset = findAssetByContext(s.heading + ' ' + s.text, assets);
+    if (contextAsset) return { ...s, assetId: contextAsset.id };
+
+    return s;
+  });

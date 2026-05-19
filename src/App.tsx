@@ -45,7 +45,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
 import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
@@ -324,34 +324,6 @@ export default function App() {
   const [testFrameUrl, setTestFrameUrl] = useState<string | null>(null);
 
 
-  const autoMatchAssets = () => {
-    setProject(prev => {
-      const newSegs = prev.segments.map(s => {
-        if (s.assetId) return s;
-        
-        // Look for bracketed name in heading or text
-        const bracketMatch = (s.heading + s.text).match(/\[(.*?):?\s*(.*?)\]/);
-        if (bracketMatch) {
-          const name = (bracketMatch[2] ?? '').trim();
-          const asset = prev.assets.find(a => isFuzzyMatch(name, a.name));
-          if (asset) return { ...s, assetId: asset.id };
-        }
-        
-        // Otherwise try current segment context
-        const contextAsset = findAssetByContext(s.heading + ' ' + s.text, prev.assets);
-        if (contextAsset) return { ...s, assetId: contextAsset.id };
-        
-        return s;
-      });
-      return { ...prev, segments: newSegs };
-    });
-  };
-
-  useEffect(() => {
-    if (project.assets.length > 0 && project.segments.length > 0) {
-      autoMatchAssets();
-    }
-  }, [project.assets.length]);
 
   // Rehydrate persisted project on mount
   useEffect(() => {
@@ -608,11 +580,15 @@ export default function App() {
       });
       
       await Promise.all(filePromises);
-      setProject(prev => ({
-        ...prev,
-        assets: [...prev.assets, ...newAssets],
-        voiceoverId: newAssets.find(a => a.type === 'audio')?.id || prev.voiceoverId
-      }));
+      setProject(prev => {
+        const allAssets = [...prev.assets, ...newAssets];
+        return {
+          ...prev,
+          assets: allAssets,
+          segments: autoMatchSegments(allAssets, prev.segments),
+          voiceoverId: newAssets.find(a => a.type === 'audio')?.id || prev.voiceoverId,
+        };
+      });
     } catch (err) {
       console.error("ZIP Error:", err);
     } finally {
@@ -665,11 +641,15 @@ export default function App() {
         return;
       }
       const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
-      setProject(prev => ({
-        ...prev,
-        assets: [...prev.assets, newAsset],
-        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
-      }));
+      setProject(prev => {
+        const newAssets = [...prev.assets, newAsset];
+        return {
+          ...prev,
+          assets: newAssets,
+          segments: autoMatchSegments(newAssets, prev.segments),
+          voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
+        };
+      });
     }
   };
 
@@ -1391,15 +1371,19 @@ export default function App() {
                 url: URL.createObjectURL(blob),
                 type: stock.type,
               };
-              setProject(p => ({
-                ...p,
-                assets: [...p.assets, newAsset],
-                segments: p.segments.map(s =>
+              setProject(p => {
+                const newAssets = [...p.assets, newAsset];
+                const afterTarget = p.segments.map(s =>
                   s.id === targetId
                     ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
                     : s
-                ),
-              }));
+                );
+                return {
+                  ...p,
+                  assets: newAssets,
+                  segments: autoMatchSegments(newAssets, afterTarget),
+                };
+              });
             }}
           />
         </AnimatePresence>
