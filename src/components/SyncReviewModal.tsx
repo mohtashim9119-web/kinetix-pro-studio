@@ -7,6 +7,7 @@ import { motion } from 'motion/react';
 import { MonitorPlay, X, RefreshCw, AlertCircle, ChevronRight } from 'lucide-react';
 import { Asset, VideoSegment } from '../types';
 import { isFuzzyMatch, findAssetByContext } from '../services/syncEngine';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   sceneDetails: string;
@@ -32,6 +33,7 @@ export function SyncReviewModal({
   onAssetChange,
 }: Props) {
   const sceneBlocks = sceneDetails.split(/\r?\n\r?\n/).map(l => l.trim()).filter(l => l !== '');
+  const trapRef = useFocusTrap<HTMLDivElement>();
 
   return (
     <>
@@ -41,6 +43,7 @@ export function SyncReviewModal({
           initial={{ opacity: 0, scale: 0.95, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          ref={trapRef}
           className="w-full max-w-6xl bg-[#080808] border border-[#1A1A1A] rounded-[32px] overflow-hidden flex flex-col max-h-[85vh] shadow-[0_0_50px_rgba(242,125,38,0.2)]"
         >
           <div className="p-8 border-b border-[#1A1A1A] flex justify-between items-center bg-[#050505]">

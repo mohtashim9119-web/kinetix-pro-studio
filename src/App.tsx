@@ -49,6 +49,7 @@ import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/
 import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
+import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 const StockSearchModal = lazy(() =>
@@ -305,6 +306,8 @@ export default function App() {
   const [syncStep, setSyncStep] = useState<0 | 1 | 2 | 3 | 4>(0);
   const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [editingSegment, setEditingSegment] = useState<VideoSegment | null>(null);
+  const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
+  const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [syncValidation, setSyncValidation] = useState<{
     voMatch: boolean;
     scriptScenesMatch: boolean;
@@ -1250,6 +1253,7 @@ export default function App() {
       <AnimatePresence>
         {(exportState.isExporting || exportState.error !== null) && (
           <motion.div
+            ref={exportModalTrapRef}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1434,7 +1438,8 @@ export default function App() {
       <AnimatePresence>
         {editingSegment && (
            <div className="fixed inset-0 z-[5000] flex items-center justify-center p-12 bg-black/90 backdrop-blur-2xl">
-             <motion.div 
+             <motion.div
+               ref={segmentEditorTrapRef}
                initial={{ opacity: 0, scale: 0.9, y: 30 }}
                animate={{ opacity: 1, scale: 1, y: 0 }}
                exit={{ opacity: 0, scale: 0.9, y: 30 }}

@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { Plus, RefreshCw, Video, Image as ImageIcon, AlertCircle, Clock } from 'lucide-react';
 import { searchAllStock, StockResult, StockSearchResult } from '../services/stockService';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 interface Props {
   targetSegmentId: string | null;
@@ -19,6 +20,7 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
   const [mediaType, setMediaType] = useState<'video' | 'image'>('video');
   const [isSearching, setIsSearching] = useState(false);
   const [searchResult, setSearchResult] = useState<StockSearchResult | null>(null);
+  const trapRef = useFocusTrap<HTMLDivElement>();
 
   useEffect(() => {
     const timer = setTimeout(async () => {
@@ -47,6 +49,7 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
         initial={{ scale: 0.9, y: 20, opacity: 0 }}
         animate={{ scale: 1, y: 0, opacity: 1 }}
         exit={{ scale: 0.9, y: 20, opacity: 0 }}
+        ref={trapRef}
         className="relative w-full max-w-4xl bg-[#0A0A0A] border border-[#1A1A1A] rounded-[40px] shadow-2xl overflow-hidden flex flex-col h-[80vh]"
       >
         <div className="p-8 border-b border-[#1A1A1A] flex items-center justify-between">
