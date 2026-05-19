@@ -1325,7 +1325,7 @@ export default function App() {
 
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
+                  <p aria-live="polite" aria-atomic="true" className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
                   <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
                 </div>
 

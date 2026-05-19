@@ -26,3 +26,12 @@
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: #222;
 }
+
+/* Global keyboard focus ring — visible on all interactive elements when navigated via keyboard.
+   Inputs and textareas keep their existing border-based focus style (outline-none in className). */
+button:focus-visible,
+select:focus-visible,
+[role="slider"]:focus-visible {
+  outline: 2px solid #F27D26;
+  outline-offset: 2px;
+}
