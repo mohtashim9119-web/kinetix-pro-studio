@@ -107,6 +107,7 @@ export function Timeline({
               type="range" min="0.5" max="10" step="0.1"
               value={zoomLevel}
               onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+              aria-label="Zoom level"
               className="w-32 h-1 bg-[#1A1A1A] rounded-full appearance-none accent-[#F27D26] cursor-pointer"
             />
           </div>
@@ -135,6 +136,7 @@ export function Timeline({
               type="range" min="0.1" max="5" step="0.1"
               value={zoomLevel}
               onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+              aria-label="Horizontal zoom"
               className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
             />
             <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(zoomLevel * 100)}%</span>
@@ -146,6 +148,7 @@ export function Timeline({
               type="range" min="0.5" max="2" step="0.1"
               value={globalPlaybackSpeed}
               onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
+              aria-label="Playback speed"
               className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
             />
             <span className="text-[9px] font-bold text-gray-500 w-8">{globalPlaybackSpeed.toFixed(1)}x</span>
@@ -157,6 +160,7 @@ export function Timeline({
               type="range" min="0.5" max="3" step="0.1"
               value={verticalZoom}
               onChange={(e) => setVerticalZoom(parseFloat(e.target.value))}
+              aria-label="Vertical zoom"
               className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
             />
             <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(verticalZoom * 100)}%</span>
@@ -167,7 +171,24 @@ export function Timeline({
       {/* Timeline Tracks Area */}
       <div
         id="timeline-scroll-area"
-        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-6 pt-10 cursor-crosshair"
+        role="slider"
+        tabIndex={0}
+        aria-label="Timeline position"
+        aria-valuenow={Math.round(currentTime * 10) / 10}
+        aria-valuemin={0}
+        aria-valuemax={Math.round(totalDuration * 10) / 10}
+        aria-valuetext={`${Math.floor(currentTime / 60).toString().padStart(2, '0')}:${Math.floor(currentTime % 60).toString().padStart(2, '0')}`}
+        onKeyDown={(e) => {
+          const step = e.shiftKey ? 5 : 1;
+          if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            onSeek(Math.min(totalDuration, currentTime + step));
+          } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            onSeek(Math.max(0, currentTime - step));
+          }
+        }}
+        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-6 pt-10 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
           const timeline = document.getElementById('timeline-scroll-area');
           if (timeline && !resizingId) {
