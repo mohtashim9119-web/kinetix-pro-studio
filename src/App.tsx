@@ -274,6 +274,8 @@ function ModalLoadingFallback(): ReactElement {
 
 function getExportErrorSummary(error: ExportError): string {
   switch (error.kind) {
+    case 'cancelled':
+      return 'Export cancelled.';
     case 'asset_missing':
       return `An asset used by segment ${(error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`;
     case 'ffmpeg_load':
@@ -1257,42 +1259,50 @@ export default function App() {
                   <span className="text-2xl">✕</span>
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
+                  <h2 className="text-xl font-bold text-white mb-2">
+                    {exportState.error.kind === 'cancelled' ? 'Export Cancelled' : 'Export Failed'}
+                  </h2>
                   <p className="text-sm text-gray-300 mb-1">
                     {getExportErrorSummary(exportState.error)}
                   </p>
-                  <p className="text-xs text-gray-600">{exportState.error.message}</p>
+                  {exportState.error.kind !== 'cancelled' && (
+                    <p className="text-xs text-gray-600">{exportState.error.message}</p>
+                  )}
                 </div>
                 <div className="flex gap-3 justify-center">
-                  <button
-                    onClick={() => {
-                      const diagnostics = {
-                        error: exportState.error,
-                        projectMeta: {
-                          segmentCount: project.segments.length,
-                          hasVoiceover: !!project.voiceoverId,
-                          exportResolution,
-                          exportFps,
-                          ts: new Date().toISOString(),
-                        },
-                      };
-                      navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
-                    }}
-                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
-                  >
-                    Copy diagnostics
-                  </button>
-                  <button
-                    onClick={retryExport}
-                    className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
-                  >
-                    Retry
-                  </button>
+                  {exportState.error.kind !== 'cancelled' && (
+                    <button
+                      onClick={() => {
+                        const diagnostics = {
+                          error: exportState.error,
+                          projectMeta: {
+                            segmentCount: project.segments.length,
+                            hasVoiceover: !!project.voiceoverId,
+                            exportResolution,
+                            exportFps,
+                            ts: new Date().toISOString(),
+                          },
+                        };
+                        navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
+                      }}
+                      className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                    >
+                      Copy diagnostics
+                    </button>
+                  )}
+                  {exportState.error.kind !== 'cancelled' && (
+                    <button
+                      onClick={retryExport}
+                      className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
                   <button
                     onClick={cancelExport}
                     className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
                   >
-                    Cancel
+                    {exportState.error.kind === 'cancelled' ? 'Dismiss' : 'Cancel'}
                   </button>
                 </div>
               </div>

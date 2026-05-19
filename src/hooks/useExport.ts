@@ -73,6 +73,10 @@ export function useExport(
   const workerRef = useRef<Worker | null>(null);
   const svcRef = useRef<Comlink.Remote<FfmpegWorkerService> | null>(null);
 
+  // Generation counter — incremented on every cancel so in-flight onProgress
+  // callbacks from the dying export silently no-op and never overwrite new state.
+  const generationRef = useRef(0);
+
   // Last snapshot — retryExport re-runs with the same inputs as the last startExport.
   const lastSnapshotRef = useRef<ExportSnapshot | null>(null);
 
@@ -87,6 +91,8 @@ export function useExport(
   useEffect(() => teardownWorker, [teardownWorker]);
 
   const runExport = useCallback(async (snapshot: ExportSnapshot): Promise<void> => {
+    const gen = ++generationRef.current;
+
     setState({
       isExporting: true,
       stage: null,
@@ -109,6 +115,7 @@ export function useExport(
     try {
       await svc.load();
     } catch (err) {
+      if (generationRef.current !== gen) return;
       teardownWorker();
       setState({
         isExporting: false,
@@ -124,6 +131,8 @@ export function useExport(
       return;
     }
 
+    if (generationRef.current !== gen) return;
+
     const { resolution, fps, project: snap } = snapshot;
     const resWidth = resolution === '4k' ? 3840 : 1920;
     const resHeight = resolution === '4k' ? 2160 : 1080;
@@ -133,6 +142,7 @@ export function useExport(
       svc,
       { fps, width: resWidth, height: resHeight },
       (stage: ExportStage) => {
+        if (generationRef.current !== gen) return;
         setState(prev => ({
           ...prev,
           stage,
@@ -141,6 +151,8 @@ export function useExport(
         }));
       },
     );
+
+    if (generationRef.current !== gen) return;
 
     teardownWorker();
 
@@ -178,10 +190,21 @@ export function useExport(
   }, [project, exportResolution, exportFps, runExport]);
 
   const cancelExport = useCallback((): void => {
-    // TODO: Phase 5 — actual mid-export cancellation via worker message.
-    // For now the worker keeps running; the result is discarded.
+    if (workerRef.current === null) {
+      // No active export — just dismiss the error/cancelled modal.
+      setState(IDLE_STATE);
+      return;
+    }
+    // Invalidate all in-flight onProgress callbacks from the current generation.
+    generationRef.current++;
     teardownWorker();
-    setState(IDLE_STATE);
+    setState({
+      isExporting: false,
+      stage: null,
+      progress: 0,
+      stageLabel: '',
+      error: { kind: 'cancelled', message: 'Export cancelled.' },
+    });
   }, [teardownWorker]);
 
   const retryExport = useCallback((): void => {

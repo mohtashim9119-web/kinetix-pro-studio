@@ -23,6 +23,7 @@ export type ExportErrorKind =
   | 'concat'
   | 'mux'
   | 'asset_missing'
+  | 'cancelled'
   | 'unknown';
 
 export interface ExportError {
