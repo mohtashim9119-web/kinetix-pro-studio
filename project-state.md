@@ -115,7 +115,7 @@ Phase 3 steps:
 | 2026-05-16 | **Output format:** MP4 required for YouTube upload. Current WebM output is unacceptable for production — this is a Phase 3 blocker. |
 | 2026-05-17 | **ffmpeg.wasm encode speed:** ~25s wall-clock per 1s of 1080p output (≈1.35s per frame at 30fps). Acceptable for Phase 3 validation; production-grade speed requires Phase 6 native ffmpeg via Tauri. |
 | 2026-05-17 | **Safari export verified:** `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264 + AAC. No code changes required for Safari support. |
-| 2026-05-17 | **Global transition fallback:** `segmentEncoder.ts` now falls back to `project.globalTransition` when a segment's own `transition` field is NONE. Per-segment overrides take precedence. "Apply to All" button in Settings still materializes the global value onto segments for per-segment overrides. UX revisit deferred to Phase 5. |
+| 2026-05-17 | **Global transition fallback:** `segmentEncoder.ts` now falls back to `project.globalTransition` when a segment's own `transition` field is NONE. Per-segment overrides take precedence. "Override all per-segment transitions" button in Settings still materializes the global value onto segments for per-segment overrides. UX revisit deferred to Phase 5. |
 
 ---
 
@@ -141,7 +141,7 @@ Phase 3 steps:
 ## Deferred to Phase 5
 
 - ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
-- **Per-segment vs global transition UX** — "Apply to All Scenes" button still redundant given encoder fallback. Consider removing in Phase 6.
+- **Per-segment vs global transition UX** — now that `segmentEncoder.ts` falls back to `project.globalTransition`, the "Override all per-segment transitions" button is partly redundant. Consider removing it or repurposing it for per-segment *overrides* only.
 - **`motion` library bundle weight** — ~264 kB unminified; not easily tree-shaken without switching APIs. Evaluate whether animation features justify the cost or trim to specific motion primitives.
 - **4K export validation** — 1080p verified on Safari and Chrome. 4K path is untested.
 - ~~**Stock API rate-limit handling**~~ — **Fixed Phase 5 step 7.** Exponential backoff retry (3 attempts); discriminated union StockSearchResult; distinct UI for rate_limited/error/ok.
@@ -203,7 +203,7 @@ Phase 3 steps:
 | 2026-05-17 | **Phase 4 commit `cdb2296`:** Prune phantom filter/transition/animation options from UI — `FILTERS` 57→27, `TEXT_ANIMATIONS` 49→27; add `TRANSITION_OPTIONS` (10 implemented) and `ANIMATION_OPTIONS` (11 implemented); dev-only `console.assert` guards added to `constants.ts`. |
 | 2026-05-17 | **Phase 4 commit `3a370e6`:** Clarify dev guard exclusion comments in `constants.ts` (Step 6 fixup). |
 | 2026-05-17 | **Phase 4 commit `97821cd`:** Add Safari validation test procedure (`docs/phase-4-safari-test.md`). Safari E2E result: **PASS** — `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264/AAC. |
-| 2026-05-17 | **Phase 4 commit `ea18635`:** Fix fade transition global fallback — `segmentEncoder.ts` now uses `project.globalTransition` when a segment's own `transition` field is NONE. Previously, users who set the global transition without clicking "Apply to All" got hard cuts. |
+| 2026-05-17 | **Phase 4 commit `ea18635`:** Fix fade transition global fallback — `segmentEncoder.ts` now uses `project.globalTransition` when a segment's own `transition` field is NONE. Previously, users who set the global transition without clicking "Override all per-segment transitions" got hard cuts. |
 
 ---
 

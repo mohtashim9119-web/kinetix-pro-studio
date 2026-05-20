@@ -148,7 +148,7 @@ const effectiveTransition =
     ? segment.transition
     : (options.globalTransition ?? TransitionType.NONE);
 ```
-`exportPipeline.ts` passes `project.globalTransition` as `options.globalTransition`. This means a user can set the global transition in Settings and get it applied without clicking "Apply Transition to All Scenes" — but per-segment overrides always take precedence. The "Apply to All" button materializes the global value onto each segment's own field (useful for subsequent per-segment divergence).
+`exportPipeline.ts` passes `project.globalTransition` as `options.globalTransition`. This means a user can set the global transition in Settings and get it applied without clicking "Override all per-segment transitions" — but per-segment overrides always take precedence. The "Override all per-segment transitions" button materializes the global value onto each segment's own field (useful for subsequent per-segment divergence).
 
 ---
 
