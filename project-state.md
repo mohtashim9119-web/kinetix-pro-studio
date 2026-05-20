@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-05-17 |
-| Current phase | Phase 5 — Production hardening |
+| Last updated | 2026-05-19 |
+| Current phase | Phase 6 — Desktop app (Tauri + native ffmpeg) |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -26,14 +26,33 @@
 | Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
 | Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ✅ Complete |
-| Phase 5 | Production hardening — tests, accessibility, responsive | ⬜ Not started |
+| Phase 5 | Production hardening — tests, accessibility, responsive | ✅ Complete (2026-05-19) |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
 
 ---
 
 ## Current Sprint
 
-Phase 4 complete. Next: Phase 5 (production hardening — tests, accessibility, responsive layout).
+Phase 5 complete (2026-05-19). Next: Phase 6 (Desktop app — Tauri wrap with native ffmpeg).
+
+---
+
+## Phase 5 Summary
+
+| Step | Description | Commits |
+|---|---|---|
+| Step 1+2 | Fix autoMatchAssets delete regression; confirm asset_missing reachability | 75be8dd |
+| Step 3 | Real mid-export cancellation — worker.terminate() + generation counter | (multiple) |
+| Step 4 | Mux failure investigation (30-min timebox) — no repro; root cause pre-existing c7515e5 fix | — |
+| Step 5 | JSZip type cleanup — destructure { default: JSZip }; @types/jszip removed | (commit) |
+| Step 6 | Relabel Apply Transition button; add title tooltip | (commit) |
+| Step 7 | Stock API 429 handling — fetchWithRetry exp backoff; discriminated union StockSearchResult | (commit) |
+| Step 8a | ARIA labels on icon-only buttons throughout app | (commit) |
+| Step 8b+8c | Global focus rings (CSS :focus-visible); aria-live on export stage label | (commit) |
+| Step 8c | Timeline scrubber — role="slider", full ARIA attributes, arrow-key navigation | (commit) |
+| Step 8d | useFocusTrap hook — Tab/Shift+Tab cycle in all 4 modals, focus restore on close | e49c28d |
+
+**Bundle size:** 435 kB / 133 kB gzip (negligible change vs Phase 4 433 kB / 132 kB — no new heavy deps added).
 
 ---
 
@@ -60,7 +79,7 @@ Phase 4 complete. Next: Phase 5 (production hardening — tests, accessibility, 
 | Test 1 — `crossOriginIsolated` | ✅ PASS | `true` in both Chrome and Safari; `SharedArrayBuffer` available; COOP/COEP headers correct |
 | Test 2 — Console hygiene | ✅ PASS | ffmpeg stderr routed to `console.debug`; no spurious `console.error` from pipeline |
 | Test 3 — Lazy modal loading | ✅ PASS | `StockSearchModal-*.js` loaded on demand; no lazy chunks in initial network request |
-| Test 4 — Dangling asset cleanup | ⚠️ PARTIAL | `c7515e5` clears `assetId` correctly; `autoMatchAssets` re-assigns immediately (pre-existing bug, deferred to Phase 5) |
+| Test 4 — Dangling asset cleanup | ✅ PASS | `c7515e5` clears `assetId` correctly; `autoMatchAssets` re-assignment regression **fixed Phase 5 step 1** — `autoMatchSegments` now imperative-only |
 | Test 5 — `asset_missing` error path | ⚠️ NOT REACHED via reload | Hydration cleanup clears orphaned `assetId`s before export; `ExportError` infrastructure verified by code review; deeper trigger deferred |
 | Test 6 — Fade transition | ⬜ PENDING | User execution pending |
 | Safari validation | ✅ PASS | `crossOriginIsolated=true`, full export, MP4 plays in VLC with H.264/AAC |
@@ -115,21 +134,23 @@ Phase 3 steps:
 
 - **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
 
+- **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
+
 ---
 
 ## Deferred to Phase 5
 
-- **JSZip dynamic-import double-cast** — `as unknown as typeof import('jszip')` workaround for `export =` + ESM dynamic import. Replace with a proper ambient module declaration in `src/types/jszip.d.ts`.
-- **Per-segment vs global transition UX** — now that `segmentEncoder.ts` falls back to `project.globalTransition`, the "Apply Transition to All Scenes" button is partly redundant. Consider removing it or repurposing it for per-segment *overrides* only.
+- ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
+- **Per-segment vs global transition UX** — "Apply to All Scenes" button still redundant given encoder fallback. Consider removing in Phase 6.
 - **`motion` library bundle weight** — ~264 kB unminified; not easily tree-shaken without switching APIs. Evaluate whether animation features justify the cost or trim to specific motion primitives.
 - **4K export validation** — 1080p verified on Safari and Chrome. 4K path is untested.
-- **Stock API rate-limit handling** — 429s silently return empty results. Add retry-with-backoff + user-visible feedback.
-- **Real mid-export cancellation** — `cancelExport` in `useExport.ts` clears state but does not terminate the in-flight worker. Requires `worker.terminate()` + restart guard (`// TODO: Phase 5`).
-- **Accessibility audit** — no ARIA labels, focus traps, or keyboard nav beyond spacebar. Required before public launch.
+- ~~**Stock API rate-limit handling**~~ — **Fixed Phase 5 step 7.** Exponential backoff retry (3 attempts); discriminated union StockSearchResult; distinct UI for rate_limited/error/ok.
+- ~~**Real mid-export cancellation**~~ — **Fixed Phase 5 step 3.** `worker.terminate()` + generation counter in `useExport`.
+- ~~**Accessibility audit**~~ — **Phase 5 step 8 complete.** ARIA labels, focus rings, aria-live, timeline slider keyboard nav, useFocusTrap on all 4 modals. Pass 2 (screen reader, responsive) deferred to Phase 6.
 - **Responsive layout** — layout assumes ≥1280px width. Mobile/tablet breakpoints not addressed.
 - **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
-- **`autoMatchAssets` re-assignment on delete** — the `useEffect` at `App.tsx:350–355` depends on `project.assets.length`, so it fires on every asset deletion. `autoMatchAssets` then immediately re-fills segments whose `assetId` was just cleared by `handleDeleteAsset` (Phase 4 Step 3). The immutable clear in `c7515e5` is correct but is negated within the same render cycle by this pre-existing effect. Fix options: gate `autoMatchAssets` to fire only when `assets.length` increases (addition only), refactor to an imperative call on upload, or remove fuzzy auto-match in favour of explicit user action. See also CLAUDE.md Known Bugs.
-- **`asset_missing` ExportError path is defense-in-depth only** — hydration-time cleanup (`App.tsx` mount effect) clears orphaned `assetId`s on reload, and `autoMatchAssets` re-fills cleared `assetId`s mid-session, making `exportPipeline.ts:80–93` unreachable via normal user actions. The other `ExportErrorKind` values (`ffmpeg_load`, `encode`, `concat`, `mux`) remain reachable and the modal error UI is verified. `asset_missing` is triggerable in-session only by deleting an IndexedDB row via DevTools without reloading. Worth keeping for defense-in-depth; no action needed unless the `autoMatchAssets` bug is fixed.
+- ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
+- ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
 
 ---
 

@@ -92,6 +92,7 @@ export function SegmentEditorPanel({
                 </button>
                 <button
                   onClick={() => onDeleteSegment(s.id)}
+                  aria-label="Delete segment"
                   className="p-1.5 text-gray-700 hover:text-red-500 transition-colors"
                 >
                   <Trash2 size={12} />
@@ -303,6 +304,7 @@ export function SegmentEditorPanel({
                   <span className="text-[8px] font-black text-gray-700 uppercase tracking-widest">Overlay #{oIdx + 1}</span>
                   <button
                     onClick={() => onUpdateSegment(idx, { extraOverlays: s.extraOverlays?.filter(o => o.id !== overlay.id) })}
+                    aria-label={`Delete overlay ${oIdx + 1}`}
                     className="text-red-900 hover:text-red-500"
                   >
                     <Trash2 size={10} />

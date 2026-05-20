@@ -59,6 +59,8 @@ export function SettingsPanel({
             Hide On-Screen Text
             <button
               onClick={() => onProjectChange({ hideAllText: !project.hideAllText })}
+              aria-label={project.hideAllText ? 'Show on-screen text' : 'Hide on-screen text'}
+              aria-pressed={project.hideAllText}
               className={`w-10 h-5 rounded-full transition-colors relative ${project.hideAllText ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
             >
               <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${project.hideAllText ? 'translate-x-5' : ''}`} />
@@ -117,9 +119,10 @@ export function SettingsPanel({
           <div className="flex flex-col gap-3">
             <button
               onClick={onApplyTransitionToAll}
+              title="Writes the global transition onto every segment's own field, overriding any per-segment choices. Only needed if you want to diverge per-segment after this point — the global transition setting applies automatically without clicking this."
               className="w-full bg-[#1A1A1A] border border-[#282828] p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all flex items-center justify-center gap-2"
             >
-              <RefreshCw size={12} /> Apply Transition to All Scenes
+              <RefreshCw size={12} /> Override all per-segment transitions
             </button>
             <button
               onClick={onApplyAnimationToAll}

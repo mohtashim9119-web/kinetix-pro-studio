@@ -239,7 +239,7 @@ App.tsx                    — top-level state + orchestration only
 - **`togglePlay` in keyboard effect**: `togglePlay` is recreated each render → listener attaches/detaches constantly. Wrap in `useCallback` or use a ref
 - **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI
 - **`storyMap` parameter in `parseProjectData`**: declared but body never uses it
-- **`autoMatchAssets` effect at `App.tsx:350–355`**: depends on `project.assets.length`, so it fires on both asset *addition* and asset *deletion*. On deletion, `handleDeleteAsset` correctly sets `segment.assetId = undefined`, but `autoMatchAssets` immediately re-fills it by fuzzy-matching the segment text against remaining assets — negating the cleanup within the same render cycle. Additionally, `autoMatchAssets` is not in the effect's dep array (stale closure). Fix: gate the effect to fire only when `assets.length` increases, or refactor to an imperative call triggered only on upload.
+- ~~**`autoMatchAssets` effect at `App.tsx:350–355`**~~: **Fixed Phase 5 step 1** — removed the effect; `autoMatchSegments` is now called imperatively inside each upload handler only. Deletion path is clean.
 
 ---
 
@@ -257,20 +257,16 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 | No authentication | Open access | Add auth layer when persistence is added |
 | `AnimationType` values not applied in canvas export | Camera dynamics are live-preview only; export path does not apply AnimationType to frames | Implement per-type canvas animation or document as preview-only |
 | Extra overlays have no drag-to-position UI | Position set as `x: 50, y: 50` always | Add drag handles in preview |
-| No rate-limit handling in stockService | 429s silently return empty results | Retry + user feedback (Phase 5) |
-| JSZip dynamic-import double-cast | `as unknown as typeof import('jszip')` workaround for `export =` + ESM | Replace with ambient module declaration in `src/types/jszip.d.ts` (Phase 5) |
-| Real mid-export cancellation not implemented | `cancelExport` clears UI state but does not terminate in-flight worker | `worker.terminate()` + restart guard (Phase 5) |
-| 4K export unvalidated | 1080p verified on Safari + Chrome; 4K path untested | Validate in Phase 5 |
+| ~~No rate-limit handling in stockService~~ | ✅ **Resolved Phase 5** — exponential backoff retry (3 attempts); discriminated union surface rate_limited/error/ok | — |
+| ~~JSZip dynamic-import double-cast~~ | ✅ **Resolved Phase 5** — `{ default: JSZip }` destructure; `moduleResolution: "bundler"` synthesizes `.default` | — |
+| ~~Real mid-export cancellation not implemented~~ | ✅ **Resolved Phase 5** — `worker.terminate()` + generation counter prevents stale state overwrite | — |
+| 4K export unvalidated | 1080p verified on Safari + Chrome; 4K path untested | Validate in Phase 6 |
 
 ---
 
 ## Dependencies to Remove
 
-All major dead dependencies removed in Phase 1. Remaining minor items:
-
-```
-@types/jszip    — still in deps, should be devDeps only (cosmetic; no runtime impact)
-```
+All dead dependencies removed. No remaining items.
 
 ---
 
@@ -298,7 +294,7 @@ All major dead dependencies removed in Phase 1. Remaining minor items:
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 5 | Playback interval + audio sync still in App.tsx |
+| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 6 | Playback interval + audio sync still in App.tsx |
 | Extract `useExport.ts` hook | ✅ Done — 2026-05-17 | ab8d4d9 — lazy worker, snapshot semantics, ExportError re-export |
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
@@ -317,3 +313,9 @@ All major dead dependencies removed in Phase 1. Remaining minor items:
 | Safari export validation | ✅ Done — 2026-05-17 | 97821cd — PASS; crossOriginIsolated=true, full export works |
 | Global transition fallback in encoder | ✅ Done — 2026-05-17 | ea18635 — effectiveTransition uses project.globalTransition as fallback |
 | Main bundle size | ✅ 433 kB / 132 kB gzip | Down from 542 kB / 161 kB at end of Phase 3 |
+| Fix autoMatchAssets delete regression | ✅ Done — 2026-05-19 | Pure autoMatchSegments fn in syncEngine; called imperatively in upload handlers only |
+| Real mid-export cancellation | ✅ Done — 2026-05-19 | worker.terminate() + generation counter in useExport |
+| JSZip type cleanup | ✅ Done — 2026-05-19 | Destructure { default: JSZip }; @types/jszip removed (jszip ships own types) |
+| Stock API 429 handling | ✅ Done — 2026-05-19 | fetchWithRetry exp backoff; StockSearchResult discriminated union; distinct UI states |
+| Accessibility pass 1 | ✅ Done — 2026-05-19 | ARIA labels, focus rings, aria-live, timeline slider, useFocusTrap on all 4 modals |
+| Phase 5 smoke test doc | ✅ Done — 2026-05-19 | docs/phase-5-smoke-tests.md |

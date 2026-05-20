@@ -23,6 +23,7 @@ export type ExportErrorKind =
   | 'concat'
   | 'mux'
   | 'asset_missing'
+  | 'cancelled'
   | 'unknown';
 
 export interface ExportError {
@@ -76,7 +77,7 @@ export async function exportProject(
     const segment = segments[i];
     if (!segment) continue;
 
-    // Check for missing asset blob before attempting encode
+    // Reachable when the user deletes an asset mid-session and exports before reload (Phase 5 step 1).
     if (segment.assetId) {
       const asset = assetMap.get(segment.assetId);
       if (!asset?.url) {

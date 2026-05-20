@@ -45,10 +45,11 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
 import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
+import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 const StockSearchModal = lazy(() =>
@@ -274,6 +275,8 @@ function ModalLoadingFallback(): ReactElement {
 
 function getExportErrorSummary(error: ExportError): string {
   switch (error.kind) {
+    case 'cancelled':
+      return 'Export cancelled.';
     case 'asset_missing':
       return `An asset used by segment ${(error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`;
     case 'ffmpeg_load':
@@ -303,6 +306,8 @@ export default function App() {
   const [syncStep, setSyncStep] = useState<0 | 1 | 2 | 3 | 4>(0);
   const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [editingSegment, setEditingSegment] = useState<VideoSegment | null>(null);
+  const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
+  const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [syncValidation, setSyncValidation] = useState<{
     voMatch: boolean;
     scriptScenesMatch: boolean;
@@ -324,34 +329,6 @@ export default function App() {
   const [testFrameUrl, setTestFrameUrl] = useState<string | null>(null);
 
 
-  const autoMatchAssets = () => {
-    setProject(prev => {
-      const newSegs = prev.segments.map(s => {
-        if (s.assetId) return s;
-        
-        // Look for bracketed name in heading or text
-        const bracketMatch = (s.heading + s.text).match(/\[(.*?):?\s*(.*?)\]/);
-        if (bracketMatch) {
-          const name = (bracketMatch[2] ?? '').trim();
-          const asset = prev.assets.find(a => isFuzzyMatch(name, a.name));
-          if (asset) return { ...s, assetId: asset.id };
-        }
-        
-        // Otherwise try current segment context
-        const contextAsset = findAssetByContext(s.heading + ' ' + s.text, prev.assets);
-        if (contextAsset) return { ...s, assetId: contextAsset.id };
-        
-        return s;
-      });
-      return { ...prev, segments: newSegs };
-    });
-  };
-
-  useEffect(() => {
-    if (project.assets.length > 0 && project.segments.length > 0) {
-      autoMatchAssets();
-    }
-  }, [project.assets.length]);
 
   // Rehydrate persisted project on mount
   useEffect(() => {
@@ -572,7 +549,7 @@ export default function App() {
     try {
       let JSZip: typeof import('jszip');
       try {
-        JSZip = (await import('jszip')).default as unknown as typeof import('jszip');
+        ({ default: JSZip } = await import('jszip'));
       } catch (loadErr) {
         console.error('Failed to load jszip:', loadErr);
         setIsProcessing(false);
@@ -608,11 +585,15 @@ export default function App() {
       });
       
       await Promise.all(filePromises);
-      setProject(prev => ({
-        ...prev,
-        assets: [...prev.assets, ...newAssets],
-        voiceoverId: newAssets.find(a => a.type === 'audio')?.id || prev.voiceoverId
-      }));
+      setProject(prev => {
+        const allAssets = [...prev.assets, ...newAssets];
+        return {
+          ...prev,
+          assets: allAssets,
+          segments: autoMatchSegments(allAssets, prev.segments),
+          voiceoverId: newAssets.find(a => a.type === 'audio')?.id || prev.voiceoverId,
+        };
+      });
     } catch (err) {
       console.error("ZIP Error:", err);
     } finally {
@@ -665,11 +646,15 @@ export default function App() {
         return;
       }
       const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
-      setProject(prev => ({
-        ...prev,
-        assets: [...prev.assets, newAsset],
-        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
-      }));
+      setProject(prev => {
+        const newAssets = [...prev.assets, newAsset];
+        return {
+          ...prev,
+          assets: newAssets,
+          segments: autoMatchSegments(newAssets, prev.segments),
+          voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
+        };
+      });
     }
   };
 
@@ -901,9 +886,11 @@ export default function App() {
           { id: 'editor', icon: Layout, label: 'Scene Editor' },
           { id: 'settings', icon: Settings, label: 'Config' }
         ].map(tab => (
-          <button 
+          <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
+            aria-label={tab.label}
+            aria-current={activeTab === tab.id ? 'page' : undefined}
             className={`p-3 rounded-xl transition-all duration-300 relative group ${activeTab === tab.id ? 'bg-[#1A1A1A] text-[#F27D26]' : 'text-gray-600 hover:text-white'}`}
           >
             <tab.icon size={20} />
@@ -1034,6 +1021,7 @@ export default function App() {
                             <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center p-4">
                               <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
                               <button
+                                aria-label={`Delete asset ${asset.name}`}
                                 onClick={() => {
                                   URL.revokeObjectURL(asset.url);
                                   setProject(p => ({
@@ -1265,6 +1253,7 @@ export default function App() {
       <AnimatePresence>
         {(exportState.isExporting || exportState.error !== null) && (
           <motion.div
+            ref={exportModalTrapRef}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -1277,42 +1266,50 @@ export default function App() {
                   <span className="text-2xl">✕</span>
                 </div>
                 <div>
-                  <h2 className="text-xl font-bold text-white mb-2">Export Failed</h2>
+                  <h2 className="text-xl font-bold text-white mb-2">
+                    {exportState.error.kind === 'cancelled' ? 'Export Cancelled' : 'Export Failed'}
+                  </h2>
                   <p className="text-sm text-gray-300 mb-1">
                     {getExportErrorSummary(exportState.error)}
                   </p>
-                  <p className="text-xs text-gray-600">{exportState.error.message}</p>
+                  {exportState.error.kind !== 'cancelled' && (
+                    <p className="text-xs text-gray-600">{exportState.error.message}</p>
+                  )}
                 </div>
                 <div className="flex gap-3 justify-center">
-                  <button
-                    onClick={() => {
-                      const diagnostics = {
-                        error: exportState.error,
-                        projectMeta: {
-                          segmentCount: project.segments.length,
-                          hasVoiceover: !!project.voiceoverId,
-                          exportResolution,
-                          exportFps,
-                          ts: new Date().toISOString(),
-                        },
-                      };
-                      navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
-                    }}
-                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
-                  >
-                    Copy diagnostics
-                  </button>
-                  <button
-                    onClick={retryExport}
-                    className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
-                  >
-                    Retry
-                  </button>
+                  {exportState.error.kind !== 'cancelled' && (
+                    <button
+                      onClick={() => {
+                        const diagnostics = {
+                          error: exportState.error,
+                          projectMeta: {
+                            segmentCount: project.segments.length,
+                            hasVoiceover: !!project.voiceoverId,
+                            exportResolution,
+                            exportFps,
+                            ts: new Date().toISOString(),
+                          },
+                        };
+                        navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
+                      }}
+                      className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                    >
+                      Copy diagnostics
+                    </button>
+                  )}
+                  {exportState.error.kind !== 'cancelled' && (
+                    <button
+                      onClick={retryExport}
+                      className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
                   <button
                     onClick={cancelExport}
                     className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
                   >
-                    Cancel
+                    {exportState.error.kind === 'cancelled' ? 'Dismiss' : 'Cancel'}
                   </button>
                 </div>
               </div>
@@ -1332,7 +1329,7 @@ export default function App() {
 
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
-                  <p className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
+                  <p aria-live="polite" aria-atomic="true" className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
                   <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
                 </div>
 
@@ -1391,15 +1388,19 @@ export default function App() {
                 url: URL.createObjectURL(blob),
                 type: stock.type,
               };
-              setProject(p => ({
-                ...p,
-                assets: [...p.assets, newAsset],
-                segments: p.segments.map(s =>
+              setProject(p => {
+                const newAssets = [...p.assets, newAsset];
+                const afterTarget = p.segments.map(s =>
                   s.id === targetId
                     ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
                     : s
-                ),
-              }));
+                );
+                return {
+                  ...p,
+                  assets: newAssets,
+                  segments: autoMatchSegments(newAssets, afterTarget),
+                };
+              });
             }}
           />
         </AnimatePresence>
@@ -1437,7 +1438,8 @@ export default function App() {
       <AnimatePresence>
         {editingSegment && (
            <div className="fixed inset-0 z-[5000] flex items-center justify-center p-12 bg-black/90 backdrop-blur-2xl">
-             <motion.div 
+             <motion.div
+               ref={segmentEditorTrapRef}
                initial={{ opacity: 0, scale: 0.9, y: 30 }}
                animate={{ opacity: 1, scale: 1, y: 0 }}
                exit={{ opacity: 0, scale: 0.9, y: 30 }}
@@ -1473,7 +1475,7 @@ export default function App() {
                         <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Edit Scene</h3>
                         <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Precise Timing & Visual Controls</p>
                       </div>
-                      <button onClick={() => setEditingSegment(null)} className="p-4 bg-white/5 rounded-2xl hover:bg-red-500 hover:text-white transition-all"><X size={24}/></button>
+                      <button onClick={() => setEditingSegment(null)} aria-label="Close segment editor" className="p-4 bg-white/5 rounded-2xl hover:bg-red-500 hover:text-white transition-all"><X size={24}/></button>
                    </div>
 
                    <div className="space-y-8 flex-1 overflow-y-auto pr-4 custom-scrollbar">
