@@ -80,6 +80,10 @@ export interface AnimationFrameResult {
   postDrawAlpha?: number;
 }
 
+// Export-side animation renderer. The live-preview side lives in
+// src/components/PreviewStage.tsx (getAnimationWrapperProps).
+// Both must remain visually consistent — see comment
+// there for full rationale.
 /**
  * Applies a canvas transform representing the segment animation.
  * Call this AFTER ctx.save() and BEFORE drawing media.

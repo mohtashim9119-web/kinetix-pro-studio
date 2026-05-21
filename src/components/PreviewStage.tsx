@@ -11,6 +11,12 @@ import { getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 
+// Live-preview side of the animation pipeline. The export side
+// lives in src/services/canvasAnimations.ts (applySegmentAnimation).
+// Both must remain visually consistent — if you change motion
+// parameters here, port the change to canvasAnimations.ts and
+// vice versa. Drift between the two will cause preview-vs-export
+// mismatches that are tedious to diagnose.
 /**
  * Returns Framer Motion props for the intra-segment media wrapper.
  * The outer motion.div drives cross-segment transition (initial/exit).
