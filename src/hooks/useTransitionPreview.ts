@@ -62,6 +62,12 @@ export function useTransitionPreview({
   const [snapshots, setSnapshots] = useState<SnapshotPair | null>(null);
   // Prevent concurrent or duplicate snapshot renders
   const pendingKeyRef = useRef<string>('');
+  // Guard against setState after unmount (async renderSegmentFrame can outlive the component)
+  const mountedRef = useRef<boolean>(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Derive relevant segments + transition metadata
@@ -69,9 +75,12 @@ export function useTransitionPreview({
   const currentSeg = segments.find(
     s => currentTime >= s.startTime && currentTime < s.startTime + s.duration,
   );
-  // Next segment in timeline order (first segment whose startTime > currentSeg.startTime)
+  // Next segment: sorted by startTime, first one that begins at or after the end of currentSeg.
+  // Using order sort is more robust than relying on array position.
   const nextSeg = currentSeg
-    ? segments.find(s => s.startTime >= currentSeg.startTime + currentSeg.duration - 0.001)
+    ? [...segments]
+        .sort((a, b) => a.startTime - b.startTime)
+        .find(s => s.startTime >= currentSeg.startTime + currentSeg.duration - 0.001 && s.id !== currentSeg.id)
     : undefined;
 
   const effectiveTransition: TransitionType =
@@ -156,7 +165,9 @@ export function useTransitionPreview({
           height: SNAP_H,
           global: globalConfig,
         });
-        setSnapshots({ key, outgoing: outCanvas, incoming: inCanvas });
+        if (mountedRef.current) {
+          setSnapshots({ key, outgoing: outCanvas, incoming: inCanvas });
+        }
       } catch (err) {
         console.warn('[useTransitionPreview] snapshot render failed:', err);
       } finally {
