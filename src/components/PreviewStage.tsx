@@ -35,6 +35,7 @@ function getAnimationWrapperProps(
 
     case AnimationType.KEN_BURNS:
       return {
+        initial: { scale: 1 },
         animate: { scale: 1.1 },
         transition: { duration: segmentDuration, ease: 'linear' },
         style: { transformOrigin: 'center center' },

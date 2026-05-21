@@ -246,10 +246,12 @@ if (import.meta.env.DEV) {
         canvasWidth: 16,
         canvasHeight: 16,
       });
+      // Read transform BEFORE restore() — restore() resets the matrix to identity,
+      // so checking after restore always produces a false positive.
+      const m = ctx.getTransform();
       ctx.restore();
       // If postDrawAlpha came back undefined AND the transform matrix is
       // identity, consider it a no-op (likely a missing case).
-      const m = ctx.getTransform();
       const isIdentity = m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0;
       if (isIdentity && result.postDrawAlpha === undefined) {
         console.assert(
