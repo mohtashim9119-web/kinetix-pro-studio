@@ -266,20 +266,66 @@ export function SegmentEditorPanel({
                   className="w-full accent-[#F27D26]"
                 />
               </div>
-              {assets.find(a => a.id === s.assetId)?.type === 'video' && (
-                <div className="space-y-1">
-                  <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
-                    <span>Trim Start (s)</span>
-                    <span className="text-blue-400">{(s.trimStart ?? 0).toFixed(1)}s</span>
-                  </label>
-                  <input
-                    type="range" min="0" max={s.sourceDuration ?? 60} step="0.5"
-                    value={s.trimStart ?? 0}
-                    onChange={(e) => onUpdateSegment(idx, { trimStart: parseFloat(e.target.value) })}
-                    className="w-full accent-blue-500"
-                  />
-                </div>
-              )}
+              {assets.find(a => a.id === s.assetId)?.type === 'video' && (() => {
+                const srcDur = s.sourceDuration ?? 60;
+                const trimStart = s.trimStart ?? 0;
+                // undefined trimEnd = "play to end of media"
+                const trimEnd = s.trimEnd ?? srcDur;
+                return (
+                  <>
+                    <div className="space-y-1">
+                      <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
+                        <span>Trim Start (s)</span>
+                        <span className="text-blue-400">{trimStart.toFixed(1)}s</span>
+                      </label>
+                      <input
+                        type="range" min="0" max={srcDur} step="0.5"
+                        value={trimStart}
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value);
+                          // Keep trimStart < trimEnd (when trimEnd is set)
+                          const updates: Partial<import('../types').VideoSegment> = { trimStart: val };
+                          if (s.trimEnd !== undefined && val >= s.trimEnd) {
+                            updates.trimEnd = Math.min(srcDur, val + 0.1);
+                          }
+                          onUpdateSegment(idx, updates);
+                        }}
+                        className="w-full accent-blue-500"
+                      />
+                    </div>
+                    <div className="space-y-1 col-span-2">
+                      <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
+                        <span>Trim End (s)</span>
+                        <span className="text-purple-400">
+                          {s.trimEnd !== undefined ? `${s.trimEnd.toFixed(1)}s` : 'end of media'}
+                        </span>
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="range" min={trimStart + 0.1} max={srcDur} step="0.5"
+                          value={trimEnd}
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value);
+                            // Clamp: trimEnd > trimStart
+                            onUpdateSegment(idx, { trimEnd: Math.max(trimStart + 0.1, val) });
+                          }}
+                          className="flex-1 accent-purple-500"
+                        />
+                        {s.trimEnd !== undefined && (
+                          <button
+                            onClick={() => onUpdateSegment(idx, { trimEnd: undefined })}
+                            title="Reset to end of media"
+                            className="text-[8px] font-black text-gray-600 hover:text-red-400 transition-colors px-1"
+                            aria-label="Reset trim end to end of media"
+                          >
+                            ×
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
 
             <div className="flex items-center justify-between pt-1">
