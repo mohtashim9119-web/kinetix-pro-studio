@@ -19,8 +19,11 @@ import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer
 const SNAP_W = 960;
 const SNAP_H = 540;
 
-/** How many seconds before the transition window to trigger the pre-roll. */
-const PRE_ROLL_LEAD_S = 0.4;
+/** How many seconds before the transition window to trigger the pre-roll.
+ *  0.8s covers the worst-case parallel seek cost (~200ms per video) with a
+ *  600ms safety margin. Same-asset sequential fallback costs ~400ms — still
+ *  400ms of margin inside the 800ms window. */
+const PRE_ROLL_LEAD_S = 0.8;
 
 interface SnapshotPair {
   /** Unique key identifying this boundary: `${outId}:${inId}` */
@@ -147,7 +150,17 @@ export function useTransitionPreview({
 
     void (async () => {
       try {
-        await renderSegmentFrame({
+        // When both segments reference the same video URL, videoCache returns
+        // the same HTMLVideoElement. Concurrent seeks on the same element race
+        // (the second seek cancels the first), so fall back to sequential in
+        // that case. For all other combinations (distinct URLs, or non-video
+        // assets) parallel rendering is safe and halves the snapshot cost.
+        const sharesAsset =
+          currentAsset?.type === 'video' &&
+          nextAsset?.type === 'video' &&
+          currentAsset.url === nextAsset.url;
+
+        const outgoingPromise = renderSegmentFrame({
           segment: currentSeg,
           asset: currentAsset,
           timeInSegment: outgoingTime,
@@ -156,15 +169,35 @@ export function useTransitionPreview({
           height: SNAP_H,
           global: globalConfig,
         });
-        await renderSegmentFrame({
-          segment: nextSeg,
-          asset: nextAsset,
-          timeInSegment: 0, // first frame of incoming segment
-          ctx: inCtx,
-          width: SNAP_W,
-          height: SNAP_H,
-          global: globalConfig,
-        });
+
+        if (sharesAsset) {
+          // Same video element — seek sequentially to avoid race.
+          await outgoingPromise;
+          await renderSegmentFrame({
+            segment: nextSeg,
+            asset: nextAsset,
+            timeInSegment: 0,
+            ctx: inCtx,
+            width: SNAP_W,
+            height: SNAP_H,
+            global: globalConfig,
+          });
+        } else {
+          // Distinct sources (or non-video) — parallel is safe.
+          await Promise.all([
+            outgoingPromise,
+            renderSegmentFrame({
+              segment: nextSeg,
+              asset: nextAsset,
+              timeInSegment: 0,
+              ctx: inCtx,
+              width: SNAP_W,
+              height: SNAP_H,
+              global: globalConfig,
+            }),
+          ]);
+        }
+
         if (mountedRef.current) {
           setSnapshots({ key, outgoing: outCanvas, incoming: inCanvas });
         }

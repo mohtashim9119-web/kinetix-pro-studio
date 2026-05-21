@@ -365,49 +365,65 @@ export function PreviewStage({
               {/* Main Overlays Gradient */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
 
-              {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided */}
-              {currentSegment.extraOverlays?.map((o) => {
-                const isDraggable = !!onUpdateExtraOverlayPosition;
-                return (
-                  <motion.div
-                    key={o.id}
-                    ref={(el) => {
-                      if (el) overlayRefs.current.set(o.id, el);
-                      else overlayRefs.current.delete(o.id);
-                    }}
-                    {...getMotionProps(o.animation || 'fade')}
-                    className={`absolute p-4 rounded-xl shadow-lg border border-white/5 select-none${isDraggable ? ' cursor-move' : ' pointer-events-none'}`}
-                    onPointerDown={isDraggable
-                      ? (e) => handleOverlayPointerDown(e, o.id, currentSegment.id, o.position.x, o.position.y)
-                      : undefined}
-                    onPointerMove={isDraggable
-                      ? (e) => handleOverlayPointerMove(e, o.id)
-                      : undefined}
-                    onPointerUp={isDraggable ? handleOverlayPointerUp : undefined}
-                    style={{
-                      left: `${o.position.x}%`,
-                      top: `${o.position.y}%`,
-                      transform: 'translate(-50%, -50%)',
-                      color: o.color,
-                      backgroundColor: o.backgroundColor,
-                      fontFamily: o.fontFamily,
-                      fontSize: `${o.fontSize}px`,
-                      fontWeight: o.fontWeight || 'normal',
-                      fontStyle: o.fontStyle || 'normal',
-                      textShadow: o.textShadow || '0 2px 10px rgba(0,0,0,0.5)',
-                      textAlign: o.textAlign || 'center',
-                      whiteSpace: 'nowrap',
-                      zIndex: 40,
-                      backdropFilter: 'blur(4px)',
-                      touchAction: 'none', // required for pointer capture on touch
-                    }}
-                  >
-                    {o.text}
-                  </motion.div>
-                );
-              })}
+              {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided.
+                  Wrapper fades out with the canvas overlay during transitions to prevent
+                  double-render (canvas snapshot already contains extra overlays). */}
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={{
+                  zIndex: 40,
+                  opacity: transitionPreview.isActive ? 0 : 1,
+                  transition: 'opacity 100ms ease',
+                }}
+              >
+                {currentSegment.extraOverlays?.map((o) => {
+                  const isDraggable = !!onUpdateExtraOverlayPosition;
+                  return (
+                    <motion.div
+                      key={o.id}
+                      ref={(el) => {
+                        if (el) overlayRefs.current.set(o.id, el);
+                        else overlayRefs.current.delete(o.id);
+                      }}
+                      {...getMotionProps(o.animation || 'fade')}
+                      className={`absolute p-4 rounded-xl shadow-lg border border-white/5 select-none${isDraggable ? ' cursor-move' : ' pointer-events-none'}`}
+                      onPointerDown={isDraggable
+                        ? (e) => handleOverlayPointerDown(e, o.id, currentSegment.id, o.position.x, o.position.y)
+                        : undefined}
+                      onPointerMove={isDraggable
+                        ? (e) => handleOverlayPointerMove(e, o.id)
+                        : undefined}
+                      onPointerUp={isDraggable ? handleOverlayPointerUp : undefined}
+                      style={{
+                        left: `${o.position.x}%`,
+                        top: `${o.position.y}%`,
+                        transform: 'translate(-50%, -50%)',
+                        color: o.color,
+                        backgroundColor: o.backgroundColor,
+                        fontFamily: o.fontFamily,
+                        fontSize: `${o.fontSize}px`,
+                        fontWeight: o.fontWeight || 'normal',
+                        fontStyle: o.fontStyle || 'normal',
+                        textShadow: o.textShadow || '0 2px 10px rgba(0,0,0,0.5)',
+                        textAlign: o.textAlign || 'center',
+                        whiteSpace: 'nowrap',
+                        backdropFilter: 'blur(4px)',
+                        touchAction: 'none', // required for pointer capture on touch
+                        pointerEvents: isDraggable ? 'auto' : 'none',
+                      }}
+                    >
+                      {o.text}
+                    </motion.div>
+                  );
+                })}
+              </div>
 
-              <div className="absolute inset-0 flex flex-col items-center justify-center p-20 text-center pointer-events-none select-none z-10">
+              {/* Main heading + body text. Fades out during canvas transition overlay to prevent
+                  double-render — same 100ms ease as the canvas fade-in so they crossfade cleanly. */}
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center p-20 text-center pointer-events-none select-none z-10"
+                style={{ opacity: transitionPreview.isActive ? 0 : 1, transition: 'opacity 100ms ease' }}
+              >
                 {currentSegment.heading && (currentSegment.showOverlay || !hideAllText) && (
                   <motion.h3
                     {...currentSegment.overlayConfig?.animation ? getMotionProps(currentSegment.overlayConfig.animation) : { initial: { opacity: 0, y: -20 }, animate: { opacity: 1, y: 0 } }}
