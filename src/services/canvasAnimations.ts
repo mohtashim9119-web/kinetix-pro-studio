@@ -12,6 +12,27 @@
 
 import { AnimationType } from '../types';
 
+/**
+ * Explicit set of every AnimationType that has a non-default case in
+ * applySegmentAnimation. Maintained by hand — if you add a case to the
+ * switch, add it here too. The DEV guard below asserts
+ * ANIMATION_OPTIONS ⊆ IMPLEMENTED_ANIMATIONS at module load.
+ */
+const IMPLEMENTED_ANIMATIONS = new Set<AnimationType>([
+  AnimationType.NONE,
+  AnimationType.KEN_BURNS,
+  AnimationType.FLOAT,
+  AnimationType.BOUNCE,
+  AnimationType.PULSE,
+  AnimationType.HEARTBEAT,
+  AnimationType.WOBBLE,
+  AnimationType.ROTATE,
+  AnimationType.SHAKE,
+  AnimationType.SKEW,
+  AnimationType.GLITCH,
+  AnimationType.NEON_FLICKER,
+]);
+
 // ---------------------------------------------------------------------------
 // Easing functions — t must be in [0, 1]
 // ---------------------------------------------------------------------------
@@ -225,40 +246,21 @@ export function applySegmentAnimation(
 }
 
 // ---------------------------------------------------------------------------
-// Dev-only guard: assert every ANIMATION_OPTIONS entry has a non-default case.
+// Dev-only guard: assert ANIMATION_OPTIONS ⊆ IMPLEMENTED_ANIMATIONS.
 // Import ANIMATION_OPTIONS lazily to avoid circular dep with constants.ts.
+// Runs once at module load — no behavioral probing, no per-frame cost,
+// no false positives from time-dependent animations (PULSE, SKEW, ROTATE).
 // ---------------------------------------------------------------------------
 if (import.meta.env.DEV) {
-  // We check at module load time after a microtask to let constants.ts register first.
   void Promise.resolve().then(async () => {
     const { ANIMATION_OPTIONS } = await import('../constants');
-    const canvas = document.createElement('canvas');
-    canvas.width = 16; canvas.height = 16;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    for (const anim of ANIMATION_OPTIONS) {
-      if (anim === AnimationType.NONE) continue;
-      ctx.save();
-      const result = applySegmentAnimation(ctx, {
-        animation: anim,
-        timeInSegment: 1,
-        segmentDuration: 5,
-        canvasWidth: 16,
-        canvasHeight: 16,
-      });
-      // Read transform BEFORE restore() — restore() resets the matrix to identity,
-      // so checking after restore always produces a false positive.
-      const m = ctx.getTransform();
-      ctx.restore();
-      // If postDrawAlpha came back undefined AND the transform matrix is
-      // identity, consider it a no-op (likely a missing case).
-      const isIdentity = m.a === 1 && m.b === 0 && m.c === 0 && m.d === 1 && m.e === 0 && m.f === 0;
-      if (isIdentity && result.postDrawAlpha === undefined) {
-        console.assert(
-          false,
-          `[canvasAnimations] ANIMATION_OPTIONS contains "${anim}" but applySegmentAnimation returns identity. Either implement it or remove it.`,
-        );
-      }
+    for (const a of ANIMATION_OPTIONS) {
+      console.assert(
+        IMPLEMENTED_ANIMATIONS.has(a),
+        `[canvasAnimations] ANIMATION_OPTIONS contains "${a}" but it is not in ` +
+        `IMPLEMENTED_ANIMATIONS. Add it to the switch in applySegmentAnimation ` +
+        `and to IMPLEMENTED_ANIMATIONS.`,
+      );
     }
   });
 }
