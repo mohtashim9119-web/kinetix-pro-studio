@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useMemo, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -409,6 +409,28 @@ export default function App() {
       ),
     }));
   };
+
+  /**
+   * Updates the position of an extra overlay identified by segment id + overlay id.
+   * Used by PreviewStage drag-to-position — IDs allow lookup without passing indices
+   * across the component boundary.
+   */
+  const updateExtraOverlayPosition = useCallback(
+    (segmentId: string, overlayId: string, x: number, y: number): void => {
+      setProject(prev => ({
+        ...prev,
+        segments: prev.segments.map(s =>
+          s.id !== segmentId ? s : {
+            ...s,
+            extraOverlays: s.extraOverlays?.map(o =>
+              o.id !== overlayId ? o : { ...o, position: { x, y } }
+            ),
+          }
+        ),
+      }));
+    },
+    [],
+  );
 
   // Validation report
   const validationReport = useMemo(() => {
@@ -1149,6 +1171,7 @@ export default function App() {
                  globalOverlayConfig={project.globalOverlayConfig}
                  hideAllText={project.hideAllText ?? false}
                  assets={project.assets}
+                 onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                />
              </ErrorBoundary>
 

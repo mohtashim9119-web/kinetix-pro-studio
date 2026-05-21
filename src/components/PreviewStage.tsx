@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Layout, Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
@@ -90,6 +90,8 @@ interface Props {
   globalOverlayConfig: GlobalOverlayConfig;
   hideAllText: boolean;
   assets: Asset[];
+  /** Called when the user drags an extra overlay to a new position. */
+  onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
 }
 
 export function PreviewStage({
@@ -101,9 +103,82 @@ export function PreviewStage({
   globalOverlayConfig,
   hideAllText,
   assets,
+  onUpdateExtraOverlayPosition,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMidView, setIsMidView] = useState(false);
+
+  // Ref for the stage container — used for percentage coordinate calculation
+  const stageRef = useRef<HTMLDivElement>(null);
+  // Refs for individual overlay elements — keyed by overlay.id
+  const overlayRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  // Active drag state — stored in a ref to avoid stale closures in pointer handlers
+  const dragState = useRef<{
+    overlayId: string;
+    segmentId: string;
+    startPointerX: number;
+    startPointerY: number;
+    startPctX: number;
+    startPctY: number;
+  } | null>(null);
+
+  const handleOverlayPointerDown = useCallback((
+    e: React.PointerEvent<HTMLDivElement>,
+    overlayId: string,
+    segmentId: string,
+    currentPctX: number,
+    currentPctY: number,
+  ) => {
+    if (!onUpdateExtraOverlayPosition) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragState.current = {
+      overlayId,
+      segmentId,
+      startPointerX: e.clientX,
+      startPointerY: e.clientY,
+      startPctX: currentPctX,
+      startPctY: currentPctY,
+    };
+  }, [onUpdateExtraOverlayPosition]);
+
+  const handleOverlayPointerMove = useCallback((
+    e: React.PointerEvent<HTMLDivElement>,
+    overlayId: string,
+  ) => {
+    const drag = dragState.current;
+    if (!drag || drag.overlayId !== overlayId) return;
+    if (!onUpdateExtraOverlayPosition) return;
+
+    const stage = stageRef.current;
+    const overlayEl = overlayRefs.current.get(overlayId);
+    if (!stage) return;
+
+    const stageW = stage.offsetWidth;
+    const stageH = stage.offsetHeight;
+    if (stageW === 0 || stageH === 0) return;
+
+    const dxPct = ((e.clientX - drag.startPointerX) / stageW) * 100;
+    const dyPct = ((e.clientY - drag.startPointerY) / stageH) * 100;
+
+    let newX = drag.startPctX + dxPct;
+    let newY = drag.startPctY + dyPct;
+
+    // Hard-clamp to viewport bounds (locked decision 4).
+    // The overlay uses translate(-50%, -50%) so the percentage is the center.
+    if (overlayEl) {
+      const halfWPct = (overlayEl.offsetWidth / stageW) * 100 / 2;
+      const halfHPct = (overlayEl.offsetHeight / stageH) * 100 / 2;
+      newX = Math.max(halfWPct, Math.min(100 - halfWPct, newX));
+      newY = Math.max(halfHPct, Math.min(100 - halfHPct, newY));
+    }
+
+    onUpdateExtraOverlayPosition(drag.segmentId, overlayId, newX, newY);
+  }, [onUpdateExtraOverlayPosition]);
+
+  const handleOverlayPointerUp = useCallback(() => {
+    dragState.current = null;
+  }, []);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -127,6 +202,7 @@ export function PreviewStage({
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
+        ref={stageRef}
         className={isFullscreen
           ? 'fixed inset-0 z-[5000] flex items-center justify-center bg-black overflow-hidden'
           : `relative mx-auto bg-black rounded-[40px] border border-[#1A1A1A] overflow-hidden shadow-2xl group transition-all duration-500 ${isMidView ? 'aspect-video w-[900px] h-auto' : 'aspect-video max-w-5xl w-full h-auto'}`}
@@ -216,32 +292,47 @@ export function PreviewStage({
               {/* Main Overlays Gradient */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
 
-              {/* Extra Overlays Rendering */}
-              {currentSegment.extraOverlays?.map((o) => (
-                <motion.div
-                  key={o.id}
-                  {...getMotionProps(o.animation || 'fade')}
-                  className="absolute pointer-events-none p-4 rounded-xl shadow-lg border border-white/5"
-                  style={{
-                    left: `${o.position.x}%`,
-                    top: `${o.position.y}%`,
-                    transform: 'translate(-50%, -50%)',
-                    color: o.color,
-                    backgroundColor: o.backgroundColor,
-                    fontFamily: o.fontFamily,
-                    fontSize: `${o.fontSize}px`,
-                    fontWeight: o.fontWeight || 'normal',
-                    fontStyle: o.fontStyle || 'normal',
-                    textShadow: o.textShadow || '0 2px 10px rgba(0,0,0,0.5)',
-                    textAlign: o.textAlign || 'center',
-                    whiteSpace: 'nowrap',
-                    zIndex: 40,
-                    backdropFilter: 'blur(4px)',
-                  }}
-                >
-                  {o.text}
-                </motion.div>
-              ))}
+              {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided */}
+              {currentSegment.extraOverlays?.map((o) => {
+                const isDraggable = !!onUpdateExtraOverlayPosition;
+                return (
+                  <motion.div
+                    key={o.id}
+                    ref={(el) => {
+                      if (el) overlayRefs.current.set(o.id, el);
+                      else overlayRefs.current.delete(o.id);
+                    }}
+                    {...getMotionProps(o.animation || 'fade')}
+                    className={`absolute p-4 rounded-xl shadow-lg border border-white/5 select-none${isDraggable ? ' cursor-move' : ' pointer-events-none'}`}
+                    onPointerDown={isDraggable
+                      ? (e) => handleOverlayPointerDown(e, o.id, currentSegment.id, o.position.x, o.position.y)
+                      : undefined}
+                    onPointerMove={isDraggable
+                      ? (e) => handleOverlayPointerMove(e, o.id)
+                      : undefined}
+                    onPointerUp={isDraggable ? handleOverlayPointerUp : undefined}
+                    style={{
+                      left: `${o.position.x}%`,
+                      top: `${o.position.y}%`,
+                      transform: 'translate(-50%, -50%)',
+                      color: o.color,
+                      backgroundColor: o.backgroundColor,
+                      fontFamily: o.fontFamily,
+                      fontSize: `${o.fontSize}px`,
+                      fontWeight: o.fontWeight || 'normal',
+                      fontStyle: o.fontStyle || 'normal',
+                      textShadow: o.textShadow || '0 2px 10px rgba(0,0,0,0.5)',
+                      textAlign: o.textAlign || 'center',
+                      whiteSpace: 'nowrap',
+                      zIndex: 40,
+                      backdropFilter: 'blur(4px)',
+                      touchAction: 'none', // required for pointer capture on touch
+                    }}
+                  >
+                    {o.text}
+                  </motion.div>
+                );
+              })}
 
               <div className="absolute inset-0 flex flex-col items-center justify-center p-20 text-center pointer-events-none select-none z-10">
                 {currentSegment.heading && (currentSegment.showOverlay || !hideAllText) && (
