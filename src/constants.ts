@@ -78,6 +78,7 @@ export const TRANSITION_OPTIONS: TransitionType[] = [
 // ---------------------------------------------------------------------------
 export const ANIMATION_OPTIONS: AnimationType[] = [
   AnimationType.NONE,
+  AnimationType.KEN_BURNS, // default for new segments; slow zoom 1.0→1.1
   AnimationType.GLITCH,
   AnimationType.NEON_FLICKER,
   AnimationType.BOUNCE,
