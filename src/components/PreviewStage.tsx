@@ -114,7 +114,11 @@ export function PreviewStage({
                             if (el) {
                               el.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
                               const segmentProgress = currentTime - currentSegment.startTime;
-                              const videoTime = (currentSegment.trimStart || 0) + (segmentProgress * (currentSegment.playbackSpeed || 1));
+                              const rawTime = (currentSegment.trimStart || 0) + (segmentProgress * (currentSegment.playbackSpeed || 1));
+                              // undefined trimEnd = "play to end of media"
+                              const videoTime = currentSegment.trimEnd !== undefined
+                                ? Math.min(rawTime, currentSegment.trimEnd)
+                                : rawTime;
                               if (Math.abs(el.currentTime - videoTime) > 0.1) {
                                 el.currentTime = videoTime;
                               }

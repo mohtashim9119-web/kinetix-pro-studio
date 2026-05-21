@@ -311,7 +311,9 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       drawImageCover(ctx, img, w, h, scale);
     } else if (asset.type === 'video') {
       const videoEl = getOrCreateVideo(asset.url);
-      const videoTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+      const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+      // undefined trimEnd = "play to end of media"; seekVideo clamps to el.duration internally
+      const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
       await seekVideo(videoEl, videoTime);
       drawImageCover(ctx, videoEl, w, h);
     }
