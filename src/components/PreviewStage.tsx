@@ -6,8 +6,71 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Layout, Maximize, Minimize, MonitorPlay } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { getMotionProps } from '../constants';
+
+/**
+ * Returns Framer Motion props for the intra-segment media wrapper.
+ * The outer motion.div drives cross-segment transition (initial/exit).
+ * This inner wrapper drives the looping/entry camera-dynamics animation.
+ *
+ * NB: segmentDuration is needed for time-scaled entry animations (ROTATE, SKEW, BOUNCE)
+ * and KEN_BURNS; pass it in from the consuming component.
+ */
+function getAnimationWrapperProps(
+  animation: AnimationType,
+  segmentDuration: number,
+): Record<string, unknown> {
+  switch (animation) {
+    case AnimationType.NONE:
+      return {};
+
+    case AnimationType.KEN_BURNS:
+      return {
+        animate: { scale: 1.1 },
+        transition: { duration: segmentDuration, ease: 'linear' },
+        style: { transformOrigin: 'center center' },
+      };
+
+    case AnimationType.FLOAT:
+      return getMotionProps('float');
+
+    case AnimationType.SHAKE:
+      return getMotionProps('shake');
+
+    case AnimationType.PULSE:
+      return getMotionProps('pulse');
+
+    case AnimationType.WOBBLE:
+      return getMotionProps('wobble');
+
+    case AnimationType.HEARTBEAT:
+      return getMotionProps('heartbeat');
+
+    case AnimationType.BOUNCE:
+      return getMotionProps('bounce');
+
+    case AnimationType.ROTATE:
+      // Entry spin: rotate -360 → 0 (entry only, no exit)
+      return { initial: { rotate: -360, opacity: 0 }, animate: { rotate: 0, opacity: 1 }, transition: { duration: 1, ease: 'easeOut' } };
+
+    case AnimationType.SKEW:
+      return getMotionProps('skew');
+
+    case AnimationType.GLITCH:
+      return getMotionProps('glitch');
+
+    case AnimationType.NEON_FLICKER:
+      // Opacity flicker only (textShadow is CSS-only; canvas export handles glow separately)
+      return {
+        animate: { opacity: [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9] },
+        transition: { duration: 1.5, repeat: Infinity },
+      };
+
+    default:
+      return {};
+  }
+}
 
 interface GlobalOverlayConfig {
   fontFamily: string;
@@ -96,8 +159,14 @@ export function PreviewStage({
               transition={{ duration: currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
               className="absolute inset-0 bg-black"
             >
-              {/* Visuals */}
-              <div className="absolute inset-0 overflow-hidden">
+              {/* Visuals — media wrapper carries intra-segment camera-dynamics animation */}
+              <motion.div
+                className="absolute inset-0 overflow-hidden"
+                {...getAnimationWrapperProps(
+                  currentSegment.animation ?? AnimationType.NONE,
+                  currentSegment.duration,
+                )}
+              >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);
                   if (asset?.url) {
@@ -128,12 +197,13 @@ export function PreviewStage({
                       );
                     }
                     return (
+                      // Fade-in on segment enter; scale animation driven by wrapper (KEN_BURNS etc.)
                       <motion.img
                         src={asset.url}
                         className="w-full h-full object-cover"
-                        initial={{ scale: 1, opacity: 0 }}
-                        animate={{ scale: 1.1, opacity: 1 }}
-                        transition={{ duration: currentSegment.duration, ease: "linear" }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        transition={{ duration: 0.4 }}
                       />
                     );
                   }
@@ -141,7 +211,7 @@ export function PreviewStage({
                     <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505] flex items-center justify-center p-20 text-center" />
                   );
                 })()}
-              </div>
+              </motion.div>
 
               {/* Main Overlays Gradient */}
               <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
