@@ -235,11 +235,11 @@ App.tsx                    — top-level state + orchestration only
 
 ## Known Bugs (Fix Before Shipping)
 
-- **Line ~908**: Both branches of the `Math.abs(audioRef.current.currentTime - currentTime) > 0.2` check do the same thing — dead code
-- **`togglePlay` in keyboard effect**: `togglePlay` is recreated each render → listener attaches/detaches constantly. Wrap in `useCallback` or use a ref
-- **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI
-- **`storyMap` parameter in `parseProjectData`**: declared but body never uses it
+- **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI — **being implemented in Fidelity Polish Item 1**
 - ~~**`autoMatchAssets` effect at `App.tsx:350–355`**~~: **Fixed Phase 5 step 1** — removed the effect; `autoMatchSegments` is now called imperatively inside each upload handler only. Deletion path is clean.
+- ~~**Line ~908 dead branch**~~: **Fixed Phase 1 Step 3** — `Math.abs(audioRef.current.currentTime - currentTime) > 0.2` check removed from playback interval. No such check exists in current code.
+- ~~**`togglePlay` listener churn**~~: **Fixed Phase 1 Step 3** — keyboard `useEffect` at App.tsx:817 uses `setIsPlaying(p => !p)` directly with `[]` dep array; listener attaches once on mount. No churn.
+- ~~**`storyMap` unused param**~~: **Fixed Phase 1 Step 3** — `parseProjectData` signature has no `storyMap` parameter. Removed in Phase 1.
 
 ---
 
