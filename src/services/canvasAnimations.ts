@@ -202,6 +202,9 @@ export function applySegmentAnimation(
       return {};
     }
 
+    // NEON_FLICKER: keyframe alpha pulse + cyan shadow glow pass.
+    // If glow ever looks wrong (e.g. on dark backgrounds), reduce
+    // shadowBlur or fall back to alpha-only.
     case AnimationType.NEON_FLICKER: {
       // Alpha flicker: [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9], 1.5s period
       const alpha = interpKeyframes((t / 1.5) % 1, [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9]);
