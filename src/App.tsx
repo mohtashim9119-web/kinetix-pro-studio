@@ -1163,6 +1163,7 @@ export default function App() {
                <PanelFallback label="Preview" error={err} reset={reset} />
              )}>
                <PreviewStage
+                 segments={project.segments}
                  currentSegment={currentSegment ?? undefined}
                  currentTime={currentTime}
                  globalPlaybackSpeed={globalPlaybackSpeed}

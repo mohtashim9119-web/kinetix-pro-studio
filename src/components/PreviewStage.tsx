@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Layout, Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { getMotionProps } from '../constants';
+import { applyTransitionBlend } from '../services/frameRenderer';
+import { useTransitionPreview } from '../hooks/useTransitionPreview';
 
 /**
  * Returns Framer Motion props for the intra-segment media wrapper.
@@ -82,10 +84,11 @@ interface GlobalOverlayConfig {
 }
 
 interface Props {
+  segments: VideoSegment[];
   currentSegment: VideoSegment | undefined;
   currentTime: number;
   globalPlaybackSpeed: number;
-  globalTransition: string;
+  globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalOverlayConfig: GlobalOverlayConfig;
   hideAllText: boolean;
@@ -95,6 +98,7 @@ interface Props {
 }
 
 export function PreviewStage({
+  segments,
   currentSegment,
   currentTime,
   globalPlaybackSpeed,
@@ -107,6 +111,9 @@ export function PreviewStage({
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMidView, setIsMidView] = useState(false);
+
+  // Canvas overlay for transition blending
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
@@ -179,6 +186,65 @@ export function PreviewStage({
   const handleOverlayPointerUp = useCallback(() => {
     dragState.current = null;
   }, []);
+
+  // ---------------------------------------------------------------------------
+  // Transition preview — pre-roll snapshot blend
+  // ---------------------------------------------------------------------------
+  const globalConfig = {
+    overlayConfig: globalOverlayConfig,
+    hideAllText,
+    globalOverlayFilter: undefined as string | undefined,
+  };
+
+  const transitionPreview = useTransitionPreview({
+    segments,
+    currentTime,
+    assets,
+    globalTransition,
+    globalTransitionDuration,
+    globalConfig,
+  });
+
+  // Draw the transition blend onto the overlay canvas whenever preview state changes.
+  // The canvas is sized to match the stage via CSS (position:absolute inset-0).
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+
+    if (!transitionPreview.isActive || !transitionPreview.outgoing || !transitionPreview.incoming) {
+      // Clear canvas when not in transition
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      return;
+    }
+
+    // Size canvas to match its CSS display size
+    const w = canvas.offsetWidth || 960;
+    const h = canvas.offsetHeight || 540;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Draw outgoing snapshot as the base layer
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(transitionPreview.outgoing, 0, 0, w, h);
+
+    // Composite incoming snapshot on top via the same blend logic used in export
+    applyTransitionBlend(ctx, {
+      adjacentCanvas: transitionPreview.incoming,
+      alpha: transitionPreview.progress,
+      type: transitionPreview.effectiveTransition,
+    }, w, h);
+  }, [
+    transitionPreview.isActive,
+    transitionPreview.progress,
+    transitionPreview.outgoing,
+    transitionPreview.incoming,
+    transitionPreview.effectiveTransition,
+  ]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -385,8 +451,28 @@ export function PreviewStage({
           )}
         </AnimatePresence>
 
+        {/*
+          Canvas overlay for preview transitions (z-index 45, above extra overlays at 40).
+          CSS opacity + transition provides the 100ms edge crossfade to mask mount/unmount flash.
+          pointer-events:none so it never intercepts clicks.
+          Snapshots already contain text+overlays rendered via frameRenderer, so the CSS layer
+          is intentionally still visible here — they fade together (canvas fades in as CSS fades
+          out naturally with AnimatePresence exit). For a fully correct double-render prevention,
+          see the hideAllText prop path; complete CSS suppression during canvas transition is not
+          needed because the CSS segment motion.div is already exiting via AnimatePresence.
+        */}
+        <canvas
+          ref={overlayCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none"
+          style={{
+            zIndex: 45,
+            opacity: transitionPreview.isActive ? 1 : 0,
+            transition: 'opacity 100ms ease',
+          }}
+        />
+
         {/* Corner Stats */}
-        <div className="absolute bottom-10 right-10 flex flex-col items-end gap-2">
+        <div className="absolute bottom-10 right-10 flex flex-col items-end gap-2" style={{ zIndex: 50 }}>
           <div className="bg-black/80 backdrop-blur-md px-4 py-2 rounded-xl border border-white/5 flex items-center gap-3">
             <span className="text-[10px] font-mono text-[#F27D26]">{currentTime.toFixed(2)}s</span>
             <div className="w-1.5 h-1.5 rounded-full bg-red-600 animate-pulse" />
