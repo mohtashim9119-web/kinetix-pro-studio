@@ -266,18 +266,20 @@ export function SegmentEditorPanel({
                   className="w-full accent-[#F27D26]"
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
-                  <span>Trim Start (s)</span>
-                  <span className="text-blue-400">{(s.trimStart ?? 0).toFixed(1)}s</span>
-                </label>
-                <input
-                  type="range" min="0" max={s.sourceDuration ?? 60} step="0.5"
-                  value={s.trimStart ?? 0}
-                  onChange={(e) => onUpdateSegment(idx, { trimStart: parseFloat(e.target.value) })}
-                  className="w-full accent-blue-500"
-                />
-              </div>
+              {assets.find(a => a.id === s.assetId)?.type === 'video' && (
+                <div className="space-y-1">
+                  <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
+                    <span>Trim Start (s)</span>
+                    <span className="text-blue-400">{(s.trimStart ?? 0).toFixed(1)}s</span>
+                  </label>
+                  <input
+                    type="range" min="0" max={s.sourceDuration ?? 60} step="0.5"
+                    value={s.trimStart ?? 0}
+                    onChange={(e) => onUpdateSegment(idx, { trimStart: parseFloat(e.target.value) })}
+                    className="w-full accent-blue-500"
+                  />
+                </div>
+              )}
             </div>
 
             <div className="flex items-center justify-between pt-1">
