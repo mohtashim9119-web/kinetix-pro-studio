@@ -274,7 +274,7 @@ export function SegmentEditorPanel({
                 return (
                   <>
                     <div className="space-y-1">
-                      <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
+                      <label className="text-[11px] uppercase font-bold text-gray-600 flex justify-between">
                         <span>Trim Start (s)</span>
                         <span className="text-blue-400">{trimStart.toFixed(1)}s</span>
                       </label>
@@ -294,7 +294,7 @@ export function SegmentEditorPanel({
                       />
                     </div>
                     <div className="space-y-1 col-span-2">
-                      <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
+                      <label className="text-[11px] uppercase font-bold text-gray-600 flex justify-between">
                         <span>Trim End (s)</span>
                         <span className="text-purple-400">
                           {s.trimEnd !== undefined ? `${s.trimEnd.toFixed(1)}s` : 'end of media'}
@@ -315,7 +315,7 @@ export function SegmentEditorPanel({
                           <button
                             onClick={() => onUpdateSegment(idx, { trimEnd: undefined })}
                             title="Reset to end of media"
-                            className="text-[8px] font-black text-gray-600 hover:text-red-400 transition-colors px-1"
+                            className="text-base font-black text-gray-400 hover:text-red-400 transition-colors px-1"
                             aria-label="Reset trim end to end of media"
                           >
                             ×

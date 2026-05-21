@@ -1523,28 +1523,75 @@ export default function App() {
                          </div>
                       </div>
 
-                      <div className="space-y-4">
-                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500">Visual Trimming (Slip)</label>
-                         <div className="p-6 rounded-3xl bg-white/5 border border-white/5 space-y-6">
-                            <div className="flex justify-between text-[11px] font-mono">
-                               <span className="text-gray-500">Video Start</span>
-                               <span className="text-blue-400 font-bold">{editingSegment.trimStart?.toFixed(2)}s</span>
+                      {project.assets.find(a => a.id === editingSegment.assetId)?.type === 'video' && (() => {
+                        const srcDur = editingSegment.sourceDuration ?? 60;
+                        const trimStart = editingSegment.trimStart ?? 0;
+                        const trimEnd = editingSegment.trimEnd ?? srcDur;
+                        return (
+                          <div className="space-y-4">
+                            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500">Visual Trimming (Slip)</label>
+                            <div className="p-6 rounded-3xl bg-white/5 border border-white/5 space-y-6">
+                              <div className="flex justify-between text-[11px] font-mono">
+                                <span className="text-gray-500">Video Start</span>
+                                <span className="text-blue-400 font-bold">{trimStart.toFixed(2)}s</span>
+                              </div>
+                              <input
+                                type="range" min="0" max={srcDur} step="0.1"
+                                value={trimStart}
+                                onChange={(e) => {
+                                  const val = parseFloat(e.target.value);
+                                  const next = { ...editingSegment, trimStart: val };
+                                  if (editingSegment.trimEnd !== undefined && val >= editingSegment.trimEnd) {
+                                    next.trimEnd = Math.min(srcDur, val + 0.1);
+                                  }
+                                  setEditingSegment(next);
+                                }}
+                                className="w-full accent-blue-500"
+                              />
+                              <div className="flex justify-between text-[11px] font-mono">
+                                <span className="text-gray-500">Video End</span>
+                                <span className="text-purple-400 font-bold">
+                                  {editingSegment.trimEnd !== undefined
+                                    ? `${editingSegment.trimEnd.toFixed(2)}s`
+                                    : 'end of media'}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="range" min={trimStart + 0.1} max={srcDur} step="0.1"
+                                  value={trimEnd}
+                                  onChange={(e) => {
+                                    const val = parseFloat(e.target.value);
+                                    setEditingSegment({ ...editingSegment, trimEnd: Math.max(trimStart + 0.1, val) });
+                                  }}
+                                  className="flex-1 accent-purple-500"
+                                />
+                                {editingSegment.trimEnd !== undefined && (
+                                  <button
+                                    onClick={() => setEditingSegment({ ...editingSegment, trimEnd: undefined })}
+                                    title="Reset to end of media"
+                                    className="text-base font-black text-gray-400 hover:text-red-400 transition-colors px-2"
+                                    aria-label="Reset trim end to end of media"
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
                             </div>
-                            <input 
-                               type="range" min="0" max={editingSegment.sourceDuration || 60} step="0.1"
-                               value={editingSegment.trimStart || 0}
-                               onChange={(e) => setEditingSegment({...editingSegment, trimStart: parseFloat(e.target.value)})}
-                               className="w-full accent-blue-500"
-                            />
-                            <div className="flex items-center gap-4 pt-2">
-                               <div className="flex-1 p-3 bg-black rounded-xl border border-white/5 text-center">
-                                  <span className="text-[9px] font-bold text-gray-600 block uppercase mb-1">Playback Speed</span>
-                                  <span className="text-sm font-bold text-white">{editingSegment.playbackSpeed?.toFixed(2)}x</span>
-                               </div>
-                               <div className="flex gap-2">
-                                  <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.max(0.2, (editingSegment.playbackSpeed || 1) - 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">-</button>
-                                  <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.min(3, (editingSegment.playbackSpeed || 1) + 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">+</button>
-                               </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="space-y-4">
+                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Playback Speed</label>
+                         <div className="flex items-center gap-4">
+                            <div className="flex-1 p-3 bg-black rounded-xl border border-white/5 text-center">
+                               <span className="text-[9px] font-bold text-gray-600 block uppercase mb-1">Speed</span>
+                               <span className="text-sm font-bold text-white">{editingSegment.playbackSpeed?.toFixed(2)}x</span>
+                            </div>
+                            <div className="flex gap-2">
+                               <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.max(0.2, (editingSegment.playbackSpeed || 1) - 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">-</button>
+                               <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.min(3, (editingSegment.playbackSpeed || 1) + 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">+</button>
                             </div>
                          </div>
                       </div>
