@@ -441,8 +441,12 @@ const SUPPORTED_TRANSITIONS = new Set<string>([
  * Called after all overlays have been drawn for the current frame.
  *
  * alpha=0 → fully current; alpha=1 → fully adjacent (incoming segment).
+ *
+ * Exported for use by the preview transition canvas overlay
+ * (useTransitionPreview / PreviewStage). The encoder calls this indirectly
+ * via the `transition` param of renderSegmentFrame.
  */
-function applyTransitionBlend(
+export function applyTransitionBlend(
   ctx: CanvasRenderingContext2D,
   blend: TransitionBlendParams,
   w: number,
