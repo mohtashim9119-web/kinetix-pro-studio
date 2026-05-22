@@ -219,9 +219,21 @@ export function PreviewStage({
     if (!canvas) return;
 
     if (!transitionPreview.isActive || !transitionPreview.outgoing || !transitionPreview.incoming) {
-      // Clear canvas when not in transition
-      const ctx = canvas.getContext('2d');
-      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // INTENTIONAL: do NOT clearRect here.
+      //
+      // The canvas element has CSS `transition: opacity 100ms ease`. When isActive
+      // flips false, opacity animates 1 → 0 over 100ms. Calling clearRect now would
+      // erase the last drawn frame in a useEffect that fires post-paint, leaving
+      // the canvas visually transparent within ~16ms (well before the 100ms CSS
+      // fade completes). With nothing drawn on the canvas, bg-black underneath
+      // shows through during the video decode latency window (50-200ms), producing
+      // a visible black flash on video segments.
+      //
+      // Retaining the last frame (incoming snapshot at progress=1) keeps the canvas
+      // visually showing the target media while the live video element decodes its
+      // first frame underneath. The draw path below always clearRects before drawing,
+      // so this stale content is cleaned up on the next transition's frame 0 — at
+      // which point CSS opacity is near 0 again and the stale frame is invisible.
       return;
     }
 
@@ -314,13 +326,15 @@ export function PreviewStage({
               transition={{ duration: suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
               className="absolute inset-0 bg-black"
             >
-              {/* Visuals — media wrapper carries intra-segment camera-dynamics animation */}
+              {/* Visuals — media wrapper carries intra-segment camera-dynamics animation.
+                  Suppressed when canvas just handled the transition: BOUNCE/SKEW/ROTATE
+                  return initial:{opacity:0} which would produce a black flash on entry. */}
               <motion.div
                 className="absolute inset-0 overflow-hidden"
-                {...getAnimationWrapperProps(
+                {...(suppressMotionAnim ? {} : getAnimationWrapperProps(
                   currentSegment.animation ?? AnimationType.NONE,
                   currentSegment.duration,
-                )}
+                ))}
               >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);
