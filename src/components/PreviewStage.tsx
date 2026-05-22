@@ -272,6 +272,12 @@ export function PreviewStage({
     }
   };
 
+  // True while the canvas overlay covers the stage (isActive) OR on the one render where
+  // it just finished (justCompleted). Both conditions require the AnimatePresence motion.div
+  // and motion.img to be no-ops — the canvas already showed the visual transition, so
+  // letting these layers animate produces a double-transition underneath.
+  const suppressMotionAnim = transitionPreview.isActive || transitionPreview.justCompleted;
+
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
@@ -302,10 +308,10 @@ export function PreviewStage({
           {currentSegment ? (
             <motion.div
               key={currentSegment.id}
-              initial={currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).initial}
-              animate={currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).animate}
-              exit={currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).exit}
-              transition={{ duration: currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
+              initial={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).initial}
+              animate={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).animate}
+              exit={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).exit}
+              transition={{ duration: suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
               className="absolute inset-0 bg-black"
             >
               {/* Visuals — media wrapper carries intra-segment camera-dynamics animation */}
@@ -346,11 +352,13 @@ export function PreviewStage({
                       );
                     }
                     return (
-                      // Fade-in on segment enter; scale animation driven by wrapper (KEN_BURNS etc.)
+                      // Fade-in on segment enter; suppressed when canvas just handled the
+                      // transition (suppressMotionAnim) to avoid a black-to-image stutter
+                      // immediately after the canvas blend completes.
                       <motion.img
                         src={asset.url}
                         className="w-full h-full object-cover"
-                        initial={{ opacity: 0 }}
+                        initial={{ opacity: suppressMotionAnim ? 1 : 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ duration: 0.4 }}
                       />

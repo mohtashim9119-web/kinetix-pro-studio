@@ -14,6 +14,9 @@ import { useRef, useEffect, useState } from 'react';
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer';
 
+// [transition-debug] Toggle — set to true to enable verbose transition diagnostics.
+const DEBUG_TRANSITION = true;
+
 /** Snapshot resolution — 16:9 half-HD. Full resolution is unnecessary
  *  for preview-quality blending. */
 const SNAP_W = 960;
@@ -35,6 +38,10 @@ interface SnapshotPair {
 export interface TransitionPreviewInfo {
   /** True when the playhead is inside the transition window AND snapshots are ready. */
   isActive: boolean;
+  /** True for exactly one render after isActive flips false — signals that the canvas
+   *  just finished handling a transition. PreviewStage uses this to suppress the
+   *  AnimatePresence entry animation and motion.img fade-in on that one render. */
+  justCompleted: boolean;
   /** Blend factor 0..1 (0 = fully outgoing, 1 = fully incoming). */
   progress: number;
   /** Pre-rendered outgoing frame (at transition start time). */
@@ -67,6 +74,8 @@ export function useTransitionPreview({
   const pendingKeyRef = useRef<string>('');
   // Guard against setState after unmount (async renderSegmentFrame can outlive the component)
   const mountedRef = useRef<boolean>(true);
+  // [transition-debug] track isActive transitions
+  const prevIsActiveRef = useRef<boolean>(false);
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
@@ -121,12 +130,30 @@ export function useTransitionPreview({
     currentTime < transitionEnd;
 
   useEffect(() => {
-    if (!needsPreRoll || !currentSeg || !nextSeg) return;
+    if (DEBUG_TRANSITION) {
+      console.log(
+        `[transition-debug] pre-roll effect fired` +
+        ` | needsPreRoll=${needsPreRoll}` +
+        ` | currentSeg=${currentSeg?.id ?? 'none'}` +
+        ` | nextSeg=${nextSeg?.id ?? 'none'}` +
+        ` | currentTime=${currentTime.toFixed(3)}` +
+        ` | transitionStart=${transitionStart === Infinity ? '∞' : transitionStart.toFixed(3)}` +
+        ` | effectiveTransition=${effectiveTransition}`,
+      );
+    }
+    if (!needsPreRoll || !currentSeg || !nextSeg) {
+      if (DEBUG_TRANSITION) console.log(`[transition-debug] pre-roll early-return: needsPreRoll=${needsPreRoll} currentSeg=${!!currentSeg} nextSeg=${!!nextSeg}`);
+      return;
+    }
 
     const key = `${currentSeg.id}:${nextSeg.id}`;
     // Already have this snapshot pair or render is in flight
-    if (snapshots?.key === key || pendingKeyRef.current === key) return;
+    if (snapshots?.key === key || pendingKeyRef.current === key) {
+      if (DEBUG_TRANSITION) console.log(`[transition-debug] pre-roll skipped (already have/pending): snapshotsKey=${snapshots?.key ?? 'null'} pendingKey=${pendingKeyRef.current} wantedKey=${key}`);
+      return;
+    }
 
+    if (DEBUG_TRANSITION) console.log(`[transition-debug] pre-roll starting render for key=${key}`);
     pendingKeyRef.current = key;
 
     const outCanvas = document.createElement('canvas');
@@ -160,19 +187,24 @@ export function useTransitionPreview({
           nextAsset?.type === 'video' &&
           currentAsset.url === nextAsset.url;
 
-        const outgoingPromise = renderSegmentFrame({
-          segment: currentSeg,
-          asset: currentAsset,
-          timeInSegment: outgoingTime,
-          ctx: outCtx,
-          width: SNAP_W,
-          height: SNAP_H,
-          global: globalConfig,
-        });
+        const t0 = performance.now();
 
         if (sharesAsset) {
           // Same video element — seek sequentially to avoid race.
-          await outgoingPromise;
+          const tOut0 = performance.now();
+          await renderSegmentFrame({
+            segment: currentSeg,
+            asset: currentAsset,
+            timeInSegment: outgoingTime,
+            ctx: outCtx,
+            width: SNAP_W,
+            height: SNAP_H,
+            global: globalConfig,
+          });
+          const tOut1 = performance.now();
+          if (DEBUG_TRANSITION) console.log(`[transition-debug] outgoing frame (sequential) took ${(tOut1 - tOut0).toFixed(1)}ms | key=${key}`);
+
+          const tIn0 = performance.now();
           await renderSegmentFrame({
             segment: nextSeg,
             asset: nextAsset,
@@ -182,24 +214,49 @@ export function useTransitionPreview({
             height: SNAP_H,
             global: globalConfig,
           });
+          const tIn1 = performance.now();
+          if (DEBUG_TRANSITION) console.log(`[transition-debug] incoming frame (sequential) took ${(tIn1 - tIn0).toFixed(1)}ms | key=${key}`);
         } else {
           // Distinct sources (or non-video) — parallel is safe.
-          await Promise.all([
-            outgoingPromise,
-            renderSegmentFrame({
-              segment: nextSeg,
-              asset: nextAsset,
-              timeInSegment: 0,
-              ctx: inCtx,
-              width: SNAP_W,
-              height: SNAP_H,
-              global: globalConfig,
-            }),
-          ]);
+          const tOut0 = performance.now();
+          const outgoingPromise = renderSegmentFrame({
+            segment: currentSeg,
+            asset: currentAsset,
+            timeInSegment: outgoingTime,
+            ctx: outCtx,
+            width: SNAP_W,
+            height: SNAP_H,
+            global: globalConfig,
+          }).then(r => {
+            if (DEBUG_TRANSITION) console.log(`[transition-debug] outgoing frame (parallel) took ${(performance.now() - tOut0).toFixed(1)}ms | key=${key}`);
+            return r;
+          });
+
+          const tIn0 = performance.now();
+          const incomingPromise = renderSegmentFrame({
+            segment: nextSeg,
+            asset: nextAsset,
+            timeInSegment: 0,
+            ctx: inCtx,
+            width: SNAP_W,
+            height: SNAP_H,
+            global: globalConfig,
+          }).then(r => {
+            if (DEBUG_TRANSITION) console.log(`[transition-debug] incoming frame (parallel) took ${(performance.now() - tIn0).toFixed(1)}ms | key=${key}`);
+            return r;
+          });
+
+          await Promise.all([outgoingPromise, incomingPromise]);
         }
 
+        const totalMs = (performance.now() - t0).toFixed(1);
+        if (DEBUG_TRANSITION) console.log(`[transition-debug] snapshot render took ${totalMs}ms | key=${key} | path=${sharesAsset ? 'sequential' : 'parallel'}`);
+
         if (mountedRef.current) {
+          if (DEBUG_TRANSITION) console.log(`[transition-debug] snapshots ready — calling setSnapshots for key=${key}`);
           setSnapshots({ key, outgoing: outCanvas, incoming: inCanvas });
+        } else {
+          if (DEBUG_TRANSITION) console.log(`[transition-debug] snapshots ready but component unmounted — discarding key=${key}`);
         }
       } catch (err) {
         console.warn('[useTransitionPreview] snapshot render failed:', err);
@@ -224,9 +281,31 @@ export function useTransitionPreview({
   // Compose result
   // ---------------------------------------------------------------------------
   const snapshotsReady = snapshots !== null && snapshots.key === `${currentSeg?.id}:${nextSeg?.id}`;
+  const isActive = inTransitionWindow && snapshotsReady;
+
+  // Debug log reads prevIsActiveRef.current (the OLD value) before the write below.
+  if (DEBUG_TRANSITION && isActive !== prevIsActiveRef.current) {
+    console.log(
+      `[transition-debug] isActive changed: ${prevIsActiveRef.current} → ${isActive}` +
+      ` | currentTime=${currentTime.toFixed(3)}` +
+      ` | inTransitionWindow=${inTransitionWindow}` +
+      ` | snapshotsReady=${snapshotsReady}` +
+      ` | snapshotsKey=${snapshots?.key ?? 'null'}` +
+      ` | wantedKey=${currentSeg?.id}:${nextSeg?.id}`,
+    );
+  }
+
+  // justCompleted: true only on the one render where isActive flips true→false.
+  // PreviewStage reads this before the ref is updated, so prevIsActiveRef.current
+  // still holds the previous value here.
+  const justCompleted = prevIsActiveRef.current && !isActive;
+
+  // Single unconditional write — sole owner of prevIsActiveRef.
+  prevIsActiveRef.current = isActive;
 
   return {
-    isActive: inTransitionWindow && snapshotsReady,
+    isActive,
+    justCompleted,
     progress,
     outgoing: snapshotsReady ? snapshots!.outgoing : null,
     incoming: snapshotsReady ? snapshots!.incoming : null,
