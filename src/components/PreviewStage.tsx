@@ -130,6 +130,10 @@ export function PreviewStage({
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   // [black-fade-debug] tracks previous isActive to detect true→false transitions
   const prevIsActiveForDebugRef = useRef<boolean>(false);
+  // Edge-detector for the hold effect. Must live in PreviewStage (not the hook)
+  // because the hook mutates its prevIsActiveRef during render — Strict Mode
+  // double-invocation overwrites it, causing justCompleted to always be false.
+  const prevIsActiveForHoldRef = useRef<boolean>(false);
 
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
@@ -375,6 +379,23 @@ export function PreviewStage({
   // releases, so the crossfade from canvas-frame to live media is smooth.
   // ---------------------------------------------------------------------------
   useEffect(() => {
+    // Edge-detect isActive true→false locally. transitionPreview.justCompleted
+    // cannot be used — the hook mutates prevIsActiveRef during render; React
+    // Strict Mode double-invocation overwrites it before the second pass reads
+    // it, so justCompleted is always false.
+    const wasActive = prevIsActiveForHoldRef.current;
+    const isActiveNow = transitionPreview.isActive;
+    prevIsActiveForHoldRef.current = isActiveNow;
+    const justCompletedLocal = wasActive && !isActiveNow;
+
+    console.log(
+      `[hold-debug] effect fired` +
+      ` | justCompletedLocal=${justCompletedLocal}` +
+      ` | wasActive=${wasActive}` +
+      ` | isActiveNow=${isActiveNow}` +
+      ` | canvasHoldActive=${canvasHoldActive}`,
+    );
+
     if (transitionPreview.isActive) {
       // New transition starting — cancel any hold left over from a prior one.
       if (holdTimeoutRef.current !== null) {
@@ -386,13 +407,20 @@ export function PreviewStage({
     }
 
     // Only activate on the single render where isActive flips true → false.
-    if (!transitionPreview.justCompleted) return;
+    if (!justCompletedLocal) return;
 
     setCanvasHoldActive(true);
 
     const stage = stageRef.current;
     const video = stage?.querySelector('video') as HTMLVideoElement | null;
     const img   = stage?.querySelector('img')   as HTMLImageElement | null;
+
+    console.log(
+      `[hold-debug] media lookup` +
+      ` | videoEl=${!!video}` +
+      ` | imgEl=${!!img}` +
+      (video ? ` | video.readyState=${video.readyState} src=${video.src.slice(0, 40)}` : ''),
+    );
 
     // Mutable ref so the cleanup can nullify it after removal.
     let removeMediaListener: (() => void) | null = null;
@@ -415,7 +443,10 @@ export function PreviewStage({
         release();
         return () => { /* nothing pending — already released */ };
       }
-      const onReady = () => release();
+      const onReady = () => {
+        console.log(`[hold-debug] canplay fired`);
+        release();
+      };
       video.addEventListener('canplay', onReady, { once: true });
       removeMediaListener = () => video.removeEventListener('canplay', onReady);
     } else if (img) {
@@ -423,7 +454,10 @@ export function PreviewStage({
         release();
         return () => { /* nothing pending — already released */ };
       }
-      const onLoad = () => release();
+      const onLoad = () => {
+        console.log(`[hold-debug] img load fired`);
+        release();
+      };
       img.addEventListener('load', onLoad, { once: true });
       removeMediaListener = () => img.removeEventListener('load', onLoad);
     }
@@ -431,11 +465,13 @@ export function PreviewStage({
 
     // Failsafe: 800ms cap prevents a stuck canvas if media never loads.
     holdTimeoutRef.current = setTimeout(() => {
+      console.log(`[hold-debug] failsafe timeout fired`);
       holdTimeoutRef.current = null;
       release();
     }, 800);
 
     return () => {
+      console.log(`[hold-debug] cleanup`);
       // Cleanup on re-run or unmount — always cancel hold so the canvas
       // doesn't stay visible past component teardown or dep changes.
       removeMediaListener?.();
@@ -446,7 +482,7 @@ export function PreviewStage({
       }
       setCanvasHoldActive(false);
     };
-  }, [transitionPreview.isActive, transitionPreview.justCompleted]);
+  }, [transitionPreview.isActive]);
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -467,11 +503,24 @@ export function PreviewStage({
     }
   };
 
-  // True while the canvas overlay covers the stage (isActive) OR on the one render where
-  // it just finished (justCompleted). Both conditions require the AnimatePresence motion.div
-  // and motion.img to be no-ops — the canvas already showed the visual transition, so
-  // letting these layers animate produces a double-transition underneath.
-  const suppressMotionAnim = transitionPreview.isActive || transitionPreview.justCompleted;
+  // Suppress Framer Motion entry/exit animations during the canvas transition
+  // AND during the canvas hold window AND on the exact mount frame where
+  // isActive flipped false but the hold effect hasn't yet run post-paint.
+  //
+  // The third clause is critical: on the render where currentSegment switches
+  // to B, transitionPreview.isActive has just flipped false (synchronous,
+  // same render as the segment switch), but canvasHoldActive is still false
+  // (state update from the effect hasn't committed yet). Without the third
+  // clause, Framer Motion would capture initial={opacity:0} on B's mount,
+  // and the subsequent hold-effect re-render can't change initial after mount.
+  //
+  // prevIsActiveForHoldRef.current still holds the PREVIOUS isActive value
+  // here because the hold effect (which writes to it) runs post-paint — so
+  // during this render, the ref reflects the state from the previous render.
+  const suppressMotionAnim =
+    transitionPreview.isActive ||
+    canvasHoldActive ||
+    (prevIsActiveForHoldRef.current && !transitionPreview.isActive);
 
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">

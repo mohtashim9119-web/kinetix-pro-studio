@@ -38,10 +38,6 @@ interface SnapshotPair {
 export interface TransitionPreviewInfo {
   /** True when the playhead is inside the transition window AND snapshots are ready. */
   isActive: boolean;
-  /** True for exactly one render after isActive flips false — signals that the canvas
-   *  just finished handling a transition. PreviewStage uses this to suppress the
-   *  AnimatePresence entry animation and motion.img fade-in on that one render. */
-  justCompleted: boolean;
   /** Blend factor 0..1 (0 = fully outgoing, 1 = fully incoming). */
   progress: number;
   /** Pre-rendered outgoing frame (at transition start time). */
@@ -295,17 +291,11 @@ export function useTransitionPreview({
     );
   }
 
-  // justCompleted: true only on the one render where isActive flips true→false.
-  // PreviewStage reads this before the ref is updated, so prevIsActiveRef.current
-  // still holds the previous value here.
-  const justCompleted = prevIsActiveRef.current && !isActive;
-
-  // Single unconditional write — sole owner of prevIsActiveRef.
+  // Single unconditional write — used only by the [transition-debug] log above.
   prevIsActiveRef.current = isActive;
 
   return {
     isActive,
-    justCompleted,
     progress,
     outgoing: snapshotsReady ? snapshots!.outgoing : null,
     incoming: snapshotsReady ? snapshots!.incoming : null,
