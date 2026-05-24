@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-05-21 |
+| Last updated | 2026-05-25 |
 | Current phase | Phase 6 — Desktop app (Tauri + native ffmpeg) |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -77,7 +77,7 @@ vs Phase 5 baseline (435.88 / 133.19). Within the ≤+20 kB / +5 kB budget.
 - All 12 AnimationType values render in export ✓ (was 0 before — phase audit caught the no-op gap)
 - KEN_BURNS added to ANIMATION_OPTIONS (was a phantom default) ✓
 - Drag-to-position UI for extra overlays ✓
-- Preview transition rendering via canvas overlay ✓
+- **Preview transitions** (canvas blend) — partial: canvas-based blend visible during transition window, but ~150ms black flash remains on video→video boundaries due to video decode latency. Suppressed double-cross-fade with motion-anim guard. Exports unaffected (frameRenderer pipeline handles transitions correctly).
 - Stale bugs purged from CLAUDE.md ✓
 
 ---
@@ -160,6 +160,10 @@ Phase 3 steps:
 ---
 
 ## Known Cosmetic Issues
+
+- **Preview transition black flash on video boundaries** — when a transition ends on a video segment, the newly-mounted `<video>` element shows ~100-200ms of black before its first decoded frame paints. Attempted fix (canvas hold + canplay listener + failsafe timeout) did not engage reliably across multiple debugging rounds — root cause never isolated. Removed in favor of shipping the working blend without the hold. Future fix likely requires pre-mounting the next video element offscreen during the pre-roll window, or replacing the canvas blend entirely with a dual-video CSS opacity crossfade. Exports are unaffected — issue is preview-only.
+
+- **Preview letterboxing in normal view** — already noted previously. Carried forward.
 
 - **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
 
@@ -263,7 +267,7 @@ Phase 3 steps:
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
 | Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
-| Main bundle size | 443.50 kB minified / 135.70 kB gzip (Fidelity Polish) — down from 542 kB / 161 kB at Phase 3 end |
+| Main bundle size | 445.20 kB minified / 136.07 kB gzip (post-hold-strip cleanup) — down from 542 kB / 161 kB at Phase 3 end |
 | Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | Safari support | ✅ Verified — `crossOriginIsolated=true`, full export works |

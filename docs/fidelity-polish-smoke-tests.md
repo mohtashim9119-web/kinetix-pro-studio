@@ -120,7 +120,15 @@ Covered by Item 1-A above. No separate test procedure needed.
 
 ---
 
-## Item 3 — Preview transition canvas overlay
+## Item 3 — Preview transitions (partial / known limitation)
+
+Set Transition Style = FADE, Duration = 1.0 s, Apply to All. Play through 2-3 transitions.
+
+Expected:
+- Visible cross-fade blend during the transition window (canvas overlay)
+- No double cross-fade or stutter from Framer Motion underneath
+- **KNOWN LIMITATION:** brief (~100-200ms) black flash at the end of transitions that land on a video segment. See deferred items in project-state.md.
+- Exports are unaffected by this preview-only artifact.
 
 ### 3-A: Transition window activates canvas overlay
 
@@ -129,7 +137,7 @@ Covered by Item 1-A above. No separate test procedure needed.
 3. Press Play. As playback reaches the segment boundary, observe the preview.
 4. During the transition window, you should see a **smooth blend** from the outgoing frame to the incoming frame — not a hard cut.
 
-**Pass**: Visible blend in preview during transition window.
+**Pass**: Canvas blend is visible. The black flash at video boundaries is acknowledged as a known limitation, not a regression.
 
 ### 3-B: Transition types are visually distinct
 
@@ -159,9 +167,10 @@ Test at least Crossfade and one spatial transition (Slide or Zoom).
 2. Open DevTools → Console. Check for:
    - `[useTransitionPreview] snapshot render failed` warnings
    - React state-update-after-unmount errors
+   - Any `[transition-debug]`, `[hold-debug]`, or `[black-fade-debug]` logs (must be **absent**)
    - Any uncaught exceptions
 
-**Pass**: Console clean (minor warnings about ffmpeg are acceptable; snapshot/unmount errors are not).
+**Pass**: Console clean (minor warnings about ffmpeg are acceptable; snapshot/unmount errors are not; diagnostic prefix logs must be absent).
 
 ---
 
