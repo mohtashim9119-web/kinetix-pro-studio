@@ -119,8 +119,17 @@ export function PreviewStage({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMidView, setIsMidView] = useState(false);
 
+  // Canvas hold — keeps the canvas visible after isActive=false until the
+  // incoming media element reports it has decoded its first frame. Without
+  // this, the 100ms CSS fade-out completes while the video is still at
+  // readyState=0, exposing bg-black for 200-300ms+. See hold effect below.
+  const [canvasHoldActive, setCanvasHoldActive] = useState(false);
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  // [black-fade-debug] tracks previous isActive to detect true→false transitions
+  const prevIsActiveForDebugRef = useRef<boolean>(false);
 
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
@@ -265,6 +274,180 @@ export function PreviewStage({
     transitionPreview.effectiveTransition,
   ]);
 
+  // [black-fade-debug] Sample every layer that could contribute a black frame in the
+  // 0–300ms window after isActive flips false. Fires only on true→false transitions.
+  useEffect(() => {
+    const isNowActive = transitionPreview.isActive;
+    const wasActive = prevIsActiveForDebugRef.current;
+    prevIsActiveForDebugRef.current = isNowActive;
+
+    // Only instrument the true → false edge
+    if (!wasActive || isNowActive) return;
+
+    const t0 = performance.now();
+    const stage = stageRef.current;
+    const canvas = overlayCanvasRef.current;
+    const timers: ReturnType<typeof setTimeout>[] = [];
+
+    const snapshot = (label: string) => {
+      const elapsed = (performance.now() - t0).toFixed(1);
+
+      // Canvas opacity (CSS computed — not the inline style value)
+      const canvasComputed = canvas ? window.getComputedStyle(canvas) : null;
+      const canvasOpacity = canvasComputed?.opacity ?? 'n/a';
+      const canvasInDOM = canvas ? document.contains(canvas) : false;
+
+      // Canvas pixel content — sample centre pixel to detect clearRect vs retained frame
+      let centerPixel = 'n/a';
+      if (canvas) {
+        if (canvas.width > 0 && canvas.height > 0) {
+          try {
+            const ctx2d = canvas.getContext('2d');
+            if (ctx2d) {
+              const cx = Math.floor(canvas.width / 2);
+              const cy = Math.floor(canvas.height / 2);
+              const d = ctx2d.getImageData(cx, cy, 1, 1).data;
+              centerPixel = `rgba(${d[0]},${d[1]},${d[2]},${d[3]})`;
+            }
+          } catch { centerPixel = 'getImageData-error'; }
+        } else {
+          centerPixel = `zero-dims(${canvas.width}x${canvas.height})`;
+        }
+      }
+
+      // Outer AnimatePresence segment wrapper
+      const segRoot = stage?.querySelector('[data-segment-root]') as HTMLElement | null;
+      const segRootOpacity = segRoot
+        ? window.getComputedStyle(segRoot).opacity
+        : 'MISSING-no-data-segment-root-in-DOM';
+
+      // Inner media wrapper
+      const mediaWrapper = stage?.querySelector('[data-media-wrapper]') as HTMLElement | null;
+      const mediaWrapperOpacity = mediaWrapper
+        ? window.getComputedStyle(mediaWrapper).opacity
+        : 'MISSING-no-data-media-wrapper-in-DOM';
+
+      // Video element
+      const video = stage?.querySelector('video') as HTMLVideoElement | null;
+      const videoInfo = video
+        ? `readyState=${video.readyState} videoWidth=${video.videoWidth} ` +
+          `currentTime=${video.currentTime.toFixed(3)} paused=${video.paused} ` +
+          `networkState=${video.networkState}`
+        : 'none';
+
+      // Image element
+      const img = stage?.querySelector('img') as HTMLImageElement | null;
+      const imgInfo = img
+        ? `complete=${img.complete} naturalWidth=${img.naturalWidth}`
+        : 'none';
+
+      console.log(
+        `[black-fade-debug] @t+${label} (actual +${elapsed}ms since isActive→false)\n` +
+        `  canvas : opacity=${canvasOpacity} inDOM=${canvasInDOM}` +
+        ` dims=${canvas?.width ?? '?'}x${canvas?.height ?? '?'} centerPixel=${centerPixel}\n` +
+        `  segRoot: opacity=${segRootOpacity}\n` +
+        `  mediaWr: opacity=${mediaWrapperOpacity}\n` +
+        `  video  : ${videoInfo}\n` +
+        `  img    : ${imgInfo}`,
+      );
+
+      // DOM snapshot at t+50ms only — outerHTML is expensive
+      if (label === '50ms') {
+        const html = segRoot?.outerHTML?.slice(0, 500) ?? 'no [data-segment-root] found';
+        console.log(`[black-fade-debug] DOM snapshot @t+50ms (first 500 chars):\n${html}`);
+      }
+    };
+
+    timers.push(setTimeout(() => snapshot('0ms'),   0));
+    timers.push(setTimeout(() => snapshot('50ms'),  50));
+    timers.push(setTimeout(() => snapshot('150ms'), 150));
+    timers.push(setTimeout(() => snapshot('300ms'), 300));
+
+    return () => { timers.forEach(clearTimeout); };
+  }, [transitionPreview.isActive]);
+
+  // ---------------------------------------------------------------------------
+  // Canvas hold: extend canvas visibility past isActive=false until the
+  // incoming media element is renderable (video canplay / img load), or until
+  // an 800ms failsafe fires — whichever comes first.
+  //
+  // The CSS `opacity 100ms ease` on the canvas still applies when the hold
+  // releases, so the crossfade from canvas-frame to live media is smooth.
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (transitionPreview.isActive) {
+      // New transition starting — cancel any hold left over from a prior one.
+      if (holdTimeoutRef.current !== null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+      setCanvasHoldActive(false);
+      return;
+    }
+
+    // Only activate on the single render where isActive flips true → false.
+    if (!transitionPreview.justCompleted) return;
+
+    setCanvasHoldActive(true);
+
+    const stage = stageRef.current;
+    const video = stage?.querySelector('video') as HTMLVideoElement | null;
+    const img   = stage?.querySelector('img')   as HTMLImageElement | null;
+
+    // Mutable ref so the cleanup can nullify it after removal.
+    let removeMediaListener: (() => void) | null = null;
+
+    const release = () => {
+      removeMediaListener?.();
+      removeMediaListener = null;
+      if (holdTimeoutRef.current !== null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+      setCanvasHoldActive(false);
+    };
+
+    if (video) {
+      // HAVE_FUTURE_DATA (3) or HAVE_ENOUGH_DATA (4) — already decoded.
+      // React 18 batches the setCanvasHoldActive(true) above with the
+      // setCanvasHoldActive(false) here → net result is false; no visible hold.
+      if (video.readyState >= 3) {
+        release();
+        return () => { /* nothing pending — already released */ };
+      }
+      const onReady = () => release();
+      video.addEventListener('canplay', onReady, { once: true });
+      removeMediaListener = () => video.removeEventListener('canplay', onReady);
+    } else if (img) {
+      if (img.complete && img.naturalWidth > 0) {
+        release();
+        return () => { /* nothing pending — already released */ };
+      }
+      const onLoad = () => release();
+      img.addEventListener('load', onLoad, { once: true });
+      removeMediaListener = () => img.removeEventListener('load', onLoad);
+    }
+    // If neither (placeholder segment) the failsafe below is the only release.
+
+    // Failsafe: 800ms cap prevents a stuck canvas if media never loads.
+    holdTimeoutRef.current = setTimeout(() => {
+      holdTimeoutRef.current = null;
+      release();
+    }, 800);
+
+    return () => {
+      // Cleanup on re-run or unmount — always cancel hold so the canvas
+      // doesn't stay visible past component teardown or dep changes.
+      removeMediaListener?.();
+      removeMediaListener = null;
+      if (holdTimeoutRef.current !== null) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+      setCanvasHoldActive(false);
+    };
+  }, [transitionPreview.isActive, transitionPreview.justCompleted]);
+
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -325,12 +508,14 @@ export function PreviewStage({
               exit={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).exit}
               transition={{ duration: suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
               className="absolute inset-0 bg-black"
+              data-segment-root=""
             >
               {/* Visuals — media wrapper carries intra-segment camera-dynamics animation.
                   Suppressed when canvas just handled the transition: BOUNCE/SKEW/ROTATE
                   return initial:{opacity:0} which would produce a black flash on entry. */}
               <motion.div
                 className="absolute inset-0 overflow-hidden"
+                data-media-wrapper=""
                 {...(suppressMotionAnim ? {} : getAnimationWrapperProps(
                   currentSegment.animation ?? AnimationType.NONE,
                   currentSegment.duration,
@@ -511,7 +696,7 @@ export function PreviewStage({
           className="absolute inset-0 w-full h-full pointer-events-none"
           style={{
             zIndex: 45,
-            opacity: transitionPreview.isActive ? 1 : 0,
+            opacity: (transitionPreview.isActive || canvasHoldActive) ? 1 : 0,
             transition: 'opacity 100ms ease',
           }}
         />
