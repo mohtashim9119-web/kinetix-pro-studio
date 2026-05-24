@@ -105,13 +105,21 @@ export async function encodeSegment(
       if (timeFromEnd <= transitionDuration) {
         // alpha: 0 at start of transition zone → 1 at segment end
         const alpha = Math.max(0, Math.min(1, 1 - timeFromEnd / transitionDuration));
-        // Incoming segment time: mirror of timeFromEnd into the start of next segment
-        const nextTimeInSegment = transitionDuration - timeFromEnd;
 
         await renderSegmentFrame({
           segment: options.nextSegment,
           asset: options.nextAsset,
-          timeInSegment: nextTimeInSegment,
+          // Path A: hold incoming at its first frame (trimStart) throughout the
+          // fade. When the next segment's own encoding loop begins, it also
+          // starts at timeInSegment=0 — producing exact visual continuity.
+          // Avoids:
+          //   - Duplicate emission of N+1's first transitionDuration seconds
+          //   - Ken Burns / animation "snap-back" at fade-end
+          //   - trimStart>0 content leaking into the fade
+          // Tradeoff: incoming side is a static frame during the fade rather
+          // than advancing video. Audio sync preserved (total encoded duration
+          // unchanged at Σ segment.duration).
+          timeInSegment: 0,
           ctx: blendCtx,
           width: w,
           height: h,
