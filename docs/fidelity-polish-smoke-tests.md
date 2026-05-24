@@ -174,6 +174,42 @@ Test at least Crossfade and one spatial transition (Slide or Zoom).
 
 ---
 
+## Test 6 — Export Transitions
+
+> **Path A landed** (commit 4b75737) — no doubled content, no animation snap-back, no trimStart leak, audio sync OK.
+> **Path B PENDING** — user reviewed Path A and rejected the static-frame aesthetic. Branch must not merge until Path B passes.
+
+### 6-A: No doubled content (Path A gate)
+
+1. Set up two segments with a **FADE** transition (duration ≥ 0.5 s).
+2. Export. Open the MP4.
+3. Scrub through the transition boundary — confirm the outgoing segment does **not** appear twice (no duplicated tail frames after the cut point).
+
+**Pass (Path A)**: Clean single playthrough; no duplicated content at segment boundary.
+
+### 6-B: No animation snap-back (Path A gate)
+
+1. Set a **Ken Burns** animation on the outgoing segment. Set FADE transition.
+2. Export. At the transition point, the outgoing segment should fade out smoothly — the zoom should **not** snap back to scale 1.0 before the fade begins.
+
+**Pass (Path A)**: Smooth fade-out without animation reset artifact.
+
+### 6-C: Audio sync (Path A gate)
+
+1. Add a voiceover. Export with a FADE transition.
+2. In the exported MP4, verify audio and visual stay in sync through and after the transition. Voiceover must end coincident with the last visual frame.
+
+**Pass (Path A)**: No audio drift through transitions; voiceover end aligns with final frame.
+
+### 6-D: True cross-fade — advancing incoming video (Path B gate — PENDING)
+
+1. Export with a FADE transition.
+2. During the transition window in the exported MP4, the incoming segment should show **advancing video** (not a frozen first frame) — both segments should appear to be playing simultaneously, blending together (Premiere/CapCut style).
+
+**Pass (Path B)**: Incoming video advances during fade. This test must pass before the branch merges.
+
+---
+
 ## Post-test Checklist
 
 - [ ] All 5 items above have at least one "Pass" verdict recorded

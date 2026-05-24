@@ -77,8 +77,27 @@ vs Phase 5 baseline (435.88 / 133.19). Within the ≤+20 kB / +5 kB budget.
 - All 12 AnimationType values render in export ✓ (was 0 before — phase audit caught the no-op gap)
 - KEN_BURNS added to ANIMATION_OPTIONS (was a phantom default) ✓
 - Drag-to-position UI for extra overlays ✓
-- **Preview transitions** (canvas blend) — partial: canvas-based blend visible during transition window, but ~150ms black flash remains on video→video boundaries due to video decode latency. Suppressed double-cross-fade with motion-anim guard. Exports unaffected (frameRenderer pipeline handles transitions correctly).
+- **Preview transitions** (canvas blend): partial, ships with documented ~100-200ms black flash on video boundaries (see Deferred).
+- **Export transitions:** Path A landed (commit 4b75737) — fixes double-emission, animation snap-back, and trimStart leak by holding incoming segment at its first frame during fade. Audio sync preserved. ACCEPTANCE PENDING — user reviewed and rejected the static-frame aesthetic. Path B (true cross-fade with advancing incoming video, Premiere/CapCut style) is the immediate next work.
 - Stale bugs purged from CLAUDE.md ✓
+
+---
+
+## Active Work — Path B (Export Cross-Fade)
+
+**Goal:** Replace Path A's static-incoming behavior with advancing incoming video during the transition window, matching professional editor defaults (Premiere/CapCut).
+
+**Architectural changes required (per audit in prior session):**
+
+- `segmentEncoder.ts`: add `startFrameIndex` parameter. Segment N+1's encoding loop skips the first `transitionDurationFromPrev * fps` frames (already emitted by N's tail).
+- `exportPipeline.ts`: pass `transitionDurationFromPrev` to `encodeSegment` by reading `segments[i-1]`'s effective transition duration.
+- `App.tsx`: change `startTime` accumulator in all four sites (`parseProjectData`, `finalizeSync`, duration-change handler, timeline resize handler) from `acc += seg.duration` to `acc += seg.duration - effectiveTransitionDuration(seg)`.
+- `App.tsx` voiceover alignment (constraint effect at line ~758, `finalizeSync`, playback `maxDuration` at line ~791): target `Σ(duration) - Σ(transitionDuration)` instead of `Σ(duration)`.
+- All four `startTime` sites must update together to keep timeline math consistent.
+
+**Risk:** Audio desync if any `startTime` site is missed or if voiceover alignment math doesn't update in lockstep. Verify with Test 6 export — voiceover must end coincident with last visual frame.
+
+**Do not merge `fidelity-polish` until Path B lands and Test 6 passes.**
 
 ---
 
@@ -267,7 +286,7 @@ Phase 3 steps:
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
 | Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
-| Main bundle size | 445.20 kB minified / 136.07 kB gzip (post-hold-strip cleanup) — down from 542 kB / 161 kB at Phase 3 end |
+| Main bundle size | 445.19 kB / 136.06 kB gzip (unchanged from Path A) — down from 542 kB / 161 kB at Phase 3 end |
 | Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | Safari support | ✅ Verified — `crossOriginIsolated=true`, full export works |
