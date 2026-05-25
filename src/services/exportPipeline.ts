@@ -1,5 +1,5 @@
 import { fetchFile } from '@ffmpeg/util';
-import { Project, Asset } from '../types';
+import { Project, Asset, VideoSegment, TransitionType } from '../types';
 import { encodeSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
 
@@ -39,6 +39,28 @@ export type ExportResult =
 
 function causeString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * Resolves the effective outgoing transition duration for `segment` into
+ * `next`. Returns 0 when there is no next segment, when the effective
+ * transition is NONE, or when the resolved duration is 0/undefined.
+ * Mirrors the precedence logic in segmentEncoder.ts (per-segment first,
+ * global fallback when segment.transition is NONE).
+ */
+function effectiveTransitionOut(
+  segment: VideoSegment,
+  next: VideoSegment | undefined,
+  globalTransition: TransitionType,
+  globalTransitionDuration: number,
+): number {
+  if (!next) return 0;
+  const effTrans =
+    segment.transition && segment.transition !== TransitionType.NONE
+      ? segment.transition
+      : globalTransition;
+  if (effTrans === TransitionType.NONE) return 0;
+  return segment.transitionDuration ?? globalTransitionDuration;
 }
 
 /**
@@ -96,17 +118,28 @@ export async function exportProject(
     const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
     const nextSegment = segments[i + 1];
     const nextAsset = nextSegment?.assetId ? assetMap.get(nextSegment.assetId) : undefined;
+    const prevSegment = segments[i - 1];
+    const startTimeOffset = prevSegment
+      ? effectiveTransitionOut(prevSegment, segment, project.globalTransition, project.globalTransitionDuration)
+      : 0;
+    const trailingExtension = effectiveTransitionOut(
+      segment, nextSegment, project.globalTransition, project.globalTransitionDuration,
+    );
 
     const segFile = `seg_out_${i}.mp4`;
     segmentFiles.push(segFile);
     allTempFiles.push(segFile);
 
+    const segmentFrameCount = Math.max(
+      1,
+      Math.round((segment.duration - startTimeOffset + trailingExtension) * fps),
+    );
     onProgress({
       type: 'encoding_segment',
       index: i,
       total: segments.length,
       frame: 0,
-      totalFrames: Math.round(segment.duration * fps),
+      totalFrames: segmentFrameCount,
     });
 
     try {
@@ -123,6 +156,8 @@ export async function exportProject(
           nextAsset,
           globalTransitionDuration: project.globalTransitionDuration,
           globalTransition: project.globalTransition,
+          startTimeOffset,
+          trailingExtension,
           onProgress: (frame, totalFrames) => {
             onProgress({
               type: 'encoding_segment',
