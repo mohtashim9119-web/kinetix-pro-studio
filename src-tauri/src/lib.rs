@@ -20,6 +20,7 @@ pub fn run() {
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,
             ffmpeg::ffmpeg_destroy_session,
+            ffmpeg::save_bytes_to_disk,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -133,3 +133,27 @@ pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Opens a native OS save-file dialog and writes `data` to the chosen path.
+///
+/// Returns `true` if the file was saved, `false` if the user cancelled.
+/// The dialog suggests `default_name` as the filename and filters to .mp4.
+///
+/// Uses `rfd::AsyncFileDialog` which dispatches the native panel to the main
+/// thread internally (required on macOS/AppKit) while awaiting on the Tauri
+/// tokio runtime — no deadlock risk.
+#[tauri::command]
+pub async fn save_bytes_to_disk(data: Vec<u8>, default_name: String) -> Result<bool, String> {
+    let handle = rfd::AsyncFileDialog::new()
+        .set_file_name(&default_name)
+        .add_filter("MP4 Video", &["mp4"])
+        .save_file()
+        .await;
+
+    match handle {
+        None => Ok(false),
+        Some(file_handle) => std::fs::write(file_handle.path(), &data)
+            .map(|_| true)
+            .map_err(|e| format!("Failed to save file: {e}")),
+    }
+}
