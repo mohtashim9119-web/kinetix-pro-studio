@@ -336,5 +336,6 @@ All dead dependencies removed. No remaining items.
 | Phase 6.1 — Tauri v2 scaffold | ✅ Done — 2026-05-26 | tauri init, tauri.conf.json, npm scripts, smoke test |
 | Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (6 commands); TauriFfmpeg class; IPC smoke test (10/10) |
 | Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
+| Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
 | Phase 6.4 — Remove wasm path | ⬜ Next | Delete @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons |
 | Phase 6.5 — Bundle ffmpeg sidecar | ⬜ Planned | Ship ffmpeg binary inside app bundle; remove PATH dependency |
