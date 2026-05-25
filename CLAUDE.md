@@ -32,7 +32,11 @@ src/
     ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated.
                      #   NOTE: only used by dev-only test buttons (handleRenderTestFrame, handleEncodeTestSegment)
                      #   on the main thread — NOT used by the production export path.
-    frameRenderer.ts # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
+    frameRenderer.ts   # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
+                     #   Calls applySegmentAnimation (canvasAnimations.ts) for AnimationType canvas transforms.
+                     #   Respects segment.trimEnd for video seek clamping.
+    canvasAnimations.ts # Canvas 2D animation transforms keyed by AnimationType (Fidelity Polish Item 1).
+                     #   applySegmentAnimation() — ctx.save/restore wrapper, easing helpers, dev-only assert guard.
     segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array.
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
     exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
@@ -41,9 +45,11 @@ src/
     exportWorker.ts  # Comlink-exposed FfmpegWorkerService; owns FFmpeg instance off main thread.
                      #   Registers ffmpeg.on('log', ...) → console.debug to silence ffmpeg stderr noise.
   hooks/
-    usePersistProject.ts  # Debounced (500ms) project save; accepts enabled flag to gate hydration
-    useExport.ts          # Export orchestration: lazy worker lifecycle, ExportSnapshot for retry, progress callback.
-                          #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
+    usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
+    useExport.ts             # Export orchestration: lazy worker lifecycle, ExportSnapshot for retry, progress callback.
+                             #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
+    useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
+                             #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
   components/
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
     PreviewStage.tsx      # Video/image display + overlay rendering
@@ -60,7 +66,8 @@ vite.config.ts       # Vite config — COOP/COEP headers for dev server (require
 public/
   _headers           # Cloudflare Pages: COOP/COEP headers for production (required for SharedArrayBuffer)
 docs/
-  phase-4-safari-test.md  # Safari validation procedure + decision matrix (result: PASS)
+  phase-4-safari-test.md         # Safari validation procedure + decision matrix (result: PASS)
+  fidelity-polish-smoke-tests.md # Fidelity Polish manual smoke test procedures (Items 1–5)
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
@@ -235,11 +242,11 @@ App.tsx                    — top-level state + orchestration only
 
 ## Known Bugs (Fix Before Shipping)
 
-- **Line ~908**: Both branches of the `Math.abs(audioRef.current.currentTime - currentTime) > 0.2` check do the same thing — dead code
-- **`togglePlay` in keyboard effect**: `togglePlay` is recreated each render → listener attaches/detaches constantly. Wrap in `useCallback` or use a ref
-- **Trim End**: `trimEnd` field on `VideoSegment` type is never set or rendered in the UI
-- **`storyMap` parameter in `parseProjectData`**: declared but body never uses it
+- ~~**Trim End**~~: **Fixed Fidelity Polish Item 5** — `trimEnd` UI (slider + reset button, video-only) in SegmentEditorPanel; `frameRenderer.ts` clamps `videoTime = Math.min(rawTime, segment.trimEnd)` before seek; encoder path flows through frameRenderer automatically.
 - ~~**`autoMatchAssets` effect at `App.tsx:350–355`**~~: **Fixed Phase 5 step 1** — removed the effect; `autoMatchSegments` is now called imperatively inside each upload handler only. Deletion path is clean.
+- ~~**Line ~908 dead branch**~~: **Fixed Phase 1 Step 3** — `Math.abs(audioRef.current.currentTime - currentTime) > 0.2` check removed from playback interval. No such check exists in current code.
+- ~~**`togglePlay` listener churn**~~: **Fixed Phase 1 Step 3** — keyboard `useEffect` at App.tsx:817 uses `setIsPlaying(p => !p)` directly with `[]` dep array; listener attaches once on mount. No churn.
+- ~~**`storyMap` unused param**~~: **Fixed Phase 1 Step 3** — `parseProjectData` signature has no `storyMap` parameter. Removed in Phase 1.
 
 ---
 
@@ -255,8 +262,8 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 | ~~No error boundaries~~ | ✅ **Resolved Phase 4 (a42ed66)** — `ErrorBoundary` wraps left panel, PreviewStage, Timeline | — |
 | Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint (Phase 5) |
 | No authentication | Open access | Add auth layer when persistence is added |
-| `AnimationType` values not applied in canvas export | Camera dynamics are live-preview only; export path does not apply AnimationType to frames | Implement per-type canvas animation or document as preview-only |
-| Extra overlays have no drag-to-position UI | Position set as `x: 50, y: 50` always | Add drag handles in preview |
+| ~~`AnimationType` values not applied in canvas export~~ | ✅ **Resolved Fidelity Polish Item 1** — `canvasAnimations.ts` applies KEN_BURNS/FLOAT/BOUNCE/PULSE/HEARTBEAT/WOBBLE/SHAKE/SKEW/GLITCH/NEON_FLICKER/ROTATE via ctx transforms in frameRenderer; live preview uses `getAnimationWrapperProps` in PreviewStage. | — |
+| ~~Extra overlays have no drag-to-position UI~~ | ✅ **Resolved Fidelity Polish Item 4** — Pointer Events drag in PreviewStage with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires to App.tsx immutable state update. | — |
 | ~~No rate-limit handling in stockService~~ | ✅ **Resolved Phase 5** — exponential backoff retry (3 attempts); discriminated union surface rate_limited/error/ok | — |
 | ~~JSZip dynamic-import double-cast~~ | ✅ **Resolved Phase 5** — `{ default: JSZip }` destructure; `moduleResolution: "bundler"` synthesizes `.default` | — |
 | ~~Real mid-export cancellation not implemented~~ | ✅ **Resolved Phase 5** — `worker.terminate()` + generation counter prevents stale state overwrite | — |
@@ -319,3 +326,10 @@ All dead dependencies removed. No remaining items.
 | Stock API 429 handling | ✅ Done — 2026-05-19 | fetchWithRetry exp backoff; StockSearchResult discriminated union; distinct UI states |
 | Accessibility pass 1 | ✅ Done — 2026-05-19 | ARIA labels, focus rings, aria-live, timeline slider, useFocusTrap on all 4 modals |
 | Phase 5 smoke test doc | ✅ Done — 2026-05-19 | docs/phase-5-smoke-tests.md |
+| Fidelity Polish Item 5 — trimEnd | ✅ Done — 2026-05-21 | b3f09b9 + 0f4016c + e7a5134 — gate trimStart/trimEnd UI on video; renderer clamp; encoder flows through frameRenderer |
+| Fidelity Polish Item 1 — AnimationType canvas | ✅ Done — 2026-05-21 | ee5ea67 + 33d5840 + 7dfd934 — canvasAnimations.ts (12 types); KEN_BURNS added to picker; live preview motion.div wrapper |
+| Fidelity Polish Item 4 — Overlay drag | ✅ Done — 2026-05-21 | cf2e3aa — Pointer Events drag in PreviewStage; hard-clamp; updateExtraOverlayPosition in App.tsx |
+| Fidelity Polish Item 2 — KEN_BURNS in picker | ✅ Done — 2026-05-21 | 33d5840 — added to ANIMATION_OPTIONS; dev assert guard extended |
+| Fidelity Polish Item 3 — Preview transitions | ✅ Done — 2026-05-21 | 94f8a37 + 0c49339 + ea5ba65 — useTransitionPreview (pre-roll snapshot); canvas overlay in PreviewStage; mounted-ref guard |
+| Fidelity Polish smoke test doc | ✅ Done — 2026-05-21 | docs/fidelity-polish-smoke-tests.md |
+| Main bundle size (post Fidelity Polish) | ✅ 443.50 kB / 135.70 kB gzip | +7.6 kB raw / +2.5 kB gzip from Phase 5 baseline (443.50 / 435.88 vs 135.70 / 133.19) — within ≤+20kB/+5kB budget |

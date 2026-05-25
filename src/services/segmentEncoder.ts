@@ -24,6 +24,12 @@ export interface EncodeSegmentOptions {
   /** Global transition type fallback — used when the segment's own transition is NONE. */
   globalTransition?: TransitionType;
   onProgress?: (framesWritten: number, totalFrames: number) => void;
+  /** Seconds to skip at the start of this segment. Paid back by the previous
+   *  segment's trailing transition overlap. Default 0. */
+  startTimeOffset?: number;
+  /** Seconds to encode past `segment.duration`. Equal to the outgoing transition
+   *  duration when this segment transitions into a next one. Default 0. */
+  trailingExtension?: number;
 }
 
 /**
@@ -84,29 +90,39 @@ export async function encodeSegment(
     blendCtx = blendCanvas.getContext('2d');
   }
 
-  const totalFrames = Math.max(1, Math.round(segment.duration * fps));
+  const startTimeOffset = options.startTimeOffset ?? 0;
+  const trailingExtension = options.trailingExtension ?? 0;
+  const encodeStart = startTimeOffset;
+  const encodeEnd = segment.duration + trailingExtension;
+  const encodeDuration = Math.max(0, encodeEnd - encodeStart);
+  const totalFrames = Math.max(1, Math.round(encodeDuration * fps));
   const writtenFiles: string[] = [];
 
   // -------------------------------------------------------------------------
   // Render and write frames
   // -------------------------------------------------------------------------
   for (let i = 0; i < totalFrames; i++) {
-    const timeInSegment = i / fps;
+    const timeInSegment = encodeStart + i / fps;
 
     console.debug(
       `[encode] frame ${i + 1}/${totalFrames} time=${timeInSegment.toFixed(3)}s` +
+      ` (offset=${startTimeOffset.toFixed(3)} ext=${trailingExtension.toFixed(3)})` +
       ` asset=${asset ? `${asset.type}:${asset.name}` : 'none'}`,
     );
 
-    // Compute transition blend alpha for frames near the outgoing boundary
+    // Compute transition blend alpha for frames in the trailing extension window.
+    // Path B: the outgoing segment extends trailingExtension seconds past segment.duration
+    // into the fade window; the incoming segment is rendered with advancing timeInSegment
+    // so it plays live during the blend. The next segment's encoder call skips its first
+    // transitionDuration seconds via startTimeOffset, so no duplicate emission occurs.
+    // In/out overlap contributions cancel pairwise: Σ encoded = Σ duration = voiceoverDuration.
+    // Audio sync is preserved because total encoded duration is unchanged.
     let blendParams: import('./frameRenderer').TransitionBlendParams | undefined;
     if (hasTransition && blendCanvas && blendCtx && options.nextSegment) {
-      const timeFromEnd = segment.duration - timeInSegment;
-      if (timeFromEnd <= transitionDuration) {
-        // alpha: 0 at start of transition zone → 1 at segment end
-        const alpha = Math.max(0, Math.min(1, 1 - timeFromEnd / transitionDuration));
-        // Incoming segment time: mirror of timeFromEnd into the start of next segment
-        const nextTimeInSegment = transitionDuration - timeFromEnd;
+      if (timeInSegment >= segment.duration && timeInSegment < segment.duration + transitionDuration) {
+        const timeIntoTransition = timeInSegment - segment.duration;
+        const alpha = Math.max(0, Math.min(1, timeIntoTransition / transitionDuration));
+        const nextTimeInSegment = timeIntoTransition;
 
         await renderSegmentFrame({
           segment: options.nextSegment,
@@ -126,6 +142,10 @@ export async function encodeSegment(
       }
     }
 
+    // NOTE: for segments with a trailingExtension, the video element may be seeked
+    // past trimStart + duration * playbackSpeed. The video element holds its last
+    // decoded frame in that case, which is acceptable since the segment is being faded
+    // out and visually replaced by the incoming side.
     await renderSegmentFrame({
       segment,
       asset,

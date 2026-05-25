@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-05-19 |
+| Last updated | 2026-05-25 |
 | Current phase | Phase 6 — Desktop app (Tauri + native ffmpeg) |
 | Hosting target | Cloudflare Pages (frontend) · Render backend TBD |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -27,13 +27,14 @@
 | Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ✅ Complete |
 | Phase 5 | Production hardening — tests, accessibility, responsive | ✅ Complete (2026-05-19) |
-| Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
+| Fidelity Polish | Canvas animations, trimEnd, drag overlays, preview transitions, KEN_BURNS picker fix, Path B export cross-fade | ✅ Complete (2026-05-25) |
+| Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Next |
 
 ---
 
 ## Current Sprint
 
-Phase 5 complete (2026-05-19). Next: Phase 6 (Desktop app — Tauri wrap with native ffmpeg).
+Fidelity Polish complete. Next: Phase 6 — Desktop app (Tauri + native ffmpeg).
 
 ---
 
@@ -53,6 +54,45 @@ Phase 5 complete (2026-05-19). Next: Phase 6 (Desktop app — Tauri wrap with na
 | Step 8d | useFocusTrap hook — Tab/Shift+Tab cycle in all 4 modals, focus restore on close | e49c28d |
 
 **Bundle size:** 435 kB / 133 kB gzip (negligible change vs Phase 4 433 kB / 132 kB — no new heavy deps added).
+
+---
+
+## Fidelity Polish Summary
+
+| Step | Description | Commits |
+|---|---|---|
+| Item 1 — trimEnd UI + renderer | trimStart/trimEnd UI gated on video assets; frameRenderer + PreviewStage respect trimEnd; encoder unchanged | b3f09b9, 0f4016c, e7a5134 |
+| Item 4 — Canvas animations | canvasAnimations.ts with 12 AnimationTypes (incl. KEN_BURNS); frameRenderer integration; PreviewStage live preview via motion.div wrappers | ee5ea67, 33d5840, 7dfd934 |
+| Item 2 — Overlay drag | Pointer events drag on extra overlays in PreviewStage; hard-clamp to [halfW/2, 100-halfW/2]; updateExtraOverlayPosition callback in App.tsx | cf2e3aa |
+| Item 3 — Preview transitions | useTransitionPreview hook pre-rolls outgoing+incoming snapshots; canvas overlay blends via applyTransitionBlend; mounted-ref guard for unmount safety | 94f8a37, 0c49339, ea5ba65 |
+| Item 5 — Stale Known Bugs cleanup | Verified bugs already fixed in Phase 1; removed stale entries from CLAUDE.md | (CLAUDE.md only) |
+| Docs | CLAUDE.md status + Known Limitations updates; new docs/fidelity-polish-smoke-tests.md (14 procedures) | c6fcc64, 136b1ac |
+| Pre-merge cleanup | NEON_FLICKER decision comment; preview ↔ export cross-reference comments; project-state.md updates | 0465996, 533315e, (this commit) |
+
+**Bundle size:** 443.50 kB / 135.70 kB gzip — delta +7.6 kB / +2.5 kB
+vs Phase 5 baseline (435.88 / 133.19). Within the ≤+20 kB / +5 kB budget.
+
+**Items delivered vs kickoff:**
+- trimEnd field wired through UI + export ✓
+- All 12 AnimationType values render in export ✓ (was 0 before — phase audit caught the no-op gap)
+- KEN_BURNS added to ANIMATION_OPTIONS (was a phantom default) ✓
+- Drag-to-position UI for extra overlays ✓
+- **Preview transitions** (canvas blend): partial, ships with documented ~100-200ms black flash on video boundaries (see Deferred).
+- **Export transitions:** Path A landed (commit 4b75737) — fixes double-emission, animation snap-back, and trimStart leak by holding incoming segment at its first frame during fade. Audio sync preserved. ACCEPTANCE PENDING — user reviewed and rejected the static-frame aesthetic. Path B (true cross-fade with advancing incoming video, Premiere/CapCut style) is the immediate next work.
+- Stale bugs purged from CLAUDE.md ✓
+
+---
+
+## Path B (Export Cross-Fade) — Complete
+
+Path B landed in commit `261936f`. All four Test 6 gates verified manually:
+
+- 6-A: no doubled content
+- 6-B: no animation snap-back
+- 6-C: audio sync preserved
+- 6-D: true cross-fade aesthetic confirmed
+
+**Key insight:** In/out transition overlaps cancel pairwise across the timeline, so `Σ encoded = Σ duration = voiceoverDuration` is preserved without any `App.tsx` changes. Only `segmentEncoder.ts` and `exportPipeline.ts` were modified. The pre-audit predicted App.tsx would need updating at four `startTime` accumulator sites — this was not required because the algebraic invariant held by construction.
 
 ---
 
@@ -116,6 +156,10 @@ Phase 3 steps:
 | 2026-05-17 | **ffmpeg.wasm encode speed:** ~25s wall-clock per 1s of 1080p output (≈1.35s per frame at 30fps). Acceptable for Phase 3 validation; production-grade speed requires Phase 6 native ffmpeg via Tauri. |
 | 2026-05-17 | **Safari export verified:** `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264 + AAC. No code changes required for Safari support. |
 | 2026-05-17 | **Global transition fallback:** `segmentEncoder.ts` now falls back to `project.globalTransition` when a segment's own `transition` field is NONE. Per-segment overrides take precedence. "Override all per-segment transitions" button in Settings still materializes the global value onto segments for per-segment overrides. UX revisit deferred to Phase 5. |
+| 2026-05-21 | **Item 3 approach (preview transitions):** Pre-roll snapshot blend (option b). When playhead enters transition window, snapshot outgoing + incoming first frame to offscreen canvases, blend over transition duration via applyTransitionBlend. Universal coverage across image/video, single seek cost lands during pre-roll (before transition visually starts). Rejected option (a) image-only canvas overlay (asset-type branching complexity) and option (c) skip-and-document (would leave preview-vs-export gap user said to close). |
+| 2026-05-21 | **NEON_FLICKER glow:** Implemented as ctx.shadowBlur + shadowColor pass on top of keyframe alpha pulse. Documented fallback path if visual quality regresses on dark backgrounds. |
+| 2026-05-21 | **Overlay drag clamp policy:** Hard-clamp drag to [halfW/2, 100-halfW/2] (percent). Off-canvas positioning explicitly rejected — overlay drag is positioning, not animation authoring; off-screen reveal effects belong to AnimationType, not overlay position. |
+| 2026-05-25 | **Path B over Path A:** The export pipeline now renders true cross-fades (both segments advance during the fade window) rather than holding the incoming segment static. Mechanism: outgoing segment encodes `trailingExtension` seconds past its boundary; incoming segment skips its first `transitionDuration` seconds via `startTimeOffset`. Overlap contributions cancel pairwise on the timeline, so `Σ duration = voiceoverDuration` invariant is preserved without changing `App.tsx`. Commit `261936f`. |
 
 ---
 
@@ -132,6 +176,10 @@ Phase 3 steps:
 
 ## Known Cosmetic Issues
 
+- **Preview transition black flash on video boundaries** — when a transition ends on a video segment, the newly-mounted `<video>` element shows ~100-200ms of black before its first decoded frame paints. Attempted fix (canvas hold + canplay listener + failsafe timeout) did not engage reliably across multiple debugging rounds — root cause never isolated. Removed in favor of shipping the working blend without the hold. Future fix likely requires pre-mounting the next video element offscreen during the pre-roll window, or replacing the canvas blend entirely with a dual-video CSS opacity crossfade. Exports are unaffected — issue is preview-only.
+
+- **Preview letterboxing in normal view** — already noted previously. Carried forward.
+
 - **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
 
 - **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
@@ -147,6 +195,8 @@ Phase 3 steps:
 - ~~**Stock API rate-limit handling**~~ — **Fixed Phase 5 step 7.** Exponential backoff retry (3 attempts); discriminated union StockSearchResult; distinct UI for rate_limited/error/ok.
 - ~~**Real mid-export cancellation**~~ — **Fixed Phase 5 step 3.** `worker.terminate()` + generation counter in `useExport`.
 - ~~**Accessibility audit**~~ — **Phase 5 step 8 complete.** ARIA labels, focus rings, aria-live, timeline slider keyboard nav, useFocusTrap on all 4 modals. Pass 2 (screen reader, responsive) deferred to Phase 6.
+- ~~**`AnimationType` values not applied in canvas export**~~ — **Fixed Fidelity Polish Item 4.** `canvasAnimations.ts` applies all 12 AnimationType values via canvas ctx transforms in `frameRenderer.ts`; live preview uses `getAnimationWrapperProps` motion.div wrapper in `PreviewStage.tsx`.
+- ~~**Extra overlays have no drag-to-position UI**~~ — **Fixed Fidelity Polish Item 2.** Pointer Events drag on extra overlays with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires through to App.tsx immutable state update.
 - **Responsive layout** — layout assumes ≥1280px width. Mobile/tablet breakpoints not addressed.
 - **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
 - ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
@@ -204,6 +254,21 @@ Phase 3 steps:
 | 2026-05-17 | **Phase 4 commit `3a370e6`:** Clarify dev guard exclusion comments in `constants.ts` (Step 6 fixup). |
 | 2026-05-17 | **Phase 4 commit `97821cd`:** Add Safari validation test procedure (`docs/phase-4-safari-test.md`). Safari E2E result: **PASS** — `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264/AAC. |
 | 2026-05-17 | **Phase 4 commit `ea18635`:** Fix fade transition global fallback — `segmentEncoder.ts` now uses `project.globalTransition` when a segment's own `transition` field is NONE. Previously, users who set the global transition without clicking "Override all per-segment transitions" got hard cuts. |
+| 2026-05-21 | **Fidelity Polish commit `c6fcc64`:** Remove stale Known Bugs entries from CLAUDE.md — verified all three (togglePlay churn, dead audio-sync branch, storyMap param) were already fixed in Phase 1; replaced with strikethrough resolution notes. |
+| 2026-05-21 | **Fidelity Polish commit `b3f09b9`:** Gate trimStart UI on video segments only — `asset.type === 'video'` guard prevents showing a seek-point control for image/color segments that have no media timeline. |
+| 2026-05-21 | **Fidelity Polish commit `0f4016c`:** Add trimEnd UI control — slider (video-only, same guard) with "end of media" default display and × reset button that clears `trimEnd` back to `undefined`. Clamped `trimEnd > trimStart`. |
+| 2026-05-21 | **Fidelity Polish commit `e7a5134`:** Wire trimEnd through renderer and preview — `frameRenderer.ts` clamps `videoTime = Math.min(rawTime, segment.trimEnd)` before seek; `PreviewStage.tsx` respects the same clamp for live preview. Encoder path is unchanged (flows through frameRenderer). |
+| 2026-05-21 | **Fidelity Polish commit `ee5ea67`:** Scaffold `canvasAnimations.ts` — easing primitives (`easeLinear`, `easeOutQuad`, `easeInOutSine`, `springApprox`, `oscillate`, `interpKeyframes`); `AnimationFrameInput`/`AnimationFrameResult` interfaces; `applySegmentAnimation()` with cases for all 12 AnimationType values; dev-only assert guard via lazy import of ANIMATION_OPTIONS. |
+| 2026-05-21 | **Fidelity Polish commit `33d5840`:** Add `AnimationType.KEN_BURNS` to `ANIMATION_OPTIONS` in `constants.ts` — it was the default for new segments but missing from the picker, making it unselectable once changed away. |
+| 2026-05-21 | **Fidelity Polish commit `7dfd934`:** Wire `segment.animation` into live preview — `PreviewStage.tsx` wraps media in a `motion.div` driven by `getAnimationWrapperProps(animation, segmentDuration)`. Removed hardcoded Ken Burns scale from `motion.img`. |
+| 2026-05-21 | **Fidelity Polish commit `cf2e3aa`:** Pointer-driven drag for extra overlays — `PreviewStage.tsx` adds `onPointerDown/Move/Up` handlers on draggable overlay divs; hard-clamp to `[halfW/2, 100-halfW/2]` in both axes; `updateExtraOverlayPosition(segmentId, overlayId, x, y)` callback added to App.tsx with `useCallback` + immutable `setProject` update. |
+| 2026-05-21 | **Fidelity Polish commit `94f8a37`:** Add `useTransitionPreview` hook — pre-roll snapshot approach; renders outgoing+incoming frames to offscreen 960×540 canvases ~400ms before transition window; `pendingKeyRef` prevents concurrent renders; keyed by `"${outId}:${inId}"` for stale-snapshot safety. |
+| 2026-05-21 | **Fidelity Polish commit `0c49339`:** Render preview transitions via canvas overlay — `PreviewStage.tsx` adds a `<canvas>` overlay at z-index 45 driven by `useTransitionPreview`; calls `applyTransitionBlend` each animation frame during the transition window; opacity fade in/out at window edges. |
+| 2026-05-21 | **Fidelity Polish commit `ea5ba65`:** Cleanup pass on `useTransitionPreview` — sort `nextSeg` by `startTime` for robust lookup on unsorted segment arrays; add `mountedRef` guard so async `renderSegmentFrame` never calls `setSnapshots` after hook unmounts. |
+| 2026-05-21 | **Fidelity Polish commit `136b1ac`:** Update CLAUDE.md — add `canvasAnimations.ts` and `useTransitionPreview.ts` to File Map; resolve Known Bugs (trimEnd) and Known Limitations (AnimationType canvas, overlay drag); add 9 rows to Current Refactor Status; create `docs/fidelity-polish-smoke-tests.md` with 14 test procedures. |
+| 2026-05-21 | **Pre-merge cleanup commit `0465996`:** Document NEON_FLICKER glow-pass decision — Path A (full glow: `ctx.shadowBlur` + `ctx.shadowColor`) currently ships; comment added above case in `canvasAnimations.ts` so the choice is recoverable. |
+| 2026-05-21 | **Pre-merge cleanup commit `533315e`:** Cross-reference comments linking preview and export animation paths — reciprocal comments added above `getAnimationWrapperProps` in `PreviewStage.tsx` and above `applySegmentAnimation` in `canvasAnimations.ts`. |
+| 2026-05-25 | **Path B implementation — true cross-fade in export.** `segmentEncoder.ts` accepts `startTimeOffset` + `trailingExtension`; outgoing extends past boundary, incoming skips head, advancing `timeInSegment` on both sides during the fade. `exportPipeline.ts` computes both offsets per segment via `effectiveTransitionOut` helper. Bundle: +9.77 kB / +3.03 kB gzip. Commit `261936f`. |
 
 ---
 
@@ -211,17 +276,18 @@ Phase 3 steps:
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | ~1,450 (was 3,167 — 54% reduction net of all phases) |
+| `src/App.tsx` LOC | 1,603 (was 3,167 — 49% reduction net of all phases; Fidelity Polish added ~150 LOC for updateExtraOverlayPosition and related wiring) |
 | localStorage key | `kinetix:project:v1` |
 | IndexedDB store | `kinetix-assets` / `assets` (keyPath: `id`) |
 | Total dependencies | 13 prod + 9 dev |
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
 | Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
-| Main bundle size | 433 kB minified / 132 kB gzip (down from 542 kB / 161 kB) |
+| Main bundle size | 445.65 kB / 136.22 kB gzip — down from 542 kB / 161 kB at Phase 3 end |
 | Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | Safari support | ✅ Verified — `crossOriginIsolated=true`, full export works |
 | Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
 | Transition enum values in UI | 10 (pruned from 51 — only implemented transitions shown) |
 | Filter names in UI | 27 (pruned from 57 — only implemented filters shown) |
+| AnimationType values rendered in export | 12 (was 0 — no-op until Fidelity Polish; all 12 now applied via canvasAnimations.ts) |

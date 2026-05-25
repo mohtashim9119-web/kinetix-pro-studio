@@ -1,5 +1,6 @@
-import { VideoSegment, Asset, TextOverlay, TransitionType } from '../types';
+import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
 import { getFilterStyle } from '../constants';
+import { applySegmentAnimation } from './canvasAnimations';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string };
@@ -303,18 +304,39 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   ctx.filter = filterStr !== 'none' ? filterStr : 'none';
 
   if (asset?.url) {
+    // Apply segment animation transform around media draw.
+    // NONE and undefined both produce identity (no transform).
+    const animation = segment.animation ?? AnimationType.NONE;
+    ctx.save();
+    const animResult = applySegmentAnimation(ctx, {
+      animation,
+      timeInSegment,
+      segmentDuration: segment.duration,
+      canvasWidth: w,
+      canvasHeight: h,
+    });
+    // postDrawAlpha must be applied before the draw to affect the image.
+    if (animResult.postDrawAlpha !== undefined) {
+      ctx.globalAlpha = animResult.postDrawAlpha;
+    }
+
     if (asset.type === 'image') {
       const img = await loadImage(asset.url);
-      // Ken Burns: scale 1.0 → 1.1 over the segment duration (matches PreviewStage)
-      const progress = segment.duration > 0 ? Math.min(timeInSegment / segment.duration, 1) : 0;
-      const scale = 1.0 + 0.1 * progress;
-      drawImageCover(ctx, img, w, h, scale);
+      drawImageCover(ctx, img, w, h);
     } else if (asset.type === 'video') {
       const videoEl = getOrCreateVideo(asset.url);
-      const videoTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+      const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+      // undefined trimEnd = "play to end of media"; seekVideo clamps to el.duration internally
+      const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
       await seekVideo(videoEl, videoTime);
       drawImageCover(ctx, videoEl, w, h);
     }
+
+    ctx.restore();
+    // Restore global state after animation transform
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.shadowColor = 'rgba(0,0,0,0)';
   }
 
   // All overlays drawn without the media filter
@@ -419,8 +441,12 @@ const SUPPORTED_TRANSITIONS = new Set<string>([
  * Called after all overlays have been drawn for the current frame.
  *
  * alpha=0 → fully current; alpha=1 → fully adjacent (incoming segment).
+ *
+ * Exported for use by the preview transition canvas overlay
+ * (useTransitionPreview / PreviewStage). The encoder calls this indirectly
+ * via the `transition` param of renderSegmentFrame.
  */
-function applyTransitionBlend(
+export function applyTransitionBlend(
   ctx: CanvasRenderingContext2D,
   blend: TransitionBlendParams,
   w: number,
