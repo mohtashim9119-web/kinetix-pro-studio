@@ -333,3 +333,8 @@ All dead dependencies removed. No remaining items.
 | Fidelity Polish Item 3 — Preview transitions | ✅ Done — 2026-05-21 | 94f8a37 + 0c49339 + ea5ba65 — useTransitionPreview (pre-roll snapshot); canvas overlay in PreviewStage; mounted-ref guard |
 | Fidelity Polish smoke test doc | ✅ Done — 2026-05-21 | docs/fidelity-polish-smoke-tests.md |
 | Main bundle size (post Fidelity Polish) | ✅ 443.50 kB / 135.70 kB gzip | +7.6 kB raw / +2.5 kB gzip from Phase 5 baseline (443.50 / 435.88 vs 135.70 / 133.19) — within ≤+20kB/+5kB budget |
+| Phase 6.1 — Tauri v2 scaffold | ✅ Done — 2026-05-26 | tauri init, tauri.conf.json, npm scripts, smoke test |
+| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (6 commands); TauriFfmpeg class; IPC smoke test (10/10) |
+| Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
+| Phase 6.4 — Remove wasm path | ⬜ Next | Delete @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons |
+| Phase 6.5 — Bundle ffmpeg sidecar | ⬜ Planned | Ship ffmpeg binary inside app bundle; remove PATH dependency |
