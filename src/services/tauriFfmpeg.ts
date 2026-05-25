@@ -1,6 +1,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { FfmpegLike } from './segmentEncoder';
 
+/**
+ * Converts a Uint8Array to a base64 string using 32 KB chunks to avoid
+ * stack-overflow on large buffers (String.fromCharCode.apply has a per-call
+ * argument limit of ~65 k entries on Safari/WebKit).
+ */
+export function bytesToBase64(bytes: Uint8Array): string {
+  const chunkSize = 32 * 1024;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return btoa(binary);
+}
+
 declare global {
   interface Window {
     __TAURI_INTERNALS__?: unknown;
@@ -48,12 +63,14 @@ export class TauriFfmpeg implements FfmpegLike {
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
     this.#assertAlive();
+    // Frame data is base64-encoded before IPC to avoid the JSON-array-of-numbers
+    // serialization cost (~5-10× speedup vs Array.from). Phase 6.3.1.
+    // Channel API (binary IPC) is a further optimization for Phase 7 if needed.
     try {
       await invoke<void>('ffmpeg_write_file', {
         sessionId: this.#sessionId,
         path,
-        // Tauri v2 IPC: Uint8Array → number[] in JSON. Overhead acknowledged.
-        data: Array.from(data),
+        dataB64: bytesToBase64(data),
       });
     } catch (err) {
       throw new Error(typeof err === 'string' ? err : String(err));

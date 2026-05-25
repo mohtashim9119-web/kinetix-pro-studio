@@ -8,7 +8,7 @@ import {
   type ExportStage,
 } from '../services/exportPipeline';
 import { type Project } from '../types';
-import { isTauri } from '../services/tauriFfmpeg';
+import { isTauri, bytesToBase64 } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
 import type { FfmpegLike } from '../services/segmentEncoder';
 
@@ -228,7 +228,7 @@ export function useExport(
     if (isTauri()) {
       const bytes = new Uint8Array(await result.blob.arrayBuffer());
       await invoke<boolean>('save_bytes_to_disk', {
-        data: Array.from(bytes),
+        dataB64: bytesToBase64(bytes),
         defaultName: fileName,
       });
       // Guard: a new export may have started while the save dialog was open.

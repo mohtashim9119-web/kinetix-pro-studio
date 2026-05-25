@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -60,11 +61,18 @@ pub fn ffmpeg_create_session() -> Result<String, String> {
     Ok(id)
 }
 
-/// Writes bytes to <session_dir>/<path>.
+/// Writes base64-encoded bytes to <session_dir>/<path>.
+///
+/// The frontend encodes Uint8Array → base64 string before invoking this command.
+/// Decoding in Rust eliminates the JSON-array-of-numbers IPC overhead that was
+/// the dominant export bottleneck (~5-10× speedup on per-frame PNG writes). Phase 6.3.1.
 #[tauri::command]
-pub fn ffmpeg_write_file(session_id: String, path: String, data: Vec<u8>) -> Result<(), String> {
+pub fn ffmpeg_write_file(session_id: String, path: String, data_b64: String) -> Result<(), String> {
     validate_path(&path)?;
     let full = session_dir(&session_id)?.join(&path);
+    let data = STANDARD
+        .decode(&data_b64)
+        .map_err(|e| format!("write_file({}): base64 decode failed: {}", path, e))?;
     fs::write(&full, &data).map_err(|e| format!("write_file({}): {}", path, e))
 }
 
@@ -134,16 +142,24 @@ pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Opens a native OS save-file dialog and writes `data` to the chosen path.
+/// Opens a native OS save-file dialog and writes the base64-decoded bytes to
+/// the chosen path.
 ///
 /// Returns `true` if the file was saved, `false` if the user cancelled.
 /// The dialog suggests `default_name` as the filename and filters to .mp4.
+///
+/// Accepts base64-encoded data (same encoding as ffmpeg_write_file) to avoid
+/// JSON-array-of-numbers overhead on the final MP4 blob, which can be 100+ MB.
 ///
 /// Uses `rfd::AsyncFileDialog` which dispatches the native panel to the main
 /// thread internally (required on macOS/AppKit) while awaiting on the Tauri
 /// tokio runtime — no deadlock risk.
 #[tauri::command]
-pub async fn save_bytes_to_disk(data: Vec<u8>, default_name: String) -> Result<bool, String> {
+pub async fn save_bytes_to_disk(data_b64: String, default_name: String) -> Result<bool, String> {
+    let data = STANDARD
+        .decode(&data_b64)
+        .map_err(|e| format!("save_bytes_to_disk: base64 decode failed: {e}"))?;
+
     let handle = rfd::AsyncFileDialog::new()
         .set_file_name(&default_name)
         .add_filter("MP4 Video", &["mp4"])
