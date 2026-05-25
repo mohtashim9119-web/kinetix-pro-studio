@@ -27,14 +27,14 @@
 | Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ✅ Complete |
 | Phase 5 | Production hardening — tests, accessibility, responsive | ✅ Complete (2026-05-19) |
-| Fidelity Polish | Canvas animations, trimEnd, drag overlays, preview transitions, KEN_BURNS picker fix | ✅ Complete (2026-05-21) |
-| Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Not started |
+| Fidelity Polish | Canvas animations, trimEnd, drag overlays, preview transitions, KEN_BURNS picker fix, Path B export cross-fade | ✅ Complete (2026-05-25) |
+| Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ⬜ Next |
 
 ---
 
 ## Current Sprint
 
-Fidelity Polish complete (2026-05-21). Next: Phase 6 (Desktop app — Tauri wrap with native ffmpeg).
+Fidelity Polish complete. Next: Phase 6 — Desktop app (Tauri + native ffmpeg).
 
 ---
 
@@ -83,21 +83,16 @@ vs Phase 5 baseline (435.88 / 133.19). Within the ≤+20 kB / +5 kB budget.
 
 ---
 
-## Active Work — Path B (Export Cross-Fade)
+## Path B (Export Cross-Fade) — Complete
 
-**Goal:** Replace Path A's static-incoming behavior with advancing incoming video during the transition window, matching professional editor defaults (Premiere/CapCut).
+Path B landed in commit `261936f`. All four Test 6 gates verified manually:
 
-**Architectural changes required (per audit in prior session):**
+- 6-A: no doubled content
+- 6-B: no animation snap-back
+- 6-C: audio sync preserved
+- 6-D: true cross-fade aesthetic confirmed
 
-- `segmentEncoder.ts`: add `startFrameIndex` parameter. Segment N+1's encoding loop skips the first `transitionDurationFromPrev * fps` frames (already emitted by N's tail).
-- `exportPipeline.ts`: pass `transitionDurationFromPrev` to `encodeSegment` by reading `segments[i-1]`'s effective transition duration.
-- `App.tsx`: change `startTime` accumulator in all four sites (`parseProjectData`, `finalizeSync`, duration-change handler, timeline resize handler) from `acc += seg.duration` to `acc += seg.duration - effectiveTransitionDuration(seg)`.
-- `App.tsx` voiceover alignment (constraint effect at line ~758, `finalizeSync`, playback `maxDuration` at line ~791): target `Σ(duration) - Σ(transitionDuration)` instead of `Σ(duration)`.
-- All four `startTime` sites must update together to keep timeline math consistent.
-
-**Risk:** Audio desync if any `startTime` site is missed or if voiceover alignment math doesn't update in lockstep. Verify with Test 6 export — voiceover must end coincident with last visual frame.
-
-**Do not merge `fidelity-polish` until Path B lands and Test 6 passes.**
+**Key insight:** In/out transition overlaps cancel pairwise across the timeline, so `Σ encoded = Σ duration = voiceoverDuration` is preserved without any `App.tsx` changes. Only `segmentEncoder.ts` and `exportPipeline.ts` were modified. The pre-audit predicted App.tsx would need updating at four `startTime` accumulator sites — this was not required because the algebraic invariant held by construction.
 
 ---
 
@@ -164,6 +159,7 @@ Phase 3 steps:
 | 2026-05-21 | **Item 3 approach (preview transitions):** Pre-roll snapshot blend (option b). When playhead enters transition window, snapshot outgoing + incoming first frame to offscreen canvases, blend over transition duration via applyTransitionBlend. Universal coverage across image/video, single seek cost lands during pre-roll (before transition visually starts). Rejected option (a) image-only canvas overlay (asset-type branching complexity) and option (c) skip-and-document (would leave preview-vs-export gap user said to close). |
 | 2026-05-21 | **NEON_FLICKER glow:** Implemented as ctx.shadowBlur + shadowColor pass on top of keyframe alpha pulse. Documented fallback path if visual quality regresses on dark backgrounds. |
 | 2026-05-21 | **Overlay drag clamp policy:** Hard-clamp drag to [halfW/2, 100-halfW/2] (percent). Off-canvas positioning explicitly rejected — overlay drag is positioning, not animation authoring; off-screen reveal effects belong to AnimationType, not overlay position. |
+| 2026-05-25 | **Path B over Path A:** The export pipeline now renders true cross-fades (both segments advance during the fade window) rather than holding the incoming segment static. Mechanism: outgoing segment encodes `trailingExtension` seconds past its boundary; incoming segment skips its first `transitionDuration` seconds via `startTimeOffset`. Overlap contributions cancel pairwise on the timeline, so `Σ duration = voiceoverDuration` invariant is preserved without changing `App.tsx`. Commit `261936f`. |
 
 ---
 
@@ -272,6 +268,7 @@ Phase 3 steps:
 | 2026-05-21 | **Fidelity Polish commit `136b1ac`:** Update CLAUDE.md — add `canvasAnimations.ts` and `useTransitionPreview.ts` to File Map; resolve Known Bugs (trimEnd) and Known Limitations (AnimationType canvas, overlay drag); add 9 rows to Current Refactor Status; create `docs/fidelity-polish-smoke-tests.md` with 14 test procedures. |
 | 2026-05-21 | **Pre-merge cleanup commit `0465996`:** Document NEON_FLICKER glow-pass decision — Path A (full glow: `ctx.shadowBlur` + `ctx.shadowColor`) currently ships; comment added above case in `canvasAnimations.ts` so the choice is recoverable. |
 | 2026-05-21 | **Pre-merge cleanup commit `533315e`:** Cross-reference comments linking preview and export animation paths — reciprocal comments added above `getAnimationWrapperProps` in `PreviewStage.tsx` and above `applySegmentAnimation` in `canvasAnimations.ts`. |
+| 2026-05-25 | **Path B implementation — true cross-fade in export.** `segmentEncoder.ts` accepts `startTimeOffset` + `trailingExtension`; outgoing extends past boundary, incoming skips head, advancing `timeInSegment` on both sides during the fade. `exportPipeline.ts` computes both offsets per segment via `effectiveTransitionOut` helper. Bundle: +9.77 kB / +3.03 kB gzip. Commit `261936f`. |
 
 ---
 
@@ -286,7 +283,7 @@ Phase 3 steps:
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | ffmpeg.wasm 0.12.6 core via `@ffmpeg/ffmpeg@0.12.15` |
 | Export speed (1080p/30fps) | ~25s wall-clock per 1s of output (≈1.35s/frame) |
-| Main bundle size | 445.19 kB / 136.06 kB gzip (unchanged from Path A) — down from 542 kB / 161 kB at Phase 3 end |
+| Main bundle size | 445.65 kB / 136.22 kB gzip — down from 542 kB / 161 kB at Phase 3 end |
 | Worker bundle size | 8.62 kB (`exportWorker.ts` compiled separately by Vite) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | Safari support | ✅ Verified — `crossOriginIsolated=true`, full export works |
