@@ -2,11 +2,8 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::process::Command;
+use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
-
-// In sub-phase 6.5 this becomes the resolved sidecar path.
-const FFMPEG_BINARY: &str = "ffmpeg";
 
 /// Validates a logical filename is safe for use inside a session directory.
 ///
@@ -96,7 +93,7 @@ pub fn ffmpeg_delete_file(session_id: String, path: String) -> Result<(), String
     }
 }
 
-/// Runs `ffmpeg <args>` with the session directory as cwd.
+/// Runs the bundled ffmpeg sidecar with `args`, using the session directory as cwd.
 ///
 /// Returns the exit code on success (0 for clean ffmpeg runs). On non-zero
 /// exit, returns Err containing the tail of ffmpeg's stderr output so the
@@ -104,14 +101,26 @@ pub fn ffmpeg_delete_file(session_id: String, path: String) -> Result<(), String
 ///
 /// Note: ffmpeg writes progress and encoding info to stderr even on success.
 /// We only surface stderr when the exit code is non-zero.
+///
+/// Uses the Tauri sidecar API (tauri-plugin-shell) so the binary runs from
+/// inside the app bundle — no PATH dependency required. Phase 6.5.
 #[tauri::command]
-pub fn ffmpeg_exec(session_id: String, args: Vec<String>) -> Result<i32, String> {
+pub async fn ffmpeg_exec(
+    app: tauri::AppHandle,
+    session_id: String,
+    args: Vec<String>,
+) -> Result<i32, String> {
     let cwd = session_dir(&session_id)?;
-    let output = Command::new(FFMPEG_BINARY)
+
+    let output = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar error: {e}"))?
         .args(&args)
         .current_dir(&cwd)
         .output()
-        .map_err(|e| format!("ffmpeg spawn failed: {} (is ffmpeg on PATH?)", e))?;
+        .await
+        .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
 
     let exit_code = output.status.code().unwrap_or(-1);
 

@@ -26,3 +26,4 @@ tauri-plugin-log = "2"
 uuid = { version = "1", features = ["v4"] }
 rfd = { version = "0.15", features = ["tokio"] }
 base64 = "0.22"
+tauri-plugin-shell = "2"
