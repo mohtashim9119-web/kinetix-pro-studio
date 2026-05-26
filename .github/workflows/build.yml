@@ -5,6 +5,10 @@ on:
     branches: [main, phase-6-windows]
   workflow_dispatch:
 
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -14,13 +18,13 @@ jobs:
           - os: macos-13          # Intel macOS runner
             target: x86_64-apple-darwin
             artifact-name: kinetix-macos-x64
-            artifact-path: src-tauri/target/release/bundle/dmg/*.dmg
+            artifact-path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact-name: kinetix-windows-x64
             artifact-path: |
-              src-tauri/target/release/bundle/msi/*.msi
-              src-tauri/target/release/bundle/nsis/*.exe
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+              src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
 
     runs-on: ${{ matrix.os }}
 
