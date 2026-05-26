@@ -6,13 +6,13 @@
 
 ## What This App Does
 
-Browser-based video slideshow compositor. Workflow:
+Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite frontend). Workflow:
 1. User provides a script (text), scene details (bracketed asset names like `[IMAGE: hero.jpg]`), and a voiceover audio file
 2. A 3-step sync wizard maps script → scenes → uploaded assets, proportioning segment durations to word count
 3. User edits segments on a visual timeline (transitions, overlays, filters, animations)
-4. Exports via ffmpeg.wasm — full H.264/AAC MP4 with overlays, filters, and transitions rendered from canvas
+4. Exports via native ffmpeg (Tauri sidecar) — full H.264/AAC MP4 with overlays, filters, and transitions rendered from canvas
 
-No server. No AI calls. Fully client-side.
+**Export is desktop-only** (requires the Tauri app). No server. No AI calls. No ffmpeg.wasm — export runs fully native via the bundled ffmpeg sidecar.
 
 ---
 
@@ -29,9 +29,11 @@ src/
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # isFuzzyMatch(), findAssetByContext() — parseProjectData() is still in App.tsx
-    ffmpegLoader.ts  # Lazy-loads + caches single FFmpeg instance; warns if not crossOriginIsolated.
-                     #   NOTE: only used by dev-only test buttons (handleRenderTestFrame, handleEncodeTestSegment)
-                     #   on the main thread — NOT used by the production export path.
+    tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
+                     #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
+                     #   isTauri() guard — checks for window.__TAURI_INTERNALS__.
+    ffmpegBackend.ts # createTauriBackend() — creates TauriFfmpeg session, returns { ffmpeg, dispose }.
+                     #   dispose() calls ffmpegDestroy to delete $TMPDIR/kinetix-export-<uuid>/ after export.
     frameRenderer.ts   # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
                      #   Calls applySegmentAnimation (canvasAnimations.ts) for AnimationType canvas transforms.
                      #   Respects segment.trimEnd for video seek clamping.
@@ -41,12 +43,11 @@ src/
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
     exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
                      #   Returns ExportResult (never throws). ExportErrorKind: ffmpeg_load|encode|concat|mux|asset_missing|unknown.
-  workers/
-    exportWorker.ts  # Comlink-exposed FfmpegWorkerService; owns FFmpeg instance off main thread.
-                     #   Registers ffmpeg.on('log', ...) → console.debug to silence ffmpeg stderr noise.
   hooks/
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
-    useExport.ts             # Export orchestration: lazy worker lifecycle, ExportSnapshot for retry, progress callback.
+    useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
+                             #   calls exportProject(), invokes save_bytes_to_disk IPC for native save dialog.
+                             #   ExportSnapshot for retry; generation counter guards stale callbacks.
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
     useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
                              #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
@@ -62,9 +63,22 @@ src/
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
 index.html           # Title: "Kinetix Pro Studio"
-vite.config.ts       # Vite config — COOP/COEP headers for dev server (required for SharedArrayBuffer)
+vite.config.ts       # Vite config — plugins (react, tailwindcss) + path alias. COOP/COEP removed (Phase 6.4).
 public/
-  _headers           # Cloudflare Pages: COOP/COEP headers for production (required for SharedArrayBuffer)
+  _headers           # Cloudflare Pages headers. COOP/COEP removed in Phase 6.4 (no longer needed without wasm).
+src-tauri/
+  Cargo.toml         # Rust deps: tauri 2.x, tauri-plugin-shell, tauri-plugin-log, rfd, base64, uuid
+  tauri.conf.json    # productName, bundle.externalBin: ["binaries/ffmpeg"], devUrl, beforeDevCommand
+  capabilities/
+    default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
+  src/
+    lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all ffmpeg commands
+    ffmpeg.rs        # 7 Tauri commands: create_session, write_file (b64), read_file, delete_file,
+                     #   exec (sidecar), destroy_session, save_bytes_to_disk (rfd native save dialog).
+                     #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal validation.
+  binaries/
+    README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binary.
+    ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 static build (system libs only).
 docs/
   phase-4-safari-test.md         # Safari validation procedure + decision matrix (result: PASS)
   fidelity-polish-smoke-tests.md # Fidelity Polish manual smoke test procedures (Items 1–5)
@@ -99,50 +113,49 @@ localStorage (key `kinetix:project:v1`, versioned for future migrations) holds t
 
 ### Export Pipeline
 
-**Requires `crossOriginIsolated = true`** — served with `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` headers (configured in `vite.config.ts` for dev, `public/_headers` for Cloudflare Pages prod). Without these headers `SharedArrayBuffer` is unavailable and ffmpeg.wasm falls back to single-threaded mode (slower but still functional).
+**Desktop-only (Tauri app required).** No `crossOriginIsolated` requirement — ffmpeg.wasm removed in Phase 6.4. Export uses the native ffmpeg sidecar bundled in `src-tauri/binaries/` (gitignored; see `binaries/README.md` for re-provisioning on a fresh checkout).
 
 Full chain, left to right:
 
 ```
-App.tsx handleExport()
+App.tsx handleExport()  [via useExport hook]
   │
-  ├─ spawns exportWorker.ts Web Worker (Comlink)
-  │     └─ FfmpegWorkerService.load()
-  │           └─ new FFmpeg() + toBlobURL inline  →  loads @ffmpeg/core@0.12.6 (WASM) via unpkg CDN
-  │           NOTE: does NOT call ffmpegLoader.ts — the worker owns its FFmpeg instance directly.
-  │           ffmpegLoader.ts is only used by dev test buttons on the main thread.
-  │
-  └─ exportPipeline.ts  exportProject(project, ffmpegWorkerProxy, options, onProgress)
-        │
-        ├── for each segment:
-        │     segmentEncoder.ts  encodeSegment(segment, asset, ffmpeg, globalConfig, opts)
-        │       ├─ for each frame: frameRenderer.ts  renderSegmentFrame(...)
-        │       │     ├─ draws background (color fill / image drawImage / video seeked drawImage)
-        │       │     ├─ applies CSS filter string via ctx.filter
-        │       │     ├─ draws text overlay + extra overlays
-        │       │     └─ if transition frame: applyTransitionBlend(ctx, blendParams, w, h)
-        │       │           └─ FADE/DISSOLVE: globalAlpha + drawImage
-        │       │           └─ SLIDE/SLIDE_UP: offset drawImage
-        │       │           └─ ZOOM: scale + globalAlpha
-        │       │           └─ BLUR: ctx.filter blur + globalAlpha
-        │       ├─ writes frame_00001.png … frame_NNNNN.png to ffmpeg FS
-        │       └─ ffmpeg exec: libx264 fast crf23 yuv420p → seg_N.mp4
-        │
-        ├── if >1 segment: ffmpeg concat demuxer → concat_video.mp4
-        │
-        ├── if voiceover: ffmpeg mux audio (AAC 192k -shortest) → export_final.mp4
-        │
-        └── readFile → Blob('video/mp4') → download {name}_{timestamp}.mp4
+  └─ ffmpegBackend.ts  createTauriBackend()
+        └─ TauriFfmpeg.create()  →  IPC: ffmpeg_create_session  →  $TMPDIR/kinetix-export-<uuid>/
+              │
+              └─ exportPipeline.ts  exportProject(project, tauriFfmpeg, options, onProgress)
+                    │
+                    ├── for each segment:
+                    │     segmentEncoder.ts  encodeSegment(segment, asset, ffmpeg, globalConfig, opts)
+                    │       ├─ for each frame: frameRenderer.ts  renderSegmentFrame(...)
+                    │       │     ├─ draws background (color fill / image drawImage / video seeked drawImage)
+                    │       │     ├─ applies CSS filter string via ctx.filter
+                    │       │     ├─ draws text overlay + extra overlays
+                    │       │     └─ if transition frame: applyTransitionBlend(ctx, blendParams, w, h)
+                    │       │           └─ FADE/DISSOLVE: globalAlpha + drawImage
+                    │       │           └─ SLIDE/SLIDE_UP: offset drawImage
+                    │       │           └─ ZOOM: scale + globalAlpha
+                    │       │           └─ BLUR: ctx.filter blur + globalAlpha
+                    │       ├─ writes frame_00001.png … frame_NNNNN.png via IPC (base64-encoded)
+                    │       │     IPC: ffmpeg_write_file  →  $TMPDIR/kinetix-export-<uuid>/frame_NNNNN.png
+                    │       └─ IPC: ffmpeg_exec  →  sidecar ffmpeg  →  libx264 fast crf23 yuv420p → seg_N.mp4
+                    │
+                    ├── if >1 segment: ffmpeg concat demuxer → concat_video.mp4
+                    │
+                    ├── if voiceover: ffmpeg mux audio (AAC 192k -shortest) → export_final.mp4
+                    │
+                    └── IPC: ffmpeg_read_file → MP4 bytes → IPC: save_bytes_to_disk (rfd native save dialog)
+                          + IPC: ffmpeg_destroy_session (cleanup $TMPDIR session dir)
 ```
 
 **Key types:**
-- `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`. Both raw `FFmpeg` and the Comlink proxy satisfy this contract.
+- `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`. `TauriFfmpeg` satisfies this contract.
 - `ExportResult = { ok: true; blob: Blob } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed.
 - `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`.
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
 
-**Performance (Phase 3 baseline):** ~25s wall-clock per 1s of 1080p/30fps output (≈1.35s/frame). 4K is untested. Phase 6 (Tauri + native ffmpeg) will replace this path entirely.
+**Performance (Phase 6 native baseline):** ~30s wall-clock per 1s of 1080p/30fps output on a 2020 MacBook Air (M1 via Rosetta). Native Apple Silicon build expected to be ~2× faster. 4K untested.
 
 ### Transition Handling
 
@@ -337,5 +350,5 @@ All dead dependencies removed. No remaining items.
 | Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (6 commands); TauriFfmpeg class; IPC smoke test (10/10) |
 | Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
 | Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
-| Phase 6.4 — Remove wasm path | ⬜ Next | Delete @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons |
-| Phase 6.5 — Bundle ffmpeg sidecar | ⬜ Planned | Ship ffmpeg binary inside app bundle; remove PATH dependency |
+| Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |
+| Phase 6.5 — Bundle ffmpeg sidecar | ✅ Done — 2026-05-27 | c567d5e — evermeet.cx 8.1.1 static build (76 MB, system-libs-only); tauri-build copies to target/debug/ffmpeg; sidecar("ffmpeg") at runtime; portability verified (export works with system ffmpeg disabled) |
