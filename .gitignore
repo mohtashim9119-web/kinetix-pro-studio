@@ -9,3 +9,6 @@ dist/
 .idea/
 .claude/
 kinetix-video-studio.zip
+
+# Tauri sidecar binaries — built locally, not committed (large, platform-specific)
+src-tauri/binaries/ffmpeg-*

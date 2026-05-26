@@ -62,8 +62,6 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
-import { renderSegmentFrame } from './services/frameRenderer';
-import { encodeSegment } from './services/segmentEncoder';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 
@@ -326,7 +324,6 @@ export default function App() {
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
-  const [testFrameUrl, setTestFrameUrl] = useState<string | null>(null);
 
 
 
@@ -686,72 +683,6 @@ export default function App() {
   }, [currentTime, project.segments]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
-
-  const handleRenderTestFrame = async () => {
-    const seg = currentSegment ?? project.segments[0];
-    if (!seg) return;
-    const W = 1920, H = 1080;
-    const canvas = document.createElement('canvas');
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    const asset = project.assets.find(a => a.id === seg.assetId);
-    await renderSegmentFrame({
-      segment: seg,
-      asset,
-      timeInSegment: Math.max(0, currentTime - seg.startTime),
-      ctx,
-      width: W,
-      height: H,
-      global: {
-        overlayConfig: project.globalOverlayConfig,
-        hideAllText: project.hideAllText ?? false,
-        globalOverlayFilter: project.globalOverlayFilter,
-      },
-    });
-    setTestFrameUrl(prev => {
-      if (prev) URL.revokeObjectURL(prev);
-      return null;
-    });
-    canvas.toBlob(blob => {
-      if (blob) setTestFrameUrl(URL.createObjectURL(blob));
-    }, 'image/png');
-  };
-
-  const handleEncodeTestSegment = async () => {
-    const seg = currentSegment ?? project.segments[0];
-    if (!seg) { alert('No segment to encode'); return; }
-    const asset = project.assets.find(a => a.id === seg.assetId);
-    console.time('[encodeTest] total');
-    try {
-      const { loadFFmpeg } = await import('./services/ffmpegLoader');
-      const ffmpeg = await loadFFmpeg();
-      const bytes = await encodeSegment(seg, asset, ffmpeg, {
-        overlayConfig: project.globalOverlayConfig,
-        hideAllText: project.hideAllText ?? false,
-        globalOverlayFilter: project.globalOverlayFilter,
-      }, {
-        fps: 30,
-        width: 1920,
-        height: 1080,
-        onProgress: (done, total) => console.log(`[encodeTest] frame ${done}/${total}`),
-      });
-      console.timeEnd('[encodeTest] total');
-      console.log(`[encodeTest] output size: ${(bytes.byteLength / 1024 / 1024).toFixed(2)} MB`);
-      const blob = new Blob([bytes], { type: 'video/mp4' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `segment_test_${seg.id}.mp4`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
-    } catch (err) {
-      console.timeEnd('[encodeTest] total');
-      console.error('[encodeTest] failed:', err);
-      alert(`Encode failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  };
 
   // Constrain segments to match audio duration perfectly
   useEffect(() => {
@@ -1148,8 +1079,6 @@ export default function App() {
                     onExportResolutionChange={setExportResolution}
                     exportFps={exportFps}
                     onExportFpsChange={setExportFps}
-                    onRenderTestFrame={import.meta.env.DEV ? handleRenderTestFrame : undefined}
-                    onEncodeTestSegment={import.meta.env.DEV ? handleEncodeTestSegment : undefined}
                   />
                 )}
               </div>
@@ -1634,17 +1563,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Dev-only: frame renderer test output */}
-      {import.meta.env.DEV && testFrameUrl && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/90 backdrop-blur-sm" onClick={() => setTestFrameUrl(null)}>
-          <div className="relative max-w-[90vw] max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <p className="text-[9px] font-black uppercase tracking-[0.3em] text-yellow-500 mb-2">
-              Frame Renderer Output — 1920×1080 — click outside to dismiss
-            </p>
-            <img src={testFrameUrl} alt="Rendered frame" className="w-full h-auto rounded-xl border border-yellow-900" />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

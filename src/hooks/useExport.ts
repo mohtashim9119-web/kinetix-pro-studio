@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import * as Comlink from 'comlink';
-import { type FfmpegWorkerService } from '../workers/exportWorker';
+import { invoke } from '@tauri-apps/api/core';
 import {
   exportProject,
   type ExportError,
   type ExportStage,
 } from '../services/exportPipeline';
 import { type Project } from '../types';
+import { isTauri, bytesToBase64 } from '../services/tauriFfmpeg';
+import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
 
 export type ExportResolution = '1080p' | '4k';
 export type ExportFps = 24 | 30 | 60;
@@ -69,9 +70,8 @@ export function useExport(
 ): UseExportApi {
   const [state, setState] = useState<UseExportState>(IDLE_STATE);
 
-  // Worker refs — lazy: created on first startExport, not on mount.
-  const workerRef = useRef<Worker | null>(null);
-  const svcRef = useRef<Comlink.Remote<FfmpegWorkerService> | null>(null);
+  // Tauri native backend ref — lazy: created on first startExport.
+  const tauriBackendRef = useRef<TauriBackend | null>(null);
 
   // Generation counter — incremented on every cancel so in-flight onProgress
   // callbacks from the dying export silently no-op and never overwrite new state.
@@ -80,15 +80,17 @@ export function useExport(
   // Last snapshot — retryExport re-runs with the same inputs as the last startExport.
   const lastSnapshotRef = useRef<ExportSnapshot | null>(null);
 
-  // Terminate and null out the worker refs.
-  const teardownWorker = useCallback((): void => {
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    svcRef.current = null;
+  // Tear down the active backend and null the ref.
+  // Async because session cleanup (dispose) awaits an IPC call.
+  const teardown = useCallback(async (): Promise<void> => {
+    if (tauriBackendRef.current) {
+      await tauriBackendRef.current.dispose();
+      tauriBackendRef.current = null;
+    }
   }, []);
 
-  // Terminate worker on unmount.
-  useEffect(() => teardownWorker, [teardownWorker]);
+  // Clean up on unmount — fire-and-forget since useEffect cleanup must be sync.
+  useEffect(() => () => { void teardown(); }, [teardown]);
 
   const runExport = useCallback(async (snapshot: ExportSnapshot): Promise<void> => {
     const gen = ++generationRef.current;
@@ -101,22 +103,14 @@ export function useExport(
       error: null,
     });
 
-    // Lazy worker creation — spawn only when actually needed.
-    if (!workerRef.current) {
-      workerRef.current = new Worker(
-        new URL('../workers/exportWorker.ts', import.meta.url),
-        { type: 'module' },
-      );
-      svcRef.current = Comlink.wrap<FfmpegWorkerService>(workerRef.current);
-    }
-
-    const svc = svcRef.current!;
-
+    // -------------------------------------------------------------------------
+    // Backend acquisition — Tauri native path only (wasm removed in Phase 6.4).
+    // -------------------------------------------------------------------------
     try {
-      await svc.load();
+      tauriBackendRef.current = await createTauriBackend();
     } catch (err) {
       if (generationRef.current !== gen) return;
-      teardownWorker();
+      await teardown();
       setState({
         isExporting: false,
         stage: null,
@@ -124,7 +118,7 @@ export function useExport(
         stageLabel: '',
         error: {
           kind: 'ffmpeg_load',
-          message: 'Failed to load the ffmpeg engine. Check your network connection and try again.',
+          message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
           cause: err instanceof Error ? err.message : String(err),
         },
       });
@@ -139,7 +133,7 @@ export function useExport(
 
     const result = await exportProject(
       snap,
-      svc,
+      tauriBackendRef.current.ffmpeg,
       { fps, width: resWidth, height: resHeight },
       (stage: ExportStage) => {
         if (generationRef.current !== gen) return;
@@ -152,12 +146,11 @@ export function useExport(
       },
     );
 
-    // Guard required: worker.terminate() causes Comlink to reject the exportProject
-    // promise with an unknown error. Without this check that rejection would overwrite
-    // the 'cancelled' error state that cancelExport already set.
+    // Guard required: cancelExport increments the generation counter; without this
+    // check its result would overwrite the 'cancelled' error state.
     if (generationRef.current !== gen) return;
 
-    teardownWorker();
+    await teardown();
 
     if (!result.ok) {
       setState(prev => ({
@@ -168,21 +161,24 @@ export function useExport(
       return;
     }
 
-    // Trigger download.
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement('a');
-    a.href = url;
+    // Trigger native save dialog — base64 encoded to avoid JSON number[] overhead.
     const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-    a.download = `${snap.name.replace(/\s+/g, '_')}_${ts}.mp4`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    const fileName = `${snap.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+    const bytes = new Uint8Array(await result.blob.arrayBuffer());
+    await invoke<boolean>('save_bytes_to_disk', {
+      dataB64: bytesToBase64(bytes),
+      defaultName: fileName,
+    });
+    // Guard: a new export may have started while the save dialog was open.
+    if (generationRef.current !== gen) return;
 
     setState(IDLE_STATE);
-  }, [teardownWorker]);
+  }, [teardown]);
 
   const startExport = useCallback((): void => {
+    if (!isTauri()) {
+      throw new Error('Export is only available in the desktop app.');
+    }
     const snapshot: ExportSnapshot = {
       project,
       resolution: exportResolution,
@@ -193,14 +189,16 @@ export function useExport(
   }, [project, exportResolution, exportFps, runExport]);
 
   const cancelExport = useCallback((): void => {
-    if (workerRef.current === null) {
+    if (tauriBackendRef.current === null) {
       // No active export — just dismiss the error/cancelled modal.
       setState(IDLE_STATE);
       return;
     }
     // Invalidate all in-flight onProgress callbacks from the current generation.
     generationRef.current++;
-    teardownWorker();
+    // Fire-and-forget: cancelExport is sync. The in-flight ffmpeg subprocess is
+    // not killed (see cancellation note in runExport; Phase 7 adds a kill command).
+    void teardown();
     setState({
       isExporting: false,
       stage: null,
@@ -208,15 +206,16 @@ export function useExport(
       stageLabel: '',
       error: { kind: 'cancelled', message: 'Export cancelled.' },
     });
-  }, [teardownWorker]);
+  }, [teardown]);
 
   const retryExport = useCallback((): void => {
     const snapshot = lastSnapshotRef.current;
     if (!snapshot) return;
-    // Tear down any lingering worker before re-spawning.
-    teardownWorker();
+    // Tear down any lingering backend before re-spawning. Fire-and-forget:
+    // retryExport is sync; runExport creates a fresh session regardless.
+    void teardown();
     void runExport(snapshot);
-  }, [runExport, teardownWorker]);
+  }, [runExport, teardown]);
 
   return { state, startExport, cancelExport, retryExport };
 }

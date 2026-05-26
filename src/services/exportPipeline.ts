@@ -1,4 +1,3 @@
-import { fetchFile } from '@ffmpeg/util';
 import { Project, Asset, VideoSegment, TransitionType } from '../types';
 import { encodeSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
@@ -230,7 +229,8 @@ export async function exportProject(
     if (voiceoverAsset?.url) {
       const audioFile = 'voiceover_audio';
       allTempFiles.push(audioFile);
-      const audioBytes = await fetchFile(voiceoverAsset.url);
+      const audioResp = await fetch(voiceoverAsset.url);
+      const audioBytes = new Uint8Array(await audioResp.arrayBuffer());
       await ffmpeg.writeFile(audioFile, audioBytes);
       await ffmpeg.exec([
         '-i', finalVideoFile,
