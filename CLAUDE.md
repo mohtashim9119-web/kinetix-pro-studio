@@ -20,7 +20,7 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~1,450 lines — top-level state, orchestration, playback, export
+  App.tsx            # ~1,550 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
@@ -77,8 +77,10 @@ src-tauri/
                      #   exec (sidecar), destroy_session, save_bytes_to_disk (rfd native save dialog).
                      #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal validation.
   binaries/
-    README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binary.
-    ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 static build (system libs only).
+    README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binaries.
+    ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 (76 MB, Intel macOS).
+    ffmpeg-aarch64-apple-darwin # gitignored — osxexperts.net 7.1.1 (48 MB, arm64 macOS).
+    ffmpeg-x86_64-pc-windows-msvc.exe # gitignored — gyan.dev essentials (97 MB, Windows).
 docs/
   phase-4-safari-test.md         # Safari validation procedure + decision matrix (result: PASS)
   fidelity-polish-smoke-tests.md # Fidelity Polish manual smoke test procedures (Items 1–5)
@@ -155,7 +157,7 @@ App.tsx handleExport()  [via useExport hook]
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
 
-**Performance (Phase 6 native baseline):** ~30s wall-clock per 1s of 1080p/30fps output on a 2020 MacBook Air (M1 via Rosetta). Native Apple Silicon build expected to be ~2× faster. 4K untested.
+**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested.
 
 ### Transition Handling
 
@@ -273,14 +275,14 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 | ~~Safari export untested~~ | ✅ **Resolved Phase 4** — Safari verified 2026-05-17; `crossOriginIsolated=true`, full export works | — |
 | ~~Segments referencing a deleted asset not cleaned up until reload~~ | ✅ **Resolved Phase 4 (c7515e5)** — cleaned up at delete time | — |
 | ~~No error boundaries~~ | ✅ **Resolved Phase 4 (a42ed66)** — `ErrorBoundary` wraps left panel, PreviewStage, Timeline | — |
-| Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint (Phase 5) |
-| No authentication | Open access | Add auth layer when persistence is added |
+| Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint (deferred — required before public launch) |
+| No authentication | Open access | Add auth layer before public launch / multi-user (tracked in SaaS readiness) |
 | ~~`AnimationType` values not applied in canvas export~~ | ✅ **Resolved Fidelity Polish Item 1** — `canvasAnimations.ts` applies KEN_BURNS/FLOAT/BOUNCE/PULSE/HEARTBEAT/WOBBLE/SHAKE/SKEW/GLITCH/NEON_FLICKER/ROTATE via ctx transforms in frameRenderer; live preview uses `getAnimationWrapperProps` in PreviewStage. | — |
 | ~~Extra overlays have no drag-to-position UI~~ | ✅ **Resolved Fidelity Polish Item 4** — Pointer Events drag in PreviewStage with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires to App.tsx immutable state update. | — |
 | ~~No rate-limit handling in stockService~~ | ✅ **Resolved Phase 5** — exponential backoff retry (3 attempts); discriminated union surface rate_limited/error/ok | — |
 | ~~JSZip dynamic-import double-cast~~ | ✅ **Resolved Phase 5** — `{ default: JSZip }` destructure; `moduleResolution: "bundler"` synthesizes `.default` | — |
 | ~~Real mid-export cancellation not implemented~~ | ✅ **Resolved Phase 5** — `worker.terminate()` + generation counter prevents stale state overwrite | — |
-| 4K export unvalidated | 1080p verified on Safari + Chrome; 4K path untested | Validate in Phase 6 |
+| 4K export unvalidated | 1080p verified on macOS + Windows native; 4K path untested | Validate in Phase 7+ |
 
 ---
 
@@ -314,7 +316,7 @@ All dead dependencies removed. No remaining items.
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 6 | Playback interval + audio sync still in App.tsx |
+| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 7+ | Playback interval + audio sync still in App.tsx; not done during Phase 6 |
 | Extract `useExport.ts` hook | ✅ Done — 2026-05-17 | ab8d4d9 — lazy worker, snapshot semantics, ExportError re-export |
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
@@ -332,7 +334,7 @@ All dead dependencies removed. No remaining items.
 | Prune phantom enum/filter/animation entries | ✅ Done — 2026-05-17 | cdb2296 — FILTERS 57→27, TRANSITION_OPTIONS 10, ANIMATION_OPTIONS 11 |
 | Safari export validation | ✅ Done — 2026-05-17 | 97821cd — PASS; crossOriginIsolated=true, full export works |
 | Global transition fallback in encoder | ✅ Done — 2026-05-17 | ea18635 — effectiveTransition uses project.globalTransition as fallback |
-| Main bundle size | ✅ 433 kB / 132 kB gzip | Down from 542 kB / 161 kB at end of Phase 3 |
+| Main bundle size | ✅ 433 kB / 132 kB gzip | Down from 542 kB / 161 kB at end of Phase 3 (pre-Phase 6.4) |
 | Fix autoMatchAssets delete regression | ✅ Done — 2026-05-19 | Pure autoMatchSegments fn in syncEngine; called imperatively in upload handlers only |
 | Real mid-export cancellation | ✅ Done — 2026-05-19 | worker.terminate() + generation counter in useExport |
 | JSZip type cleanup | ✅ Done — 2026-05-19 | Destructure { default: JSZip }; @types/jszip removed (jszip ships own types) |
@@ -345,9 +347,9 @@ All dead dependencies removed. No remaining items.
 | Fidelity Polish Item 2 — KEN_BURNS in picker | ✅ Done — 2026-05-21 | 33d5840 — added to ANIMATION_OPTIONS; dev assert guard extended |
 | Fidelity Polish Item 3 — Preview transitions | ✅ Done — 2026-05-21 | 94f8a37 + 0c49339 + ea5ba65 — useTransitionPreview (pre-roll snapshot); canvas overlay in PreviewStage; mounted-ref guard |
 | Fidelity Polish smoke test doc | ✅ Done — 2026-05-21 | docs/fidelity-polish-smoke-tests.md |
-| Main bundle size (post Fidelity Polish) | ✅ 443.50 kB / 135.70 kB gzip | +7.6 kB raw / +2.5 kB gzip from Phase 5 baseline (443.50 / 435.88 vs 135.70 / 133.19) — within ≤+20kB/+5kB budget |
+| Main bundle size (post Phase 6.4) | ✅ 442.18 kB / 134.73 kB gzip (post Phase 6.4 wasm removal) | Current measured value; down from 443.50 kB / 135.70 kB at Fidelity Polish |
 | Phase 6.1 — Tauri v2 scaffold | ✅ Done — 2026-05-26 | tauri init, tauri.conf.json, npm scripts, smoke test |
-| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (6 commands); TauriFfmpeg class; IPC smoke test (10/10) |
+| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (7 commands incl. save_bytes_to_disk); TauriFfmpeg class; IPC smoke test (10/10) |
 | Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
 | Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
 | Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |

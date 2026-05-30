@@ -26,7 +26,7 @@
 | Phase 2 | Persistence — localStorage + IndexedDB | ✅ Complete |
 | Phase 3 | Export pipeline — ffmpeg.wasm in browser | ✅ Complete |
 | Phase 4 | Polish — filters, transitions, Safari, error handling | ✅ Complete |
-| Phase 5 | Production hardening — tests, accessibility, responsive | ✅ Complete (2026-05-19) |
+| Phase 5 | Production hardening — tests, accessibility (responsive deferred) | ✅ Complete (2026-05-19) |
 | Fidelity Polish | Canvas animations, trimEnd, drag overlays, preview transitions, KEN_BURNS picker fix, Path B export cross-fade | ✅ Complete (2026-05-25) |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ✅ Complete (2026-05-27) |
 | Phase 7 | TBD | ⬜ Next |
@@ -70,8 +70,7 @@ Phase 6 complete (2026-05-31). Phase 7 scope TBD. See Phase 6 Summary below.
 | Docs | CLAUDE.md status + Known Limitations updates; new docs/fidelity-polish-smoke-tests.md (14 procedures) | c6fcc64, 136b1ac |
 | Pre-merge cleanup | NEON_FLICKER decision comment; preview ↔ export cross-reference comments; project-state.md updates | 0465996, 533315e, (this commit) |
 
-**Bundle size:** 443.50 kB / 135.70 kB gzip — delta +7.6 kB / +2.5 kB
-vs Phase 5 baseline (435.88 / 133.19). Within the ≤+20 kB / +5 kB budget.
+**Bundle size:** 442.18 kB / 134.73 kB gzip (measured post-Phase 6.4 wasm removal) — delta vs Phase 5 baseline (435.88 / 133.19): +6.3 kB / +1.5 kB. Within the ≤+20 kB / +5 kB budget.
 
 **Items delivered vs kickoff:**
 - trimEnd field wired through UI + export ✓
@@ -118,8 +117,7 @@ Path B landed in commit `261936f`. All four Test 6 gates verified manually:
 - **Native save dialog** — `rfd::AsyncFileDialog` (dispatch to main thread internally on macOS/AppKit); no download-link workaround needed.
 - **SaaS readiness deferred** — GPL-licensed sidecar (libx264) acceptable for internal distribution. Before public launch: swap for LGPL-only build (OpenH264 or commercial x264 license); add auth layer; proxy API keys. Tracked in CLAUDE.md Known Limitations.
 
-**Performance (Phase 6 native baseline):** ~30s wall-clock per 1s of 1080p/30fps on 2020 MacBook Air x86_64.
-Native Apple Silicon build (aarch64) expected ~2× faster (no Rosetta overhead).
+**Performance (post Phase 6.3.1):** macOS Intel: ~10× realtime (120s for 12s of 1080p/30fps). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement.
 
 ---
 
@@ -141,6 +139,8 @@ Native Apple Silicon build (aarch64) expected ~2× faster (no Rosetta overhead).
 
 ### Smoke Test Results
 
+> **Historical note:** Validated at end of Phase 4. The wasm/browser path was removed in Phase 6.4; rows referencing `crossOriginIsolated`, Safari, and COOP/COEP are preserved for history only and no longer reflect the shipping product.
+
 | Test | Result | Notes |
 |---|---|---|
 | Test 1 — `crossOriginIsolated` | ✅ PASS | `true` in both Chrome and Safari; `SharedArrayBuffer` available; COOP/COEP headers correct |
@@ -148,7 +148,7 @@ Native Apple Silicon build (aarch64) expected ~2× faster (no Rosetta overhead).
 | Test 3 — Lazy modal loading | ✅ PASS | `StockSearchModal-*.js` loaded on demand; no lazy chunks in initial network request |
 | Test 4 — Dangling asset cleanup | ✅ PASS | `c7515e5` clears `assetId` correctly; `autoMatchAssets` re-assignment regression **fixed Phase 5 step 1** — `autoMatchSegments` now imperative-only |
 | Test 5 — `asset_missing` error path | ⚠️ NOT REACHED via reload | Hydration cleanup clears orphaned `assetId`s before export; `ExportError` infrastructure verified by code review; deeper trigger deferred |
-| Test 6 — Fade transition | ⬜ PENDING | User execution pending |
+| Test 6 — Fade transition | ✅ PASS | Verified during Path B export work (commit 261936f); 6-A through 6-D all verified |
 | Safari validation | ✅ PASS | `crossOriginIsolated=true`, full export, MP4 plays in VLC with H.264/AAC |
 
 ---
@@ -192,6 +192,7 @@ Phase 3 steps:
 | 2026-05-27 | **Static evermeet.cx ffmpeg build over Homebrew:** Homebrew binary (385 kB) was dynamically linked to `/usr/local/Cellar/ffmpeg/…/lib/` — not portable to machines without Homebrew. evermeet.cx 8.1.1 static build (76 MB) links only `/System/Library/` and `/usr/lib/` (verified via `otool -L`). Binary is gitignored; `src-tauri/binaries/README.md` documents re-provisioning. |
 | 2026-05-27 | **Base64 IPC for frame writes:** Encoding `Uint8Array` as base64 before IPC and decoding on the Rust side eliminates the JSON-array-of-numbers serialization bottleneck. Speedup: 551s → 120s for a 4-segment project (4.6×). Further optimizations (Tauri Channel API binary IPC) deferred to Phase 7 if needed. |
 | 2026-05-27 | **GPL sidecar for internal distribution:** evermeet.cx build compiled with `--enable-gpl` (includes libx264). GPL is acceptable for internal distribution (closed, no redistribution). Before public SaaS launch: swap for LGPL-only build (OpenH264 or commercial x264 license). Tracked as SaaS readiness item in `src-tauri/binaries/README.md`. |
+| 2026-05-27 | **Branch strategy update:** Continuing short-lived feature branches, but merging directly to `main` with `git merge --no-ff` rather than via PR (single-developer workflow). |
 
 ---
 
@@ -212,13 +213,11 @@ Phase 3 steps:
 
 - **Preview letterboxing in normal view** — already noted previously. Carried forward.
 
-- **Safari DevTools renders `console.debug` output in red**, making `[ffmpeg-worker]` log lines look alarming. Not a real error. The handler at `exportWorker.ts:35` correctly routes ffmpeg log output to `console.debug`. This is a Safari DevTools display quirk, not a code problem.
-
 - **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
 
 ---
 
-## Deferred to Phase 5
+## Long-running Deferred Items
 
 - ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
 - **Per-segment vs global transition UX** — now that `segmentEncoder.ts` falls back to `project.globalTransition`, the "Override all per-segment transitions" button is partly redundant. Consider removing it or repurposing it for per-segment *overrides* only.
@@ -322,10 +321,10 @@ Phase 3 steps:
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 1,603 (was 3,167 — 49% reduction net of all phases; Fidelity Polish added ~150 LOC for updateExtraOverlayPosition and related wiring) |
+| `src/App.tsx` LOC | 1,568 (was 3,167 — 50% reduction net of all phases; Fidelity Polish added ~150 LOC, Phase 6.4 trimmed worker references) |
 | localStorage key | `kinetix:project:v1` |
 | IndexedDB store | `kinetix-assets` / `assets` (keyPath: `id`) |
-| Total dependencies | 13 prod + 9 dev |
+| Total dependencies | 6 prod + 11 dev (post Phase 6.4 — dropped @ffmpeg/* and comlink) |
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | Native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) via Tauri `tauri-plugin-shell` |
 | Export speed (1080p/30fps) | macOS Intel/Rosetta: ~10× realtime (120s for 12s of output, post-6.3.1); Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
