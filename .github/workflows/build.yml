@@ -2,7 +2,7 @@ name: Build desktop installers
 
 on:
   push:
-    branches: [main, phase-6-windows, phase-6.8-macos-arm64]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
