@@ -2,7 +2,7 @@ name: Build desktop installers
 
 on:
   push:
-    branches: [main, chore/actions-node24-bump]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
