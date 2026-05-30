@@ -328,12 +328,12 @@ Phase 3 steps:
 | Total dependencies | 13 prod + 9 dev |
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | Native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) via Tauri `tauri-plugin-shell` |
-| Export speed (1080p/30fps) | ~30s wall-clock per 1s of output on x86_64 (Rosetta); ~2× faster expected on native aarch64 |
+| Export speed (1080p/30fps) | macOS Intel/Rosetta: ~10× realtime (120s for 12s of output, post-6.3.1); Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
 | Frontend bundle size | 442.18 kB / 134.73 kB gzip (no wasm in bundle; ffmpeg is sidecar binary) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |
 | Safari support | ✅ Verified Phase 4 — wasm path (now removed). Native sidecar path is macOS-only (DMG). |
-| Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
+| Critical bugs (Phase 1 audit) | 5 identified, all resolved (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
 | Transition enum values in UI | 10 (pruned from 51 — only implemented transitions shown) |
 | Filter names in UI | 27 (pruned from 57 — only implemented filters shown) |
 | AnimationType values rendered in export | 12 (was 0 — no-op until Fidelity Polish; all 12 now applied via canvasAnimations.ts) |
