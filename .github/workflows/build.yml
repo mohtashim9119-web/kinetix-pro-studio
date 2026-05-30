@@ -2,7 +2,7 @@ name: Build desktop installers
 
 on:
   push:
-    branches: [main, phase-6-windows]
+    branches: [main, phase-6-windows, phase-6.8-macos-arm64]
   workflow_dispatch:
 
 concurrency:
@@ -15,10 +15,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-13          # Intel macOS runner
-            target: x86_64-apple-darwin
-            artifact-name: kinetix-macos-x64
-            artifact-path: src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
+          - os: macos-latest      # Apple Silicon (arm64) runner
+            target: aarch64-apple-darwin
+            artifact-name: kinetix-macos-arm64
+            artifact-path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact-name: kinetix-windows-x64
@@ -51,14 +51,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Provision ffmpeg sidecar (macOS)
-        if: matrix.os == 'macos-13'
+      - name: Provision ffmpeg sidecar (macOS arm64)
+        if: matrix.os == 'macos-latest'
         run: |
           mkdir -p src-tauri/binaries
-          curl -L -o /tmp/ffmpeg.zip https://evermeet.cx/ffmpeg/getrelease/zip
-          unzip /tmp/ffmpeg.zip -d /tmp/
-          cp /tmp/ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
-          chmod +x src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+          curl -L -o /tmp/ffmpeg.zip https://www.osxexperts.net/ffmpeg711arm.zip
+          unzip /tmp/ffmpeg.zip -d /tmp/ffmpeg-arm64/
+          cp /tmp/ffmpeg-arm64/ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+          chmod +x src-tauri/binaries/ffmpeg-aarch64-apple-darwin
 
       - name: Provision ffmpeg sidecar (Windows)
         if: matrix.os == 'windows-latest'
