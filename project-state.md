@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-05-27 |
+| Last updated | 2026-05-31 |
 | Current phase | Phase 7 — TBD |
 | Hosting target | Desktop app (Tauri DMG/installer) · no web hosting needed for export |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Phase 6 complete (2026-05-27). Phase 7 scope TBD. See Phase 6 Summary below.
+Phase 6 complete (2026-05-31). Phase 7 scope TBD. See Phase 6 Summary below.
 
 ---
 
@@ -107,6 +107,8 @@ Path B landed in commit `261936f`. All four Test 6 gates verified manually:
 | 6.3.1 — Base64 IPC | 32 KB-chunked `bytesToBase64`; b64 write_file + save_bytes_to_disk; 551s → 120s (4.6× speedup) | ba87174 |
 | 6.4 — Remove wasm path | Delete `@ffmpeg/*`, `comlink`, `exportWorker.ts`, `ffmpegLoader.ts`, dev test buttons; COOP/COEP headers removed | 55ba298 |
 | 6.5 — Bundle sidecar | evermeet.cx 8.1.1 static build (76 MB, system-libs-only); `externalBin: ["binaries/ffmpeg"]`; portability verified | c567d5e |
+| 6.7 — Windows CI | GitHub Actions matrix build; `windows-latest` runner; ffmpeg from gyan.dev; NSIS .exe (~28 MB) + MSI (~39 MB); brother's smoke-test passed (functionality OK; export performance issue logged to Deferred List) | 64fc98b, d86228e, 4d4cce7 |
+| 6.8 — arm64 macOS CI | Switched `macos-13` (Intel, 24h queue timeout) → `macos-latest` (arm64 runner, 3m 25s build); static arm64 ffmpeg from osxexperts.net 7.1.1 (48 MB, system-libs-only); Intel binary retained in repo | fe0734a |
 
 **Key decisions:**
 - **Tauri v2** + `tauri-plugin-shell` for sidecar spawning. `sidecar("ffmpeg")` resolves to `{exe_dir}/ffmpeg` — bare name (no path prefix, no triple) — because `tauri-build` strips both when copying from `src-tauri/binaries/ffmpeg-x86_64-apple-darwin`.
@@ -234,6 +236,13 @@ Phase 3 steps:
 
 ---
 
+## Deferred List
+
+- **Faster export rendering** — `canvas.toBlob` is the current bottleneck. ~120s for 12s of video on macOS (x86_64/Rosetta), ~6 min per minute of video on Windows. Target: >50% speedup. Candidates: OffscreenCanvas, WebCodecs `VideoEncoder` API, or Tauri v2 Channel API (would also eliminate the remaining base64 IPC overhead).
+- **GitHub Actions deprecations (deadline June 2026)** — bump `actions/checkout`, `setup-node`, `upload-artifact` to Node 24-compatible versions; `windows-latest` will redirect to `windows-2025-vs2026` automatically by June 15, 2026.
+
+---
+
 ## Completed Work Log
 
 | Date | Work |
@@ -304,6 +313,8 @@ Phase 3 steps:
 | 2026-05-26 | **Phase 6.4 — wasm path removed (55ba298).** Deleted `@ffmpeg/ffmpeg`, `@ffmpeg/util`, `@ffmpeg/core`, `comlink`; deleted `exportWorker.ts`, `ffmpegLoader.ts`, dev test buttons (handleRenderTestFrame, handleEncodeTestSegment). COOP/COEP headers removed from `vite.config.ts` and `public/_headers`. |
 | 2026-05-27 | **Phase 6.5 — ffmpeg sidecar bundled (c567d5e).** Replaced Homebrew-linked binary (385 kB, dynamic) with evermeet.cx 8.1.1 static build (76 MB, system-libs-only). `tauri.conf.json` `externalBin: ["binaries/ffmpeg"]`; `capabilities/default.json` `shell:allow-execute { name: "ffmpeg", sidecar: true }`. Portability verified: renamed `/usr/local/bin/ffmpeg` symlink; app exported successfully from installed .dmg; symlink restored. |
 | 2026-05-27 | **Phase 6.6 — Close-out.** CLAUDE.md Export Pipeline section rewritten (native Tauri diagram). project-state.md fully updated. Build verified (`tsc --noEmit`, `npm run build`, `cargo build` all clean on main). `phase-6-tauri` merged to main via `--no-ff`. Branch deleted. |
+| 2026-05-27 | **Phase 6.7 — Windows CI.** GitHub Actions matrix build added: `windows-latest` runner, ffmpeg provisioned from gyan.dev essentials build. Produced NSIS `.exe` (~28 MB) and MSI (~39 MB) artifacts. Brother's smoke-test: all UI flows functional; export performance noted as slow (logged to Deferred List). Concurrency guard added. Commits: 64fc98b, d86228e, 4d4cce7. |
+| 2026-05-31 | **Phase 6.8 — arm64 macOS CI.** Switched CI macOS job from `macos-13` (Intel runner, hit 24h queue timeout on first run) to `macos-latest` (arm64 runner — first build completed in 3m 25s). Static arm64 ffmpeg from osxexperts.net 7.1.1 (48 MB, system-libs-only, verified via `otool -L`). Intel macOS binary (`ffmpeg-x86_64-apple-darwin`) retained in repo for local fallback. Merged `phase-6.8-macos-arm64` → `phase-6-windows` → `main`. Merge commit c7982e1. |
 
 ---
 
@@ -320,7 +331,7 @@ Phase 3 steps:
 | Export speed (1080p/30fps) | ~30s wall-clock per 1s of output on x86_64 (Rosetta); ~2× faster expected on native aarch64 |
 | Frontend bundle size | 442.18 kB / 134.73 kB gzip (no wasm in bundle; ffmpeg is sidecar binary) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
-| ffmpeg sidecar binary | 76 MB (static, x86_64-apple-darwin) — gitignored; see `src-tauri/binaries/README.md` |
+| ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |
 | Safari support | ✅ Verified Phase 4 — wasm path (now removed). Native sidecar path is macOS-only (DMG). |
 | Critical bugs identified | 5 (stale closure in playback, `togglePlay` listener churn, dead branch in audio sync, `trimEnd` unimplemented, `storyMap` param unused) |
 | Transition enum values in UI | 10 (pruned from 51 — only implemented transitions shown) |
