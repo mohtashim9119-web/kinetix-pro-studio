@@ -50,7 +50,7 @@ import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
-import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
+import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
@@ -188,24 +188,41 @@ const parseProjectData = async (
     rawSegments.push(current);
   }
 
-  const textSegments = rawSegments.filter(s => s.text);
-  const totalTextLength = textSegments.reduce((acc, s) => acc + s.text.length, 0) || 1;
+  const headingOnlyScenes = rawSegments.filter(s => s.heading && !s.text);
+  const textBearingScenes = rawSegments.filter(s => s.text);
   const voDuration = voiceoverDuration > 0 ? voiceoverDuration : rawSegments.length * 5;
+
+  // Allocate fixed time to heading-only scenes, then split the remainder by char-count weight.
+  let headingDuration = HEADING_ONLY_DURATION_SECONDS;
+  let headingTotal = headingOnlyScenes.length * HEADING_ONLY_DURATION_SECONDS;
+  if (headingOnlyScenes.length > 0 && voDuration - headingTotal <= 0) {
+    headingTotal = voDuration * 0.5;
+    headingDuration = headingTotal / headingOnlyScenes.length;
+    console.warn(
+      `[kinetix] Heading-only scenes (${headingOnlyScenes.length} × ${HEADING_ONLY_DURATION_SECONDS}s = ` +
+      `${(headingOnlyScenes.length * HEADING_ONLY_DURATION_SECONDS).toFixed(2)}s) exceed voiceover duration ` +
+      `(${voDuration.toFixed(2)}s). Clamping each heading to ${headingDuration.toFixed(3)}s so headings ` +
+      `stay within 50% of total duration.`
+    );
+  }
+  const textBudget = Math.max(0.1, voDuration - headingTotal);
+  const totalTextLength = textBearingScenes.reduce((acc, s) => acc + s.text.length, 0) || 1;
 
   let currentTimeAccumulator = 0;
   const finalSegments: VideoSegment[] = [];
 
   for (const [i, s] of rawSegments.entries()) {
-    let targetDuration = 0;
+    let targetDuration: number;
 
-    if (textSegments.length > 0) {
+    if (s.heading && !s.text) {
+      // Heading-only scene: fixed display time, independent of voiceover word count.
+      targetDuration = headingDuration;
+    } else if (textBearingScenes.length > 0) {
       const weight = s.text.length / totalTextLength;
-      targetDuration = weight * voDuration;
+      targetDuration = weight * textBudget;
     } else {
       targetDuration = voDuration / Math.max(1, rawSegments.length);
     }
-
-    targetDuration = Math.max(targetDuration, 0.5);
 
     const asset = assets.find(a => a.id === s.assetId);
     let playbackSpeed = 1;
@@ -325,12 +342,11 @@ export default function App() {
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Refs that mirror volatile segment state for stable interval closure access.
-  // The playback setInterval reads these instead of closing over the state values
+  // Ref that mirrors project.segments for stable interval closure access.
+  // The playback setInterval reads this instead of closing over the state value
   // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
   // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
   const segmentsRef = useRef<VideoSegment[]>(project.segments);
-  const currentSegmentRef = useRef<VideoSegment | null>(null);
 
 
 
@@ -695,61 +711,31 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     segmentsRef.current = project.segments;
-    currentSegmentRef.current = currentSegment;
   });
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
-  // Constrain segments to match audio duration perfectly
-  useEffect(() => {
-    if (isSynced && voiceover && audioRef.current?.duration) {
-      const audioDuration = audioRef.current.duration;
-      const segmentsDuration = project.segments.reduce((acc, s) => acc + s.duration, 0);
-      
-      // If there's a significant mismatch (> 0.1s), re-average or distribute the difference
-      if (Math.abs(segmentsDuration - audioDuration) > 0.1 && !resizingId) {
-        setProject(prev => {
-          const ratio = audioDuration / segmentsDuration;
-          let acc = 0;
-          const adjustedSegs = prev.segments.map(s => {
-            const newDuration = s.duration * ratio;
-            const start = acc;
-            acc += newDuration;
-            return {
-              ...s,
-              duration: Number(newDuration.toFixed(3)),
-              startTime: Number(start.toFixed(3))
-            };
-          });
-          return { ...prev, segments: adjustedSegs };
-        });
-      }
-    }
-  }, [project.voiceoverId, isSynced, resizingId]);
 
   useEffect(() => {
     let interval: any;
     if (isPlaying) {
       interval = setInterval(() => {
-        const inHeading = currentSegmentRef.current?.heading && !currentSegmentRef.current?.text;
         const audioDuration = audioRef.current?.duration || 0;
         const segmentsDuration = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
-        
+
         let maxDuration = audioDuration > 0 ? audioDuration : segmentsDuration;
         if (isNaN(maxDuration) || !isFinite(maxDuration)) maxDuration = segmentsDuration || 10;
 
         if (audioRef.current) {
           audioRef.current.playbackRate = globalPlaybackSpeed;
-          
-          if (voiceover && !inHeading && currentTime < audioDuration) {
+
+          if (voiceover && currentTime < audioDuration) {
             if (audioRef.current.paused) {
               audioRef.current.play().catch(() => {});
             }
             setCurrentTime(audioRef.current.currentTime);
           } else {
-            // Manual advancement if no audio or in a heading (heading pauses script voiceover)
-            if (audioRef.current && !exportState.isExporting && inHeading) audioRef.current.pause();
-            
+            // Manual advancement — no voiceover or audio has ended
             setCurrentTime(prev => {
               const next = prev + 0.1 * globalPlaybackSpeed;
               if (next >= maxDuration) {
@@ -783,8 +769,8 @@ export default function App() {
     voiceover,                  // restart when voiceover presence changes — switches audio-master ↔ manual-advance mode
     exportState.isExporting,    // restart so the pause-during-export branch always reads the current flag
     globalPlaybackSpeed,        // restart so audioRef.current.playbackRate is set with the fresh speed value
-    // project.segments and currentSegment intentionally omitted — read via segmentsRef / currentSegmentRef
-    // so that segment edits do not destroy and rebuild the interval (Finding 13 / Batch A).
+    // project.segments intentionally omitted — read via segmentsRef so that segment edits
+    // do not destroy and rebuild the interval (Finding 13 / Batch A).
   ]);
 
   const togglePlay = () => setIsPlaying(p => !p);
