@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-01 |
-| Current phase | Phase 7 — TBD |
+| Current phase | Phase 7 — Active |
 | Hosting target | Desktop app (Tauri DMG/installer) · no web hosting needed for export |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -29,13 +29,51 @@
 | Phase 5 | Production hardening — tests, accessibility (responsive deferred) | ✅ Complete (2026-05-19) |
 | Fidelity Polish | Canvas animations, trimEnd, drag overlays, preview transitions, KEN_BURNS picker fix, Path B export cross-fade | ✅ Complete (2026-05-25) |
 | Phase 6 | Desktop app — Tauri wrap with native ffmpeg | ✅ Complete (2026-05-27) |
-| Phase 7 | TBD | ⬜ Next |
+| Phase 7 | Multi-project + bug fixes + features (10 tasks; see Phase 7 Scope below) | ⬜ Active |
 
 ---
 
 ## Current Sprint
 
-Phase 6 complete (2026-05-31). Phase 7 scope TBD. See Phase 6 Summary below.
+Phase 7 active. 10 tasks queued in dependency order. See Phase 7 Scope section below for the full list. Start: export-rendering investigation (task 1) — read-only profiling pass to inform task 10's implementation choice.
+
+---
+
+## Phase 7 Scope
+
+10 tasks in dependency order. Tasks 1–2 are prerequisites; tasks 3–4 are bug fixes; tasks 5–9 are features; task 10 is the export-rendering implementation.
+
+### Prerequisites
+
+1. **Export-rendering investigation** ⬜ — Read-only profiling pass. Instrument the export pipeline to measure per-frame time distribution (canvas render, `canvas.toBlob`, base64 encode, IPC write, ffmpeg exec). Output: data-backed recommendation on OffscreenCanvas vs WebCodecs vs Tauri Channel API. No code changes. Informs task 10.
+
+2. **Persistence layer project-id scoping** ⬜ — Migrate `kinetix:project:v1` → `kinetix:projects:v1` registry + per-project keys. Scope IndexedDB assets store by project id. Pure refactor, no UX change. Prerequisite for task 5.
+
+### Bug fixes
+
+3. **Video plays when timeline paused** ⬜ — `<video>` element's playback state not synced to `isPlaying`. Add pause sync in playback effect.
+
+4. **Preview/audio sync drift** ⬜ — Replace 100ms `setInterval` with `requestAnimationFrame` driven by `audioRef.current.currentTime` as master clock. Frame-accurate preview like CapCut/Premiere.
+
+### Features
+
+5. **Multi-project picker window** ⬜ — Project registry; picker UI on app open with create/select/duplicate/delete/rename. Single-window with tabs or sidebar (not multi-window — see Rejected). Depends on task 2.
+
+6. **Per-project save location + post-export popup** ⬜ — Persist export path per project. "Open / Open folder" popup after export via `tauri-plugin-opener` or shell open.
+
+7. **Merge inputs into one upload area** ⬜ — Unified drop zone; auto-classify by file type. UX design pass first to decide fate of 3-step wizard.
+
+8. **More stock footage APIs** ⬜ — Add Coverr, Mixkit, Videvo adapters alongside Pexels/Pixabay in `stockService.ts`. Keys remain client-side (internal use).
+
+9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
+
+### Export-rendering implementation
+
+10. **Export-rendering implementation** ⬜ — Implement whichever approach task 1 recommended. Target >50% speedup on macOS and Windows. Done last because the feature work in tasks 5–9 changes daily UX more.
+
+### Rejected from scope
+
+- **Multi-window simultaneous projects** — 5–10 parallel webviews + renders would thrash the machine. Use tabs in one window or a render queue instead. Revisit only if single-window UX proves insufficient.
 
 ---
 
@@ -219,6 +257,9 @@ Phase 3 steps:
 
 ## Long-running Deferred Items
 
+- **`usePlayback` hook extraction** — Playback interval + audio sync still inline in App.tsx. Pure refactor, no behavior change. Worth doing before adding more playback features.
+- **SaaS-readiness cluster** — Three items that must ship together for public launch: backend API proxy for Pexels/Pixabay keys; auth layer; swap GPL ffmpeg sidecar (libx264) for LGPL-only build (OpenH264 or commercial x264 license). Do not pick off individually.
+- **Phase 4 Test 5 deeper trigger validation** — `asset_missing` error path verified by code review; deeper trigger validation deferred. Low value.
 - ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
 - **Per-segment vs global transition UX** — now that `segmentEncoder.ts` falls back to `project.globalTransition`, the "Override all per-segment transitions" button is partly redundant. Consider removing it or repurposing it for per-segment *overrides* only.
 - **`motion` library bundle weight** — ~264 kB unminified; not easily tree-shaken without switching APIs. Evaluate whether animation features justify the cost or trim to specific motion primitives.
@@ -232,12 +273,6 @@ Phase 3 steps:
 - **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
 - ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
 - ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
-
----
-
-## Deferred List
-
-- **Faster export rendering** — `canvas.toBlob` is the current bottleneck. ~120s for 12s of video on macOS (x86_64), ~6 min per minute of video on Windows. Target: >50% speedup. Candidates: OffscreenCanvas, WebCodecs `VideoEncoder` API, or Tauri v2 Channel API (would also eliminate the remaining base64 IPC overhead).
 
 ---
 
