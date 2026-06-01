@@ -325,6 +325,13 @@ export default function App() {
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
 
+  // Refs that mirror volatile segment state for stable interval closure access.
+  // The playback setInterval reads these instead of closing over the state values
+  // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
+  // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
+  const segmentsRef = useRef<VideoSegment[]>(project.segments);
+  const currentSegmentRef = useRef<VideoSegment | null>(null);
+
 
 
   // Rehydrate persisted project on mount
@@ -682,6 +689,15 @@ export default function App() {
     return seg || null;
   }, [currentTime, project.segments]);
 
+  // Sync volatile values into refs on every render so the playback interval can
+  // read them without those values appearing in the interval's dependency array.
+  // Intentionally no dependency array — must run after every render to stay fresh.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    segmentsRef.current = project.segments;
+    currentSegmentRef.current = currentSegment;
+  });
+
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
   // Constrain segments to match audio duration perfectly
@@ -715,9 +731,9 @@ export default function App() {
     let interval: any;
     if (isPlaying) {
       interval = setInterval(() => {
-        const inHeading = currentSegment?.heading && !currentSegment?.text;
+        const inHeading = currentSegmentRef.current?.heading && !currentSegmentRef.current?.text;
         const audioDuration = audioRef.current?.duration || 0;
-        const segmentsDuration = project.segments.reduce((acc, s) => acc + s.duration, 0);
+        const segmentsDuration = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
         
         let maxDuration = audioDuration > 0 ? audioDuration : segmentsDuration;
         if (isNaN(maxDuration) || !isFinite(maxDuration)) maxDuration = segmentsDuration || 10;
@@ -762,7 +778,14 @@ export default function App() {
       }
     }
     return () => clearInterval(interval);
-  }, [isPlaying, voiceover, project.segments, currentSegment, exportState.isExporting, globalPlaybackSpeed]);
+  }, [
+    isPlaying,                  // restart when play/pause toggles — the interval itself is gated on this
+    voiceover,                  // restart when voiceover presence changes — switches audio-master ↔ manual-advance mode
+    exportState.isExporting,    // restart so the pause-during-export branch always reads the current flag
+    globalPlaybackSpeed,        // restart so audioRef.current.playbackRate is set with the fresh speed value
+    // project.segments and currentSegment intentionally omitted — read via segmentsRef / currentSegmentRef
+    // so that segment edits do not destroy and rebuild the interval (Finding 13 / Batch A).
+  ]);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
