@@ -321,12 +321,12 @@ All dead dependencies removed. No remaining items.
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
 | Fix `togglePlay` stale closure | ✅ Done — 2026-05-16 | Uses functional updater setIsPlaying(p => !p) |
-| Fix export file extension | ✅ Done — 2026-05-16 / 2026-05-17 | Was .webm mislabeled; now real .mp4 from ffmpeg.wasm |
+| Fix export file extension | ✅ Done — 2026-05-16 / 2026-05-17 | Was .webm mislabeled; now real .mp4 from ffmpeg (sidecar in 6.4+) |
 | Replace Math.random IDs | ✅ Done — 2026-05-16 | All IDs use crypto.randomUUID() |
 | Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix |
 | Add project persistence | ✅ Done — 2026-05-16 | localStorage + IndexedDB; single-project; "New Project" reset |
-| Replace canvas/MediaRecorder export with ffmpeg.wasm | ✅ Done — 2026-05-17 | Full pipeline: frameRenderer → segmentEncoder → exportPipeline → Comlink worker |
-| COOP/COEP headers for SharedArrayBuffer | ✅ Done — 2026-05-17 | vite.config.ts (dev) + public/_headers (Cloudflare Pages prod) |
+| Replace canvas/MediaRecorder export pipeline | ✅ Done — 2026-05-17 | Full pipeline: frameRenderer → segmentEncoder → exportPipeline. Originally via Comlink worker + ffmpeg.wasm; superseded by native ffmpeg sidecar in Phase 6.4. |
+| COOP/COEP headers for SharedArrayBuffer | ✅ Done — 2026-05-17 | vite.config.ts (dev) + public/_headers (Cloudflare Pages prod) — removed in Phase 6.4 (wasm no longer needed). |
 | Phase 3 E2E smoke test (human) | ✅ Done — 2026-05-17 | Multi-segment + voiceover + FADE transition verified in VLC |
 | Add error boundaries | ✅ Done — 2026-05-17 | a42ed66 — ErrorBoundary + PanelFallback, structured ExportResult |
 | Clean up dangling asset refs at delete time | ✅ Done — 2026-05-17 | c7515e5 |

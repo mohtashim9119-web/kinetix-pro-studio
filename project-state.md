@@ -181,7 +181,7 @@ Phase 3 steps:
 | 2026-05-16 | **Branch strategy:** `main` is the stable branch. Feature work goes on short-lived branches, merged via PR. |
 | 2026-05-16 | **Output format:** MP4 required for YouTube upload. Current WebM output is unacceptable for production — this is a Phase 3 blocker. |
 | 2026-05-17 | **ffmpeg.wasm encode speed:** ~25s wall-clock per 1s of 1080p output (≈1.35s per frame at 30fps). Acceptable for Phase 3 validation; production-grade speed requires Phase 6 native ffmpeg via Tauri. |
-| 2026-05-17 | **Safari export verified:** `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264 + AAC. No code changes required for Safari support. |
+| 2026-05-17 | **(Historical — wasm path removed in Phase 6.4) Safari export verified:** `crossOriginIsolated=true`, `SharedArrayBuffer` available, COOP/COEP headers correct, export completes, MP4 plays in VLC with H.264 + AAC. No code changes required for Safari support. |
 | 2026-05-17 | **Global transition fallback:** `segmentEncoder.ts` now falls back to `project.globalTransition` when a segment's own `transition` field is NONE. Per-segment overrides take precedence. "Override all per-segment transitions" button in Settings still materializes the global value onto segments for per-segment overrides. UX revisit deferred to Phase 5. |
 | 2026-05-21 | **Item 3 approach (preview transitions):** Pre-roll snapshot blend (option b). When playhead enters transition window, snapshot outgoing + incoming first frame to offscreen canvases, blend over transition duration via applyTransitionBlend. Universal coverage across image/video, single seek cost lands during pre-roll (before transition visually starts). Rejected option (a) image-only canvas overlay (asset-type branching complexity) and option (c) skip-and-document (would leave preview-vs-export gap user said to close). |
 | 2026-05-21 | **NEON_FLICKER glow:** Implemented as ctx.shadowBlur + shadowColor pass on top of keyframe alpha pulse. Documented fallback path if visual quality regresses on dark backgrounds. |
@@ -202,7 +202,7 @@ Phase 3 steps:
 - [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
 - [x] Dangling segment references on asset delete — **Resolved (Phase 4, Step 3):** cleaned up at delete time via `c7515e5`.
 - [x] Bundle splitting — **Resolved (Phase 4, Step 5):** jszip, StockSearchModal, SyncReviewModal are now lazy-loaded. Main bundle: 542 kB → 433 kB.
-- [ ] Stock API key handling — keep client-side for internal use, or proxy immediately in Phase 5?
+- [x] Stock API key handling — kept client-side for internal use; backend proxy deferred (tracked in Long-running Deferred Items as "Backend proxy for API keys — required for public launch").
 - [x] **Phase 3 end-to-end export verified — 2026-05-17.** Multi-segment + voiceover + FADE transition + main Export button + VLC playback confirmed H.264/AAC. Verified before `phase-3-export` merged to `main`.
 
 ---
@@ -237,7 +237,7 @@ Phase 3 steps:
 
 ## Deferred List
 
-- **Faster export rendering** — `canvas.toBlob` is the current bottleneck. ~120s for 12s of video on macOS (x86_64/Rosetta), ~6 min per minute of video on Windows. Target: >50% speedup. Candidates: OffscreenCanvas, WebCodecs `VideoEncoder` API, or Tauri v2 Channel API (would also eliminate the remaining base64 IPC overhead).
+- **Faster export rendering** — `canvas.toBlob` is the current bottleneck. ~120s for 12s of video on macOS (x86_64), ~6 min per minute of video on Windows. Target: >50% speedup. Candidates: OffscreenCanvas, WebCodecs `VideoEncoder` API, or Tauri v2 Channel API (would also eliminate the remaining base64 IPC overhead).
 
 ---
 
@@ -324,10 +324,10 @@ Phase 3 steps:
 | `src/App.tsx` LOC | 1,568 (was 3,167 — 50% reduction net of all phases; Fidelity Polish added ~150 LOC, Phase 6.4 trimmed worker references) |
 | localStorage key | `kinetix:project:v1` |
 | IndexedDB store | `kinetix-assets` / `assets` (keyPath: `id`) |
-| Total dependencies | 6 prod + 11 dev (post Phase 6.4 — dropped @ffmpeg/* and comlink) |
+| Total dependencies | 6 prod + 11 dev (Phase 6.4 removed @ffmpeg/ffmpeg, @ffmpeg/util, comlink) |
 | Export codec | H.264 video + AAC audio, MP4 container |
 | Export engine | Native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) via Tauri `tauri-plugin-shell` |
-| Export speed (1080p/30fps) | macOS Intel/Rosetta: ~10× realtime (120s for 12s of output, post-6.3.1); Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
+| Export speed (1080p/30fps) | macOS Intel (x86_64): ~10× realtime (120s for 12s of output, post-6.3.1); Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
 | Frontend bundle size | 442.18 kB / 134.73 kB gzip (no wasm in bundle; ffmpeg is sidecar binary) |
 | Lazy chunks | StockSearchModal 5.3 kB · SyncReviewModal 10 kB · jszip 96 kB |
 | ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |
