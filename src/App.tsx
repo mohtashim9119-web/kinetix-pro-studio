@@ -258,6 +258,28 @@ const parseProjectData = async (
     currentTimeAccumulator += segment.duration;
   }
 
+  // Detect segments sharing the same assetId — can happen when the
+  // unused-asset pool is exhausted after a deletion and re-sync.
+  // This is a data quality warning, not a hard error.
+  const assetIdCounts = new Map<string, number>();
+  finalSegments.forEach(seg => {
+    if (seg.assetId) {
+      assetIdCounts.set(seg.assetId, (assetIdCounts.get(seg.assetId) ?? 0) + 1);
+    }
+  });
+  assetIdCounts.forEach((count, assetId) => {
+    if (count > 1) {
+      const duplicatedSegments = finalSegments
+        .filter(s => s.assetId === assetId)
+        .map(s => s.heading || s.id)
+        .join(', ');
+      console.warn(
+        `[parseProjectData] Asset "${assetId}" is assigned to ${count} segments: ` +
+        `${duplicatedSegments}. Re-upload the missing asset and re-sync to fix.`
+      );
+    }
+  });
+
   return finalSegments;
 };
 
