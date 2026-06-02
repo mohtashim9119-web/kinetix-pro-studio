@@ -371,6 +371,10 @@ export default function App() {
   const segmentsRef = useRef<VideoSegment[]>(project.segments);
   // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
   const rafRef = useRef<number | null>(null);
+  // Synchronous guard: true while a timeline resize drag is in progress.
+  // Cleared via a one-frame rAF delay in handleUp so it stays true through
+  // the render that processes the final mousemove setProject call.
+  const isResizingRef = useRef(false);
 
 
 
@@ -1165,7 +1169,7 @@ export default function App() {
                  globalOverlayConfig={project.globalOverlayConfig}
                  hideAllText={project.hideAllText ?? false}
                  assets={project.assets}
-                 isResizing={resizingId !== null}
+                 isResizingRef={isResizingRef}
                  onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                />
              </ErrorBoundary>
@@ -1229,8 +1233,12 @@ export default function App() {
                    document.body.classList.remove('resizing');
                    window.removeEventListener('mousemove', handleMove);
                    window.removeEventListener('mouseup', handleUp);
+                   requestAnimationFrame(() => {
+                     isResizingRef.current = false;
+                   });
                  };
 
+                 isResizingRef.current = true;
                  window.addEventListener('mousemove', handleMove);
                  window.addEventListener('mouseup', handleUp);
                }}
