@@ -1139,25 +1139,44 @@ export default function App() {
                }}
                onZoomChange={setZoomLevel}
                onSpeedChange={setGlobalPlaybackSpeed}
-               onResizeStart={(id, type) => { setResizingId(id); setResizingType(type); }}
-               onResizeEnd={() => { setResizingId(null); setResizingType(null); }}
-               onResizeMove={(x) => {
-                 setProject(prev => {
-                   const target = prev.segments.find(s => s.id === resizingId);
-                   if (!target) return prev;
+               onResizeStart={(id, type) => {
+                 setResizingId(id);
+                 setResizingType(type);
+                 document.body.classList.add('resizing');
+
+                 const handleMove = (e: MouseEvent) => {
+                   const timeline = document.getElementById('timeline-scroll-area');
+                   if (!timeline) return;
+                   const rect = timeline.getBoundingClientRect();
+                   const x = e.clientX - rect.left + timeline.scrollLeft - 24;
                    const pixelsPerSecond = 100 * zoomLevel;
-                   const updated = prev.segments.map(s => {
-                     if (s.id !== resizingId) return s;
-                     if (resizingType === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
-                     if (resizingType === 'start') {
-                       const delta = (x / pixelsPerSecond) - target.startTime;
-                       return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
-                     }
-                     return s;
+                   setProject(prev => {
+                     const target = prev.segments.find(s => s.id === id);
+                     if (!target) return prev;
+                     const updated = prev.segments.map(s => {
+                       if (s.id !== id) return s;
+                       if (type === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
+                       if (type === 'start') {
+                         const delta = (x / pixelsPerSecond) - target.startTime;
+                         return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
+                       }
+                       return s;
+                     });
+                     let acc = 0;
+                     return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
                    });
-                   let acc = 0;
-                   return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
-                 });
+                 };
+
+                 const handleUp = () => {
+                   setResizingId(null);
+                   setResizingType(null);
+                   document.body.classList.remove('resizing');
+                   window.removeEventListener('mousemove', handleMove);
+                   window.removeEventListener('mouseup', handleUp);
+                 };
+
+                 window.addEventListener('mousemove', handleMove);
+                 window.addEventListener('mouseup', handleUp);
                }}
                onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}

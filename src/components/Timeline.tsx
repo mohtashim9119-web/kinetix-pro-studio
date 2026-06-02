@@ -30,8 +30,6 @@ interface Props {
   onZoomChange: (zoom: number) => void;
   onSpeedChange: (speed: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
-  onResizeEnd: () => void;
-  onResizeMove: (x: number) => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onSetTrimmingSegment: (id: string | null) => void;
@@ -57,8 +55,6 @@ export function Timeline({
   onZoomChange,
   onSpeedChange,
   onResizeStart,
-  onResizeEnd,
-  onResizeMove,
   onSegmentUpdate,
   onOpenStockSearch,
   onSetTrimmingSegment,
@@ -216,21 +212,6 @@ export function Timeline({
           window.addEventListener('mouseup', handleMouseUp);
         }}
       >
-        {/* Resize overlay — captures mouse outside segment bounds */}
-        {resizingId && (
-          <div
-            className="fixed inset-0 z-[100] cursor-col-resize"
-            onMouseMove={(e) => {
-              const timeline = document.getElementById('timeline-scroll-area');
-              if (!timeline) return;
-              const rect = timeline.getBoundingClientRect();
-              const x = e.clientX - rect.left + timeline.scrollLeft - 24;
-              onResizeMove(x);
-            }}
-            onMouseUp={onResizeEnd}
-          />
-        )}
-
         {/* Time Ruler */}
         <div className="absolute top-4 left-6 right-6 h-4 border-b border-[#1A1A1A] flex items-end">
           {Array.from({ length: Math.ceil(segments.reduce((acc, s) => acc + s.duration, 0) || 30) + 1 }).map((_, i) => (
