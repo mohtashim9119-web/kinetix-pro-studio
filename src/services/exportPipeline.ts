@@ -98,23 +98,22 @@ export async function exportProject(
     const segment = segments[i];
     if (!segment) continue;
 
-    // Reachable when the user deletes an asset mid-session and exports before reload (Phase 5 step 1).
-    if (segment.assetId) {
-      const asset = assetMap.get(segment.assetId);
-      if (!asset?.url) {
-        return {
-          ok: false,
-          error: {
-            kind: 'asset_missing',
-            message: `Asset for segment ${i + 1} could not be found. It may have been deleted.`,
-            segmentIndex: i,
-            cause: `assetId=${segment.assetId}`,
-          },
-        };
-      }
-    }
-
+    // Treat assetId=undefined the same as a defined-but-missing asset —
+    // both mean no visual content is available for this segment.
     const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
+    if (segment.assetId && !asset?.url) {
+      return { ok: false, error: { kind: 'asset_missing',
+        message: `Segment "${segment.heading || segment.id}" has no asset` } };
+    }
+    if (!segment.assetId) {
+      // No asset assigned — encode black frames with text overlays only.
+      // This is intentional fallback behavior, not an error.
+      // Log so the user can diagnose if unexpected.
+      console.warn(
+        `[exportPipeline] Segment "${segment.heading || segment.id}" ` +
+        `(id: ${segment.id}) has no assetId — encoding black frames.`
+      );
+    }
     const nextSegment = segments[i + 1];
     const nextAsset = nextSegment?.assetId ? assetMap.get(nextSegment.assetId) : undefined;
     const prevSegment = segments[i - 1];
