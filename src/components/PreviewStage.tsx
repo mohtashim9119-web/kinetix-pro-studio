@@ -100,6 +100,7 @@ interface Props {
   globalOverlayConfig: GlobalOverlayConfig;
   hideAllText: boolean;
   assets: Asset[];
+  isResizing: boolean;
   /** Called when the user drags an extra overlay to a new position. */
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
 }
@@ -114,6 +115,7 @@ export function PreviewStage({
   globalOverlayConfig,
   hideAllText,
   assets,
+  isResizing,
   onUpdateExtraOverlayPosition,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -354,7 +356,7 @@ export function PreviewStage({
                               const videoTime = currentSegment.trimEnd !== undefined
                                 ? Math.min(rawTime, currentSegment.trimEnd)
                                 : rawTime;
-                              if (Math.abs(el.currentTime - videoTime) > 0.1) {
+                              if (!isResizing && Math.abs(el.currentTime - videoTime) > 0.1) {
                                 el.currentTime = videoTime;
                               }
                             }

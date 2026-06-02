@@ -1165,6 +1165,7 @@ export default function App() {
                  globalOverlayConfig={project.globalOverlayConfig}
                  hideAllText={project.hideAllText ?? false}
                  assets={project.assets}
+                 isResizing={resizingId !== null}
                  onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                />
              </ErrorBoundary>
