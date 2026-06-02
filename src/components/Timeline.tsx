@@ -307,9 +307,11 @@ export function Timeline({
 
                     <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
                       onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                      onClick={(e) => e.stopPropagation()}
                     />
                     <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
                       onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                      onClick={(e) => e.stopPropagation()}
                     />
 
                     <div className="flex-1 relative bg-black/50">
@@ -379,9 +381,11 @@ export function Timeline({
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="flex-1 flex items-center gap-0.5 opacity-20 group-hover:opacity-60 transition-opacity">
                     {Array.from({ length: Math.ceil(s.duration * 5) }).map((_, i) => (
