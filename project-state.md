@@ -35,7 +35,14 @@
 
 ## Current Sprint
 
-Phase 7 active. 10 tasks queued in dependency order. See Phase 7 Scope section below for the full list. Start: export-rendering investigation (task 1) — read-only profiling pass to inform task 10's implementation choice.
+Phase 7 active. 10 tasks queued in dependency order. See Phase 7 Scope section below for the full list.
+
+**Batches A, B, and C complete** (branch `phase-7-sync-fixes`):
+- Batch A — `90bfa71`: Playback interval teardown fix (finding 13).
+- Batch B — `f7e48ba`, `6395862`, `7a4e737`: Heading-pause removed + ratio-correction deleted; drag overlay race fixed; segment width transition scoped to exclude width.
+- Batch C — `e961110`, `e8869d9`: rAF + audio master clock replaces setInterval (findings 9, 10); stray resize-click seek bug fixed.
+
+**Next: Batch D** — Missing-asset suite (findings 17, 18, 19, 20).
 
 ---
 
@@ -53,7 +60,7 @@ Phase 7 active. 10 tasks queued in dependency order. See Phase 7 Scope section b
 
 3. **Video plays when timeline paused** ⬜ — `<video>` element's playback state not synced to `isPlaying`. Add pause sync in playback effect.
 
-4. **Preview/audio sync drift** ⬜ — Replace 100ms `setInterval` with `requestAnimationFrame` driven by `audioRef.current.currentTime` as master clock. Frame-accurate preview like CapCut/Premiere.
+4. **Preview/audio sync drift** ✅ — Replace 100ms `setInterval` with `requestAnimationFrame` driven by `audioRef.current.currentTime` as master clock. Frame-accurate preview like CapCut/Premiere. Completed Batch C, commit `e961110`.
 
 ### Features
 
@@ -349,6 +356,12 @@ Phase 3 steps:
 | 2026-05-27 | **Phase 6.7 — Windows CI.** GitHub Actions matrix build added: `windows-latest` runner, ffmpeg provisioned from gyan.dev essentials build. Produced NSIS `.exe` (~28 MB) and MSI (~39 MB) artifacts. Brother's smoke-test: all UI flows functional; export performance noted as slow (logged to Deferred List). Concurrency guard added. Commits: 64fc98b, d86228e, 4d4cce7. |
 | 2026-06-01 | **chore: GitHub Actions Node 24 bump.** Bumped `actions/checkout` v4→v5, `actions/setup-node` v4→v6, `actions/upload-artifact` v4→v6. CI verified on `chore/actions-node24-bump` — zero deprecation warnings in logs. Merge commit 25a3475. Resolves June 2026 deadline item from Deferred List. |
 | 2026-05-31 | **Phase 6.8 — arm64 macOS CI.** Switched CI macOS job from `macos-13` (Intel runner, hit 24h queue timeout on first run) to `macos-latest` (arm64 runner — first build completed in 3m 25s). Static arm64 ffmpeg from osxexperts.net 7.1.1 (48 MB, system-libs-only, verified via `otool -L`). Intel macOS binary (`ffmpeg-x86_64-apple-darwin`) retained in repo for local fallback. Merged `phase-6.8-macos-arm64` → `phase-6-windows` → `main`. Merge commit c7982e1. |
+| 2026-06-02 | **Phase 7 Batch A — `90bfa71`.** Playback interval no longer tears down on segment edits (finding 13). `project.segments` and `currentSegment` removed from interval dep array; both read via `segmentsRef` / `currentSegmentRef` refs updated in a no-dep sync effect. Drag-resize during playback no longer freezes the playhead. |
+| 2026-06-02 | **Phase 7 Batch B commit 1 — `f7e48ba`.** Heading-pause semantics removed; ratio-correction `useEffect` deleted (findings 3, 6, 7, 12, 22, 27). `HEADING_ONLY_DURATION_SECONDS = 1.5` added to `constants.ts`; heading-only scenes get fixed 1.5s slice, text-bearing scenes split remaining audio budget by char-count weight. `currentSegmentRef` removed (was only needed for the deleted `inHeading` check). Audio plays continuously through headings, matching export pipeline behaviour. |
+| 2026-06-02 | **Phase 7 Batch B commit 2 — `6395862`.** Drag handler attaches `window` listeners on `mousedown` (audit Q1). Replaces the conditional `fixed inset-0` overlay div with `window.addEventListener('mousemove'/'mouseup')` calls that fire immediately on resize-handle `mousedown`. `onResizeMove` and `onResizeEnd` removed from Timeline props interface. `body.resizing` CSS class added for viewport-wide col-resize cursor coverage during drag. |
+| 2026-06-02 | **Phase 7 Batch B commit 3 — `7a4e737`.** Segment width updates instantly during drag (audit Q6). `transition-all duration-300` on segment div replaced with `transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300` — excludes `width` so drag updates are synchronous; intentional aesthetic animations (trim-mode fade, active-segment highlight) preserved. |
+| 2026-06-02 | **Phase 7 Batch C commit 1 — `e961110`.** `setInterval` playback replaced with rAF + audio master clock (findings 9, 10). Four focused effects: pause `[isPlaying, exportState.isExporting]`; rAF loop `[isPlaying, voiceover]` reading `audio.currentTime` every frame (~16ms); no-voiceover `setInterval` `[isPlaying, voiceover, globalPlaybackSpeed]` (unchanged); playbackRate sync `[isPlaying, globalPlaybackSpeed]`. `onTimeUpdate` handler removed — rAF loop is sole writer of `setCurrentTime`. `audio.ended` used for end-of-audio detection; defensive `.play()` guard carried into tick with `!audio.ended` guard. |
+| 2026-06-02 | **Phase 7 Batch C commit 2 — `e8869d9`.** Block stray click on resize handles from seeking segment (Batch B regression). After Commit 2 removed the overlay div, native browser `click` events could bubble from a resize handle through to the segment div's `onClick` handler, triggering `onSeek(s.startTime)` and jumping playback backwards. Fixed by adding `onClick={e => e.stopPropagation()}` to all four resize handle divs (two visual track, two audio track). |
 
 ---
 
