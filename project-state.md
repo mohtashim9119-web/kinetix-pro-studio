@@ -35,14 +35,9 @@
 
 ## Current Sprint
 
-Phase 7 active. 10 tasks queued in dependency order. See Phase 7 Scope section below for the full list.
-
-**Batches A, B, and C complete** (branch `phase-7-sync-fixes`):
-- Batch A — `90bfa71`: Playback interval teardown fix (finding 13).
-- Batch B — `f7e48ba`, `6395862`, `7a4e737`: Heading-pause removed + ratio-correction deleted; drag overlay race fixed; segment width transition scoped to exclude width.
-- Batch C — `e961110`, `e8869d9`: rAF + audio master clock replaces setInterval (findings 9, 10); stray resize-click seek bug fixed.
-
-**Next: Batch D** — Missing-asset suite (findings 17, 18, 19, 20).
+Batch E complete. Branch `phase-7-sync-fixes` ready for merge to main.
+Next: decide Task 2 (persistence layer project-id scoping) vs Task 3
+(video plays when timeline paused) as the next Phase 7 task.
 
 ---
 
@@ -258,6 +253,8 @@ Phase 3 steps:
 
 - **Preview letterboxing in normal view** — already noted previously. Carried forward.
 
+- **Video preview jumps on resize drag release** — video preview jumps to near-start of current segment on resize drag release. Audio position is unaffected and exports are correct. Three approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by the same root cause: currentSegment useMemo re-resolves with new startTimes in the same render that clears the resize guard. Deferred.
+
 - **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
 
 ---
@@ -278,6 +275,13 @@ Phase 3 steps:
 - ~~**Extra overlays have no drag-to-position UI**~~ — **Fixed Fidelity Polish Item 2.** Pointer Events drag on extra overlays with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires through to App.tsx immutable state update.
 - **Responsive layout** — layout assumes ≥1280px width. Mobile/tablet breakpoints not addressed.
 - **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
+- **`getMediaDuration()` URL cache missing** — creates a new HTMLVideoElement per invocation with no cache; N segments sharing the same video asset trigger N separate `loadedmetadata` loads at sync time. Low impact for small projects. Fix when sync performance becomes a complaint.
+- **`finalizeSync` redundant second-pass startTime accumulation** — re-accumulates startTimes already set correctly by `parseProjectData`. Dead code under normal conditions; may silently correct floating-point drift with 20+ segments. Remove or verify in a future cleanup pass.
+- **Character-count vs word-count duration weights** — `parseProjectData` uses `s.text.length` (character count) for duration weights, not word count as documented in CLAUDE.md. Dense prose receives disproportionate time. Deferred to a future sync quality pass.
+- **`audioRef.current.duration` synchronous read on upload** — read at button-click time with no await; if `loadedmetadata` has not fired, `audioDuration = 0` and `parseProjectData` silently falls back to `rawSegments.length × 5` seconds with no user feedback. Add a `loadedmetadata` await and a toast warning before public launch.
+- **`currentSegment` gap behavior** — useMemo returns `null` during any timing gap between segments (e.g. after a trim-resize misaligns startTimes); preview shows "Sequence Standby" with no indicator that a gap exists. Low priority until trim-resize precision is improved.
+- **Audio waveform bars use `Math.random()` heights** — Timeline waveform bars are decorative, not real waveform data, and re-randomize on every render. Replace with real waveform analysis or make heights stable (compute once on asset load). Deferred.
+- **Video seek on resize drag release** — video preview jumps to near-start of current segment when resize drag releases; audio is unaffected, exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by currentSegment useMemo re-resolving with new startTimes in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
 - ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
 - ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
 
