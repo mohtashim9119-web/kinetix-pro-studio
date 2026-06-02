@@ -347,6 +347,8 @@ export default function App() {
   // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
   // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
   const segmentsRef = useRef<VideoSegment[]>(project.segments);
+  // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
+  const rafRef = useRef<number | null>(null);
 
 
 
@@ -716,62 +718,93 @@ export default function App() {
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
 
+  // --- Playback: audio pause on user stop ---
+  // Fires whenever isPlaying flips to false; no-ops when audioRef is null (no voiceover loaded).
+  // Kept in a separate effect so the rAF loop dep array stays minimal.
   useEffect(() => {
-    let interval: any;
-    if (isPlaying) {
-      interval = setInterval(() => {
-        const audioDuration = audioRef.current?.duration || 0;
-        const segmentsDuration = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
-
-        let maxDuration = audioDuration > 0 ? audioDuration : segmentsDuration;
-        if (isNaN(maxDuration) || !isFinite(maxDuration)) maxDuration = segmentsDuration || 10;
-
-        if (audioRef.current) {
-          audioRef.current.playbackRate = globalPlaybackSpeed;
-
-          if (voiceover && currentTime < audioDuration) {
-            if (audioRef.current.paused) {
-              audioRef.current.play().catch(() => {});
-            }
-            setCurrentTime(audioRef.current.currentTime);
-          } else {
-            // Manual advancement — no voiceover or audio has ended
-            setCurrentTime(prev => {
-              const next = prev + 0.1 * globalPlaybackSpeed;
-              if (next >= maxDuration) {
-                setIsPlaying(false);
-                if (audioRef.current) audioRef.current.currentTime = 0;
-                return 0;
-              }
-              return next;
-            });
-          }
-        } else {
-          // No audio ref, manual play
-          setCurrentTime(prev => {
-            const next = prev + 0.1 * globalPlaybackSpeed;
-             if (next >= maxDuration) {
-               setIsPlaying(false);
-               return 0;
-             }
-             return next;
-          });
-        }
-      }, 100);
-    } else {
-      if (!exportState.isExporting) {
-        audioRef.current?.pause();
-      }
+    if (!isPlaying && !exportState.isExporting) {
+      audioRef.current?.pause();
     }
+  }, [isPlaying, exportState.isExporting]);
+
+  // --- Playback: rAF loop — voiceover path (audio element is master clock) ---
+  // Reads audioRef.current.currentTime on every animation frame (~16ms at 60fps).
+  // Replaces the 100ms setInterval, eliminating quantization drift (audit findings 9, 10).
+  // All values inside tick are read via stable refs or setters — no stale closure risk.
+  // segmentsRef not needed here: end-of-audio uses native audio.ended, not segmentsDuration.
+  useEffect(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    if (!isPlaying || !voiceover) return;
+
+    const tick = () => {
+      const audio = audioRef.current;
+      if (!audio) return;
+
+      const t = audio.currentTime;
+      setCurrentTime(t);
+
+      // Defensive resume: if audio stalled mid-playback for any reason, restart it.
+      // Guard with !audio.ended so a naturally-finished audio is not restarted here.
+      if (audio.paused && !audio.ended) {
+        audio.play().catch(() => {});
+      }
+
+      // End-of-audio detection via native HTMLMediaElement.ended flag.
+      if (audio.ended) {
+        setIsPlaying(false);
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        return; // do not schedule next frame
+      }
+
+      rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+  }, [isPlaying, voiceover]);
+
+  // --- Playback: setInterval manual-advance — no-voiceover path ---
+  // Only runs when isPlaying is true and no voiceover asset is loaded.
+  // No audio drift concern here; keeps globalPlaybackSpeed and segmentsDuration as before.
+  // (Decision 1 / Batch C: keep no-voiceover path as a separate setInterval, unchanged.)
+  useEffect(() => {
+    if (!isPlaying || voiceover) return;
+
+    const interval = setInterval(() => {
+      const segDur = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
+      const maxDuration = (!segDur || isNaN(segDur) || !isFinite(segDur)) ? 10 : segDur;
+      setCurrentTime(prev => {
+        const next = prev + 0.1 * globalPlaybackSpeed;
+        if (next >= maxDuration) {
+          setIsPlaying(false);
+          return 0;
+        }
+        return next;
+      });
+    }, 100);
+
     return () => clearInterval(interval);
-  }, [
-    isPlaying,                  // restart when play/pause toggles — the interval itself is gated on this
-    voiceover,                  // restart when voiceover presence changes — switches audio-master ↔ manual-advance mode
-    exportState.isExporting,    // restart so the pause-during-export branch always reads the current flag
-    globalPlaybackSpeed,        // restart so audioRef.current.playbackRate is set with the fresh speed value
-    // project.segments intentionally omitted — read via segmentsRef so that segment edits
-    // do not destroy and rebuild the interval (Finding 13 / Batch A).
-  ]);
+  }, [isPlaying, voiceover, globalPlaybackSpeed]);
+
+  // --- Playback: playbackRate sync ---
+  // Separate effect so neither loop gains globalPlaybackSpeed as a dep.
+  // Fires on play-start and whenever the user adjusts speed mid-playback.
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = globalPlaybackSpeed;
+    }
+  }, [isPlaying, globalPlaybackSpeed]);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -1190,14 +1223,9 @@ export default function App() {
 
       {/* Persistence Audio */}
       {voiceover && (
-        <audio 
-          ref={audioRef} 
-          src={voiceover.url} 
-          onTimeUpdate={() => {
-            if (isPlaying) {
-              setCurrentTime(audioRef.current?.currentTime || 0);
-            }
-          }}
+        <audio
+          ref={audioRef}
+          src={voiceover.url}
         />
       )}
 
