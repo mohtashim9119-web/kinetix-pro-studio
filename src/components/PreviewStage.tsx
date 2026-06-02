@@ -289,6 +289,22 @@ export function PreviewStage({
   // Suppress Framer Motion entry/exit animations while canvas is handling the transition.
   const suppressMotionAnim = transitionPreview.isActive;
 
+  // Stable ref callback for the video element — useCallback ensures this only fires
+  // on mount/unmount rather than on every render (which would happen with an inline
+  // arrow ref, causing a seek on every rAF tick at 60fps).
+  const videoRef = useCallback((el: HTMLVideoElement | null) => {
+    if (!el) return;
+    el.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
+    const segmentProgress = currentTime - (currentSegment?.startTime ?? 0);
+    const rawTime = (currentSegment?.trimStart || 0) + (segmentProgress * (currentSegment?.playbackSpeed || 1));
+    const videoTime = currentSegment?.trimEnd !== undefined
+      ? Math.min(rawTime, currentSegment.trimEnd)
+      : rawTime;
+    if (!isResizingRef.current && Math.abs(el.currentTime - videoTime) > 0.1) {
+      el.currentTime = videoTime;
+    }
+  }, [currentSegment, currentTime, globalPlaybackSpeed, isResizingRef]);
+
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
@@ -347,20 +363,7 @@ export function PreviewStage({
                           autoPlay
                           muted={currentSegment.isMuted}
                           playsInline
-                          ref={(el) => {
-                            if (el) {
-                              el.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
-                              const segmentProgress = currentTime - currentSegment.startTime;
-                              const rawTime = (currentSegment.trimStart || 0) + (segmentProgress * (currentSegment.playbackSpeed || 1));
-                              // undefined trimEnd = "play to end of media"
-                              const videoTime = currentSegment.trimEnd !== undefined
-                                ? Math.min(rawTime, currentSegment.trimEnd)
-                                : rawTime;
-                              if (!isResizingRef.current && Math.abs(el.currentTime - videoTime) > 0.1) {
-                                el.currentTime = videoTime;
-                              }
-                            }
-                          }}
+                          ref={videoRef}
                         />
                       );
                     }
