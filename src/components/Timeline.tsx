@@ -30,8 +30,6 @@ interface Props {
   onZoomChange: (zoom: number) => void;
   onSpeedChange: (speed: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
-  onResizeEnd: () => void;
-  onResizeMove: (x: number) => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onSetTrimmingSegment: (id: string | null) => void;
@@ -57,8 +55,6 @@ export function Timeline({
   onZoomChange,
   onSpeedChange,
   onResizeStart,
-  onResizeEnd,
-  onResizeMove,
   onSegmentUpdate,
   onOpenStockSearch,
   onSetTrimmingSegment,
@@ -216,21 +212,6 @@ export function Timeline({
           window.addEventListener('mouseup', handleMouseUp);
         }}
       >
-        {/* Resize overlay — captures mouse outside segment bounds */}
-        {resizingId && (
-          <div
-            className="fixed inset-0 z-[100] cursor-col-resize"
-            onMouseMove={(e) => {
-              const timeline = document.getElementById('timeline-scroll-area');
-              if (!timeline) return;
-              const rect = timeline.getBoundingClientRect();
-              const x = e.clientX - rect.left + timeline.scrollLeft - 24;
-              onResizeMove(x);
-            }}
-            onMouseUp={onResizeEnd}
-          />
-        )}
-
         {/* Time Ruler */}
         <div className="absolute top-4 left-6 right-6 h-4 border-b border-[#1A1A1A] flex items-end">
           {Array.from({ length: Math.ceil(segments.reduce((acc, s) => acc + s.duration, 0) || 30) + 1 }).map((_, i) => (
@@ -316,7 +297,7 @@ export function Timeline({
                       boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
                       zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
                     }}
-                    className={`rounded-lg border transition-all duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
+                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
                   >
                     {isAdjustingTrim && trimmingSegmentId === s.id && (
                       <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
@@ -326,9 +307,11 @@ export function Timeline({
 
                     <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
                       onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                      onClick={(e) => e.stopPropagation()}
                     />
                     <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
                       onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                      onClick={(e) => e.stopPropagation()}
                     />
 
                     <div className="flex-1 relative bg-black/50">
@@ -398,9 +381,11 @@ export function Timeline({
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="flex-1 flex items-center gap-0.5 opacity-20 group-hover:opacity-60 transition-opacity">
                     {Array.from({ length: Math.ceil(s.duration * 5) }).map((_, i) => (

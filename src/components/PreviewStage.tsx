@@ -100,6 +100,7 @@ interface Props {
   globalOverlayConfig: GlobalOverlayConfig;
   hideAllText: boolean;
   assets: Asset[];
+  isResizingRef: React.RefObject<boolean>;
   /** Called when the user drags an extra overlay to a new position. */
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
 }
@@ -114,6 +115,7 @@ export function PreviewStage({
   globalOverlayConfig,
   hideAllText,
   assets,
+  isResizingRef,
   onUpdateExtraOverlayPosition,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -287,6 +289,22 @@ export function PreviewStage({
   // Suppress Framer Motion entry/exit animations while canvas is handling the transition.
   const suppressMotionAnim = transitionPreview.isActive;
 
+  // Stable ref callback for the video element — useCallback ensures this only fires
+  // on mount/unmount rather than on every render (which would happen with an inline
+  // arrow ref, causing a seek on every rAF tick at 60fps).
+  const videoRef = useCallback((el: HTMLVideoElement | null) => {
+    if (!el) return;
+    el.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
+    const segmentProgress = currentTime - (currentSegment?.startTime ?? 0);
+    const rawTime = (currentSegment?.trimStart || 0) + (segmentProgress * (currentSegment?.playbackSpeed || 1));
+    const videoTime = currentSegment?.trimEnd !== undefined
+      ? Math.min(rawTime, currentSegment.trimEnd)
+      : rawTime;
+    if (!isResizingRef.current && Math.abs(el.currentTime - videoTime) > 0.1) {
+      el.currentTime = videoTime;
+    }
+  }, [currentSegment, currentTime, globalPlaybackSpeed, isResizingRef]);
+
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
       <div
@@ -345,20 +363,7 @@ export function PreviewStage({
                           autoPlay
                           muted={currentSegment.isMuted}
                           playsInline
-                          ref={(el) => {
-                            if (el) {
-                              el.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
-                              const segmentProgress = currentTime - currentSegment.startTime;
-                              const rawTime = (currentSegment.trimStart || 0) + (segmentProgress * (currentSegment.playbackSpeed || 1));
-                              // undefined trimEnd = "play to end of media"
-                              const videoTime = currentSegment.trimEnd !== undefined
-                                ? Math.min(rawTime, currentSegment.trimEnd)
-                                : rawTime;
-                              if (Math.abs(el.currentTime - videoTime) > 0.1) {
-                                el.currentTime = videoTime;
-                              }
-                            }
-                          }}
+                          ref={videoRef}
                         />
                       );
                     }
@@ -376,7 +381,33 @@ export function PreviewStage({
                     );
                   }
                   return (
-                    <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505] flex items-center justify-center p-20 text-center" />
+                    <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
+                                    flex items-center justify-center p-6 text-center">
+                      <div className="flex flex-col items-center gap-3 opacity-60">
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="w-10 h-10 text-yellow-400"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                          strokeWidth={1.5}
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0
+                               2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898
+                               0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+                          />
+                        </svg>
+                        <p className="text-yellow-400 text-sm font-medium">Missing asset</p>
+                        <p className="text-gray-500 text-xs">
+                          {currentSegment?.heading
+                            ? `Scene: ${currentSegment.heading}`
+                            : 'Upload or assign an asset to this segment'}
+                        </p>
+                      </div>
+                    </div>
                   );
                 })()}
               </motion.div>

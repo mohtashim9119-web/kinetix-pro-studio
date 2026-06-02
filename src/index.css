@@ -35,3 +35,11 @@ select:focus-visible,
   outline: 2px solid #F27D26;
   outline-offset: 2px;
 }
+
+/* Applied to <body> during a timeline segment resize drag so the col-resize cursor
+   covers the entire viewport even when the pointer moves outside the segment handle. */
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
