@@ -52,6 +52,8 @@ import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
+import { DropZonePanel } from './components/DropZonePanel';
+import { BottomDrawer } from './components/BottomDrawer';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
@@ -357,6 +359,8 @@ export default function App() {
     missingAssets: []
   });
   const [isSynced, setIsSynced] = useState(false);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
@@ -480,6 +484,22 @@ export default function App() {
     [],
   );
 
+  const handleToggleLock = useCallback((segmentId: string): void => {
+    setProject(prev => ({
+      ...prev,
+      segments: prev.segments.map(s =>
+        s.id === segmentId ? { ...s, locked: !s.locked } : s
+      ),
+    }));
+  }, []);
+
+  const handleUnlockAll = useCallback((): void => {
+    setProject(prev => ({
+      ...prev,
+      segments: prev.segments.map(s => ({ ...s, locked: false })),
+    }));
+  }, []);
+
   // Validation report
   const validationReport = useMemo(() => {
     const lines = project.script.split('\n');
@@ -585,21 +605,26 @@ export default function App() {
   const finalizeSync = async () => {
     setIsProcessing(true);
     const audioDuration = audioRef.current?.duration || 0;
-    const segments = await parseProjectData(project.script, project.sceneDetails, project.assets, audioDuration);
-    
-    // Ensure accurate start times
+    const newSegments = await parseProjectData(project.script, project.sceneDetails, project.assets, audioDuration);
+
+    // Locked segments (matched by order index) preserve their duration from the
+    // previous sync so manual timing adjustments survive a re-sync.
+    const prevByOrder = new Map(project.segments.map(s => [s.order, s]));
+
     let acc = 0;
-    const syncedSegments = segments.map(s => {
+    const syncedSegments = newSegments.map(s => {
+      const prev = prevByOrder.get(s.order);
+      const duration = prev?.locked ? prev.duration : s.duration;
       const start = acc;
-      acc += s.duration;
-      return { ...s, startTime: Number(start.toFixed(3)) };
+      acc += duration;
+      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
     });
 
     setProject(prev => ({ ...prev, segments: syncedSegments }));
     setIsSynced(true);
     setIsProcessing(false);
     setSyncStep(4);
-    setActiveTab('editor'); 
+    setActiveTab('editor');
   };
 
   /** '1080p' | '4k' */
@@ -610,6 +635,28 @@ export default function App() {
 
   const exportApi = useExport(project, exportResolution, exportFps);
   const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
+
+  const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
+    const id = crypto.randomUUID();
+    const url = URL.createObjectURL(file);
+    try {
+      await putAsset(id, file, { name: file.name, mimeType: file.type });
+    } catch (err) {
+      console.error('Failed to persist asset to IndexedDB, skipping:', file.name, err);
+      URL.revokeObjectURL(url);
+      return;
+    }
+    const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
+    setProject(prev => {
+      const newAssets = [...prev.assets, newAsset];
+      return {
+        ...prev,
+        assets: newAssets,
+        segments: autoMatchSegments(newAssets, prev.segments),
+        voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
+      };
+    });
+  }, []);
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -705,33 +752,33 @@ export default function App() {
       if (file.type.startsWith('video/')) detectedType = 'video';
       else if (file.type.startsWith('audio/')) detectedType = 'audio';
       else if (file.type.startsWith('image/')) detectedType = 'image';
-
-      const id = crypto.randomUUID();
-      const url = URL.createObjectURL(file);
-      try {
-        await putAsset(id, file, { name: file.name, mimeType: file.type });
-      } catch (err) {
-        console.error('Failed to persist asset to IndexedDB, skipping:', file.name, err);
-        URL.revokeObjectURL(url);
-        return;
-      }
-      const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
-      setProject(prev => {
-        const newAssets = [...prev.assets, newAsset];
-        return {
-          ...prev,
-          assets: newAssets,
-          segments: autoMatchSegments(newAssets, prev.segments),
-          voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
-        };
-      });
+      await processMediaFile(file, detectedType);
     }
   };
+
+  const handleDropFiles = useCallback(async (files: File[]): Promise<void> => {
+    for (const file of files) {
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+      if (ext === 'txt') {
+        const text = await file.text();
+        setProject(prev => ({ ...prev, sceneDetails: text }));
+      } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
+        await processMediaFile(file, 'audio');
+      } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+        await processMediaFile(file, 'image');
+      } else if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
+        await processMediaFile(file, 'video');
+      }
+    }
+  }, [processMediaFile]);
 
   const currentSegment = useMemo(() => {
     const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration);
     return seg || null;
   }, [currentTime, project.segments]);
+
+  const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
+  const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
 
   // Sync volatile values into refs on every render so the playback interval can
   // read them without those values appearing in the interval's dependency array.
@@ -896,7 +943,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden">
-      {/* Sidebar Navigation */}
+      {/* Sidebar Navigation — hidden in new UX, preserved for rollback */}
+      {false && (
       <nav className="w-16 border-right border-[#1A1A1A] flex flex-col items-center py-6 gap-8 bg-[#050505]">
         <div className="bg-[#F27D26] p-2 rounded-lg mb-4 shadow-[0_0_20px_rgba(242,125,38,0.3)]">
           <Video size={24} className="text-white" />
@@ -919,6 +967,7 @@ export default function App() {
           </button>
         ))}
       </nav>
+      )}
 
       {/* Workspace */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
@@ -945,6 +994,21 @@ export default function App() {
               </span>
             </div>
           </div>
+          {/* Status indicator — replaces SyncWizard in new UX */}
+          <div className="flex items-center gap-3">
+            <div className={`w-2 h-2 rounded-full ${isSynced ? 'bg-green-500' : 'bg-[#F27D26] animate-pulse'}`} />
+            <span className="text-[10px] uppercase tracking-widest text-gray-500">
+              {isSynced ? 'Timeline Ready' : 'Drop files to begin'}
+            </span>
+            <button
+              onClick={startExport}
+              className="ml-4 bg-white text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-white transition-all transform hover:scale-105 active:scale-95 shadow-xl"
+            >
+              Export
+            </button>
+          </div>
+          {/* SyncWizard — hidden in new UX, preserved for rollback */}
+          {false && (
           <SyncWizard
             syncStep={syncStep}
             syncValidation={syncValidation}
@@ -958,15 +1022,37 @@ export default function App() {
             onExport={startExport}
             onReviewMapping={() => setShowSyncDetails(true)}
           />
+          )}
         </header>
 
         <div className="flex-1 flex overflow-hidden">
-          {/* Left Panel */}
+          {/* Left Panel — new unified DropZonePanel */}
           <ErrorBoundary fallback={(err, reset) => (
-            <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
+            <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
               <PanelFallback label="Left panel" error={err} reset={reset} />
             </div>
           )}>
+          <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
+            <DropZonePanel
+              isSynced={isSynced}
+              segments={project.segments}
+              assets={project.assets}
+              voiceoverId={project.voiceoverId}
+              onDropFiles={handleDropFiles}
+              onApplySync={finalizeSync}
+              onReSync={finalizeSync}
+              onSegmentClick={(id) => setSelectedSegmentId(id)}
+              onToggleLock={handleToggleLock}
+              onUnlockAll={handleUnlockAll}
+              onAddFiles={() => { /* handled internally by DropZonePanel */ }}
+              selectedSegmentId={selectedSegmentId ?? undefined}
+              onOpenSettings={() => setShowSettings(true)}
+            />
+          </div>
+          </ErrorBoundary>
+
+          {/* Legacy left panel content — hidden in new UX, preserved for rollback */}
+          {false && (
           <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
             <div className="p-8 h-full flex flex-col">
               <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
@@ -1152,7 +1238,8 @@ export default function App() {
               </div>
             </div>
           </div>
-          </ErrorBoundary>
+          )} {/* end legacy left panel {false && */}
+
                 {/* Right Panel: Preview & Sequence */}
           <div className="flex-1 flex flex-col bg-[#020202] relative p-8 gap-8 overflow-hidden">
              {/* Main Stage */}
@@ -1248,6 +1335,46 @@ export default function App() {
                onSetAdjustingTrim={setIsAdjustingTrim}
              />
              </ErrorBoundary>
+
+             <BottomDrawer
+               segment={selectedSegment}
+               segmentIndex={selectedSegmentIndex}
+               assets={project.assets}
+               globalOverlayConfig={project.globalOverlayConfig}
+               onClose={() => setSelectedSegmentId(null)}
+               onUpdateSegment={updateSegment}
+               onUpdateSegmentOverlay={updateSegmentOverlay}
+               onUpdateExtraOverlay={updateExtraOverlay}
+               onSegmentDurationChange={(idx, val) => setProject(prev => {
+                 const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
+                 let acc = 0;
+                 return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
+               })}
+               onToggleOverlay={(idx) => setProject(prev => ({
+                 ...prev,
+                 segments: prev.segments.map((seg, i) =>
+                   i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
+                 ),
+               }))}
+               onSetOverlayPreset={(idx, preset) => setProject(prev => ({
+                 ...prev,
+                 segments: prev.segments.map((seg, i) => {
+                   if (i !== idx) return seg;
+                   const base = { ...prev.globalOverlayConfig };
+                   if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                   if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
+                   return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
+                 }),
+               }))}
+               onAddExtraOverlay={(idx) => setProject(prev => ({
+                 ...prev,
+                 segments: prev.segments.map((seg, i) =>
+                   i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                 ),
+               }))}
+               onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+               onToggleLock={handleToggleLock}
+             />
         </div>
       </div>
       </main>
@@ -1396,6 +1523,60 @@ export default function App() {
                 </div>
               </div>
             )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Settings Modal */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-2xl flex items-start justify-center p-12 overflow-y-auto"
+            onClick={(e) => { if (e.target === e.currentTarget) setShowSettings(false); }}
+          >
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              className="w-full max-w-2xl bg-[#080808] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl"
+            >
+              <div className="flex items-center justify-between px-8 py-6 border-b border-[#1A1A1A]">
+                <h2 className="text-sm font-black uppercase tracking-[0.2em] text-white">Settings</h2>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="p-2 rounded-xl hover:bg-white/5 transition-colors"
+                  aria-label="Close settings"
+                >
+                  <X size={18} className="text-gray-500" />
+                </button>
+              </div>
+              <div className="p-8">
+                <SettingsPanel
+                  project={project}
+                  onProjectChange={(updates) => setProject(p => ({ ...p, ...updates }))}
+                  onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
+                  onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
+                  onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
+                  onNewProject={handleNewProject}
+                  onExportScenesJson={() => {
+                    const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${project.name.replace(/\s+/g, '_')}_scenes.json`;
+                    a.click();
+                  }}
+                  onImportScenesJson={(e) => handleFileUpload(e, 'story')}
+                  exportResolution={exportResolution}
+                  onExportResolutionChange={setExportResolution}
+                  exportFps={exportFps}
+                  onExportFpsChange={setExportFps}
+                />
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
