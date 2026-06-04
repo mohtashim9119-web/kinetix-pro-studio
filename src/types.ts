@@ -185,3 +185,9 @@ export interface Project {
     fontFamily: string;
   };
 }
+
+export type TranscriptionStatus =
+  | { phase: 'idle' }
+  | { phase: 'transcribing'; percent: number; jobId: string }
+  | { phase: 'done'; jobId: string }
+  | { phase: 'error'; message: string; jobId: string };

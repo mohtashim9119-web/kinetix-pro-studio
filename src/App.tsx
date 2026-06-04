@@ -66,6 +66,9 @@ import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
+import { useWhisper } from './hooks/useWhisper';
+import { TranscriptionBar } from './components/TranscriptionBar';
+import { isTauri } from './services/tauriFfmpeg';
 
 interface RawSegment {
   text: string;
@@ -88,6 +91,16 @@ const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number>
     media.onerror = () => resolve(0);
   });
 };
+
+/** Returns audio duration with a 5 s timeout that falls back to 60 s. */
+const getAudioDuration = (url: string): Promise<number> =>
+  new Promise((resolve) => {
+    const audio = document.createElement('audio');
+    const timer = setTimeout(() => { audio.src = ''; resolve(60); }, 5000);
+    audio.onloadedmetadata = () => { clearTimeout(timer); resolve(audio.duration); };
+    audio.onerror = () => { clearTimeout(timer); resolve(60); };
+    audio.src = url;
+  });
 
 // Fuzzy matching helper
 
@@ -636,6 +649,8 @@ export default function App() {
   const exportApi = useExport(project, exportResolution, exportFps);
   const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
 
+  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError } = useWhisper();
+
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
     const id = crypto.randomUUID();
     const url = URL.createObjectURL(file);
@@ -656,7 +671,13 @@ export default function App() {
         voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
       };
     });
-  }, []);
+    if (detectedType === 'audio' && isTauri()) {
+      const duration = await getAudioDuration(url);
+      startTranscription(newAsset, duration, segmentsRef.current, (updated) => {
+        setProject(prev => ({ ...prev, segments: updated }));
+      });
+    }
+  }, [startTranscription]);
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -971,6 +992,11 @@ export default function App() {
 
       {/* Workspace */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        <TranscriptionBar
+          status={transcriptionStatus}
+          onCancel={cancelTranscription}
+          onDismiss={dismissError}
+        />
         {/* Header */}
         <header className="h-16 border-bottom border-[#1A1A1A] px-8 flex items-center justify-between bg-[#0A0A0A]">
           <div className="flex items-center gap-6">
