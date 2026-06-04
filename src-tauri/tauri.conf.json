@@ -35,7 +35,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/ffmpeg"],
+    "externalBin": ["binaries/ffmpeg", "binaries/whisper"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

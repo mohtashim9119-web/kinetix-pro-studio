@@ -106,3 +106,37 @@ Both binaries are GPL-licensed (include libx264). Acceptable for internal use.
 Before public SaaS launch, swap for LGPL-only builds (e.g. OpenH264 for H.264
 encode, or a commercial x264 license) — see deferred SaaS readiness items in
 CLAUDE.md.
+
+---
+
+## Whisper CLI Binaries
+
+The whisper-cli binaries are gitignored. Re-provision by building from source:
+
+### macOS (Intel x86_64)
+
+```sh
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper-cpp
+cd /tmp/whisper-cpp
+cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=OFF
+cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
+cp build-static/bin/whisper-cli src-tauri/binaries/whisper-x86_64-apple-darwin
+chmod +x src-tauri/binaries/whisper-x86_64-apple-darwin
+```
+
+### macOS (Apple Silicon arm64)
+
+Same as above but add `-DCMAKE_OSX_ARCHITECTURES=arm64` to the cmake configure step.
+Output: `src-tauri/binaries/whisper-aarch64-apple-darwin`
+
+### Windows
+
+```powershell
+git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
+cd C:\whisper-cpp
+cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=OFF -DGGML_CUDA=OFF
+cmake --build build-static --config Release --target whisper-cli
+copy build-static\bin\Release\whisper-cli.exe src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe
+```
+
+Model file: see `src-tauri/models/README.md`
