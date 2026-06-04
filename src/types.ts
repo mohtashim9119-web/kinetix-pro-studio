@@ -162,6 +162,7 @@ export interface VideoSegment {
   trimStart?: number;
   trimEnd?: number;
   isMuted?: boolean;
+  locked?: boolean; // true = manual adjustment applied; re-sync skips this segment
   sourceDuration?: number;
 }
 
