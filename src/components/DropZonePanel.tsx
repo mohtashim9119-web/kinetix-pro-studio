@@ -16,6 +16,7 @@ import {
   Image as ImageIcon,
   Video,
   AlertCircle,
+  Archive,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
@@ -23,6 +24,7 @@ interface FileSummary {
   sceneDoc: string | null;
   voiceover: string | null;
   assetCount: number;
+  zipCount: number;
   unmatchedCount: number;
   canSync: boolean;
   rawFiles: File[];
@@ -71,6 +73,7 @@ export function DropZonePanel({
     let sceneDoc: string | null = null;
     let voiceover: string | null = null;
     let assetCount = 0;
+    let zipCount = 0;
 
     for (const file of files) {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -80,6 +83,8 @@ export function DropZonePanel({
         voiceover = file.name;
       } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
         assetCount++;
+      } else if (ext === 'zip') {
+        zipCount++;
       }
     }
 
@@ -87,8 +92,9 @@ export function DropZonePanel({
       sceneDoc,
       voiceover,
       assetCount,
+      zipCount,
       unmatchedCount: 0,
-      canSync: !!(sceneDoc || voiceover || assetCount > 0),
+      canSync: !!(sceneDoc || voiceover || assetCount > 0 || zipCount > 0),
       rawFiles: files,
     };
   };
@@ -167,6 +173,15 @@ export function DropZonePanel({
                   ? <span className="text-yellow-500 ml-auto">⚠ {fileSummary.unmatchedCount} unmatched</span>
                   : <span className="text-green-500 ml-auto">✓ all matched</span>
                 }
+              </div>
+            )}
+            {fileSummary.zipCount > 0 && (
+              <div className="flex items-center gap-2 text-xs">
+                <Archive size={12} className="text-indigo-400" />
+                <span className="text-gray-300 truncate flex-1">
+                  {fileSummary.zipCount} zip {fileSummary.zipCount === 1 ? 'archive' : 'archives'}
+                </span>
+                <span className="text-green-500 ml-auto">✓</span>
               </div>
             )}
             <button

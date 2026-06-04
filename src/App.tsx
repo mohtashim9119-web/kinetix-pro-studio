@@ -679,10 +679,8 @@ export default function App() {
     }
   }, [startTranscription]);
 
-  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
+  /** Core zip-extraction logic shared by handleZipUpload and handleDropFiles. */
+  const processZipFile = useCallback(async (file: File): Promise<void> => {
     setIsProcessing(true);
     try {
       let JSZip: typeof import('jszip');
@@ -690,13 +688,12 @@ export default function App() {
         ({ default: JSZip } = await import('jszip'));
       } catch (loadErr) {
         console.error('Failed to load jszip:', loadErr);
-        setIsProcessing(false);
         return;
       }
       const zip = new JSZip();
       const content = await zip.loadAsync(file);
       const newAssets: Asset[] = [];
-      
+
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
         if (!fileData || fileData.dir) return;
@@ -721,7 +718,7 @@ export default function App() {
           file: new File([blob], filename),
         });
       });
-      
+
       await Promise.all(filePromises);
       setProject(prev => {
         const allAssets = [...prev.assets, ...newAssets];
@@ -737,6 +734,12 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
+  }, []);
+
+  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processZipFile(file);
   };
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
@@ -789,9 +792,11 @@ export default function App() {
         await processMediaFile(file, 'image');
       } else if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
         await processMediaFile(file, 'video');
+      } else if (ext === 'zip') {
+        await processZipFile(file);
       }
     }
-  }, [processMediaFile]);
+  }, [processMediaFile, processZipFile]);
 
   const currentSegment = useMemo(() => {
     const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration);

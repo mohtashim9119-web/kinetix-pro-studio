@@ -21,13 +21,13 @@ type WhisperEvent =
 // ---------------------------------------------------------------------------
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const uint8 = new Uint8Array(buffer);
-  const CHUNK = 32768;
-  let b64 = '';
-  for (let i = 0; i < uint8.length; i += CHUNK) {
-    b64 += btoa(String.fromCharCode(...uint8.subarray(i, i + CHUNK)));
+  const bytes = new Uint8Array(buffer);
+  const CHUNK = 3 * 4096; // 12288 — multiple of 3, safe boundary
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
   }
-  return b64;
+  return btoa(binary);
 }
 
 function parseTimestamp(ts: string): number {
