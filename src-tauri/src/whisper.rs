@@ -9,21 +9,18 @@ use uuid::Uuid;
 /// In development: resolves relative to the executable in target/debug/.
 /// In production: resolves relative to the app bundle resources.
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    // Try app resource directory first (production bundle)
     if let Ok(resource_dir) = app.path().resource_dir() {
         let model = resource_dir.join("models").join("ggml-base.en.bin");
         if model.exists() {
             return Ok(model);
         }
     }
-    // Fallback: relative to executable (dev mode)
     let exe = std::env::current_exe()
         .map_err(|e| format!("cannot get exe path: {e}"))?;
     let dev_model = exe
-        .parent().unwrap_or(&exe)
-        .parent().unwrap_or(&exe)
-        .parent().unwrap_or(&exe)
-        .join("src-tauri")
+        .parent().unwrap_or(&exe)   // target/debug/
+        .parent().unwrap_or(&exe)   // target/
+        .parent().unwrap_or(&exe)   // src-tauri/
         .join("models")
         .join("ggml-base.en.bin");
     if dev_model.exists() {
