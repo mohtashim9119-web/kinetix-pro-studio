@@ -46,6 +46,7 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
+import { stripRtfIfNeeded } from './services/textUtils';
 import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
@@ -105,25 +106,6 @@ const getAudioDuration = (url: string): Promise<number> =>
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
-
-/**
- * Strips RTF control codes from text read from a .rtf file.
- * RTF files start with "{\rtf". When that prefix is detected, all backslash
- * control words, curly-brace groups, and remaining braces are removed,
- * leaving only the plain prose / bracket tags the user typed.
- *
- * Regex breakdown:
- *   \{[^{}]*\}   — remove { ... } groups with no nested braces (e.g. colour tables)
- *   \\[a-z]+\d*\s?  — remove RTF control words like \rtf1, \ansi, \par, \pard
- *   [{}]         — remove any remaining stray braces
- */
-function stripRtfIfNeeded(text: string): string {
-  if (!text.startsWith('{\\rtf')) return text;
-  return text
-    .replace(/\{[^{}]*\}|\\[a-z]+\d*\s?|[{}]/g, ' ')
-    .replace(/\s{2,}/g, '\n')
-    .trim();
-}
 
 /**
  * Persists a single media file to IndexedDB and returns a fully-formed Asset,
@@ -751,6 +733,10 @@ export default function App() {
       ? stripRtfIfNeeded(await staged.sceneFile.file.text())
       : project.sceneDetails;
 
+    // Debug: verify RTF stripping and block count before parse
+    console.log('[sync debug] sceneText preview:', sceneText.slice(0, 500));
+    console.log('[sync debug] block count:', sceneText.split(/\r?\n\r?\n/).filter(b => b.trim()).length);
+
     // 2. Persist media files without touching React state.
     //    allAssets starts with existing assets so dedup checks are against the
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
@@ -847,6 +833,19 @@ export default function App() {
         ),
       };
     });
+  }, []);
+
+  const handleDeleteAllAssets = useCallback(() => {
+    assetsRef.current.forEach(a => URL.revokeObjectURL(a.url));
+    Promise.all(assetsRef.current.map(a => deleteAsset(a.id))).catch(err =>
+      console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
+    );
+    setProject(prev => ({
+      ...prev,
+      assets: [],
+      voiceoverId: undefined,
+      segments: prev.segments.map(s => ({ ...s, assetId: undefined })),
+    }));
   }, []);
 
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
@@ -1279,6 +1278,7 @@ export default function App() {
               onScriptChange={(text) => setProject(p => ({ ...p, script: text }))}
               onSceneDetailsChange={(text) => setProject(p => ({ ...p, sceneDetails: text }))}
               onDeleteAsset={handleDeleteAsset}
+              onDeleteAllAssets={handleDeleteAllAssets}
               onDropFiles={handleDropFiles}
               onApplySync={handleApplySyncFromFiles}
               onReSync={finalizeSync}

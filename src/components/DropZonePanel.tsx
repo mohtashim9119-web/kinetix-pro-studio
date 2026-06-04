@@ -23,6 +23,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
+import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -53,55 +54,6 @@ const EMPTY_STAGED: StagedFiles = {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function classifyFile(file: File): 'script' | 'scene' | 'voiceover' | 'asset' | 'zip' {
-  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'txt') {
-    const lower = file.name.toLowerCase();
-    return lower.includes('scene') || lower.includes('detail') || lower.includes('visual')
-      ? 'scene'
-      : 'script';
-  }
-  if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) return 'voiceover';
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm', 'm4v'].includes(ext))
-    return 'asset';
-  if (ext === 'zip') return 'zip';
-  return 'asset';
-}
-
-function mergeIntoStaged(base: StagedFiles, files: File[]): StagedFiles {
-  let { scriptFile, sceneFile, voiceoverFile } = base;
-  const assetFiles = [...base.assetFiles];
-  const zipFiles = [...base.zipFiles];
-
-  for (const file of files) {
-    const key = crypto.randomUUID();
-    const kind = classifyFile(file);
-    switch (kind) {
-      case 'script':
-        if (!scriptFile) { scriptFile = { file, key }; break; }
-        if (!sceneFile) { sceneFile = { file, key }; break; }
-        assetFiles.push({ file, key }); // overflow
-        break;
-      case 'scene':
-        if (!sceneFile) { sceneFile = { file, key }; break; }
-        if (!scriptFile) { scriptFile = { file, key }; break; }
-        assetFiles.push({ file, key }); // overflow
-        break;
-      case 'voiceover':
-        voiceoverFile = { file, key }; // last wins
-        break;
-      case 'asset':
-        assetFiles.push({ file, key });
-        break;
-      case 'zip':
-        zipFiles.push({ file, key });
-        break;
-    }
-  }
-
-  return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
-}
-
 function hasStagedFiles(s: StagedFiles): boolean {
   return !!(
     s.scriptFile ||
@@ -122,51 +74,86 @@ const formatTime = (seconds: number) => {
   return `${m}:${s}`;
 };
 
-// A single labelled file-slot row used in pre-sync view
+// A single labelled file-slot row used in pre-sync view.
+// Supports both browse-click and drag-and-drop directly onto the slot.
 interface SlotRowProps {
   icon: React.ReactNode;
   label: string;
+  subtitle: string;
   accept: string;
   stagedFile: StagedFile | null;
-  onFile: (file: File) => void;
+  onFile: (file: File) => void;        // from browse input
+  onDropFiles: (files: File[]) => void; // from drag-and-drop onto slot
   onDelete: () => void;
   color?: string;
 }
-function SlotRow({ icon, label, accept, stagedFile, onFile, onDelete, color = 'text-gray-500' }: SlotRowProps) {
+function SlotRow({
+  icon,
+  label,
+  subtitle,
+  accept,
+  stagedFile,
+  onFile,
+  onDropFiles,
+  onDelete,
+  color = 'text-gray-500',
+}: SlotRowProps) {
   const ref = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-[#1A1A1A] bg-[#0A0A0A] px-3 py-2">
-      <span className={`flex-shrink-0 ${color}`}>{icon}</span>
-      <span className={`text-[10px] font-bold uppercase tracking-widest w-24 flex-shrink-0 ${color}`}>{label}</span>
-      {stagedFile ? (
-        <>
-          <span className="flex-1 text-[10px] text-gray-300 truncate">{stagedFile.file.name}</span>
-          <button
-            onClick={onDelete}
-            aria-label={`Remove ${label} file`}
-            className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-500 transition-colors"
-          >
-            <Trash2 size={11} />
-          </button>
-        </>
-      ) : (
-        <>
-          <span className="flex-1 text-[10px] text-gray-600 italic">No file</span>
-          <button
-            onClick={() => ref.current?.click()}
-            className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600 hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
-          >
-            Browse
-          </button>
-          <input
-            ref={ref}
-            type="file"
-            accept={accept}
-            className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) { onFile(f); e.target.value = ''; } }}
-          />
-        </>
-      )}
+    <div
+      className={`flex flex-col gap-1 rounded-xl border px-3 py-2 transition-colors
+                  ${isDragOver ? 'border-[#F27D26]/60 bg-[#F27D26]/5' : 'border-[#1A1A1A] bg-[#0A0A0A]'}`}
+      onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setIsDragOver(false);
+        onDropFiles(Array.from(e.dataTransfer.files));
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <span className={`flex-shrink-0 ${color}`}>{icon}</span>
+        <div className="flex-1 min-w-0">
+          <span className={`text-[10px] font-bold uppercase tracking-widest ${color}`}>{label}</span>
+          {!stagedFile && (
+            <p className="text-[9px] text-gray-600">{subtitle}</p>
+          )}
+        </div>
+        {stagedFile ? (
+          <>
+            <span className="text-[10px] text-gray-300 truncate max-w-[120px]">{stagedFile.file.name}</span>
+            <button
+              onClick={onDelete}
+              aria-label={`Remove ${label} file`}
+              className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-500 transition-colors"
+            >
+              <Trash2 size={11} />
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              onClick={() => ref.current?.click()}
+              className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600
+                         hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
+            >
+              Browse
+            </button>
+            <input
+              ref={ref}
+              type="file"
+              accept={accept}
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) { onFile(f); e.target.value = ''; }
+              }}
+            />
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -187,6 +174,7 @@ interface Props {
   onSceneDetailsChange: (text: string) => void;
   // Asset management
   onDeleteAsset: (assetId: string) => void;
+  onDeleteAllAssets: () => void;
   // File actions
   onApplySync: (staged: StagedFiles) => void; // atomic: files + sync
   onDropFiles: (files: File[]) => void;        // post-sync add-more
@@ -215,6 +203,7 @@ export function DropZonePanel({
   onScriptChange,
   onSceneDetailsChange,
   onDeleteAsset,
+  onDeleteAllAssets,
   onApplySync,
   onDropFiles,
   onReSync,
@@ -229,8 +218,100 @@ export function DropZonePanel({
   const dropZoneRef = useRef<HTMLInputElement>(null);
   const addAssetsRef = useRef<HTMLInputElement>(null);
 
-  const addFiles = (files: File[]) =>
-    setStaged(prev => mergeIntoStaged(prev, files));
+  /**
+   * Adds files to staged state with content-based text classification.
+   * For .txt/.rtf files, reads content and strips RTF before deciding
+   * whether the file belongs in the Script slot or Scene Details slot.
+   *
+   * forceSlot: when the user drags directly onto a specific labelled slot,
+   * skip content detection and assign to that slot unconditionally.
+   */
+  const addFiles = async (
+    files: File[],
+    forceSlot?: 'script' | 'scene',
+  ): Promise<void> => {
+    type TextEntry = {
+      file: File;
+      key: string;
+      role: 'script' | 'sceneDetails' | 'forced_script' | 'forced_scene';
+    };
+
+    const textEntries: TextEntry[] = [];
+    const voiceoverEntries: { file: File; key: string }[] = [];
+    const assetEntries: { file: File; key: string }[] = [];
+    const zipEntries: { file: File; key: string }[] = [];
+
+    for (const file of files) {
+      const key = crypto.randomUUID();
+      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+      if (ext === 'txt' || ext === 'rtf') {
+        if (forceSlot) {
+          textEntries.push({
+            file,
+            key,
+            role: forceSlot === 'script' ? 'forced_script' : 'forced_scene',
+          });
+        } else {
+          const raw = await file.text();
+          const stripped = stripRtfIfNeeded(raw);
+          const role = detectTextFileRole(stripped);
+          textEntries.push({ file, key, role });
+        }
+      } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
+        voiceoverEntries.push({ file, key });
+      } else if (ext === 'zip') {
+        zipEntries.push({ file, key });
+      } else {
+        assetEntries.push({ file, key });
+      }
+    }
+
+    // Apply changes to staged state using functional updater so concurrent
+    // calls from other event sources don't lose each other's updates.
+    setStaged(prev => {
+      let { scriptFile, sceneFile, voiceoverFile } = prev;
+      const assetFiles = [...prev.assetFiles];
+      const zipFiles = [...prev.zipFiles];
+
+      // Voiceover: last wins (smart replace)
+      for (const v of voiceoverEntries) {
+        voiceoverFile = { file: v.file, key: v.key };
+      }
+
+      // Assets/zips: accumulate
+      for (const a of assetEntries) assetFiles.push({ file: a.file, key: a.key });
+      for (const z of zipEntries) zipFiles.push({ file: z.file, key: z.key });
+
+      // Text files: forced assignments first, then content-detected.
+      // For content-detected: sceneDetails → sceneFile, script → scriptFile.
+      // When multiple files compete for the same slot, the second one fills
+      // the other slot (fallback). Always smart-replace existing files.
+      let pendingScript: TextEntry | null = null;
+      let pendingScene: TextEntry | null = null;
+
+      for (const tf of textEntries) {
+        if (tf.role === 'forced_script') {
+          scriptFile = { file: tf.file, key: tf.key };
+        } else if (tf.role === 'forced_scene') {
+          sceneFile = { file: tf.file, key: tf.key };
+        } else if (tf.role === 'sceneDetails') {
+          if (!pendingScene) pendingScene = tf;
+          else if (!pendingScript) pendingScript = tf; // overflow → script
+        } else {
+          // 'script'
+          if (!pendingScript) pendingScript = tf;
+          else if (!pendingScene) pendingScene = tf; // overflow → scene
+        }
+      }
+
+      // Smart replace: always assign even if slot already had a file
+      if (pendingScript) scriptFile = { file: pendingScript.file, key: pendingScript.key };
+      if (pendingScene) sceneFile = { file: pendingScene.file, key: pendingScene.key };
+
+      return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
+    });
+  };
 
   const removeSlot = (slot: 'script' | 'scene' | 'voiceover') =>
     setStaged(prev => ({ ...prev, [`${slot}File`]: null }));
@@ -265,7 +346,7 @@ export function DropZonePanel({
                      hover:border-[#F27D26]/50 transition-all cursor-pointer bg-[#050505]
                      min-h-[90px]"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); }}
+          onDrop={(e) => { e.preventDefault(); void addFiles(Array.from(e.dataTransfer.files)); }}
           onClick={() => dropZoneRef.current?.click()}
         >
           <Upload size={20} className="text-[#F27D26]" />
@@ -277,36 +358,45 @@ export function DropZonePanel({
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+            onChange={(e) => { void addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
           />
         </div>
 
         {/* File slots */}
         <div className="space-y-1.5">
+          {/* Script slot */}
           <SlotRow
             icon={<FileText size={12} />}
             label="Script"
-            accept=".txt"
+            subtitle="Plain text voiceover script"
+            accept=".txt,.rtf"
             stagedFile={staged.scriptFile}
-            onFile={(f) => setStaged(prev => ({ ...prev, scriptFile: { file: f, key: crypto.randomUUID() } }))}
+            onFile={(f) => void addFiles([f], 'script')}
+            onDropFiles={(files) => void addFiles(files, 'script')}
             onDelete={() => removeSlot('script')}
             color="text-blue-400"
           />
+          {/* Scene Details slot */}
           <SlotRow
             icon={<FileCode size={12} />}
             label="Scene Details"
-            accept=".txt"
+            subtitle="File with [IMAGE:] tags"
+            accept=".txt,.rtf"
             stagedFile={staged.sceneFile}
-            onFile={(f) => setStaged(prev => ({ ...prev, sceneFile: { file: f, key: crypto.randomUUID() } }))}
+            onFile={(f) => void addFiles([f], 'scene')}
+            onDropFiles={(files) => void addFiles(files, 'scene')}
             onDelete={() => removeSlot('scene')}
             color="text-cyan-400"
           />
+          {/* Voiceover slot */}
           <SlotRow
             icon={<Music size={12} />}
             label="Voiceover"
+            subtitle="MP3, WAV, M4A, or OGG"
             accept="audio/*"
             stagedFile={staged.voiceoverFile}
-            onFile={(f) => setStaged(prev => ({ ...prev, voiceoverFile: { file: f, key: crypto.randomUUID() } }))}
+            onFile={(f) => void addFiles([f])}
+            onDropFiles={(files) => void addFiles(files)}
             onDelete={() => removeSlot('voiceover')}
             color="text-[#F27D26]"
           />
@@ -328,7 +418,7 @@ export function DropZonePanel({
                 multiple
                 accept="image/*,video/*,.zip"
                 className="hidden"
-                onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+                onChange={(e) => { void addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
               />
             </div>
             {allStagedAssets.length === 0 && (
@@ -462,20 +552,32 @@ export function DropZonePanel({
 
         {/* ── Assets section ── */}
         <div className="border-t border-[#1A1A1A]">
-          <button
-            onClick={() => setShowAssets(p => !p)}
-            className="w-full flex items-center gap-2 px-5 py-3 hover:bg-[#0F0F0F] transition-colors"
-          >
-            {showAssets
-              ? <ChevronDown size={12} className="text-gray-500" />
-              : <ChevronRight size={12} className="text-gray-500" />
-            }
-            <ImageIcon size={12} className="text-purple-400" />
-            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
-              Assets
-            </span>
-            <span className="text-[9px] text-gray-600 ml-1">({assets.length})</span>
-          </button>
+          <div className="flex items-center">
+            <button
+              onClick={() => setShowAssets(p => !p)}
+              className="flex-1 flex items-center gap-2 px-5 py-3 hover:bg-[#0F0F0F] transition-colors"
+            >
+              {showAssets
+                ? <ChevronDown size={12} className="text-gray-500" />
+                : <ChevronRight size={12} className="text-gray-500" />
+              }
+              <ImageIcon size={12} className="text-purple-400" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                Assets
+              </span>
+              <span className="text-[9px] text-gray-600 ml-1">({assets.length})</span>
+            </button>
+            {assets.length > 0 && (
+              <button
+                onClick={onDeleteAllAssets}
+                title="Delete all assets"
+                className="px-3 py-3 text-[9px] uppercase tracking-widest text-red-700
+                           hover:text-red-400 transition-colors flex-shrink-0"
+              >
+                Delete All
+              </button>
+            )}
+          </div>
           {showAssets && (
             <div className="px-4 pb-3 space-y-1">
               {assets.length === 0 && (
