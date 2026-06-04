@@ -60,6 +60,27 @@ jobs:
           cp /tmp/ffmpeg-arm64/ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
           chmod +x src-tauri/binaries/ffmpeg-aarch64-apple-darwin
 
+      - name: Provision whisper sidecar (macOS arm64)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p src-tauri/binaries src-tauri/models
+          # Build whisper-cli from source (static, no Metal, arm64)
+          brew install cmake
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper-cpp
+          cd /tmp/whisper-cpp
+          cmake -B build-static \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_METAL=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=arm64
+          cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
+          cp build-static/bin/whisper-cli \
+            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
+          chmod +x \
+            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
+          # Download base.en model
+          curl -L -o "$GITHUB_WORKSPACE/src-tauri/models/ggml-base.en.bin" \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+
       - name: Provision ffmpeg sidecar (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -69,6 +90,28 @@ jobs:
           Expand-Archive -Path "$env:TEMP\ffmpeg-win.zip" -DestinationPath "$env:TEMP\ffmpeg-windows" -Force
           $ffmpegExe = Get-ChildItem -Path "$env:TEMP\ffmpeg-windows" -Filter "ffmpeg.exe" -Recurse | Select-Object -First 1
           Copy-Item -Path $ffmpegExe.FullName -Destination "src-tauri/binaries/ffmpeg-x86_64-pc-windows-msvc.exe"
+
+      - name: Provision whisper sidecar (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          New-Item -ItemType Directory -Force -Path src-tauri/models | Out-Null
+          # Build whisper-cli from source (static, no GPU, Windows)
+          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
+          cd C:\whisper-cpp
+          cmake -B build-static `
+            -DBUILD_SHARED_LIBS=OFF `
+            -DGGML_VULKAN=OFF `
+            -DGGML_CUDA=OFF
+          cmake --build build-static --config Release --target whisper-cli
+          Copy-Item -Path "C:\whisper-cpp\build-static\bin\Release\whisper-cli.exe" `
+            -Destination "$env:GITHUB_WORKSPACE\src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe"
+          # Download base.en model
+          Invoke-WebRequest `
+            -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" `
+            -OutFile "$env:GITHUB_WORKSPACE\src-tauri\models\ggml-base.en.bin"
 
       - name: Build Tauri app
         run: npm run tauri:build -- --target ${{ matrix.target }}

@@ -10,6 +10,7 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "Kinetix Pro Studio",
@@ -35,7 +36,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "externalBin": ["binaries/ffmpeg"],
+    "externalBin": ["binaries/ffmpeg", "binaries/whisper"],
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }

@@ -1,4 +1,5 @@
 mod ffmpeg;
+mod whisper;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +23,7 @@ pub fn run() {
             ffmpeg::ffmpeg_exec,
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::save_bytes_to_disk,
+            whisper::whisper_transcribe,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

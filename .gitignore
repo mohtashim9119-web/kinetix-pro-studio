@@ -12,3 +12,7 @@ kinetix-video-studio.zip
 
 # Tauri sidecar binaries — built locally, not committed (large, platform-specific)
 src-tauri/binaries/ffmpeg-*
+src-tauri/binaries/whisper-*
+
+# Whisper model files — too large for git (141 MB+); see src-tauri/models/README.md
+src-tauri/models/*.bin

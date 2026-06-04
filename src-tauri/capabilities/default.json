@@ -9,7 +9,10 @@
     "core:default",
     {
       "identifier": "shell:allow-execute",
-      "allow": [{ "name": "ffmpeg", "sidecar": true }]
+      "allow": [
+        { "name": "ffmpeg", "sidecar": true },
+        { "name": "whisper", "sidecar": true }
+      ]
     }
   ]
 }
