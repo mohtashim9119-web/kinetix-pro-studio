@@ -35,9 +35,7 @@
 
 ## Current Sprint
 
-Batch E complete. Branch `phase-7-sync-fixes` ready for merge to main.
-Next: decide Task 2 (persistence layer project-id scoping) vs Task 3
-(video plays when timeline paused) as the next Phase 7 task.
+Task 9b-0 complete. Next: 9b-1 — whisper.cpp sidecar + Rust IPC + CI binaries.
 
 ---
 
@@ -63,11 +61,12 @@ Next: decide Task 2 (persistence layer project-id scoping) vs Task 3
 
 6. **Per-project save location + post-export popup** ⬜ — Persist export path per project. "Open / Open folder" popup after export via `tauri-plugin-opener` or shell open.
 
-7. **Merge inputs into one upload area** ⬜ — Unified drop zone; auto-classify by file type. UX design pass first to decide fate of 3-step wizard.
+7. **Merge inputs into one upload area** ✅ — Unified drop zone; auto-classify by file type. UX design pass first to decide fate of 3-step wizard. Completed as part of Task 9b-0 (commit `4ed6a04`).
 
 8. **More stock footage APIs** ⬜ — Add Coverr, Mixkit, Videvo adapters alongside Pexels/Pixabay in `stockService.ts`. Keys remain client-side (internal use).
 
 9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
+   - **9b-0 — UX foundation (drop zone + bottom drawer)** ✅ — Unified drop zone + mapping list (DropZonePanel), slide-up BottomDrawer, VideoSegment.locked with order-index re-sync preservation. SyncWizard and sidebar nav hidden (preserved). Commit `4ed6a04`, merged to main 2026-06-04.
 
 ### Export-rendering implementation
 
@@ -262,6 +261,7 @@ Phase 3 steps:
 ## Long-running Deferred Items
 
 - **`usePlayback` hook extraction** — Playback interval + audio sync still inline in App.tsx. Pure refactor, no behavior change. Worth doing before adding more playback features.
+- **Segment lock order-index matching** — if scenes are added/removed between re-syncs, locked segments may match wrong positions since matching is by order index which shifts. Acceptable for now; revisit when scene management UI is added.
 - **SaaS-readiness cluster** — Three items that must ship together for public launch: backend API proxy for Pexels/Pixabay keys; auth layer; swap GPL ffmpeg sidecar (libx264) for LGPL-only build (OpenH264 or commercial x264 license). Do not pick off individually.
 - **Phase 4 Test 5 deeper trigger validation** — `asset_missing` error path verified by code review; deeper trigger validation deferred. Low value.
 - ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
@@ -366,6 +366,7 @@ Phase 3 steps:
 | 2026-06-02 | **Phase 7 Batch B commit 3 — `7a4e737`.** Segment width updates instantly during drag (audit Q6). `transition-all duration-300` on segment div replaced with `transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300` — excludes `width` so drag updates are synchronous; intentional aesthetic animations (trim-mode fade, active-segment highlight) preserved. |
 | 2026-06-02 | **Phase 7 Batch C commit 1 — `e961110`.** `setInterval` playback replaced with rAF + audio master clock (findings 9, 10). Four focused effects: pause `[isPlaying, exportState.isExporting]`; rAF loop `[isPlaying, voiceover]` reading `audio.currentTime` every frame (~16ms); no-voiceover `setInterval` `[isPlaying, voiceover, globalPlaybackSpeed]` (unchanged); playbackRate sync `[isPlaying, globalPlaybackSpeed]`. `onTimeUpdate` handler removed — rAF loop is sole writer of `setCurrentTime`. `audio.ended` used for end-of-audio detection; defensive `.play()` guard carried into tick with `!audio.ended` guard. |
 | 2026-06-02 | **Phase 7 Batch C commit 2 — `e8869d9`.** Block stray click on resize handles from seeking segment (Batch B regression). After Commit 2 removed the overlay div, native browser `click` events could bubble from a resize handle through to the segment div's `onClick` handler, triggering `onSeek(s.startTime)` and jumping playback backwards. Fixed by adding `onClick={e => e.stopPropagation()}` to all four resize handle divs (two visual track, two audio track). |
+| 2026-06-04 | **Task 9b-0 commit `4ed6a04`.** Unified drop zone + bottom drawer segment editor. Replaced 4-tab left panel with 2-state DropZonePanel (pre-sync drop zone / post-sync mapping list with lock icons). Added BottomDrawer slide-up segment editor (editor fields copied verbatim from SegmentEditorPanel). Added `VideoSegment.locked` field; `finalizeSync` preserves locked durations by order-index match during re-sync. Extracted `processMediaFile` helper (eliminates as-any synthetic event casts). SyncWizard and sidebar nav hidden via `{false && ...}` (code preserved). Settings accessible via modal overlay gated on `showSettings` state. tsc/lint/build clean; 439.90 kB / 134.58 kB gzip. Branch `task-9b-0-unified-ux` merged to main. |
 
 ---
 
