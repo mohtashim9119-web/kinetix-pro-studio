@@ -12,39 +12,109 @@ import {
   Unlock,
   Plus,
   FileText,
+  FileCode,
   Music,
   Image as ImageIcon,
   Video,
   AlertCircle,
   Archive,
+  Trash2,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
-interface FileSummary {
-  sceneDoc: string | null;
-  voiceover: string | null;
-  assetCount: number;
-  zipCount: number;
-  unmatchedCount: number;
-  canSync: boolean;
-  rawFiles: File[];
+// ---------------------------------------------------------------------------
+// Exported types (consumed by App.tsx)
+// ---------------------------------------------------------------------------
+
+export interface StagedFile {
+  file: File;
+  key: string; // stable React key, generated on staging
 }
 
-interface Props {
-  isSynced: boolean;
-  segments: VideoSegment[];
-  assets: Asset[];
-  voiceoverId: string | undefined;
-  onDropFiles: (files: File[]) => void;
-  onApplySync: () => void;
-  onReSync: () => void;
-  onSegmentClick: (segmentId: string) => void;
-  onToggleLock: (segmentId: string) => void;
-  onUnlockAll: () => void;
-  onAddFiles: () => void;
-  selectedSegmentId: string | undefined;
-  onOpenSettings: () => void;
+export interface StagedFiles {
+  scriptFile: StagedFile | null;
+  sceneFile: StagedFile | null;
+  voiceoverFile: StagedFile | null;
+  assetFiles: StagedFile[]; // images + videos
+  zipFiles: StagedFile[];
 }
+
+const EMPTY_STAGED: StagedFiles = {
+  scriptFile: null,
+  sceneFile: null,
+  voiceoverFile: null,
+  assetFiles: [],
+  zipFiles: [],
+};
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function classifyFile(file: File): 'script' | 'scene' | 'voiceover' | 'asset' | 'zip' {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'txt') {
+    const lower = file.name.toLowerCase();
+    return lower.includes('scene') || lower.includes('detail') || lower.includes('visual')
+      ? 'scene'
+      : 'script';
+  }
+  if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) return 'voiceover';
+  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm', 'm4v'].includes(ext))
+    return 'asset';
+  if (ext === 'zip') return 'zip';
+  return 'asset';
+}
+
+function mergeIntoStaged(base: StagedFiles, files: File[]): StagedFiles {
+  let { scriptFile, sceneFile, voiceoverFile } = base;
+  const assetFiles = [...base.assetFiles];
+  const zipFiles = [...base.zipFiles];
+
+  for (const file of files) {
+    const key = crypto.randomUUID();
+    const kind = classifyFile(file);
+    switch (kind) {
+      case 'script':
+        if (!scriptFile) { scriptFile = { file, key }; break; }
+        if (!sceneFile) { sceneFile = { file, key }; break; }
+        assetFiles.push({ file, key }); // overflow
+        break;
+      case 'scene':
+        if (!sceneFile) { sceneFile = { file, key }; break; }
+        if (!scriptFile) { scriptFile = { file, key }; break; }
+        assetFiles.push({ file, key }); // overflow
+        break;
+      case 'voiceover':
+        voiceoverFile = { file, key }; // last wins
+        break;
+      case 'asset':
+        assetFiles.push({ file, key });
+        break;
+      case 'zip':
+        zipFiles.push({ file, key });
+        break;
+    }
+  }
+
+  return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
+}
+
+function hasStagedFiles(s: StagedFiles): boolean {
+  return !!(
+    s.scriptFile ||
+    s.sceneFile ||
+    s.voiceoverFile ||
+    s.assetFiles.length > 0 ||
+    s.zipFiles.length > 0
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
 
 const formatTime = (seconds: number) => {
   const m = Math.floor(seconds / 60).toString().padStart(2, '0');
@@ -52,12 +122,101 @@ const formatTime = (seconds: number) => {
   return `${m}:${s}`;
 };
 
+// A single labelled file-slot row used in pre-sync view
+interface SlotRowProps {
+  icon: React.ReactNode;
+  label: string;
+  accept: string;
+  stagedFile: StagedFile | null;
+  onFile: (file: File) => void;
+  onDelete: () => void;
+  color?: string;
+}
+function SlotRow({ icon, label, accept, stagedFile, onFile, onDelete, color = 'text-gray-500' }: SlotRowProps) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-2 rounded-xl border border-[#1A1A1A] bg-[#0A0A0A] px-3 py-2">
+      <span className={`flex-shrink-0 ${color}`}>{icon}</span>
+      <span className={`text-[10px] font-bold uppercase tracking-widest w-24 flex-shrink-0 ${color}`}>{label}</span>
+      {stagedFile ? (
+        <>
+          <span className="flex-1 text-[10px] text-gray-300 truncate">{stagedFile.file.name}</span>
+          <button
+            onClick={onDelete}
+            aria-label={`Remove ${label} file`}
+            className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-500 transition-colors"
+          >
+            <Trash2 size={11} />
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="flex-1 text-[10px] text-gray-600 italic">No file</span>
+          <button
+            onClick={() => ref.current?.click()}
+            className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600 hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
+          >
+            Browse
+          </button>
+          <input
+            ref={ref}
+            type="file"
+            accept={accept}
+            className="hidden"
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) { onFile(f); e.target.value = ''; } }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Props
+// ---------------------------------------------------------------------------
+
+interface Props {
+  isSynced: boolean;
+  segments: VideoSegment[];
+  assets: Asset[];
+  voiceoverId: string | undefined;
+  // Text content (for editing after sync)
+  script: string;
+  sceneDetails: string;
+  onScriptChange: (text: string) => void;
+  onSceneDetailsChange: (text: string) => void;
+  // Asset management
+  onDeleteAsset: (assetId: string) => void;
+  // File actions
+  onApplySync: (staged: StagedFiles) => void; // atomic: files + sync
+  onDropFiles: (files: File[]) => void;        // post-sync add-more
+  onReSync: () => void;
+  // Segment actions
+  onSegmentClick: (segmentId: string) => void;
+  onToggleLock: (segmentId: string) => void;
+  onUnlockAll: () => void;
+  // Misc
+  onAddFiles?: () => void; // kept for compat, unused
+  selectedSegmentId: string | undefined;
+  onOpenSettings: () => void;
+}
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
 export function DropZonePanel({
   isSynced,
   segments,
   assets,
-  onDropFiles,
+  voiceoverId,
+  script,
+  sceneDetails,
+  onScriptChange,
+  onSceneDetailsChange,
+  onDeleteAsset,
   onApplySync,
+  onDropFiles,
   onReSync,
   onSegmentClick,
   onToggleLock,
@@ -65,136 +224,152 @@ export function DropZonePanel({
   selectedSegmentId,
   onOpenSettings,
 }: Props) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const addFilesRef = useRef<HTMLInputElement>(null);
-  const [fileSummary, setFileSummary] = useState<FileSummary | null>(null);
+  // ── Pre-sync: staged file state ──────────────────────────────────────────
+  const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
+  const dropZoneRef = useRef<HTMLInputElement>(null);
+  const addAssetsRef = useRef<HTMLInputElement>(null);
 
-  const computeSummary = (files: File[]): FileSummary => {
-    let sceneDoc: string | null = null;
-    let voiceover: string | null = null;
-    let assetCount = 0;
-    let zipCount = 0;
+  const addFiles = (files: File[]) =>
+    setStaged(prev => mergeIntoStaged(prev, files));
 
-    for (const file of files) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-      if (ext === 'txt') {
-        sceneDoc = file.name;
-      } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
-        voiceover = file.name;
-      } else if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
-        assetCount++;
-      } else if (ext === 'zip') {
-        zipCount++;
-      }
-    }
+  const removeSlot = (slot: 'script' | 'scene' | 'voiceover') =>
+    setStaged(prev => ({ ...prev, [`${slot}File`]: null }));
 
-    return {
-      sceneDoc,
-      voiceover,
-      assetCount,
-      zipCount,
-      unmatchedCount: 0,
-      canSync: !!(sceneDoc || voiceover || assetCount > 0 || zipCount > 0),
-      rawFiles: files,
-    };
-  };
-
-  const handleFiles = (files: File[]) => {
-    if (files.length === 0) return;
-    setFileSummary(computeSummary(files));
-  };
+  const removeStagedAsset = (key: string) =>
+    setStaged(prev => ({
+      ...prev,
+      assetFiles: prev.assetFiles.filter(f => f.key !== key),
+      zipFiles: prev.zipFiles.filter(f => f.key !== key),
+    }));
 
   const handleApplySync = () => {
-    if (!fileSummary) return;
-    onDropFiles(fileSummary.rawFiles);
-    onApplySync();
-    setFileSummary(null);
+    onApplySync(staged);
+    setStaged(EMPTY_STAGED);
   };
 
-  // ── Pre-sync state: unified drop zone ──────────────────────────────────────
+  // ── Post-sync: expandable section state ──────────────────────────────────
+  const [showAssets, setShowAssets] = useState(false);
+  const [showScript, setShowScript] = useState(false);
+  const [showScene, setShowScene] = useState(false);
+  const addFilesRef = useRef<HTMLInputElement>(null);
+
+  // ── PRE-SYNC VIEW ─────────────────────────────────────────────────────────
   if (!isSynced) {
+    const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
     return (
-      <div className="flex flex-col h-full p-6 gap-6">
+      <div className="flex flex-col h-full p-4 gap-3 overflow-y-auto custom-scrollbar">
+        {/* Drop zone */}
         <div
-          className="flex-1 border-2 border-dashed border-[#1A1A1A] rounded-3xl
-                      flex flex-col items-center justify-center gap-4 p-8
-                      hover:border-[#F27D26]/50 transition-all cursor-pointer
-                      bg-[#050505]"
+          className="border-2 border-dashed border-[#1A1A1A] rounded-2xl p-6
+                     flex flex-col items-center justify-center gap-2
+                     hover:border-[#F27D26]/50 transition-all cursor-pointer bg-[#050505]
+                     min-h-[90px]"
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault();
-            handleFiles(Array.from(e.dataTransfer.files));
-          }}
-          onClick={() => fileInputRef.current?.click()}
+          onDrop={(e) => { e.preventDefault(); addFiles(Array.from(e.dataTransfer.files)); }}
+          onClick={() => dropZoneRef.current?.click()}
         >
-          <div className="w-16 h-16 rounded-2xl bg-[#0A0A0A] border border-[#1A1A1A]
-                          flex items-center justify-center">
-            <Upload size={24} className="text-[#F27D26]" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-bold text-white mb-1">Drop your files here</p>
-            <p className="text-[10px] text-gray-600 uppercase tracking-widest">
-              Scene doc · Voiceover · Images · Videos
-            </p>
-          </div>
+          <Upload size={20} className="text-[#F27D26]" />
+          <p className="text-[10px] text-gray-600 uppercase tracking-widest text-center">
+            Drop all files here, or use slots below
+          </p>
           <input
-            ref={fileInputRef}
+            ref={dropZoneRef}
             type="file"
             multiple
             className="hidden"
-            onChange={(e) => handleFiles(Array.from(e.target.files || []))}
+            onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
           />
         </div>
 
-        {fileSummary && (
-          <div className="bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl p-4 space-y-2">
-            <p className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-3">
-              Files Ready
-            </p>
-            {fileSummary.sceneDoc && (
-              <div className="flex items-center gap-2 text-xs">
-                <FileText size={12} className="text-blue-400" />
-                <span className="text-gray-300 truncate flex-1">{fileSummary.sceneDoc}</span>
-                <span className="text-green-500 ml-auto">✓</span>
-              </div>
+        {/* File slots */}
+        <div className="space-y-1.5">
+          <SlotRow
+            icon={<FileText size={12} />}
+            label="Script"
+            accept=".txt"
+            stagedFile={staged.scriptFile}
+            onFile={(f) => setStaged(prev => ({ ...prev, scriptFile: { file: f, key: crypto.randomUUID() } }))}
+            onDelete={() => removeSlot('script')}
+            color="text-blue-400"
+          />
+          <SlotRow
+            icon={<FileCode size={12} />}
+            label="Scene Details"
+            accept=".txt"
+            stagedFile={staged.sceneFile}
+            onFile={(f) => setStaged(prev => ({ ...prev, sceneFile: { file: f, key: crypto.randomUUID() } }))}
+            onDelete={() => removeSlot('scene')}
+            color="text-cyan-400"
+          />
+          <SlotRow
+            icon={<Music size={12} />}
+            label="Voiceover"
+            accept="audio/*"
+            stagedFile={staged.voiceoverFile}
+            onFile={(f) => setStaged(prev => ({ ...prev, voiceoverFile: { file: f, key: crypto.randomUUID() } }))}
+            onDelete={() => removeSlot('voiceover')}
+            color="text-[#F27D26]"
+          />
+
+          {/* Assets slot */}
+          <div className="rounded-xl border border-[#1A1A1A] bg-[#0A0A0A] px-3 py-2 space-y-1">
+            <div className="flex items-center gap-2">
+              <ImageIcon size={12} className="text-purple-400 flex-shrink-0" />
+              <span className="text-[10px] font-bold uppercase tracking-widest text-purple-400 w-24 flex-shrink-0">Assets</span>
+              <button
+                onClick={() => addAssetsRef.current?.click()}
+                className="ml-auto text-[9px] uppercase tracking-widest text-gray-600 hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
+              >
+                + Add
+              </button>
+              <input
+                ref={addAssetsRef}
+                type="file"
+                multiple
+                accept="image/*,video/*,.zip"
+                className="hidden"
+                onChange={(e) => { addFiles(Array.from(e.target.files || [])); e.target.value = ''; }}
+              />
+            </div>
+            {allStagedAssets.length === 0 && (
+              <p className="text-[10px] text-gray-600 italic pl-1">No files</p>
             )}
-            {fileSummary.voiceover && (
-              <div className="flex items-center gap-2 text-xs">
-                <Music size={12} className="text-[#F27D26]" />
-                <span className="text-gray-300 truncate flex-1">{fileSummary.voiceover}</span>
-                <span className="text-green-500 ml-auto">✓</span>
-              </div>
-            )}
-            {fileSummary.assetCount > 0 && (
-              <div className="flex items-center gap-2 text-xs">
-                <ImageIcon size={12} className="text-purple-400" />
-                <span className="text-gray-300">{fileSummary.assetCount} assets</span>
-                {fileSummary.unmatchedCount > 0
-                  ? <span className="text-yellow-500 ml-auto">⚠ {fileSummary.unmatchedCount} unmatched</span>
-                  : <span className="text-green-500 ml-auto">✓ all matched</span>
-                }
-              </div>
-            )}
-            {fileSummary.zipCount > 0 && (
-              <div className="flex items-center gap-2 text-xs">
-                <Archive size={12} className="text-indigo-400" />
-                <span className="text-gray-300 truncate flex-1">
-                  {fileSummary.zipCount} zip {fileSummary.zipCount === 1 ? 'archive' : 'archives'}
-                </span>
-                <span className="text-green-500 ml-auto">✓</span>
-              </div>
-            )}
-            <button
-              onClick={(e) => { e.stopPropagation(); handleApplySync(); }}
-              disabled={!fileSummary.canSync}
-              className="w-full mt-3 py-3 rounded-xl bg-[#F27D26] text-black text-xs
-                         font-black uppercase tracking-widest hover:bg-[#FF9D46]
-                         transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-            >
-              Apply Sync
-            </button>
+            {allStagedAssets.map((sf) => {
+              const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
+              const isZip = ext === 'zip';
+              const isVideo = ['mp4', 'mov', 'webm', 'm4v'].includes(ext);
+              return (
+                <div key={sf.key} className="flex items-center gap-2">
+                  {isZip
+                    ? <Archive size={10} className="text-indigo-400 flex-shrink-0" />
+                    : isVideo
+                    ? <Video size={10} className="text-blue-400 flex-shrink-0" />
+                    : <ImageIcon size={10} className="text-purple-400 flex-shrink-0" />
+                  }
+                  <span className="flex-1 text-[10px] text-gray-300 truncate">{sf.file.name}</span>
+                  <button
+                    onClick={() => removeStagedAsset(sf.key)}
+                    aria-label={`Remove ${sf.file.name}`}
+                    className="flex-shrink-0 p-0.5 rounded hover:bg-red-900/40 text-red-500 transition-colors"
+                  >
+                    <Trash2 size={10} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
-        )}
+        </div>
+
+        {/* Apply Sync */}
+        <button
+          onClick={handleApplySync}
+          disabled={!hasStagedFiles(staged)}
+          className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
+                     font-black uppercase tracking-widest hover:bg-[#FF9D46]
+                     transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          Apply Sync
+        </button>
 
         <button
           onClick={onOpenSettings}
@@ -207,10 +382,11 @@ export function DropZonePanel({
     );
   }
 
-  // ── Post-sync state: segment mapping list ──────────────────────────────────
+  // ── POST-SYNC VIEW ────────────────────────────────────────────────────────
   return (
     <div className="flex flex-col h-full">
-      <div className="flex items-center justify-between px-6 py-4 border-b border-[#1A1A1A]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b border-[#1A1A1A] flex-shrink-0">
         <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
           {segments.length} Segments
         </span>
@@ -231,59 +407,166 @@ export function DropZonePanel({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-4 py-2 space-y-1">
-        {segments.map((seg) => {
-          const asset = assets.find(a => a.id === seg.assetId);
-          const isSelected = seg.id === selectedSegmentId;
-          const isMissing = !asset && !!(seg.text || seg.heading);
-          return (
-            <div
-              key={seg.id}
-              onClick={() => onSegmentClick(seg.id)}
-              className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
-                          transition-all border
-                          ${isSelected
-                            ? 'bg-[#F27D26]/10 border-[#F27D26]/30'
-                            : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
-                          }`}
-            >
-              <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
-                              bg-[#1A1A1A] flex items-center justify-center">
-                {asset?.url && asset.type === 'image'
-                  ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                  : asset?.type === 'video'
-                  ? <Video size={14} className="text-blue-400" />
-                  : isMissing
-                  ? <AlertCircle size={14} className="text-yellow-500" />
-                  : <div className="w-full h-full bg-[#1A1A1A]" />
-                }
-              </div>
-
-              <div className="flex-1 min-w-0">
-                <p className="text-[10px] font-bold text-white truncate">
-                  {seg.heading || asset?.name || `Scene ${seg.order + 1}`}
-                </p>
-                <p className="text-[9px] text-gray-600 font-mono">
-                  {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
-                </p>
-              </div>
-
-              <button
-                onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
-                className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
-                aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        {/* Segment list */}
+        <div className="px-4 py-2 space-y-1">
+          {segments.map((seg) => {
+            const asset = assets.find(a => a.id === seg.assetId);
+            const isSelected = seg.id === selectedSegmentId;
+            const isMissing = !asset && !!(seg.text || seg.heading);
+            return (
+              <div
+                key={seg.id}
+                onClick={() => onSegmentClick(seg.id)}
+                className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
+                            transition-all border
+                            ${isSelected
+                              ? 'bg-[#F27D26]/10 border-[#F27D26]/30'
+                              : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
+                            }`}
               >
-                {seg.locked
-                  ? <Lock size={12} className="text-[#F27D26]" />
-                  : <Unlock size={12} className="text-gray-600" />
-                }
-              </button>
+                <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
+                                bg-[#1A1A1A] flex items-center justify-center">
+                  {asset?.url && asset.type === 'image'
+                    ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                    : asset?.type === 'video'
+                    ? <Video size={14} className="text-blue-400" />
+                    : isMissing
+                    ? <AlertCircle size={14} className="text-yellow-500" />
+                    : <div className="w-full h-full bg-[#1A1A1A]" />
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-[10px] font-bold text-white truncate">
+                    {seg.heading || asset?.name || `Scene ${seg.order + 1}`}
+                  </p>
+                  <p className="text-[9px] text-gray-600 font-mono">
+                    {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
+                  </p>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
+                  className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
+                  aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
+                >
+                  {seg.locked
+                    ? <Lock size={12} className="text-[#F27D26]" />
+                    : <Unlock size={12} className="text-gray-600" />
+                  }
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* ── Assets section ── */}
+        <div className="border-t border-[#1A1A1A]">
+          <button
+            onClick={() => setShowAssets(p => !p)}
+            className="w-full flex items-center gap-2 px-5 py-3 hover:bg-[#0F0F0F] transition-colors"
+          >
+            {showAssets
+              ? <ChevronDown size={12} className="text-gray-500" />
+              : <ChevronRight size={12} className="text-gray-500" />
+            }
+            <ImageIcon size={12} className="text-purple-400" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              Assets
+            </span>
+            <span className="text-[9px] text-gray-600 ml-1">({assets.length})</span>
+          </button>
+          {showAssets && (
+            <div className="px-4 pb-3 space-y-1">
+              {assets.length === 0 && (
+                <p className="text-[10px] text-gray-600 italic px-1">No assets loaded</p>
+              )}
+              {assets.map((asset) => (
+                <div key={asset.id} className="flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-[#0F0F0F]">
+                  {asset.type === 'audio'
+                    ? <Music size={11} className="text-[#F27D26] flex-shrink-0" />
+                    : asset.type === 'video'
+                    ? <Video size={11} className="text-blue-400 flex-shrink-0" />
+                    : <ImageIcon size={11} className="text-purple-400 flex-shrink-0" />
+                  }
+                  <span className="flex-1 text-[10px] text-gray-300 truncate">{asset.name}</span>
+                  {asset.id === voiceoverId && (
+                    <span className="text-[8px] uppercase text-[#F27D26] font-bold">VO</span>
+                  )}
+                  <button
+                    onClick={() => onDeleteAsset(asset.id)}
+                    aria-label={`Delete ${asset.name}`}
+                    className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-600 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              ))}
             </div>
-          );
-        })}
+          )}
+        </div>
+
+        {/* ── Script editor ── */}
+        <div className="border-t border-[#1A1A1A]">
+          <button
+            onClick={() => setShowScript(p => !p)}
+            className="w-full flex items-center gap-2 px-5 py-3 hover:bg-[#0F0F0F] transition-colors"
+          >
+            {showScript
+              ? <ChevronDown size={12} className="text-gray-500" />
+              : <ChevronRight size={12} className="text-gray-500" />
+            }
+            <FileText size={12} className="text-blue-400" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              Script
+            </span>
+          </button>
+          {showScript && (
+            <div className="px-4 pb-3">
+              <textarea
+                value={script}
+                onChange={(e) => onScriptChange(e.target.value)}
+                className="w-full h-28 bg-[#050505] border border-[#1A1A1A] rounded-xl p-3
+                           text-[11px] leading-relaxed outline-none focus:border-blue-500/40
+                           transition-all resize-none font-mono text-gray-300"
+                placeholder="Voiceover script…"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* ── Scene Details editor ── */}
+        <div className="border-t border-[#1A1A1A]">
+          <button
+            onClick={() => setShowScene(p => !p)}
+            className="w-full flex items-center gap-2 px-5 py-3 hover:bg-[#0F0F0F] transition-colors"
+          >
+            {showScene
+              ? <ChevronDown size={12} className="text-gray-500" />
+              : <ChevronRight size={12} className="text-gray-500" />
+            }
+            <FileCode size={12} className="text-cyan-400" />
+            <span className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+              Scene Details
+            </span>
+          </button>
+          {showScene && (
+            <div className="px-4 pb-3">
+              <textarea
+                value={sceneDetails}
+                onChange={(e) => onSceneDetailsChange(e.target.value)}
+                className="w-full h-28 bg-[#050505] border border-[#1A1A1A] rounded-xl p-3
+                           text-[11px] leading-relaxed outline-none focus:border-cyan-500/40
+                           transition-all resize-none font-mono text-gray-300"
+                placeholder="[IMAGE: hero.jpg]&#10;[HEADING: Intro]&#10;…"
+              />
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="px-6 py-4 border-t border-[#1A1A1A] flex items-center justify-between">
+      {/* Footer */}
+      <div className="px-6 py-4 border-t border-[#1A1A1A] flex items-center justify-between flex-shrink-0">
         <button
           onClick={() => addFilesRef.current?.click()}
           className="text-[9px] uppercase tracking-widest text-gray-600
@@ -298,7 +581,7 @@ export function DropZonePanel({
           className="hidden"
           onChange={(e) => {
             const files = Array.from(e.target.files || []);
-            if (files.length > 0) onDropFiles(files);
+            if (files.length > 0) { onDropFiles(files); e.target.value = ''; }
           }}
         />
         <button
