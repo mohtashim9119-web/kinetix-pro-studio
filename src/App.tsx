@@ -107,6 +107,25 @@ const getAudioDuration = (url: string): Promise<number> =>
 // ---------------------------------------------------------------------------
 
 /**
+ * Strips RTF control codes from text read from a .rtf file.
+ * RTF files start with "{\rtf". When that prefix is detected, all backslash
+ * control words, curly-brace groups, and remaining braces are removed,
+ * leaving only the plain prose / bracket tags the user typed.
+ *
+ * Regex breakdown:
+ *   \{[^{}]*\}   — remove { ... } groups with no nested braces (e.g. colour tables)
+ *   \\[a-z]+\d*\s?  — remove RTF control words like \rtf1, \ansi, \par, \pard
+ *   [{}]         — remove any remaining stray braces
+ */
+function stripRtfIfNeeded(text: string): string {
+  if (!text.startsWith('{\\rtf')) return text;
+  return text
+    .replace(/\{[^{}]*\}|\\[a-z]+\d*\s?|[{}]/g, ' ')
+    .replace(/\s{2,}/g, '\n')
+    .trim();
+}
+
+/**
  * Persists a single media file to IndexedDB and returns a fully-formed Asset,
  * or null if the write fails. Does NOT call setProject.
  */
@@ -447,6 +466,9 @@ export default function App() {
   // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
   // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
   const segmentsRef = useRef<VideoSegment[]>(project.segments);
+  // Ref that mirrors project.assets so useCallback([]) closures can read the
+  // latest asset list without project.assets appearing in their dep arrays.
+  const assetsRef = useRef<Asset[]>(project.assets);
   // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
   const rafRef = useRef<number | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
@@ -501,6 +523,8 @@ export default function App() {
         segments: rehydratedSegments,
         voiceoverId: rehydratedVoiceoverId,
       });
+      // Restore sync state — if saved segments exist the user had already synced.
+      if (rehydratedSegments.length > 0) setIsSynced(true);
       setIsHydrating(false);
     })();
   }, []);
@@ -719,42 +743,49 @@ export default function App() {
   const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<void> => {
     setIsProcessing(true);
 
-    // 1. Read text files
+    // 1. Read text files — strip RTF markup if the file is an .rtf document
     const scriptText = staged.scriptFile
-      ? await staged.scriptFile.file.text()
+      ? stripRtfIfNeeded(await staged.scriptFile.file.text())
       : project.script;
     const sceneText = staged.sceneFile
-      ? await staged.sceneFile.file.text()
+      ? stripRtfIfNeeded(await staged.sceneFile.file.text())
       : project.sceneDetails;
 
-    // 2. Persist media files without touching React state
-    const newAssets: Asset[] = [];
+    // 2. Persist media files without touching React state.
+    //    allAssets starts with existing assets so dedup checks are against the
+    //    full accumulated list (prevents duplicating on re-upload or re-sync).
+    const allAssets: Asset[] = [...project.assets];
     let newVoiceoverId = project.voiceoverId;
 
     if (staged.voiceoverFile) {
-      const asset = await persistFileToAsset(staged.voiceoverFile.file, 'audio');
-      if (asset) {
-        newAssets.push(asset);
-        newVoiceoverId = asset.id;
+      if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
+        const asset = await persistFileToAsset(staged.voiceoverFile.file, 'audio');
+        if (asset) {
+          allAssets.push(asset);
+          newVoiceoverId = asset.id;
+        }
       }
     }
     for (const sf of staged.assetFiles) {
+      if (allAssets.some(a => a.name === sf.file.name)) continue;
       const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
       const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
       const asset = await persistFileToAsset(sf.file, type);
-      if (asset) newAssets.push(asset);
+      if (asset) allAssets.push(asset);
     }
     for (const sf of staged.zipFiles) {
       const extracted = await extractZipToAssets(sf.file);
-      newAssets.push(...extracted);
-      const audioFromZip = extracted.find(a => a.type === 'audio');
-      if (audioFromZip) newVoiceoverId = audioFromZip.id;
+      for (const asset of extracted) {
+        if (allAssets.some(a => a.name === asset.name)) {
+          URL.revokeObjectURL(asset.url); // won't be used — clean up
+          continue;
+        }
+        allAssets.push(asset);
+        if (asset.type === 'audio') newVoiceoverId = asset.id;
+      }
     }
 
-    // 3. Combine with existing assets
-    const allAssets = [...project.assets, ...newAssets];
-
-    // 4. Get audio duration from the voiceover asset we just created (or existing)
+    // 3. Get audio duration from the voiceover asset we just created (or existing)
     const voiceoverAsset = allAssets.find(a => a.id === newVoiceoverId);
     let audioDuration = audioRef.current?.duration || 0;
     if (voiceoverAsset && (!audioRef.current || audioRef.current.src !== voiceoverAsset.url)) {
@@ -819,6 +850,8 @@ export default function App() {
   }, []);
 
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
+    // Skip if an asset with the same filename already exists
+    if (assetsRef.current.some(a => a.name === file.name)) return;
     const id = crypto.randomUUID();
     const url = URL.createObjectURL(file);
     try {
@@ -864,13 +897,15 @@ export default function App() {
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
         if (!fileData || fileData.dir) return;
+        const name = filename.split('/').pop() || filename;
+        // Skip files whose name already exists in the current asset list
+        if (assetsRef.current.some(a => a.name === name)) return;
         const blob = await fileData.async('blob');
         let type: Asset['type'] = 'image';
         if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
         else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
 
         const id = crypto.randomUUID();
-        const name = filename.split('/').pop() || filename;
         try {
           await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
         } catch (err) {
@@ -888,7 +923,9 @@ export default function App() {
 
       await Promise.all(filePromises);
       setProject(prev => {
-        const allAssets = [...prev.assets, ...newAssets];
+        // Final dedup against the latest project state (catches concurrent adds)
+        const dedupedNew = newAssets.filter(na => !prev.assets.some(a => a.name === na.name));
+        const allAssets = [...prev.assets, ...dedupedNew];
         return {
           ...prev,
           assets: allAssets,
@@ -979,6 +1016,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     segmentsRef.current = project.segments;
+    assetsRef.current = project.assets;
   });
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
