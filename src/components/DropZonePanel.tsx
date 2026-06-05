@@ -268,9 +268,20 @@ export function DropZonePanel({
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
+  // Ref that mirrors staged synchronously — used by handleApplySync so that
+  // React batching cannot cause it to read a stale pre-update value.
+  const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
   const topZoneInputRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
+
+  const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
+    setStaged(prev => {
+      const next = updater(prev);
+      stagedRef.current = next;
+      return next;
+    });
+  };
 
   // `script` retained for compatibility; Apply Sync no longer gates on it.
   void script;
@@ -330,7 +341,7 @@ export function DropZonePanel({
       }
     }
 
-    setStaged(prev => {
+    updateStaged(prev => {
       let { scriptFile, sceneFile, voiceoverFile } = prev;
       const assetFiles = [...prev.assetFiles];
       const zipFiles = [...prev.zipFiles];
@@ -368,14 +379,13 @@ export function DropZonePanel({
   };
 
   const removeSlot = (slot: 'script' | 'scene' | 'voiceover') =>
-    setStaged(prev => ({ ...prev, [`${slot}File`]: null }));
+    updateStaged(prev => ({ ...prev, [`${slot}File`]: null }));
 
   const clearAllStagedAssets = () =>
-    setStaged(prev => ({ ...prev, assetFiles: [], zipFiles: [] }));
+    updateStaged(prev => ({ ...prev, assetFiles: [], zipFiles: [] }));
 
   const handleApplySync = () => {
-    const snapshot = { ...staged };
-    onApplySync(snapshot);
+    onApplySync(stagedRef.current);
     // Do NOT reset staged — slots keep showing their files after sync.
     // User can clear individually with × buttons.
   };
