@@ -22,6 +22,15 @@ export function stripRtfIfNeeded(text: string): string {
 
   let s = text;
 
+  // PROTECT bracket tags before any {} removal
+  // Replace [IMAGE:...], [VIDEO:...], [AUDIO:...] with
+  // placeholders so Step 1 cannot delete them
+  const bracketTags: string[] = [];
+  s = s.replace(/\[(IMAGE|VIDEO|AUDIO):[^\]]*\]/gi, (match) => {
+    bracketTags.push(match);
+    return `__BRACKET_${bracketTags.length - 1}__`;
+  });
+
   // Step 1: iteratively remove innermost {} groups
   let prev = '';
   while (prev !== s) {
@@ -57,7 +66,11 @@ export function stripRtfIfNeeded(text: string): string {
   // Step 10: max 2 consecutive newlines
   s = s.replace(/\n{3,}/g, '\n\n');
 
-  // Step 11: filter blocks
+  // RESTORE bracket tags from placeholders
+  s = s.replace(/__BRACKET_(\d+)__/g, (_, i) =>
+    bracketTags[parseInt(i, 10)] ?? '');
+
+  // Step 11: filter blocks — keep only those with content
   const blocks = s.split('\n\n');
   const cleaned = blocks
     .map((b: string) => b.trim())

@@ -317,6 +317,7 @@ export function DropZonePanel({
         // Top drop-zone path: content detection picks script vs scene.
         const raw = await file.text();
         const stripped = stripRtfIfNeeded(raw);
+        console.log('[strip test] bracket count after strip:', (stripped.match(/\[(IMAGE|VIDEO):/gi) ?? []).length, 'in file:', file.name);
         const role = detectTextFileRole(stripped);
         console.log('[addFiles] role detected:', role, 'for file:', file.name);
         textEntries.push({ file, key, role });
