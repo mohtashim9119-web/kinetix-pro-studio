@@ -862,15 +862,13 @@ export default function App() {
     }
     const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
 
-    // When replacing with a new audio file, evict the existing voiceover asset
-    // so the assets list doesn't accumulate orphaned audio entries.
+    // When replacing with a new audio file, evict the existing audio asset so
+    // the assets list never accumulates more than one voiceover entry.
     if (detectedType === 'audio') {
-      const oldVoiceover = assetsRef.current.find(
-        a => a.id === assetsRef.current.find(x => x.type === 'audio')?.id && a.type === 'audio',
-      );
-      if (oldVoiceover) {
-        URL.revokeObjectURL(oldVoiceover.url);
-        deleteAsset(oldVoiceover.id).catch(err =>
+      const oldAudio = assetsRef.current.find(a => a.type === 'audio');
+      if (oldAudio) {
+        URL.revokeObjectURL(oldAudio.url);
+        deleteAsset(oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
         );
       }
@@ -1298,6 +1296,7 @@ export default function App() {
               onSceneDetailsChange={(text) => setProject(p => ({ ...p, sceneDetails: text }))}
               onDeleteAsset={handleDeleteAsset}
               onDeleteAllAssets={handleDeleteAllAssets}
+              onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
               onDropFiles={handleDropFiles}
               onApplySync={handleApplySyncFromFiles}
               onReSync={finalizeSync}

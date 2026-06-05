@@ -22,46 +22,53 @@ export function stripRtfIfNeeded(text: string): string {
 
   let s = text;
 
-  // Step 1: normalize RTF paragraph breaks → double newlines
-  s = s.replace(/\\pard?[^\\{}\r\n]*/g, '\n\n');
+  // Step 1: iteratively remove innermost {} groups
+  let prev = '';
+  while (prev !== s) {
+    prev = s;
+    s = s.replace(/\{[^{}]*\}/g, '');
+  }
 
-  // Step 2: remove unicode escapes  \u-12345?
-  s = s.replace(/\\u-?\d+\??/g, ' ');
+  // Step 2: paragraph breaks → double newline
+  s = s.replace(/\\pard?\b\s*/g, '\n\n');
+  s = s.replace(/\\line\b\s?/g, '\n');
 
-  // Step 3: remove hex char escapes  \'XX
-  s = s.replace(/\\\'[0-9a-fA-F]{2}/g, ' ');
+  // Step 3: remove carriage returns
+  s = s.replace(/\r/g, '');
 
-  // Step 4: remove all remaining control words  \wordOptionalDigits
-  s = s.replace(/\\[a-zA-Z]+\-?\d*\s?/g, ' ');
+  // Step 4: remove control words
+  s = s.replace(/\\[a-zA-Z]+\-?\d*\s?/g, '');
 
-  // Step 5: remove control symbols  \* \~ etc.
-  s = s.replace(/\\[^a-zA-Z\r\n]/g, ' ');
+  // Step 5: remove control symbols
+  s = s.replace(/\\[^a-zA-Z\n]/g, '');
 
-  // Step 6: remove bare curly braces left after group removal
-  s = s.replace(/[{}]/g, ' ');
+  // Step 6: remove lone backslashes
+  s = s.replace(/\\/g, '');
 
-  // Step 7: collapse runs of spaces/tabs within a line (leave newlines intact)
-  s = s.replace(/[ \t]{2,}/g, ' ');
+  // Step 7: remove remaining braces
+  s = s.replace(/[{}]/g, '');
 
-  // Step 8: collapse 3+ consecutive newlines → exactly 2
-  s = s.replace(/\n{3,}/g, '\n\n');
+  // Step 8: collapse spaces/tabs within lines
+  s = s.replace(/[ \t]+/g, ' ');
 
   // Step 9: trim each line
-  s = s.split('\n').map(l => l.trim()).join('\n');
+  s = s.split('\n').map((l: string) => l.trim()).join('\n');
 
-  // Step 10: within each double-newline block, drop empty or purely-numeric lines
-  s = s
-    .split('\n\n')
-    .map(block =>
-      block
-        .split('\n')
-        .filter(l => l.length > 0 && !/^\d+$/.test(l))
-        .join('\n'),
-    )
-    .filter(block => block.trim().length > 0)
-    .join('\n\n');
+  // Step 10: max 2 consecutive newlines
+  s = s.replace(/\n{3,}/g, '\n\n');
 
-  return s.trim();
+  // Step 11: filter blocks
+  const blocks = s.split('\n\n');
+  const cleaned = blocks
+    .map((b: string) => b.trim())
+    .filter((b: string) => {
+      if (b.length === 0) return false;
+      if (/\[(IMAGE|VIDEO|AUDIO):/i.test(b)) return true;
+      if (/[a-zA-Z]{2,}.*[a-zA-Z]{2,}/.test(b)) return true;
+      return false;
+    });
+
+  return cleaned.join('\n\n').trim();
 }
 
 /**
