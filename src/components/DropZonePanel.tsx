@@ -16,6 +16,10 @@ import {
   AlertCircle,
   Check,
   X,
+  ChevronDown,
+  ChevronRight,
+  Upload,
+  Trash2,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
@@ -45,6 +49,8 @@ const EMPTY_STAGED: StagedFiles = {
   zipFiles: [],
 };
 
+type ExpandKey = 'script' | 'scene' | 'voiceover' | 'assets' | null;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -55,16 +61,22 @@ const formatTime = (seconds: number) => {
   return `${m}:${s}`;
 };
 
+const formatBytes = (bytes: number) => {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
 // ---------------------------------------------------------------------------
-// SlotRow — flat two-line file slot (no card border, just row separator)
+// SlotRow — flat two-line file slot with a collapsible content section.
 //
-// Display priority per slot:
+// Display priority on line 2:
 //   1. staged file present  → staged filename (pending sync)
 //   2. persistedLabel set    → "✓ <label>" muted green (already in project)
 //   3. otherwise             → subtitle
 //
-// The × button appears when there's a staged file, OR when persisted data
-// exists AND that data is deletable from this slot (canDeletePersisted).
+// Right-side buttons (line 1): [×] (when deletable) then [Browse / + Add].
+// Clicking the label rows toggles the expanded content section (children).
 // ---------------------------------------------------------------------------
 
 interface SlotRowProps {
@@ -80,6 +92,9 @@ interface SlotRowProps {
   onDelete: () => void;
   color?: string;
   multiFile?: boolean; // renders "+ Add" instead of "Browse"
+  expanded: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode; // expanded content
 }
 
 function SlotRow({
@@ -95,6 +110,9 @@ function SlotRow({
   onDelete,
   color = 'text-gray-500',
   multiFile = false,
+  expanded,
+  onToggle,
+  children,
 }: SlotRowProps) {
   const ref = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -112,14 +130,29 @@ function SlotRow({
         onDropFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {/* Line 1: icon + label + action button */}
-      <div className="flex items-center gap-3 px-4 pt-3 pb-1">
+      {/* Line 1: chevron + icon + label + [×] [Browse/Add] */}
+      <div className="flex items-center gap-2 px-4 pt-3 pb-1 cursor-pointer" onClick={onToggle}>
+        {expanded
+          ? <ChevronDown size={12} className="flex-shrink-0 text-gray-500" />
+          : <ChevronRight size={12} className="flex-shrink-0 text-gray-500" />
+        }
         <span className={`flex-shrink-0 ${color}`}>{icon}</span>
         <span className={`flex-1 text-[10px] font-bold uppercase tracking-widest ${color}`}>
           {label}
         </span>
+        {showDelete && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onDelete(); }}
+            aria-label={`Remove ${label} file`}
+            className="flex-shrink-0 flex items-center text-[9px] uppercase tracking-widest
+                       text-red-500 border border-red-500 rounded px-2 py-0.5
+                       hover:bg-red-500/10 transition-colors"
+          >
+            <X size={11} />
+          </button>
+        )}
         <button
-          onClick={() => ref.current?.click()}
+          onClick={(e) => { e.stopPropagation(); ref.current?.click(); }}
           className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600
                      hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
         >
@@ -143,8 +176,8 @@ function SlotRow({
         />
       </div>
 
-      {/* Line 2: subtitle / staged filename / persisted indicator  +  × */}
-      <div className="flex items-center pl-10 pr-4 pb-2.5">
+      {/* Line 2: subtitle / staged filename / persisted indicator */}
+      <div className="flex items-center pl-10 pr-4 pb-2.5 cursor-pointer" onClick={onToggle}>
         {stagedFile ? (
           <span className="flex-1 text-[10px] truncate text-gray-300">{stagedFile.file.name}</span>
         ) : persistedLabel ? (
@@ -155,16 +188,12 @@ function SlotRow({
         ) : (
           <span className="flex-1 text-[10px] truncate text-gray-600">{subtitle}</span>
         )}
-        {showDelete && (
-          <button
-            onClick={onDelete}
-            aria-label={`Remove ${label} file`}
-            className="flex-shrink-0 ml-2 p-0.5 rounded hover:bg-red-900/40 text-red-500 transition-colors"
-          >
-            <X size={11} />
-          </button>
-        )}
       </div>
+
+      {/* Expanded content */}
+      {expanded && (
+        <div className="px-4 pb-3">{children}</div>
+      )}
     </div>
   );
 }
@@ -177,12 +206,15 @@ interface Props {
   segments: VideoSegment[];
   assets: Asset[];
   voiceoverId: string | undefined;
-  // Current project state — drives "already synced" slot display.
+  // Current project state — drives "already synced" slot display + editors.
   script: string;
   persistedScript: string;
   persistedSceneDetails: string;
   persistedVoiceoverName: string;
   persistedAssetCount: number;
+  // Text editing (collapsible sections)
+  onScriptChange: (val: string) => void;
+  onSceneDetailsChange: (val: string) => void;
   // Asset management
   onDeleteAsset: (assetId: string) => void;
   onDeleteAllAssets: () => void;
@@ -211,6 +243,8 @@ export function DropZonePanel({
   persistedSceneDetails,
   persistedVoiceoverName,
   persistedAssetCount,
+  onScriptChange,
+  onSceneDetailsChange,
   onDeleteAsset,
   onDeleteAllAssets,
   onDeleteVoiceover,
@@ -224,18 +258,22 @@ export function DropZonePanel({
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments'>('files');
 
+  // ── Collapsible section + top-zone drag state ──────────────────────────────
+  const [expanded, setExpanded] = useState<ExpandKey>(null);
+  const [dragOver, setDragOver] = useState(false);
+
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
 
-  // Props received but not surfaced in this layout; suppress unused-var warnings.
-  // (assets + onDeleteAllAssets ARE used below — intentionally not voided.)
-  void voiceoverId; void onDeleteAsset;
+  // `script` retained for compatibility; Apply Sync no longer gates on it.
+  void script;
 
   /**
    * Classifies and stages dropped/browsed files.
-   * forceSlot bypasses content detection for explicit slot drops.
+   * forceSlot bypasses content detection AND extension sniffing for explicit
+   * slot drops/browses (Script + Scene Details).
    */
   const addFiles = async (
     files: File[],
@@ -256,19 +294,25 @@ export function DropZonePanel({
       const key = crypto.randomUUID();
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 
+      // FIX 4A: a forced slot (direct drop / Browse on Script or Scene Details)
+      // always wins — regardless of extension or content. This must be checked
+      // BEFORE extension sniffing, or non-.txt/.rtf files would be misrouted to
+      // the asset bucket and the forced slot would never fill.
+      if (forceSlot) {
+        textEntries.push({
+          file,
+          key,
+          role: forceSlot === 'script' ? 'forced_script' : 'forced_scene',
+        });
+        continue;
+      }
+
       if (ext === 'txt' || ext === 'rtf') {
-        if (forceSlot) {
-          textEntries.push({
-            file,
-            key,
-            role: forceSlot === 'script' ? 'forced_script' : 'forced_scene',
-          });
-        } else {
-          const raw = await file.text();
-          const stripped = stripRtfIfNeeded(raw);
-          const role = detectTextFileRole(stripped);
-          textEntries.push({ file, key, role });
-        }
+        // Top drop-zone path: content detection picks script vs scene.
+        const raw = await file.text();
+        const stripped = stripRtfIfNeeded(raw);
+        const role = detectTextFileRole(stripped);
+        textEntries.push({ file, key, role });
       } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
         voiceoverEntries.push({ file, key });
       } else if (ext === 'zip') {
@@ -325,11 +369,6 @@ export function DropZonePanel({
     setStaged(EMPTY_STAGED);
   };
 
-  // Apply Sync enabled when sceneFile is staged AND either scriptFile is
-  // staged or an existing script is already loaded.
-  const canApplySync =
-    !!staged.sceneFile && (!!staged.scriptFile || script.trim().length > 0);
-
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
 
   // ── × clear handlers ───────────────────────────────────────────────────────
@@ -356,10 +395,16 @@ export function DropZonePanel({
     else onDeleteAllAssets();                               // delete persisted
   };
 
-  // ── Persisted-state labels ─────────────────────────────────────────────────
+  // ── Persisted-state labels + derived lookups ────────────────────────────────
   const scriptPersisted = persistedScript.trim().length > 0 ? 'Loaded' : undefined;
   const scenePersisted = persistedSceneDetails.trim().length > 0 ? 'Loaded' : undefined;
   const voiceoverPersisted = persistedVoiceoverName || undefined;
+
+  const voiceoverAsset = assets.find(a => a.id === voiceoverId);
+  const nonAudioAssets = assets.filter(a => a.type !== 'audio');
+
+  const toggle = (key: Exclude<ExpandKey, null>) =>
+    setExpanded(prev => (prev === key ? null : key));
 
   // ---------------------------------------------------------------------------
   // Render
@@ -391,6 +436,27 @@ export function DropZonePanel({
           {/* Scrollable slots area */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
 
+            {/* Top drag-and-drop zone — accepts all types, auto-classifies */}
+            <div className="px-4 pt-4">
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOver(false);
+                  void addFiles(Array.from(e.dataTransfer.files));
+                }}
+                className={`border-2 border-dashed rounded-lg p-4 text-center
+                            text-xs text-gray-500 transition-colors mb-4
+                            ${dragOver
+                              ? 'border-orange-500 text-orange-400 bg-orange-500/5'
+                              : 'border-gray-700'}`}
+              >
+                <Upload className="w-4 h-4 mx-auto mb-1 opacity-50" />
+                DROP ALL FILES HERE, OR USE SLOTS BELOW
+              </div>
+            </div>
+
             {/* Slot 1 — Script */}
             <SlotRow
               icon={<FileText size={12} />}
@@ -403,7 +469,18 @@ export function DropZonePanel({
               onDropFiles={(files) => void addFiles(files, 'script')}
               onDelete={handleScriptClear}
               color="text-orange-400"
-            />
+              expanded={expanded === 'script'}
+              onToggle={() => toggle('script')}
+            >
+              <textarea
+                value={persistedScript}
+                onChange={(e) => onScriptChange(e.target.value)}
+                placeholder="Paste or type your script here..."
+                className="w-full h-40 bg-transparent text-sm text-gray-300
+                  resize-none border border-gray-700 rounded p-2
+                  focus:outline-none focus:border-orange-500"
+              />
+            </SlotRow>
 
             {/* Slot 2 — Scene Details */}
             <SlotRow
@@ -417,7 +494,18 @@ export function DropZonePanel({
               onDropFiles={(files) => void addFiles(files, 'scene')}
               onDelete={handleSceneClear}
               color="text-teal-400"
-            />
+              expanded={expanded === 'scene'}
+              onToggle={() => toggle('scene')}
+            >
+              <textarea
+                value={persistedSceneDetails}
+                onChange={(e) => onSceneDetailsChange(e.target.value)}
+                placeholder="Paste scene details with [IMAGE:] or [VIDEO:] tags..."
+                className="w-full h-40 bg-transparent text-sm text-gray-300
+                  resize-none border border-gray-700 rounded p-2
+                  focus:outline-none focus:border-teal-500"
+              />
+            </SlotRow>
 
             {/* Slot 3 — Voiceover */}
             <SlotRow
@@ -432,7 +520,26 @@ export function DropZonePanel({
               onDropFiles={(files) => void addFiles(files)}
               onDelete={handleVoiceoverClear}
               color="text-amber-400"
-            />
+              expanded={expanded === 'voiceover'}
+              onToggle={() => toggle('voiceover')}
+            >
+              {voiceoverAsset ? (
+                <div className="text-[11px] text-gray-400 space-y-1">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-gray-600">File</span>
+                    <span className="truncate text-gray-300">{voiceoverAsset.name}</span>
+                  </div>
+                  {voiceoverAsset.file && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-gray-600">Size</span>
+                      <span className="text-gray-300">{formatBytes(voiceoverAsset.file.size)}</span>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-600 italic">No voiceover loaded.</p>
+              )}
+            </SlotRow>
 
             {/* Slot 4 — Images & Videos (multi-file, inline drag state) */}
             <div
@@ -446,13 +553,28 @@ export function DropZonePanel({
               }}
             >
               {/* Line 1 */}
-              <div className="flex items-center gap-3 px-4 pt-3 pb-1">
+              <div className="flex items-center gap-2 px-4 pt-3 pb-1 cursor-pointer" onClick={() => toggle('assets')}>
+                {expanded === 'assets'
+                  ? <ChevronDown size={12} className="flex-shrink-0 text-gray-500" />
+                  : <ChevronRight size={12} className="flex-shrink-0 text-gray-500" />
+                }
                 <ImageIcon size={12} className="flex-shrink-0 text-purple-400" />
                 <span className="flex-1 text-[10px] font-bold uppercase tracking-widest text-purple-400">
                   Images &amp; Videos
                 </span>
+                {(allStagedAssets.length > 0 || persistedAssetCount > 0) && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleAssetsClear(); }}
+                    aria-label={allStagedAssets.length > 0 ? 'Clear staged assets' : 'Delete all project assets'}
+                    className="flex-shrink-0 flex items-center text-[9px] uppercase tracking-widest
+                               text-red-500 border border-red-500 rounded px-2 py-0.5
+                               hover:bg-red-500/10 transition-colors"
+                  >
+                    <X size={11} />
+                  </button>
+                )}
                 <button
-                  onClick={() => addAssetsRef.current?.click()}
+                  onClick={(e) => { e.stopPropagation(); addAssetsRef.current?.click(); }}
                   className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600
                              hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
                 >
@@ -468,7 +590,7 @@ export function DropZonePanel({
                 />
               </div>
               {/* Line 2 */}
-              <div className="flex items-center pl-10 pr-4 pb-2.5">
+              <div className="flex items-center pl-10 pr-4 pb-2.5 cursor-pointer" onClick={() => toggle('assets')}>
                 {allStagedAssets.length > 0 ? (
                   <span className="flex-1 text-[10px] text-gray-300">
                     {allStagedAssets.length} file{allStagedAssets.length !== 1 ? 's' : ''}
@@ -481,16 +603,37 @@ export function DropZonePanel({
                 ) : (
                   <span className="flex-1 text-[10px] text-gray-600">Images, videos, or ZIP archive</span>
                 )}
-                {(allStagedAssets.length > 0 || persistedAssetCount > 0) && (
-                  <button
-                    onClick={handleAssetsClear}
-                    aria-label={allStagedAssets.length > 0 ? 'Clear staged assets' : 'Delete all project assets'}
-                    className="flex-shrink-0 ml-2 p-0.5 rounded hover:bg-red-900/40 text-red-500 transition-colors"
-                  >
-                    <X size={11} />
-                  </button>
-                )}
               </div>
+              {/* Expanded: project asset list (non-audio) */}
+              {expanded === 'assets' && (
+                <div className="px-4 pb-3">
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                    {nonAudioAssets.length === 0 && (
+                      <p className="text-[10px] text-gray-600 italic px-1">No images or videos loaded.</p>
+                    )}
+                    {nonAudioAssets.map((asset) => (
+                      <div key={asset.id} className="flex items-center gap-2">
+                        <div className="w-10 h-10 rounded overflow-hidden flex-shrink-0
+                                        bg-[#1A1A1A] flex items-center justify-center">
+                          {asset.type === 'image'
+                            ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                            : <Video size={16} className="text-blue-400" />
+                          }
+                        </div>
+                        <span className="flex-1 text-[10px] text-gray-300 truncate">{asset.name}</span>
+                        <button
+                          onClick={() => onDeleteAsset(asset.id)}
+                          aria-label={`Delete ${asset.name}`}
+                          className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-600
+                                     hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
           </div>{/* end scrollable */}
@@ -499,10 +642,9 @@ export function DropZonePanel({
           <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A] space-y-2">
             <button
               onClick={handleApplySync}
-              disabled={!canApplySync}
               className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
                          font-black uppercase tracking-widest hover:bg-[#FF9D46]
-                         transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                         transition-all"
             >
               Apply Sync
             </button>
