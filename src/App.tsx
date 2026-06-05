@@ -779,6 +779,8 @@ export default function App() {
     }
 
     // 5. Parse project data with the fresh, complete data
+    console.log('[sync debug] asset count passed to parse:', allAssets.length);
+    console.log('[sync debug] script length:', scriptText.length);
     const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
     // 6. Preserve locked durations by order index
@@ -1000,6 +1002,11 @@ export default function App() {
     }
   };
 
+  // DEAD CODE — kept for reference, not called anywhere.
+  // All file ingestion now goes through DropZonePanel staged
+  // state → handleApplySyncFromFiles.
+  // Do not delete — may be useful for future drag-drop
+  // onto timeline feature.
   const handleDropFiles = useCallback(async (files: File[]): Promise<void> => {
     for (const file of files) {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -1286,24 +1293,21 @@ export default function App() {
           )}>
           <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
             <DropZonePanel
-              isSynced={isSynced}
               segments={project.segments}
               assets={project.assets}
               voiceoverId={project.voiceoverId}
               script={project.script}
-              sceneDetails={project.sceneDetails}
-              onScriptChange={(text) => setProject(p => ({ ...p, script: text }))}
-              onSceneDetailsChange={(text) => setProject(p => ({ ...p, sceneDetails: text }))}
+              persistedScript={project.script}
+              persistedSceneDetails={project.sceneDetails}
+              persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
+              persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
               onDeleteAsset={handleDeleteAsset}
               onDeleteAllAssets={handleDeleteAllAssets}
               onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
-              onDropFiles={handleDropFiles}
               onApplySync={handleApplySyncFromFiles}
-              onReSync={finalizeSync}
               onSegmentClick={(id) => setSelectedSegmentId(id)}
               onToggleLock={handleToggleLock}
               onUnlockAll={handleUnlockAll}
-              onAddFiles={() => { /* handled internally by DropZonePanel */ }}
               selectedSegmentId={selectedSegmentId ?? undefined}
               onOpenSettings={() => setShowSettings(true)}
             />
