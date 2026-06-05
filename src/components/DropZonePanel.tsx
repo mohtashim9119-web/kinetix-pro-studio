@@ -224,7 +224,9 @@ interface Props {
   // Segment actions
   onSegmentClick: (segmentId: string) => void;
   onToggleLock: (segmentId: string) => void;
+  onLockAll: () => void;
   onUnlockAll: () => void;
+  allLocked: boolean;
   // Misc
   selectedSegmentId: string | undefined;
   onOpenSettings: () => void;
@@ -251,7 +253,9 @@ export function DropZonePanel({
   onApplySync,
   onSegmentClick,
   onToggleLock,
+  onLockAll,
   onUnlockAll,
+  allLocked,
   selectedSegmentId,
   onOpenSettings,
 }: Props) {
@@ -265,6 +269,7 @@ export function DropZonePanel({
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
+  const topZoneInputRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
 
   // `script` retained for compatibility; Apply Sync no longer gates on it.
@@ -299,6 +304,7 @@ export function DropZonePanel({
       // BEFORE extension sniffing, or non-.txt/.rtf files would be misrouted to
       // the asset bucket and the forced slot would never fill.
       if (forceSlot) {
+        console.log('[addFiles] forceSlot:', forceSlot, 'file:', file.name, 'ext:', ext);
         textEntries.push({
           file,
           key,
@@ -342,6 +348,7 @@ export function DropZonePanel({
           scriptFile = { file: tf.file, key: tf.key };
         } else if (tf.role === 'forced_scene') {
           sceneFile = { file: tf.file, key: tf.key };
+          console.log('[addFiles] staged.sceneFile set to:', tf.file.name);
         } else if (tf.role === 'sceneDetails') {
           if (!pendingScene) pendingScene = tf;
           else if (!pendingScript) pendingScript = tf;
@@ -439,6 +446,7 @@ export function DropZonePanel({
             {/* Top drag-and-drop zone — accepts all types, auto-classifies */}
             <div className="px-4 pt-4">
               <div
+                onClick={() => topZoneInputRef.current?.click()}
                 onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={(e) => {
@@ -446,15 +454,27 @@ export function DropZonePanel({
                   setDragOver(false);
                   void addFiles(Array.from(e.dataTransfer.files));
                 }}
-                className={`border-2 border-dashed rounded-lg p-4 text-center
+                className={`cursor-pointer border-2 border-dashed rounded-lg p-4 text-center
                             text-xs text-gray-500 transition-colors mb-4
                             ${dragOver
                               ? 'border-orange-500 text-orange-400 bg-orange-500/5'
-                              : 'border-gray-700'}`}
+                              : 'border-gray-700 hover:border-gray-500'}`}
               >
                 <Upload className="w-4 h-4 mx-auto mb-1 opacity-50" />
                 DROP ALL FILES HERE, OR USE SLOTS BELOW
               </div>
+              <input
+                ref={topZoneInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files) {
+                    void addFiles(Array.from(e.target.files));
+                    e.target.value = '';
+                  }
+                }}
+              />
             </div>
 
             {/* Slot 1 — Script */}
@@ -465,6 +485,7 @@ export function DropZonePanel({
               accept=".txt,.rtf"
               stagedFile={staged.scriptFile}
               persistedLabel={scriptPersisted}
+              canDeletePersisted={true}
               onFile={(f) => void addFiles([f], 'script')}
               onDropFiles={(files) => void addFiles(files, 'script')}
               onDelete={handleScriptClear}
@@ -490,6 +511,7 @@ export function DropZonePanel({
               accept=".txt,.rtf"
               stagedFile={staged.sceneFile}
               persistedLabel={scenePersisted}
+              canDeletePersisted={true}
               onFile={(f) => void addFiles([f], 'scene')}
               onDropFiles={(files) => void addFiles(files, 'scene')}
               onDelete={handleSceneClear}
@@ -669,13 +691,18 @@ export function DropZonePanel({
           {/* Header */}
           <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
             <button
-              onClick={onUnlockAll}
-              aria-label="Unlock all segments"
-              title="Unlock all segments"
-              className="p-1.5 rounded-lg hover:bg-[#1A1A1A] text-amber-400 hover:text-amber-300
-                         transition-colors"
+              onClick={() => allLocked ? onUnlockAll() : onLockAll()}
+              title={allLocked ? 'Unlock All' : 'Lock All'}
+              aria-label={allLocked ? 'Unlock all segments' : 'Lock all segments'}
+              className={`p-1.5 rounded-lg hover:bg-[#1A1A1A] transition-colors
+                          ${allLocked
+                            ? 'text-amber-500 hover:text-amber-400'
+                            : 'text-indigo-400 hover:text-indigo-300'}`}
             >
-              <LockOpen size={14} />
+              {allLocked
+                ? <LockOpen className="w-4 h-4" />
+                : <Lock className="w-4 h-4" />
+              }
             </button>
             <span className="ml-auto text-[10px] font-black uppercase tracking-widest text-gray-600">
               {segments.length} Segments

@@ -1309,7 +1309,12 @@ export default function App() {
               onApplySync={handleApplySyncFromFiles}
               onSegmentClick={(id) => setSelectedSegmentId(id)}
               onToggleLock={handleToggleLock}
+              onLockAll={() => setProject(p => ({
+                ...p,
+                segments: p.segments.map(s => ({ ...s, locked: true })),
+              }))}
               onUnlockAll={handleUnlockAll}
+              allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
               selectedSegmentId={selectedSegmentId ?? undefined}
               onOpenSettings={() => setShowSettings(true)}
             />
