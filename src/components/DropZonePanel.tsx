@@ -372,8 +372,10 @@ export function DropZonePanel({
     setStaged(prev => ({ ...prev, assetFiles: [], zipFiles: [] }));
 
   const handleApplySync = () => {
-    onApplySync(staged);
-    setStaged(EMPTY_STAGED);
+    const snapshot = { ...staged };
+    onApplySync(snapshot);
+    // Do NOT reset staged — slots keep showing their files after sync.
+    // User can clear individually with × buttons.
   };
 
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
