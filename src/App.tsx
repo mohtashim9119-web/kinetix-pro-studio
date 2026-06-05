@@ -861,8 +861,27 @@ export default function App() {
       return;
     }
     const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
+
+    // When replacing with a new audio file, evict the existing voiceover asset
+    // so the assets list doesn't accumulate orphaned audio entries.
+    if (detectedType === 'audio') {
+      const oldVoiceover = assetsRef.current.find(
+        a => a.id === assetsRef.current.find(x => x.type === 'audio')?.id && a.type === 'audio',
+      );
+      if (oldVoiceover) {
+        URL.revokeObjectURL(oldVoiceover.url);
+        deleteAsset(oldVoiceover.id).catch(err =>
+          console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
+        );
+      }
+    }
+
     setProject(prev => {
-      const newAssets = [...prev.assets, newAsset];
+      // For audio: drop any existing audio asset so we don't accumulate them.
+      const baseAssets = detectedType === 'audio'
+        ? prev.assets.filter(a => a.type !== 'audio')
+        : prev.assets;
+      const newAssets = [...baseAssets, newAsset];
       return {
         ...prev,
         assets: newAssets,

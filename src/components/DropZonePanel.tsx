@@ -21,6 +21,7 @@ import {
   Trash2,
   ChevronDown,
   ChevronRight,
+  FolderOpen,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
@@ -326,6 +327,7 @@ export function DropZonePanel({
   const handleApplySync = () => {
     onApplySync(staged);
     setStaged(EMPTY_STAGED);
+    setShowUploadView(false);
   };
 
   // ── Post-sync: expandable section state ──────────────────────────────────
@@ -333,9 +335,12 @@ export function DropZonePanel({
   const [showScript, setShowScript] = useState(false);
   const [showScene, setShowScene] = useState(false);
   const addFilesRef = useRef<HTMLInputElement>(null);
+  // Local override: lets the user return to the upload view from post-sync
+  // without clearing project state. Reset to false after Apply Sync fires.
+  const [showUploadView, setShowUploadView] = useState(false);
 
   // ── PRE-SYNC VIEW ─────────────────────────────────────────────────────────
-  if (!isSynced) {
+  if (!isSynced || showUploadView) {
     const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
     return (
       <div className="flex flex-col h-full p-4 gap-3 overflow-y-auto custom-scrollbar">
@@ -461,13 +466,24 @@ export function DropZonePanel({
           Apply Sync
         </button>
 
-        <button
-          onClick={onOpenSettings}
-          className="flex items-center gap-2 text-[10px] uppercase tracking-widest
-                     text-gray-600 hover:text-white transition-colors"
-        >
-          <Settings size={12} /> Settings
-        </button>
+        <div className="flex items-center justify-between">
+          <button
+            onClick={onOpenSettings}
+            className="flex items-center gap-2 text-[10px] uppercase tracking-widest
+                       text-gray-600 hover:text-white transition-colors"
+          >
+            <Settings size={12} /> Settings
+          </button>
+          {isSynced && (
+            <button
+              onClick={() => { setShowUploadView(false); setStaged(EMPTY_STAGED); }}
+              className="text-[10px] uppercase tracking-widest text-gray-600
+                         hover:text-white transition-colors"
+            >
+              ← Back
+            </button>
+          )}
+        </div>
       </div>
     );
   }
@@ -493,6 +509,14 @@ export function DropZonePanel({
                        text-[#F27D26] hover:text-white transition-colors font-bold"
           >
             <RefreshCw size={10} /> Re-sync
+          </button>
+          <button
+            onClick={() => setShowUploadView(true)}
+            title="Upload replacement files and re-apply sync"
+            className="flex items-center gap-1 text-[9px] uppercase tracking-widest
+                       text-gray-500 hover:text-white transition-colors"
+          >
+            <FolderOpen size={10} /> Change Files
           </button>
         </div>
       </div>
