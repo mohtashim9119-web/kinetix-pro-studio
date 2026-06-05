@@ -318,6 +318,7 @@ export function DropZonePanel({
         const raw = await file.text();
         const stripped = stripRtfIfNeeded(raw);
         const role = detectTextFileRole(stripped);
+        console.log('[addFiles] role detected:', role, 'for file:', file.name);
         textEntries.push({ file, key, role });
       } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
         voiceoverEntries.push({ file, key });
@@ -454,6 +455,7 @@ export function DropZonePanel({
                 onDrop={(e) => {
                   e.preventDefault();
                   setDragOver(false);
+                  console.log('[dropzone] files dropped:', Array.from(e.dataTransfer.files).map(f => f.name));
                   void addFiles(Array.from(e.dataTransfer.files));
                 }}
                 className={`cursor-pointer border-2 border-dashed rounded-lg p-4 text-center

@@ -838,14 +838,14 @@ export default function App() {
   }, []);
 
   const handleDeleteAllAssets = useCallback(() => {
-    assetsRef.current.forEach(a => URL.revokeObjectURL(a.url));
-    Promise.all(assetsRef.current.map(a => deleteAsset(a.id))).catch(err =>
+    const nonAudio = assetsRef.current.filter(a => a.type !== 'audio');
+    nonAudio.forEach(a => URL.revokeObjectURL(a.url));
+    Promise.all(nonAudio.map(a => deleteAsset(a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
     setProject(prev => ({
       ...prev,
-      assets: [],
-      voiceoverId: undefined,
+      assets: prev.assets.filter(a => a.type === 'audio'),
       segments: prev.segments.map(s => ({ ...s, assetId: undefined })),
     }));
   }, []);
