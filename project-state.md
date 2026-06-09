@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Bundle 1 (Task 3 + Task 6) in progress — branch task-bundle-1-bug-fixes
+Bundle 1 complete. Starting Bundle 2 (Task 8 + Task 9c) next.
 
 ---
 
@@ -51,7 +51,7 @@ Bundle 1 (Task 3 + Task 6) in progress — branch task-bundle-1-bug-fixes
 
 ### Bug fixes
 
-3. **Video plays when timeline paused** ⬜ — `<video>` element's playback state not synced to `isPlaying`. Add pause sync in playback effect.
+3. **Video plays when timeline paused** ✅ — Done (Bundle 1)
 
 4. **Preview/audio sync drift** ✅ — Replace 100ms `setInterval` with `requestAnimationFrame` driven by `audioRef.current.currentTime` as master clock. Frame-accurate preview like CapCut/Premiere. Completed Batch C, commit `e961110`.
 
@@ -59,7 +59,7 @@ Bundle 1 (Task 3 + Task 6) in progress — branch task-bundle-1-bug-fixes
 
 5. **Multi-project picker window** ⬜ — Project registry; picker UI on app open with create/select/duplicate/delete/rename. Single-window with tabs or sidebar (not multi-window — see Rejected). Depends on task 2.
 
-6. **Per-project save location + post-export popup** ⬜ — Persist export path per project. "Open / Open folder" popup after export via `tauri-plugin-opener` or shell open.
+6. **Per-project save location + post-export popup** ✅ — Done (Bundle 1)
 
 7. **Merge inputs into one upload area** ✅ — Unified drop zone; auto-classify by file type. UX design pass first to decide fate of 3-step wizard. Completed as part of Task 9b-0 (commit `4ed6a04`).
 
@@ -371,6 +371,7 @@ Phase 3 steps:
 | 2026-06-09 | **Task 9b-3 — Wire Whisper Timestamps into Segment Timing.** TranscriptToken moved to types.ts (canonical); Project extended with lastTranscribedAssetId + transcriptTokens; Option A skip logic in useWhisper (same audio → instant re-align, no Whisper run); handleApplySyncFromFiles + finalizeSync both call startTranscription; stray call in processMediaFile removed. Branch `task-9b-3-whisper-timestamps` merged to main. |
 | 2026-06-09 | **Task 9b-4 — Accurate Whisper Alignment.** --dtw base.en flag for frame-accurate timestamps; alignScenestoTranscript rewritten as sliding-window text matcher; infinite loop fix (maxStart floor-clamped to searchStart); audio format detection from magic bytes (WAV/MP3/M4A/OGG); parseWhisperStdout dead code removed; zero-segment guard prevents timeline wipe on failed parse; projectRef fixes stale closure reads in handleApplySyncFromFiles + finalizeSync. Branch `task-9b-4-whisper-alignment` merged to main. |
 | 2026-06-09 | Task 9b complete. 9b-0 through 9b-4 shipped; 9b-5 closed as no-op. Whisper pipeline fully operational: DTW alignment, Option A caching, text-matching aligner, audio format detection, zero-segment guard, stale closure fixes. |
+| 2026-06-10 | Bundle 1 complete — Task 3 (video pause sync) + Task 6 (pre-render save dialog, last path memory, post-export toast, Show in Finder). Branch task-bundle-1-bug-fixes merged to main. |
 
 ---
 
@@ -469,18 +470,22 @@ Status: COMPLETE — merged to main
 ---
 
 ## Bundle 1 — Bug Fixes (Task 3 + Task 6)
-Status: IN PROGRESS — branch task-bundle-1-bug-fixes
+Status: COMPLETE — merged to main
 
 ### Task 3 — Video plays when timeline paused
-- Add isPlaying prop to PreviewStage
-- useEffect syncs video element play/pause state to isPlaying
-- videoRef callback also syncs on segment change
+- isPlaying prop added to PreviewStage
+- useEffect syncs video element play/pause to isPlaying
+- autoPlay removed — playback fully explicit
+- videoRef callback syncs on segment change
 
-### Task 6 — Post-export popup
-- reveal_in_finder Rust command (open -R on macOS, explorer /select on Windows)
-- showExportSuccess + lastExportPath added to ExportState
-- Bottom-right toast popup: filename, Show in Finder button, Dismiss button
-- Auto-dismisses after 10 seconds
+### Task 6 — Post-export save dialog + popup
+- Save dialog now appears BEFORE rendering starts
+- Cancel before render wastes nothing — no render triggered
+- pick_save_path Rust command opens rfd dialog, returns path only
+- save_bytes_to_disk now takes explicit path, no dialog
+- lastExportPath persisted in Project state — dialog remembers last folder
+- Bottom-right success toast: filename, Show in Finder, Dismiss, 10s auto-dismiss
+- reveal_in_finder command: open -R on macOS, explorer /select on Windows
 
 ---
 
