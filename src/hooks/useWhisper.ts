@@ -4,7 +4,7 @@ import {
   alignScenestoTranscript,
   distributeSegmentTimes,
 } from '../services/whisperService';
-import type { TranscriptionStatus, Asset, VideoSegment } from '../types';
+import type { TranscriptionStatus, Asset, VideoSegment, Project } from '../types';
 
 export interface UseWhisperApi {
   transcriptionStatus: TranscriptionStatus;
@@ -12,8 +12,10 @@ export interface UseWhisperApi {
     audioAsset: Asset,
     durationSecs: number,
     segments: VideoSegment[],
+    project: Project,
     onSegmentsUpdated: (segments: VideoSegment[]) => void,
-  ) => void;
+    onProjectUpdated: (updater: (p: Project) => Project) => void,
+  ) => Promise<void>;
   cancelTranscription: () => void;
   dismissError: () => void;
 }
@@ -32,8 +34,24 @@ export function useWhisper(): UseWhisperApi {
       audioAsset: Asset,
       durationSecs: number,
       segments: VideoSegment[],
+      project: Project,
       onSegmentsUpdated: (segments: VideoSegment[]) => void,
+      onProjectUpdated: (updater: (p: Project) => Project) => void,
     ) => {
+      // Option A: skip Whisper if audio hasn't changed
+      const alreadyTranscribed =
+        project.lastTranscribedAssetId === audioAsset.id &&
+        project.transcriptTokens &&
+        project.transcriptTokens.length > 0;
+
+      if (alreadyTranscribed) {
+        const tokens = project.transcriptTokens!;
+        const alignments = alignScenestoTranscript(segments, tokens);
+        const updated = distributeSegmentTimes(segments, alignments, durationSecs);
+        onSegmentsUpdated(updated);
+        return;
+      }
+
       // Cancel any job already running.
       abortRef.current?.abort();
 
@@ -60,6 +78,12 @@ export function useWhisper(): UseWhisperApi {
         const alignments = alignScenestoTranscript(segments, tokens);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
         onSegmentsUpdated(updated);
+
+        onProjectUpdated(p => ({
+          ...p,
+          lastTranscribedAssetId: audioAsset.id,
+          transcriptTokens: tokens,
+        }));
 
         setTranscriptionStatus({ phase: 'done', jobId });
 
