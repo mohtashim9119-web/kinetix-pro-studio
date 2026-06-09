@@ -397,34 +397,38 @@ export function DropZonePanel({
 
   const handleApplySync = () => {
     onApplySync(stagedRef.current);
-    // Do NOT reset staged — slots keep showing their files after sync.
-    // User can clear individually with × buttons.
+    // Clear staged so slots immediately switch to the green persisted indicator.
+    updateStaged(() => ({
+      scriptFile: null,
+      sceneFile: null,
+      voiceoverFile: null,
+      assetFiles: [],
+      zipFiles: [],
+    }));
   };
 
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
 
   // ── × clear handlers ───────────────────────────────────────────────────────
-  // Rule: a × clears the STAGED file first (deselect, no project mutation).
-  // Only when nothing is staged does × delete the persisted project data —
-  // and only for slots where that makes sense (voiceover, assets).
+  // Single click clears both staged file AND persisted project data.
   const handleScriptClear = () => {
     updateStaged(prev => ({ ...prev, scriptFile: null }));
-    if (!staged.scriptFile) onClearScript();
+    onClearScript();
   };
 
   const handleSceneClear = () => {
     updateStaged(prev => ({ ...prev, sceneFile: null }));
-    if (!staged.sceneFile) onClearSceneDetails();
+    onClearSceneDetails();
   };
 
   const handleVoiceoverClear = () => {
-    if (staged.voiceoverFile) removeSlot('voiceover'); // just clear staged
-    else onDeleteVoiceover();                          // delete persisted
+    updateStaged(prev => ({ ...prev, voiceoverFile: null }));
+    onDeleteVoiceover();
   };
 
   const handleAssetsClear = () => {
-    if (allStagedAssets.length > 0) clearAllStagedAssets(); // just clear staged
-    else onDeleteAllAssets();                               // delete persisted
+    updateStaged(prev => ({ ...prev, assetFiles: [], zipFiles: [] }));
+    onDeleteAllAssets();
   };
 
   // ── Persisted-state labels + derived lookups ────────────────────────────────
