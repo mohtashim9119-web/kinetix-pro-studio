@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Task 9b-3 complete. Planning 9b-4 next.
+Task 9b-4 complete. Planning 9b-5 next.
 
 ---
 
@@ -369,6 +369,7 @@ Phase 3 steps:
 | 2026-06-04 | **Task 9b-0 commit `4ed6a04`.** Unified drop zone + bottom drawer segment editor. Replaced 4-tab left panel with 2-state DropZonePanel (pre-sync drop zone / post-sync mapping list with lock icons). Added BottomDrawer slide-up segment editor (editor fields copied verbatim from SegmentEditorPanel). Added `VideoSegment.locked` field; `finalizeSync` preserves locked durations by order-index match during re-sync. Extracted `processMediaFile` helper (eliminates as-any synthetic event casts). SyncWizard and sidebar nav hidden via `{false && ...}` (code preserved). Settings accessible via modal overlay gated on `showSettings` state. tsc/lint/build clean; 439.90 kB / 134.58 kB gzip. Branch `task-9b-0-unified-ux` merged to main. |
 | 2026-06-09 | **Task 9b-2 — Background Transcription Pipeline + Progress Bar.** WhisperState streaming via Tauri Channel; TranscriptionBar animated progress strip; character-walk RTF parser replacing iterative brace-regex; 4-slot staged-file UX with FILES/SEGMENTS tabs; filenames persisted in project state; × clear buttons fixed; inline error banner for script-slot mis-drop. Branch `task-9b-2-transcription-pipeline` merged to main. |
 | 2026-06-09 | **Task 9b-3 — Wire Whisper Timestamps into Segment Timing.** TranscriptToken moved to types.ts (canonical); Project extended with lastTranscribedAssetId + transcriptTokens; Option A skip logic in useWhisper (same audio → instant re-align, no Whisper run); handleApplySyncFromFiles + finalizeSync both call startTranscription; stray call in processMediaFile removed. Branch `task-9b-3-whisper-timestamps` merged to main. |
+| 2026-06-09 | **Task 9b-4 — Accurate Whisper Alignment.** --dtw base.en flag for frame-accurate timestamps; alignScenestoTranscript rewritten as sliding-window text matcher; infinite loop fix (maxStart floor-clamped to searchStart); audio format detection from magic bytes (WAV/MP3/M4A/OGG); parseWhisperStdout dead code removed; zero-segment guard prevents timeline wipe on failed parse; projectRef fixes stale closure reads in handleApplySyncFromFiles + finalizeSync. Branch `task-9b-4-whisper-alignment` merged to main. |
 
 ---
 
@@ -428,6 +429,39 @@ Status: COMPLETE — merged to main
 - New audio: full Whisper run triggers correctly
 - Locked segments: timing preserved across re-sync
 - Scene edits with same audio: instant re-sync, correct timing
+
+---
+
+## Task 9b-4 — Accurate Whisper Alignment
+Status: COMPLETE — merged to main
+
+### What was built
+- --dtw base.en flag added to Whisper CLI args for frame-accurate
+  per-token timestamps via Dynamic Time Warping
+- alignScenestoTranscript rewritten: sliding-window text matcher
+  with monotonic searchStart, gap-fill pass, last segment clamped
+  to audio end; replaces token-count distribution
+- Infinite loop fix: maxStart floor-clamped to searchStart;
+  loop condition changed from wi <= Math.max(wi, maxStart) to
+  wi <= maxStart
+- Audio format detection from magic bytes: WAV/MP3/M4A/OGG
+  auto-detected; correct extension written so whisper-cli
+  format detection works; no more false WAV rejections
+- parseWhisperStdout dead code removed
+- Zero-segment guard: if parseProjectData returns 0 segments
+  and existing segments exist, sync aborts — existing timeline
+  never wiped by a failed parse
+- projectRef added: all post-await reads in handleApplySyncFromFiles
+  and finalizeSync use projectRef.current to avoid stale closure bugs
+- Option A skip logic confirmed working: re-sync with same audio
+  uses cached tokens, no Whisper re-run
+
+### Verified behaviors
+- Timestamps are speech-accurate (DTW), not character-count based
+- Timeline is contiguous with no gaps between segments
+- Locked segments preserve timing across re-sync
+- Re-syncing images only does not wipe segments
+- Assets cleared + reload: segments persist, re-attaching works
 
 ---
 
