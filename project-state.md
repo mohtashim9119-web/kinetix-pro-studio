@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Task 9b-4 complete. Planning 9b-5 next.
+Task 9b complete. Starting Task 3 (video plays when timeline paused) next.
 
 ---
 
@@ -370,6 +370,7 @@ Phase 3 steps:
 | 2026-06-09 | **Task 9b-2 — Background Transcription Pipeline + Progress Bar.** WhisperState streaming via Tauri Channel; TranscriptionBar animated progress strip; character-walk RTF parser replacing iterative brace-regex; 4-slot staged-file UX with FILES/SEGMENTS tabs; filenames persisted in project state; × clear buttons fixed; inline error banner for script-slot mis-drop. Branch `task-9b-2-transcription-pipeline` merged to main. |
 | 2026-06-09 | **Task 9b-3 — Wire Whisper Timestamps into Segment Timing.** TranscriptToken moved to types.ts (canonical); Project extended with lastTranscribedAssetId + transcriptTokens; Option A skip logic in useWhisper (same audio → instant re-align, no Whisper run); handleApplySyncFromFiles + finalizeSync both call startTranscription; stray call in processMediaFile removed. Branch `task-9b-3-whisper-timestamps` merged to main. |
 | 2026-06-09 | **Task 9b-4 — Accurate Whisper Alignment.** --dtw base.en flag for frame-accurate timestamps; alignScenestoTranscript rewritten as sliding-window text matcher; infinite loop fix (maxStart floor-clamped to searchStart); audio format detection from magic bytes (WAV/MP3/M4A/OGG); parseWhisperStdout dead code removed; zero-segment guard prevents timeline wipe on failed parse; projectRef fixes stale closure reads in handleApplySyncFromFiles + finalizeSync. Branch `task-9b-4-whisper-alignment` merged to main. |
+| 2026-06-09 | Task 9b complete. 9b-0 through 9b-4 shipped; 9b-5 closed as no-op. Whisper pipeline fully operational: DTW alignment, Option A caching, text-matching aligner, audio format detection, zero-segment guard, stale closure fixes. |
 
 ---
 
@@ -464,6 +465,17 @@ Status: COMPLETE — merged to main
 - Assets cleared + reload: segments persist, re-attaching works
 - Slot UX: immediate green ✓ after sync; single × click clears both
   staged and persisted; no two-step clear behavior
+
+---
+
+## Task 9b-5
+Status: NO-OP — all originally planned items already delivered
+
+- Apply Sync commits whisper timings: ✅ delivered in 9b-2/9b-3
+- Hide SyncWizard: ✅ delivered in 9b-0 ({false && ...} preserved)
+- Bracket-only scene format: deferred — old format still accepted and
+  works correctly; no change needed since Whisper handles timing
+  independently of description text
 
 ---
 
