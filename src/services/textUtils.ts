@@ -99,11 +99,19 @@ export function stripRtfIfNeeded(text: string): string {
   // Step 5: collapse 3+ consecutive newlines to exactly two
   result = result.replace(/\n{3,}/g, '\n\n');
 
-  // Step 6: remove lines that are only RTF noise (pure numbers, single chars, empty)
+  // Step 5b: remove everything before the first [IMAGE:], [VIDEO:], or [AUDIO:] tag
+  // RTF font/color table remnants leak as plain text before the first real block
+  const firstTagIndex = result.search(/\[(IMAGE|VIDEO|AUDIO):/i);
+  if (firstTagIndex > 0) {
+    result = result.slice(firstTagIndex);
+  }
+
+  // Step 6: remove lines that are only RTF noise
   const lines = result.split('\n').filter(line => {
-    if (!line.trim()) return true; // keep blank lines (they separate blocks)
-    if (/^\d+$/.test(line.trim())) return false; // pure numbers
-    if (line.trim().length <= 1) return false; // single chars
+    if (!line.trim()) return true;
+    if (/^\d+$/.test(line.trim())) return false;
+    if (line.trim().length <= 1) return false;
+    if (/^[;,.\s]+$/.test(line.trim())) return false;
     return true;
   });
 
