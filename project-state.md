@@ -367,6 +367,42 @@ Phase 3 steps:
 | 2026-06-02 | **Phase 7 Batch C commit 1 — `e961110`.** `setInterval` playback replaced with rAF + audio master clock (findings 9, 10). Four focused effects: pause `[isPlaying, exportState.isExporting]`; rAF loop `[isPlaying, voiceover]` reading `audio.currentTime` every frame (~16ms); no-voiceover `setInterval` `[isPlaying, voiceover, globalPlaybackSpeed]` (unchanged); playbackRate sync `[isPlaying, globalPlaybackSpeed]`. `onTimeUpdate` handler removed — rAF loop is sole writer of `setCurrentTime`. `audio.ended` used for end-of-audio detection; defensive `.play()` guard carried into tick with `!audio.ended` guard. |
 | 2026-06-02 | **Phase 7 Batch C commit 2 — `e8869d9`.** Block stray click on resize handles from seeking segment (Batch B regression). After Commit 2 removed the overlay div, native browser `click` events could bubble from a resize handle through to the segment div's `onClick` handler, triggering `onSeek(s.startTime)` and jumping playback backwards. Fixed by adding `onClick={e => e.stopPropagation()}` to all four resize handle divs (two visual track, two audio track). |
 | 2026-06-04 | **Task 9b-0 commit `4ed6a04`.** Unified drop zone + bottom drawer segment editor. Replaced 4-tab left panel with 2-state DropZonePanel (pre-sync drop zone / post-sync mapping list with lock icons). Added BottomDrawer slide-up segment editor (editor fields copied verbatim from SegmentEditorPanel). Added `VideoSegment.locked` field; `finalizeSync` preserves locked durations by order-index match during re-sync. Extracted `processMediaFile` helper (eliminates as-any synthetic event casts). SyncWizard and sidebar nav hidden via `{false && ...}` (code preserved). Settings accessible via modal overlay gated on `showSettings` state. tsc/lint/build clean; 439.90 kB / 134.58 kB gzip. Branch `task-9b-0-unified-ux` merged to main. |
+| 2026-06-09 | **Task 9b-2 — Background Transcription Pipeline + Progress Bar.** WhisperState streaming via Tauri Channel; TranscriptionBar animated progress strip; character-walk RTF parser replacing iterative brace-regex; 4-slot staged-file UX with FILES/SEGMENTS tabs; filenames persisted in project state; × clear buttons fixed; inline error banner for script-slot mis-drop. Branch `task-9b-2-transcription-pipeline` merged to main. |
+
+---
+
+## Task 9b-2 — Background Transcription Pipeline + Progress Bar
+Status: COMPLETE — merged to main
+
+### What was built
+- Rust: WhisperState<Mutex<Option<CommandChild>>>; streaming via Channel<WhisperEvent>;
+  cancellation via whisper_cancel command; silent exit codes 130/143
+- TypeScript: transcribeWithProgress(); AbortController cancellation pattern (same as useExport)
+- TranscriptionBar: animated indigo progress strip; green done flash (3s); red error banner
+- App.tsx: startTranscription() triggered on audio upload when isTauri()
+
+### Upload/Sync flow (also stabilised in this task)
+- 4 explicit file slots: Script, Scene Details, Voiceover, Images & Videos
+- FILES / SEGMENTS two-tab layout in left panel
+- RTF stripping: character-walk parser (brace-depth tracking); bracket tag placeholder protection;
+  preamble trimmed before first [IMAGE:] tag
+- Content detection: ≥3 bracket tags → Scene Details; Script slot actively rejects scene files
+  with inline error banner (4s auto-dismiss)
+- Filenames persisted in project state (scriptFileName, sceneDetailsFileName) — survive reload
+- × buttons work for both staged and persisted data on all 4 slots
+- Asset dedup: no duplicates on re-upload; audio replace: max 1 voiceover at all times
+- Persistence (usePersistProject): isSynced restored on hydration when segments.length > 0
+
+### Key files changed
+- src-tauri/src/whisper.rs
+- src-tauri/src/lib.rs
+- src/types.ts
+- src/services/whisperService.ts
+- src/services/textUtils.ts
+- src/hooks/useWhisper.ts
+- src/components/TranscriptionBar.tsx
+- src/components/DropZonePanel.tsx
+- src/App.tsx
 
 ---
 
