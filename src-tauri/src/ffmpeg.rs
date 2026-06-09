@@ -154,8 +154,9 @@ pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
 /// Opens a native OS save-file dialog and writes the base64-decoded bytes to
 /// the chosen path.
 ///
-/// Returns `true` if the file was saved, `false` if the user cancelled.
-/// The dialog suggests `default_name` as the filename and filters to .mp4.
+/// Returns `Some(path)` with the absolute path of the saved file, or `None` if
+/// the user cancelled. The dialog suggests `default_name` as the filename and
+/// filters to .mp4.
 ///
 /// Accepts base64-encoded data (same encoding as ffmpeg_write_file) to avoid
 /// JSON-array-of-numbers overhead on the final MP4 blob, which can be 100+ MB.
@@ -164,7 +165,7 @@ pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
 /// thread internally (required on macOS/AppKit) while awaiting on the Tauri
 /// tokio runtime — no deadlock risk.
 #[tauri::command]
-pub async fn save_bytes_to_disk(data_b64: String, default_name: String) -> Result<bool, String> {
+pub async fn save_bytes_to_disk(data_b64: String, default_name: String) -> Result<Option<String>, String> {
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("save_bytes_to_disk: base64 decode failed: {e}"))?;
@@ -176,9 +177,34 @@ pub async fn save_bytes_to_disk(data_b64: String, default_name: String) -> Resul
         .await;
 
     match handle {
-        None => Ok(false),
-        Some(file_handle) => std::fs::write(file_handle.path(), &data)
-            .map(|_| true)
-            .map_err(|e| format!("Failed to save file: {e}")),
+        None => Ok(None),
+        Some(file_handle) => {
+            let path = file_handle.path().to_string_lossy().to_string();
+            std::fs::write(file_handle.path(), &data)
+                .map(|_| Some(path))
+                .map_err(|e| format!("Failed to save file: {e}"))
+        }
     }
+}
+
+/// Opens the file manager (Finder on macOS, Explorer on Windows) with the
+/// specified file selected. Used for the "Show in Finder" button after a
+/// successful export. Fire-and-forget: the OS handler runs asynchronously.
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

@@ -33,7 +33,8 @@ import {
   Maximize,
   Minimize,
   Info,
-  X
+  X,
+  CheckCircle,
 } from 'lucide-react';
 import { motion, AnimatePresence, type Transition } from 'motion/react';
 import {
@@ -70,6 +71,7 @@ import { useExport, type ExportResolution, type ExportFps, type ExportError } fr
 import { useWhisper } from './hooks/useWhisper';
 import { TranscriptionBar } from './components/TranscriptionBar';
 import { isTauri } from './services/tauriFfmpeg';
+import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
   text: string;
@@ -742,7 +744,7 @@ export default function App() {
   const previewRef = useRef<HTMLDivElement>(null);
 
   const exportApi = useExport(project, exportResolution, exportFps);
-  const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
+  const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
 
   const { transcriptionStatus, startTranscription, cancelTranscription, dismissError } = useWhisper();
 
@@ -1084,6 +1086,13 @@ export default function App() {
       audioRef.current?.pause();
     }
   }, [isPlaying, exportState.isExporting]);
+
+  // --- Export success toast: auto-dismiss after 10 s ---
+  useEffect(() => {
+    if (!exportState.showExportSuccess) return;
+    const t = setTimeout(() => dismissSuccess(), 10000);
+    return () => clearTimeout(t);
+  }, [exportState.showExportSuccess, dismissSuccess]);
 
   // --- Playback: rAF loop — voiceover path (audio element is master clock) ---
   // Reads audioRef.current.currentTime on every animation frame (~16ms at 60fps).
@@ -1561,6 +1570,7 @@ export default function App() {
                  globalOverlayConfig={project.globalOverlayConfig}
                  hideAllText={project.hideAllText ?? false}
                  assets={project.assets}
+                 isPlaying={isPlaying}
                  isResizingRef={isResizingRef}
                  onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                />
@@ -2133,6 +2143,42 @@ export default function App() {
                 </div>
              </motion.div>
            </div>
+        )}
+      </AnimatePresence>
+
+      {/* Export success toast — bottom-right, auto-dismisses after 10 s */}
+      <AnimatePresence>
+        {exportState.showExportSuccess && exportState.lastExportPath && (
+          <motion.div
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            className="fixed bottom-6 right-6 z-[300] bg-zinc-900 border border-zinc-700
+                       rounded-xl p-4 shadow-2xl flex flex-col gap-3 min-w-64"
+          >
+            <div className="flex items-center gap-2 text-green-400 font-semibold text-sm">
+              <CheckCircle size={18} />
+              Export complete
+            </div>
+            <p className="text-zinc-400 text-xs truncate max-w-56">
+              {exportState.lastExportPath.split('/').pop()?.split('\\').pop()}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => invoke('reveal_in_finder', { path: exportState.lastExportPath })}
+                className="flex-1 text-xs bg-zinc-800 hover:bg-zinc-700
+                           text-zinc-200 rounded-lg px-3 py-2 transition-colors"
+              >
+                Show in Finder
+              </button>
+              <button
+                onClick={dismissSuccess}
+                className="text-xs text-zinc-500 hover:text-zinc-300 px-2 transition-colors"
+              >
+                Dismiss
+              </button>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

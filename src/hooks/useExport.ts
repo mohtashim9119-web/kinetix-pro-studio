@@ -19,6 +19,8 @@ export interface UseExportState {
   progress: number;
   stageLabel: string;
   error: ExportError | null;
+  showExportSuccess?: boolean;
+  lastExportPath?: string;
 }
 
 export interface UseExportApi {
@@ -26,6 +28,7 @@ export interface UseExportApi {
   startExport: () => void;
   cancelExport: () => void;
   retryExport: () => void;
+  dismissSuccess: () => void;
 }
 
 interface ExportSnapshot {
@@ -165,14 +168,18 @@ export function useExport(
     const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
     const fileName = `${snap.name.replace(/\s+/g, '_')}_${ts}.mp4`;
     const bytes = new Uint8Array(await result.blob.arrayBuffer());
-    await invoke<boolean>('save_bytes_to_disk', {
+    const savedPath = await invoke<string | null>('save_bytes_to_disk', {
       dataB64: bytesToBase64(bytes),
       defaultName: fileName,
     });
     // Guard: a new export may have started while the save dialog was open.
     if (generationRef.current !== gen) return;
 
-    setState(IDLE_STATE);
+    setState({
+      ...IDLE_STATE,
+      lastExportPath: savedPath ?? undefined,
+      showExportSuccess: savedPath !== null,
+    });
   }, [teardown]);
 
   const startExport = useCallback((): void => {
@@ -217,5 +224,9 @@ export function useExport(
     void runExport(snapshot);
   }, [runExport, teardown]);
 
-  return { state, startExport, cancelExport, retryExport };
+  const dismissSuccess = useCallback((): void => {
+    setState(prev => ({ ...prev, showExportSuccess: false }));
+  }, []);
+
+  return { state, startExport, cancelExport, retryExport, dismissSuccess };
 }
