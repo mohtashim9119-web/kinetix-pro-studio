@@ -100,6 +100,7 @@ interface Props {
   globalOverlayConfig: GlobalOverlayConfig;
   hideAllText: boolean;
   assets: Asset[];
+  isPlaying: boolean;
   isResizingRef: React.RefObject<boolean>;
   /** Called when the user drags an extra overlay to a new position. */
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
@@ -115,6 +116,7 @@ export function PreviewStage({
   globalOverlayConfig,
   hideAllText,
   assets,
+  isPlaying,
   isResizingRef,
   onUpdateExtraOverlayPosition,
 }: Props) {
@@ -123,6 +125,9 @@ export function PreviewStage({
 
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Stable ref to the current <video> DOM element — read by the isPlaying useEffect.
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
 
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
@@ -289,10 +294,10 @@ export function PreviewStage({
   // Suppress Framer Motion entry/exit animations while canvas is handling the transition.
   const suppressMotionAnim = transitionPreview.isActive;
 
-  // Stable ref callback for the video element — useCallback ensures this only fires
-  // on mount/unmount rather than on every render (which would happen with an inline
-  // arrow ref, causing a seek on every rAF tick at 60fps).
+  // Callback ref for the video element — fires on mount/unmount and whenever deps
+  // change. Stores element in videoElRef for the isPlaying useEffect below.
   const videoRef = useCallback((el: HTMLVideoElement | null) => {
+    videoElRef.current = el;
     if (!el) return;
     el.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
     const segmentProgress = currentTime - (currentSegment?.startTime ?? 0);
@@ -303,7 +308,23 @@ export function PreviewStage({
     if (!isResizingRef.current && Math.abs(el.currentTime - videoTime) > 0.1) {
       el.currentTime = videoTime;
     }
-  }, [currentSegment, currentTime, globalPlaybackSpeed, isResizingRef]);
+    if (isPlaying) {
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+    }
+  }, [currentSegment, currentTime, globalPlaybackSpeed, isResizingRef, isPlaying]);
+
+  // Sync play/pause state whenever isPlaying toggles between renders.
+  useEffect(() => {
+    const el = videoElRef.current;
+    if (!el) return;
+    if (isPlaying) {
+      el.play().catch(() => {});
+    } else {
+      el.pause();
+    }
+  }, [isPlaying]);
 
   return (
     <div className="flex-1 min-h-0 flex items-center justify-center">
@@ -360,7 +381,6 @@ export function PreviewStage({
                           key={asset.id}
                           src={asset.url}
                           className="w-full h-full object-cover"
-                          autoPlay
                           muted={currentSegment.isMuted}
                           playsInline
                           ref={videoRef}

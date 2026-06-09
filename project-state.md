@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Task 9b complete. Starting Task 3 (video plays when timeline paused) next.
+Bundle 1 (Task 3 + Task 6) in progress — branch task-bundle-1-bug-fixes
 
 ---
 
@@ -465,6 +465,22 @@ Status: COMPLETE — merged to main
 - Assets cleared + reload: segments persist, re-attaching works
 - Slot UX: immediate green ✓ after sync; single × click clears both
   staged and persisted; no two-step clear behavior
+
+---
+
+## Bundle 1 — Bug Fixes (Task 3 + Task 6)
+Status: IN PROGRESS — branch task-bundle-1-bug-fixes
+
+### Task 3 — Video plays when timeline paused
+- Add isPlaying prop to PreviewStage
+- useEffect syncs video element play/pause state to isPlaying
+- videoRef callback also syncs on segment change
+
+### Task 6 — Post-export popup
+- reveal_in_finder Rust command (open -R on macOS, explorer /select on Windows)
+- showExportSuccess + lastExportPath added to ExportState
+- Bottom-right toast popup: filename, Show in Finder button, Dismiss button
+- Auto-dismisses after 10 seconds
 
 ---
 

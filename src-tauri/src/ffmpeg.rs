@@ -151,34 +151,61 @@ pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Opens a native OS save-file dialog and writes the base64-decoded bytes to
-/// the chosen path.
+/// Opens a native OS save-file dialog and returns the chosen path without
+/// writing anything. `default_name` is the suggested filename; `default_dir`
+/// (if provided) opens the dialog in that directory — used to remember the
+/// last export location.
 ///
-/// Returns `true` if the file was saved, `false` if the user cancelled.
-/// The dialog suggests `default_name` as the filename and filters to .mp4.
-///
-/// Accepts base64-encoded data (same encoding as ffmpeg_write_file) to avoid
-/// JSON-array-of-numbers overhead on the final MP4 blob, which can be 100+ MB.
-///
-/// Uses `rfd::AsyncFileDialog` which dispatches the native panel to the main
-/// thread internally (required on macOS/AppKit) while awaiting on the Tauri
-/// tokio runtime — no deadlock risk.
+/// Returns `Some(path)` or `None` if the user cancelled.
 #[tauri::command]
-pub async fn save_bytes_to_disk(data_b64: String, default_name: String) -> Result<bool, String> {
+pub async fn pick_save_path(
+    default_name: String,
+    default_dir: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut dialog = rfd::AsyncFileDialog::new()
+        .set_title("Save Export As")
+        .set_file_name(&default_name)
+        .add_filter("MP4 Video", &["mp4"]);
+
+    if let Some(dir) = default_dir {
+        dialog = dialog.set_directory(&dir);
+    }
+
+    let handle = dialog.save_file().await;
+    Ok(handle.map(|p| p.path().to_string_lossy().into_owned()))
+}
+
+/// Writes base64-decoded bytes to an explicit file path chosen by the caller.
+///
+/// The frontend base64-encodes the MP4 blob (same scheme as ffmpeg_write_file)
+/// and passes the path returned by `pick_save_path`. Separating path-picking
+/// from writing lets the user confirm the destination before the render starts.
+#[tauri::command]
+pub async fn save_bytes_to_disk(path: String, data_b64: String) -> Result<(), String> {
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("save_bytes_to_disk: base64 decode failed: {e}"))?;
+    fs::write(&path, &data).map_err(|e| format!("save_bytes_to_disk: {e}"))
+}
 
-    let handle = rfd::AsyncFileDialog::new()
-        .set_file_name(&default_name)
-        .add_filter("MP4 Video", &["mp4"])
-        .save_file()
-        .await;
-
-    match handle {
-        None => Ok(false),
-        Some(file_handle) => std::fs::write(file_handle.path(), &data)
-            .map(|_| true)
-            .map_err(|e| format!("Failed to save file: {e}")),
+/// Opens the file manager (Finder on macOS, Explorer on Windows) with the
+/// specified file selected. Used for the "Show in Finder" button after a
+/// successful export. Fire-and-forget: the OS handler runs asynchronously.
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
     }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .args(["/select,", &path])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }

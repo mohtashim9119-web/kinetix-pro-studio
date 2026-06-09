@@ -23,7 +23,9 @@ pub fn run() {
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,
             ffmpeg::ffmpeg_destroy_session,
+            ffmpeg::pick_save_path,
             ffmpeg::save_bytes_to_disk,
+            ffmpeg::reveal_in_finder,
             whisper::whisper_transcribe,
             whisper::whisper_cancel,
         ])

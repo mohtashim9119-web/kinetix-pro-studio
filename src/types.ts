@@ -182,6 +182,7 @@ export interface Project {
   segments: VideoSegment[];
   assets: Asset[];
   voiceoverId?: string;
+  lastExportPath?: string;
   lastTranscribedAssetId?: string;
   transcriptTokens?: TranscriptToken[];
   globalTransition: TransitionType;
