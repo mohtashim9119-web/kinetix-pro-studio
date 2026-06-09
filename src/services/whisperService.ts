@@ -78,12 +78,15 @@ export function alignScenestoTranscript(
     let bestStart = searchStart;
     let bestEnd = Math.min(searchStart + windowSize - 1, tokenWords.length - 1);
 
-    const maxStart = Math.min(
-      searchStart + Math.floor(tokenWords.length / segments.length) * 3,
-      tokenWords.length - targetWords.length,
+    const maxStart = Math.max(
+      searchStart,
+      Math.min(
+        searchStart + Math.floor(tokenWords.length / segments.length) * 3,
+        tokenWords.length - targetWords.length,
+      ),
     );
 
-    for (let wi = searchStart; wi <= Math.max(wi, maxStart); wi++) {
+    for (let wi = searchStart; wi <= maxStart; wi++) {
       let score = 0;
       for (let j = 0; j < targetWords.length; j++) {
         if (tokenWords[wi + j]?.word === targetWords[j]) score++;
