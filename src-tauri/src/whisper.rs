@@ -126,6 +126,14 @@ pub async fn whisper_transcribe(
     let audio_path = tmp_dir.join("input.wav");
     fs::write(&audio_path, &audio_bytes).map_err(|e| format!("write audio: {e}"))?;
 
+    // Validate WAV magic bytes before invoking whisper
+    if audio_bytes.len() < 4 || &audio_bytes[0..4] != b"RIFF" {
+        let _ = on_event.send(WhisperEvent::Error {
+            message: "Audio file is not a valid WAV file. Please convert to WAV before transcribing.".into(),
+        });
+        return Ok(());
+    }
+
     let model = model_path(&app)?;
 
     let (mut rx, child) = app
@@ -133,11 +141,12 @@ pub async fn whisper_transcribe(
         .sidecar("whisper")
         .map_err(|e| format!("sidecar lookup: {e}"))?
         .args([
-            "-m",  model.to_str().unwrap_or(""),
-            "-f",  audio_path.to_str().unwrap_or(""),
-            "-ml", "1",
+            "-m",    model.to_str().unwrap_or(""),
+            "-f",    audio_path.to_str().unwrap_or(""),
+            "-ml",   "1",
             "-np",
-            "-l",  "en",
+            "-l",    "en",
+            "--dtw", "base.en",
         ])
         .spawn()
         .map_err(|e| format!("whisper spawn: {e}"))?;
