@@ -123,7 +123,26 @@ pub async fn whisper_transcribe(
     let tmp_dir = std::env::temp_dir().join(format!("kinetix-whisper-{}", tmp_id));
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
 
-    let audio_path = tmp_dir.join("input.wav");
+    // Detect audio format from magic bytes and use correct extension
+    let audio_ext = if audio_bytes.starts_with(b"RIFF") {
+        "wav"
+    } else if audio_bytes.starts_with(b"ID3")
+        || audio_bytes.starts_with(b"\xff\xfb")
+        || audio_bytes.starts_with(b"\xff\xf3")
+        || audio_bytes.starts_with(b"\xff\xf2")
+    {
+        "mp3"
+    } else if audio_bytes.starts_with(b"\x00\x00\x00")
+        && audio_bytes.get(4..8) == Some(b"ftyp")
+    {
+        "m4a"
+    } else if audio_bytes.starts_with(b"OggS") {
+        "ogg"
+    } else {
+        "wav" // fallback — let whisper try
+    };
+
+    let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
     fs::write(&audio_path, &audio_bytes).map_err(|e| format!("write audio: {e}"))?;
 
     let model = model_path(&app)?;
@@ -133,11 +152,12 @@ pub async fn whisper_transcribe(
         .sidecar("whisper")
         .map_err(|e| format!("sidecar lookup: {e}"))?
         .args([
-            "-m",  model.to_str().unwrap_or(""),
-            "-f",  audio_path.to_str().unwrap_or(""),
-            "-ml", "1",
+            "-m",    model.to_str().unwrap_or(""),
+            "-f",    audio_path.to_str().unwrap_or(""),
+            "-ml",   "1",
             "-np",
-            "-l",  "en",
+            "-l",    "en",
+            "--dtw", "base.en",
         ])
         .spawn()
         .map_err(|e| format!("whisper spawn: {e}"))?;

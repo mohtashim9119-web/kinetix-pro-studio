@@ -36,30 +36,6 @@ function parseTimestamp(ts: string): number {
 // Public helpers (also used by useWhisper)
 // ---------------------------------------------------------------------------
 
-/** Parses whisper stdout text (multiline) into an array of TranscriptTokens. */
-export function parseWhisperStdout(stdout: string): TranscriptToken[] {
-  const tokens: TranscriptToken[] = [];
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('[')) continue;
-    const closeIdx = trimmed.indexOf(']');
-    if (closeIdx === -1) continue;
-    const tsPart = trimmed.slice(1, closeIdx);
-    const arrowIdx = tsPart.indexOf(' --> ');
-    if (arrowIdx === -1) continue;
-    const startSec = parseTimestamp(tsPart.slice(0, arrowIdx));
-    const endSec = parseTimestamp(tsPart.slice(arrowIdx + 5));
-    const text = trimmed.slice(closeIdx + 1).trim();
-    if (text) tokens.push({ startSec, endSec, text });
-  }
-  return tokens;
-}
-
-/**
- * Aligns project segments to whisper transcript tokens by distributing tokens
- * proportionally across segments.
- * Returns `{ t0, t1 }` windows for each segment (same length as `segments`).
- */
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
@@ -68,25 +44,89 @@ export function alignScenestoTranscript(
     return segments.map(() => ({ t0: 0, t1: 0 }));
   }
 
-  const totalDuration = tokens[tokens.length - 1]?.endSec ?? 0;
-  const totalTokens = tokens.length;
-  const tokensPerScene = Math.max(1, Math.floor(totalTokens / segments.length));
+  function normalize(s: string): string[] {
+    return s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+  }
 
-  return segments.map((_, i) => {
-    const startIdx = i * tokensPerScene;
-    const endIdx =
-      i === segments.length - 1
-        ? totalTokens - 1
-        : Math.min((i + 1) * tokensPerScene - 1, totalTokens - 1);
+  const tokenWords = tokens.map((t, i) => ({
+    word: normalize(t.text)[0] ?? '',
+    tokenIdx: i,
+  })).filter(tw => tw.word.length > 0);
 
-    const t0 =
-      tokens[startIdx]?.startSec ?? (totalDuration * i) / segments.length;
-    const t1 =
-      tokens[endIdx]?.endSec ??
-      (totalDuration * (i + 1)) / segments.length;
+  const results: Array<{ t0: number; t1: number }> = [];
+  let searchStart = 0;
 
-    return { t0, t1: Math.max(t0 + 0.1, t1) };
-  });
+  for (let si = 0; si < segments.length; si++) {
+    const seg = segments[si];
+    if (!seg) continue;
+
+    if (!seg.text || !seg.text.trim()) {
+      const anchor = results[si - 1]?.t1 ?? 0;
+      results.push({ t0: anchor, t1: anchor });
+      continue;
+    }
+
+    const targetWords = normalize(seg.text);
+    if (targetWords.length === 0) {
+      const anchor = results[si - 1]?.t1 ?? 0;
+      results.push({ t0: anchor, t1: anchor });
+      continue;
+    }
+
+    const windowSize = Math.max(targetWords.length, 3);
+    let bestScore = -1;
+    let bestStart = searchStart;
+    let bestEnd = Math.min(searchStart + windowSize - 1, tokenWords.length - 1);
+
+    const maxStart = Math.max(
+      searchStart,
+      Math.min(
+        searchStart + Math.floor(tokenWords.length / segments.length) * 3,
+        tokenWords.length - targetWords.length,
+      ),
+    );
+
+    for (let wi = searchStart; wi <= maxStart; wi++) {
+      let score = 0;
+      for (let j = 0; j < targetWords.length; j++) {
+        if (tokenWords[wi + j]?.word === targetWords[j]) score++;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestStart = wi;
+        bestEnd = wi + targetWords.length - 1;
+      }
+    }
+
+    const t0TokenIdx = tokenWords[bestStart]?.tokenIdx ?? 0;
+    const t1TokenIdx = tokenWords[Math.min(bestEnd, tokenWords.length - 1)]?.tokenIdx ?? t0TokenIdx;
+
+    const t0 = tokens[t0TokenIdx]?.startSec ?? 0;
+    const t1 = tokens[t1TokenIdx]?.endSec ?? t0 + 0.1;
+
+    results.push({ t0, t1: Math.max(t0 + 0.05, t1) });
+
+    searchStart = bestStart + Math.max(1, Math.floor(targetWords.length * 0.8));
+  }
+
+  // Pass 2: fill gaps — extend each segment to meet the next one
+  for (let i = 0; i < results.length - 1; i++) {
+    const curr = results[i]!;
+    const next = results[i + 1]!;
+    if (curr.t1 < next.t0) {
+      const mid = (curr.t1 + next.t0) / 2;
+      curr.t1 = mid;
+      next.t0 = mid;
+    }
+  }
+
+  // Clamp last segment to actual audio end
+  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
+  if (results.length > 0) {
+    results[results.length - 1]!.t1 = audioEnd;
+  }
+
+  return results;
 }
 
 /**
