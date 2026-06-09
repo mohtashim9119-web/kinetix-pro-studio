@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Task 9b-0 complete. Next: 9b-1 — whisper.cpp sidecar + Rust IPC + CI binaries.
+Task 9b-3 complete. Planning 9b-4 next.
 
 ---
 
@@ -368,6 +368,7 @@ Phase 3 steps:
 | 2026-06-02 | **Phase 7 Batch C commit 2 — `e8869d9`.** Block stray click on resize handles from seeking segment (Batch B regression). After Commit 2 removed the overlay div, native browser `click` events could bubble from a resize handle through to the segment div's `onClick` handler, triggering `onSeek(s.startTime)` and jumping playback backwards. Fixed by adding `onClick={e => e.stopPropagation()}` to all four resize handle divs (two visual track, two audio track). |
 | 2026-06-04 | **Task 9b-0 commit `4ed6a04`.** Unified drop zone + bottom drawer segment editor. Replaced 4-tab left panel with 2-state DropZonePanel (pre-sync drop zone / post-sync mapping list with lock icons). Added BottomDrawer slide-up segment editor (editor fields copied verbatim from SegmentEditorPanel). Added `VideoSegment.locked` field; `finalizeSync` preserves locked durations by order-index match during re-sync. Extracted `processMediaFile` helper (eliminates as-any synthetic event casts). SyncWizard and sidebar nav hidden via `{false && ...}` (code preserved). Settings accessible via modal overlay gated on `showSettings` state. tsc/lint/build clean; 439.90 kB / 134.58 kB gzip. Branch `task-9b-0-unified-ux` merged to main. |
 | 2026-06-09 | **Task 9b-2 — Background Transcription Pipeline + Progress Bar.** WhisperState streaming via Tauri Channel; TranscriptionBar animated progress strip; character-walk RTF parser replacing iterative brace-regex; 4-slot staged-file UX with FILES/SEGMENTS tabs; filenames persisted in project state; × clear buttons fixed; inline error banner for script-slot mis-drop. Branch `task-9b-2-transcription-pipeline` merged to main. |
+| 2026-06-09 | **Task 9b-3 — Wire Whisper Timestamps into Segment Timing.** TranscriptToken moved to types.ts (canonical); Project extended with lastTranscribedAssetId + transcriptTokens; Option A skip logic in useWhisper (same audio → instant re-align, no Whisper run); handleApplySyncFromFiles + finalizeSync both call startTranscription; stray call in processMediaFile removed. Branch `task-9b-3-whisper-timestamps` merged to main. |
 
 ---
 
@@ -403,6 +404,30 @@ Status: COMPLETE — merged to main
 - src/components/TranscriptionBar.tsx
 - src/components/DropZonePanel.tsx
 - src/App.tsx
+
+---
+
+## Task 9b-3 — Wire Whisper Timestamps into Segment Timing
+Status: COMPLETE — merged to main
+
+### What was built
+- TranscriptToken interface moved to types.ts as canonical definition;
+  re-exported from whisperService.ts for backward compatibility
+- Project interface extended: lastTranscribedAssetId, transcriptTokens
+- Option A skip logic in useWhisper.ts: if voiceoverId matches
+  lastTranscribedAssetId and cached tokens exist, skip Whisper entirely
+  and run alignment directly — no progress bar, near instant
+- Fresh Whisper run stores tokens + asset ID back into project state
+  via onProjectUpdated callback
+- handleApplySyncFromFiles and finalizeSync both use startTranscription;
+  stray call in processMediaFile removed to prevent double-triggering
+- distributeSegmentTimes confirmed to skip locked segments
+
+### Verified behaviors
+- Re-sync with same audio: no transcription bar, cached tokens reused
+- New audio: full Whisper run triggers correctly
+- Locked segments: timing preserved across re-sync
+- Scene edits with same audio: instant re-sync, correct timing
 
 ---
 
