@@ -462,6 +462,8 @@ Status: COMPLETE — merged to main
 - Locked segments preserve timing across re-sync
 - Re-syncing images only does not wipe segments
 - Assets cleared + reload: segments persist, re-attaching works
+- Slot UX: immediate green ✓ after sync; single × click clears both
+  staged and persisted; no two-step clear behavior
 
 ---
 
