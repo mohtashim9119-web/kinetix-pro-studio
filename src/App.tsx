@@ -723,6 +723,14 @@ export default function App() {
   // a single setProject call so finalizeSync never reads stale state.
   // --------------------------------------------------------------------------
   const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<void> => {
+    console.log('[handoff] received:', JSON.stringify({
+      hasScript: !!staged.scriptFile,
+      hasScene: !!staged.sceneFile,
+      hasVoiceover: !!staged.voiceoverFile,
+      assetCount: staged.assetFiles.length,
+      zipCount: staged.zipFiles.length,
+      sceneFileName: staged.sceneFile?.file.name ?? 'NULL',
+    }));
     setIsProcessing(true);
 
     // 1. Read text files — strip RTF markup if the file is an .rtf document
@@ -733,6 +741,7 @@ export default function App() {
       ? stripRtfIfNeeded(await staged.sceneFile.file.text())
       : project.sceneDetails;
 
+    console.log('[strip debug] sceneText length:', sceneText.length, 'first 100:', sceneText.slice(0, 100));
     // Debug: verify RTF stripping and block count before parse
     console.log('[sync debug] sceneText preview:', sceneText.slice(0, 500));
     console.log('[sync debug] block count:', sceneText.split(/\r?\n\r?\n/).filter(b => b.trim()).length);

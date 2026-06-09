@@ -7,81 +7,107 @@
  * Strips RTF control codes from text read from a .rtf file (or a .txt file
  * saved by macOS TextEdit which embeds RTF inside a .txt extension).
  *
- * Strategy:
- *  1. Normalize \par / \pard into double newlines BEFORE removing control words
- *     so that scene-block boundaries survive as the \n\n that parseProjectData
- *     splits on.
- *  2. Remove unicode escapes, hex escapes, remaining control words, control
- *     symbols, and bare braces.
- *  3. Collapse runs of spaces/tabs within a line but leave newlines alone.
- *  4. Collapse 3+ consecutive newlines → exactly 2 (preserves scene boundary).
- *  5. Trim each line, drop empty or purely-numeric lines within a block.
+ * Uses a character-walk parser instead of iterative regex group removal so
+ * the outermost RTF brace pair is never consumed — the previous regex approach
+ * matched `{[^{}]*}` across newlines and deleted all content in the final pass.
  */
 export function stripRtfIfNeeded(text: string): string {
   if (!text.trimStart().startsWith('{\\rtf')) return text;
 
-  let s = text;
-
-  // PROTECT bracket tags before any {} removal
-  // Replace [IMAGE:...], [VIDEO:...], [AUDIO:...] with
-  // placeholders so Step 1 cannot delete them
-  const bracketTags: string[] = [];
-  s = s.replace(/\[(IMAGE|VIDEO|AUDIO):[^\]]*\]/gi, (match) => {
-    bracketTags.push(match);
-    return `__BRACKET_${bracketTags.length - 1}__`;
+  // Step 1: protect bracket tags before any destructive operation
+  const placeholders: string[] = [];
+  let protected_ = text.replace(/\[(IMAGE|VIDEO|AUDIO):[^\]]*\]/gi, (match) => {
+    placeholders.push(match);
+    return `__BRACKET_${placeholders.length - 1}__`;
   });
 
-  // Step 1: iteratively remove innermost {} groups
-  let prev = '';
-  while (prev !== s) {
-    prev = s;
-    s = s.replace(/\{[^{}]*\}/g, '');
+  // Step 2: walk characters to remove RTF groups by depth
+  // We keep only text-run content (chars outside groups or in plain-text positions)
+  let result = '';
+  let depth = 0;
+  let i = 0;
+  const len = protected_.length;
+
+  while (i < len) {
+    const ch = protected_[i];
+
+    if (ch === '{') {
+      depth++;
+      i++;
+      continue;
+    }
+    if (ch === '}') {
+      depth--;
+      i++;
+      continue;
+    }
+    // RTF control word or symbol: \word or \<punctuation>
+    if (ch === '\\') {
+      i++;
+      if (i >= len) break;
+      const next = protected_[i]!;
+      // control symbol (single non-alpha char)
+      if (!/[a-zA-Z]/.test(next)) {
+        // \n and \r are not RTF escapes, treat as literal
+        if (next === '\n' || next === '\r') {
+          // keep the newline
+          result += '\n';
+        }
+        // all other control symbols: skip
+        i++;
+        continue;
+      }
+      // control word: \[a-zA-Z]+[-]?\d*
+      let word = '';
+      while (i < len && /[a-zA-Z]/.test(protected_[i]!)) {
+        word += protected_[i++]!;
+      }
+      // optional numeric parameter
+      if (i < len && (protected_[i]! === '-' || /\d/.test(protected_[i]!))) {
+        while (i < len && /[\d-]/.test(protected_[i]!)) i++;
+      }
+      // optional trailing space (delimiter) — consume but do not emit
+      if (i < len && protected_[i]! === ' ') i++;
+
+      // convert paragraph/line breaks to newlines
+      const lc = word.toLowerCase();
+      if (lc === 'par' || lc === 'pard' || lc === 'sect') {
+        result += '\n\n';
+      } else if (lc === 'line' || lc === 'tab') {
+        result += '\n';
+      }
+      // all other control words: skip
+      continue;
+    }
+
+    // plain character — only emit if we're inside the outermost group (depth >= 1)
+    if (depth >= 1) {
+      result += ch;
+    }
+    i++;
   }
 
-  // Step 2: paragraph breaks → double newline
-  s = s.replace(/\\pard?\b\s*/g, '\n\n');
-  s = s.replace(/\\line\b\s?/g, '\n');
+  // Step 3: restore bracket tags
+  result = result.replace(/__BRACKET_(\d+)__/g, (_, idx) => placeholders[parseInt(idx, 10)] ?? '');
 
-  // Step 3: remove carriage returns
-  s = s.replace(/\r/g, '');
+  // Step 4: normalize whitespace — collapse runs of spaces/tabs on each line
+  result = result
+    .split('\n')
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n');
 
-  // Step 4: remove control words
-  s = s.replace(/\\[a-zA-Z]+\-?\d*\s?/g, '');
+  // Step 5: collapse 3+ consecutive newlines to exactly two
+  result = result.replace(/\n{3,}/g, '\n\n');
 
-  // Step 5: remove control symbols
-  s = s.replace(/\\[^a-zA-Z\n]/g, '');
+  // Step 6: remove lines that are only RTF noise (pure numbers, single chars, empty)
+  const lines = result.split('\n').filter(line => {
+    if (!line.trim()) return true; // keep blank lines (they separate blocks)
+    if (/^\d+$/.test(line.trim())) return false; // pure numbers
+    if (line.trim().length <= 1) return false; // single chars
+    return true;
+  });
 
-  // Step 6: remove lone backslashes
-  s = s.replace(/\\/g, '');
-
-  // Step 7: remove remaining braces
-  s = s.replace(/[{}]/g, '');
-
-  // Step 8: collapse spaces/tabs within lines
-  s = s.replace(/[ \t]+/g, ' ');
-
-  // Step 9: trim each line
-  s = s.split('\n').map((l: string) => l.trim()).join('\n');
-
-  // Step 10: max 2 consecutive newlines
-  s = s.replace(/\n{3,}/g, '\n\n');
-
-  // RESTORE bracket tags from placeholders
-  s = s.replace(/__BRACKET_(\d+)__/g, (_, i) =>
-    bracketTags[parseInt(i, 10)] ?? '');
-
-  // Step 11: filter blocks — keep only those with content
-  const blocks = s.split('\n\n');
-  const cleaned = blocks
-    .map((b: string) => b.trim())
-    .filter((b: string) => {
-      if (b.length === 0) return false;
-      if (/\[(IMAGE|VIDEO|AUDIO):/i.test(b)) return true;
-      if (/[a-zA-Z]{2,}.*[a-zA-Z]{2,}/.test(b)) return true;
-      return false;
-    });
-
-  return cleaned.join('\n\n').trim();
+  return lines.join('\n').trim();
 }
 
 /**
