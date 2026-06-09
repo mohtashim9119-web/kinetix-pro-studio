@@ -35,6 +35,7 @@ interface ExportSnapshot {
   project: Project;
   resolution: ExportResolution;
   fps: ExportFps;
+  savedPath: string;
 }
 
 const IDLE_STATE: UseExportState = {
@@ -70,6 +71,7 @@ export function useExport(
   project: Project,
   exportResolution: ExportResolution,
   exportFps: ExportFps,
+  onSavePath: (path: string) => void,
 ): UseExportApi {
   const [state, setState] = useState<UseExportState>(IDLE_STATE);
 
@@ -130,7 +132,7 @@ export function useExport(
 
     if (generationRef.current !== gen) return;
 
-    const { resolution, fps, project: snap } = snapshot;
+    const { resolution, fps, project: snap, savedPath } = snapshot;
     const resWidth = resolution === '4k' ? 3840 : 1920;
     const resHeight = resolution === '4k' ? 2160 : 1080;
 
@@ -164,21 +166,19 @@ export function useExport(
       return;
     }
 
-    // Trigger native save dialog — base64 encoded to avoid JSON number[] overhead.
-    const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
-    const fileName = `${snap.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+    // Write to the path the user already chose before rendering started.
+    // No dialog here — save dialog ran in startExport before any render work.
     const bytes = new Uint8Array(await result.blob.arrayBuffer());
-    const savedPath = await invoke<string | null>('save_bytes_to_disk', {
+    await invoke('save_bytes_to_disk', {
+      path: savedPath,
       dataB64: bytesToBase64(bytes),
-      defaultName: fileName,
     });
-    // Guard: a new export may have started while the save dialog was open.
     if (generationRef.current !== gen) return;
 
     setState({
       ...IDLE_STATE,
-      lastExportPath: savedPath ?? undefined,
-      showExportSuccess: savedPath !== null,
+      lastExportPath: savedPath,
+      showExportSuccess: true,
     });
   }, [teardown]);
 
@@ -186,14 +186,34 @@ export function useExport(
     if (!isTauri()) {
       throw new Error('Export is only available in the desktop app.');
     }
-    const snapshot: ExportSnapshot = {
-      project,
-      resolution: exportResolution,
-      fps: exportFps,
-    };
-    lastSnapshotRef.current = snapshot;
-    void runExport(snapshot);
-  }, [project, exportResolution, exportFps, runExport]);
+    void (async () => {
+      // Step 1: prompt for destination BEFORE any rendering work begins.
+      // If the user cancels nothing is wasted.
+      const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+      const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
+      const defaultDir = project.lastExportPath
+        ? project.lastExportPath.substring(0, project.lastExportPath.lastIndexOf('/'))
+        : null;
+      const savedPath = await invoke<string | null>('pick_save_path', {
+        defaultName,
+        defaultDir,
+      });
+      if (!savedPath) return; // user cancelled — nothing rendered, nothing wasted
+
+      // Step 2: remember path immediately so retryExport and the toast can use it.
+      onSavePath(savedPath);
+
+      // Step 3: render and write.
+      const snapshot: ExportSnapshot = {
+        project,
+        resolution: exportResolution,
+        fps: exportFps,
+        savedPath,
+      };
+      lastSnapshotRef.current = snapshot;
+      void runExport(snapshot);
+    })();
+  }, [project, exportResolution, exportFps, runExport, onSavePath]);
 
   const cancelExport = useCallback((): void => {
     if (tauriBackendRef.current === null) {

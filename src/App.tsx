@@ -743,7 +743,10 @@ export default function App() {
   const [exportFps, setExportFps] = useState<ExportFps>(30);
   const previewRef = useRef<HTMLDivElement>(null);
 
-  const exportApi = useExport(project, exportResolution, exportFps);
+  const onExportSavePath = useCallback((path: string) => {
+    setProject(p => ({ ...p, lastExportPath: path }));
+  }, []);
+  const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
 
   const { transcriptionStatus, startTranscription, cancelTranscription, dismissError } = useWhisper();
