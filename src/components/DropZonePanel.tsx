@@ -18,7 +18,6 @@ import {
   X,
   ChevronDown,
   ChevronRight,
-  Upload,
   Trash2,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
@@ -262,9 +261,8 @@ export function DropZonePanel({
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments'>('files');
 
-  // ── Collapsible section + top-zone drag state ──────────────────────────────
+  // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
-  const [dragOver, setDragOver] = useState(false);
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
@@ -272,7 +270,6 @@ export function DropZonePanel({
   // React batching cannot cause it to read a stale pre-update value.
   const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
-  const topZoneInputRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
 
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
@@ -315,7 +312,15 @@ export function DropZonePanel({
       // BEFORE extension sniffing, or non-.txt/.rtf files would be misrouted to
       // the asset bucket and the forced slot would never fill.
       if (forceSlot) {
-        console.log('[addFiles] forceSlot:', forceSlot, 'file:', file.name, 'ext:', ext);
+        if (forceSlot === 'script') {
+          const raw = await file.text();
+          const stripped = stripRtfIfNeeded(raw);
+          const bracketCount = (stripped.match(/\[(IMAGE|VIDEO|AUDIO):/gi) ?? []).length;
+          if (bracketCount >= 3) {
+            alert('This file looks like a Scene Details file (contains [IMAGE:] or [VIDEO:] tags). Please drop it into the Scene Details slot instead.');
+            return;
+          }
+        }
         textEntries.push({
           file,
           key,
@@ -325,12 +330,9 @@ export function DropZonePanel({
       }
 
       if (ext === 'txt' || ext === 'rtf') {
-        // Top drop-zone path: content detection picks script vs scene.
         const raw = await file.text();
         const stripped = stripRtfIfNeeded(raw);
-        console.log('[strip test] bracket count after strip:', (stripped.match(/\[(IMAGE|VIDEO):/gi) ?? []).length, 'in file:', file.name);
         const role = detectTextFileRole(stripped);
-        console.log('[addFiles] role detected:', role, 'for file:', file.name);
         textEntries.push({ file, key, role });
       } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
         voiceoverEntries.push({ file, key });
@@ -361,7 +363,6 @@ export function DropZonePanel({
           scriptFile = { file: tf.file, key: tf.key };
         } else if (tf.role === 'forced_scene') {
           sceneFile = { file: tf.file, key: tf.key };
-          console.log('[addFiles] staged.sceneFile set to:', tf.file.name);
         } else if (tf.role === 'sceneDetails') {
           if (!pendingScene) pendingScene = tf;
           else if (!pendingScript) pendingScript = tf;
@@ -456,41 +457,6 @@ export function DropZonePanel({
 
           {/* Scrollable slots area */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
-
-            {/* Top drag-and-drop zone — accepts all types, auto-classifies */}
-            <div className="px-4 pt-4">
-              <div
-                onClick={() => topZoneInputRef.current?.click()}
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragOver(false);
-                  console.log('[dropzone] files dropped:', Array.from(e.dataTransfer.files).map(f => f.name));
-                  void addFiles(Array.from(e.dataTransfer.files));
-                }}
-                className={`cursor-pointer border-2 border-dashed rounded-lg p-4 text-center
-                            text-xs text-gray-500 transition-colors mb-4
-                            ${dragOver
-                              ? 'border-orange-500 text-orange-400 bg-orange-500/5'
-                              : 'border-gray-700 hover:border-gray-500'}`}
-              >
-                <Upload className="w-4 h-4 mx-auto mb-1 opacity-50" />
-                DROP ALL FILES HERE, OR USE SLOTS BELOW
-              </div>
-              <input
-                ref={topZoneInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files) {
-                    void addFiles(Array.from(e.target.files));
-                    e.target.value = '';
-                  }
-                }}
-              />
-            </div>
 
             {/* Slot 1 — Script */}
             <SlotRow
