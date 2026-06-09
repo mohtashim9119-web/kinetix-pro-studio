@@ -208,12 +208,16 @@ interface Props {
   // Current project state — drives "already synced" slot display + editors.
   script: string;
   persistedScript: string;
+  persistedScriptName: string;
   persistedSceneDetails: string;
+  persistedSceneDetailsName: string;
   persistedVoiceoverName: string;
   persistedAssetCount: number;
   // Text editing (collapsible sections)
   onScriptChange: (val: string) => void;
   onSceneDetailsChange: (val: string) => void;
+  onClearScript: () => void;
+  onClearSceneDetails: () => void;
   // Asset management
   onDeleteAsset: (assetId: string) => void;
   onDeleteAllAssets: () => void;
@@ -241,11 +245,15 @@ export function DropZonePanel({
   voiceoverId,
   script,
   persistedScript,
+  persistedScriptName,
   persistedSceneDetails,
+  persistedSceneDetailsName,
   persistedVoiceoverName,
   persistedAssetCount,
   onScriptChange,
   onSceneDetailsChange,
+  onClearScript,
+  onClearSceneDetails,
   onDeleteAsset,
   onDeleteAllAssets,
   onDeleteVoiceover,
@@ -263,6 +271,7 @@ export function DropZonePanel({
 
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
+  const [slotError, setSlotError] = useState<string | null>(null);
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
@@ -317,7 +326,8 @@ export function DropZonePanel({
           const stripped = stripRtfIfNeeded(raw);
           const bracketCount = (stripped.match(/\[(IMAGE|VIDEO|AUDIO):/gi) ?? []).length;
           if (bracketCount >= 3) {
-            alert('This file looks like a Scene Details file (contains [IMAGE:] or [VIDEO:] tags). Please drop it into the Scene Details slot instead.');
+            setSlotError('Wrong file — drop your plain text script here, not a scene details file.');
+            setTimeout(() => setSlotError(null), 4000);
             return;
           }
         }
@@ -398,13 +408,13 @@ export function DropZonePanel({
   // Only when nothing is staged does × delete the persisted project data —
   // and only for slots where that makes sense (voiceover, assets).
   const handleScriptClear = () => {
-    if (staged.scriptFile) removeSlot('script');
-    // No persisted delete for script — text stays in project until re-sync.
+    updateStaged(prev => ({ ...prev, scriptFile: null }));
+    if (!staged.scriptFile) onClearScript();
   };
 
   const handleSceneClear = () => {
-    if (staged.sceneFile) removeSlot('scene');
-    // No persisted delete for scene details — text stays in project until re-sync.
+    updateStaged(prev => ({ ...prev, sceneFile: null }));
+    if (!staged.sceneFile) onClearSceneDetails();
   };
 
   const handleVoiceoverClear = () => {
@@ -418,8 +428,12 @@ export function DropZonePanel({
   };
 
   // ── Persisted-state labels + derived lookups ────────────────────────────────
-  const scriptPersisted = persistedScript.trim().length > 0 ? 'Loaded' : undefined;
-  const scenePersisted = persistedSceneDetails.trim().length > 0 ? 'Loaded' : undefined;
+  const scriptPersisted = persistedScript.trim().length > 0
+    ? (persistedScriptName || 'Script loaded')
+    : undefined;
+  const scenePersisted = persistedSceneDetails.trim().length > 0
+    ? (persistedSceneDetailsName || 'Scene loaded')
+    : undefined;
   const voiceoverPersisted = persistedVoiceoverName || undefined;
 
   const voiceoverAsset = assets.find(a => a.id === voiceoverId);
@@ -483,6 +497,13 @@ export function DropZonePanel({
                   focus:outline-none focus:border-orange-500"
               />
             </SlotRow>
+
+            {slotError && (
+              <div className="mx-4 mb-2 px-3 py-2 rounded bg-red-900/60 border border-red-500/50 text-red-300 text-xs flex items-center justify-between gap-2">
+                <span>{slotError}</span>
+                <button onClick={() => setSlotError(null)} className="text-red-400 hover:text-red-200 shrink-0">✕</button>
+              </div>
+            )}
 
             {/* Slot 2 — Scene Details */}
             <SlotRow

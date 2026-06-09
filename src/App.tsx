@@ -793,6 +793,8 @@ export default function App() {
       ...prev,
       script: scriptText,
       sceneDetails: sceneText,
+      scriptFileName: staged.scriptFile?.file.name ?? prev.scriptFileName ?? '',
+      sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
       assets: allAssets,
       voiceoverId: newVoiceoverId,
       segments: autoMatchSegments(allAssets, syncedSegments),
@@ -1292,11 +1294,15 @@ export default function App() {
               voiceoverId={project.voiceoverId}
               script={project.script}
               persistedScript={project.script}
+              persistedScriptName={project.scriptFileName ?? ''}
               persistedSceneDetails={project.sceneDetails}
+              persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
               persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
               persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
               onScriptChange={(val) => setProject(p => ({ ...p, script: val }))}
               onSceneDetailsChange={(val) => setProject(p => ({ ...p, sceneDetails: val }))}
+              onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
+              onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
               onDeleteAsset={handleDeleteAsset}
               onDeleteAllAssets={handleDeleteAllAssets}
               onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}

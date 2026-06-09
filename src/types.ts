@@ -171,6 +171,8 @@ export interface Project {
   name: string;
   script: string;
   sceneDetails: string;
+  scriptFileName?: string;
+  sceneDetailsFileName?: string;
   segments: VideoSegment[];
   assets: Asset[];
   voiceoverId?: string;
