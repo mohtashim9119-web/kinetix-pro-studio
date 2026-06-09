@@ -1,15 +1,7 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
-import type { Asset, VideoSegment } from '../types';
+import type { Asset, VideoSegment, TranscriptToken } from '../types';
 
-// ---------------------------------------------------------------------------
-// Shared types
-// ---------------------------------------------------------------------------
-
-export interface TranscriptToken {
-  startSec: number;
-  endSec: number;
-  text: string;
-}
+export type { TranscriptToken };
 
 type WhisperEvent =
   | { event: 'Progress'; data: { percent: number } }

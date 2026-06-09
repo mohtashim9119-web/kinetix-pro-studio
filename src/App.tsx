@@ -705,6 +705,19 @@ export default function App() {
     setIsProcessing(false);
     setSyncStep(4);
     setActiveTab('editor');
+
+    // Trigger transcription (Tauri only) — Option A caching applies
+    const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
+    if (voiceoverAsset && isTauri()) {
+      startTranscription(
+        voiceoverAsset,
+        audioDuration,
+        syncedSegments,
+        project,
+        (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
+        (updater) => setProject(updater),
+      );
+    }
   };
 
   /** '1080p' | '4k' */
@@ -807,9 +820,14 @@ export default function App() {
 
     // 8. Trigger transcription on voiceover (Tauri only)
     if (voiceoverAsset && isTauri()) {
-      startTranscription(voiceoverAsset, audioDuration, syncedSegments, (updated) => {
-        setProject(prev => ({ ...prev, segments: updated }));
-      });
+      startTranscription(
+        voiceoverAsset,
+        audioDuration,
+        syncedSegments,
+        project,
+        (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
+        (updater) => setProject(updater),
+      );
     }
   };
 
@@ -885,13 +903,7 @@ export default function App() {
         voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
       };
     });
-    if (detectedType === 'audio' && isTauri()) {
-      const duration = await getAudioDuration(url);
-      startTranscription(newAsset, duration, segmentsRef.current, (updated) => {
-        setProject(prev => ({ ...prev, segments: updated }));
-      });
-    }
-  }, [startTranscription]);
+  }, []);
 
   /** Core zip-extraction logic shared by handleZipUpload and handleDropFiles. */
   const processZipFile = useCallback(async (file: File): Promise<void> => {

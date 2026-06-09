@@ -166,6 +166,12 @@ export interface VideoSegment {
   sourceDuration?: number;
 }
 
+export interface TranscriptToken {
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -176,6 +182,8 @@ export interface Project {
   segments: VideoSegment[];
   assets: Asset[];
   voiceoverId?: string;
+  lastTranscribedAssetId?: string;
+  transcriptTokens?: TranscriptToken[];
   globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalAnimation: AnimationType;
