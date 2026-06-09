@@ -451,6 +451,9 @@ export default function App() {
   // Ref that mirrors project.assets so useCallback([]) closures can read the
   // latest asset list without project.assets appearing in their dep arrays.
   const assetsRef = useRef<Asset[]>(project.assets);
+  // Ref that mirrors the full project so async handlers (handleApplySyncFromFiles,
+  // finalizeSync) can read the live state after awaits without stale closures.
+  const projectRef = useRef<Project>(project);
   // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
   const rafRef = useRef<number | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
@@ -685,11 +688,16 @@ export default function App() {
   const finalizeSync = async () => {
     setIsProcessing(true);
     const audioDuration = audioRef.current?.duration || 0;
-    const newSegments = await parseProjectData(project.script, project.sceneDetails, project.assets, audioDuration);
+    const newSegments = await parseProjectData(
+      projectRef.current.script,
+      projectRef.current.sceneDetails,
+      projectRef.current.assets,
+      audioDuration,
+    );
 
     // Locked segments (matched by order index) preserve their duration from the
     // previous sync so manual timing adjustments survive a re-sync.
-    const prevByOrder = new Map(project.segments.map(s => [s.order, s]));
+    const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
 
     let acc = 0;
     const syncedSegments = newSegments.map(s => {
@@ -700,6 +708,13 @@ export default function App() {
       return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
     });
 
+    // Never wipe existing segments if parse produced nothing
+    if (syncedSegments.length === 0 && projectRef.current.segments.length > 0) {
+      console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
+      setIsProcessing(false);
+      return;
+    }
+
     setProject(prev => ({ ...prev, segments: syncedSegments }));
     setIsSynced(true);
     setIsProcessing(false);
@@ -707,13 +722,13 @@ export default function App() {
     setActiveTab('editor');
 
     // Trigger transcription (Tauri only) — Option A caching applies
-    const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
+    const voiceoverAsset = projectRef.current.assets.find(a => a.id === projectRef.current.voiceoverId);
     if (voiceoverAsset && isTauri()) {
       startTranscription(
         voiceoverAsset,
         audioDuration,
         syncedSegments,
-        project,
+        projectRef.current,
         (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
         (updater) => setProject(updater),
       );
@@ -741,16 +756,16 @@ export default function App() {
     // 1. Read text files — strip RTF markup if the file is an .rtf document
     const scriptText = staged.scriptFile
       ? stripRtfIfNeeded(await staged.scriptFile.file.text())
-      : project.script;
+      : projectRef.current.script;
     const sceneText = staged.sceneFile
       ? stripRtfIfNeeded(await staged.sceneFile.file.text())
-      : project.sceneDetails;
+      : projectRef.current.sceneDetails;
 
     // 2. Persist media files without touching React state.
     //    allAssets starts with existing assets so dedup checks are against the
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
-    const allAssets: Asset[] = [...project.assets];
-    let newVoiceoverId = project.voiceoverId;
+    const allAssets: Asset[] = [...projectRef.current.assets];
+    let newVoiceoverId = projectRef.current.voiceoverId;
 
     if (staged.voiceoverFile) {
       if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
@@ -791,7 +806,7 @@ export default function App() {
     const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
     // 6. Preserve locked durations by order index
-    const prevByOrder = new Map(project.segments.map(s => [s.order, s]));
+    const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
     let acc = 0;
     const syncedSegments = newSegments.map(s => {
       const prev = prevByOrder.get(s.order);
@@ -800,6 +815,13 @@ export default function App() {
       acc += duration;
       return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
     });
+
+    // Never wipe existing segments if parse produced nothing
+    if (syncedSegments.length === 0 && projectRef.current.segments.length > 0) {
+      console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
+      setIsProcessing(false);
+      return;
+    }
 
     // 7. Single atomic state update
     setProject(prev => ({
@@ -824,7 +846,7 @@ export default function App() {
         voiceoverAsset,
         audioDuration,
         syncedSegments,
-        project,
+        projectRef.current,
         (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
         (updater) => setProject(updater),
       );
@@ -1048,6 +1070,7 @@ export default function App() {
   useEffect(() => {
     segmentsRef.current = project.segments;
     assetsRef.current = project.assets;
+    projectRef.current = project;
   });
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
