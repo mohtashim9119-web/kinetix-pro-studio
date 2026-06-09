@@ -46,13 +46,14 @@ import {
 } from './types';
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
+import { stripRtfIfNeeded } from './services/textUtils';
 import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
 import { loadProject, clearProject } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
-import { DropZonePanel } from './components/DropZonePanel';
+import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { BottomDrawer } from './components/BottomDrawer';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
@@ -66,6 +67,9 @@ import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
+import { useWhisper } from './hooks/useWhisper';
+import { TranscriptionBar } from './components/TranscriptionBar';
+import { isTauri } from './services/tauriFfmpeg';
 
 interface RawSegment {
   text: string;
@@ -88,6 +92,77 @@ const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number>
     media.onerror = () => resolve(0);
   });
 };
+
+/** Returns audio duration with a 5 s timeout that falls back to 60 s. */
+const getAudioDuration = (url: string): Promise<number> =>
+  new Promise((resolve) => {
+    const audio = document.createElement('audio');
+    const timer = setTimeout(() => { audio.src = ''; resolve(60); }, 5000);
+    audio.onloadedmetadata = () => { clearTimeout(timer); resolve(audio.duration); };
+    audio.onerror = () => { clearTimeout(timer); resolve(60); };
+    audio.src = url;
+  });
+
+// ---------------------------------------------------------------------------
+// Module-level helpers for the atomic Apply Sync flow
+// ---------------------------------------------------------------------------
+
+/**
+ * Persists a single media file to IndexedDB and returns a fully-formed Asset,
+ * or null if the write fails. Does NOT call setProject.
+ */
+async function persistFileToAsset(file: File, type: Asset['type']): Promise<Asset | null> {
+  const id = crypto.randomUUID();
+  const url = URL.createObjectURL(file);
+  try {
+    await putAsset(id, file, { name: file.name, mimeType: file.type });
+  } catch (err) {
+    console.error('[persistFileToAsset] IndexedDB write failed, skipping:', file.name, err);
+    URL.revokeObjectURL(url);
+    return null;
+  }
+  return { id, name: file.name, url, type, file };
+}
+
+/**
+ * Extracts all media files from a zip archive, persists them to IndexedDB,
+ * and returns the resulting Asset array. Does NOT call setProject.
+ */
+async function extractZipToAssets(zipFile: File): Promise<Asset[]> {
+  const newAssets: Asset[] = [];
+  try {
+    let JSZipModule: typeof import('jszip');
+    try {
+      ({ default: JSZipModule } = await import('jszip'));
+    } catch (loadErr) {
+      console.error('[extractZipToAssets] Failed to load jszip:', loadErr);
+      return [];
+    }
+    const zip = new JSZipModule();
+    const content = await zip.loadAsync(zipFile);
+    const filePromises = Object.keys(content.files).map(async (filename) => {
+      const fileData = content.files[filename];
+      if (!fileData || fileData.dir) return;
+      const blob = await fileData.async('blob');
+      let type: Asset['type'] = 'image';
+      if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
+      else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
+      const id = crypto.randomUUID();
+      const name = filename.split('/').pop() || filename;
+      try {
+        await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
+      } catch (err) {
+        console.error('[extractZipToAssets] Skipping file:', name, err);
+        return;
+      }
+      newAssets.push({ id, name, url: URL.createObjectURL(blob), type, file: new File([blob], filename) });
+    });
+    await Promise.all(filePromises);
+  } catch (err) {
+    console.error('[extractZipToAssets] Error:', err);
+  }
+  return newAssets;
+}
 
 // Fuzzy matching helper
 
@@ -373,6 +448,9 @@ export default function App() {
   // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
   // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
   const segmentsRef = useRef<VideoSegment[]>(project.segments);
+  // Ref that mirrors project.assets so useCallback([]) closures can read the
+  // latest asset list without project.assets appearing in their dep arrays.
+  const assetsRef = useRef<Asset[]>(project.assets);
   // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
   const rafRef = useRef<number | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
@@ -427,6 +505,8 @@ export default function App() {
         segments: rehydratedSegments,
         voiceoverId: rehydratedVoiceoverId,
       });
+      // Restore sync state — if saved segments exist the user had already synced.
+      if (rehydratedSegments.length > 0) setIsSynced(true);
       setIsHydrating(false);
     })();
   }, []);
@@ -636,7 +716,139 @@ export default function App() {
   const exportApi = useExport(project, exportResolution, exportFps);
   const { state: exportState, startExport, cancelExport, retryExport } = exportApi;
 
+  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError } = useWhisper();
+
+  // --------------------------------------------------------------------------
+  // Atomic Apply Sync handler — persists ALL staged files, then runs sync in
+  // a single setProject call so finalizeSync never reads stale state.
+  // --------------------------------------------------------------------------
+  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<void> => {
+    setIsProcessing(true);
+
+    // 1. Read text files — strip RTF markup if the file is an .rtf document
+    const scriptText = staged.scriptFile
+      ? stripRtfIfNeeded(await staged.scriptFile.file.text())
+      : project.script;
+    const sceneText = staged.sceneFile
+      ? stripRtfIfNeeded(await staged.sceneFile.file.text())
+      : project.sceneDetails;
+
+    // 2. Persist media files without touching React state.
+    //    allAssets starts with existing assets so dedup checks are against the
+    //    full accumulated list (prevents duplicating on re-upload or re-sync).
+    const allAssets: Asset[] = [...project.assets];
+    let newVoiceoverId = project.voiceoverId;
+
+    if (staged.voiceoverFile) {
+      if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
+        const asset = await persistFileToAsset(staged.voiceoverFile.file, 'audio');
+        if (asset) {
+          allAssets.push(asset);
+          newVoiceoverId = asset.id;
+        }
+      }
+    }
+    for (const sf of staged.assetFiles) {
+      if (allAssets.some(a => a.name === sf.file.name)) continue;
+      const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
+      const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
+      const asset = await persistFileToAsset(sf.file, type);
+      if (asset) allAssets.push(asset);
+    }
+    for (const sf of staged.zipFiles) {
+      const extracted = await extractZipToAssets(sf.file);
+      for (const asset of extracted) {
+        if (allAssets.some(a => a.name === asset.name)) {
+          URL.revokeObjectURL(asset.url); // won't be used — clean up
+          continue;
+        }
+        allAssets.push(asset);
+        if (asset.type === 'audio') newVoiceoverId = asset.id;
+      }
+    }
+
+    // 3. Get audio duration from the voiceover asset we just created (or existing)
+    const voiceoverAsset = allAssets.find(a => a.id === newVoiceoverId);
+    let audioDuration = audioRef.current?.duration || 0;
+    if (voiceoverAsset && (!audioRef.current || audioRef.current.src !== voiceoverAsset.url)) {
+      audioDuration = await getAudioDuration(voiceoverAsset.url);
+    }
+
+    // 5. Parse project data with the fresh, complete data
+    const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
+
+    // 6. Preserve locked durations by order index
+    const prevByOrder = new Map(project.segments.map(s => [s.order, s]));
+    let acc = 0;
+    const syncedSegments = newSegments.map(s => {
+      const prev = prevByOrder.get(s.order);
+      const duration = prev?.locked ? prev.duration : s.duration;
+      const start = acc;
+      acc += duration;
+      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
+    });
+
+    // 7. Single atomic state update
+    setProject(prev => ({
+      ...prev,
+      script: scriptText,
+      sceneDetails: sceneText,
+      scriptFileName: staged.scriptFile?.file.name ?? prev.scriptFileName ?? '',
+      sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
+      assets: allAssets,
+      voiceoverId: newVoiceoverId,
+      segments: autoMatchSegments(allAssets, syncedSegments),
+    }));
+
+    setIsSynced(true);
+    setIsProcessing(false);
+    setSyncStep(4);
+    setActiveTab('editor');
+
+    // 8. Trigger transcription on voiceover (Tauri only)
+    if (voiceoverAsset && isTauri()) {
+      startTranscription(voiceoverAsset, audioDuration, syncedSegments, (updated) => {
+        setProject(prev => ({ ...prev, segments: updated }));
+      });
+    }
+  };
+
+  // Shared delete handler — used by DropZonePanel post-sync assets list
+  const handleDeleteAsset = useCallback((assetId: string) => {
+    setProject(prev => {
+      const asset = prev.assets.find(a => a.id === assetId);
+      if (!asset) return prev;
+      URL.revokeObjectURL(asset.url);
+      deleteAsset(assetId).catch(err =>
+        console.error('Failed to delete asset from IndexedDB:', err)
+      );
+      return {
+        ...prev,
+        assets: prev.assets.filter(a => a.id !== assetId),
+        voiceoverId: prev.voiceoverId === assetId ? undefined : prev.voiceoverId,
+        segments: prev.segments.map(s =>
+          s.assetId === assetId ? { ...s, assetId: undefined } : s
+        ),
+      };
+    });
+  }, []);
+
+  const handleDeleteAllAssets = useCallback(() => {
+    const nonAudio = assetsRef.current.filter(a => a.type !== 'audio');
+    nonAudio.forEach(a => URL.revokeObjectURL(a.url));
+    Promise.all(nonAudio.map(a => deleteAsset(a.id))).catch(err =>
+      console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
+    );
+    setProject(prev => ({
+      ...prev,
+      assets: prev.assets.filter(a => a.type === 'audio'),
+      segments: prev.segments.map(s => ({ ...s, assetId: undefined })),
+    }));
+  }, []);
+
   const processMediaFile = useCallback(async (file: File, detectedType: Asset['type']): Promise<void> => {
+    // Skip if an asset with the same filename already exists
+    if (assetsRef.current.some(a => a.name === file.name)) return;
     const id = crypto.randomUUID();
     const url = URL.createObjectURL(file);
     try {
@@ -647,8 +859,25 @@ export default function App() {
       return;
     }
     const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
+
+    // When replacing with a new audio file, evict the existing audio asset so
+    // the assets list never accumulates more than one voiceover entry.
+    if (detectedType === 'audio') {
+      const oldAudio = assetsRef.current.find(a => a.type === 'audio');
+      if (oldAudio) {
+        URL.revokeObjectURL(oldAudio.url);
+        deleteAsset(oldAudio.id).catch(err =>
+          console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
+        );
+      }
+    }
+
     setProject(prev => {
-      const newAssets = [...prev.assets, newAsset];
+      // For audio: drop any existing audio asset so we don't accumulate them.
+      const baseAssets = detectedType === 'audio'
+        ? prev.assets.filter(a => a.type !== 'audio')
+        : prev.assets;
+      const newAssets = [...baseAssets, newAsset];
       return {
         ...prev,
         assets: newAssets,
@@ -656,12 +885,16 @@ export default function App() {
         voiceoverId: detectedType === 'audio' ? newAsset.id : prev.voiceoverId,
       };
     });
-  }, []);
+    if (detectedType === 'audio' && isTauri()) {
+      const duration = await getAudioDuration(url);
+      startTranscription(newAsset, duration, segmentsRef.current, (updated) => {
+        setProject(prev => ({ ...prev, segments: updated }));
+      });
+    }
+  }, [startTranscription]);
 
-  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
+  /** Core zip-extraction logic shared by handleZipUpload and handleDropFiles. */
+  const processZipFile = useCallback(async (file: File): Promise<void> => {
     setIsProcessing(true);
     try {
       let JSZip: typeof import('jszip');
@@ -669,23 +902,24 @@ export default function App() {
         ({ default: JSZip } = await import('jszip'));
       } catch (loadErr) {
         console.error('Failed to load jszip:', loadErr);
-        setIsProcessing(false);
         return;
       }
       const zip = new JSZip();
       const content = await zip.loadAsync(file);
       const newAssets: Asset[] = [];
-      
+
       const filePromises = Object.keys(content.files).map(async (filename) => {
         const fileData = content.files[filename];
         if (!fileData || fileData.dir) return;
+        const name = filename.split('/').pop() || filename;
+        // Skip files whose name already exists in the current asset list
+        if (assetsRef.current.some(a => a.name === name)) return;
         const blob = await fileData.async('blob');
         let type: Asset['type'] = 'image';
         if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
         else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
 
         const id = crypto.randomUUID();
-        const name = filename.split('/').pop() || filename;
         try {
           await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
         } catch (err) {
@@ -700,10 +934,12 @@ export default function App() {
           file: new File([blob], filename),
         });
       });
-      
+
       await Promise.all(filePromises);
       setProject(prev => {
-        const allAssets = [...prev.assets, ...newAssets];
+        // Final dedup against the latest project state (catches concurrent adds)
+        const dedupedNew = newAssets.filter(na => !prev.assets.some(a => a.name === na.name));
+        const allAssets = [...prev.assets, ...dedupedNew];
         return {
           ...prev,
           assets: allAssets,
@@ -716,6 +952,12 @@ export default function App() {
     } finally {
       setIsProcessing(false);
     }
+  }, []);
+
+  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processZipFile(file);
   };
 
   const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
@@ -756,6 +998,11 @@ export default function App() {
     }
   };
 
+  // DEAD CODE — kept for reference, not called anywhere.
+  // All file ingestion now goes through DropZonePanel staged
+  // state → handleApplySyncFromFiles.
+  // Do not delete — may be useful for future drag-drop
+  // onto timeline feature.
   const handleDropFiles = useCallback(async (files: File[]): Promise<void> => {
     for (const file of files) {
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
@@ -768,9 +1015,11 @@ export default function App() {
         await processMediaFile(file, 'image');
       } else if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
         await processMediaFile(file, 'video');
+      } else if (ext === 'zip') {
+        await processZipFile(file);
       }
     }
-  }, [processMediaFile]);
+  }, [processMediaFile, processZipFile]);
 
   const currentSegment = useMemo(() => {
     const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration);
@@ -786,6 +1035,7 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     segmentsRef.current = project.segments;
+    assetsRef.current = project.assets;
   });
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
@@ -971,6 +1221,11 @@ export default function App() {
 
       {/* Workspace */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden">
+        <TranscriptionBar
+          status={transcriptionStatus}
+          onCancel={cancelTranscription}
+          onDismiss={dismissError}
+        />
         {/* Header */}
         <header className="h-16 border-bottom border-[#1A1A1A] px-8 flex items-center justify-between bg-[#0A0A0A]">
           <div className="flex items-center gap-6">
@@ -1034,17 +1289,32 @@ export default function App() {
           )}>
           <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
             <DropZonePanel
-              isSynced={isSynced}
               segments={project.segments}
               assets={project.assets}
               voiceoverId={project.voiceoverId}
-              onDropFiles={handleDropFiles}
-              onApplySync={finalizeSync}
-              onReSync={finalizeSync}
+              script={project.script}
+              persistedScript={project.script}
+              persistedScriptName={project.scriptFileName ?? ''}
+              persistedSceneDetails={project.sceneDetails}
+              persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
+              persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
+              persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
+              onScriptChange={(val) => setProject(p => ({ ...p, script: val }))}
+              onSceneDetailsChange={(val) => setProject(p => ({ ...p, sceneDetails: val }))}
+              onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
+              onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
+              onDeleteAsset={handleDeleteAsset}
+              onDeleteAllAssets={handleDeleteAllAssets}
+              onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
+              onApplySync={handleApplySyncFromFiles}
               onSegmentClick={(id) => setSelectedSegmentId(id)}
               onToggleLock={handleToggleLock}
+              onLockAll={() => setProject(p => ({
+                ...p,
+                segments: p.segments.map(s => ({ ...s, locked: true })),
+              }))}
               onUnlockAll={handleUnlockAll}
-              onAddFiles={() => { /* handled internally by DropZonePanel */ }}
+              allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
               selectedSegmentId={selectedSegmentId ?? undefined}
               onOpenSettings={() => setShowSettings(true)}
             />

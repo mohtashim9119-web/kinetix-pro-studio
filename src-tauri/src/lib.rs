@@ -5,6 +5,7 @@ mod whisper;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .manage(whisper::WhisperState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -24,6 +25,7 @@ pub fn run() {
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::save_bytes_to_disk,
             whisper::whisper_transcribe,
+            whisper::whisper_cancel,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
