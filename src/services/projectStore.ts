@@ -146,7 +146,7 @@ const LAST_OPENED_KEY = 'kinetix:lastOpenedProjectId';
  *  it directly on the next launch instead of showing the dashboard. */
 export function setLastOpenedProjectId(id: string): void {
   try {
-    localStorage.setItem(LAST_OPENED_KEY, id);
+    sessionStorage.setItem(LAST_OPENED_KEY, id);
   } catch {
     // quota exceeded or private browsing — silently skip
   }
@@ -155,7 +155,7 @@ export function setLastOpenedProjectId(id: string): void {
 /** Returns the id stored by the last setLastOpenedProjectId call, or null. */
 export function getLastOpenedProjectId(): string | null {
   try {
-    return localStorage.getItem(LAST_OPENED_KEY);
+    return sessionStorage.getItem(LAST_OPENED_KEY);
   } catch {
     return null;
   }
@@ -165,7 +165,7 @@ export function getLastOpenedProjectId(): string | null {
  *  navigates to the dashboard so the next reload shows the dashboard too. */
 export function clearLastOpenedProjectId(): void {
   try {
-    localStorage.removeItem(LAST_OPENED_KEY);
+    sessionStorage.removeItem(LAST_OPENED_KEY);
   } catch {
     // ignore
   }
