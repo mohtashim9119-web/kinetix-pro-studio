@@ -64,7 +64,14 @@ export function alignScenestoTranscript(
     }
   }
 
-  const results: Array<{ t0: number; t1: number }> = [];
+  interface AlignResult {
+    t0: number;
+    t1: number;
+    firstTokenIdx: number;
+    lastTokenIdx: number;
+  }
+
+  const results: AlignResult[] = [];
   let searchStart = 0;
 
   for (let si = 0; si < segments.length; si++) {
@@ -73,14 +80,14 @@ export function alignScenestoTranscript(
 
     if (!seg.text || !seg.text.trim()) {
       const anchor = results[si - 1]?.t1 ?? 0;
-      results.push({ t0: anchor, t1: anchor });
+      results.push({ t0: anchor, t1: anchor, firstTokenIdx: -1, lastTokenIdx: -1 });
       continue;
     }
 
     const targetWords = normalize(seg.text);
     if (targetWords.length === 0) {
       const anchor = results[si - 1]?.t1 ?? 0;
-      results.push({ t0: anchor, t1: anchor });
+      results.push({ t0: anchor, t1: anchor, firstTokenIdx: -1, lastTokenIdx: -1 });
       continue;
     }
 
@@ -115,17 +122,36 @@ export function alignScenestoTranscript(
     const t0 = tokens[t0TokenIdx]?.startSec ?? 0;
     const t1 = tokens[t1TokenIdx]?.endSec ?? t0 + 0.1;
 
-    results.push({ t0, t1: Math.max(t0 + 0.05, t1) });
+    results.push({
+      t0,
+      t1: Math.max(t0 + 0.05, t1),
+      firstTokenIdx: t0TokenIdx,
+      lastTokenIdx: t1TokenIdx,
+    });
 
     searchStart = bestStart + Math.max(1, Math.floor(targetWords.length * 0.8));
   }
 
-  // Pass 2: fill gaps — extend each segment to meet the next one
+  // Pass 2: silence-aware boundary detection
+  // Use actual token gaps from Whisper output to place boundaries precisely
   for (let i = 0; i < results.length - 1; i++) {
     const curr = results[i]!;
     const next = results[i + 1]!;
-    if (curr.t1 < next.t0) {
-      const mid = (curr.t1 + next.t0) / 2;
+
+    // Actual end of last spoken word in curr, start of first spoken word in next.
+    // Sentinel -1 indices (empty segments) safely return undefined → fallback to t1/t0.
+    const currLastTokenEnd   = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
+    const nextFirstTokenStart = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
+
+    if (nextFirstTokenStart > currLastTokenEnd) {
+      // There is a silence gap between the two segments — split it 50/50.
+      const silenceGap = nextFirstTokenStart - currLastTokenEnd;
+      curr.t1 = currLastTokenEnd + silenceGap * 0.5;
+      next.t0 = curr.t1;
+    } else {
+      // No silence gap (back-to-back or overlapping token spans).
+      // Use midpoint of the boundary to avoid a hard cut at a non-zero overlap.
+      const mid = (currLastTokenEnd + nextFirstTokenStart) / 2;
       curr.t1 = mid;
       next.t0 = mid;
     }
@@ -137,7 +163,7 @@ export function alignScenestoTranscript(
     results[results.length - 1]!.t1 = audioEnd;
   }
 
-  return results;
+  return results.map(r => ({ t0: r.t0, t1: r.t1 }));
 }
 
 /**
