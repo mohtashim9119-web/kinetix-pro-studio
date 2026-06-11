@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Priority 1 complete. Starting Priority 2 (multi-project dashboard) next.
+Priority 2 (multi-project dashboard) complete. Starting Priority 3 (stock footage APIs — Coverr + Mixkit) next.
 
 ---
 
@@ -47,7 +47,7 @@ Priority 1 complete. Starting Priority 2 (multi-project dashboard) next.
 
 1. **Export-rendering investigation** ⬜ — Read-only profiling pass. Instrument the export pipeline to measure per-frame time distribution (canvas render, `canvas.toBlob`, base64 encode, IPC write, ffmpeg exec). Output: data-backed recommendation on OffscreenCanvas vs WebCodecs vs Tauri Channel API. No code changes. Informs task 10.
 
-2. **Persistence layer project-id scoping** ⬜ — Migrate `kinetix:project:v1` → `kinetix:projects:v1` registry + per-project keys. Scope IndexedDB assets store by project id. Pure refactor, no UX change. Prerequisite for task 5.
+2. **Persistence layer project-id scoping** ✅ Done — persistence layer project-id scoping (priority-2 branch)
 
 ### Bug fixes
 
@@ -57,7 +57,7 @@ Priority 1 complete. Starting Priority 2 (multi-project dashboard) next.
 
 ### Features
 
-5. **Multi-project picker window** ⬜ — Project registry; picker UI on app open with create/select/duplicate/delete/rename. Single-window with tabs or sidebar (not multi-window — see Rejected). Depends on task 2.
+5. **Multi-project picker window** ✅ Done — multi-project picker (priority-2 branch)
 
 6. **Per-project save location + post-export popup** ✅ — Done (Bundle 1)
 
@@ -374,6 +374,7 @@ Phase 3 steps:
 | 2026-06-09 | Task 9b complete. 9b-0 through 9b-4 shipped; 9b-5 closed as no-op. Whisper pipeline fully operational: DTW alignment, Option A caching, text-matching aligner, audio format detection, zero-segment guard, stale closure fixes. |
 | 2026-06-10 | Bundle 1 complete — Task 3 (video pause sync) + Task 6 (pre-render save dialog, last path memory, post-export toast, Show in Finder). Branch task-bundle-1-bug-fixes merged to main. |
 | 2026-06-11 | Priority 1 complete — whisper alignment fixes: token expansion, normalize punctuation, wider search window, dual persistent video elements + preload + seek-after-canplay, silence-aware boundary detection using Whisper token gaps. Branch task-priority-1-video-preview-fix merged to main. |
+| 2026-06-11 | Priority 2 — Multi-project dashboard: full-screen swap, confirmed flag, lastOpenedProjectId (sessionStorage), clear-on-dashboard-nav, image-only thumbnails, base64 thumbnail on asset change, ← Projects nav link. All tests passed. |
 
 ---
 
@@ -488,6 +489,58 @@ Status: COMPLETE — merged to main
 - lastExportPath persisted in Project state — dialog remembers last folder
 - Bottom-right success toast: filename, Show in Finder, Dismiss, 10s auto-dismiss
 - reveal_in_finder command: open -R on macOS, explorer /select on Windows
+
+---
+
+## Priority 2 — Multi-Project Dashboard
+Status: COMPLETE — merged to main
+
+### What was built
+
+**Persistence layer (Task 2):**
+- Project registry: kinetix:projects:v1 in localStorage holding ProjectMeta[]
+- Per-project storage: kinetix:project:{id}:v1 key per project
+- IndexedDB assets store upgraded to v2 with projectId scoping and compound keyPath ['projectId', 'id']
+- migrateLegacyIfNeeded() copies v1 IDB assets and v1 localStorage project to new scoped keys on first launch
+
+**Multi-project picker (Task 5):**
+- Full-screen dashboard (not overlay): renders as top-level return swap, editor fully unmounted when dashboard is active
+- Grid layout: project cards with thumbnail, name, scene count, last saved date
+- Three-dot menu per card: rename, delete with confirmation dialog
+- Search bar: real-time filter by project name
+- + New Project button: top-right, opens NewProjectModal for name entry before project is created
+- Current project card: green "Current" badge
+- ← Projects button: top-left in editor, saves if confirmed then navigates to dashboard
+
+**Session and launch behaviour:**
+- sessionStorage lastOpenedProjectId: reload (Cmd+R) reopens last active project; full app close + reopen shows dashboard
+- clearLastOpenedProjectId() called on all three user-initiated dashboard navigation sites; hydration fallback intentionally excluded
+- confirmed flag on Project: gates usePersistProject debounce and saveNow; prevents unconfirmed makeDefaultProject() from auto-saving as "Untitled Project"
+- handleNewProjectConfirm: sets confirmed = true and calls saveProject immediately before setProject
+- handleSwitchProject: pre-switch save only if project.confirmed; loaded project marked confirmed = true
+
+**Thumbnails:**
+- buildThumbnailBase64(): draws blob URL onto 320×180 offscreen canvas, exports as JPEG at 0.7 quality (~15–25 KB per project)
+- Written to meta immediately via useEffect watching project.assets — not deferred to debounced save
+- image-type assets only (no audio/zip blobs as thumbnails)
+- Survives app restart because base64 data URL is plain text in localStorage
+
+### Key files changed
+- src/types.ts — ProjectMeta (thumbnailUrl, thumbnailAssetId), Project.confirmed
+- src/services/projectStore.ts — registry, per-project keys, lastOpenedProjectId helpers (sessionStorage)
+- src/services/assetStore.ts — projectId scoping, v2 IDB upgrade, getLegacyAssets()
+- src/hooks/usePersistProject.ts — confirmed gate, buildThumbnailBase64 (exported), persistMeta async helper
+- src/components/ProjectDashboard.tsx — full redesign (grid, search, three-dot menu, badges)
+- src/components/NewProjectModal.tsx — new file
+- src/App.tsx — hydration rewrite, handleSwitchProject, handleNewProjectConfirm, ← Projects button, thumbnail useEffect
+
+### Verified behaviours
+- Dashboard appears on fresh app launch; last project reopens on reload
+- No duplicate "Untitled Project" on new project creation
+- Thumbnails load correctly on fresh launch (base64, not blob URL)
+- Deleting a project removes card and all associated localStorage + IDB data
+- Search filters projects in real time
+- Confirmed flag prevents blank projects from polluting the registry
 
 ---
 
