@@ -45,13 +45,24 @@ export function alignScenestoTranscript(
   }
 
   function normalize(s: string): string[] {
-    return s.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, ' ') // replace punctuation with space, not nothing
+      .split(/\s+/)
+      .filter(w => w.length > 0);
   }
 
-  const tokenWords = tokens.map((t, i) => ({
-    word: normalize(t.text)[0] ?? '',
-    tokenIdx: i,
-  })).filter(tw => tw.word.length > 0);
+  // Expand each token into all its words — Whisper tokens may contain multiple
+  // words (e.g. " hello world") and every word must be individually searchable.
+  const tokenWords: Array<{ word: string; tokenIdx: number }> = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const words = normalize(tokens[i]!.text);
+    for (const word of words) {
+      if (word.length > 0) {
+        tokenWords.push({ word, tokenIdx: i });
+      }
+    }
+  }
 
   const results: Array<{ t0: number; t1: number }> = [];
   let searchStart = 0;
@@ -81,8 +92,8 @@ export function alignScenestoTranscript(
     const maxStart = Math.max(
       searchStart,
       Math.min(
-        searchStart + Math.floor(tokenWords.length / segments.length) * 3,
-        tokenWords.length - targetWords.length,
+        searchStart + Math.floor(tokenWords.length / segments.length) * 5,
+        tokenWords.length - Math.max(1, targetWords.length),
       ),
     );
 
