@@ -112,7 +112,10 @@ export function alignScenestoTranscript(
     const t0TokenIdx = tokenWords[bestStart]?.tokenIdx ?? 0;
     const t1TokenIdx = tokenWords[Math.min(bestEnd, tokenWords.length - 1)]?.tokenIdx ?? t0TokenIdx;
 
-    const t0 = tokens[t0TokenIdx]?.startSec ?? 0;
+    const t0Raw = tokens[t0TokenIdx]?.startSec ?? 0;
+    const segmentDuration = (tokens[t1TokenIdx]?.endSec ?? t0Raw) - t0Raw;
+    // Only apply offset on segments longer than 0.5s — short segments are already accurate
+    const t0 = segmentDuration > 0.5 ? Math.max(0, t0Raw + 0.25) : t0Raw;
     const t1 = tokens[t1TokenIdx]?.endSec ?? t0 + 0.1;
 
     results.push({ t0, t1: Math.max(t0 + 0.05, t1) });
@@ -125,9 +128,9 @@ export function alignScenestoTranscript(
     const curr = results[i]!;
     const next = results[i + 1]!;
     if (curr.t1 < next.t0) {
-      const mid = (curr.t1 + next.t0) / 2;
-      curr.t1 = mid;
-      next.t0 = mid;
+      const gap = next.t0 - curr.t1;
+      curr.t1 = curr.t1 + gap * 0.8;
+      next.t0 = curr.t1;
     }
   }
 
