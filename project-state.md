@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Bundle 1 complete. Starting Bundle 2 (Task 8 + Task 9c) next.
+Priority 1 complete. Starting Priority 2 (multi-project dashboard) next.
 
 ---
 
@@ -67,6 +67,7 @@ Bundle 1 complete. Starting Bundle 2 (Task 8 + Task 9c) next.
 
 9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
    - **9b-0 — UX foundation (drop zone + bottom drawer)** ✅ — Unified drop zone + mapping list (DropZonePanel), slide-up BottomDrawer, VideoSegment.locked with order-index re-sync preservation. SyncWizard and sidebar nav hidden (preserved). Commit `4ed6a04`, merged to main 2026-06-04.
+   - Task 9b ✅ Done (whisper alignment + video preview — priority-1 branch)
 
 ### Export-rendering implementation
 
@@ -372,6 +373,7 @@ Phase 3 steps:
 | 2026-06-09 | **Task 9b-4 — Accurate Whisper Alignment.** --dtw base.en flag for frame-accurate timestamps; alignScenestoTranscript rewritten as sliding-window text matcher; infinite loop fix (maxStart floor-clamped to searchStart); audio format detection from magic bytes (WAV/MP3/M4A/OGG); parseWhisperStdout dead code removed; zero-segment guard prevents timeline wipe on failed parse; projectRef fixes stale closure reads in handleApplySyncFromFiles + finalizeSync. Branch `task-9b-4-whisper-alignment` merged to main. |
 | 2026-06-09 | Task 9b complete. 9b-0 through 9b-4 shipped; 9b-5 closed as no-op. Whisper pipeline fully operational: DTW alignment, Option A caching, text-matching aligner, audio format detection, zero-segment guard, stale closure fixes. |
 | 2026-06-10 | Bundle 1 complete — Task 3 (video pause sync) + Task 6 (pre-render save dialog, last path memory, post-export toast, Show in Finder). Branch task-bundle-1-bug-fixes merged to main. |
+| 2026-06-11 | Priority 1 complete — whisper alignment fixes: token expansion, normalize punctuation, wider search window, dual persistent video elements + preload + seek-after-canplay, silence-aware boundary detection using Whisper token gaps. Branch task-priority-1-video-preview-fix merged to main. |
 
 ---
 
@@ -486,6 +488,25 @@ Status: COMPLETE — merged to main
 - lastExportPath persisted in Project state — dialog remembers last folder
 - Bottom-right success toast: filename, Show in Finder, Dismiss, 10s auto-dismiss
 - reveal_in_finder command: open -R on macOS, explorer /select on Windows
+
+---
+
+## Priority 1 — Whisper Alignment + Video Preview Fix
+Status: COMPLETE — merged to main
+
+### Alignment fixes
+- Token expansion: each Whisper token expanded into all its words (was taking only first word)
+- normalize() punctuation → space instead of strip
+- Search window multiplier 3→5
+- Proportional DTW offset (later replaced)
+- Silence-aware boundary detection: reads actual token gaps from Whisper output, splits silence 50/50 at each segment boundary — replaces all previous offset/gap-fill heuristics
+
+### Video preview fixes
+- Dual persistent video elements (slot A + slot B) — no more mount/unmount per segment
+- preload="auto" on both slots
+- seekToTime() helper waits for canPlay before seeking
+- currentTimeRef fixes callback ref churn (was recreating every 100ms)
+- key={currentSegment.id} removed from motion.div wrapper
 
 ---
 
