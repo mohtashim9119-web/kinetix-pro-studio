@@ -114,8 +114,8 @@ export function alignScenestoTranscript(
 
     const t0Raw = tokens[t0TokenIdx]?.startSec ?? 0;
     const segmentDuration = (tokens[t1TokenIdx]?.endSec ?? t0Raw) - t0Raw;
-    // Only apply offset on segments longer than 0.5s — short segments are already accurate
-    const t0 = segmentDuration > 0.5 ? Math.max(0, t0Raw + 0.25) : t0Raw;
+    const offset = Math.min(segmentDuration * 0.08, 0.35);
+    const t0 = segmentDuration > 0.3 ? Math.max(0, t0Raw + offset) : t0Raw;
     const t1 = tokens[t1TokenIdx]?.endSec ?? t0 + 0.1;
 
     results.push({ t0, t1: Math.max(t0 + 0.05, t1) });
