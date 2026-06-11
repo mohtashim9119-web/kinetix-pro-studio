@@ -202,6 +202,8 @@ export interface ProjectMeta {
   name: string;
   savedAt: number;
   segmentCount: number;
+  /** Optional base64 or blob-URL thumbnail captured at save time. */
+  thumbnailUrl?: string;
 }
 
 export type TranscriptionStatus =
