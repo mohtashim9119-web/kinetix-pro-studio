@@ -20,7 +20,9 @@ export function ProjectDashboard({
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
 
   useEffect(() => {
-    setMetas(loadAllMetas());
+    const data = loadAllMetas();
+    console.log('[dashboard] loaded metas:', data);
+    setMetas(data);
   }, []);
 
   const handleDelete = async (id: string, e: React.MouseEvent): Promise<void> => {

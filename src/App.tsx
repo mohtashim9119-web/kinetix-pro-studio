@@ -59,7 +59,6 @@ import {
 } from './services/assetStore';
 import {
   loadProject,
-  loadMostRecentMeta,
   loadAllMetas,
   deleteProjectData,
   migrateLegacyIfNeeded,
@@ -497,8 +496,8 @@ export default function App() {
     (async () => {
       // -----------------------------------------------------------------------
       // 1. Migrate legacy single-project format if present.
-      //    If migration ran, we also need to copy assets from the v1 IDB store
-      //    to the new v2 store (scoped by projectId).
+      //    If migration ran, copy assets from the v1 IDB store to the new v2
+      //    store scoped by projectId.
       // -----------------------------------------------------------------------
       const migrated = migrateLegacyIfNeeded();
       if (migrated) {
@@ -519,64 +518,20 @@ export default function App() {
       }
 
       // -----------------------------------------------------------------------
-      // 2. Load the most-recently saved project from the registry.
+      // 2. Route on launch:
+      //    • Projects exist  → show the dashboard so the user picks one.
+      //    • No projects yet → show the new-project modal to name the first one.
+      //    We never auto-open a project on launch; the user always chooses.
       // -----------------------------------------------------------------------
-      const meta = loadMostRecentMeta();
-      if (!meta) {
+      const allMetas = loadAllMetas();
+      if (allMetas.length > 0) {
+        setShowDashboard(true);
         setIsHydrating(false);
         return;
       }
-      const saved = loadProject(meta.id);
-      if (!saved) {
-        setIsHydrating(false);
-        return;
-      }
 
-      // -----------------------------------------------------------------------
-      // 3. Rehydrate assets from the v2 IndexedDB store.
-      // -----------------------------------------------------------------------
-      const storedAssets = await getAllAssetsForProject(saved.project.id);
-      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
-
-      const droppedIds = new Set<string>();
-      const rehydratedAssets = saved.project.assets
-        .map(asset => {
-          const stored = blobMap.get(asset.id);
-          if (!stored) {
-            console.warn(
-              `[kinetix] Dropping orphaned asset on load — id: ${asset.id}, name: ${asset.name}`,
-            );
-            droppedIds.add(asset.id);
-            return null;
-          }
-          return { ...asset, url: URL.createObjectURL(stored.blob) };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null);
-
-      const rehydratedSegments = saved.project.segments.map(seg => {
-        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-          console.warn(
-            `[kinetix] Clearing assetId on segment "${seg.id}" — referenced asset was dropped`,
-          );
-          return { ...seg, assetId: undefined };
-        }
-        return seg;
-      });
-
-      let rehydratedVoiceoverId = saved.project.voiceoverId;
-      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
-        console.warn('[kinetix] Clearing voiceoverId — referenced asset was dropped');
-        rehydratedVoiceoverId = undefined;
-      }
-
-      setProject({
-        ...saved.project,
-        assets: rehydratedAssets,
-        segments: rehydratedSegments,
-        voiceoverId: rehydratedVoiceoverId,
-      });
-      // Restore sync state — if saved segments exist the user had already synced.
-      if (rehydratedSegments.length > 0) setIsSynced(true);
+      // No saved projects — prompt for a name then start fresh.
+      setShowNewProjectModal(true);
       setIsHydrating(false);
     })();
   }, []);
