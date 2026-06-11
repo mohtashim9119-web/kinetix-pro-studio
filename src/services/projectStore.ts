@@ -161,6 +161,16 @@ export function getLastOpenedProjectId(): string | null {
   }
 }
 
+/** Clears the last-opened project id.  Call when the user intentionally
+ *  navigates to the dashboard so the next reload shows the dashboard too. */
+export function clearLastOpenedProjectId(): void {
+  try {
+    localStorage.removeItem(LAST_OPENED_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 /**
  * Detects the legacy single-project key (`kinetix:project:v1`) and migrates it
  * to the new multi-project format.  Call once at app boot before reading the

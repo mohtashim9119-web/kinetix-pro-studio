@@ -66,6 +66,7 @@ import {
   upsertProjectMeta,
   setLastOpenedProjectId,
   getLastOpenedProjectId,
+  clearLastOpenedProjectId,
 } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
@@ -1428,6 +1429,7 @@ export default function App() {
             <button
               onClick={() => {
                 if (project.confirmed) saveNow();
+                clearLastOpenedProjectId();
                 setShowDashboard(true);
               }}
               className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
@@ -1714,7 +1716,7 @@ export default function App() {
                     onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                     onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
                     onNewProject={handleNewProject}
-                    onOpenDashboard={() => setShowDashboard(true)}
+                    onOpenDashboard={() => { clearLastOpenedProjectId(); setShowDashboard(true); }}
                     onExportScenesJson={() => {
                       const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
@@ -2065,7 +2067,7 @@ export default function App() {
                   onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                   onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
                   onNewProject={handleNewProject}
-                  onOpenDashboard={() => { setShowSettings(false); setShowDashboard(true); }}
+                  onOpenDashboard={() => { setShowSettings(false); clearLastOpenedProjectId(); setShowDashboard(true); }}
                   onExportScenesJson={() => {
                     const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
