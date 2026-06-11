@@ -9,15 +9,18 @@ export interface PersistHandle {
   lastSavedAt: number | null;
 }
 
-/** Builds the meta record for the registry, including a live thumbnail blob URL. */
+/** Builds the meta record for the registry, including a live thumbnail blob URL.
+ *  Only considers IMAGE assets for the thumbnail — audio/zip blobs cannot be
+ *  rendered as <img> and must be skipped. */
 function buildMeta(project: Project, savedAt: number) {
+  const firstImageAsset = project.assets.find(a => a.type === 'image');
   return {
     id: project.id,
     name: project.name,
     savedAt,
     segmentCount: project.segments.length,
-    thumbnailUrl: project.assets[0]?.url ?? undefined,
-    thumbnailAssetId: project.assets[0]?.id ?? undefined,
+    thumbnailUrl: firstImageAsset?.url ?? undefined,
+    thumbnailAssetId: firstImageAsset?.id ?? undefined,
   };
 }
 
@@ -31,6 +34,8 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
 
   const saveNow = useCallback(() => {
     if (!enabled) return;
+    // Never persist a project the user hasn't explicitly named yet.
+    if (!projectRef.current.confirmed) return;
     const ts = Date.now();
     saveProject(projectRef.current);
     upsertProjectMeta(buildMeta(projectRef.current, ts));
@@ -44,6 +49,9 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
       isFirstRender.current = false;
       return;
     }
+    // Never auto-save a project the user hasn't explicitly named yet —
+    // prevents blank "Untitled Project" entries appearing in the registry.
+    if (!project.confirmed) return;
     const timer = setTimeout(() => {
       const ts = Date.now();
       saveProject(project);

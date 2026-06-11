@@ -401,6 +401,8 @@ function makeDefaultProject(): Project {
     backgroundColor: '#000000',
     fontFamily: 'Inter',
   },
+  // Not confirmed yet — auto-save is gated until the user names this project.
+  confirmed: false,
   };
 }
 
@@ -1252,6 +1254,8 @@ export default function App() {
     // the dashboard next renders.
     const fresh = makeDefaultProject();
     fresh.name = name;
+    // Mark as confirmed so auto-save and saveNow will persist it going forward.
+    fresh.confirmed = true;
     saveProject(fresh); // persist full project JSON
     upsertProjectMeta({ // ensure registry entry exists right away
       id: fresh.id,
@@ -1270,8 +1274,10 @@ export default function App() {
     setShowDashboard(false);
     if (id === project.id) return;
 
-    // Save current project before switching.
-    saveNow();
+    // Save current project before switching — only if it was confirmed by the user.
+    if (project.confirmed) {
+      saveNow();
+    }
 
     const saved = loadProject(id);
     if (!saved) {
@@ -1318,6 +1324,9 @@ export default function App() {
       assets: rehydratedAssets,
       segments: rehydratedSegments,
       voiceoverId: rehydratedVoiceoverId,
+      // Any project loaded from storage was previously confirmed by the user,
+      // so mark it as confirmed to enable auto-save going forward.
+      confirmed: true,
     });
     setIsSynced(rehydratedSegments.length > 0);
     setCurrentTime(0);

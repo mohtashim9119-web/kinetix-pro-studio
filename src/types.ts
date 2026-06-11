@@ -195,6 +195,9 @@ export interface Project {
     backgroundColor: string;
     fontFamily: string;
   };
+  /** True only after the user has explicitly named the project via NewProjectModal.
+   *  Unconfirmed projects (blank defaults) are never auto-saved to the registry. */
+  confirmed?: boolean;
 }
 
 export interface ProjectMeta {
