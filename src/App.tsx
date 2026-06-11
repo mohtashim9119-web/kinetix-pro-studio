@@ -64,6 +64,8 @@ import {
   deleteProjectData,
   migrateLegacyIfNeeded,
   upsertProjectMeta,
+  setLastOpenedProjectId,
+  getLastOpenedProjectId,
 } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
@@ -495,6 +497,11 @@ export default function App() {
 
 
 
+  // Ref bridge so the mount-only hydration effect ([] deps) can call
+  // handleSwitchProject, which is defined later in the component body.
+  // The ref is updated every render so it always holds the latest version.
+  const handleSwitchProjectRef = useRef<(id: string) => Promise<void>>(async () => {});
+
   // Rehydrate persisted project on mount
   useEffect(() => {
     (async () => {
@@ -523,21 +530,33 @@ export default function App() {
 
       // -----------------------------------------------------------------------
       // 2. Route on launch:
-      //    • Projects exist  → show the dashboard so the user picks one.
-      //    • No projects yet → show the new-project modal to name the first one.
-      //    We never auto-open a project on launch; the user always chooses.
+      //    • No projects yet  → new-project modal (first ever launch).
+      //    • Has a lastOpenedProjectId that still exists in the registry →
+      //      reopen that project directly (normal reload case).
+      //    • Has projects but no last-opened id (e.g. first launch after
+      //      migration) → show the dashboard so the user picks one.
       // -----------------------------------------------------------------------
       const allMetas = loadAllMetas();
-      if (allMetas.length > 0) {
-        setShowDashboard(true);
+      const lastId = getLastOpenedProjectId();
+
+      if (allMetas.length === 0) {
+        // First ever launch — no projects yet.
+        setShowDashboard(false);
+        setShowNewProjectModal(true);
         setIsHydrating(false);
         return;
       }
 
-      // No saved projects — hide the dashboard (started as true) then show the
-      // new-project modal so the user can name their first project.
-      setShowDashboard(false);
-      setShowNewProjectModal(true);
+      if (lastId && allMetas.some(m => m.id === lastId)) {
+        // Reload case — reopen the last active project directly.
+        await handleSwitchProjectRef.current(lastId);
+        setShowDashboard(false);
+        setIsHydrating(false);
+        return;
+      }
+
+      // Has projects but no last-opened id (e.g. first launch after migration).
+      setShowDashboard(true);
       setIsHydrating(false);
     })();
   }, []);
@@ -1259,6 +1278,7 @@ export default function App() {
     // Mark as confirmed so auto-save and saveNow will persist it going forward.
     fresh.confirmed = true;
     saveProject(fresh); // persist full project JSON
+    setLastOpenedProjectId(fresh.id);
     upsertProjectMeta({ // ensure registry entry exists right away
       id: fresh.id,
       name: fresh.name,
@@ -1330,11 +1350,17 @@ export default function App() {
       // so mark it as confirmed to enable auto-save going forward.
       confirmed: true,
     });
+    setLastOpenedProjectId(saved.project.id);
     setIsSynced(rehydratedSegments.length > 0);
     setCurrentTime(0);
     setIsPlaying(false);
     setSelectedSegmentId(null);
   };
+
+  // Keep the ref up to date every render so the mount-only hydration effect
+  // (which closes over the ref, not the function directly) always invokes the
+  // latest version of handleSwitchProject.
+  handleSwitchProjectRef.current = handleSwitchProject;
 
   if (isHydrating) {
     return (

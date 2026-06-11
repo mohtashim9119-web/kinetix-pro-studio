@@ -136,6 +136,31 @@ export function deleteProjectData(id: string): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Last-opened project tracking
+// ---------------------------------------------------------------------------
+
+const LAST_OPENED_KEY = 'kinetix:lastOpenedProjectId';
+
+/** Persists the id of the most recently opened project so the app can reopen
+ *  it directly on the next launch instead of showing the dashboard. */
+export function setLastOpenedProjectId(id: string): void {
+  try {
+    localStorage.setItem(LAST_OPENED_KEY, id);
+  } catch {
+    // quota exceeded or private browsing — silently skip
+  }
+}
+
+/** Returns the id stored by the last setLastOpenedProjectId call, or null. */
+export function getLastOpenedProjectId(): string | null {
+  try {
+    return localStorage.getItem(LAST_OPENED_KEY);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Detects the legacy single-project key (`kinetix:project:v1`) and migrates it
  * to the new multi-project format.  Call once at app boot before reading the
