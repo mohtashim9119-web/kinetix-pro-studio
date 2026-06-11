@@ -197,6 +197,13 @@ export interface Project {
   };
 }
 
+export interface ProjectMeta {
+  id: string;
+  name: string;
+  savedAt: number;
+  segmentCount: number;
+}
+
 export type TranscriptionStatus =
   | { phase: 'idle' }
   | { phase: 'transcribing'; percent: number; jobId: string }
