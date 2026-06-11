@@ -126,8 +126,14 @@ export function PreviewStage({
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Stable ref to the current <video> DOM element — read by the isPlaying useEffect.
-  const videoElRef = useRef<HTMLVideoElement | null>(null);
+  // FIX 1 — Dual persistent video elements (A/B slot pingpong).
+  // Neither element is ever unmounted; we swap which is visible on segment change.
+  const videoARef = useRef<HTMLVideoElement>(null);
+  const videoBRef = useRef<HTMLVideoElement>(null);
+  const [activeSlot, setActiveSlot] = useState<'a' | 'b'>('a');
+  const activeSlotRef = useRef<'a' | 'b'>('a');
+  // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
+  const currentTimeRef = useRef(currentTime);
 
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
@@ -294,35 +300,90 @@ export function PreviewStage({
   // Suppress Framer Motion entry/exit animations while canvas is handling the transition.
   const suppressMotionAnim = transitionPreview.isActive;
 
-  // Callback ref for the video element — fires on mount/unmount and whenever deps
-  // change. Stores element in videoElRef for the isPlaying useEffect below.
-  const videoRef = useCallback((el: HTMLVideoElement | null) => {
-    videoElRef.current = el;
-    if (!el) return;
-    el.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
-    const segmentProgress = currentTime - (currentSegment?.startTime ?? 0);
-    const rawTime = (currentSegment?.trimStart || 0) + (segmentProgress * (currentSegment?.playbackSpeed || 1));
-    const videoTime = currentSegment?.trimEnd !== undefined
+  // FIX 2 — Keep currentTimeRef current so the segment-change effect can read
+  // playhead position without adding `currentTime` to its dep array (which would
+  // fire the effect on every 100 ms playback tick and re-seek constantly).
+  useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+
+  // FIX 3 — Seek helper: defers the seek until the element has buffered enough
+  // data (readyState >= HAVE_FUTURE_DATA) so the seek is not silently dropped on
+  // a freshly loaded src.
+  const seekToTime = (el: HTMLVideoElement, targetTime: number): void => {
+    if (el.readyState >= 3) {
+      el.currentTime = targetTime;
+    } else {
+      const onCanPlay = () => {
+        el.currentTime = targetTime;
+        el.removeEventListener('canplay', onCanPlay);
+      };
+      el.addEventListener('canplay', onCanPlay);
+    }
+  };
+
+  // FIX 1 — Segment-change handler: swap A/B slots (pingpong), load current
+  // segment into the newly active slot, preload the next segment into the idle slot.
+  // Dep array is intentionally [currentSegment?.id] — volatile values (assets,
+  // segments, isPlaying, globalPlaybackSpeed) are read at effect-run time; including
+  // them would re-fire on every state update and defeat the preload optimisation.
+  useEffect(() => {
+    if (!currentSegment) return;
+    const currentAsset = assets.find(a => a.id === currentSegment.assetId);
+    if (currentAsset?.type !== 'video') return;
+
+    // Swap slots: the idle slot was preloading this segment — promote it to active.
+    const prevSlot = activeSlotRef.current;
+    const newSlot: 'a' | 'b' = prevSlot === 'a' ? 'b' : 'a';
+    activeSlotRef.current = newSlot;
+    setActiveSlot(newSlot);
+
+    const activeEl  = newSlot === 'a' ? videoARef.current : videoBRef.current;
+    const inactiveEl = newSlot === 'a' ? videoBRef.current : videoARef.current;
+
+    if (!activeEl) return;
+
+    // Load current segment (no-op when preload already set the correct src).
+    if (activeEl.src !== currentAsset.url) {
+      activeEl.src = currentAsset.url;
+      activeEl.load();
+    }
+
+    // Seek to the correct intra-segment position.
+    const segmentProgress = currentTimeRef.current - (currentSegment.startTime ?? 0);
+    const rawTime = (currentSegment.trimStart || 0) + segmentProgress * (currentSegment.playbackSpeed || 1);
+    const videoTime = currentSegment.trimEnd !== undefined
       ? Math.min(rawTime, currentSegment.trimEnd)
       : rawTime;
-    if (!isResizingRef.current && Math.abs(el.currentTime - videoTime) > 0.1) {
-      el.currentTime = videoTime;
-    }
-    if (isPlaying) {
-      el.play().catch(() => {});
-    } else {
-      el.pause();
-    }
-  }, [currentSegment, currentTime, globalPlaybackSpeed, isResizingRef, isPlaying]);
+    seekToTime(activeEl, Math.max(0, videoTime));
 
-  // Sync play/pause state whenever isPlaying toggles between renders.
-  useEffect(() => {
-    const el = videoElRef.current;
-    if (!el) return;
+    activeEl.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
+
     if (isPlaying) {
-      el.play().catch(() => {});
+      activeEl.play().catch(() => {});
     } else {
-      el.pause();
+      activeEl.pause();
+    }
+
+    // Preload the next video segment into the idle slot.
+    const currentSegmentIndex = segments.findIndex(s => s.id === currentSegment.id);
+    const nextSeg = segments[currentSegmentIndex + 1];
+    const nextAsset = nextSeg ? assets.find(a => a.id === nextSeg.assetId) : null;
+    const nextVideoUrl = nextAsset?.type === 'video' ? nextAsset.url : null;
+
+    if (inactiveEl && nextVideoUrl && inactiveEl.src !== nextVideoUrl) {
+      inactiveEl.src = nextVideoUrl;
+      inactiveEl.preload = 'auto';
+      inactiveEl.load();
+    }
+  }, [currentSegment?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sync play/pause whenever isPlaying toggles (independent of segment changes).
+  useEffect(() => {
+    const activeEl = activeSlotRef.current === 'a' ? videoARef.current : videoBRef.current;
+    if (!activeEl) return;
+    if (isPlaying) {
+      activeEl.play().catch(() => {});
+    } else {
+      activeEl.pause();
     }
   }, [isPlaying]);
 
@@ -355,7 +416,6 @@ export function PreviewStage({
         <AnimatePresence mode="popLayout" initial={false}>
           {currentSegment ? (
             <motion.div
-              key={currentSegment.id}
               initial={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).initial}
               animate={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).animate}
               exit={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).exit}
@@ -374,60 +434,72 @@ export function PreviewStage({
               >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);
-                  if (asset?.url) {
-                    if (asset.type === 'video') {
-                      return (
-                        <video
-                          key={asset.id}
+                  const isVideoAsset = !!(asset?.url && asset.type === 'video');
+                  return (
+                    <>
+                      {/* FIX 1 + FIX 4 — Dual persistent video slots. Both elements stay
+                          in the DOM at all times; only the active slot is visible. The src
+                          is set imperatively by the segment-change effect, never via JSX,
+                          so React never unmounts the element when currentSegment changes.
+                          preload="auto" tells the browser to buffer the full video. */}
+                      <video
+                        ref={videoARef}
+                        className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'a' ? '' : ' opacity-0 pointer-events-none'}`}
+                        muted
+                        playsInline
+                        preload="auto"
+                      />
+                      <video
+                        ref={videoBRef}
+                        className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'b' ? '' : ' opacity-0 pointer-events-none'}`}
+                        muted
+                        playsInline
+                        preload="auto"
+                      />
+                      {/* Image segments */}
+                      {asset?.url && !isVideoAsset && (
+                        // Fade-in on segment enter; suppressed when canvas just handled the
+                        // transition (suppressMotionAnim) to avoid a black-to-image stutter
+                        // immediately after the canvas blend completes.
+                        <motion.img
                           src={asset.url}
                           className="w-full h-full object-cover"
-                          muted={currentSegment.isMuted}
-                          playsInline
-                          ref={videoRef}
+                          initial={{ opacity: suppressMotionAnim ? 1 : 0 }}
+                          animate={{ opacity: 1 }}
+                          transition={{ duration: 0.4 }}
                         />
-                      );
-                    }
-                    return (
-                      // Fade-in on segment enter; suppressed when canvas just handled the
-                      // transition (suppressMotionAnim) to avoid a black-to-image stutter
-                      // immediately after the canvas blend completes.
-                      <motion.img
-                        src={asset.url}
-                        className="w-full h-full object-cover"
-                        initial={{ opacity: suppressMotionAnim ? 1 : 0 }}
-                        animate={{ opacity: 1 }}
-                        transition={{ duration: 0.4 }}
-                      />
-                    );
-                  }
-                  return (
-                    <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
-                                    flex items-center justify-center p-6 text-center">
-                      <div className="flex flex-col items-center gap-3 opacity-60">
-                        <svg
-                          xmlns="http://www.w3.org/2000/svg"
-                          className="w-10 h-10 text-yellow-400"
-                          fill="none"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                          strokeWidth={1.5}
-                        >
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0
-                               2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898
-                               0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
-                          />
-                        </svg>
-                        <p className="text-yellow-400 text-sm font-medium">Missing asset</p>
-                        <p className="text-gray-500 text-xs">
-                          {currentSegment?.heading
-                            ? `Scene: ${currentSegment.heading}`
-                            : 'Upload or assign an asset to this segment'}
-                        </p>
-                      </div>
-                    </div>
+                      )}
+                      {/* Missing asset placeholder */}
+                      {!asset?.url && (
+                        <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
+                                        flex items-center justify-center p-6 text-center">
+                          <div className="flex flex-col items-center gap-3 opacity-60">
+                            <svg
+                              xmlns="http://www.w3.org/2000/svg"
+                              className="w-10 h-10 text-yellow-400"
+                              fill="none"
+                              viewBox="0 0 24 24"
+                              stroke="currentColor"
+                              strokeWidth={1.5}
+                            >
+                              <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0
+                                   2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898
+                                   0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"
+                              />
+                            </svg>
+                            <p className="text-yellow-400 text-sm font-medium">Missing asset</p>
+                            <p className="text-gray-500 text-xs">
+                              {currentSegment?.heading
+                                ? `Scene: ${currentSegment.heading}`
+                                : 'Upload or assign an asset to this segment'}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </>
                   );
                 })()}
               </motion.div>
