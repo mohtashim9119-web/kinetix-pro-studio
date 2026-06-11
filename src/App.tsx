@@ -68,7 +68,7 @@ import {
   getLastOpenedProjectId,
   clearLastOpenedProjectId,
 } from './services/projectStore';
-import { usePersistProject } from './hooks/usePersistProject';
+import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
@@ -1124,6 +1124,27 @@ export default function App() {
     projectRef.current = project;
     projectIdRef.current = project.id;
   });
+
+  // --- Thumbnail: write base64 to meta immediately when first image asset changes ---
+  // This ensures the dashboard shows a correct thumbnail even on fresh app launch,
+  // without waiting for the next full auto-save cycle.
+  useEffect(() => {
+    const firstImage = project.assets.find(a => a.type === 'image');
+    if (!firstImage || !project.confirmed) return;
+
+    void buildThumbnailBase64(firstImage.url).then((base64) => {
+      if (!base64) return;
+      upsertProjectMeta({
+        id: project.id,
+        name: project.name,
+        savedAt: Date.now(),
+        segmentCount: project.segments.length,
+        thumbnailUrl: base64,
+        thumbnailAssetId: firstImage.id,
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.assets, project.confirmed, project.id]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 

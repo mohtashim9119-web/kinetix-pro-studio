@@ -16,7 +16,7 @@ export interface PersistHandle {
  * The canvas resize keeps thumbnails at ~15–25 KB so localStorage stays lean
  * even with many projects.  Uses letterbox (black bars) to preserve aspect ratio.
  */
-async function buildThumbnailBase64(url: string | undefined): Promise<string | undefined> {
+export async function buildThumbnailBase64(url: string | undefined): Promise<string | undefined> {
   if (!url) return undefined;
   try {
     return await new Promise<string | undefined>((resolve) => {
