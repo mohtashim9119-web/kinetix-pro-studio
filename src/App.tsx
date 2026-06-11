@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
   Trash2,
   ChevronRight,
+  ChevronLeft,
   MonitorPlay,
   RotateCcw,
   Check,
@@ -35,6 +36,7 @@ import {
   Info,
   X,
   CheckCircle,
+  Save,
 } from 'lucide-react';
 import { motion, AnimatePresence, type Transition } from 'motion/react';
 import {
@@ -48,9 +50,25 @@ import {
 import { StockResult } from './services/stockService';
 import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
-import { putAsset, deleteAsset, getAllAssets, clearAllAssets } from './services/assetStore';
-import { loadProject, clearProject } from './services/projectStore';
-import { usePersistProject } from './hooks/usePersistProject';
+import {
+  putAsset,
+  deleteAsset,
+  getAllAssetsForProject,
+  deleteAllAssets,
+  getLegacyAssets,
+} from './services/assetStore';
+import {
+  saveProject,
+  loadProject,
+  loadAllMetas,
+  deleteProjectData,
+  migrateLegacyIfNeeded,
+  upsertProjectMeta,
+  setLastOpenedProjectId,
+  getLastOpenedProjectId,
+  clearLastOpenedProjectId,
+} from './services/projectStore';
+import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
@@ -66,6 +84,8 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
 import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
+import { ProjectDashboard } from './components/ProjectDashboard';
+import { NewProjectModal } from './components/NewProjectModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
@@ -113,11 +133,15 @@ const getAudioDuration = (url: string): Promise<number> =>
  * Persists a single media file to IndexedDB and returns a fully-formed Asset,
  * or null if the write fails. Does NOT call setProject.
  */
-async function persistFileToAsset(file: File, type: Asset['type']): Promise<Asset | null> {
+async function persistFileToAsset(
+  projectId: string,
+  file: File,
+  type: Asset['type'],
+): Promise<Asset | null> {
   const id = crypto.randomUUID();
   const url = URL.createObjectURL(file);
   try {
-    await putAsset(id, file, { name: file.name, mimeType: file.type });
+    await putAsset(projectId, id, file, { name: file.name, mimeType: file.type });
   } catch (err) {
     console.error('[persistFileToAsset] IndexedDB write failed, skipping:', file.name, err);
     URL.revokeObjectURL(url);
@@ -130,7 +154,7 @@ async function persistFileToAsset(file: File, type: Asset['type']): Promise<Asse
  * Extracts all media files from a zip archive, persists them to IndexedDB,
  * and returns the resulting Asset array. Does NOT call setProject.
  */
-async function extractZipToAssets(zipFile: File): Promise<Asset[]> {
+async function extractZipToAssets(projectId: string, zipFile: File): Promise<Asset[]> {
   const newAssets: Asset[] = [];
   try {
     let JSZipModule: typeof import('jszip');
@@ -152,7 +176,7 @@ async function extractZipToAssets(zipFile: File): Promise<Asset[]> {
       const id = crypto.randomUUID();
       const name = filename.split('/').pop() || filename;
       try {
-        await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
+        await putAsset(projectId, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
       } catch (err) {
         console.error('[extractZipToAssets] Skipping file:', name, err);
         return;
@@ -363,9 +387,10 @@ const parseProjectData = async (
 };
 
 
-const DEFAULT_PROJECT: Project = {
-  id: '1',
-  name: 'KINETIX STUDIO',
+function makeDefaultProject(): Project {
+  return {
+  id: crypto.randomUUID(),
+  name: 'Untitled Project',
   script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
   sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
   segments: [],
@@ -379,7 +404,10 @@ const DEFAULT_PROJECT: Project = {
     backgroundColor: '#000000',
     fontFamily: 'Inter',
   },
-};
+  // Not confirmed yet — auto-save is gated until the user names this project.
+  confirmed: false,
+  };
+}
 
 function ModalLoadingFallback(): ReactElement {
   return (
@@ -409,7 +437,7 @@ function getExportErrorSummary(error: ExportError): string {
 }
 
 export default function App() {
-  const [project, setProject] = useState<Project>(DEFAULT_PROJECT);
+  const [project, setProject] = useState<Project>(makeDefaultProject);
 
   const [isHydrating, setIsHydrating] = useState(true);
   const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
@@ -443,6 +471,8 @@ export default function App() {
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
+  const [showDashboard, setShowDashboard] = useState(true);
+  const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
   // Ref that mirrors project.segments for stable interval closure access.
@@ -456,6 +486,9 @@ export default function App() {
   // Ref that mirrors the full project so async handlers (handleApplySyncFromFiles,
   // finalizeSync) can read the live state after awaits without stale closures.
   const projectRef = useRef<Project>(project);
+  // Ref that mirrors project.id so stable useCallback([]) closures can pass the
+  // correct projectId to IndexedDB calls without project.id in their dep arrays.
+  const projectIdRef = useRef<string>(project.id);
   // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
   const rafRef = useRef<number | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
@@ -465,58 +498,71 @@ export default function App() {
 
 
 
+  // Ref bridge so the mount-only hydration effect ([] deps) can call
+  // handleSwitchProject, which is defined later in the component body.
+  // The ref is updated every render so it always holds the latest version.
+  const handleSwitchProjectRef = useRef<(id: string) => Promise<void>>(async () => {});
+
   // Rehydrate persisted project on mount
   useEffect(() => {
     (async () => {
-      const saved = loadProject();
-      if (!saved) {
+      // -----------------------------------------------------------------------
+      // 1. Migrate legacy single-project format if present.
+      //    If migration ran, copy assets from the v1 IDB store to the new v2
+      //    store scoped by projectId.
+      // -----------------------------------------------------------------------
+      const migrated = migrateLegacyIfNeeded();
+      if (migrated) {
+        const legacyBlobs = await getLegacyAssets();
+        await Promise.all(
+          legacyBlobs.map(a =>
+            putAsset(migrated.project.id, a.id, a.blob, {
+              name: a.name,
+              mimeType: a.mimeType,
+            }).catch((err: unknown) =>
+              console.warn('[kinetix] Migration: failed to copy asset', a.id, err),
+            ),
+          ),
+        );
+        console.info(
+          `[kinetix] Migrated legacy project "${migrated.project.name}" (id: ${migrated.project.id})`,
+        );
+      }
+
+      // -----------------------------------------------------------------------
+      // 2. Route on launch:
+      //    • No projects yet  → new-project modal (first ever launch).
+      //    • Has a lastOpenedProjectId that still exists in the registry →
+      //      reopen that project directly (normal reload case).
+      //    • Has projects but no last-opened id (e.g. first launch after
+      //      migration) → show the dashboard so the user picks one.
+      // -----------------------------------------------------------------------
+      const allMetas = loadAllMetas();
+      const lastId = getLastOpenedProjectId();
+
+      if (allMetas.length === 0) {
+        // First ever launch — no projects yet.
+        setShowDashboard(false);
+        setShowNewProjectModal(true);
         setIsHydrating(false);
         return;
       }
 
-      const storedAssets = await getAllAssets();
-      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
-
-      const droppedIds = new Set<string>();
-      const rehydratedAssets = saved.project.assets
-        .map(asset => {
-          const stored = blobMap.get(asset.id);
-          if (!stored) {
-            console.warn(`[kinetix] Dropping orphaned asset on load — id: ${asset.id}, name: ${asset.name}`);
-            droppedIds.add(asset.id);
-            return null;
-          }
-          return { ...asset, url: URL.createObjectURL(stored.blob) };
-        })
-        .filter((a): a is NonNullable<typeof a> => a !== null);
-
-      const rehydratedSegments = saved.project.segments.map(seg => {
-        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-          console.warn(`[kinetix] Clearing assetId on segment "${seg.id}" — referenced asset was dropped`);
-          return { ...seg, assetId: undefined };
-        }
-        return seg;
-      });
-
-      let rehydratedVoiceoverId = saved.project.voiceoverId;
-      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
-        console.warn(`[kinetix] Clearing voiceoverId — referenced asset was dropped`);
-        rehydratedVoiceoverId = undefined;
+      if (lastId && allMetas.some(m => m.id === lastId)) {
+        // Reload case — reopen the last active project directly.
+        await handleSwitchProjectRef.current(lastId);
+        setShowDashboard(false);
+        setIsHydrating(false);
+        return;
       }
 
-      setProject({
-        ...saved.project,
-        assets: rehydratedAssets,
-        segments: rehydratedSegments,
-        voiceoverId: rehydratedVoiceoverId,
-      });
-      // Restore sync state — if saved segments exist the user had already synced.
-      if (rehydratedSegments.length > 0) setIsSynced(true);
+      // Has projects but no last-opened id (e.g. first launch after migration).
+      setShowDashboard(true);
       setIsHydrating(false);
     })();
   }, []);
 
-  usePersistProject(project, !isHydrating);
+  const { saveNow, lastSavedAt } = usePersistProject(project, !isHydrating);
 
   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
     setProject(prev => ({
@@ -774,7 +820,7 @@ export default function App() {
 
     if (staged.voiceoverFile) {
       if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
-        const asset = await persistFileToAsset(staged.voiceoverFile.file, 'audio');
+        const asset = await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
         if (asset) {
           allAssets.push(asset);
           newVoiceoverId = asset.id;
@@ -785,11 +831,11 @@ export default function App() {
       if (allAssets.some(a => a.name === sf.file.name)) continue;
       const ext = sf.file.name.split('.').pop()?.toLowerCase() ?? '';
       const type: Asset['type'] = ['mp4', 'mov', 'webm', 'm4v'].includes(ext) ? 'video' : 'image';
-      const asset = await persistFileToAsset(sf.file, type);
+      const asset = await persistFileToAsset(projectRef.current.id, sf.file, type);
       if (asset) allAssets.push(asset);
     }
     for (const sf of staged.zipFiles) {
-      const extracted = await extractZipToAssets(sf.file);
+      const extracted = await extractZipToAssets(projectRef.current.id, sf.file);
       for (const asset of extracted) {
         if (allAssets.some(a => a.name === asset.name)) {
           URL.revokeObjectURL(asset.url); // won't be used — clean up
@@ -864,7 +910,7 @@ export default function App() {
       const asset = prev.assets.find(a => a.id === assetId);
       if (!asset) return prev;
       URL.revokeObjectURL(asset.url);
-      deleteAsset(assetId).catch(err =>
+      deleteAsset(projectIdRef.current, assetId).catch(err =>
         console.error('Failed to delete asset from IndexedDB:', err)
       );
       return {
@@ -881,7 +927,7 @@ export default function App() {
   const handleDeleteAllAssets = useCallback(() => {
     const nonAudio = assetsRef.current.filter(a => a.type !== 'audio');
     nonAudio.forEach(a => URL.revokeObjectURL(a.url));
-    Promise.all(nonAudio.map(a => deleteAsset(a.id))).catch(err =>
+    Promise.all(nonAudio.map(a => deleteAsset(projectIdRef.current, a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
     setProject(prev => ({
@@ -897,7 +943,7 @@ export default function App() {
     const id = crypto.randomUUID();
     const url = URL.createObjectURL(file);
     try {
-      await putAsset(id, file, { name: file.name, mimeType: file.type });
+      await putAsset(projectIdRef.current, id, file, { name: file.name, mimeType: file.type });
     } catch (err) {
       console.error('Failed to persist asset to IndexedDB, skipping:', file.name, err);
       URL.revokeObjectURL(url);
@@ -911,7 +957,7 @@ export default function App() {
       const oldAudio = assetsRef.current.find(a => a.type === 'audio');
       if (oldAudio) {
         URL.revokeObjectURL(oldAudio.url);
-        deleteAsset(oldAudio.id).catch(err =>
+        deleteAsset(projectIdRef.current, oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
         );
       }
@@ -960,7 +1006,7 @@ export default function App() {
 
         const id = crypto.randomUUID();
         try {
-          await putAsset(id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
+          await putAsset(projectIdRef.current, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
         } catch (err) {
           console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
           return;
@@ -1076,7 +1122,29 @@ export default function App() {
     segmentsRef.current = project.segments;
     assetsRef.current = project.assets;
     projectRef.current = project;
+    projectIdRef.current = project.id;
   });
+
+  // --- Thumbnail: write base64 to meta immediately when first image asset changes ---
+  // This ensures the dashboard shows a correct thumbnail even on fresh app launch,
+  // without waiting for the next full auto-save cycle.
+  useEffect(() => {
+    const firstImage = project.assets.find(a => a.type === 'image');
+    if (!firstImage || !project.confirmed) return;
+
+    void buildThumbnailBase64(firstImage.url).then((base64) => {
+      if (!base64) return;
+      upsertProjectMeta({
+        id: project.id,
+        name: project.name,
+        savedAt: Date.now(),
+        segmentCount: project.segments.length,
+        thumbnailUrl: base64,
+        thumbnailAssetId: firstImage.id,
+      });
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.assets, project.confirmed, project.id]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
@@ -1214,27 +1282,129 @@ export default function App() {
 
   // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
-  const handleNewProject = async () => {
-    const confirmed = window.confirm(
-      'Discard this project? This will permanently delete your script, segments, and all uploaded assets from this browser. This cannot be undone.'
-    );
-    if (!confirmed) return;
-
-    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
-    clearProject();
-    try {
-      await clearAllAssets();
-    } catch (err) {
-      console.error('Failed to clear IndexedDB assets:', err);
-    }
-    setProject(DEFAULT_PROJECT);
+  const handleNewProject = (): void => {
+    // Save current project first, then show the name-picking modal.
+    saveNow();
+    setShowNewProjectModal(true);
   };
+
+  const handleNewProjectConfirm = (name: string): void => {
+    setShowNewProjectModal(false);
+    // Revoke current project's blob URLs (they belong to the old session).
+    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+    // Build the new project and register it immediately — don't wait for the
+    // debounced hook so the registry always reflects this project by the time
+    // the dashboard next renders.
+    const fresh = makeDefaultProject();
+    fresh.name = name;
+    // Mark as confirmed so auto-save and saveNow will persist it going forward.
+    fresh.confirmed = true;
+    saveProject(fresh); // persist full project JSON
+    setLastOpenedProjectId(fresh.id);
+    upsertProjectMeta({ // ensure registry entry exists right away
+      id: fresh.id,
+      name: fresh.name,
+      savedAt: Date.now(),
+      segmentCount: 0,
+    });
+    setProject(fresh);
+    setIsSynced(false);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setSelectedSegmentId(null);
+  };
+
+  const handleSwitchProject = async (id: string): Promise<void> => {
+    setShowDashboard(false);
+    if (id === project.id) return;
+
+    // Save current project before switching — only if it was confirmed by the user.
+    if (project.confirmed) {
+      saveNow();
+    }
+
+    const saved = loadProject(id);
+    if (!saved) {
+      console.error('[kinetix] Cannot switch to project — not found in storage:', id);
+      return;
+    }
+
+    // Revoke current project's blob URLs.
+    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+
+    // Rehydrate the target project's assets from IndexedDB.
+    const storedAssets = await getAllAssetsForProject(saved.project.id);
+    const blobMap = new Map(storedAssets.map(a => [a.id, a]));
+
+    const droppedIds = new Set<string>();
+    const rehydratedAssets = saved.project.assets
+      .map(asset => {
+        const stored = blobMap.get(asset.id);
+        if (!stored) {
+          console.warn(
+            `[kinetix] Dropping orphaned asset on switch — id: ${asset.id}, name: ${asset.name}`,
+          );
+          droppedIds.add(asset.id);
+          return null;
+        }
+        return { ...asset, url: URL.createObjectURL(stored.blob) };
+      })
+      .filter((a): a is NonNullable<typeof a> => a !== null);
+
+    const rehydratedSegments = saved.project.segments.map(seg => {
+      if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+        return { ...seg, assetId: undefined };
+      }
+      return seg;
+    });
+
+    let rehydratedVoiceoverId = saved.project.voiceoverId;
+    if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
+      rehydratedVoiceoverId = undefined;
+    }
+
+    setProject({
+      ...saved.project,
+      assets: rehydratedAssets,
+      segments: rehydratedSegments,
+      voiceoverId: rehydratedVoiceoverId,
+      // Any project loaded from storage was previously confirmed by the user,
+      // so mark it as confirmed to enable auto-save going forward.
+      confirmed: true,
+    });
+    setLastOpenedProjectId(saved.project.id);
+    setIsSynced(rehydratedSegments.length > 0);
+    setCurrentTime(0);
+    setIsPlaying(false);
+    setSelectedSegmentId(null);
+  };
+
+  // Keep the ref up to date every render so the mount-only hydration effect
+  // (which closes over the ref, not the function directly) always invokes the
+  // latest version of handleSwitchProject.
+  handleSwitchProjectRef.current = handleSwitchProject;
 
   if (isHydrating) {
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
         <span className="text-[#E4E3E0] text-sm font-mono tracking-widest uppercase">Loading…</span>
       </div>
+    );
+  }
+
+  if (showDashboard) {
+    return (
+      <ProjectDashboard
+        currentProjectId={project.confirmed ? project.id : null}
+        onSelectProject={(id) => {
+          void handleSwitchProject(id);
+          setShowDashboard(false);
+        }}
+        onNewProject={() => {
+          setShowDashboard(false);
+          setShowNewProjectModal(true);
+        }}
+      />
     );
   }
 
@@ -1276,6 +1446,19 @@ export default function App() {
         {/* Header */}
         <header className="h-16 border-bottom border-[#1A1A1A] px-8 flex items-center justify-between bg-[#0A0A0A]">
           <div className="flex items-center gap-6">
+            {/* Back to Projects nav link */}
+            <button
+              onClick={() => {
+                if (project.confirmed) saveNow();
+                clearLastOpenedProjectId();
+                setShowDashboard(true);
+              }}
+              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
+              title="Back to Projects"
+            >
+              <ChevronLeft size={14} />
+              <span>Projects</span>
+            </button>
             {isAdjustingTrim && (
               <button 
                 onClick={() => {
@@ -1288,6 +1471,14 @@ export default function App() {
               </button>
             )}
             <h1 className="text-sm font-bold tracking-[0.2em] uppercase text-white/90">Kinetix <span className="text-[#F27D26]">Pro</span> Studio</h1>
+            <div className="h-4 w-px bg-[#1A1A1A]" />
+            {/* Project name */}
+            <span
+              className="text-[11px] font-bold text-gray-400 max-w-[180px] truncate"
+              title={project.name}
+            >
+              {project.name}
+            </span>
             <div className="h-4 w-px bg-[#1A1A1A]" />
             <div className="flex items-center gap-2">
               <div className={`w-2 h-2 rounded-full animate-pulse ${isSynced ? 'bg-green-500' : 'bg-[#F27D26]'}`} />
@@ -1302,9 +1493,18 @@ export default function App() {
             <span className="text-[10px] uppercase tracking-widest text-gray-500">
               {isSynced ? 'Timeline Ready' : 'Drop files to begin'}
             </span>
+            {/* Manual save */}
+            <button
+              onClick={saveNow}
+              title={lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Save project'}
+              aria-label="Save project"
+              className="p-2 text-gray-500 hover:text-[#F27D26] transition-colors rounded-lg hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F27D26]"
+            >
+              <Save size={16} />
+            </button>
             <button
               onClick={startExport}
-              className="ml-4 bg-white text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-white transition-all transform hover:scale-105 active:scale-95 shadow-xl"
+              className="ml-2 bg-white text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-white transition-all transform hover:scale-105 active:scale-95 shadow-xl"
             >
               Export
             </button>
@@ -1456,7 +1656,7 @@ export default function App() {
                                       s.assetId === asset.id ? { ...s, assetId: undefined } : s
                                     ),
                                   }));
-                                  deleteAsset(asset.id).catch(err =>
+                                  deleteAsset(projectIdRef.current, asset.id).catch(err =>
                                     console.error('Failed to delete asset from IndexedDB:', err)
                                   );
                                 }}
@@ -1537,6 +1737,7 @@ export default function App() {
                     onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                     onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
                     onNewProject={handleNewProject}
+                    onOpenDashboard={() => { clearLastOpenedProjectId(); setShowDashboard(true); }}
                     onExportScenesJson={() => {
                       const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                       const url = URL.createObjectURL(blob);
@@ -1845,6 +2046,14 @@ export default function App() {
         )}
       </AnimatePresence>
 
+      {/* New Project Modal */}
+      {showNewProjectModal && (
+        <NewProjectModal
+          onConfirm={handleNewProjectConfirm}
+          onCancel={() => setShowNewProjectModal(false)}
+        />
+      )}
+
       {/* Settings Modal */}
       <AnimatePresence>
         {showSettings && (
@@ -1879,6 +2088,7 @@ export default function App() {
                   onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
                   onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
                   onNewProject={handleNewProject}
+                  onOpenDashboard={() => { setShowSettings(false); clearLastOpenedProjectId(); setShowDashboard(true); }}
                   onExportScenesJson={() => {
                     const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
                     const url = URL.createObjectURL(blob);
@@ -1916,7 +2126,7 @@ export default function App() {
               }
               const id = crypto.randomUUID();
               try {
-                await putAsset(id, blob, { name: stock.name, mimeType: blob.type });
+                await putAsset(projectIdRef.current, id, blob, { name: stock.name, mimeType: blob.type });
               } catch (err) {
                 console.error('Failed to persist stock asset to IndexedDB, skipping:', stock.name, err);
                 return;

@@ -1,7 +1,7 @@
 import React from 'react';
 import { Project, TransitionType, AnimationType } from '../types';
 import { FILTERS, FONT_FAMILIES, TRANSITION_OPTIONS, ANIMATION_OPTIONS } from '../constants';
-import { RefreshCw, Sparkles, Layers, Trash2 } from 'lucide-react';
+import { RefreshCw, Sparkles, Layers, Trash2, FolderOpen } from 'lucide-react';
 
 interface Props {
   project: Project;
@@ -12,6 +12,8 @@ interface Props {
   onExportScenesJson: () => void;
   onImportScenesJson: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onNewProject: () => void;
+  /** Opens the multi-project dashboard / switcher. */
+  onOpenDashboard: () => void;
   /** Export resolution. Defaults to '1080p'. */
   exportResolution: '1080p' | '4k';
   onExportResolutionChange: (r: '1080p' | '4k') => void;
@@ -33,6 +35,7 @@ export function SettingsPanel({
   onExportScenesJson,
   onImportScenesJson,
   onNewProject,
+  onOpenDashboard,
   exportResolution,
   onExportResolutionChange,
   exportFps,
@@ -234,6 +237,12 @@ export function SettingsPanel({
         )}
         <section className="space-y-3 pt-4 border-t border-[#1A1A1A]">
           <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-red-500">Danger Zone</h3>
+          <button
+            onClick={onOpenDashboard}
+            className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-gray-400 hover:bg-[#1A1A1A] hover:text-white hover:border-gray-500 transition-all flex items-center justify-center gap-2"
+          >
+            <FolderOpen size={12} /> Switch Project
+          </button>
           <button
             onClick={onNewProject}
             className="w-full bg-transparent border border-red-900 p-3 rounded-xl text-[9px] font-black uppercase tracking-[0.2em] text-red-500 hover:bg-red-500 hover:text-white hover:border-red-500 transition-all flex items-center justify-center gap-2"
