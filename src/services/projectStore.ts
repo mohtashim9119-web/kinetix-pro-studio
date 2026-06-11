@@ -104,6 +104,27 @@ export function loadMostRecentMeta(): ProjectMeta | null {
   return metas[0] ?? null; // already sorted newest-first
 }
 
+/**
+ * Upserts a single ProjectMeta entry in the registry without touching the
+ * per-project JSON blob.  Use this to update lightweight meta (name, thumbnail,
+ * segmentCount) independently of a full saveProject() call.
+ */
+export function upsertProjectMeta(meta: ProjectMeta): void {
+  try {
+    const metas = loadAllMetas();
+    const idx = metas.findIndex(m => m.id === meta.id);
+    if (idx >= 0) {
+      metas[idx] = meta;
+    } else {
+      metas.push(meta);
+    }
+    metas.sort((a, b) => b.savedAt - a.savedAt);
+    localStorage.setItem(REGISTRY_KEY, JSON.stringify(metas));
+  } catch {
+    // quota exceeded or private browsing — silently skip
+  }
+}
+
 /** Removes a project's per-project key and its registry entry. */
 export function deleteProjectData(id: string): void {
   localStorage.removeItem(projectKey(id));

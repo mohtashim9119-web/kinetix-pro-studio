@@ -8,14 +8,12 @@ interface Props {
   currentProjectId: string | null;
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
-  onClose?: () => void; // only shown when a project is already open
 }
 
 export function ProjectDashboard({
   currentProjectId,
   onSelectProject,
   onNewProject,
-  onClose,
 }: Props): React.ReactElement {
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
@@ -95,16 +93,6 @@ export function ProjectDashboard({
             <Plus size={16} />
             New Project
           </button>
-          {/* Close button — only when a project is open */}
-          {onClose && (
-            <button
-              onClick={onClose}
-              className="text-zinc-500 hover:text-white text-sm px-3 py-2
-                         rounded-lg hover:bg-zinc-800 transition-colors"
-            >
-              Back to Editor
-            </button>
-          )}
         </div>
       </div>
 

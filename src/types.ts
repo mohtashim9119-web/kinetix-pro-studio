@@ -204,6 +204,8 @@ export interface ProjectMeta {
   segmentCount: number;
   /** Optional base64 or blob-URL thumbnail captured at save time. */
   thumbnailUrl?: string;
+  /** Asset id of the thumbnail source (used to re-derive the URL after reload). */
+  thumbnailAssetId?: string;
 }
 
 export type TranscriptionStatus =

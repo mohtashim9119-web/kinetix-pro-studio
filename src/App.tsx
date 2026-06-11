@@ -58,10 +58,12 @@ import {
   getLegacyAssets,
 } from './services/assetStore';
 import {
+  saveProject,
   loadProject,
   loadAllMetas,
   deleteProjectData,
   migrateLegacyIfNeeded,
+  upsertProjectMeta,
 } from './services/projectStore';
 import { usePersistProject } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
@@ -1245,9 +1247,18 @@ export default function App() {
     setShowNewProjectModal(false);
     // Revoke current project's blob URLs (they belong to the old session).
     project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
-    // Switch to a brand-new project (assets stay in IDB under the old project id).
+    // Build the new project and register it immediately — don't wait for the
+    // debounced hook so the registry always reflects this project by the time
+    // the dashboard next renders.
     const fresh = makeDefaultProject();
     fresh.name = name;
+    saveProject(fresh); // persist full project JSON
+    upsertProjectMeta({ // ensure registry entry exists right away
+      id: fresh.id,
+      name: fresh.name,
+      savedAt: Date.now(),
+      segmentCount: 0,
+    });
     setProject(fresh);
     setIsSynced(false);
     setCurrentTime(0);
@@ -1961,8 +1972,7 @@ export default function App() {
         <ProjectDashboard
           currentProjectId={project.id}
           onSelectProject={handleSwitchProject}
-          onNewProject={() => { setShowDashboard(false); handleNewProject(); }}
-          onClose={() => setShowDashboard(false)}
+          onNewProject={() => { setShowDashboard(false); setShowNewProjectModal(true); }}
         />
       )}
 
