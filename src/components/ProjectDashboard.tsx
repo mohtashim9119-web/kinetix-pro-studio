@@ -181,12 +181,11 @@ export function ProjectDashboard({
                 </div>
               )}
 
-              {/* Currently open badge */}
+              {/* Current project badge */}
               {meta.id === currentProjectId && (
-                <div className="absolute top-2 left-2 bg-[#F27D26] text-white
-                                text-xs px-2 py-0.5 rounded-full font-medium">
-                  Open
-                </div>
+                <span className="absolute top-2 left-2 text-[10px] bg-green-600/80 text-white px-1.5 py-0.5 rounded-full font-medium">
+                  Current
+                </span>
               )}
             </div>
           ))}

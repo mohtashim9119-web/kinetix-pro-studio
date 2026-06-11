@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
   Trash2,
   ChevronRight,
+  ChevronLeft,
   MonitorPlay,
   RotateCcw,
   Check,
@@ -35,7 +36,6 @@ import {
   Info,
   X,
   CheckCircle,
-  FolderOpen,
   Save,
 } from 'lucide-react';
 import { motion, AnimatePresence, type Transition } from 'motion/react';
@@ -468,7 +468,7 @@ export default function App() {
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
-  const [showDashboard, setShowDashboard] = useState(false);
+  const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
@@ -534,7 +534,9 @@ export default function App() {
         return;
       }
 
-      // No saved projects — prompt for a name then start fresh.
+      // No saved projects — hide the dashboard (started as true) then show the
+      // new-project modal so the user can name their first project.
+      setShowDashboard(false);
       setShowNewProjectModal(true);
       setIsHydrating(false);
     })();
@@ -1342,6 +1344,22 @@ export default function App() {
     );
   }
 
+  if (showDashboard) {
+    return (
+      <ProjectDashboard
+        currentProjectId={project.confirmed ? project.id : null}
+        onSelectProject={(id) => {
+          void handleSwitchProject(id);
+          setShowDashboard(false);
+        }}
+        onNewProject={() => {
+          setShowDashboard(false);
+          setShowNewProjectModal(true);
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden">
       {/* Sidebar Navigation — hidden in new UX, preserved for rollback */}
@@ -1380,6 +1398,18 @@ export default function App() {
         {/* Header */}
         <header className="h-16 border-bottom border-[#1A1A1A] px-8 flex items-center justify-between bg-[#0A0A0A]">
           <div className="flex items-center gap-6">
+            {/* Back to Projects nav link */}
+            <button
+              onClick={() => {
+                if (project.confirmed) saveNow();
+                setShowDashboard(true);
+              }}
+              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
+              title="Back to Projects"
+            >
+              <ChevronLeft size={14} />
+              <span>Projects</span>
+            </button>
             {isAdjustingTrim && (
               <button 
                 onClick={() => {
@@ -1414,15 +1444,6 @@ export default function App() {
             <span className="text-[10px] uppercase tracking-widest text-gray-500">
               {isSynced ? 'Timeline Ready' : 'Drop files to begin'}
             </span>
-            {/* Projects switcher */}
-            <button
-              onClick={() => setShowDashboard(true)}
-              title="Switch project"
-              aria-label="Open project switcher"
-              className="p-2 text-gray-500 hover:text-white transition-colors rounded-lg hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F27D26]"
-            >
-              <FolderOpen size={16} />
-            </button>
             {/* Manual save */}
             <button
               onClick={saveNow}
@@ -1975,15 +1996,6 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* Project Dashboard */}
-      {showDashboard && (
-        <ProjectDashboard
-          currentProjectId={project.id}
-          onSelectProject={handleSwitchProject}
-          onNewProject={() => { setShowDashboard(false); setShowNewProjectModal(true); }}
-        />
-      )}
 
       {/* New Project Modal */}
       {showNewProjectModal && (
