@@ -1770,6 +1770,14 @@ export default function App() {
                     onExportResolutionChange={setExportResolution}
                     exportFps={exportFps}
                     onExportFpsChange={setExportFps}
+                    onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
+                    onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
+                    onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
+                    onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
+                    currentTransition={project.globalTransition}
+                    currentAnimation={project.globalAnimation}
+                    currentOverlayFilter={project.globalOverlayFilter ?? ''}
+                    currentOverlayConfig={project.globalOverlayConfig}
                   />
                 )}
               </div>
@@ -2121,6 +2129,14 @@ export default function App() {
                   onExportResolutionChange={setExportResolution}
                   exportFps={exportFps}
                   onExportFpsChange={setExportFps}
+                  onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
+                  onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
+                  onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
+                  onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
+                  currentTransition={project.globalTransition}
+                  currentAnimation={project.globalAnimation}
+                  currentOverlayFilter={project.globalOverlayFilter ?? ''}
+                  currentOverlayConfig={project.globalOverlayConfig}
                 />
               </div>
             </motion.div>

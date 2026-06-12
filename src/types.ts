@@ -145,7 +145,6 @@ export interface VideoSegment {
   overlayFilter?: string;
   order: number;
   showOverlay?: boolean;
-  customOverlayText?: string;
   overlayConfig?: {
     color: string;
     backgroundColor: string;
