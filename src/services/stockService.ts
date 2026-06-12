@@ -5,6 +5,7 @@
 
 const PEXELS_KEY = import.meta.env.VITE_PEXELS_API_KEY as string | undefined;
 const PIXABAY_KEY = import.meta.env.VITE_PIXABAY_API_KEY as string | undefined;
+const COVERR_KEY = import.meta.env.VITE_COVERR_API_KEY as string | undefined;
 
 export interface StockResult {
   id: string;
@@ -12,7 +13,7 @@ export interface StockResult {
   url: string;
   thumbnail: string;
   type: 'video' | 'image';
-  provider: 'pexels' | 'pixabay' | 'coverr' | 'mixkit';
+  provider: 'pexels' | 'pixabay' | 'coverr';
 }
 
 export type StockSearchResult =
@@ -134,14 +135,18 @@ export async function searchPixabay(query: string, type: 'video' | 'image' = 'vi
 }
 
 // ── Coverr ──────────────────────────────────────────────────────────────────
-// Free, no API key required.
-// Search endpoint: https://coverr.co/api/videos/search?query=<q>&per_page=20&page=1
+// Free tier: 50 calls/hour. Requires API key.
+// Docs: https://api.coverr.co/docs
+// Base: https://api.coverr.co/videos
 
 interface CoverrVideo {
   id: string;
   title: string;
-  coverr_url: string;           // direct MP4 download URL
-  preview_url: string;          // thumbnail JPEG
+  thumbnail: string;
+  urls: {
+    mp4_preview: string;
+    mp4: string;
+  };
 }
 
 interface CoverrResponse {
@@ -155,12 +160,18 @@ export async function searchCoverr(
   // Coverr is video-only
   if (type === 'image') return { status: 'ok', results: [] };
 
+  if (!COVERR_KEY) {
+    return { status: 'error', message: 'Coverr API key not configured. Add VITE_COVERR_API_KEY to your .env file.' };
+  }
+
   const url =
-    `https://coverr.co/api/videos/search?query=${encodeURIComponent(query)}&per_page=20&page=1`;
+    `https://api.coverr.co/videos?query=${encodeURIComponent(query)}&page_size=20&page=0&urls=true`;
 
   let res: Response;
   try {
-    res = await fetchWithRetry(url, {});
+    res = await fetchWithRetry(url, {
+      headers: { Authorization: `Bearer ${COVERR_KEY}` },
+    });
   } catch (err) {
     return { status: 'error', message: String(err) };
   }
@@ -175,68 +186,16 @@ export async function searchCoverr(
     return { status: 'error', message: 'Coverr: invalid JSON response' };
   }
 
-  const results: StockResult[] = (data.hits ?? []).map((v) => ({
-    id: `coverr-${v.id}`,
-    name: v.title,
-    url: v.coverr_url,
-    thumbnail: v.preview_url,
-    type: 'video',
-    provider: 'coverr',
-  }));
-
-  return { status: 'ok', results };
-}
-
-// ── Mixkit ───────────────────────────────────────────────────────────────────
-// Free, no API key required.
-// Search endpoint: https://mixkit.co/api/assets?vl=en&page=1&per_page=20&term=<q>&asset_type=footage
-
-interface MixkitAsset {
-  id: number;
-  name: string;
-  source_download: string;      // direct MP4 download URL
-  image_small: string;          // thumbnail URL
-}
-
-interface MixkitResponse {
-  assets: MixkitAsset[];
-}
-
-export async function searchMixkit(
-  query: string,
-  type: 'video' | 'image' = 'video',
-): Promise<StockSearchResult> {
-  // Mixkit is video-only (footage)
-  if (type === 'image') return { status: 'ok', results: [] };
-
-  const url =
-    `https://mixkit.co/api/assets?vl=en&page=1&per_page=20&term=${encodeURIComponent(query)}&asset_type=footage`;
-
-  let res: Response;
-  try {
-    res = await fetchWithRetry(url, {});
-  } catch (err) {
-    return { status: 'error', message: String(err) };
-  }
-
-  if (res.status === 429) return { status: 'rate_limited' };
-  if (!res.ok) return { status: 'error', message: `Mixkit HTTP ${res.status}` };
-
-  let data: MixkitResponse;
-  try {
-    data = (await res.json()) as MixkitResponse;
-  } catch {
-    return { status: 'error', message: 'Mixkit: invalid JSON response' };
-  }
-
-  const results: StockResult[] = (data.assets ?? []).map((a) => ({
-    id: `mixkit-${a.id}`,
-    name: a.name,
-    url: a.source_download,
-    thumbnail: a.image_small,
-    type: 'video',
-    provider: 'mixkit',
-  }));
+  const results: StockResult[] = (data.hits ?? [])
+    .filter(v => v.urls?.mp4_preview || v.urls?.mp4)
+    .map((v) => ({
+      id: `coverr-${v.id}`,
+      name: v.title,
+      url: v.urls.mp4_preview || v.urls.mp4,
+      thumbnail: v.thumbnail,
+      type: 'video' as const,
+      provider: 'coverr' as const,
+    }));
 
   return { status: 'ok', results };
 }
@@ -245,14 +204,13 @@ export async function searchAllStock(
   query: string,
   type: 'video' | 'image' = 'video',
 ): Promise<StockSearchResult> {
-  const [pexels, pixabay, coverr, mixkit] = await Promise.all([
+  const [pexels, pixabay, coverr] = await Promise.all([
     searchPexels(query, type),
     searchPixabay(query, type),
     searchCoverr(query, type),
-    searchMixkit(query, type),
   ]);
 
-  const sources = [pexels, pixabay, coverr, mixkit];
+  const sources = [pexels, pixabay, coverr];
 
   // Any rate limit short-circuits everything
   if (sources.some((s) => s.status === 'rate_limited')) {
