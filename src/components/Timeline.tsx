@@ -3,11 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Play, Pause, RotateCcw, Layers, MonitorPlay,
-  Search, Layout, RefreshCw, Music, AlertCircle,
+  Play, Pause, RotateCcw, Music, AlertCircle,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
@@ -28,7 +26,6 @@ interface Props {
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onZoomChange: (zoom: number) => void;
-  onSpeedChange: (speed: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
@@ -53,115 +50,47 @@ export function Timeline({
   onTogglePlay,
   onSeek,
   onZoomChange,
-  onSpeedChange,
   onResizeStart,
   onSegmentUpdate,
   onOpenStockSearch,
   onSetTrimmingSegment,
   onSetAdjustingTrim,
 }: Props) {
-  const [verticalZoom, setVerticalZoom] = useState(1);
-
   const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
   const pixelsPerSecond = 100 * zoomLevel;
 
   return (
-    <div className="h-72 flex flex-col bg-[#050505] rounded-[32px] border border-[#1A1A1A] overflow-hidden shadow-2xl relative">
+    <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Toolbar */}
-      <div className="px-10 py-4 border-bottom border-[#1A1A1A] flex items-center justify-between bg-[#080808]">
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => onSeek(0)}
-              aria-label="Seek to start"
-              className="p-2 text-gray-500 hover:text-white transition-colors"
-            >
-              <RotateCcw size={16} />
-            </button>
-            <button
-              onClick={onTogglePlay}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-              className="w-12 h-12 bg-[#F27D26] rounded-full text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_20px_rgba(242,125,38,0.3)]"
-            >
-              {isPlaying ? <Pause size={22} /> : <Play size={22} fill="currentColor" />}
-            </button>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#F27D26] mb-0.5">Timeline Position</span>
-            <span className="text-lg font-mono text-white tracking-widest">
-              {Math.floor(currentTime / 60).toString().padStart(2, '0')}:
-              {Math.floor(currentTime % 60).toString().padStart(2, '0')}:
-              {Math.floor((currentTime % 1) * 100).toString().padStart(2, '0')}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 mr-4">
-            <span className="text-[9px] font-black uppercase tracking-widest text-gray-600">Zoom</span>
-            <input
-              type="range" min="0.5" max="10" step="0.1"
-              value={zoomLevel}
-              onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-              aria-label="Zoom level"
-              className="w-32 h-1 bg-[#1A1A1A] rounded-full appearance-none accent-[#F27D26] cursor-pointer"
-            />
-          </div>
-          <div className="h-8 w-px bg-[#1A1A1A]" />
-          <div className="flex items-center gap-2">
-            <Layers size={14} className="text-gray-600" />
-            <span className="text-[9px] font-bold uppercase tracking-widest text-gray-600">Visuals + Audio Tracks</span>
-          </div>
-          <div className="p-2 bg-[#F27D26]/5 rounded-lg border border-[#F27D26]/10 flex items-center gap-3">
-            <MonitorPlay size={14} className="text-[#F27D26]" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#F27D26]">Live Rendering</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between px-6 pb-2">
-        <div className="flex items-center gap-2">
-          <RefreshCw size={14} className="text-[#F27D26]" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-[#F27D26]">Timeline Master</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Search size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Horizontal</span>
-            <input
-              type="range" min="0.1" max="5" step="0.1"
-              value={zoomLevel}
-              onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-              aria-label="Horizontal zoom"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(zoomLevel * 100)}%</span>
-          </div>
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Play size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Speed</span>
-            <input
-              type="range" min="0.5" max="2" step="0.1"
-              value={globalPlaybackSpeed}
-              onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-              aria-label="Playback speed"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{globalPlaybackSpeed.toFixed(1)}x</span>
-          </div>
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Layout size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Vertical</span>
-            <input
-              type="range" min="0.5" max="3" step="0.1"
-              value={verticalZoom}
-              onChange={(e) => setVerticalZoom(parseFloat(e.target.value))}
-              aria-label="Vertical zoom"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(verticalZoom * 100)}%</span>
-          </div>
-        </div>
+      <div className="h-8 flex-shrink-0 px-4 border-b border-[#1A1A1A] flex items-center gap-4 bg-[#080808]">
+        <button
+          onClick={() => onSeek(0)}
+          aria-label="Seek to start"
+          className="p-1 text-gray-600 hover:text-white transition-colors"
+        >
+          <RotateCcw size={12} />
+        </button>
+        <button
+          onClick={onTogglePlay}
+          aria-label={isPlaying ? 'Pause' : 'Play'}
+          className="w-6 h-6 bg-[#F27D26] rounded-full text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
+        >
+          {isPlaying ? <Pause size={10} /> : <Play size={10} fill="currentColor" />}
+        </button>
+        <span className="text-[10px] font-mono text-gray-400 tracking-widest">
+          {Math.floor(currentTime / 60).toString().padStart(2, '0')}:
+          {Math.floor(currentTime % 60).toString().padStart(2, '0')}:
+          {Math.floor((currentTime % 1) * 100).toString().padStart(2, '0')}
+        </span>
+        <div className="flex-1" />
+        <span className="text-[9px] uppercase tracking-widest text-gray-700">Zoom</span>
+        <input
+          type="range" min="0.5" max="10" step="0.1"
+          value={zoomLevel}
+          onChange={(e) => onZoomChange(parseFloat(e.target.value))}
+          aria-label="Zoom level"
+          className="w-24 h-1 bg-[#1A1A1A] rounded-full appearance-none accent-[#F27D26] cursor-pointer"
+        />
       </div>
 
       {/* Timeline Tracks Area */}
@@ -238,10 +167,7 @@ export function Timeline({
 
           {/* Visual Track */}
           {!isSynced ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-700 bg-[#080808a0] rounded-3xl border border-[#1A1A1A] border-dashed" style={{ minWidth: '100%' }}>
-              <MonitorPlay size={40} className="mb-4 opacity-20" />
-              <p className="text-[10px] font-black uppercase tracking-[0.4em]">Initialize Project Synchronization</p>
-            </div>
+            <div className="flex-1 h-14 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
           ) : (
             <div className="flex gap-1 h-full items-stretch">
               {segments.map((s, i) => {
@@ -290,7 +216,7 @@ export function Timeline({
                     }}
                     style={{
                       width: `${s.duration * pixelsPerSecond}px`,
-                      height: `${64 * verticalZoom}px`,
+                      height: '56px',
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
                       filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
                       transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
@@ -366,6 +292,13 @@ export function Timeline({
           )}
         </div>
 
+        {/* Captions track — hook-in for Task 9d (captionCues not yet wired) */}
+        {false && (
+          <div className="h-8 border-t border-[#1A1A1A] flex items-center px-2">
+            {/* caption cues rendered here — Task 9d */}
+          </div>
+        )}
+
         {/* Audio Track */}
         {voiceoverName && (
           <div className="mt-2 h-12 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-hidden flex items-center">
@@ -387,10 +320,8 @@ export function Timeline({
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
                     onClick={(e) => e.stopPropagation()}
                   />
-                  <div className="flex-1 flex items-center gap-0.5 opacity-20 group-hover:opacity-60 transition-opacity">
-                    {Array.from({ length: Math.ceil(s.duration * 5) }).map((_, i) => (
-                      <div key={i} className="w-px bg-[#F27D26]" style={{ height: `${20 + Math.random() * 60}%` }} />
-                    ))}
+                  <div className="flex-1 flex items-center px-2">
+                    <div className="h-px bg-[#2A2A2A] w-full" />
                   </div>
                   {currentSegmentId === s.id && (
                     <div className="absolute inset-0 bg-[#F27D26]/5" />

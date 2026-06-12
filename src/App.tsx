@@ -467,6 +467,7 @@ export default function App() {
   const [isSynced, setIsSynced] = useState(false);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
@@ -1478,7 +1479,50 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden">
+    <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex flex-col overflow-hidden h-screen">
+
+      {/* Header */}
+      <header className="h-12 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#1A1A1A] bg-[#0A0A0A] z-10">
+        {/* Left: back to projects + project name */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => {
+              if (project.confirmed) saveNow();
+              clearLastOpenedProjectId();
+              setShowDashboard(true);
+            }}
+            className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
+            title="Back to Projects"
+          >
+            <ChevronLeft size={14} />
+            <span>Projects</span>
+          </button>
+          <div className="h-4 w-px bg-[#1A1A1A]" />
+          <span className="text-[11px] font-bold text-gray-400 max-w-[200px] truncate" title={project.name}>
+            {project.name}
+          </span>
+        </div>
+        {/* Right: save indicator */}
+        <div className="flex items-center gap-2">
+          <div className={`w-1.5 h-1.5 rounded-full ${lastSavedAt ? 'bg-green-500' : 'bg-[#F27D26] animate-pulse'}`} />
+          <button
+            onClick={saveNow}
+            title={lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Save project'}
+            aria-label="Save project"
+            className="p-1.5 text-gray-500 hover:text-[#F27D26] transition-colors rounded-lg hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F27D26]"
+          >
+            <Save size={14} />
+          </button>
+        </div>
+      </header>
+
+      {/* TranscriptionBar — slim status strip below header */}
+      <TranscriptionBar
+        status={transcriptionStatus}
+        onCancel={cancelTranscription}
+        onDismiss={dismissError}
+      />
+
       {/* Sidebar Navigation — hidden in new UX, preserved for rollback */}
       {false && (
       <nav className="w-16 border-right border-[#1A1A1A] flex flex-col items-center py-6 gap-8 bg-[#050505]">
@@ -1493,7 +1537,7 @@ export default function App() {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => setActiveTab(tab.id as 'script' | 'assets' | 'settings' | 'editor')}
             aria-label={tab.label}
             aria-current={activeTab === tab.id ? 'page' : undefined}
             className={`p-3 rounded-xl transition-all duration-300 relative group ${activeTab === tab.id ? 'bg-[#1A1A1A] text-[#F27D26]' : 'text-gray-600 hover:text-white'}`}
@@ -1505,497 +1549,348 @@ export default function App() {
       </nav>
       )}
 
-      {/* Workspace */}
-      <main className="flex-1 flex flex-col h-screen overflow-hidden">
-        <TranscriptionBar
-          status={transcriptionStatus}
-          onCancel={cancelTranscription}
-          onDismiss={dismissError}
-        />
-        {/* Header */}
-        <header className="h-16 border-bottom border-[#1A1A1A] px-8 flex items-center justify-between bg-[#0A0A0A]">
-          <div className="flex items-center gap-6">
-            {/* Back to Projects nav link */}
-            <button
-              onClick={() => {
-                if (project.confirmed) saveNow();
-                clearLastOpenedProjectId();
-                setShowDashboard(true);
-              }}
-              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
-              title="Back to Projects"
-            >
-              <ChevronLeft size={14} />
-              <span>Projects</span>
-            </button>
-            {isAdjustingTrim && (
-              <button 
-                onClick={() => {
-                  setIsAdjustingTrim(false);
-                  setTrimmingSegmentId(null);
-                }}
-                className="bg-green-500 text-white px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-green-400 transition-all flex items-center gap-2 animate-pulse"
-              >
-                <Check size={14} /> Done Adjusting
-              </button>
-            )}
-            <h1 className="text-sm font-bold tracking-[0.2em] uppercase text-white/90">Kinetix <span className="text-[#F27D26]">Pro</span> Studio</h1>
-            <div className="h-4 w-px bg-[#1A1A1A]" />
-            {/* Project name */}
-            <span
-              className="text-[11px] font-bold text-gray-400 max-w-[180px] truncate"
-              title={project.name}
-            >
-              {project.name}
-            </span>
-            <div className="h-4 w-px bg-[#1A1A1A]" />
-            <div className="flex items-center gap-2">
-              <div className={`w-2 h-2 rounded-full animate-pulse ${isSynced ? 'bg-green-500' : 'bg-[#F27D26]'}`} />
-              <span className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-                {isSynced ? 'Timeline Master Ready' : 'Auto-Sync Active'}
-              </span>
+      {/* Body — 3 columns */}
+      <div className="flex flex-1 overflow-hidden">
+
+        {/* Left panel — 20vw collapsible */}
+        <ErrorBoundary fallback={(err, reset) => (
+          <div style={{ width: '20vw' }} className="flex-shrink-0 flex flex-col h-full border-r border-[#1A1A1A] bg-[#080808]">
+            <PanelFallback label="Left panel" error={err} reset={reset} />
+          </div>
+        )}>
+        <div
+          style={{ width: leftPanelCollapsed ? 0 : '20vw' }}
+          className="flex-shrink-0 flex flex-col h-full border-r border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
+        >
+          <DropZonePanel
+            segments={project.segments}
+            assets={project.assets}
+            voiceoverId={project.voiceoverId}
+            script={project.script}
+            persistedScript={project.script}
+            persistedScriptName={project.scriptFileName ?? ''}
+            persistedSceneDetails={project.sceneDetails}
+            persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
+            persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
+            persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
+            onScriptChange={(val) => setProject(p => ({ ...p, script: val }))}
+            onSceneDetailsChange={(val) => setProject(p => ({ ...p, sceneDetails: val }))}
+            onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
+            onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
+            onDeleteAsset={handleDeleteAsset}
+            onDeleteAllAssets={handleDeleteAllAssets}
+            onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
+            onApplySync={handleApplySyncFromFiles}
+            onSegmentClick={(id) => setSelectedSegmentId(id)}
+            onToggleLock={handleToggleLock}
+            onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
+            onUnlockAll={handleUnlockAll}
+            allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
+            selectedSegmentId={selectedSegmentId ?? undefined}
+            textLayers={project.textLayers ?? []}
+            onAddTextLayer={handleAddTextLayer}
+            onUpdateTextLayer={handleUpdateTextLayer}
+            onDeleteTextLayer={handleDeleteTextLayer}
+            onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
+            globalTransition={project.globalTransition}
+            globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
+            globalAnimation={project.globalAnimation ?? 'none'}
+            globalOverlayFilter={project.globalOverlayFilter ?? 'none'}
+            globalOverlayConfig={project.globalOverlayConfig}
+            hideAllText={project.hideAllText ?? false}
+            exportResolution={exportResolution}
+            exportFps={exportFps}
+            currentTransition={project.globalTransition}
+            currentAnimation={project.globalAnimation ?? ''}
+            currentOverlayFilter={project.globalOverlayFilter ?? ''}
+            currentOverlayConfig={project.globalOverlayConfig}
+            onTransitionChange={(v) => setProject(p => ({ ...p, globalTransition: v }))}
+            onTransitionDurationChange={(v) => setProject(p => ({ ...p, globalTransitionDuration: v }))}
+            onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
+            onAnimationChange={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
+            onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation as AnimationType })) }))}
+            onFilterChange={(v) => setProject(p => ({ ...p, globalOverlayFilter: v }))}
+            onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
+            onOverlayConfigChange={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
+            onHideAllTextChange={(v) => setProject(p => ({ ...p, hideAllText: v }))}
+            onExportResolutionChange={(v) => setExportResolution(v as ExportResolution)}
+            onExportFpsChange={(v) => setExportFps(v as ExportFps)}
+            onApplyTransitionPreset={(v) => setProject(p => ({ ...p, globalTransition: v as TransitionType }))}
+            onApplyAnimationPreset={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
+            onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
+            onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
+          />
+        </div>
+        </ErrorBoundary>
+
+        {/* Left collapse toggle strip */}
+        <button
+          onClick={() => setLeftPanelCollapsed(p => !p)}
+          className="w-3 flex-shrink-0 flex items-center justify-center bg-[#0D0D0D] hover:bg-[#1A1A1A] border-r border-[#1A1A1A] transition-colors cursor-col-resize z-10"
+          title={leftPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
+          aria-label={leftPanelCollapsed ? 'Expand left panel' : 'Collapse left panel'}
+        >
+          {leftPanelCollapsed ? <ChevronRight size={10} className="text-zinc-600" /> : <ChevronLeft size={10} className="text-zinc-600" />}
+        </button>
+
+        {/* Center — preview + timeline stacked */}
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0">
+
+          {/* Preview — 16:9 fixed ratio, fills center width */}
+          <div className="flex-shrink-0 flex items-center justify-center p-4 bg-[#020202]">
+            <div className="w-full aspect-video max-h-[60vh]">
+              <ErrorBoundary fallback={(err, reset) => (
+                <PanelFallback label="Preview" error={err} reset={reset} />
+              )}>
+                <PreviewStage
+                  segments={project.segments}
+                  currentSegment={currentSegment ?? undefined}
+                  currentTime={currentTime}
+                  globalPlaybackSpeed={globalPlaybackSpeed}
+                  globalTransition={project.globalTransition}
+                  globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
+                  globalOverlayConfig={project.globalOverlayConfig}
+                  hideAllText={project.hideAllText ?? false}
+                  assets={project.assets}
+                  isPlaying={isPlaying}
+                  isResizingRef={isResizingRef}
+                  onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
+                  textLayers={project.textLayers ?? []}
+                />
+              </ErrorBoundary>
             </div>
           </div>
-          {/* Status indicator — replaces SyncWizard in new UX */}
-          <div className="flex items-center gap-3">
-            <div className={`w-2 h-2 rounded-full ${isSynced ? 'bg-green-500' : 'bg-[#F27D26] animate-pulse'}`} />
-            <span className="text-[10px] uppercase tracking-widest text-gray-500">
-              {isSynced ? 'Timeline Ready' : 'Drop files to begin'}
-            </span>
-            {/* Manual save */}
-            <button
-              onClick={saveNow}
-              title={lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Save project'}
-              aria-label="Save project"
-              className="p-2 text-gray-500 hover:text-[#F27D26] transition-colors rounded-lg hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F27D26]"
-            >
-              <Save size={16} />
-            </button>
+
+          {/* Timeline — fills remaining height */}
+          <div className="flex-1 min-h-0 border-t border-[#1A1A1A]">
+            <ErrorBoundary fallback={(err, reset) => (
+              <PanelFallback label="Timeline" error={err} reset={reset} />
+            )}>
+              <Timeline
+                segments={project.segments}
+                assets={project.assets}
+                currentSegmentId={currentSegment?.id}
+                currentTime={currentTime}
+                isPlaying={isPlaying}
+                isSynced={isSynced}
+                zoomLevel={zoomLevel}
+                globalPlaybackSpeed={globalPlaybackSpeed}
+                resizingId={resizingId}
+                resizingType={resizingType}
+                trimmingSegmentId={trimmingSegmentId}
+                isAdjustingTrim={isAdjustingTrim}
+                voiceoverName={voiceover?.name}
+                onTogglePlay={togglePlay}
+                onSeek={(time) => {
+                  setCurrentTime(time);
+                  if (audioRef.current) audioRef.current.currentTime = time;
+                }}
+                onZoomChange={setZoomLevel}
+                onResizeStart={(id, type) => {
+                  setResizingId(id);
+                  setResizingType(type);
+                  document.body.classList.add('resizing');
+                  const handleMove = (e: MouseEvent) => {
+                    const timeline = document.getElementById('timeline-scroll-area');
+                    if (!timeline) return;
+                    const rect = timeline.getBoundingClientRect();
+                    const x = e.clientX - rect.left + timeline.scrollLeft - 24;
+                    const pixelsPerSecond = 100 * zoomLevel;
+                    setProject(prev => {
+                      const target = prev.segments.find(s => s.id === id);
+                      if (!target) return prev;
+                      const updated = prev.segments.map(s => {
+                        if (s.id !== id) return s;
+                        if (type === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
+                        if (type === 'start') {
+                          const delta = (x / pixelsPerSecond) - target.startTime;
+                          return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
+                        }
+                        return s;
+                      });
+                      let acc = 0;
+                      return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
+                    });
+                  };
+                  const handleUp = () => {
+                    setResizingId(null);
+                    setResizingType(null);
+                    document.body.classList.remove('resizing');
+                    window.removeEventListener('mousemove', handleMove);
+                    window.removeEventListener('mouseup', handleUp);
+                    requestAnimationFrame(() => { isResizingRef.current = false; });
+                  };
+                  isResizingRef.current = true;
+                  window.addEventListener('mousemove', handleMove);
+                  window.addEventListener('mouseup', handleUp);
+                }}
+                onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
+                onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+                onSetTrimmingSegment={setTrimmingSegmentId}
+                onSetAdjustingTrim={setIsAdjustingTrim}
+              />
+            </ErrorBoundary>
+          </div>
+
+          <BottomDrawer
+            segment={selectedSegment}
+            segmentIndex={selectedSegmentIndex}
+            assets={project.assets}
+            globalOverlayConfig={project.globalOverlayConfig}
+            onClose={() => setSelectedSegmentId(null)}
+            onUpdateSegment={updateSegment}
+            onUpdateSegmentOverlay={updateSegmentOverlay}
+            onUpdateExtraOverlay={updateExtraOverlay}
+            onSegmentDurationChange={(idx, val) => setProject(prev => {
+              const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
+              let acc = 0;
+              return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
+            })}
+            onToggleOverlay={(idx) => setProject(prev => ({
+              ...prev,
+              segments: prev.segments.map((seg, i) =>
+                i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
+              ),
+            }))}
+            onSetOverlayPreset={(idx, preset) => setProject(prev => ({
+              ...prev,
+              segments: prev.segments.map((seg, i) => {
+                if (i !== idx) return seg;
+                const base = { ...prev.globalOverlayConfig };
+                if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
+                return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
+              }),
+            }))}
+            onAddExtraOverlay={(idx) => setProject(prev => ({
+              ...prev,
+              segments: prev.segments.map((seg, i) =>
+                i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+              ),
+            }))}
+            onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+            onToggleLock={handleToggleLock}
+          />
+
+        </div>
+
+        {/* Right collapse toggle strip */}
+        <button
+          onClick={() => setRightPanelCollapsed(p => !p)}
+          className="w-3 flex-shrink-0 flex items-center justify-center bg-[#0D0D0D] hover:bg-[#1A1A1A] border-l border-[#1A1A1A] transition-colors cursor-col-resize z-10"
+          title={rightPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
+          aria-label={rightPanelCollapsed ? 'Expand right panel' : 'Collapse right panel'}
+        >
+          {rightPanelCollapsed ? <ChevronLeft size={10} className="text-zinc-600" /> : <ChevronRight size={10} className="text-zinc-600" />}
+        </button>
+
+        {/* Right panel — 15vw collapsible */}
+        <div
+          style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
+          className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
+        >
+          {/* Export button at top */}
+          <div className="p-3 border-b border-[#1A1A1A]">
             <button
               onClick={startExport}
-              className="ml-2 bg-white text-black px-6 py-2 rounded-full text-[10px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-white transition-all transform hover:scale-105 active:scale-95 shadow-xl"
+              className="w-full py-2 px-3 bg-[#F27D26] hover:bg-[#E06A15] text-white text-sm font-semibold rounded-lg transition-colors"
             >
               Export
             </button>
           </div>
-          {/* SyncWizard — hidden in new UX, preserved for rollback */}
-          {false && (
-          <SyncWizard
-            syncStep={syncStep}
-            syncValidation={syncValidation}
-            isProcessing={isProcessing}
-            sceneCount={project.sceneDetails.split(/\r?\n\r?\n/).filter(l => l.trim()).length}
-            audioDuration={audioRef.current?.duration ?? 0}
-            onRunStep1={runSyncStep1}
-            onRunStep2={runSyncStep2}
-            onRunStep3={runSyncStep3}
-            onFinalizeSync={finalizeSync}
-            onExport={startExport}
-            onReviewMapping={() => setShowSyncDetails(true)}
-          />
-          )}
-        </header>
+          {/* Empty for now */}
+        </div>
 
-        <div className="flex-1 flex overflow-hidden">
-          {/* Left Panel — new unified DropZonePanel */}
-          <ErrorBoundary fallback={(err, reset) => (
-            <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
-              <PanelFallback label="Left panel" error={err} reset={reset} />
-            </div>
-          )}>
-          <div
-            className="flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
-            style={{ width: leftPanelCollapsed ? 0 : 380 }}
-          >
-            <DropZonePanel
-              segments={project.segments}
-              assets={project.assets}
-              voiceoverId={project.voiceoverId}
-              script={project.script}
-              persistedScript={project.script}
-              persistedScriptName={project.scriptFileName ?? ''}
-              persistedSceneDetails={project.sceneDetails}
-              persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
-              persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
-              persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
-              onScriptChange={(val) => setProject(p => ({ ...p, script: val }))}
-              onSceneDetailsChange={(val) => setProject(p => ({ ...p, sceneDetails: val }))}
-              onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
-              onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
-              onDeleteAsset={handleDeleteAsset}
-              onDeleteAllAssets={handleDeleteAllAssets}
-              onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
-              onApplySync={handleApplySyncFromFiles}
-              onSegmentClick={(id) => setSelectedSegmentId(id)}
-              onToggleLock={handleToggleLock}
-              onLockAll={() => setProject(p => ({
-                ...p,
-                segments: p.segments.map(s => ({ ...s, locked: true })),
-              }))}
-              onUnlockAll={handleUnlockAll}
-              allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
-              selectedSegmentId={selectedSegmentId ?? undefined}
-              onOpenSettings={() => setShowSettings(true)}
-              textLayers={project.textLayers ?? []}
-              onAddTextLayer={handleAddTextLayer}
-              onUpdateTextLayer={handleUpdateTextLayer}
-              onDeleteTextLayer={handleDeleteTextLayer}
-              onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
-            />
+      </div>
+
+      {/* Legacy left panel content — hidden in new UX, preserved for rollback */}
+      {false && (
+      <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
+        <div className="p-8 h-full flex flex-col">
+          <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
+            {activeTab === 'editor' && (
+              <SegmentEditorPanel
+                script={project.script}
+                segments={project.segments}
+                assets={project.assets}
+                globalOverlayConfig={project.globalOverlayConfig}
+                onAddSegment={(seg) => setProject(prev => ({ ...prev, segments: [...prev.segments, seg] }))}
+                onDeleteSegment={(id) => setProject(p => ({ ...p, segments: p.segments.filter(seg => seg.id !== id) }))}
+                onEditSegment={setEditingSegment}
+                onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
+                onUpdateSegment={updateSegment}
+                onUpdateSegmentOverlay={updateSegmentOverlay}
+                onUpdateExtraOverlay={updateExtraOverlay}
+                onSegmentDurationChange={(idx, val) => setProject(prev => {
+                  const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
+                  let acc = 0;
+                  return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
+                })}
+                onToggleOverlay={(idx) => setProject(prev => ({
+                  ...prev,
+                  segments: prev.segments.map((seg, i) =>
+                    i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
+                  ),
+                }))}
+                onSetOverlayPreset={(idx, preset) => setProject(prev => ({
+                  ...prev,
+                  segments: prev.segments.map((seg, i) => {
+                    if (i !== idx) return seg;
+                    const base = { ...prev.globalOverlayConfig };
+                    if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
+                    if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
+                    return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
+                  }),
+                }))}
+                onAddExtraOverlay={(idx) => setProject(prev => ({
+                  ...prev,
+                  segments: prev.segments.map((seg, i) =>
+                    i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
+                  ),
+                }))}
+              />
+            )}
+            {activeTab === 'settings' && (
+              <SettingsPanel
+                project={project}
+                onProjectChange={(updates) => setProject(p => ({ ...p, ...updates }))}
+                onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
+                onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
+                onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
+                onNewProject={handleNewProject}
+                onOpenDashboard={() => { clearLastOpenedProjectId(); setShowDashboard(true); }}
+                onExportScenesJson={() => {
+                  const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `${project.name.replace(/\s+/g, '_')}_scenes.json`;
+                  a.click();
+                }}
+                onImportScenesJson={(e) => handleFileUpload(e, 'story')}
+                exportResolution={exportResolution}
+                onExportResolutionChange={setExportResolution}
+                exportFps={exportFps}
+                onExportFpsChange={setExportFps}
+                onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
+                onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
+                onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
+                onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
+                currentTransition={project.globalTransition}
+                currentAnimation={project.globalAnimation}
+                currentOverlayFilter={project.globalOverlayFilter ?? ''}
+                currentOverlayConfig={project.globalOverlayConfig}
+              />
+            )}
           </div>
-          </ErrorBoundary>
-
-          {/* Legacy left panel content — hidden in new UX, preserved for rollback */}
-          {false && (
-          <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
-            <div className="p-8 h-full flex flex-col">
-              <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
-                {activeTab === 'script' && (
-                  <div className="space-y-6 flex flex-col h-full">
-                    <div className="flex-1 flex flex-col space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h2 className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F27D26]">Voiceover Script</h2>
-                        <label className="cursor-pointer text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:text-white transition-all flex items-center gap-2">
-                           <Upload size={12} /> Import TXT
-                           <input type="file" accept=".txt" className="hidden" onChange={(e) => handleFileUpload(e, 'script')} />
-                        </label>
-                      </div>
-                      <textarea 
-                        value={project.script}
-                        onChange={(e) => setProject(prev => ({ ...prev, script: e.target.value }))}
-                        className="w-full flex-1 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl p-6 text-sm leading-relaxed outline-none focus:border-[#F27D26]/50 transition-all resize-none font-mono text-gray-300 shadow-inner"
-                        placeholder="Enter your script here..."
-                      />
-                    </div>
-                    
-                    <div className="flex-1 flex flex-col space-y-4">
-                      <div className="flex items-center justify-between">
-                        <h2 className="text-[11px] font-black uppercase tracking-[0.3em] text-blue-500">Scene Details</h2>
-                        <label className="cursor-pointer text-[9px] font-black uppercase tracking-widest text-blue-500 hover:text-white transition-all flex items-center gap-2">
-                           <Upload size={12} /> Import TXT
-                           <input type="file" accept=".txt" className="hidden" onChange={(e) => handleFileUpload(e, 'details')} />
-                        </label>
-                      </div>
-                      <textarea 
-                        value={project.sceneDetails}
-                        onChange={(e) => setProject(prev => ({ ...prev, sceneDetails: e.target.value }))}
-                        className="w-full flex-1 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl p-6 text-sm leading-relaxed outline-none focus:border-blue-500/50 transition-all resize-none font-mono text-gray-300 shadow-inner"
-                        placeholder="Enter scene details like [IMAGE: scene1.jpg]..."
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'assets' && (
-                  <div className="space-y-8">
-                    <div className="space-y-4">
-                      <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F27D26]">Bulk Asset Import</h3>
-                      <div className="grid grid-cols-2 gap-4">
-                        <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#1A1A1A] rounded-2xl p-6 cursor-pointer hover:border-[#F27D26] hover:bg-[#F27D26]/5 transition-all group">
-                          <Archive size={24} className="text-gray-600 group-hover:text-[#F27D26] mb-2" />
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">Upload ZIP Library</span>
-                          <input type="file" accept=".zip" className="hidden" onChange={handleZipUpload} />
-                        </label>
-                        <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#1A1A1A] rounded-2xl p-6 cursor-pointer hover:border-[#F27D26] hover:bg-[#F27D26]/5 transition-all group">
-                          <Music size={24} className="text-gray-600 group-hover:text-[#F27D26] mb-2" />
-                          <span className="text-[9px] font-bold uppercase tracking-widest text-center">Voiceover Track</span>
-                          <input type="file" accept="audio/*" className="hidden" onChange={(e) => handleFileUpload(e, 'audio')} />
-                        </label>
-                      </div>
-                    </div>
-
-                    <div className="space-y-4">
-                      <div className="flex justify-between items-center">
-                        <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-gray-500">Asset Gallery</h3>
-                        <span className="text-[10px] font-mono text-gray-600">{project.assets.length} items</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3 pb-8">
-                        {project.assets.map(asset => (
-                          <div key={asset.id} className="relative aspect-video rounded-xl overflow-hidden group border border-[#1A1A1A]">
-                            {asset.type === 'image' ? (
-                              <img src={asset.url} className="w-full h-full object-cover" />
-                            ) : asset.type === 'audio' ? (
-                              <div className="w-full h-full bg-[#1A1A1A] flex items-center justify-center"><Music size={20} className="text-[#F27D26]" /></div>
-                            ) : (
-                              <div className="w-full h-full bg-[#1A1A1A] flex items-center justify-center"><Video size={20} className="text-blue-500" /></div>
-                            )}
-                            <div className="absolute inset-0 bg-black/80 opacity-0 group-hover:opacity-100 transition-all flex flex-col items-center justify-center p-4">
-                              <p className="text-[8px] text-white font-bold uppercase text-center mb-3 line-clamp-1">{asset.name}</p>
-                              <button
-                                aria-label={`Delete asset ${asset.name}`}
-                                onClick={() => {
-                                  URL.revokeObjectURL(asset.url);
-                                  setProject(p => ({
-                                    ...p,
-                                    assets: p.assets.filter(a => a.id !== asset.id),
-                                    voiceoverId: p.voiceoverId === asset.id ? undefined : p.voiceoverId,
-                                    segments: p.segments.map(s =>
-                                      s.assetId === asset.id ? { ...s, assetId: undefined } : s
-                                    ),
-                                  }));
-                                  deleteAsset(projectIdRef.current, asset.id).catch(err =>
-                                    console.error('Failed to delete asset from IndexedDB:', err)
-                                  );
-                                }}
-                                className="p-2 bg-red-500/20 text-red-500 rounded-full hover:bg-red-500 hover:text-white transition-colors"
-                              >
-                                <Trash2 size={16} />
-                              </button>
-                            </div>
-                            {asset.id === project.voiceoverId && (
-                              <div className="absolute top-2 right-2 bg-[#F27D26] text-white p-1 rounded-full"><Music size={10} /></div>
-                            )}
-                          </div>
-                        ))}
-                        <label className="border-2 border-dashed border-[#1A1A1A] rounded-xl flex flex-col items-center justify-center hover:border-[#F27D26] cursor-pointer transition-colors min-h-[80px]">
-                           <Plus size={20} className="text-gray-700" />
-                           <input type="file" multiple className="hidden" onChange={(e) => {
-                             const files: File[] = Array.from(e.target.files || []);
-                             files.forEach(f => {
-                               let type: Asset['type'] = 'image';
-                               if (f.type.startsWith('audio')) type = 'audio';
-                               else if (f.type.startsWith('video')) type = 'video';
-                               handleFileUpload({ target: { files: [f] } } as any, type);
-                             });
-                           }} />
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {activeTab === 'editor' && (
-                  <SegmentEditorPanel
-                    script={project.script}
-                    segments={project.segments}
-                    assets={project.assets}
-                    globalOverlayConfig={project.globalOverlayConfig}
-                    onAddSegment={(seg) => setProject(prev => ({ ...prev, segments: [...prev.segments, seg] }))}
-                    onDeleteSegment={(id) => setProject(p => ({ ...p, segments: p.segments.filter(seg => seg.id !== id) }))}
-                    onEditSegment={setEditingSegment}
-                    onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
-                    onUpdateSegment={updateSegment}
-                    onUpdateSegmentOverlay={updateSegmentOverlay}
-                    onUpdateExtraOverlay={updateExtraOverlay}
-                    onSegmentDurationChange={(idx, val) => setProject(prev => {
-                      const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
-                      let acc = 0;
-                      return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
-                    })}
-                    onToggleOverlay={(idx) => setProject(prev => ({
-                      ...prev,
-                      segments: prev.segments.map((seg, i) =>
-                        i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
-                      ),
-                    }))}
-                    onSetOverlayPreset={(idx, preset) => setProject(prev => ({
-                      ...prev,
-                      segments: prev.segments.map((seg, i) => {
-                        if (i !== idx) return seg;
-                        const base = { ...prev.globalOverlayConfig };
-                        if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
-                        if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
-                        return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
-                      }),
-                    }))}
-                    onAddExtraOverlay={(idx) => setProject(prev => ({
-                      ...prev,
-                      segments: prev.segments.map((seg, i) =>
-                        i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
-                      ),
-                    }))}
-                  />
-                )}
-                {activeTab === 'settings' && (
-                  <SettingsPanel
-                    project={project}
-                    onProjectChange={(updates) => setProject(p => ({ ...p, ...updates }))}
-                    onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
-                    onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
-                    onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
-                    onNewProject={handleNewProject}
-                    onOpenDashboard={() => { clearLastOpenedProjectId(); setShowDashboard(true); }}
-                    onExportScenesJson={() => {
-                      const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `${project.name.replace(/\s+/g, '_')}_scenes.json`;
-                      a.click();
-                    }}
-                    onImportScenesJson={(e) => handleFileUpload(e, 'story')}
-                    exportResolution={exportResolution}
-                    onExportResolutionChange={setExportResolution}
-                    exportFps={exportFps}
-                    onExportFpsChange={setExportFps}
-                    onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
-                    onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
-                    onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
-                    onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
-                    currentTransition={project.globalTransition}
-                    currentAnimation={project.globalAnimation}
-                    currentOverlayFilter={project.globalOverlayFilter ?? ''}
-                    currentOverlayConfig={project.globalOverlayConfig}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-          )} {/* end legacy left panel {false && */}
-
-          {/* Panel collapse toggle */}
-          <button
-            onClick={() => setLeftPanelCollapsed(c => !c)}
-            className="flex-shrink-0 w-4 flex items-center justify-center bg-[#0A0A0A] hover:bg-[#141414] border-r border-[#0F0F0F] transition-colors z-10 self-stretch"
-            title={leftPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
-            aria-label={leftPanelCollapsed ? 'Expand left panel' : 'Collapse left panel'}
-          >
-            {leftPanelCollapsed
-              ? <ChevronRight size={10} className="text-gray-600" />
-              : <ChevronLeft size={10} className="text-gray-600" />
-            }
-          </button>
-
-                {/* Right Panel: Preview & Sequence */}
-          <div className="flex-1 flex flex-col bg-[#020202] relative p-8 gap-8 overflow-hidden">
-             {/* Main Stage */}
-             <ErrorBoundary fallback={(err, reset) => (
-               <PanelFallback label="Preview" error={err} reset={reset} />
-             )}>
-               <PreviewStage
-                 segments={project.segments}
-                 currentSegment={currentSegment ?? undefined}
-                 currentTime={currentTime}
-                 globalPlaybackSpeed={globalPlaybackSpeed}
-                 globalTransition={project.globalTransition}
-                 globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
-                 globalOverlayConfig={project.globalOverlayConfig}
-                 hideAllText={project.hideAllText ?? false}
-                 assets={project.assets}
-                 isPlaying={isPlaying}
-                 isResizingRef={isResizingRef}
-                 onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
-                 textLayers={project.textLayers ?? []}
-               />
-             </ErrorBoundary>
-
-             {/* Professional Sequence Timeline */}
-             <ErrorBoundary fallback={(err, reset) => (
-               <PanelFallback label="Timeline" error={err} reset={reset} />
-             )}>
-             <Timeline
-               segments={project.segments}
-               assets={project.assets}
-               currentSegmentId={currentSegment?.id}
-               currentTime={currentTime}
-               isPlaying={isPlaying}
-               isSynced={isSynced}
-               zoomLevel={zoomLevel}
-               globalPlaybackSpeed={globalPlaybackSpeed}
-               resizingId={resizingId}
-               resizingType={resizingType}
-               trimmingSegmentId={trimmingSegmentId}
-               isAdjustingTrim={isAdjustingTrim}
-               voiceoverName={voiceover?.name}
-               onTogglePlay={togglePlay}
-               onSeek={(time) => {
-                 setCurrentTime(time);
-                 if (audioRef.current) audioRef.current.currentTime = time;
-               }}
-               onZoomChange={setZoomLevel}
-               onSpeedChange={setGlobalPlaybackSpeed}
-               onResizeStart={(id, type) => {
-                 setResizingId(id);
-                 setResizingType(type);
-                 document.body.classList.add('resizing');
-
-                 const handleMove = (e: MouseEvent) => {
-                   const timeline = document.getElementById('timeline-scroll-area');
-                   if (!timeline) return;
-                   const rect = timeline.getBoundingClientRect();
-                   const x = e.clientX - rect.left + timeline.scrollLeft - 24;
-                   const pixelsPerSecond = 100 * zoomLevel;
-                   setProject(prev => {
-                     const target = prev.segments.find(s => s.id === id);
-                     if (!target) return prev;
-                     const updated = prev.segments.map(s => {
-                       if (s.id !== id) return s;
-                       if (type === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
-                       if (type === 'start') {
-                         const delta = (x / pixelsPerSecond) - target.startTime;
-                         return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
-                       }
-                       return s;
-                     });
-                     let acc = 0;
-                     return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
-                   });
-                 };
-
-                 const handleUp = () => {
-                   setResizingId(null);
-                   setResizingType(null);
-                   document.body.classList.remove('resizing');
-                   window.removeEventListener('mousemove', handleMove);
-                   window.removeEventListener('mouseup', handleUp);
-                   requestAnimationFrame(() => {
-                     isResizingRef.current = false;
-                   });
-                 };
-
-                 isResizingRef.current = true;
-                 window.addEventListener('mousemove', handleMove);
-                 window.addEventListener('mouseup', handleUp);
-               }}
-               onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
-               onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
-               onSetTrimmingSegment={setTrimmingSegmentId}
-               onSetAdjustingTrim={setIsAdjustingTrim}
-             />
-             </ErrorBoundary>
-
-             <BottomDrawer
-               segment={selectedSegment}
-               segmentIndex={selectedSegmentIndex}
-               assets={project.assets}
-               globalOverlayConfig={project.globalOverlayConfig}
-               onClose={() => setSelectedSegmentId(null)}
-               onUpdateSegment={updateSegment}
-               onUpdateSegmentOverlay={updateSegmentOverlay}
-               onUpdateExtraOverlay={updateExtraOverlay}
-               onSegmentDurationChange={(idx, val) => setProject(prev => {
-                 const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
-                 let acc = 0;
-                 return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
-               })}
-               onToggleOverlay={(idx) => setProject(prev => ({
-                 ...prev,
-                 segments: prev.segments.map((seg, i) =>
-                   i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
-                 ),
-               }))}
-               onSetOverlayPreset={(idx, preset) => setProject(prev => ({
-                 ...prev,
-                 segments: prev.segments.map((seg, i) => {
-                   if (i !== idx) return seg;
-                   const base = { ...prev.globalOverlayConfig };
-                   if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
-                   if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
-                   return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
-                 }),
-               }))}
-               onAddExtraOverlay={(idx) => setProject(prev => ({
-                 ...prev,
-                 segments: prev.segments.map((seg, i) =>
-                   i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
-                 ),
-               }))}
-               onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
-               onToggleLock={handleToggleLock}
-             />
         </div>
       </div>
-      </main>
+      )}
+
+      {/* Settings modal — tombstoned (controls moved to Effects tab) */}
+      {false && showSettings && (
+        <div onClick={() => setShowSettings(false)} />
+      )}
 
       {/* Persistence Audio */}
       {voiceover && (
@@ -2153,68 +2048,8 @@ export default function App() {
         />
       )}
 
-      {/* Settings Modal */}
-      <AnimatePresence>
-        {showSettings && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-2xl flex items-start justify-center p-12 overflow-y-auto"
-            onClick={(e) => { if (e.target === e.currentTarget) setShowSettings(false); }}
-          >
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              className="w-full max-w-2xl bg-[#080808] border border-white/5 rounded-[32px] overflow-hidden shadow-2xl"
-            >
-              <div className="flex items-center justify-between px-8 py-6 border-b border-[#1A1A1A]">
-                <h2 className="text-sm font-black uppercase tracking-[0.2em] text-white">Settings</h2>
-                <button
-                  onClick={() => setShowSettings(false)}
-                  className="p-2 rounded-xl hover:bg-white/5 transition-colors"
-                  aria-label="Close settings"
-                >
-                  <X size={18} className="text-gray-500" />
-                </button>
-              </div>
-              <div className="p-8">
-                <SettingsPanel
-                  project={project}
-                  onProjectChange={(updates) => setProject(p => ({ ...p, ...updates }))}
-                  onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
-                  onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
-                  onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
-                  onNewProject={handleNewProject}
-                  onOpenDashboard={() => { setShowSettings(false); clearLastOpenedProjectId(); setShowDashboard(true); }}
-                  onExportScenesJson={() => {
-                    const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `${project.name.replace(/\s+/g, '_')}_scenes.json`;
-                    a.click();
-                  }}
-                  onImportScenesJson={(e) => handleFileUpload(e, 'story')}
-                  exportResolution={exportResolution}
-                  onExportResolutionChange={setExportResolution}
-                  exportFps={exportFps}
-                  onExportFpsChange={setExportFps}
-                  onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
-                  onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
-                  onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
-                  onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
-                  currentTransition={project.globalTransition}
-                  currentAnimation={project.globalAnimation}
-                  currentOverlayFilter={project.globalOverlayFilter ?? ''}
-                  currentOverlayConfig={project.globalOverlayConfig}
-                />
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Settings Modal — tombstoned (controls moved to Effects tab in task-layout-redesign) */}
+      {false && showSettings && <div />}
 
       {/* Stock Media Search Modal */}
       {showStockSearch && (

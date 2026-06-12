@@ -5,7 +5,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Layout, Maximize, Minimize, MonitorPlay } from 'lucide-react';
+import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
 import { getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
@@ -124,7 +124,6 @@ export function PreviewStage({
   textLayers,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [isMidView, setIsMidView] = useState(false);
 
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -391,22 +390,15 @@ export function PreviewStage({
   }, [isPlaying]);
 
   return (
-    <div className="flex-1 min-h-0 flex items-center justify-center">
+    <div className="w-full h-full">
       <div
         ref={stageRef}
         className={isFullscreen
           ? 'fixed inset-0 z-[5000] flex items-center justify-center bg-black overflow-hidden'
-          : `relative mx-auto bg-black rounded-[40px] border border-[#1A1A1A] overflow-hidden shadow-2xl group transition-all duration-500 ${isMidView ? 'aspect-video w-[900px] h-auto' : 'aspect-video max-w-5xl w-full h-auto'}`}
+          : 'relative bg-black rounded-xl border border-[#1A1A1A] overflow-hidden shadow-2xl group w-full h-full'}
       >
         {/* Floating Controls */}
         <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button
-            onClick={() => setIsMidView(!isMidView)}
-            aria-label={isMidView ? 'Collapse preview' : 'Expand preview'}
-            className="p-3 bg-black/50 backdrop-blur-md rounded-xl text-white border border-white/10 hover:bg-[#F27D26] transition-all"
-          >
-            <Layout size={20} />
-          </button>
           <button
             onClick={toggleNativeFullscreen}
             aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}

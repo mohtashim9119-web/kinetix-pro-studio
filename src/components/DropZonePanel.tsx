@@ -5,7 +5,6 @@
 
 import { useState, useRef } from 'react';
 import {
-  Settings,
   Lock,
   LockOpen,
   Unlock,
@@ -20,7 +19,9 @@ import {
   ChevronRight,
   Trash2,
 } from 'lucide-react';
-import { VideoSegment, Asset, TextOverlay } from '../types';
+import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
+import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
+import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { TextLayersPanel } from './TextLayersPanel';
 
@@ -233,13 +234,40 @@ interface Props {
   allLocked: boolean;
   // Misc
   selectedSegmentId: string | undefined;
-  onOpenSettings: () => void;
   // Global text layers
   textLayers: TextOverlay[];
   onAddTextLayer: () => void;
   onUpdateTextLayer: (id: string, updates: Partial<TextOverlay>) => void;
   onDeleteTextLayer: (id: string) => void;
   onToggleTextLayerOnSegment: (layerId: string, segmentId: string) => void;
+  // Effects tab props
+  globalTransition: TransitionType;
+  globalTransitionDuration: number;
+  globalAnimation: string;
+  globalOverlayFilter: string;
+  globalOverlayConfig: { color: string; backgroundColor: string; fontFamily: string };
+  hideAllText: boolean;
+  exportResolution: string;
+  exportFps: number;
+  currentTransition: string;
+  currentAnimation: string;
+  currentOverlayFilter: string;
+  currentOverlayConfig: OverlayConfigPreset;
+  onTransitionChange: (v: TransitionType) => void;
+  onTransitionDurationChange: (v: number) => void;
+  onApplyTransitionToAll: () => void;
+  onAnimationChange: (v: string) => void;
+  onApplyAnimationToAll: () => void;
+  onFilterChange: (v: string) => void;
+  onApplyFilterToAll: () => void;
+  onOverlayConfigChange: (v: Partial<{ color: string; backgroundColor: string; fontFamily: string }>) => void;
+  onHideAllTextChange: (v: boolean) => void;
+  onExportResolutionChange: (v: string) => void;
+  onExportFpsChange: (v: number) => void;
+  onApplyTransitionPreset: (preset: OverlayConfigPreset | string) => void;
+  onApplyAnimationPreset: (preset: OverlayConfigPreset | string) => void;
+  onApplyOverlayFilterPreset: (preset: OverlayConfigPreset | string) => void;
+  onApplyOverlayConfigPreset: (preset: OverlayConfigPreset) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -271,15 +299,41 @@ export function DropZonePanel({
   onUnlockAll,
   allLocked,
   selectedSegmentId,
-  onOpenSettings,
   textLayers,
   onAddTextLayer,
   onUpdateTextLayer,
   onDeleteTextLayer,
   onToggleTextLayerOnSegment,
+  globalTransition,
+  globalTransitionDuration,
+  globalAnimation,
+  globalOverlayFilter,
+  globalOverlayConfig,
+  hideAllText,
+  exportResolution,
+  exportFps,
+  currentTransition,
+  currentAnimation,
+  currentOverlayFilter,
+  currentOverlayConfig,
+  onTransitionChange,
+  onTransitionDurationChange,
+  onApplyTransitionToAll,
+  onAnimationChange,
+  onApplyAnimationToAll,
+  onFilterChange,
+  onApplyFilterToAll,
+  onOverlayConfigChange,
+  onHideAllTextChange,
+  onExportResolutionChange,
+  onExportFpsChange,
+  onApplyTransitionPreset,
+  onApplyAnimationPreset,
+  onApplyOverlayFilterPreset,
+  onApplyOverlayConfigPreset,
 }: Props) {
   // ── Tab state ─────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'files' | 'segments'>('files');
+  const [activeTab, setActiveTab] = useState<'files' | 'segments' | 'effects'>('files');
 
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
@@ -467,7 +521,7 @@ export function DropZonePanel({
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-shrink-0 border-b border-[#1A1A1A]">
-        {(['files', 'segments'] as const).map((tab) => (
+        {(['files', 'segments', 'effects'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -678,8 +732,8 @@ export function DropZonePanel({
 
           </div>{/* end scrollable */}
 
-          {/* Pinned bottom: Apply Sync + Settings */}
-          <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A] space-y-2">
+          {/* Pinned bottom: Apply Sync */}
+          <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A]">
             <button
               onClick={handleApplySync}
               className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
@@ -687,15 +741,6 @@ export function DropZonePanel({
                          transition-all"
             >
               Apply Sync
-            </button>
-            <button
-              onClick={onOpenSettings}
-              className="flex items-center justify-center gap-1.5 w-full py-1.5
-                         text-[9px] uppercase tracking-widest text-gray-600
-                         hover:text-gray-400 transition-colors"
-            >
-              <Settings size={10} />
-              Settings
             </button>
           </div>
 
@@ -791,6 +836,182 @@ export function DropZonePanel({
                 No segments yet — apply sync to generate.
               </p>
             )}
+          </div>
+
+        </div>
+      )}
+
+      {/* ── EFFECTS TAB ─────────────────────────────────────────────────────── */}
+      {activeTab === 'effects' && (
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+
+          {/* Section: Transition */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Transition</p>
+            <select
+              value={globalTransition}
+              onChange={(e) => onTransitionChange(e.target.value as TransitionType)}
+              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
+            >
+              {TRANSITION_OPTIONS.map(t => (
+                <option key={t} value={t}>{t === TransitionType.NONE ? 'instant (none)' : t}</option>
+              ))}
+            </select>
+            <div className="flex items-center gap-2">
+              <label className="text-[9px] text-gray-600 uppercase tracking-widest">Duration (s)</label>
+              <input
+                type="number" step="0.1" min="0.1" max="2"
+                value={globalTransitionDuration}
+                onChange={(e) => onTransitionDurationChange(parseFloat(e.target.value) || 0.1)}
+                className="w-20 bg-[#111] border border-[#222] p-1.5 rounded-lg text-[10px] font-bold outline-none focus:border-[#F27D26]"
+              />
+            </div>
+            <button
+              onClick={onApplyTransitionToAll}
+              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
+            >
+              Apply to all segments
+            </button>
+            <PresetPicker
+              category="transition"
+              label="Transition"
+              currentValue={currentTransition}
+              onApply={(v) => onApplyTransitionPreset(v as string)}
+            />
+          </div>
+
+          {/* Section: Animation */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Animation</p>
+            <select
+              value={globalAnimation}
+              onChange={(e) => onAnimationChange(e.target.value)}
+              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
+            >
+              {ANIMATION_OPTIONS.map(a => (
+                <option key={a} value={a}>{a === AnimationType.NONE ? 'static (none)' : a.replace('-', ' ')}</option>
+              ))}
+            </select>
+            <button
+              onClick={onApplyAnimationToAll}
+              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
+            >
+              Apply to all segments
+            </button>
+            <PresetPicker
+              category="animation"
+              label="Animation"
+              currentValue={currentAnimation}
+              onApply={(v) => onApplyAnimationPreset(v as string)}
+            />
+          </div>
+
+          {/* Section: Overlay Filter */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Filter</p>
+            <select
+              value={globalOverlayFilter || 'none'}
+              onChange={(e) => onFilterChange(e.target.value)}
+              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
+            >
+              {FILTERS.map(f => <option key={f} value={f}>{f.replace('-', ' ')}</option>)}
+            </select>
+            <button
+              onClick={onApplyFilterToAll}
+              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
+            >
+              Apply to all segments
+            </button>
+            <PresetPicker
+              category="overlayFilter"
+              label="Overlay Filter"
+              currentValue={currentOverlayFilter}
+              onApply={(v) => onApplyOverlayFilterPreset(v as string)}
+            />
+          </div>
+
+          {/* Section: Overlay Style */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Style</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-600">Text Color</label>
+                <input
+                  type="color"
+                  value={globalOverlayConfig.color}
+                  onChange={(e) => onOverlayConfigChange({ color: e.target.value })}
+                  className="w-full h-7 bg-transparent border-none cursor-pointer"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-600">Bg Color</label>
+                <input
+                  type="color"
+                  value={globalOverlayConfig.backgroundColor}
+                  onChange={(e) => onOverlayConfigChange({ backgroundColor: e.target.value })}
+                  className="w-full h-7 bg-transparent border-none cursor-pointer"
+                />
+              </div>
+            </div>
+            <select
+              value={globalOverlayConfig.fontFamily}
+              onChange={(e) => onOverlayConfigChange({ fontFamily: e.target.value })}
+              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] font-bold outline-none focus:border-[#F27D26]"
+            >
+              {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+            </select>
+            <PresetPicker
+              category="overlayConfig"
+              label="Overlay Style"
+              currentValue={currentOverlayConfig}
+              onApply={(v) => onApplyOverlayConfigPreset(v as OverlayConfigPreset)}
+            />
+          </div>
+
+          {/* Section: Export Quality */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Quality</p>
+            <div className="flex gap-2">
+              <div className="flex-1 space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-600">Resolution</label>
+                <select
+                  value={exportResolution}
+                  onChange={(e) => onExportResolutionChange(e.target.value)}
+                  className="w-full bg-[#111] border border-[#222] p-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
+                >
+                  <option value="1080p">1080p</option>
+                  <option value="4k">4K</option>
+                </select>
+              </div>
+              <div className="flex-1 space-y-1">
+                <label className="text-[8px] uppercase tracking-widest text-gray-600">Frame Rate</label>
+                <select
+                  value={exportFps}
+                  onChange={(e) => onExportFpsChange(Number(e.target.value))}
+                  className="w-full bg-[#111] border border-[#222] p-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
+                >
+                  <option value={24}>24 fps</option>
+                  <option value={30}>30 fps</option>
+                  <option value={60}>60 fps</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Section: Display */}
+          <div className="px-4 py-3 space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Display</p>
+            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
+              Hide On-Screen Text
+              <button
+                onClick={() => onHideAllTextChange(!hideAllText)}
+                aria-label={hideAllText ? 'Show on-screen text' : 'Hide on-screen text'}
+                aria-pressed={hideAllText}
+                className={`w-10 h-5 rounded-full transition-colors relative ${hideAllText ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
+              >
+                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${hideAllText ? 'translate-x-5' : ''}`} />
+              </button>
+            </label>
           </div>
 
         </div>

@@ -61,6 +61,9 @@ export function SettingsPanel({
   currentOverlayConfig,
 }: Props): React.ReactElement {
   return (
+    <>
+    {/* SettingsPanel tombstoned — controls moved to DropZonePanel Effects tab (task-layout-redesign) */}
+    {false && (
     <div className="space-y-8">
       <section className="space-y-4">
         <h3 className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F27D26]">Global Aesthetics</h3>
@@ -293,5 +296,7 @@ export function SettingsPanel({
         </section>
       </section>
     </div>
+    )}
+    </>
   );
 }
