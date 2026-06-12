@@ -1,5 +1,6 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
+import type { SilenceInterval } from './silenceDetector';
 
 export type { TranscriptToken };
 
@@ -39,6 +40,7 @@ function parseTimestamp(ts: string): number {
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
+  silences: SilenceInterval[] = [],
 ): Array<{ t0: number; t1: number }> {
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({ t0: 0, t1: 0 }));
@@ -166,19 +168,62 @@ export function alignScenestoTranscript(
   // Reads actual Whisper token timestamps to find the midpoint of the silence gap
   // between adjacent segments and moves both boundaries to that midpoint.
   // Pairs where either side is locked are skipped entirely.
+  // usedSilences prevents the same silence interval from being claimed by two boundaries.
+  const usedSilences = new Set<SilenceInterval>();
   for (let i = 0; i < results.length - 1; i++) {
     if (segments[i]?.locked || segments[i + 1]?.locked) continue;
     const curr = results[i]!;
     const next = results[i + 1]!;
 
     // Sentinel -1 indices (empty/heading-only segments) return undefined → fallback to curr.t1/next.t0.
-    const silenceStart = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
-    const silenceEnd   = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
+    const lastSpokenEnd   = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
+    const nextSpokenStart = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
 
-    // Midpoint splits any silence gap 50/50; also handles back-to-back tokens correctly.
-    const mid = (silenceStart + silenceEnd) / 2;
-    curr.t1 = mid;
-    next.t0 = mid;
+    // Find silences overlapping a window centered on the spoken-gap midpoint.
+    // Whisper word-boundary timestamps are inaccurate by ~300ms, so a silence can extend
+    // past nextSpokenStart or start before lastSpokenEnd — a containment check fails those.
+    // Instead we look for overlap with a generous search window and pick the closest center.
+    const spokenMid = (lastSpokenEnd + nextSpokenStart) / 2;
+    const spokenGapWidth = nextSpokenStart - lastSpokenEnd;
+    // When Whisper compresses adjacent words to the same timestamp (spokenGap near 0),
+    // its boundary timestamp is unreliable. Use a 1.0s radius (not larger — avoids stealing
+    // silences that belong to neighbouring boundaries).
+    const searchRadius = spokenGapWidth < 0.1
+      ? 1.0
+      : Math.max(0.5, spokenGapWidth / 2 + 0.4);
+    const searchStart = spokenMid - searchRadius;
+    const searchEnd   = spokenMid + searchRadius;
+
+    const candidates = silences.filter(
+      s => s.endSec > searchStart && s.startSec < searchEnd && !usedSilences.has(s),
+    );
+
+    let gap: SilenceInterval | undefined;
+    if (candidates.length > 0) {
+      gap = candidates.reduce((best, s) => {
+        const sCenter    = (s.startSec + s.endSec) / 2;
+        const bestCenter = (best.startSec + best.endSec) / 2;
+        return Math.abs(sCenter - spokenMid) < Math.abs(bestCenter - spokenMid) ? s : best;
+      });
+    }
+
+    // Mark the chosen silence as used so later boundaries cannot claim it.
+    if (gap) usedSilences.add(gap);
+
+    // Split the silence 50/50: if a real gap was detected, use its midpoint;
+    // otherwise fall back to the midpoint of the token-boundary estimate.
+    let boundary = gap
+      ? (gap.startSec + gap.endSec) / 2
+      : (lastSpokenEnd + nextSpokenStart) / 2;
+
+    // Monotonic sanity check: a boundary must not go backwards past the previous one.
+    // If it does, the chosen silence belongs to an earlier boundary — fall back.
+    if (i > 0 && boundary < results[i - 1]!.t1) {
+      boundary = (lastSpokenEnd + nextSpokenStart) / 2;
+    }
+
+    curr.t1 = boundary;
+    next.t0 = boundary;
   }
 
   // Clamp last segment to actual audio end (skip if locked).

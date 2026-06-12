@@ -4,7 +4,19 @@ import {
   alignScenestoTranscript,
   distributeSegmentTimes,
 } from '../services/whisperService';
+import { detectSilences } from '../services/silenceDetector';
+import type { SilenceInterval } from '../services/silenceDetector';
 import type { TranscriptionStatus, Asset, VideoSegment, Project } from '../types';
+
+async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> {
+  try {
+    const resp = await fetch(asset.url);
+    const blob = await resp.blob();
+    return await detectSilences(blob);
+  } catch {
+    return [];
+  }
+}
 
 export interface UseWhisperApi {
   transcriptionStatus: TranscriptionStatus;
@@ -46,7 +58,8 @@ export function useWhisper(): UseWhisperApi {
 
       if (alreadyTranscribed) {
         const tokens = project.transcriptTokens!;
-        const alignments = alignScenestoTranscript(segments, tokens);
+        const silences = await fetchAndDetectSilences(audioAsset);
+        const alignments = alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
         onSegmentsUpdated(updated);
         return;
@@ -75,7 +88,10 @@ export function useWhisper(): UseWhisperApi {
 
         if (generationRef.current !== generation) return;
 
-        const alignments = alignScenestoTranscript(segments, tokens);
+        const silences = await fetchAndDetectSilences(audioAsset);
+        if (generationRef.current !== generation) return;
+
+        const alignments = alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
         onSegmentsUpdated(updated);
 
