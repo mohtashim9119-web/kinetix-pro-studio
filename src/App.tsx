@@ -1655,7 +1655,14 @@ export default function App() {
               const onMove = (ev: MouseEvent) => {
                 if (!isDraggingDivider.current) return;
                 const delta = ev.clientY - startY;
-                const next = Math.min(Math.max(startHeight + delta, 180), Math.floor(window.innerHeight * 0.78));
+                const centerWidth = centerColRef.current
+                  ? centerColRef.current.getBoundingClientRect().width
+                  : window.innerWidth * 0.65;
+                const maxAllowed = Math.floor(centerWidth * (9 / 16));
+                const next = Math.min(
+                  Math.max(startHeight + delta, 180),
+                  maxAllowed
+                );
                 setPreviewHeight(next);
               };
               const onUp = () => {
