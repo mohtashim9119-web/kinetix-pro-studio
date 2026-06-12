@@ -748,13 +748,19 @@ export default function App() {
     // previous sync so manual timing adjustments survive a re-sync.
     const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
 
-    let acc = 0;
     const syncedSegments = newSegments.map(s => {
       const prev = prevByOrder.get(s.order);
-      const duration = prev?.locked ? prev.duration : s.duration;
-      const start = acc;
-      acc += duration;
-      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
+      return {
+        ...s,
+        assetId: prev?.assetId ?? s.assetId,
+        trimStart: prev?.trimStart,
+        trimEnd: prev?.trimEnd,
+        playbackSpeed: prev?.playbackSpeed,
+        isMuted: prev?.isMuted,
+        locked: prev?.locked,
+        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+      };
     });
 
     // Never wipe existing segments if parse produced nothing
@@ -859,13 +865,19 @@ export default function App() {
 
     // 6. Preserve locked durations by order index
     const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
-    let acc = 0;
     const syncedSegments = newSegments.map(s => {
       const prev = prevByOrder.get(s.order);
-      const duration = prev?.locked ? prev.duration : s.duration;
-      const start = acc;
-      acc += duration;
-      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
+      return {
+        ...s,
+        assetId: prev?.assetId ?? s.assetId,
+        trimStart: prev?.trimStart,
+        trimEnd: prev?.trimEnd,
+        playbackSpeed: prev?.playbackSpeed,
+        isMuted: prev?.isMuted,
+        locked: prev?.locked,
+        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+      };
     });
 
     // Never wipe existing segments if parse produced nothing
