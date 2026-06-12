@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Play, Pause, RotateCcw, Music, AlertCircle,
+  Play, Pause, RotateCcw, AlertCircle,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
@@ -23,6 +24,7 @@ interface Props {
   trimmingSegmentId: string | null;
   isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
+  voiceoverUrl?: string;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onZoomChange: (zoom: number) => void;
@@ -47,6 +49,7 @@ export function Timeline({
   trimmingSegmentId,
   isAdjustingTrim,
   voiceoverName,
+  voiceoverUrl,
   onTogglePlay,
   onSeek,
   onZoomChange,
@@ -59,38 +62,65 @@ export function Timeline({
   const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
   const pixelsPerSecond = 100 * zoomLevel;
 
+  const [waveformBars, setWaveformBars] = useState<number[]>([]);
+  // useRef available for future use (e.g. AudioContext ref)
+  const _audioCtxRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    if (!voiceoverUrl) { setWaveformBars([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(voiceoverUrl);
+        const arrayBuf = await res.arrayBuffer();
+        const audioCtx = new AudioContext();
+        const decoded = await audioCtx.decodeAudioData(arrayBuf);
+        await audioCtx.close();
+        const raw = decoded.getChannelData(0);
+        const BAR_COUNT = 300;
+        const blockSize = Math.floor(raw.length / BAR_COUNT);
+        const bars: number[] = [];
+        for (let i = 0; i < BAR_COUNT; i++) {
+          let sum = 0;
+          for (let j = 0; j < blockSize; j++) sum += Math.abs(raw[i * blockSize + j] ?? 0);
+          bars.push(sum / blockSize);
+        }
+        const max = Math.max(...bars, 0.001);
+        if (!cancelled) setWaveformBars(bars.map(b => b / max));
+      } catch {
+        if (!cancelled) setWaveformBars([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [voiceoverUrl]);
+
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
-      {/* Timeline Toolbar */}
-      <div className="h-8 flex-shrink-0 px-4 border-b border-[#1A1A1A] flex items-center gap-4 bg-[#080808]">
-        <button
-          onClick={() => onSeek(0)}
-          aria-label="Seek to start"
-          className="p-1 text-gray-600 hover:text-white transition-colors"
-        >
-          <RotateCcw size={12} />
-        </button>
-        <button
-          onClick={onTogglePlay}
-          aria-label={isPlaying ? 'Pause' : 'Play'}
-          className="w-6 h-6 bg-[#F27D26] rounded-full text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all"
-        >
-          {isPlaying ? <Pause size={10} /> : <Play size={10} fill="currentColor" />}
-        </button>
-        <span className="text-[10px] font-mono text-gray-400 tracking-widest">
-          {Math.floor(currentTime / 60).toString().padStart(2, '0')}:
-          {Math.floor(currentTime % 60).toString().padStart(2, '0')}:
-          {Math.floor((currentTime % 1) * 100).toString().padStart(2, '0')}
-        </span>
-        <div className="flex-1" />
-        <span className="text-[9px] uppercase tracking-widest text-gray-700">Zoom</span>
-        <input
-          type="range" min="0.5" max="10" step="0.1"
-          value={zoomLevel}
-          onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-          aria-label="Zoom level"
-          className="w-24 h-1 bg-[#1A1A1A] rounded-full appearance-none accent-[#F27D26] cursor-pointer"
-        />
+      {/* Floating pill controls — positioned at top of timeline, overlaid */}
+      <div className="relative h-0 flex-shrink-0 z-20">
+        {/* Left pill: seek-to-start + play/pause + timecode */}
+        <div className="absolute left-4 top-2 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
+          <button onClick={() => onSeek(0)} className="text-zinc-500 hover:text-white transition-colors">
+            <RotateCcw size={11} />
+          </button>
+          <button onClick={onTogglePlay} className="w-5 h-5 rounded-full bg-[#F27D26] hover:bg-[#E06A15] flex items-center justify-center transition-colors flex-shrink-0">
+            {isPlaying ? <Pause size={9} fill="white" className="text-white" /> : <Play size={9} fill="white" className="text-white ml-0.5" />}
+          </button>
+          <span className="text-[10px] text-zinc-400 font-mono tabular-nums">
+            {String(Math.floor(currentTime / 60)).padStart(2,'0')}:{String(Math.floor(currentTime % 60)).padStart(2,'0')}:{String(Math.floor((currentTime % 1) * 100)).padStart(2,'0')}
+          </span>
+        </div>
+
+        {/* Right pill: zoom */}
+        <div className="absolute right-4 top-2 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
+          <span className="text-[10px] text-zinc-500">Zoom</span>
+          <input
+            type="range" min={0.5} max={10} step={0.1}
+            value={zoomLevel}
+            onChange={e => onZoomChange(parseFloat(e.target.value))}
+            className="w-20 accent-[#F27D26] h-1"
+          />
+        </div>
       </div>
 
       {/* Timeline Tracks Area */}
@@ -113,19 +143,19 @@ export function Timeline({
             onSeek(Math.max(0, currentTime - step));
           }
         }}
-        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-6 pt-10 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-8 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
           const timeline = document.getElementById('timeline-scroll-area');
           if (timeline && !resizingId) {
             const rect = timeline.getBoundingClientRect();
-            const x = e.clientX - rect.left + timeline.scrollLeft - 24;
+            const x = e.clientX - rect.left + timeline.scrollLeft;
             const time = Math.max(0, x / pixelsPerSecond);
             onSeek(time);
           }
           if (resizingId) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const scrollLeft = e.currentTarget.scrollLeft;
-          const x = e.clientX - rect.left + scrollLeft - 24;
+          const x = e.clientX - rect.left + scrollLeft;
           const newTime = Math.max(0, Math.min(totalDuration, x / pixelsPerSecond));
           onSeek(newTime);
 
@@ -301,27 +331,38 @@ export function Timeline({
 
         {/* Audio Track */}
         {voiceoverName && (
-          <div className="mt-2 h-12 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-hidden flex items-center">
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-[#F27D26]/10 flex items-center justify-center border-r border-[#F27D26]/20 z-10">
-              <Music size={10} className="text-[#F27D26]" />
-            </div>
-            <div className="flex-1 flex h-full ml-6">
+          <div className="mt-1 h-10 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-hidden flex items-center">
+            <div className="flex h-full w-full">
               {segments.map((s) => (
                 <div
                   key={`vo-${s.id}`}
                   style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                  className="h-full border-r border-[#1A1A1A] relative flex items-center px-2 group"
+                  className="h-full border-r border-[#1A1A1A] relative flex items-center group flex-shrink-0"
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
                   <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                  <div className="flex-1 flex items-center px-2">
-                    <div className="h-px bg-[#2A2A2A] w-full" />
+                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
+                  <div className="flex-1 flex items-center px-1">
+                    {(() => {
+                      const totalDur = segments.reduce((a, seg) => a + seg.duration, 0);
+                      const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
+                      const startBar = Math.floor((segStart / totalDur) * waveformBars.length);
+                      const endBar = Math.floor(((segStart + s.duration) / totalDur) * waveformBars.length);
+                      const bars = waveformBars.slice(startBar, endBar);
+                      if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
+                      return (
+                        <div className="flex items-center h-full w-full gap-px px-0.5">
+                          {bars.map((amp, bi) => (
+                            <div
+                              key={bi}
+                              className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
+                              style={{ height: `${Math.max(2, amp * 32)}px` }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {currentSegmentId === s.id && (
                     <div className="absolute inset-0 bg-[#F27D26]/5" />

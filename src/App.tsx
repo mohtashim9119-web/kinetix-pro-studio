@@ -1516,12 +1516,14 @@ export default function App() {
         </div>
       </header>
 
-      {/* TranscriptionBar — slim status strip below header */}
-      <TranscriptionBar
-        status={transcriptionStatus}
-        onCancel={cancelTranscription}
-        onDismiss={dismissError}
-      />
+      {/* TranscriptionBar — shown only when active, takes zero space when idle */}
+      {transcriptionStatus.phase !== 'idle' && (
+        <TranscriptionBar
+          status={transcriptionStatus}
+          onCancel={cancelTranscription}
+          onDismiss={dismissError}
+        />
+      )}
 
       {/* Sidebar Navigation — hidden in new UX, preserved for rollback */}
       {false && (
@@ -1637,8 +1639,8 @@ export default function App() {
         <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0">
 
           {/* Preview — 16:9 fixed ratio, fills center width */}
-          <div className="flex-shrink-0 flex items-center justify-center p-4 bg-[#020202]">
-            <div className="w-full aspect-video max-h-[60vh]">
+          <div className="flex-shrink-0 w-full bg-[#020202]">
+            <div className="w-full aspect-video">
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>
@@ -1680,6 +1682,7 @@ export default function App() {
                 trimmingSegmentId={trimmingSegmentId}
                 isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
+                voiceoverUrl={voiceover?.url}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);
