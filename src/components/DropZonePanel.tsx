@@ -17,6 +17,7 @@ import {
   X,
   ChevronDown,
   ChevronRight,
+  ChevronLeft,
   Trash2,
 } from 'lucide-react';
 import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
@@ -268,6 +269,8 @@ interface Props {
   onApplyAnimationPreset: (preset: OverlayConfigPreset | string) => void;
   onApplyOverlayFilterPreset: (preset: OverlayConfigPreset | string) => void;
   onApplyOverlayConfigPreset: (preset: OverlayConfigPreset) => void;
+  onBackToProjects: () => void;
+  projectName: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +334,8 @@ export function DropZonePanel({
   onApplyAnimationPreset,
   onApplyOverlayFilterPreset,
   onApplyOverlayConfigPreset,
+  onBackToProjects,
+  projectName,
 }: Props) {
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments' | 'effects'>('files');
@@ -517,7 +522,19 @@ export function DropZonePanel({
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="flex flex-col h-full bg-[#080808]">
+    <div className="flex-1 min-h-0 flex flex-col bg-[#080808] overflow-hidden">
+
+      {/* Panel header — back button + project name */}
+      <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#1A1A1A]">
+        <button
+          onClick={onBackToProjects}
+          className="flex items-center gap-1 text-xs text-zinc-400 hover:text-white transition-colors"
+        >
+          <ChevronLeft size={12} />
+          <span>Projects</span>
+        </button>
+        <span className="text-xs text-zinc-500 truncate max-w-[120px]">{projectName}</span>
+      </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
       <div className="flex flex-shrink-0 border-b border-[#1A1A1A]">

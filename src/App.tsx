@@ -1479,80 +1479,10 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex flex-col overflow-hidden h-screen">
+    <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden h-screen">
 
-      {/* Header */}
-      <header className="h-12 flex-shrink-0 flex items-center justify-between px-4 border-b border-[#1A1A1A] bg-[#0A0A0A] z-10">
-        {/* Left: back to projects + project name */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              if (project.confirmed) saveNow();
-              clearLastOpenedProjectId();
-              setShowDashboard(true);
-            }}
-            className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
-            title="Back to Projects"
-          >
-            <ChevronLeft size={14} />
-            <span>Projects</span>
-          </button>
-          <div className="h-4 w-px bg-[#1A1A1A]" />
-          <span className="text-[11px] font-bold text-gray-400 max-w-[200px] truncate" title={project.name}>
-            {project.name}
-          </span>
-        </div>
-        {/* Right: save indicator */}
-        <div className="flex items-center gap-2">
-          <div className={`w-1.5 h-1.5 rounded-full ${lastSavedAt ? 'bg-green-500' : 'bg-[#F27D26] animate-pulse'}`} />
-          <button
-            onClick={saveNow}
-            title={lastSavedAt ? `Last saved ${new Date(lastSavedAt).toLocaleTimeString()}` : 'Save project'}
-            aria-label="Save project"
-            className="p-1.5 text-gray-500 hover:text-[#F27D26] transition-colors rounded-lg hover:bg-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#F27D26]"
-          >
-            <Save size={14} />
-          </button>
-        </div>
-      </header>
-
-      {/* TranscriptionBar — shown only when active, takes zero space when idle */}
-      {transcriptionStatus.phase !== 'idle' && (
-        <TranscriptionBar
-          status={transcriptionStatus}
-          onCancel={cancelTranscription}
-          onDismiss={dismissError}
-        />
-      )}
-
-      {/* Sidebar Navigation — hidden in new UX, preserved for rollback */}
-      {false && (
-      <nav className="w-16 border-right border-[#1A1A1A] flex flex-col items-center py-6 gap-8 bg-[#050505]">
-        <div className="bg-[#F27D26] p-2 rounded-lg mb-4 shadow-[0_0_20px_rgba(242,125,38,0.3)]">
-          <Video size={24} className="text-white" />
-        </div>
-        {[
-          { id: 'script', icon: FileText, label: 'Script' },
-          { id: 'assets', icon: Layers, label: 'Library' },
-          { id: 'editor', icon: Layout, label: 'Scene Editor' },
-          { id: 'settings', icon: Settings, label: 'Config' }
-        ].map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id as 'script' | 'assets' | 'settings' | 'editor')}
-            aria-label={tab.label}
-            aria-current={activeTab === tab.id ? 'page' : undefined}
-            className={`p-3 rounded-xl transition-all duration-300 relative group ${activeTab === tab.id ? 'bg-[#1A1A1A] text-[#F27D26]' : 'text-gray-600 hover:text-white'}`}
-          >
-            <tab.icon size={20} />
-            <span className="absolute left-full ml-4 px-2 py-1 bg-black text-[10px] uppercase tracking-widest rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50">{tab.label}</span>
-          </button>
-        ))}
-      </nav>
-      )}
-
-      {/* Body — 3 columns */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Body — 3 columns, full height */}
+      <div className="flex flex-1 overflow-hidden h-full">
 
         {/* Left panel — 20vw collapsible */}
         <ErrorBoundary fallback={(err, reset) => (
@@ -1621,7 +1551,18 @@ export default function App() {
             onApplyAnimationPreset={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
             onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
+            onBackToProjects={() => { if (project.confirmed) saveNow(); clearLastOpenedProjectId(); setShowDashboard(true); }}
+            projectName={project.name}
           />
+          {transcriptionStatus.phase !== 'idle' && (
+            <div className="flex-shrink-0">
+              <TranscriptionBar
+                status={transcriptionStatus}
+                onCancel={cancelTranscription}
+                onDismiss={dismissError}
+              />
+            </div>
+          )}
         </div>
         </ErrorBoundary>
 
@@ -1639,7 +1580,7 @@ export default function App() {
         <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0">
 
           {/* Preview — 16:9 fixed ratio, fills center width */}
-          <div className="flex-shrink-0 w-full bg-[#020202]">
+          <div className="flex-shrink-0 w-full bg-[#020202] relative">
             <div className="w-full aspect-video">
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
@@ -1660,6 +1601,38 @@ export default function App() {
                   textLayers={project.textLayers ?? []}
                 />
               </ErrorBoundary>
+            </div>
+
+            {/* Left pill — seek + play/pause + timecode */}
+            <div className="absolute bottom-3 left-3 z-30 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
+              <button
+                onClick={() => { setCurrentTime(0); if (audioRef.current) audioRef.current.currentTime = 0; }}
+                className="text-zinc-500 hover:text-white transition-colors"
+              >
+                <RotateCcw size={11} />
+              </button>
+              <button
+                onClick={togglePlay}
+                className="w-5 h-5 rounded-full bg-[#F27D26] hover:bg-[#E06A15] flex items-center justify-center transition-colors flex-shrink-0"
+              >
+                {isPlaying
+                  ? <Pause size={9} fill="white" className="text-white" />
+                  : <Play size={9} fill="white" className="text-white ml-0.5" />}
+              </button>
+              <span className="text-[10px] text-zinc-400 font-mono tabular-nums">
+                {String(Math.floor(currentTime / 60)).padStart(2,'0')}:{String(Math.floor(currentTime % 60)).padStart(2,'0')}:{String(Math.floor((currentTime % 1) * 100)).padStart(2,'0')}
+              </span>
+            </div>
+
+            {/* Right pill — zoom */}
+            <div className="absolute bottom-3 right-3 z-30 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
+              <span className="text-[10px] text-zinc-500">Zoom</span>
+              <input
+                type="range" min={0.5} max={10} step={0.1}
+                value={zoomLevel}
+                onChange={e => setZoomLevel(parseFloat(e.target.value))}
+                className="w-20 accent-[#F27D26] h-1"
+              />
             </div>
           </div>
 
@@ -1792,7 +1765,15 @@ export default function App() {
           style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
           className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          {/* Export button at top */}
+          {/* Project name + save status */}
+          <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
+            <p className="text-xs text-zinc-400 truncate">{project.name}</p>
+            <p className="text-[10px] text-zinc-600 mt-0.5">
+              {lastSavedAt ? `Saved` : `Unsaved`}
+            </p>
+          </div>
+
+          {/* Export button */}
           <div className="p-3 border-b border-[#1A1A1A]">
             <button
               onClick={startExport}
@@ -1801,7 +1782,6 @@ export default function App() {
               Export
             </button>
           </div>
-          {/* Empty for now */}
         </div>
 
       </div>

@@ -96,33 +96,6 @@ export function Timeline({
 
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
-      {/* Floating pill controls — positioned at top of timeline, overlaid */}
-      <div className="relative h-0 flex-shrink-0 z-20">
-        {/* Left pill: seek-to-start + play/pause + timecode */}
-        <div className="absolute left-4 top-2 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
-          <button onClick={() => onSeek(0)} className="text-zinc-500 hover:text-white transition-colors">
-            <RotateCcw size={11} />
-          </button>
-          <button onClick={onTogglePlay} className="w-5 h-5 rounded-full bg-[#F27D26] hover:bg-[#E06A15] flex items-center justify-center transition-colors flex-shrink-0">
-            {isPlaying ? <Pause size={9} fill="white" className="text-white" /> : <Play size={9} fill="white" className="text-white ml-0.5" />}
-          </button>
-          <span className="text-[10px] text-zinc-400 font-mono tabular-nums">
-            {String(Math.floor(currentTime / 60)).padStart(2,'0')}:{String(Math.floor(currentTime % 60)).padStart(2,'0')}:{String(Math.floor((currentTime % 1) * 100)).padStart(2,'0')}
-          </span>
-        </div>
-
-        {/* Right pill: zoom */}
-        <div className="absolute right-4 top-2 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
-          <span className="text-[10px] text-zinc-500">Zoom</span>
-          <input
-            type="range" min={0.5} max={10} step={0.1}
-            value={zoomLevel}
-            onChange={e => onZoomChange(parseFloat(e.target.value))}
-            className="w-20 accent-[#F27D26] h-1"
-          />
-        </div>
-      </div>
-
       {/* Timeline Tracks Area */}
       <div
         id="timeline-scroll-area"
@@ -143,7 +116,7 @@ export function Timeline({
             onSeek(Math.max(0, currentTime - step));
           }
         }}
-        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-8 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-5 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
           const timeline = document.getElementById('timeline-scroll-area');
           if (timeline && !resizingId) {
@@ -182,7 +155,7 @@ export function Timeline({
         </div>
 
         {/* Tracks */}
-        <div className="flex-1 flex gap-2 relative mt-4">
+        <div className="flex-shrink-0 flex gap-2 relative mt-0">
           {/* Playhead */}
           <motion.div
             className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
