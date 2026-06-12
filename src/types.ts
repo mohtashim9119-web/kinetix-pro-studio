@@ -131,6 +131,8 @@ export interface TextOverlay {
   position: { x: number; y: number };
   animation?: string;
   textAlign?: 'left' | 'center' | 'right';
+  /** Segment ids on which this global layer is hidden. Undefined = visible on all. */
+  hiddenOnSegments?: string[];
 }
 
 export interface VideoSegment {
@@ -189,6 +191,7 @@ export interface Project {
   globalAnimation: AnimationType;
   globalOverlayFilter?: string;
   hideAllText?: boolean;
+  textLayers?: TextOverlay[];
   globalOverlayConfig: {
     color: string;
     backgroundColor: string;

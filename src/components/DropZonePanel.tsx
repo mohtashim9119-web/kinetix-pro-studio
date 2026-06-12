@@ -20,8 +20,9 @@ import {
   ChevronRight,
   Trash2,
 } from 'lucide-react';
-import { VideoSegment, Asset } from '../types';
+import { VideoSegment, Asset, TextOverlay } from '../types';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
+import { TextLayersPanel } from './TextLayersPanel';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -233,6 +234,12 @@ interface Props {
   // Misc
   selectedSegmentId: string | undefined;
   onOpenSettings: () => void;
+  // Global text layers
+  textLayers: TextOverlay[];
+  onAddTextLayer: () => void;
+  onUpdateTextLayer: (id: string, updates: Partial<TextOverlay>) => void;
+  onDeleteTextLayer: (id: string) => void;
+  onToggleTextLayerOnSegment: (layerId: string, segmentId: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,6 +272,11 @@ export function DropZonePanel({
   allLocked,
   selectedSegmentId,
   onOpenSettings,
+  textLayers,
+  onAddTextLayer,
+  onUpdateTextLayer,
+  onDeleteTextLayer,
+  onToggleTextLayerOnSegment,
 }: Props) {
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments'>('files');
@@ -714,6 +726,16 @@ export function DropZonePanel({
               {segments.length} Segments
             </span>
           </div>
+
+          {/* Global text layers */}
+          <TextLayersPanel
+            textLayers={textLayers}
+            segments={segments}
+            onAddTextLayer={onAddTextLayer}
+            onUpdateTextLayer={onUpdateTextLayer}
+            onDeleteTextLayer={onDeleteTextLayer}
+            onToggleTextLayerOnSegment={onToggleTextLayerOnSegment}
+          />
 
           {/* Segment list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2 space-y-1">

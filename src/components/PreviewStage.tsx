@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Layout, Maximize, Minimize, MonitorPlay } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
 import { getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
@@ -104,6 +104,8 @@ interface Props {
   isResizingRef: React.RefObject<boolean>;
   /** Called when the user drags an extra overlay to a new position. */
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
+  /** Global text layers rendered above all segment content. */
+  textLayers?: TextOverlay[];
 }
 
 export function PreviewStage({
@@ -119,6 +121,7 @@ export function PreviewStage({
   isPlaying,
   isResizingRef,
   onUpdateExtraOverlayPosition,
+  textLayers,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isMidView, setIsMidView] = useState(false);
@@ -559,6 +562,39 @@ export function PreviewStage({
                   );
                 })}
               </div>
+
+              {/* Global text layers — rendered above segment extra overlays, below heading/body text */}
+              {(textLayers ?? []).length > 0 && (
+                <div
+                  className="absolute inset-0 pointer-events-none"
+                  style={{ zIndex: 45 }}
+                >
+                  {(textLayers ?? [])
+                    .filter(l => !(l.hiddenOnSegments ?? []).includes(currentSegment.id))
+                    .map((l) => (
+                      <div
+                        key={l.id}
+                        className="absolute p-3 rounded-xl shadow-lg select-none"
+                        style={{
+                          left: `${l.position.x}%`,
+                          top: `${l.position.y}%`,
+                          transform: 'translate(-50%, -50%)',
+                          color: l.color,
+                          backgroundColor: l.backgroundColor,
+                          fontFamily: l.fontFamily,
+                          fontSize: `${l.fontSize}px`,
+                          fontWeight: l.fontWeight || 'normal',
+                          fontStyle: l.fontStyle || 'normal',
+                          textShadow: l.textShadow || '0 2px 10px rgba(0,0,0,0.5)',
+                          textAlign: l.textAlign || 'center',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {l.text}
+                      </div>
+                    ))}
+                </div>
+              )}
 
               {/* Main heading + body text. Fades out during canvas transition overlay to prevent
                   double-render — same 100ms ease as the canvas fade-in so they crossfade cleanly. */}
