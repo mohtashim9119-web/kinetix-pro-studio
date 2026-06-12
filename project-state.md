@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Priority 3 (stock footage APIs) complete. Ready to push to origin/main for Windows + macOS CI build.
+Task 9c (style preset library) complete. Starting Task 9a (independent text layers) next.
 
 ---
 
@@ -68,6 +68,7 @@ Priority 3 (stock footage APIs) complete. Ready to push to origin/main for Windo
 9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
    - **9b-0 — UX foundation (drop zone + bottom drawer)** ✅ — Unified drop zone + mapping list (DropZonePanel), slide-up BottomDrawer, VideoSegment.locked with order-index re-sync preservation. SyncWizard and sidebar nav hidden (preserved). Commit `4ed6a04`, merged to main 2026-06-04.
    - Task 9b ✅ Done (whisper alignment + video preview — priority-1 branch)
+   - Task 9 sub-item (c) ✅ Done — style preset library (task-9c branch)
 
 ### Export-rendering implementation
 
@@ -376,6 +377,7 @@ Phase 3 steps:
 | 2026-06-11 | Priority 1 complete — whisper alignment fixes: token expansion, normalize punctuation, wider search window, dual persistent video elements + preload + seek-after-canplay, silence-aware boundary detection using Whisper token gaps. Branch task-priority-1-video-preview-fix merged to main. |
 | 2026-06-11 | Priority 2 — Multi-project dashboard: full-screen swap, confirmed flag, lastOpenedProjectId (sessionStorage), clear-on-dashboard-nav, image-only thumbnails, base64 thumbnail on asset change, ← Projects nav link. All tests passed. |
 | 2026-06-12 | Priority 3 — Stock footage APIs: Coverr adapter added (Bearer auth, api.coverr.co); Pexels + Pixabay keys wired via .env.local; stock downloads routed through Rust fetch_url_bytes command to bypass CORS; trimStart/trimEnd/playbackSpeed/assetId preserved across re-sync in both handleApplySyncFromFiles and finalizeSync; CSP updated for production builds. |
+| 2026-06-12 | Task 9c — Style preset library: presetService.ts with localStorage CRUD; PresetPicker component; per-category presets (transition, animation, overlayFilter, overlayConfig); 3 built-in overlay presets (Cyber/Retro/Bold); wired into SettingsPanel with save/apply/delete; global across all projects; customOverlayText dead field removed. |
 
 ---
 
@@ -579,6 +581,35 @@ Status: COMPLETE — merged to main
 - VITE_PIXABAY_API_KEY — free key from pixabay.com/api/docs
 - VITE_COVERR_API_KEY — free key from coverr.co/developers
 - All three go in .env.local (gitignored)
+
+---
+
+## Task 9c — Style Preset Library
+Status: COMPLETE — merged to main
+
+### What was built
+- presetService.ts: localStorage CRUD under kinetix:stylePresets:v1; loadPresets/savePreset/deletePreset/renamePreset; built-in presets are code-defined and never written to storage
+- PresetPicker.tsx: reusable chip-based picker component; inline save-with-name (Enter or click Save); trash icon on user presets; built-in badge on non-deletable presets; re-exports OverlayConfigPreset type
+- Four preset categories: transition (string), animation (string), overlayFilter (string), overlayConfig (OverlayConfigPreset object)
+- Three built-in overlayConfig presets: Cyber (green/black/Bangers/glitch), Retro (magenta/white/Monoton/neon-flicker), Bold (black/orange/Anton/slide-up)
+- SettingsPanel: 8 new props wired; PresetPicker inserted after each relevant control section
+- Both SettingsPanel renders in App.tsx wired with all 8 props
+- Presets are global — shared across all projects via localStorage
+- customOverlayText dead field removed from VideoSegment in types.ts
+
+### Key files changed
+- src/services/presetService.ts — new file
+- src/components/PresetPicker.tsx — new file
+- src/components/SettingsPanel.tsx — 8 new props, 4 PresetPicker insertions
+- src/App.tsx — both SettingsPanel renders wired
+- src/types.ts — customOverlayText removed
+
+### Verified behaviours
+- Preset pickers visible under all four setting sections
+- Save current → named preset → persists after reload
+- Apply preset → settings update immediately
+- Delete user preset → removed; built-in presets undeletable
+- Global: presets survive project switching and app restart
 
 ---
 
