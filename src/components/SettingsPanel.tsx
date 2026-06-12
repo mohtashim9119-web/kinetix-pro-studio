@@ -2,6 +2,7 @@ import React from 'react';
 import { Project, TransitionType, AnimationType } from '../types';
 import { FILTERS, FONT_FAMILIES, TRANSITION_OPTIONS, ANIMATION_OPTIONS } from '../constants';
 import { RefreshCw, Sparkles, Layers, Trash2, FolderOpen } from 'lucide-react';
+import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 
 interface Props {
   project: Project;
@@ -24,6 +25,14 @@ interface Props {
   onRenderTestFrame?: () => void;
   /** Dev-only: encodes the current segment to MP4 and triggers download. */
   onEncodeTestSegment?: () => void;
+  onApplyTransitionPreset: (value: string) => void;
+  onApplyAnimationPreset: (value: string) => void;
+  onApplyOverlayFilterPreset: (value: string) => void;
+  onApplyOverlayConfigPreset: (value: OverlayConfigPreset) => void;
+  currentTransition: string;
+  currentAnimation: string;
+  currentOverlayFilter: string;
+  currentOverlayConfig: OverlayConfigPreset;
 }
 
 export function SettingsPanel({
@@ -42,6 +51,14 @@ export function SettingsPanel({
   onExportFpsChange,
   onRenderTestFrame,
   onEncodeTestSegment,
+  onApplyTransitionPreset,
+  onApplyAnimationPreset,
+  onApplyOverlayFilterPreset,
+  onApplyOverlayConfigPreset,
+  currentTransition,
+  currentAnimation,
+  currentOverlayFilter,
+  currentOverlayConfig,
 }: Props): React.ReactElement {
   return (
     <div className="space-y-8">
@@ -81,6 +98,12 @@ export function SettingsPanel({
               <option key={t} value={t}>{t === TransitionType.NONE ? 'instant (none)' : t}</option>
             ))}
           </select>
+          <PresetPicker
+            category="transition"
+            label="Transition"
+            currentValue={currentTransition}
+            onApply={(v) => onApplyTransitionPreset(v as string)}
+          />
         </div>
         <div className="space-y-3">
           <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold block">Camera Dynamics</label>
@@ -93,6 +116,12 @@ export function SettingsPanel({
               <option key={a} value={a}>{a === AnimationType.NONE ? 'static (none)' : a.replace('-', ' ')}</option>
             ))}
           </select>
+          <PresetPicker
+            category="animation"
+            label="Animation"
+            currentValue={currentAnimation}
+            onApply={(v) => onApplyAnimationPreset(v as string)}
+          />
         </div>
         <div className="space-y-3">
           <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold block">Aesthetic Overlay Filter (50+ Styles)</label>
@@ -103,6 +132,12 @@ export function SettingsPanel({
           >
             {FILTERS.map(f => <option key={f} value={f}>{f.replace('-', ' ')}</option>)}
           </select>
+          <PresetPicker
+            category="overlayFilter"
+            label="Overlay Filter"
+            currentValue={currentOverlayFilter}
+            onApply={(v) => onApplyOverlayFilterPreset(v as string)}
+          />
         </div>
 
         <div className="space-y-3">
@@ -171,6 +206,12 @@ export function SettingsPanel({
               {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
             </select>
           </div>
+          <PresetPicker
+            category="overlayConfig"
+            label="Overlay Style"
+            currentValue={currentOverlayConfig}
+            onApply={(v) => onApplyOverlayConfigPreset(v as OverlayConfigPreset)}
+          />
           <div className="flex gap-4 pt-4">
             <button
               onClick={onExportScenesJson}
