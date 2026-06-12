@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Priority 2 (multi-project dashboard) complete. Starting Priority 3 (stock footage APIs — Coverr + Mixkit) next.
+Priority 3 (stock footage APIs) complete. Ready to push to origin/main for Windows + macOS CI build.
 
 ---
 
@@ -63,7 +63,7 @@ Priority 2 (multi-project dashboard) complete. Starting Priority 3 (stock footag
 
 7. **Merge inputs into one upload area** ✅ — Unified drop zone; auto-classify by file type. UX design pass first to decide fate of 3-step wizard. Completed as part of Task 9b-0 (commit `4ed6a04`).
 
-8. **More stock footage APIs** ⬜ — Add Coverr, Mixkit, Videvo adapters alongside Pexels/Pixabay in `stockService.ts`. Keys remain client-side (internal use).
+- Task 8 ✅ Done — stock footage APIs: Coverr + Pexels + Pixabay (priority-3 branch)
 
 9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
    - **9b-0 — UX foundation (drop zone + bottom drawer)** ✅ — Unified drop zone + mapping list (DropZonePanel), slide-up BottomDrawer, VideoSegment.locked with order-index re-sync preservation. SyncWizard and sidebar nav hidden (preserved). Commit `4ed6a04`, merged to main 2026-06-04.
@@ -375,6 +375,7 @@ Phase 3 steps:
 | 2026-06-10 | Bundle 1 complete — Task 3 (video pause sync) + Task 6 (pre-render save dialog, last path memory, post-export toast, Show in Finder). Branch task-bundle-1-bug-fixes merged to main. |
 | 2026-06-11 | Priority 1 complete — whisper alignment fixes: token expansion, normalize punctuation, wider search window, dual persistent video elements + preload + seek-after-canplay, silence-aware boundary detection using Whisper token gaps. Branch task-priority-1-video-preview-fix merged to main. |
 | 2026-06-11 | Priority 2 — Multi-project dashboard: full-screen swap, confirmed flag, lastOpenedProjectId (sessionStorage), clear-on-dashboard-nav, image-only thumbnails, base64 thumbnail on asset change, ← Projects nav link. All tests passed. |
+| 2026-06-12 | Priority 3 — Stock footage APIs: Coverr adapter added (Bearer auth, api.coverr.co); Pexels + Pixabay keys wired via .env.local; stock downloads routed through Rust fetch_url_bytes command to bypass CORS; trimStart/trimEnd/playbackSpeed/assetId preserved across re-sync in both handleApplySyncFromFiles and finalizeSync; CSP updated for production builds. |
 
 ---
 
@@ -541,6 +542,43 @@ Status: COMPLETE — merged to main
 - Deleting a project removes card and all associated localStorage + IDB data
 - Search filters projects in real time
 - Confirmed flag prevents blank projects from polluting the registry
+
+---
+
+## Priority 3 — Stock Footage APIs
+Status: COMPLETE — merged to main
+
+### What was built
+- Coverr adapter: Bearer token auth via VITE_COVERR_API_KEY; endpoint api.coverr.co/videos with urls=true; video-only; thumbnail from Coverr CDN
+- Pexels and Pixabay keys: wired via VITE_PEXELS_API_KEY and VITE_PIXABAY_API_KEY in .env.local
+- searchAllStock: fans out to all three providers via Promise.all; any rate-limit short-circuits; partial failures surface remaining results
+- fetch_url_bytes Rust command: downloads external URLs server-side via reqwest to bypass CORS restrictions in Tauri webview; returns base64-encoded bytes; registered in generate_handler!
+- Stock download flow: isTauri() branch uses invoke('fetch_url_bytes'); non-Tauri falls back to direct fetch
+- stockError state: dismissible red banner with 5s auto-dismiss on download failure
+- CSP: tauri.conf.json updated with connect-src + img-src + media-src entries for api.coverr.co, storage.coverr.co, coverr.co (production builds)
+- StockSearchModal subtitle updated to "Pexels · Pixabay · Coverr"
+- trimStart/trimEnd/playbackSpeed/isMuted/assetId preserved across re-sync in both handleApplySyncFromFiles and finalizeSync
+
+### Key files changed
+- src/services/stockService.ts — Coverr adapter, provider union extended, searchAllStock updated
+- src-tauri/src/lib.rs — fetch_url_bytes command
+- src-tauri/Cargo.toml — reqwest dependency added
+- src-tauri/tauri.conf.json — CSP entries for Coverr domains
+- src/App.tsx — fetch_url_bytes invoke, stockError state, trimStart/trimEnd preservation
+- src/components/StockSearchModal.tsx — subtitle updated
+
+### Verified behaviours
+- Search returns results from Pexels, Pixabay, and Coverr simultaneously
+- Clicking a stock video downloads and assigns to segment correctly
+- trimStart/trimEnd survive re-sync — video timing preserved after scene edits
+- CORS bypass works for all three providers via Rust fetch
+- Stock error banner appears on download failure instead of silent failure
+
+### Environment variables required
+- VITE_PEXELS_API_KEY — free key from pexels.com/api
+- VITE_PIXABAY_API_KEY — free key from pixabay.com/api/docs
+- VITE_COVERR_API_KEY — free key from coverr.co/developers
+- All three go in .env.local (gitignored)
 
 ---
 
