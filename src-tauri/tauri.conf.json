@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' blob: data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://api.pexels.com https://videos.pexels.com https://www.pexels.com https://api.pixabay.com https://pixabay.com https://i.vimeocdn.com https://api.coverr.co https://storage.coverr.co https://coverr.co; img-src 'self' blob: data: https://*.pexels.com https://*.pixabay.com https://i.vimeocdn.com https://storage.coverr.co https://coverr.co; media-src 'self' blob: https://*.pexels.com https://*.pixabay.com https://storage.coverr.co https://coverr.co"
     }
   },
   "bundle": {
