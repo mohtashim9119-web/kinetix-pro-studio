@@ -6,6 +6,7 @@ export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string };
   hideAllText: boolean;
   globalOverlayFilter?: string;
+  globalTextLayers?: TextOverlay[];
 }
 
 /**
@@ -349,6 +350,13 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   for (const overlay of segment.extraOverlays ?? []) {
     await ensureFont(overlay.fontFamily, overlay.fontSize);
     drawExtraOverlay(ctx, overlay, w, h);
+  }
+
+  // Global text layers — visible on all segments unless explicitly hidden
+  for (const layer of g.globalTextLayers ?? []) {
+    if ((layer.hiddenOnSegments ?? []).includes(segment.id)) continue;
+    await ensureFont(layer.fontFamily, layer.fontSize);
+    drawExtraOverlay(ctx, layer, w, h);
   }
 
   // -------------------------------------------------------------------------

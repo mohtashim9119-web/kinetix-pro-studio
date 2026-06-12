@@ -399,6 +399,7 @@ function makeDefaultProject(): Project {
   globalTransitionDuration: 0.5,
   globalAnimation: AnimationType.NONE,
   hideAllText: true,
+  textLayers: [],
   globalOverlayConfig: {
     color: '#FFFFFF',
     backgroundColor: '#000000',
@@ -465,6 +466,7 @@ export default function App() {
   });
   const [isSynced, setIsSynced] = useState(false);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
@@ -629,6 +631,54 @@ export default function App() {
     setProject(prev => ({
       ...prev,
       segments: prev.segments.map(s => ({ ...s, locked: false })),
+    }));
+  }, []);
+
+  const handleAddTextLayer = useCallback((): void => {
+    setProject(prev => ({
+      ...prev,
+      textLayers: [
+        ...(prev.textLayers ?? []),
+        {
+          id: crypto.randomUUID(),
+          text: 'New Text',
+          color: '#FFFFFF',
+          backgroundColor: 'transparent',
+          fontFamily: 'Inter',
+          fontSize: 32,
+          position: { x: 50, y: 50 },
+        } satisfies TextOverlay,
+      ],
+    }));
+  }, []);
+
+  const handleUpdateTextLayer = useCallback((id: string, updates: Partial<TextOverlay>): void => {
+    setProject(prev => ({
+      ...prev,
+      textLayers: (prev.textLayers ?? []).map(l => l.id === id ? { ...l, ...updates } : l),
+    }));
+  }, []);
+
+  const handleDeleteTextLayer = useCallback((id: string): void => {
+    setProject(prev => ({
+      ...prev,
+      textLayers: (prev.textLayers ?? []).filter(l => l.id !== id),
+    }));
+  }, []);
+
+  const handleToggleTextLayerOnSegment = useCallback((layerId: string, segmentId: string): void => {
+    setProject(prev => ({
+      ...prev,
+      textLayers: (prev.textLayers ?? []).map(l => {
+        if (l.id !== layerId) return l;
+        const hidden = l.hiddenOnSegments ?? [];
+        return {
+          ...l,
+          hiddenOnSegments: hidden.includes(segmentId)
+            ? hidden.filter(s => s !== segmentId)
+            : [...hidden, segmentId],
+        };
+      }),
     }));
   }, []);
 
@@ -1553,7 +1603,10 @@ export default function App() {
               <PanelFallback label="Left panel" error={err} reset={reset} />
             </div>
           )}>
-          <div className="w-[380px] flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808]">
+          <div
+            className="flex-shrink-0 flex flex-col h-full border-r border-[#0F0F0F] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
+            style={{ width: leftPanelCollapsed ? 0 : 380 }}
+          >
             <DropZonePanel
               segments={project.segments}
               assets={project.assets}
@@ -1583,6 +1636,11 @@ export default function App() {
               allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
               selectedSegmentId={selectedSegmentId ?? undefined}
               onOpenSettings={() => setShowSettings(true)}
+              textLayers={project.textLayers ?? []}
+              onAddTextLayer={handleAddTextLayer}
+              onUpdateTextLayer={handleUpdateTextLayer}
+              onDeleteTextLayer={handleDeleteTextLayer}
+              onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
             />
           </div>
           </ErrorBoundary>
@@ -1785,6 +1843,19 @@ export default function App() {
           </div>
           )} {/* end legacy left panel {false && */}
 
+          {/* Panel collapse toggle */}
+          <button
+            onClick={() => setLeftPanelCollapsed(c => !c)}
+            className="flex-shrink-0 w-4 flex items-center justify-center bg-[#0A0A0A] hover:bg-[#141414] border-r border-[#0F0F0F] transition-colors z-10 self-stretch"
+            title={leftPanelCollapsed ? 'Expand panel' : 'Collapse panel'}
+            aria-label={leftPanelCollapsed ? 'Expand left panel' : 'Collapse left panel'}
+          >
+            {leftPanelCollapsed
+              ? <ChevronRight size={10} className="text-gray-600" />
+              : <ChevronLeft size={10} className="text-gray-600" />
+            }
+          </button>
+
                 {/* Right Panel: Preview & Sequence */}
           <div className="flex-1 flex flex-col bg-[#020202] relative p-8 gap-8 overflow-hidden">
              {/* Main Stage */}
@@ -1804,6 +1875,7 @@ export default function App() {
                  isPlaying={isPlaying}
                  isResizingRef={isResizingRef}
                  onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
+                 textLayers={project.textLayers ?? []}
                />
              </ErrorBoundary>
 
