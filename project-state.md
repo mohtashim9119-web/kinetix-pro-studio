@@ -35,13 +35,15 @@
 
 ## Current Sprint
 
-Task 9a (independent text layers + collapsible left panel) complete. Starting Task 1 (export rendering profiling pass) next.
+Layout redesign complete — 3-column %, collapsible panels, Effects tab, real waveform, draggable preview divider. Starting Task 1 (export rendering profiling pass) next.
 
 ---
 
 ## Phase 7 Scope
 
 10 tasks in dependency order. Tasks 1–2 are prerequisites; tasks 3–4 are bug fixes; tasks 5–9 are features; task 10 is the export-rendering implementation.
+
+- Layout redesign ✅ Done — 3-column layout, collapsible panels, Effects tab, Timeline cleanup, real waveform, draggable divider (task-layout-redesign branch)
 
 ### Prerequisites
 
@@ -380,6 +382,7 @@ Phase 3 steps:
 | 2026-06-12 | Priority 3 — Stock footage APIs: Coverr adapter added (Bearer auth, api.coverr.co); Pexels + Pixabay keys wired via .env.local; stock downloads routed through Rust fetch_url_bytes command to bypass CORS; trimStart/trimEnd/playbackSpeed/assetId preserved across re-sync in both handleApplySyncFromFiles and finalizeSync; CSP updated for production builds. |
 | 2026-06-12 | Task 9c — Style preset library: presetService.ts with localStorage CRUD; PresetPicker component; per-category presets (transition, animation, overlayFilter, overlayConfig); 3 built-in overlay presets (Cyber/Retro/Bold); wired into SettingsPanel with save/apply/delete; global across all projects; customOverlayText dead field removed. |
 | 2026-06-12 | Task 9a — Independent text layers: textLayers[] added to Project; TextLayersPanel component (collapsible, inline editors, per-segment hide toggle); wired into DropZonePanel segments tab; global layers rendered in PreviewStage at z-45; export pipeline extended (FrameGlobalConfig.globalTextLayers, frameRenderer draws per-frame); collapsible left panel with ChevronLeft/Right toggle strip. |
+| 2026-06-12 | Layout redesign — 3-column percentage layout (20/65/15vw), collapsible left+right panels, full-width header removed (nav lives in panels), Effects tab in left panel (all SettingsPanel controls moved inline), Timeline cleanup (sub-toolbar removed, floating pills, fixed dead rows), real Web Audio API waveform, audio track full-width scroll fix, draggable preview/timeline divider clamped to 16:9 ratio, preview height-driven aspect-video. |
 
 ---
 
@@ -612,6 +615,39 @@ Status: COMPLETE — merged to main
 - Apply preset → settings update immediately
 - Delete user preset → removed; built-in presets undeletable
 - Global: presets survive project switching and app restart
+
+---
+
+## Layout Redesign
+Status: COMPLETE — merged to main
+
+### What was built
+- 3-column percentage layout: left 20vw / center flex-1 / right 15vw; both panels independently collapsible with ChevronLeft/Right toggle strips
+- Full-width header removed: ← Projects button lives in left panel header; project name + save status live in right panel header
+- Preview: height-driven aspect-video with explicit previewHeight state (px); always fully visible at 16:9; never crops
+- Draggable divider between preview and timeline: mousedown/mousemove/mouseup on window; upper clamp = centerColWidth × 9/16 (recalculated on every mousemove from centerColRef); lower clamp = 180px
+- Timeline cleanup: sub-toolbar row removed; floating pill controls removed from Timeline and moved to absolute bottom corners of preview wrapper in App.tsx; dead padding rows collapsed (pt-8 → pt-5, flex-1 tracks div → flex-shrink-0)
+- Real waveform: Web Audio API decodes voiceover blob URL (voiceoverUrl prop) into 300 normalized amplitude bars; distributed proportionally across segment cells; orange bars sized by amplitude; falls back to flat line if no audio
+- Audio track full-width scroll fix: removed w-full + overflow-hidden from audio track wrapper; changed inner div to w-max so it grows with content and scrolls with the visual track
+- Effects tab: all SettingsPanel controls moved inline into DropZonePanel third tab; SettingsPanel tombstoned
+- TranscriptionBar: conditional on phase !== idle; zero height when not active
+- SettingsPanel: tombstoned with {false && ...} comment
+
+### Key files changed
+- src/App.tsx — layout skeleton, header removal, pills, divider, previewHeight state, centerColRef
+- src/components/Timeline.tsx — cleanup, waveform, audio track fix, pills removed
+- src/components/DropZonePanel.tsx — Effects tab, ← Projects button, onOpenSettings removed
+- src/components/PreviewStage.tsx — isMidView removed, fixed pixel sizes removed, rounded-xl
+- src/components/SettingsPanel.tsx — tombstoned
+
+### Verified behaviours
+- 3-column layout renders correctly at all screen sizes tested
+- Both panels collapse/expand cleanly; nav elements hide with their panel
+- Preview always fully visible at 16:9; no cropping at any panel state
+- Draggable divider respects 16:9 max when panels open or closed
+- Real waveform shows amplitude from voiceover audio
+- Audio track scrolls full width with segments
+- Effects tab contains all transition/animation/filter/overlay/export controls
 
 ---
 
