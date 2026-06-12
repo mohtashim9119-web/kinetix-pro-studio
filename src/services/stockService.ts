@@ -12,7 +12,7 @@ export interface StockResult {
   url: string;
   thumbnail: string;
   type: 'video' | 'image';
-  provider: 'pexels' | 'pixabay';
+  provider: 'pexels' | 'pixabay' | 'coverr' | 'mixkit';
 }
 
 export type StockSearchResult =
@@ -133,26 +133,139 @@ export async function searchPixabay(query: string, type: 'video' | 'image' = 'vi
   }
 }
 
-export async function searchAllStock(query: string, type: 'video' | 'image' = 'video'): Promise<StockSearchResult> {
-  const [pexels, pixabay] = await Promise.all([
+// ── Coverr ──────────────────────────────────────────────────────────────────
+// Free, no API key required.
+// Search endpoint: https://coverr.co/api/videos/search?query=<q>&per_page=20&page=1
+
+interface CoverrVideo {
+  id: string;
+  title: string;
+  coverr_url: string;           // direct MP4 download URL
+  preview_url: string;          // thumbnail JPEG
+}
+
+interface CoverrResponse {
+  hits: CoverrVideo[];
+}
+
+export async function searchCoverr(
+  query: string,
+  type: 'video' | 'image' = 'video',
+): Promise<StockSearchResult> {
+  // Coverr is video-only
+  if (type === 'image') return { status: 'ok', results: [] };
+
+  const url =
+    `https://coverr.co/api/videos/search?query=${encodeURIComponent(query)}&per_page=20&page=1`;
+
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, {});
+  } catch (err) {
+    return { status: 'error', message: String(err) };
+  }
+
+  if (res.status === 429) return { status: 'rate_limited' };
+  if (!res.ok) return { status: 'error', message: `Coverr HTTP ${res.status}` };
+
+  let data: CoverrResponse;
+  try {
+    data = (await res.json()) as CoverrResponse;
+  } catch {
+    return { status: 'error', message: 'Coverr: invalid JSON response' };
+  }
+
+  const results: StockResult[] = (data.hits ?? []).map((v) => ({
+    id: `coverr-${v.id}`,
+    name: v.title,
+    url: v.coverr_url,
+    thumbnail: v.preview_url,
+    type: 'video',
+    provider: 'coverr',
+  }));
+
+  return { status: 'ok', results };
+}
+
+// ── Mixkit ───────────────────────────────────────────────────────────────────
+// Free, no API key required.
+// Search endpoint: https://mixkit.co/api/assets?vl=en&page=1&per_page=20&term=<q>&asset_type=footage
+
+interface MixkitAsset {
+  id: number;
+  name: string;
+  source_download: string;      // direct MP4 download URL
+  image_small: string;          // thumbnail URL
+}
+
+interface MixkitResponse {
+  assets: MixkitAsset[];
+}
+
+export async function searchMixkit(
+  query: string,
+  type: 'video' | 'image' = 'video',
+): Promise<StockSearchResult> {
+  // Mixkit is video-only (footage)
+  if (type === 'image') return { status: 'ok', results: [] };
+
+  const url =
+    `https://mixkit.co/api/assets?vl=en&page=1&per_page=20&term=${encodeURIComponent(query)}&asset_type=footage`;
+
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, {});
+  } catch (err) {
+    return { status: 'error', message: String(err) };
+  }
+
+  if (res.status === 429) return { status: 'rate_limited' };
+  if (!res.ok) return { status: 'error', message: `Mixkit HTTP ${res.status}` };
+
+  let data: MixkitResponse;
+  try {
+    data = (await res.json()) as MixkitResponse;
+  } catch {
+    return { status: 'error', message: 'Mixkit: invalid JSON response' };
+  }
+
+  const results: StockResult[] = (data.assets ?? []).map((a) => ({
+    id: `mixkit-${a.id}`,
+    name: a.name,
+    url: a.source_download,
+    thumbnail: a.image_small,
+    type: 'video',
+    provider: 'mixkit',
+  }));
+
+  return { status: 'ok', results };
+}
+
+export async function searchAllStock(
+  query: string,
+  type: 'video' | 'image' = 'video',
+): Promise<StockSearchResult> {
+  const [pexels, pixabay, coverr, mixkit] = await Promise.all([
     searchPexels(query, type),
     searchPixabay(query, type),
+    searchCoverr(query, type),
+    searchMixkit(query, type),
   ]);
 
-  // Rate-limit from either source takes priority — prompt the user to retry.
-  if (pexels.status === 'rate_limited' || pixabay.status === 'rate_limited') {
+  const sources = [pexels, pixabay, coverr, mixkit];
+
+  // Any rate limit short-circuits everything
+  if (sources.some((s) => s.status === 'rate_limited')) {
     return { status: 'rate_limited' };
   }
 
-  const results: StockResult[] = [
-    ...(pexels.status === 'ok' ? pexels.results : []),
-    ...(pixabay.status === 'ok' ? pixabay.results : []),
-  ];
+  const allResults = sources
+    .filter((s): s is { status: 'ok'; results: StockResult[] } => s.status === 'ok')
+    .flatMap((s) => s.results);
 
-  // If both sources errored and we have no results, surface the error.
-  if (results.length === 0 && pexels.status === 'error' && pixabay.status === 'error') {
-    return { status: 'error', message: 'Both Pexels and Pixabay returned errors.' };
+  if (allResults.length === 0) {
+    return { status: 'error', message: 'All stock providers returned errors.' };
   }
 
-  return { status: 'ok', results };
+  return { status: 'ok', results: allResults };
 }
