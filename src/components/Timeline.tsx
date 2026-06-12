@@ -3,11 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Play, Pause, RotateCcw, Layers, MonitorPlay,
-  Search, Layout, RefreshCw, Music, AlertCircle,
+  Play, Pause, RotateCcw, AlertCircle,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
@@ -25,10 +24,10 @@ interface Props {
   trimmingSegmentId: string | null;
   isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
+  voiceoverUrl?: string;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onZoomChange: (zoom: number) => void;
-  onSpeedChange: (speed: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
@@ -50,120 +49,53 @@ export function Timeline({
   trimmingSegmentId,
   isAdjustingTrim,
   voiceoverName,
+  voiceoverUrl,
   onTogglePlay,
   onSeek,
   onZoomChange,
-  onSpeedChange,
   onResizeStart,
   onSegmentUpdate,
   onOpenStockSearch,
   onSetTrimmingSegment,
   onSetAdjustingTrim,
 }: Props) {
-  const [verticalZoom, setVerticalZoom] = useState(1);
-
   const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
   const pixelsPerSecond = 100 * zoomLevel;
 
+  const [waveformBars, setWaveformBars] = useState<number[]>([]);
+  // useRef available for future use (e.g. AudioContext ref)
+  const _audioCtxRef = useRef<AudioContext | null>(null);
+
+  useEffect(() => {
+    if (!voiceoverUrl) { setWaveformBars([]); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(voiceoverUrl);
+        const arrayBuf = await res.arrayBuffer();
+        const audioCtx = new AudioContext();
+        const decoded = await audioCtx.decodeAudioData(arrayBuf);
+        await audioCtx.close();
+        const raw = decoded.getChannelData(0);
+        const BAR_COUNT = 300;
+        const blockSize = Math.floor(raw.length / BAR_COUNT);
+        const bars: number[] = [];
+        for (let i = 0; i < BAR_COUNT; i++) {
+          let sum = 0;
+          for (let j = 0; j < blockSize; j++) sum += Math.abs(raw[i * blockSize + j] ?? 0);
+          bars.push(sum / blockSize);
+        }
+        const max = Math.max(...bars, 0.001);
+        if (!cancelled) setWaveformBars(bars.map(b => b / max));
+      } catch {
+        if (!cancelled) setWaveformBars([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [voiceoverUrl]);
+
   return (
-    <div className="h-72 flex flex-col bg-[#050505] rounded-[32px] border border-[#1A1A1A] overflow-hidden shadow-2xl relative">
-      {/* Timeline Toolbar */}
-      <div className="px-10 py-4 border-bottom border-[#1A1A1A] flex items-center justify-between bg-[#080808]">
-        <div className="flex items-center gap-8">
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => onSeek(0)}
-              aria-label="Seek to start"
-              className="p-2 text-gray-500 hover:text-white transition-colors"
-            >
-              <RotateCcw size={16} />
-            </button>
-            <button
-              onClick={onTogglePlay}
-              aria-label={isPlaying ? 'Pause' : 'Play'}
-              className="w-12 h-12 bg-[#F27D26] rounded-full text-white flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-[0_0_20px_rgba(242,125,38,0.3)]"
-            >
-              {isPlaying ? <Pause size={22} /> : <Play size={22} fill="currentColor" />}
-            </button>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[9px] font-black uppercase tracking-[0.3em] text-[#F27D26] mb-0.5">Timeline Position</span>
-            <span className="text-lg font-mono text-white tracking-widest">
-              {Math.floor(currentTime / 60).toString().padStart(2, '0')}:
-              {Math.floor(currentTime % 60).toString().padStart(2, '0')}:
-              {Math.floor((currentTime % 1) * 100).toString().padStart(2, '0')}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-3 mr-4">
-            <span className="text-[9px] font-black uppercase tracking-widest text-gray-600">Zoom</span>
-            <input
-              type="range" min="0.5" max="10" step="0.1"
-              value={zoomLevel}
-              onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-              aria-label="Zoom level"
-              className="w-32 h-1 bg-[#1A1A1A] rounded-full appearance-none accent-[#F27D26] cursor-pointer"
-            />
-          </div>
-          <div className="h-8 w-px bg-[#1A1A1A]" />
-          <div className="flex items-center gap-2">
-            <Layers size={14} className="text-gray-600" />
-            <span className="text-[9px] font-bold uppercase tracking-widest text-gray-600">Visuals + Audio Tracks</span>
-          </div>
-          <div className="p-2 bg-[#F27D26]/5 rounded-lg border border-[#F27D26]/10 flex items-center gap-3">
-            <MonitorPlay size={14} className="text-[#F27D26]" />
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#F27D26]">Live Rendering</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between px-6 pb-2">
-        <div className="flex items-center gap-2">
-          <RefreshCw size={14} className="text-[#F27D26]" />
-          <span className="text-[10px] font-black uppercase tracking-widest text-[#F27D26]">Timeline Master</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Search size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Horizontal</span>
-            <input
-              type="range" min="0.1" max="5" step="0.1"
-              value={zoomLevel}
-              onChange={(e) => onZoomChange(parseFloat(e.target.value))}
-              aria-label="Horizontal zoom"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(zoomLevel * 100)}%</span>
-          </div>
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Play size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Speed</span>
-            <input
-              type="range" min="0.5" max="2" step="0.1"
-              value={globalPlaybackSpeed}
-              onChange={(e) => onSpeedChange(parseFloat(e.target.value))}
-              aria-label="Playback speed"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{globalPlaybackSpeed.toFixed(1)}x</span>
-          </div>
-          <div className="flex items-center gap-2 bg-[#121212] border border-[#1A1A1A] px-3 py-1.5 rounded-full">
-            <Layout size={12} className="text-gray-500" />
-            <span className="text-[9px] font-bold text-gray-500">Vertical</span>
-            <input
-              type="range" min="0.5" max="3" step="0.1"
-              value={verticalZoom}
-              onChange={(e) => setVerticalZoom(parseFloat(e.target.value))}
-              aria-label="Vertical zoom"
-              className="w-24 h-1 bg-[#282828] rounded-lg appearance-none cursor-pointer accent-[#F27D26]"
-            />
-            <span className="text-[9px] font-bold text-gray-500 w-8">{Math.round(verticalZoom * 100)}%</span>
-          </div>
-        </div>
-      </div>
-
+    <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Tracks Area */}
       <div
         id="timeline-scroll-area"
@@ -184,19 +116,19 @@ export function Timeline({
             onSeek(Math.max(0, currentTime - step));
           }
         }}
-        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-6 pt-10 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-5 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
           const timeline = document.getElementById('timeline-scroll-area');
           if (timeline && !resizingId) {
             const rect = timeline.getBoundingClientRect();
-            const x = e.clientX - rect.left + timeline.scrollLeft - 24;
+            const x = e.clientX - rect.left + timeline.scrollLeft;
             const time = Math.max(0, x / pixelsPerSecond);
             onSeek(time);
           }
           if (resizingId) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const scrollLeft = e.currentTarget.scrollLeft;
-          const x = e.clientX - rect.left + scrollLeft - 24;
+          const x = e.clientX - rect.left + scrollLeft;
           const newTime = Math.max(0, Math.min(totalDuration, x / pixelsPerSecond));
           onSeek(newTime);
 
@@ -223,7 +155,7 @@ export function Timeline({
         </div>
 
         {/* Tracks */}
-        <div className="flex-1 flex gap-2 relative mt-4">
+        <div className="flex-shrink-0 flex gap-2 relative mt-0">
           {/* Playhead */}
           <motion.div
             className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
@@ -238,10 +170,7 @@ export function Timeline({
 
           {/* Visual Track */}
           {!isSynced ? (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-700 bg-[#080808a0] rounded-3xl border border-[#1A1A1A] border-dashed" style={{ minWidth: '100%' }}>
-              <MonitorPlay size={40} className="mb-4 opacity-20" />
-              <p className="text-[10px] font-black uppercase tracking-[0.4em]">Initialize Project Synchronization</p>
-            </div>
+            <div className="flex-1 h-14 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
           ) : (
             <div className="flex gap-1 h-full items-stretch">
               {segments.map((s, i) => {
@@ -290,7 +219,7 @@ export function Timeline({
                     }}
                     style={{
                       width: `${s.duration * pixelsPerSecond}px`,
-                      height: `${64 * verticalZoom}px`,
+                      height: '56px',
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
                       filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
                       transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
@@ -366,31 +295,47 @@ export function Timeline({
           )}
         </div>
 
+        {/* Captions track — hook-in for Task 9d (captionCues not yet wired) */}
+        {false && (
+          <div className="h-8 border-t border-[#1A1A1A] flex items-center px-2">
+            {/* caption cues rendered here — Task 9d */}
+          </div>
+        )}
+
         {/* Audio Track */}
         {voiceoverName && (
-          <div className="mt-2 h-12 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-hidden flex items-center">
-            <div className="absolute left-0 top-0 bottom-0 w-6 bg-[#F27D26]/10 flex items-center justify-center border-r border-[#F27D26]/20 z-10">
-              <Music size={10} className="text-[#F27D26]" />
-            </div>
-            <div className="flex-1 flex h-full ml-6">
+          <div className="mt-1 h-10 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-visible flex items-center">
+            <div className="flex h-full w-max">
               {segments.map((s) => (
                 <div
                   key={`vo-${s.id}`}
                   style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                  className="h-full border-r border-[#1A1A1A] relative flex items-center px-2 group"
+                  className="h-full border-r border-[#1A1A1A] relative flex items-center group flex-shrink-0"
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
+                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
                   <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
-                    onClick={(e) => e.stopPropagation()}
-                  />
-                  <div className="flex-1 flex items-center gap-0.5 opacity-20 group-hover:opacity-60 transition-opacity">
-                    {Array.from({ length: Math.ceil(s.duration * 5) }).map((_, i) => (
-                      <div key={i} className="w-px bg-[#F27D26]" style={{ height: `${20 + Math.random() * 60}%` }} />
-                    ))}
+                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
+                  <div className="flex-1 flex items-center px-1">
+                    {(() => {
+                      const totalDur = segments.reduce((a, seg) => a + seg.duration, 0);
+                      const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
+                      const startBar = Math.floor((segStart / totalDur) * waveformBars.length);
+                      const endBar = Math.floor(((segStart + s.duration) / totalDur) * waveformBars.length);
+                      const bars = waveformBars.slice(startBar, endBar);
+                      if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
+                      return (
+                        <div className="flex items-center h-full w-full gap-px px-0.5">
+                          {bars.map((amp, bi) => (
+                            <div
+                              key={bi}
+                              className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
+                              style={{ height: `${Math.max(2, amp * 32)}px` }}
+                            />
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
                   {currentSegmentId === s.id && (
                     <div className="absolute inset-0 bg-[#F27D26]/5" />
