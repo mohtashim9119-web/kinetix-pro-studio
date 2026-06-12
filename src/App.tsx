@@ -471,6 +471,7 @@ export default function App() {
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
+  const [stockError, setStockError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -747,13 +748,19 @@ export default function App() {
     // previous sync so manual timing adjustments survive a re-sync.
     const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
 
-    let acc = 0;
     const syncedSegments = newSegments.map(s => {
       const prev = prevByOrder.get(s.order);
-      const duration = prev?.locked ? prev.duration : s.duration;
-      const start = acc;
-      acc += duration;
-      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
+      return {
+        ...s,
+        assetId: prev?.assetId ?? s.assetId,
+        trimStart: prev?.trimStart,
+        trimEnd: prev?.trimEnd,
+        playbackSpeed: prev?.playbackSpeed,
+        isMuted: prev?.isMuted,
+        locked: prev?.locked,
+        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+      };
     });
 
     // Never wipe existing segments if parse produced nothing
@@ -858,13 +865,19 @@ export default function App() {
 
     // 6. Preserve locked durations by order index
     const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
-    let acc = 0;
     const syncedSegments = newSegments.map(s => {
       const prev = prevByOrder.get(s.order);
-      const duration = prev?.locked ? prev.duration : s.duration;
-      const start = acc;
-      acc += duration;
-      return { ...s, duration, locked: prev?.locked, startTime: Number(start.toFixed(3)) };
+      return {
+        ...s,
+        assetId: prev?.assetId ?? s.assetId,
+        trimStart: prev?.trimStart,
+        trimEnd: prev?.trimEnd,
+        playbackSpeed: prev?.playbackSpeed,
+        isMuted: prev?.isMuted,
+        locked: prev?.locked,
+        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+      };
     });
 
     // Never wipe existing segments if parse produced nothing
@@ -1279,6 +1292,12 @@ export default function App() {
       }
     }
   }, [currentTime, isPlaying, zoomLevel]);
+
+  useEffect(() => {
+    if (!stockError) return;
+    const t = setTimeout(() => setStockError(null), 5000);
+    return () => clearTimeout(t);
+  }, [stockError]);
 
   // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
@@ -2119,9 +2138,22 @@ export default function App() {
             onSelect={async (stock, targetId) => {
               let blob: Blob;
               try {
-                blob = await fetch(stock.url).then(r => r.blob());
+                if (isTauri()) {
+                  // Route through Rust to bypass CORS restrictions on external CDN URLs
+                  const base64: string = await invoke('fetch_url_bytes', { url: stock.url });
+                  const byteChars = atob(base64);
+                  const byteArray = new Uint8Array(byteChars.length);
+                  for (let i = 0; i < byteChars.length; i++) {
+                    byteArray[i] = byteChars.charCodeAt(i);
+                  }
+                  const mimeType = stock.type === 'image' ? 'image/jpeg' : 'video/mp4';
+                  blob = new Blob([byteArray], { type: mimeType });
+                } else {
+                  blob = await fetch(stock.url).then(r => r.blob());
+                }
               } catch (err) {
-                console.error('Failed to fetch stock asset blob, skipping:', stock.url, err);
+                console.error('[stock] failed to download asset:', stock.url, err);
+                setStockError(`Failed to download asset: ${String(err)}`);
                 return;
               }
               const id = crypto.randomUUID();
@@ -2154,6 +2186,21 @@ export default function App() {
           />
         </AnimatePresence>
         </Suspense>
+      )}
+
+      {/* Stock download error banner — auto-dismisses after 5 s */}
+      {stockError && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-lg">
+          <AlertCircle size={16} className="shrink-0 text-red-400" />
+          <span className="flex-1">{stockError}</span>
+          <button
+            onClick={() => setStockError(null)}
+            aria-label="Dismiss error"
+            className="shrink-0 text-red-400 hover:text-white transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
       )}
 
       {/* Sync Review Modals */}

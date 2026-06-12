@@ -59,7 +59,7 @@ export function StockSearchModal({ targetSegmentId, onClose, onSelect }: Props) 
             </div>
             <div>
               <h2 className="text-xl font-bold tracking-tight">Stock Library</h2>
-              <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Pexels & Pixabay Integration</p>
+              <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Pexels · Pixabay · Coverr</p>
             </div>
           </div>
           <button

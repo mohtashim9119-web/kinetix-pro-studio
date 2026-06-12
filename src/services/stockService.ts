@@ -5,6 +5,7 @@
 
 const PEXELS_KEY = import.meta.env.VITE_PEXELS_API_KEY as string | undefined;
 const PIXABAY_KEY = import.meta.env.VITE_PIXABAY_API_KEY as string | undefined;
+const COVERR_KEY = import.meta.env.VITE_COVERR_API_KEY as string | undefined;
 
 export interface StockResult {
   id: string;
@@ -12,7 +13,7 @@ export interface StockResult {
   url: string;
   thumbnail: string;
   type: 'video' | 'image';
-  provider: 'pexels' | 'pixabay';
+  provider: 'pexels' | 'pixabay' | 'coverr';
 }
 
 export type StockSearchResult =
@@ -133,26 +134,96 @@ export async function searchPixabay(query: string, type: 'video' | 'image' = 'vi
   }
 }
 
-export async function searchAllStock(query: string, type: 'video' | 'image' = 'video'): Promise<StockSearchResult> {
-  const [pexels, pixabay] = await Promise.all([
+// ── Coverr ──────────────────────────────────────────────────────────────────
+// Free tier: 50 calls/hour. Requires API key.
+// Docs: https://api.coverr.co/docs
+// Base: https://api.coverr.co/videos
+
+interface CoverrVideo {
+  id: string;
+  title: string;
+  thumbnail: string;
+  urls: {
+    mp4_preview: string;
+    mp4: string;
+  };
+}
+
+interface CoverrResponse {
+  hits: CoverrVideo[];
+}
+
+export async function searchCoverr(
+  query: string,
+  type: 'video' | 'image' = 'video',
+): Promise<StockSearchResult> {
+  // Coverr is video-only
+  if (type === 'image') return { status: 'ok', results: [] };
+
+  if (!COVERR_KEY) {
+    return { status: 'error', message: 'Coverr API key not configured. Add VITE_COVERR_API_KEY to your .env file.' };
+  }
+
+  const url =
+    `https://api.coverr.co/videos?query=${encodeURIComponent(query)}&page_size=20&page=0&urls=true`;
+
+  let res: Response;
+  try {
+    res = await fetchWithRetry(url, {
+      headers: { Authorization: `Bearer ${COVERR_KEY}` },
+    });
+  } catch (err) {
+    return { status: 'error', message: String(err) };
+  }
+
+  if (res.status === 429) return { status: 'rate_limited' };
+  if (!res.ok) return { status: 'error', message: `Coverr HTTP ${res.status}` };
+
+  let data: CoverrResponse;
+  try {
+    data = (await res.json()) as CoverrResponse;
+  } catch {
+    return { status: 'error', message: 'Coverr: invalid JSON response' };
+  }
+
+  const results: StockResult[] = (data.hits ?? [])
+    .filter(v => v.urls?.mp4_preview || v.urls?.mp4)
+    .map((v) => ({
+      id: `coverr-${v.id}`,
+      name: v.title,
+      url: v.urls.mp4_preview || v.urls.mp4,
+      thumbnail: v.thumbnail,
+      type: 'video' as const,
+      provider: 'coverr' as const,
+    }));
+
+  return { status: 'ok', results };
+}
+
+export async function searchAllStock(
+  query: string,
+  type: 'video' | 'image' = 'video',
+): Promise<StockSearchResult> {
+  const [pexels, pixabay, coverr] = await Promise.all([
     searchPexels(query, type),
     searchPixabay(query, type),
+    searchCoverr(query, type),
   ]);
 
-  // Rate-limit from either source takes priority — prompt the user to retry.
-  if (pexels.status === 'rate_limited' || pixabay.status === 'rate_limited') {
+  const sources = [pexels, pixabay, coverr];
+
+  // Any rate limit short-circuits everything
+  if (sources.some((s) => s.status === 'rate_limited')) {
     return { status: 'rate_limited' };
   }
 
-  const results: StockResult[] = [
-    ...(pexels.status === 'ok' ? pexels.results : []),
-    ...(pixabay.status === 'ok' ? pixabay.results : []),
-  ];
+  const allResults = sources
+    .filter((s): s is { status: 'ok'; results: StockResult[] } => s.status === 'ok')
+    .flatMap((s) => s.results);
 
-  // If both sources errored and we have no results, surface the error.
-  if (results.length === 0 && pexels.status === 'error' && pixabay.status === 'error') {
-    return { status: 'error', message: 'Both Pexels and Pixabay returned errors.' };
+  if (allResults.length === 0) {
+    return { status: 'error', message: 'All stock providers returned errors.' };
   }
 
-  return { status: 'ok', results };
+  return { status: 'ok', results: allResults };
 }

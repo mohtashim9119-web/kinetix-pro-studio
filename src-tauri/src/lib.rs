@@ -1,6 +1,33 @@
 mod ffmpeg;
 mod whisper;
 
+use base64::Engine as _;
+
+#[tauri::command]
+async fn fetch_url_bytes(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; KinetixPro/1.0)")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -28,6 +55,7 @@ pub fn run() {
             ffmpeg::reveal_in_finder,
             whisper::whisper_transcribe,
             whisper::whisper_cancel,
+            fetch_url_bytes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
