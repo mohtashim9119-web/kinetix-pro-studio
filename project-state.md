@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Task 9c (style preset library) complete. Starting Task 9a (independent text layers) next.
+Task 9a (independent text layers + collapsible left panel) complete. Starting Task 1 (export rendering profiling pass) next.
 
 ---
 
@@ -68,6 +68,7 @@ Task 9c (style preset library) complete. Starting Task 9a (independent text laye
 9. **Independent text layers + auto-captions + style presets** ⬜ — Three sub-tasks: (a) `project.textLayers[]` decoupled from segments; (b) auto-captions via bundled `whisper.cpp` sidecar (~80 MB `base.en` model); (c) style preset library in localStorage.
    - **9b-0 — UX foundation (drop zone + bottom drawer)** ✅ — Unified drop zone + mapping list (DropZonePanel), slide-up BottomDrawer, VideoSegment.locked with order-index re-sync preservation. SyncWizard and sidebar nav hidden (preserved). Commit `4ed6a04`, merged to main 2026-06-04.
    - Task 9b ✅ Done (whisper alignment + video preview — priority-1 branch)
+   - Task 9 sub-item (a) ✅ Done — independent text layers + collapsible left panel (task-9a branch)
    - Task 9 sub-item (c) ✅ Done — style preset library (task-9c branch)
 
 ### Export-rendering implementation
@@ -378,6 +379,7 @@ Phase 3 steps:
 | 2026-06-11 | Priority 2 — Multi-project dashboard: full-screen swap, confirmed flag, lastOpenedProjectId (sessionStorage), clear-on-dashboard-nav, image-only thumbnails, base64 thumbnail on asset change, ← Projects nav link. All tests passed. |
 | 2026-06-12 | Priority 3 — Stock footage APIs: Coverr adapter added (Bearer auth, api.coverr.co); Pexels + Pixabay keys wired via .env.local; stock downloads routed through Rust fetch_url_bytes command to bypass CORS; trimStart/trimEnd/playbackSpeed/assetId preserved across re-sync in both handleApplySyncFromFiles and finalizeSync; CSP updated for production builds. |
 | 2026-06-12 | Task 9c — Style preset library: presetService.ts with localStorage CRUD; PresetPicker component; per-category presets (transition, animation, overlayFilter, overlayConfig); 3 built-in overlay presets (Cyber/Retro/Bold); wired into SettingsPanel with save/apply/delete; global across all projects; customOverlayText dead field removed. |
+| 2026-06-12 | Task 9a — Independent text layers: textLayers[] added to Project; TextLayersPanel component (collapsible, inline editors, per-segment hide toggle); wired into DropZonePanel segments tab; global layers rendered in PreviewStage at z-45; export pipeline extended (FrameGlobalConfig.globalTextLayers, frameRenderer draws per-frame); collapsible left panel with ChevronLeft/Right toggle strip. |
 
 ---
 
@@ -610,6 +612,38 @@ Status: COMPLETE — merged to main
 - Apply preset → settings update immediately
 - Delete user preset → removed; built-in presets undeletable
 - Global: presets survive project switching and app restart
+
+---
+
+## Task 9a — Independent Text Layers + Collapsible Left Panel
+Status: COMPLETE — merged to main
+
+### What was built
+- types.ts: TextOverlay gains hiddenOnSegments?: string[]; Project gains textLayers?: TextOverlay[]
+- makeDefaultProject: textLayers: [] initialised
+- App.tsx handlers: handleAddTextLayer, handleUpdateTextLayer, handleDeleteTextLayer, handleToggleTextLayerOnSegment — all useCallback, immutable setProject patterns
+- TextLayersPanel.tsx (new): collapsible section at top of Segments tab; per-layer inline editors (text, X/Y %, color, bg-color, font size, font family); per-segment hide/show toggle list; expand/collapse toggle
+- DropZonePanel.tsx: TextLayersPanel rendered at top of Segments tab; 5 new props threaded through interface
+- PreviewStage.tsx: global text layers rendered at z-45, filtered by hiddenOnSegments; textLayers prop wired from App.tsx
+- frameRenderer.ts: FrameGlobalConfig.globalTextLayers added; second draw loop after extraOverlays; skips layers where segment id is in hiddenOnSegments
+- exportPipeline.ts: passes project.textLayers ?? [] as globalTextLayers into FrameGlobalConfig
+- App.tsx (collapsible panel): leftPanelCollapsed state; panel div uses width: 0/380 with transition-[width] duration-300 overflow-hidden; 4px-wide toggle strip with ChevronLeft/ChevronRight between panels
+
+### Key files changed
+- src/types.ts
+- src/App.tsx
+- src/components/TextLayersPanel.tsx — new file
+- src/components/DropZonePanel.tsx
+- src/components/PreviewStage.tsx
+- src/services/frameRenderer.ts
+- src/services/exportPipeline.ts
+
+### Verified behaviours
+- TextLayersPanel collapses/expands cleanly at top of Segments tab
+- Add text layer → appears in PreviewStage immediately at global z-level
+- Per-segment toggle → layer hidden on that segment only in preview and export
+- Collapsible left panel → full-width preview on collapse; panel restores on expand
+- tsc --noEmit clean on commit 7efc295
 
 ---
 
