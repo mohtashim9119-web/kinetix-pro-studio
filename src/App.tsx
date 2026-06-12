@@ -468,6 +468,9 @@ export default function App() {
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
+  const [previewHeight, setPreviewHeight] = useState(400);
+  const isDraggingDivider = useRef(false);
+  const centerColRef = useRef<HTMLDivElement>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
@@ -1577,11 +1580,15 @@ export default function App() {
         </button>
 
         {/* Center — preview + timeline stacked */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0">
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0" ref={centerColRef}>
 
-          {/* Preview — 16:9 fixed ratio, fills center width */}
-          <div className="flex-shrink-0 w-full bg-[#020202] relative">
-            <div className="w-full aspect-video">
+          {/* Preview — height-driven, draggable divider below */}
+          <div
+            className="flex-shrink-0 w-full bg-[#020202] relative"
+            style={{ height: previewHeight + 'px' }}
+          >
+            <div className="h-full w-full flex items-center justify-center bg-[#020202]">
+              <div className="h-full aspect-video">
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>
@@ -1601,6 +1608,7 @@ export default function App() {
                   textLayers={project.textLayers ?? []}
                 />
               </ErrorBoundary>
+              </div>
             </div>
 
             {/* Left pill — seek + play/pause + timecode */}
@@ -1635,6 +1643,30 @@ export default function App() {
               />
             </div>
           </div>
+
+          {/* Draggable divider */}
+          <div
+            className="h-1 flex-shrink-0 bg-[#1A1A1A] hover:bg-[#F27D26]/40 cursor-row-resize transition-colors"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              isDraggingDivider.current = true;
+              const startY = e.clientY;
+              const startHeight = previewHeight;
+              const onMove = (ev: MouseEvent) => {
+                if (!isDraggingDivider.current) return;
+                const delta = ev.clientY - startY;
+                const next = Math.min(Math.max(startHeight + delta, 180), Math.floor(window.innerHeight * 0.78));
+                setPreviewHeight(next);
+              };
+              const onUp = () => {
+                isDraggingDivider.current = false;
+                window.removeEventListener('mousemove', onMove);
+                window.removeEventListener('mouseup', onUp);
+              };
+              window.addEventListener('mousemove', onMove);
+              window.addEventListener('mouseup', onUp);
+            }}
+          />
 
           {/* Timeline — fills remaining height */}
           <div className="flex-1 min-h-0 border-t border-[#1A1A1A]">

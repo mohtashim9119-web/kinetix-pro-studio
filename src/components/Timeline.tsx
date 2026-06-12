@@ -304,8 +304,8 @@ export function Timeline({
 
         {/* Audio Track */}
         {voiceoverName && (
-          <div className="mt-1 h-10 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-hidden flex items-center">
-            <div className="flex h-full w-full">
+          <div className="mt-1 h-10 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-visible flex items-center">
+            <div className="flex h-full w-max">
               {segments.map((s) => (
                 <div
                   key={`vo-${s.id}`}
