@@ -117,7 +117,19 @@ export function alignScenestoTranscript(
     }
 
     const t0TokenIdx = tokenWords[bestStart]?.tokenIdx ?? 0;
-    const t1TokenIdx = tokenWords[Math.min(bestEnd, tokenWords.length - 1)]?.tokenIdx ?? t0TokenIdx;
+
+    // Re-scan bestStart to find the highest j where a word actually matched.
+    // Using the last MATCHED position (not bestEnd = bestStart + targetWords.length - 1)
+    // makes t1TokenIdx and searchStart independent of targetWords.length: adding a
+    // non-matching word to seg.text cannot extend effectiveLastWordPos, so it cannot
+    // shift lastTokenIdx or the next segment's searchStart.
+    let lastMatchOffset = -1;
+    for (let j = 0; j < targetWords.length; j++) {
+      if (tokenWords[bestStart + j]?.word === targetWords[j]) lastMatchOffset = j;
+    }
+    if (lastMatchOffset < 0) lastMatchOffset = 0; // fallback: no matches — treat as one-word span
+    const effectiveLastWordPos = bestStart + lastMatchOffset;
+    const t1TokenIdx = tokenWords[Math.min(effectiveLastWordPos, tokenWords.length - 1)]?.tokenIdx ?? t0TokenIdx;
 
     const t0 = tokens[t0TokenIdx]?.startSec ?? 0;
     const t1 = tokens[t1TokenIdx]?.endSec ?? t0 + 0.1;
@@ -129,37 +141,48 @@ export function alignScenestoTranscript(
       lastTokenIdx: t1TokenIdx,
     });
 
-    searchStart = bestStart + Math.max(1, Math.floor(targetWords.length * 0.8));
+    // Advance searchStart past all tokenWords sharing t1TokenIdx (the last matched token).
+    // Audio-grounded, not text-length-grounded: editing scene description text cannot
+    // shift where the next segment's scoring window begins.
+    let nextSearchStart = effectiveLastWordPos + 1;
+    while (nextSearchStart < tokenWords.length && (tokenWords[nextSearchStart]?.tokenIdx ?? Infinity) <= t1TokenIdx) {
+      nextSearchStart++;
+    }
+    searchStart = nextSearchStart;
   }
 
-  // Pass 2: silence-aware boundary detection
-  // Use actual token gaps from Whisper output to place boundaries precisely
+  // Step 2 — override t1 from neighbor anchors.
+  // Each unlocked segment's right boundary is set to the next segment's t0 anchor
+  // before the gap-fill runs. This breaks the bestEnd → lastTokenIdx → t1 chain so
+  // that editing scene description text cannot shift a segment's duration via word count.
+  // Locked segments are skipped: their t1 is immovable.
+  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
   for (let i = 0; i < results.length - 1; i++) {
+    if (segments[i]?.locked) continue;
+    results[i]!.t1 = results[i + 1]!.t0;
+  }
+
+  // Gap-fill — place boundaries in real audio silence.
+  // Reads actual Whisper token timestamps to find the midpoint of the silence gap
+  // between adjacent segments and moves both boundaries to that midpoint.
+  // Pairs where either side is locked are skipped entirely.
+  for (let i = 0; i < results.length - 1; i++) {
+    if (segments[i]?.locked || segments[i + 1]?.locked) continue;
     const curr = results[i]!;
     const next = results[i + 1]!;
 
-    // Actual end of last spoken word in curr, start of first spoken word in next.
-    // Sentinel -1 indices (empty segments) safely return undefined → fallback to t1/t0.
-    const currLastTokenEnd   = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
-    const nextFirstTokenStart = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
+    // Sentinel -1 indices (empty/heading-only segments) return undefined → fallback to curr.t1/next.t0.
+    const silenceStart = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
+    const silenceEnd   = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
 
-    if (nextFirstTokenStart > currLastTokenEnd) {
-      // There is a silence gap between the two segments — split it 50/50.
-      const silenceGap = nextFirstTokenStart - currLastTokenEnd;
-      curr.t1 = currLastTokenEnd + silenceGap * 0.5;
-      next.t0 = curr.t1;
-    } else {
-      // No silence gap (back-to-back or overlapping token spans).
-      // Use midpoint of the boundary to avoid a hard cut at a non-zero overlap.
-      const mid = (currLastTokenEnd + nextFirstTokenStart) / 2;
-      curr.t1 = mid;
-      next.t0 = mid;
-    }
+    // Midpoint splits any silence gap 50/50; also handles back-to-back tokens correctly.
+    const mid = (silenceStart + silenceEnd) / 2;
+    curr.t1 = mid;
+    next.t0 = mid;
   }
 
-  // Clamp last segment to actual audio end
-  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
-  if (results.length > 0) {
+  // Clamp last segment to actual audio end (skip if locked).
+  if (results.length > 0 && !segments[results.length - 1]?.locked) {
     results[results.length - 1]!.t1 = audioEnd;
   }
 
