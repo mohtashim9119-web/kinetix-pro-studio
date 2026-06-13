@@ -199,7 +199,10 @@ const parseProjectData = async (
   assets: Asset[],
   voiceoverDuration: number = 0,
 ): Promise<VideoSegment[]> => {
-  const rawDetails = sceneDetails.split(/\r?\n\r?\n/).filter(block => block.trim() !== '');
+  // Split on the start of each bracketed tag so blank lines between a tag and its
+  // description text stay within the same block (not treated as a scene boundary).
+  const TAG_REGEX = /(?=\[(?:IMAGE|VIDEO|HEADING)\s*:)/i;
+  const rawDetails = sceneDetails.split(TAG_REGEX).filter(block => block.trim() !== '');
   const scriptLines = script.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
 
   const scenes: { tag: string; description: string }[] = [];
@@ -213,7 +216,7 @@ const parseProjectData = async (
   });
 
   if (scenes.length === 0) {
-    const backupBlocks = sceneDetails.split(/\r?\n\r?\n/).map(l => l.trim()).filter(l => l !== '');
+    const backupBlocks = sceneDetails.split(TAG_REGEX).map(l => l.trim()).filter(l => l !== '');
     backupBlocks.forEach(block => {
       const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
       const tag = lines[0];
@@ -269,6 +272,13 @@ const parseProjectData = async (
       else name = detail;
     }
 
+    // Suppress description-fallback when the structured tag carries an explicit name
+    // (e.g. [IMAGE: foo.jpg]). Only fall back to findAssetByContext when the name
+    // slot is blank ([IMAGE:]) or there is no structured tag at all.
+    const hasExplicitTagName = specificMatch !== null &&
+      !detail.toUpperCase().includes('HEADING') &&
+      (specificMatch[1] ?? '').length > 0;
+
     if (name) {
       const matchingAssets = assets.filter(a => isFuzzyMatch(name, a.name));
       const unusedAsset = matchingAssets.find(a => !usedAssetIdsTotal.has(a.id));
@@ -279,7 +289,7 @@ const parseProjectData = async (
       }
     }
 
-    if (!current.assetId && text) {
+    if (!current.assetId && !hasExplicitTagName && text) {
       const availableAssets = assets.filter(a => !usedAssetIdsTotal.has(a.id) && a.type !== 'audio');
       const contextualAsset = findAssetByContext(text, availableAssets.length > 0 ? availableAssets : assets);
       if (contextualAsset) {
@@ -798,19 +808,33 @@ export default function App() {
       audioDuration,
     );
 
-    // Locked segments (matched by order index) preserve their duration from the
-    // previous sync so manual timing adjustments survive a re-sync.
-    const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
+    // Lock restoration: keyed first by stable identity (assetId for image/video segments,
+    // heading text for title cards), then by order index as fallback. This prevents one
+    // inserted or deleted scene from cascading stale state onto all subsequent segments.
+    // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
+    const stableKey = (s: VideoSegment): string => {
+      if (s.assetId) return `asset:${s.assetId}`;
+      if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
+      return `order:${s.order}`;
+    };
+    const prevByKey = new Map<string, VideoSegment>();
+    for (const s of projectRef.current.segments) {
+      const key = stableKey(s);
+      if (!prevByKey.has(key)) prevByKey.set(key, s);
+    }
+    const prevByOrder = new Map(
+      projectRef.current.segments.map(s => [s.order, s] as const)
+    );
 
     const syncedSegments = newSegments.map(s => {
-      const prev = prevByOrder.get(s.order);
+      const prev = prevByKey.get(stableKey(s)) ?? prevByOrder.get(s.order);
       return {
         ...s,
-        assetId: prev?.assetId ?? s.assetId,
-        trimStart: prev?.trimStart,
-        trimEnd: prev?.trimEnd,
-        playbackSpeed: prev?.playbackSpeed,
-        isMuted: prev?.isMuted,
+        assetId: s.assetId,
+        trimStart: prev?.trimStart ?? s.trimStart,
+        trimEnd: prev?.trimEnd ?? s.trimEnd,
+        playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
+        isMuted: prev?.isMuted ?? s.isMuted,
         locked: prev?.locked,
         duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
         startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
@@ -917,17 +941,31 @@ export default function App() {
     // 5. Parse project data with the fresh, complete data
     const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
-    // 6. Preserve locked durations by order index
-    const prevByOrder = new Map(projectRef.current.segments.map(s => [s.order, s]));
+    // 6. Preserve locked durations: keyed first by stable identity (assetId or heading text),
+    //    then by order index as fallback — same strategy as finalizeSync.
+    // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
+    const stableKey = (s: VideoSegment): string => {
+      if (s.assetId) return `asset:${s.assetId}`;
+      if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
+      return `order:${s.order}`;
+    };
+    const prevByKey = new Map<string, VideoSegment>();
+    for (const s of projectRef.current.segments) {
+      const key = stableKey(s);
+      if (!prevByKey.has(key)) prevByKey.set(key, s);
+    }
+    const prevByOrder = new Map(
+      projectRef.current.segments.map(s => [s.order, s] as const)
+    );
     const syncedSegments = newSegments.map(s => {
-      const prev = prevByOrder.get(s.order);
+      const prev = prevByKey.get(stableKey(s)) ?? prevByOrder.get(s.order);
       return {
         ...s,
-        assetId: prev?.assetId ?? s.assetId,
-        trimStart: prev?.trimStart,
-        trimEnd: prev?.trimEnd,
-        playbackSpeed: prev?.playbackSpeed,
-        isMuted: prev?.isMuted,
+        assetId: s.assetId,
+        trimStart: prev?.trimStart ?? s.trimStart,
+        trimEnd: prev?.trimEnd ?? s.trimEnd,
+        playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
+        isMuted: prev?.isMuted ?? s.isMuted,
         locked: prev?.locked,
         duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
         startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
