@@ -234,6 +234,10 @@ export function alignScenestoTranscript(
   return results.map(r => ({ t0: r.t0, t1: r.t1 }));
 }
 
+/** Fixed on-screen duration for heading-only slides after Whisper alignment. */
+export const HEADING_DEFAULT_DURATION = 1.0; // seconds
+const MIN_SEGMENT_DURATION = 0.3; // must match App.tsx constant
+
 /**
  * Applies time windows from `alignments` to `segments`, respecting
  * `segment.locked === true` (locked segments are left unchanged).
@@ -253,6 +257,95 @@ export function distributeSegmentTimes(
       startTime: Number(a.t0.toFixed(3)),
       duration: Number(duration.toFixed(3)),
     };
+  });
+}
+
+/** Returns the index of the nearest non-heading-only segment searching from `from` in direction `step`. */
+function nearestContentIdx(segs: VideoSegment[], from: number, step: -1 | 1): number {
+  for (let ni = from + step; ni >= 0 && ni < segs.length; ni += step) {
+    const s = segs[ni];
+    if (s && !(s.heading && !s.text)) return ni;
+  }
+  return -1;
+}
+
+/**
+ * Post-processing pass that corrects heading-only segment durations after Whisper
+ * alignment collapses them to ~0.1 s (heading slides have no spoken text to match).
+ *
+ * Rules:
+ *  - Each heading-only slide (seg.heading non-empty, seg.text empty, not locked) is
+ *    set to HEADING_DEFAULT_DURATION (1.0 s), taken from adjacent content segments.
+ *  - Nearest unlocked content in each direction is found by scanning past adjacent headings.
+ *  - 50 / 50 split when both directions are available; any shortfall on one side
+ *    is shifted to the other.
+ *  - Locked neighbors contribute 0 available space.
+ *  - If total available < HEADING_DEFAULT_DURATION, heading is clamped to available space.
+ *  - If both neighbors are locked / absent, heading is set to MIN_SEGMENT_DURATION.
+ *  - startTimes are recomputed to keep segments contiguous.
+ */
+export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
+  if (segments.length === 0) return segments;
+  const segs = segments.map(s => ({ ...s }));
+
+  for (let i = 0; i < segs.length; i++) {
+    const seg = segs[i]!;
+    if (!(seg.heading && !seg.text)) continue; // not a heading-only slide
+    if (seg.locked) continue;
+
+    const prevIdx = nearestContentIdx(segs, i, -1);
+    const nextIdx = nearestContentIdx(segs, i, 1);
+    const prevSeg = prevIdx >= 0 ? segs[prevIdx]! : null;
+    const nextSeg = nextIdx >= 0 ? segs[nextIdx]! : null;
+
+    const prevAvail = prevSeg && !prevSeg.locked
+      ? Math.max(0, prevSeg.duration - MIN_SEGMENT_DURATION) : 0;
+    const nextAvail = nextSeg && !nextSeg.locked
+      ? Math.max(0, nextSeg.duration - MIN_SEGMENT_DURATION) : 0;
+    const totalAvail = prevAvail + nextAvail;
+
+    if (totalAvail <= 0) continue;
+
+    const target = Math.min(HEADING_DEFAULT_DURATION, seg.duration + totalAvail);
+    // Only take from neighbors the NET amount needed — the heading already holds seg.duration.
+    const toTake = Math.max(0, target - seg.duration);
+
+    let takeFromPrev: number;
+    let takeFromNext: number;
+
+    if (toTake < 0.001) {
+      takeFromPrev = 0; takeFromNext = 0;
+    } else if (prevAvail === 0) {
+      takeFromPrev = 0; takeFromNext = toTake;
+    } else if (nextAvail === 0) {
+      takeFromPrev = toTake; takeFromNext = 0;
+    } else {
+      const half = toTake / 2;
+      if (prevAvail >= half && nextAvail >= half) {
+        takeFromPrev = half; takeFromNext = half;
+      } else if (prevAvail < half) {
+        takeFromPrev = prevAvail;
+        takeFromNext = Math.min(toTake - prevAvail, nextAvail);
+      } else {
+        takeFromNext = nextAvail;
+        takeFromPrev = Math.min(toTake - nextAvail, prevAvail);
+      }
+    }
+
+    segs[i] = { ...seg, duration: target };
+    if (prevIdx >= 0 && prevSeg !== null && takeFromPrev > 0) {
+      segs[prevIdx] = { ...prevSeg, duration: prevSeg.duration - takeFromPrev };
+    }
+    if (nextIdx >= 0 && nextSeg !== null && takeFromNext > 0) {
+      segs[nextIdx] = { ...nextSeg, duration: nextSeg.duration - takeFromNext };
+    }
+  }
+
+  let acc = 0;
+  return segs.map(s => {
+    const t = acc;
+    acc += s.duration;
+    return { ...s, startTime: Number(t.toFixed(3)) };
   });
 }
 

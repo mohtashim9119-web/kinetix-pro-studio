@@ -3,6 +3,7 @@ import {
   transcribeWithProgress,
   alignScenestoTranscript,
   distributeSegmentTimes,
+  applyHeadingTiming,
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
@@ -61,7 +62,7 @@ export function useWhisper(): UseWhisperApi {
         const silences = await fetchAndDetectSilences(audioAsset);
         const alignments = alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        onSegmentsUpdated(updated);
+        onSegmentsUpdated(applyHeadingTiming(updated));
         return;
       }
 
@@ -93,7 +94,7 @@ export function useWhisper(): UseWhisperApi {
 
         const alignments = alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        onSegmentsUpdated(updated);
+        onSegmentsUpdated(applyHeadingTiming(updated));
 
         onProjectUpdated(p => ({
           ...p,

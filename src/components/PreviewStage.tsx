@@ -137,6 +137,11 @@ export function PreviewStage({
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
   const currentTimeRef = useRef(currentTime);
 
+  // Heading container measurement — ResizeObserver drives px font sizing so
+  // the heading scales with the preview container, not the viewport (vh units).
+  const [headingContainerHeight, setHeadingContainerHeight] = useState(0);
+  const headingContainerRef = useRef<HTMLDivElement>(null);
+
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
   // Refs for individual overlay elements — keyed by overlay.id
@@ -389,6 +394,28 @@ export function PreviewStage({
     }
   }, [isPlaying]);
 
+  // Re-observe whenever a heading segment mounts; el is null for non-heading segments
+  // so the effect is a safe no-op when the heading div is not in the DOM.
+  useEffect(() => {
+    const el = headingContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setHeadingContainerHeight(entry.contentRect.height);
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [currentSegment?.heading]);
+
+  const headingLength = currentSegment?.heading?.length ?? 0;
+  const baseSize = headingContainerHeight * 0.14;
+  const shrinkFactor = Math.max(0.3, 1 - headingLength / 80);
+  const headingFontSize = Math.max(
+    headingContainerHeight * 0.04,
+    Math.min(headingContainerHeight * 0.14, baseSize * shrinkFactor),
+  );
+
   return (
     <div className="w-full h-full">
       <div
@@ -464,8 +491,32 @@ export function PreviewStage({
                           transition={{ duration: 0.4 }}
                         />
                       )}
-                      {/* Missing asset placeholder */}
-                      {!asset?.url && (
+                      {/* Heading segment — full-screen title on black, bypasses hideAllText */}
+                      {currentSegment.heading && !asset?.url && (
+                        <div
+                          ref={headingContainerRef}
+                          className="absolute inset-0 bg-black flex items-center justify-center z-10 p-8"
+                        >
+                          <h1
+                            className="text-white font-bold text-center"
+                            style={{
+                              fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
+                              fontFamily: globalOverlayConfig.fontFamily || 'system-ui, sans-serif',
+                              lineHeight: 1.2,
+                              maxWidth: '90%',
+                              maxHeight: '80%',
+                              overflow: 'hidden',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 6,
+                              WebkitBoxOrient: 'vertical' as const,
+                            }}
+                          >
+                            {currentSegment.heading}
+                          </h1>
+                        </div>
+                      )}
+                      {/* Missing asset placeholder — not shown for heading segments */}
+                      {!asset?.url && !currentSegment.heading && (
                         <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
                                         flex items-center justify-center p-6 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-60">
@@ -487,9 +538,7 @@ export function PreviewStage({
                             </svg>
                             <p className="text-yellow-400 text-sm font-medium">Missing asset</p>
                             <p className="text-gray-500 text-xs">
-                              {currentSegment?.heading
-                                ? `Scene: ${currentSegment.heading}`
-                                : 'Upload or assign an asset to this segment'}
+                              Upload or assign an asset to this segment
                             </p>
                           </div>
                         </div>
@@ -594,22 +643,6 @@ export function PreviewStage({
                 className="absolute inset-0 flex flex-col items-center justify-center p-20 text-center pointer-events-none select-none z-10"
                 style={{ opacity: transitionPreview.isActive ? 0 : 1, transition: 'opacity 100ms ease' }}
               >
-                {currentSegment.heading && (currentSegment.showOverlay || !hideAllText) && (
-                  <motion.h3
-                    {...currentSegment.overlayConfig?.animation ? getMotionProps(currentSegment.overlayConfig.animation) : { initial: { opacity: 0, y: -20 }, animate: { opacity: 1, y: 0 } }}
-                    className="mb-4 drop-shadow-2xl"
-                    style={{
-                      fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
-                      color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
-                      fontSize: `${isFullscreen ? 80 : 60}px`,
-                      fontWeight: currentSegment.overlayConfig?.fontWeight || 900,
-                      fontStyle: currentSegment.overlayConfig?.fontStyle || 'normal',
-                      textShadow: currentSegment.overlayConfig?.textShadow || '0 4px 15px rgba(0,0,0,0.5)',
-                    }}
-                  >
-                    {currentSegment.heading}
-                  </motion.h3>
-                )}
                 {((!hideAllText && currentSegment.text) || (currentSegment.showOverlay && currentSegment.text)) && (
                   <motion.div
                     initial={{ y: 30, opacity: 0 }}

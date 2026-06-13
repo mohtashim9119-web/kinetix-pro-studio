@@ -239,7 +239,7 @@ const parseProjectData = async (
   for (const [idx, scene] of scenes.entries()) {
     let text = scene.description.trim();
 
-    if (!text) {
+    if (!text && !scene.tag.toUpperCase().includes('HEADING')) {
       if (scriptLines.length === sceneCount) {
         text = scriptLines[idx] ?? '';
       } else if (scriptLines.length > 0) {
@@ -247,6 +247,13 @@ const parseProjectData = async (
         const endIdx = Math.floor(((idx + 1) / sceneCount) * scriptLines.length);
         text = scriptLines.slice(startIdx, endIdx).join(' ');
       }
+    }
+
+    // Heading scenes never carry text — strip any description the user wrote
+    // and any script text distributed to them. Heading-only timing is owned
+    // by applyHeadingTiming in whisperService.ts.
+    if (scene.tag.toUpperCase().includes('HEADING')) {
+      text = '';
     }
 
     const current: RawSegment = {
@@ -366,7 +373,7 @@ const parseProjectData = async (
       sourceDuration,
     };
 
-    if (i === rawSegments.length - 1 && voiceoverDuration > 0) {
+    if (i === rawSegments.length - 1 && voiceoverDuration > 0 && !segment.heading) {
       segment.duration = Math.max(0.1, Number((voiceoverDuration - segment.startTime).toFixed(3)));
     }
 
@@ -903,9 +910,9 @@ export default function App() {
         trimEnd: prev?.trimEnd ?? s.trimEnd,
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
-        locked: prev?.locked,
-        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
-        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+        locked: (s.heading && !s.text) ? undefined : prev?.locked,
+        duration: prev?.locked && !(s.heading && !s.text) ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked && !(s.heading && !s.text) ? (prev.startTime ?? s.startTime) : s.startTime,
       };
     });
 
@@ -1034,9 +1041,9 @@ export default function App() {
         trimEnd: prev?.trimEnd ?? s.trimEnd,
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
-        locked: prev?.locked,
-        duration: prev?.locked ? (prev.duration ?? s.duration) : s.duration,
-        startTime: prev?.locked ? (prev.startTime ?? s.startTime) : s.startTime,
+        locked: (s.heading && !s.text) ? undefined : prev?.locked,
+        duration: prev?.locked && !(s.heading && !s.text) ? (prev.duration ?? s.duration) : s.duration,
+        startTime: prev?.locked && !(s.heading && !s.text) ? (prev.startTime ?? s.startTime) : s.startTime,
       };
     });
 

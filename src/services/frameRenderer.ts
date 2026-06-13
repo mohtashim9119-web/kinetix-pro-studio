@@ -299,6 +299,58 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   ctx.fillRect(0, 0, w, h);
 
   // -------------------------------------------------------------------------
+  // Heading segments: title is primary content — bypass media, overlays, hideAllText.
+  // Black background is already filled above; draw title text then return early.
+  // -------------------------------------------------------------------------
+  if (segment.heading) {
+    const maxWidth = w * 0.9;
+    const maxHeight = h * 0.8;
+    const fontFamily = g.overlayConfig.fontFamily || 'sans-serif';
+
+    let fontSize = Math.floor(h * 0.10);
+    const minFontSize = Math.floor(h * 0.03);
+    // Load font once at max size — covers all smaller sizes (scalable font).
+    await ensureFont(fontFamily, fontSize);
+
+    let lines: string[] = [];
+    ctx.save();
+
+    while (fontSize >= minFontSize) {
+      ctx.font = `bold ${fontSize}px "${fontFamily}"`;
+      lines = [];
+      let currentLine = '';
+      for (const word of segment.heading.split(' ')) {
+        const testLine = currentLine ? `${currentLine} ${word}` : word;
+        if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = testLine;
+        }
+      }
+      if (currentLine) lines.push(currentLine);
+      if (lines.length * fontSize * 1.2 <= maxHeight) break;
+      fontSize -= Math.max(4, Math.floor(fontSize * 0.08));
+    }
+
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const lineHeight = fontSize * 1.2;
+    const totalHeight = lines.length * lineHeight;
+    const startY = h / 2 - totalHeight / 2 + lineHeight / 2;
+    lines.forEach((line, i) => {
+      ctx.fillText(line, w / 2, startY + i * lineHeight);
+    });
+    ctx.restore();
+
+    if (params.transition && params.transition.alpha > 0) {
+      applyTransitionBlend(ctx, params.transition, w, h);
+    }
+    return;
+  }
+
+  // -------------------------------------------------------------------------
   // Visual layer (filter applied only to the media, not the text overlays)
   // -------------------------------------------------------------------------
   const filterStr = getFilterStyle(segment.overlayFilter ?? g.globalOverlayFilter);
@@ -372,22 +424,8 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const fontStyle = oc?.fontStyle ?? 'normal';
     const shadow = oc?.textShadow ?? '0 4px 15px rgba(0,0,0,0.5)';
 
-    // Scale font sizes relative to 1080p reference (PreviewStage uses 60 / 24 px CSS at ~1024px wide)
-    const headingPx = Math.round((h / 1080) * 60);
+    // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide)
     const bodyPx = Math.round((h / 1080) * 24);
-
-    if (segment.heading) {
-      await ensureFont(fontFamily, headingPx);
-      ctx.save();
-      ctx.font = `${fontStyle} ${fontWeight} ${headingPx}px "${fontFamily}"`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = color;
-      applyTextShadow(ctx, shadow);
-      ctx.fillText(segment.heading, w / 2, h * 0.30);
-      clearShadow(ctx);
-      ctx.restore();
-    }
 
     if (segment.text) {
       const displayText = `“${segment.text}”`;
