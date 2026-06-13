@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
+const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
+
 interface Props {
   segments: VideoSegment[];
   assets: Asset[];

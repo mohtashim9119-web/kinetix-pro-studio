@@ -190,6 +190,9 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
   return newAssets;
 }
 
+const MIN_SEGMENT_DURATION = 0.3; // seconds — minimum timeline slot width
+const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
+
 // Fuzzy matching helper
 
 // Enhanced parser that handles heading-voiceover logic
@@ -447,6 +450,57 @@ function getExportErrorSummary(error: ExportError): string {
   }
 }
 
+/** Recomputes sequential startTimes from accumulated durations. Pure. */
+function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
+  let acc = 0;
+  return segs.map(s => {
+    const t = acc;
+    acc += s.duration;
+    return { ...s, startTime: Number(t.toFixed(3)) };
+  });
+}
+
+/**
+ * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
+ * Affected segments (dragged + all that absorbed any portion) are auto-locked.
+ * Returns the updated array, or null if a locked neighbor blocked the cascade
+ * (caller should revert the live-preview state and show a toast).
+ */
+function computeDragCascade(
+  originalSegments: VideoSegment[],
+  draggedIdx: number,
+  finalDuration: number,
+  finalTrimStart: number,
+  direction: 'right' | 'left',
+  onLockedBlock: (segIndex: number, segId: string) => void,
+): VideoSegment[] | null {
+  const segs = originalSegments.map(s => ({ ...s }));
+  segs[draggedIdx] = { ...segs[draggedIdx]!, duration: finalDuration, trimStart: finalTrimStart, locked: true };
+  const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
+  let remaining = -delta; // positive → neighbor must grow; negative → neighbor must shrink
+  const step = direction === 'right' ? 1 : -1;
+  let ni = draggedIdx + step;
+  while (Math.abs(remaining) > 0.001) {
+    if (ni < 0 || ni >= segs.length) break;
+    const neighbor = segs[ni]!;
+    if (neighbor.locked) {
+      onLockedBlock(ni, neighbor.id);
+      return null;
+    }
+    const newDur = neighbor.duration + remaining;
+    if (newDur >= MIN_SEGMENT_DURATION) {
+      segs[ni] = { ...neighbor, duration: newDur, locked: true };
+      remaining = 0;
+    } else {
+      // Clamp neighbor to MIN; pass overflow to next segment in same direction.
+      segs[ni] = { ...neighbor, duration: MIN_SEGMENT_DURATION, locked: true };
+      remaining += neighbor.duration - MIN_SEGMENT_DURATION; // remaining stays negative
+      ni += step;
+    }
+  }
+  return recomputeStartTimes(segs);
+}
+
 export default function App() {
   const [project, setProject] = useState<Project>(makeDefaultProject);
 
@@ -484,6 +538,10 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [resizingId, setResizingId] = useState<string | null>(null);
   const [resizingType, setResizingType] = useState<'start' | 'end' | null>(null);
+  const [toast, setToast] = useState<{
+    message: string;
+    action?: { label: string; onClick: () => void };
+  } | null>(null);
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
@@ -512,6 +570,7 @@ export default function App() {
   // Cleared via a one-frame rAF delay in handleUp so it stays true through
   // the render that processes the final mousemove setProject call.
   const isResizingRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
 
 
@@ -519,6 +578,15 @@ export default function App() {
   // handleSwitchProject, which is defined later in the component body.
   // The ref is updated every render so it always holds the latest version.
   const handleSwitchProjectRef = useRef<(id: string) => Promise<void>>(async () => {});
+
+  const showToast = useCallback((
+    message: string,
+    action?: { label: string; onClick: () => void },
+  ) => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, action });
+    toastTimerRef.current = setTimeout(() => setToast(null), TOAST_DURATION);
+  }, []);
 
   // Rehydrate persisted project on mount
   useEffect(() => {
@@ -1743,21 +1811,28 @@ export default function App() {
                   setResizingId(id);
                   setResizingType(type);
                   document.body.classList.add('resizing');
+                  // Snapshot original segments at drag-start; used for cascade + revert.
+                  const originalSegments = projectRef.current.segments;
+                  const draggedIdx = originalSegments.findIndex(s => s.id === id);
+                  const originalTarget = originalSegments[draggedIdx];
+                  if (draggedIdx < 0 || !originalTarget) return;
+                  const pps = 100 * zoomLevel;
+                  let lastX = 0;
+                  let hasMoved = false;
                   const handleMove = (e: MouseEvent) => {
                     const timeline = document.getElementById('timeline-scroll-area');
                     if (!timeline) return;
                     const rect = timeline.getBoundingClientRect();
-                    const x = e.clientX - rect.left + timeline.scrollLeft - 24;
-                    const pixelsPerSecond = 100 * zoomLevel;
+                    lastX = e.clientX - rect.left + timeline.scrollLeft - 24;
+                    hasMoved = true;
+                    // Live preview: update only the dragged segment. Cascade applies on mouseup.
                     setProject(prev => {
-                      const target = prev.segments.find(s => s.id === id);
-                      if (!target) return prev;
                       const updated = prev.segments.map(s => {
                         if (s.id !== id) return s;
-                        if (type === 'end') return { ...s, duration: Math.max(0.1, (x / pixelsPerSecond) - target.startTime) };
+                        if (type === 'end') return { ...s, duration: Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime) };
                         if (type === 'start') {
-                          const delta = (x / pixelsPerSecond) - target.startTime;
-                          return { ...s, duration: Math.max(0.1, target.duration - delta), trimStart: Math.max(0, (target.trimStart ?? 0) + delta) };
+                          const rawDelta = (lastX / pps) - originalTarget.startTime;
+                          return { ...s, duration: Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta), trimStart: Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta) };
                         }
                         return s;
                       });
@@ -1772,6 +1847,41 @@ export default function App() {
                     window.removeEventListener('mousemove', handleMove);
                     window.removeEventListener('mouseup', handleUp);
                     requestAnimationFrame(() => { isResizingRef.current = false; });
+                    if (!hasMoved) return;
+                    // Compute final duration from last known mouse position.
+                    let finalDuration: number;
+                    let finalTrimStart: number = originalTarget.trimStart ?? 0;
+                    if (type === 'end') {
+                      finalDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
+                    } else {
+                      const rawDelta = (lastX / pps) - originalTarget.startTime;
+                      finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+                      finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+                    }
+                    // Negligible drag — revert live preview to original.
+                    if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
+                      setProject(prev => ({ ...prev, segments: originalSegments }));
+                      return;
+                    }
+                    const direction = type === 'end' ? 'right' as const : 'left' as const;
+                    const cascadeResult = computeDragCascade(
+                      originalSegments, draggedIdx, finalDuration, finalTrimStart, direction,
+                      (segIdx, segId) => {
+                        const lockedSeg = originalSegments.find(s => s.id === segId);
+                        showToast(
+                          `Segment ${segIdx + 1} is locked. Unlock to continue resizing.`,
+                          lockedSeg ? {
+                            label: 'Unlock',
+                            onClick: () => setProject(prev => ({
+                              ...prev,
+                              segments: prev.segments.map(s => s.id === segId ? { ...s, locked: false } : s),
+                            })),
+                          } : undefined,
+                        );
+                      },
+                    );
+                    // null → locked neighbor blocked cascade: revert to original state.
+                    setProject(prev => ({ ...prev, segments: cascadeResult ?? originalSegments }));
                   };
                   isResizingRef.current = true;
                   window.addEventListener('mousemove', handleMove);
@@ -2424,6 +2534,21 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* Lock-block toast — bottom-center, 5 s auto-dismiss */}
+      {toast !== null && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[400] bg-indigo-600 text-white rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 max-w-sm w-max">
+          <span className="flex-1 text-sm">{toast.message}</span>
+          {toast.action && (
+            <button
+              onClick={() => { toast.action!.onClick(); setToast(null); }}
+              className="text-sm font-semibold bg-white/20 hover:bg-white/30 rounded-lg px-3 py-1.5 transition-colors flex-shrink-0"
+            >
+              {toast.action.label}
+            </button>
+          )}
+        </div>
+      )}
 
     </div>
   );
