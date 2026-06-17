@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Layout redesign complete — 3-column %, collapsible panels, Effects tab, real waveform, draggable preview divider. Starting Task 1 (export rendering profiling pass) next.
+Sync engine hardening complete (100% accuracy, edit isolation, heading timing+rendering). BottomDrawer cleaned to 8 controls with slip-trim bar and click-outside close. playbackSpeed deferred (UI hidden, code preserved). Next: push to origin/main for CI artifacts, then export-rendering profiling (Task 1).
 
 ---
 
@@ -72,6 +72,10 @@ Layout redesign complete — 3-column %, collapsible panels, Effects tab, real w
    - Task 9b ✅ Done (whisper alignment + video preview — priority-1 branch)
    - Task 9 sub-item (a) ✅ Done — independent text layers + collapsible left panel (task-9a branch)
    - Task 9 sub-item (c) ✅ Done — style preset library (task-9c branch)
+
+### Quality of life — landed
+
+- Drawer UX redesign — slip-trim bar, click-outside close, timeline-click open, reduced clutter ✅ Done 2026-06-17
 
 ### Export-rendering implementation
 
@@ -283,6 +287,7 @@ Phase 3 steps:
 - **`getMediaDuration()` URL cache missing** — creates a new HTMLVideoElement per invocation with no cache; N segments sharing the same video asset trigger N separate `loadedmetadata` loads at sync time. Low impact for small projects. Fix when sync performance becomes a complaint.
 - **`finalizeSync` redundant second-pass startTime accumulation** — re-accumulates startTimes already set correctly by `parseProjectData`. Dead code under normal conditions; may silently correct floating-point drift with 20+ segments. Remove or verify in a future cleanup pass.
 - **Character-count vs word-count duration weights** — `parseProjectData` uses `s.text.length` (character count) for duration weights, not word count as documented in CLAUDE.md. Dense prose receives disproportionate time. Deferred to a future sync quality pass.
+- **`playbackSpeed` UI hidden** — speed multiplier state + logic is preserved in App.tsx but the UI control (slider/select) was removed from BottomDrawer during the 2026-06-17 redesign to reduce clutter. Re-expose as a compact dropdown if user-testing shows it's needed.
 - **`audioRef.current.duration` synchronous read on upload** — read at button-click time with no await; if `loadedmetadata` has not fired, `audioDuration = 0` and `parseProjectData` silently falls back to `rawSegments.length × 5` seconds with no user feedback. Add a `loadedmetadata` await and a toast warning before public launch.
 - **`currentSegment` gap behavior** — useMemo returns `null` during any timing gap between segments (e.g. after a trim-resize misaligns startTimes); preview shows "Sequence Standby" with no indicator that a gap exists. Low priority until trim-resize precision is improved.
 - **Audio waveform bars use `Math.random()` heights** — Timeline waveform bars are decorative, not real waveform data, and re-randomize on every render. Replace with real waveform analysis or make heights stable (compute once on asset load). Deferred.
@@ -383,6 +388,7 @@ Phase 3 steps:
 | 2026-06-12 | Task 9c — Style preset library: presetService.ts with localStorage CRUD; PresetPicker component; per-category presets (transition, animation, overlayFilter, overlayConfig); 3 built-in overlay presets (Cyber/Retro/Bold); wired into SettingsPanel with save/apply/delete; global across all projects; customOverlayText dead field removed. |
 | 2026-06-12 | Task 9a — Independent text layers: textLayers[] added to Project; TextLayersPanel component (collapsible, inline editors, per-segment hide toggle); wired into DropZonePanel segments tab; global layers rendered in PreviewStage at z-45; export pipeline extended (FrameGlobalConfig.globalTextLayers, frameRenderer draws per-frame); collapsible left panel with ChevronLeft/Right toggle strip. |
 | 2026-06-12 | Layout redesign — 3-column percentage layout (20/65/15vw), collapsible left+right panels, full-width header removed (nav lives in panels), Effects tab in left panel (all SettingsPanel controls moved inline), Timeline cleanup (sub-toolbar removed, floating pills, fixed dead rows), real Web Audio API waveform, audio track full-width scroll fix, draggable preview/timeline divider clamped to 16:9 ratio, preview height-driven aspect-video. |
+| 2026-06-17 | Sync engine hardening — whisperService.ts alignScenesToTranscript() sliding-window matcher + applyHeadingTiming() fixed 1.0s with 50/50 neighbor absorption; silenceDetector.ts Web Audio API silence scan for gap-fill; timeline manual-adjustment isolation with cascade + auto-lock; [HEADING:] scene proper timing + rendering; Whisper segment timing decoupled from description text; tag-primary asset matching. BottomDrawer redesign — reduced from ~38 controls to 8; slip-trim visual bar (fixed-width orange window slides over source clip); click-outside backdrop closes drawer; timeline-click opens drawer; reset-button scrolls timeline to 0. playbackSpeed UI hidden (code preserved). |
 
 ---
 

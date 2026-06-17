@@ -394,6 +394,14 @@ export function PreviewStage({
     }
   }, [isPlaying]);
 
+  // Sync playbackRate whenever playbackSpeed or global speed changes
+  // without re-seeking (seek only happens on segment transition above).
+  useEffect(() => {
+    const activeEl = activeSlotRef.current === 'a' ? videoARef.current : videoBRef.current;
+    if (!activeEl) return;
+    activeEl.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
+  }, [currentSegment?.playbackSpeed, globalPlaybackSpeed]);
+
   // Re-observe whenever a heading segment mounts; el is null for non-heading segments
   // so the effect is a safe no-op when the heading div is not in the DOM.
   useEffect(() => {

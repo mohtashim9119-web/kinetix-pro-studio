@@ -29,6 +29,10 @@ src/
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # isFuzzyMatch(), findAssetByContext() — parseProjectData() is still in App.tsx
+    whisperService.ts # alignScenesToTranscript() sliding-window text matcher; applyHeadingTiming() —
+                     #   gives [HEADING:] segments fixed 1.0s, 50/50 neighbor absorption, lock-aware.
+    silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
+                     #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
                      #   isTauri() guard — checks for window.__TAURI_INTERNALS__.
@@ -52,6 +56,10 @@ src/
     useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
                              #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
   components/
+    BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
+                     #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
+                     #   bar (fixed-width orange window slides over source); mute toggle. Heading input
+                     #   shown only for [HEADING:] segments. Click-outside backdrop closes drawer.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
     PreviewStage.tsx      # Video/image display + overlay rendering
     SegmentEditorPanel.tsx # Segment list + per-segment controls

@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { AnimatePresence } from 'motion/react';
-import { motion } from 'motion/react';
-import { X, Lock, Unlock, Plus, Trash2, Video, Music, Type } from 'lucide-react';
-import { VideoSegment, Asset, TextOverlay } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
+import { X, Lock, Unlock, Video, Music, ChevronDown, ChevronUp } from 'lucide-react';
+import { VideoSegment, Asset } from '../types';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
 
 interface Props {
@@ -17,13 +17,9 @@ interface Props {
   onClose: () => void;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
-  onUpdateExtraOverlay: (segIdx: number, oIdx: number, updates: Partial<TextOverlay>) => void;
-  onSegmentDurationChange: (idx: number, duration: number) => void;
-  onToggleOverlay: (idx: number) => void;
-  onSetOverlayPreset: (idx: number, preset: 'cyber' | 'retro' | 'brutal') => void;
-  onAddExtraOverlay: (idx: number) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onToggleLock: (segmentId: string) => void;
+  onSeek?: (time: number) => void;
 }
 
 export function BottomDrawer({
@@ -34,18 +30,28 @@ export function BottomDrawer({
   onClose,
   onUpdateSegment,
   onUpdateSegmentOverlay,
-  onUpdateExtraOverlay,
-  onSegmentDurationChange,
-  onToggleOverlay,
-  onSetOverlayPreset,
-  onAddExtraOverlay,
   onOpenStockSearch,
   onToggleLock,
+  onSeek,
 }: Props) {
-  // Use short aliases matching SegmentEditorPanel conventions so the verbatim
-  // copy below stays readable without renaming every reference.
+  const [formattingOpen, setFormattingOpen] = useState(false);
+  const trimTrackRef = useRef<HTMLDivElement>(null);
+
   const s = segment;
   const idx = segmentIndex;
+
+  // Reset formatting panel when switching segments
+  useEffect(() => {
+    setFormattingOpen(false);
+  }, [s?.id]);
+
+  const asset = s ? assets.find(a => a.id === s.assetId) : undefined;
+  const isVideo = asset?.type === 'video';
+  const srcDur = s?.sourceDuration ?? 60;
+  const trimStart = s?.trimStart ?? 0;
+  // Bar width is always fixed = segment.duration (slip model — only position slides)
+  const widthPct = srcDur > 0 && s ? (s.duration / srcDur) * 100 : 0;
+  const leftPct  = srcDur > 0 ? (trimStart / srcDur) * 100 : 0;
 
   return (
     <AnimatePresence>
@@ -60,12 +66,15 @@ export function BottomDrawer({
                      rounded-t-3xl shadow-2xl"
           style={{ maxHeight: '45vh' }}
         >
-          {/* Handle bar */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[#1A1A1A]">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-3 border-b border-[#1A1A1A]">
             <div className="flex items-center gap-3">
               <div className="w-8 h-1 rounded-full bg-[#282828]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                {s.heading || `Scene ${idx + 1}`}
+                {s.heading ? s.heading : `Scene ${idx + 1}`}
+              </span>
+              <span className="px-2 py-0.5 bg-[#1A1A1A] rounded text-[9px] font-mono text-gray-500">
+                {s.duration.toFixed(1)}s
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -74,10 +83,7 @@ export function BottomDrawer({
                 className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors"
                 style={{ color: s.locked ? '#F27D26' : '#4B5563' }}
               >
-                {s.locked
-                  ? <><Lock size={10} /> Locked</>
-                  : <><Unlock size={10} /> Lock</>
-                }
+                {s.locked ? <><Lock size={10} /> Locked</> : <><Unlock size={10} /> Lock</>}
               </button>
               <button
                 onClick={onClose}
@@ -88,338 +94,299 @@ export function BottomDrawer({
             </div>
           </div>
 
-          {/* Scrollable content — per-segment editor fields from SegmentEditorPanel
-              lines 80–459 verbatim, adapted for single-segment use. */}
-          <div className="overflow-y-auto p-6 space-y-4" style={{ maxHeight: 'calc(45vh - 60px)' }}>
+          {/* Scrollable content */}
+          <div className="overflow-y-auto p-5 space-y-4" style={{ maxHeight: 'calc(45vh - 52px)' }}>
 
-            {/* Duration + Heading */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[7px] uppercase font-bold text-gray-500">Duration (s)</label>
-                <input
-                  type="number"
-                  step="0.1"
-                  value={s.duration}
-                  onChange={(e) => onSegmentDurationChange(idx, parseFloat(e.target.value) || 0.1)}
-                  className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26]"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[7px] uppercase font-bold text-gray-500">Heading</label>
-                <input
-                  placeholder="Scene Heading"
-                  value={s.heading ?? ''}
-                  onChange={(e) => onUpdateSegment(idx, { heading: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
-                />
-              </div>
-              <div className="col-span-2">
-                <textarea
-                  placeholder="Scene Script Text"
-                  value={s.text}
-                  onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[11px] h-20 outline-none focus:border-[#F27D26] resize-none"
-                />
-              </div>
-            </div>
+            {/* Two-column: Asset (left) + Overlay Text (right) */}
+            <div className="grid grid-cols-2 gap-4">
 
-            {/* Asset select + stock search + overlay toggle */}
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
+              {/* Left — Visual Asset */}
+              <div className="space-y-2">
+                <label className="text-[7px] uppercase font-bold text-gray-500 block">Visual Asset</label>
                 <select
                   value={s.assetId ?? ''}
                   onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none"
+                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26] cursor-pointer"
                 >
-                  <option value="">No Visual Asset</option>
+                  <option value="">No Asset</option>
                   {assets.filter(a => a.type !== 'audio').map(a => (
                     <option key={a.id} value={a.id}>{a.name}</option>
                   ))}
                 </select>
+                <button
+                  onClick={() => onOpenStockSearch(s.id)}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all"
+                >
+                  <Video size={12} /> Stock Search
+                </button>
               </div>
-              <button
-                onClick={() => onOpenStockSearch(s.id)}
-                className="p-2 bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500 hover:text-white transition-all"
-                title="Search Stock Media"
-              >
-                <Video size={14} />
-              </button>
-              <button
-                onClick={() => onToggleOverlay(idx)}
-                className={`p-2 rounded-lg border transition-all ${s.showOverlay ? 'bg-[#F27D26] border-[#F27D26] text-white' : 'bg-[#121212] border-[#282828] text-gray-500'}`}
-                title="Toggle Main Text Overlay"
-              >
-                <Type size={14} />
-              </button>
+
+              {/* Right — Overlay Text */}
+              <div className="space-y-2">
+                <label className="text-[7px] uppercase font-bold text-gray-500 block">Overlay Text</label>
+                <textarea
+                  value={s.text}
+                  onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
+                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] h-14 outline-none focus:border-[#F27D26] resize-none"
+                  placeholder="Scene overlay text…"
+                />
+                <button
+                  onClick={() => setFormattingOpen(v => !v)}
+                  className="w-full flex items-center justify-between px-3 py-1.5 bg-[#121212] border border-[#282828] rounded-xl text-[9px] font-bold uppercase tracking-widest text-gray-500 hover:border-[#F27D26] hover:text-gray-300 transition-all"
+                >
+                  <span>Formatting</span>
+                  {formattingOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                </button>
+              </div>
             </div>
 
-            {/* Overlay styling panel */}
-            {s.showOverlay && (
-              <div className="p-3 bg-[#111] rounded-xl border border-[#222] space-y-3">
-                <p className="text-[7px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Styling</p>
+            {/* Heading label — only for [HEADING:] segments */}
+            {s.heading !== undefined && (
+              <div className="space-y-1">
+                <label className="text-[7px] uppercase font-bold text-gray-500 block">Heading Label</label>
+                <input
+                  value={s.heading}
+                  onChange={(e) => onUpdateSegment(idx, { heading: e.target.value })}
+                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
+                  placeholder="Heading text"
+                />
+              </div>
+            )}
+
+            {/* Formatting panel — collapsed by default */}
+            {formattingOpen && (
+              <div className="p-4 bg-[#0D0D0D] border border-[#1E1E1E] rounded-2xl space-y-3">
+                <p className="text-[7px] font-black uppercase tracking-widest text-[#F27D26]">Text Formatting</p>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
+
+                  <div className="space-y-1 col-span-2">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Font</label>
                     <select
                       value={s.overlayConfig?.fontFamily ?? globalOverlayConfig.fontFamily}
                       onChange={(e) => onUpdateSegmentOverlay(idx, { fontFamily: e.target.value })}
-                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
                     >
-                      {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                      {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
                     </select>
                   </div>
+
                   <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Font Size</label>
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Size</label>
                     <input
                       type="number"
                       value={s.overlayConfig?.fontSize ?? 60}
                       onChange={(e) => onUpdateSegmentOverlay(idx, { fontSize: parseInt(e.target.value) })}
-                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
                     />
                   </div>
+
                   <div className="space-y-1">
                     <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
                     <select
                       value={s.overlayConfig?.fontWeight ?? 'bold'}
                       onChange={(e) => onUpdateSegmentOverlay(idx, { fontWeight: e.target.value })}
-                      className="w-full bg-[#050505] p-1 rounded text-[10px]"
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
                     >
                       <option value="normal">Normal</option>
                       <option value="bold">Bold</option>
                       <option value="900">Black</option>
                     </select>
                   </div>
+
                   <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Style</label>
-                    <div className="flex gap-1">
-                      <button
-                        onClick={() => onUpdateSegmentOverlay(idx, { fontStyle: s.overlayConfig?.fontStyle === 'italic' ? 'normal' : 'italic' })}
-                        className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.fontStyle === 'italic' ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
-                      >IT</button>
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Color</label>
+                    <div className="flex gap-2 items-center">
                       <input
                         type="color"
                         value={s.overlayConfig?.color ?? '#FFFFFF'}
                         onChange={(e) => onUpdateSegmentOverlay(idx, { color: e.target.value })}
-                        className="flex-1 h-5 bg-transparent"
+                        className="h-8 flex-1 bg-transparent rounded cursor-pointer"
                       />
+                      <button
+                        onClick={() => onUpdateSegmentOverlay(idx, {
+                          fontStyle: s.overlayConfig?.fontStyle === 'italic' ? 'normal' : 'italic',
+                        })}
+                        className={`px-2 py-1.5 rounded text-[9px] font-black italic ${
+                          s.overlayConfig?.fontStyle === 'italic'
+                            ? 'bg-[#F27D26] text-white'
+                            : 'bg-[#050505] border border-[#282828] text-gray-500'
+                        }`}
+                      >I</button>
                     </div>
                   </div>
-                  <div className="space-y-1 col-span-2">
+
+                  <div className="space-y-1">
                     <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
-                    <div className="flex gap-2">
+                    <div className="flex gap-2 items-center">
                       <button
-                        onClick={() => onUpdateSegmentOverlay(idx, { textShadow: s.overlayConfig?.textShadow ? '' : '0 4px 15px rgba(0,0,0,1)' })}
-                        className={`flex-1 text-[7px] p-1 rounded font-bold ${s.overlayConfig?.textShadow ? 'bg-[#F27D26]' : 'bg-[#050505]'}`}
-                      >ENABLED</button>
+                        onClick={() => onUpdateSegmentOverlay(idx, {
+                          textShadow: s.overlayConfig?.textShadow ? '' : '0 4px 15px rgba(0,0,0,1)',
+                        })}
+                        className={`flex-1 py-1.5 rounded text-[7px] font-black ${
+                          s.overlayConfig?.textShadow
+                            ? 'bg-[#F27D26] text-white'
+                            : 'bg-[#050505] border border-[#282828] text-gray-500'
+                        }`}
+                      >Shadow</button>
                       <input
                         type="color"
                         value="#000000"
-                        onChange={(e) => onUpdateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
-                        className="h-5 flex-1 bg-transparent"
+                        onChange={(e) => onUpdateSegmentOverlay(idx, {
+                          textShadow: `0 4px 15px ${e.target.value}`,
+                        })}
+                        className="h-8 w-8 bg-transparent rounded cursor-pointer"
                       />
                     </div>
                   </div>
+
                   <div className="space-y-1 col-span-2">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Animation Preset</label>
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Animation</label>
                     <select
                       value={s.overlayConfig?.animation ?? 'fade'}
                       onChange={(e) => onUpdateSegmentOverlay(idx, { animation: e.target.value })}
-                      className="w-full bg-[#050505] p-1 rounded text-[10px] uppercase font-bold"
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px] uppercase font-bold"
                     >
-                      {TEXT_ANIMATIONS.map(a => <option key={a} value={a}>{a.replace('-', ' ')}</option>)}
+                      {TEXT_ANIMATIONS.map(a => (
+                        <option key={a} value={a}>{a.replace(/-/g, ' ')}</option>
+                      ))}
                     </select>
                   </div>
+
                 </div>
               </div>
             )}
 
-            {/* Overlay presets */}
-            <div className="grid grid-cols-3 gap-2 pt-2">
-              <button
-                onClick={() => onSetOverlayPreset(idx, 'cyber')}
-                className="p-1.5 bg-green-500/10 border border-green-500/20 text-green-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-green-500 hover:text-white transition-all"
-              >Cyber Bold</button>
-              <button
-                onClick={() => onSetOverlayPreset(idx, 'retro')}
-                className="p-1.5 bg-pink-500/10 border border-pink-500/20 text-pink-500 rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-pink-500 hover:text-white transition-all"
-              >Retro Neon</button>
-              <button
-                onClick={() => onSetOverlayPreset(idx, 'brutal')}
-                className="p-1.5 bg-orange-500/10 border border-orange-500/20 text-[#F27D26] rounded-lg text-[7px] font-black uppercase tracking-widest hover:bg-[#F27D26] hover:text-black transition-all"
-              >Brutal Bold</button>
-            </div>
+            {/* Visual Trim Bar — video segments only (slip model) */}
+            {isVideo && s && (
+              <div className="space-y-2 pt-1">
+                <label className="text-[7px] uppercase font-bold text-gray-500 block">Clip Trim</label>
 
-            {/* Playback speed + trim controls */}
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <div className="space-y-1">
-                <label className="text-[7px] uppercase font-bold text-gray-600 flex justify-between">
-                  <span>Playback Speed</span>
-                  <span className="text-[#F27D26]">{(s.playbackSpeed ?? 1).toFixed(2)}x</span>
-                </label>
-                <input
-                  type="range" min="0.1" max="3" step="0.1"
-                  value={s.playbackSpeed ?? 1}
-                  onChange={(e) => onUpdateSegment(idx, { playbackSpeed: parseFloat(e.target.value) })}
-                  className="w-full accent-[#F27D26]"
-                />
-              </div>
-              {assets.find(a => a.id === s.assetId)?.type === 'video' && (() => {
-                const srcDur = s.sourceDuration ?? 60;
-                const trimStart = s.trimStart ?? 0;
-                const trimEnd = s.trimEnd ?? srcDur;
-                return (
-                  <>
-                    <div className="space-y-1">
-                      <label className="text-[11px] uppercase font-bold text-gray-600 flex justify-between">
-                        <span>Trim Start (s)</span>
-                        <span className="text-blue-400">{trimStart.toFixed(1)}s</span>
-                      </label>
-                      <input
-                        type="range" min="0" max={srcDur} step="0.5"
-                        value={trimStart}
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value);
-                          const updates: Partial<VideoSegment> = { trimStart: val };
-                          if (s.trimEnd !== undefined && val >= s.trimEnd) {
-                            updates.trimEnd = Math.min(srcDur, val + 0.1);
-                          }
-                          onUpdateSegment(idx, updates);
+                {/* Track */}
+                <div className="relative h-6 select-none" ref={trimTrackRef}>
+                  <div className="absolute inset-y-0 left-0 right-0 flex items-center">
+                    <div className="relative w-full h-2.5 rounded-full bg-[#161616]">
+                      {/* Active zone — fixed width = segment.duration / srcDur.
+                          Drag to slip (move window), click to seek preview. */}
+                      <div
+                        className="absolute top-0 bottom-0 bg-[#F27D26] rounded-full cursor-grab active:cursor-grabbing"
+                        style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                        onPointerDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (srcDur <= 0) return;
+                          const track = trimTrackRef.current;
+                          if (!track) return;
+                          const startX = e.clientX;
+                          const rect = track.getBoundingClientRect();
+                          const clickRatio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                          const offsetInTime = clickRatio * srcDur - trimStart;
+                          const maxStart = Math.max(0, srcDur - s.duration);
+                          let didMove = false;
+                          const handleMove = (me: PointerEvent) => {
+                            if (!didMove && Math.abs(me.clientX - startX) < 3) return;
+                            didMove = true;
+                            const r = trimTrackRef.current?.getBoundingClientRect();
+                            if (!r) return;
+                            const ratio = Math.max(0, Math.min(1, (me.clientX - r.left) / r.width));
+                            const newStart = Math.max(0, Math.min(maxStart, ratio * srcDur - offsetInTime));
+                            onUpdateSegment(idx, { trimStart: newStart, trimEnd: newStart + s.duration });
+                          };
+                          const cleanup = (ue: Event) => {
+                            window.removeEventListener('pointermove', handleMove);
+                            window.removeEventListener('pointerup', cleanup);
+                            if (!didMove && onSeek) {
+                              const r = trimTrackRef.current?.getBoundingClientRect();
+                              if (!r) return;
+                              const pe = ue as PointerEvent;
+                              const ratio = Math.max(0, Math.min(1, (pe.clientX - r.left) / r.width));
+                              onSeek(s.startTime + ratio * s.duration);
+                            }
+                          };
+                          window.addEventListener('pointermove', handleMove);
+                          window.addEventListener('pointerup', cleanup);
                         }}
-                        className="w-full accent-blue-500"
                       />
                     </div>
-                    <div className="space-y-1 col-span-2">
-                      <label className="text-[11px] uppercase font-bold text-gray-600 flex justify-between">
-                        <span>Trim End (s)</span>
-                        <span className="text-purple-400">
-                          {s.trimEnd !== undefined ? `${s.trimEnd.toFixed(1)}s` : 'end of media'}
-                        </span>
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="range" min={trimStart + 0.1} max={srcDur} step="0.5"
-                          value={trimEnd}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            onUpdateSegment(idx, { trimEnd: Math.max(trimStart + 0.1, val) });
-                          }}
-                          className="flex-1 accent-purple-500"
-                        />
-                        {s.trimEnd !== undefined && (
-                          <button
-                            onClick={() => onUpdateSegment(idx, { trimEnd: undefined })}
-                            title="Reset to end of media"
-                            className="text-base font-black text-gray-400 hover:text-red-400 transition-colors px-1"
-                            aria-label="Reset trim end to end of media"
-                          >
-                            ×
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
+                  </div>
 
-            {/* Mute toggle + add extra overlay */}
-            <div className="flex items-center justify-between pt-1">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => onUpdateSegment(idx, { isMuted: !s.isMuted })}
-                  className={`p-1.5 rounded text-[8px] uppercase font-black tracking-widest flex items-center gap-1 ${s.isMuted ? 'bg-red-500/10 text-red-500' : 'bg-green-500/10 text-green-500'}`}
-                >
-                  {s.isMuted ? <Music size={10} className="line-through" /> : <Music size={10} />}
-                  {s.isMuted ? 'Muted' : 'Audio On'}
-                </button>
+                  {/* Left handle — left edge of window tracks mouse */}
+                  <div
+                    className="absolute inset-y-0 z-10 flex items-center justify-center cursor-col-resize"
+                    style={{ left: `calc(${leftPct}% - 5px)`, width: '10px' }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (srcDur <= 0) return;
+                      const maxStart = Math.max(0, srcDur - s.duration);
+                      const handleMove = (me: PointerEvent) => {
+                        const r = trimTrackRef.current?.getBoundingClientRect();
+                        if (!r) return;
+                        const ratio = Math.max(0, Math.min(1, (me.clientX - r.left) / r.width));
+                        const newStart = Math.max(0, Math.min(maxStart, ratio * srcDur));
+                        onUpdateSegment(idx, { trimStart: newStart, trimEnd: newStart + s.duration });
+                      };
+                      const cleanup = () => {
+                        window.removeEventListener('pointermove', handleMove);
+                        window.removeEventListener('pointerup', cleanup);
+                      };
+                      window.addEventListener('pointermove', handleMove);
+                      window.addEventListener('pointerup', cleanup);
+                    }}
+                  >
+                    <div className="w-[3px] h-5 rounded-full bg-blue-400 shadow-lg" />
+                  </div>
+
+                  {/* Right handle — right edge of window tracks mouse */}
+                  <div
+                    className="absolute inset-y-0 z-10 flex items-center justify-center cursor-col-resize"
+                    style={{ left: `calc(${leftPct + widthPct}% - 5px)`, width: '10px' }}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (srcDur <= 0) return;
+                      const maxStart = Math.max(0, srcDur - s.duration);
+                      const handleMove = (me: PointerEvent) => {
+                        const r = trimTrackRef.current?.getBoundingClientRect();
+                        if (!r) return;
+                        const ratio = Math.max(0, Math.min(1, (me.clientX - r.left) / r.width));
+                        const newStart = Math.max(0, Math.min(maxStart, ratio * srcDur - s.duration));
+                        onUpdateSegment(idx, { trimStart: newStart, trimEnd: newStart + s.duration });
+                      };
+                      const cleanup = () => {
+                        window.removeEventListener('pointermove', handleMove);
+                        window.removeEventListener('pointerup', cleanup);
+                      };
+                      window.addEventListener('pointermove', handleMove);
+                      window.addEventListener('pointerup', cleanup);
+                    }}
+                  >
+                    <div className="w-[3px] h-5 rounded-full bg-purple-400 shadow-lg" />
+                  </div>
+                </div>
+
+                {/* Time labels: start · total · end of window */}
+                <div className="flex justify-between text-[7px] font-mono">
+                  <span className="text-blue-400">{trimStart.toFixed(1)}s</span>
+                  <span className="text-gray-600">{srcDur.toFixed(1)}s total</span>
+                  <span className="text-purple-400">{(trimStart + s.duration).toFixed(1)}s</span>
+                </div>
               </div>
+            )}
+
+            {/* Mute toggle */}
+            <div className="flex items-center pt-1 pb-1">
               <button
-                onClick={() => onAddExtraOverlay(idx)}
-                className="p-1.5 bg-[#1A1A1A] text-gray-500 rounded-lg hover:border-[#F27D26] border border-transparent transition-all flex items-center gap-1 text-[8px] uppercase font-bold"
+                onClick={() => onUpdateSegment(idx, { isMuted: !s.isMuted })}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[8px] uppercase font-black tracking-widest transition-all ${
+                  s.isMuted
+                    ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                    : 'bg-green-500/10 text-green-400 border border-green-500/20'
+                }`}
               >
-                <Plus size={10} /> Overlay
+                <Music size={10} className={s.isMuted ? 'opacity-40' : ''} />
+                {s.isMuted ? 'Muted' : 'Audio On'}
               </button>
             </div>
-
-            {/* Extra overlays */}
-            {s.extraOverlays?.map((overlay, oIdx) => (
-              <div key={overlay.id} className="p-3 bg-[#050505] border border-[#1A1A1A] rounded-xl space-y-3">
-                <div className="flex justify-between items-center">
-                  <span className="text-[8px] font-black text-gray-700 uppercase tracking-widest">Overlay #{oIdx + 1}</span>
-                  <button
-                    onClick={() => onUpdateSegment(idx, { extraOverlays: s.extraOverlays?.filter(o => o.id !== overlay.id) })}
-                    aria-label={`Delete overlay ${oIdx + 1}`}
-                    className="text-red-900 hover:text-red-500"
-                  >
-                    <Trash2 size={10} />
-                  </button>
-                </div>
-                <input
-                  value={overlay.text}
-                  onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { text: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] p-2 rounded-lg text-[10px] outline-none"
-                />
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1 col-span-2">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Font Family</label>
-                    <select
-                      value={overlay.fontFamily}
-                      onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { fontFamily: e.target.value })}
-                      className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[10px]"
-                    >
-                      {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Text</label>
-                    <input type="color" value={overlay.color} onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { color: e.target.value })} className="w-full h-6 bg-transparent" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Back</label>
-                    <input type="color" value={overlay.backgroundColor} onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { backgroundColor: e.target.value })} className="w-full h-6 bg-transparent" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Size</label>
-                    <input type="number" value={overlay.fontSize} onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { fontSize: parseInt(e.target.value) })} className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]" />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
-                    <select value={overlay.fontWeight ?? 'normal'} onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { fontWeight: e.target.value })} className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[9px]">
-                      <option value="normal">Normal</option>
-                      <option value="bold">Bold</option>
-                      <option value="900">Black</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Animation</label>
-                    <select value={overlay.animation ?? 'fade'} onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { animation: e.target.value })} className="w-full bg-[#121212] border border-[#282828] p-1 rounded-lg text-[8px] uppercase font-bold">
-                      {TEXT_ANIMATIONS.map(a => <option key={a} value={a}>{a.replace('-', ' ')}</option>)}
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Shadow</label>
-                    <div className="flex gap-1">
-                      <button onClick={() => onUpdateExtraOverlay(idx, oIdx, { textShadow: overlay.textShadow ? '' : '0 2px 10px rgba(0,0,0,1)' })} className={`flex-1 text-[7px] p-1 rounded font-bold ${overlay.textShadow ? 'bg-[#F27D26]' : 'bg-[#121212]'}`}>SH</button>
-                      <input type="color" value="#000000" onChange={(e) => onUpdateExtraOverlay(idx, oIdx, { textShadow: `0 2px 10px ${e.target.value}` })} className="flex-1 h-5 bg-transparent" />
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[7px] uppercase font-bold text-gray-600">Align</label>
-                    <div className="flex gap-1">
-                      {(['left', 'center', 'right'] as const).map(align => (
-                        <button
-                          key={align}
-                          onClick={() => onUpdateExtraOverlay(idx, oIdx, { textAlign: align })}
-                          className={`flex-1 text-[7px] uppercase font-bold p-1 rounded ${overlay.textAlign === align ? 'bg-[#F27D26] text-white' : 'bg-[#121212] text-gray-500'}`}
-                        >
-                          {align.charAt(0).toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
 
           </div>
         </motion.div>

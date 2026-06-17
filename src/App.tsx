@@ -192,6 +192,9 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — minimum timeline slot width
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
+// NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
+const MIN_PLAYBACK_SPEED = 0.5;
+const MAX_PLAYBACK_SPEED = 2.0;
 
 // Fuzzy matching helper
 
@@ -578,6 +581,10 @@ export default function App() {
   // the render that processes the final mousemove setProject call.
   const isResizingRef = useRef(false);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Baseline for speed-slider drag: captured on the FIRST tick of a new drag gesture
+  // so that all subsequent ticks divide by the same original clipLen, preventing the
+  // feedback loop where each tick reads the previous tick's just-written duration.
+  const speedBaselineRef = useRef<{ segmentId: string; clipLen: number } | null>(null);
 
 
 
@@ -594,6 +601,50 @@ export default function App() {
     setToast({ message, action });
     toastTimerRef.current = setTimeout(() => setToast(null), TOAST_DURATION);
   }, []);
+
+  /**
+   * Applies a duration change for one segment with the same cascade + auto-lock
+   * semantics as a drag-resize. Shared by the drag-resize handler and the
+   * playback-speed slider. Returns true if the cascade succeeded, false if a
+   * locked neighbor blocked it (caller must revert live-preview state if any).
+   */
+  const applyDurationChange = useCallback((
+    originalSegments: VideoSegment[],
+    segmentId: string,
+    newDuration: number,
+    finalTrimStart: number,
+    fromSide: 'left' | 'right',
+    additionalUpdates?: Partial<VideoSegment>,
+  ): boolean => {
+    const draggedIdx = originalSegments.findIndex(s => s.id === segmentId);
+    if (draggedIdx < 0) return false;
+    const cascadeResult = computeDragCascade(
+      originalSegments,
+      draggedIdx,
+      newDuration,
+      finalTrimStart,
+      fromSide,
+      (segIdx, segId) => {
+        const lockedSeg = originalSegments.find(s => s.id === segId);
+        showToast(
+          `Segment ${segIdx + 1} is locked. Unlock to continue resizing.`,
+          lockedSeg ? {
+            label: 'Unlock',
+            onClick: () => setProject(prev => ({
+              ...prev,
+              segments: prev.segments.map(s => s.id === segId ? { ...s, locked: false } : s),
+            })),
+          } : undefined,
+        );
+      },
+    );
+    if (cascadeResult === null) return false;
+    const finalSegments = additionalUpdates
+      ? cascadeResult.map(s => s.id === segmentId ? { ...s, ...additionalUpdates } : s)
+      : cascadeResult;
+    setProject(prev => ({ ...prev, segments: finalSegments }));
+    return true;
+  }, [showToast]);
 
   // Rehydrate persisted project on mount
   useEffect(() => {
@@ -708,6 +759,7 @@ export default function App() {
   );
 
   const handleToggleLock = useCallback((segmentId: string): void => {
+    speedBaselineRef.current = null;
     setProject(prev => ({
       ...prev,
       segments: prev.segments.map(s =>
@@ -722,6 +774,63 @@ export default function App() {
       segments: prev.segments.map(s => ({ ...s, locked: false })),
     }));
   }, []);
+
+  const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
+    const seg = projectRef.current.segments[segIdx];
+    if (!seg) return;
+
+    // No-op if speed hasn't changed — don't capture a baseline yet either.
+    if (Math.abs(newSpeed - (seg.playbackSpeed ?? 1)) < 0.001) return;
+
+    const clampedSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, newSpeed));
+
+    // Locked segment: honor speed update but keep duration fixed.
+    if (seg.locked) {
+      setProject(prev => ({
+        ...prev,
+        segments: prev.segments.map((s, i) => i === segIdx ? { ...s, playbackSpeed: clampedSpeed } : s),
+      }));
+      return;
+    }
+
+    // Non-video or unknown sourceDuration: fall back to simple update.
+    const asset = assetsRef.current.find(a => a.id === seg.assetId);
+    if (asset?.type !== 'video' || !seg.sourceDuration || seg.sourceDuration <= 0) {
+      setProject(prev => ({
+        ...prev,
+        segments: prev.segments.map((s, i) => i === segIdx ? { ...s, playbackSpeed: clampedSpeed } : s),
+      }));
+      return;
+    }
+
+    // Compute or reuse the speed-drag baseline. Baseline = the original (duration × speed)
+    // captured on the FIRST tick of a drag gesture. Reusing it across ticks prevents the
+    // feedback loop where each tick reads the previous tick's just-written duration.
+    let clipLen: number;
+    if (speedBaselineRef.current?.segmentId === seg.id) {
+      clipLen = speedBaselineRef.current.clipLen;
+    } else {
+      const fullClipLen = (seg.trimEnd ?? seg.sourceDuration) - (seg.trimStart ?? 0);
+      clipLen = Math.min(seg.duration * (seg.playbackSpeed ?? 1), fullClipLen);
+      speedBaselineRef.current = { segmentId: seg.id, clipLen };
+    }
+    if (clipLen <= 0) return;
+    const newDuration = Math.max(MIN_SEGMENT_DURATION, clipLen / clampedSpeed);
+    const success = applyDurationChange(
+      projectRef.current.segments,
+      seg.id,
+      newDuration,
+      seg.trimStart ?? 0,
+      'right',
+      { playbackSpeed: clampedSpeed },
+    );
+    if (success) {
+      // Prevent currentTime from sitting past the segment's new shorter end,
+      // which would evict the currentSegment to an image/heading and freeze the video.
+      const newEnd = seg.startTime + newDuration;
+      setCurrentTime(t => Math.min(t, newEnd - 0.01));
+    }
+  }, [applyDurationChange]);
 
   const handleAddTextLayer = useCallback((): void => {
     setProject(prev => ({
@@ -1693,7 +1802,7 @@ export default function App() {
         </button>
 
         {/* Center — preview + timeline stacked */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0" ref={centerColRef}>
+        <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0 relative" ref={centerColRef}>
 
           {/* Preview — height-driven, draggable divider below */}
           <div
@@ -1727,7 +1836,12 @@ export default function App() {
             {/* Left pill — seek + play/pause + timecode */}
             <div className="absolute bottom-3 left-3 z-30 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
               <button
-                onClick={() => { setCurrentTime(0); if (audioRef.current) audioRef.current.currentTime = 0; }}
+                onClick={() => {
+                  setCurrentTime(0);
+                  if (audioRef.current) audioRef.current.currentTime = 0;
+                  const tl = document.getElementById('timeline-scroll-area');
+                  if (tl) tl.scrollLeft = 0;
+                }}
                 className="text-zinc-500 hover:text-white transition-colors"
               >
                 <RotateCcw size={11} />
@@ -1826,6 +1940,10 @@ export default function App() {
                   const pps = 100 * zoomLevel;
                   let lastX = 0;
                   let hasMoved = false;
+                  // Capture video context at drag-start for speed coupling.
+                  const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
+                  const isVideoSeg = dragAsset?.type === 'video';
+                  const srcDur = originalTarget.sourceDuration ?? 0;
                   const handleMove = (e: MouseEvent) => {
                     const timeline = document.getElementById('timeline-scroll-area');
                     if (!timeline) return;
@@ -1836,12 +1954,27 @@ export default function App() {
                     setProject(prev => {
                       const updated = prev.segments.map(s => {
                         if (s.id !== id) return s;
-                        if (type === 'end') return { ...s, duration: Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime) };
-                        if (type === 'start') {
+                        let liveDuration: number;
+                        let liveTrimStart: number = originalTarget.trimStart ?? 0;
+                        if (type === 'end') {
+                          liveDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
+                        } else {
                           const rawDelta = (lastX / pps) - originalTarget.startTime;
-                          return { ...s, duration: Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta), trimStart: Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta) };
+                          liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+                          liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
                         }
-                        return s;
+                        // Speed coupling: clamp duration by [0.75×, 4×] bounds for video.
+                        if (isVideoSeg && srcDur > 0) {
+                          const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
+                          if (liveClipLen > 0) {
+                            const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
+                            const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
+                            liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
+                            const liveSpeed = liveClipLen / liveDuration;
+                            return { ...s, duration: liveDuration, trimStart: liveTrimStart, playbackSpeed: liveSpeed };
+                          }
+                        }
+                        return { ...s, duration: liveDuration, trimStart: liveTrimStart };
                       });
                       let acc = 0;
                       return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
@@ -1865,30 +1998,30 @@ export default function App() {
                       finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
                       finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
                     }
+                    // Speed coupling: clamp duration + compute new playbackSpeed for video.
+                    let speedUpdate: { playbackSpeed: number } | undefined;
+                    if (isVideoSeg && srcDur > 0) {
+                      const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
+                      if (finalClipLen > 0) {
+                        const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
+                        const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
+                        finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
+                        const newSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration));
+                        speedUpdate = { playbackSpeed: newSpeed };
+                      }
+                    }
                     // Negligible drag — revert live preview to original.
                     if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
                       setProject(prev => ({ ...prev, segments: originalSegments }));
                       return;
                     }
                     const direction = type === 'end' ? 'right' as const : 'left' as const;
-                    const cascadeResult = computeDragCascade(
-                      originalSegments, draggedIdx, finalDuration, finalTrimStart, direction,
-                      (segIdx, segId) => {
-                        const lockedSeg = originalSegments.find(s => s.id === segId);
-                        showToast(
-                          `Segment ${segIdx + 1} is locked. Unlock to continue resizing.`,
-                          lockedSeg ? {
-                            label: 'Unlock',
-                            onClick: () => setProject(prev => ({
-                              ...prev,
-                              segments: prev.segments.map(s => s.id === segId ? { ...s, locked: false } : s),
-                            })),
-                          } : undefined,
-                        );
-                      },
+                    speedBaselineRef.current = null;
+                    const succeeded = applyDurationChange(
+                      originalSegments, id, finalDuration, finalTrimStart, direction, speedUpdate,
                     );
-                    // null → locked neighbor blocked cascade: revert to original state.
-                    setProject(prev => ({ ...prev, segments: cascadeResult ?? originalSegments }));
+                    // null cascade → locked neighbor blocked: revert live preview.
+                    if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
                   };
                   isResizingRef.current = true;
                   window.addEventListener('mousemove', handleMove);
@@ -1898,9 +2031,18 @@ export default function App() {
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
                 onSetTrimmingSegment={setTrimmingSegmentId}
                 onSetAdjustingTrim={setIsAdjustingTrim}
+                onSelectSegment={(id) => setSelectedSegmentId(id)}
               />
             </ErrorBoundary>
           </div>
+
+          {/* Backdrop — click outside drawer to dismiss */}
+          {selectedSegment && (
+            <div
+              className="absolute inset-0 z-40"
+              onClick={() => setSelectedSegmentId(null)}
+            />
+          )}
 
           <BottomDrawer
             segment={selectedSegment}
@@ -1910,36 +2052,12 @@ export default function App() {
             onClose={() => setSelectedSegmentId(null)}
             onUpdateSegment={updateSegment}
             onUpdateSegmentOverlay={updateSegmentOverlay}
-            onUpdateExtraOverlay={updateExtraOverlay}
-            onSegmentDurationChange={(idx, val) => setProject(prev => {
-              const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
-              let acc = 0;
-              return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
-            })}
-            onToggleOverlay={(idx) => setProject(prev => ({
-              ...prev,
-              segments: prev.segments.map((seg, i) =>
-                i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
-              ),
-            }))}
-            onSetOverlayPreset={(idx, preset) => setProject(prev => ({
-              ...prev,
-              segments: prev.segments.map((seg, i) => {
-                if (i !== idx) return seg;
-                const base = { ...prev.globalOverlayConfig };
-                if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
-                if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
-                return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
-              }),
-            }))}
-            onAddExtraOverlay={(idx) => setProject(prev => ({
-              ...prev,
-              segments: prev.segments.map((seg, i) =>
-                i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
-              ),
-            }))}
             onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
             onToggleLock={handleToggleLock}
+            onSeek={(time) => {
+              setCurrentTime(time);
+              if (audioRef.current) audioRef.current.currentTime = time;
+            }}
           />
 
         </div>

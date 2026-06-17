@@ -35,6 +35,7 @@ interface Props {
   onOpenStockSearch: (segmentId: string) => void;
   onSetTrimmingSegment: (id: string | null) => void;
   onSetAdjustingTrim: (v: boolean) => void;
+  onSelectSegment?: (id: string) => void;
 }
 
 export function Timeline({
@@ -60,6 +61,7 @@ export function Timeline({
   onOpenStockSearch,
   onSetTrimmingSegment,
   onSetAdjustingTrim,
+  onSelectSegment,
 }: Props) {
   const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
   const pixelsPerSecond = 100 * zoomLevel;
@@ -183,7 +185,7 @@ export function Timeline({
                 return (
                   <div
                     key={s.id}
-                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
+                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
                     onDoubleClick={(e) => {
                       e.stopPropagation();
                       if (trimmingSegmentId === s.id) {
