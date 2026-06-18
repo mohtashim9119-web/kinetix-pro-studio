@@ -164,6 +164,16 @@ export interface VideoSegment {
   trimEnd?: number;
   isMuted?: boolean;
   locked?: boolean; // true = manual adjustment applied; re-sync skips this segment
+  /** Audio timestamp (seconds) where this segment's content begins in the voiceover.
+   *  Set by parseProjectData (character-weight) and overwritten by Whisper alignment (t0).
+   *  Preserved across re-syncs for surviving scenes via stableKey matching.
+   *  Internal — not displayed in UI. */
+  anchorStart?: number;
+  /** How anchorStart was derived. 'whisper' means a precise audio-aligned
+   *  timestamp from Whisper transcription; 'estimate' means a character-weight
+   *  approximation from parseProjectData or applyAnchorBasedTiming's gap-fill.
+   *  Skip-guard and anchor-aware aligner trust only 'whisper'. */
+  anchorSource?: 'whisper' | 'estimate';
   sourceDuration?: number;
 }
 

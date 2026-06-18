@@ -28,9 +28,15 @@ src/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
-    syncEngine.ts    # isFuzzyMatch(), findAssetByContext() — parseProjectData() is still in App.tsx
+    syncEngine.ts    # isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming()
+                     #   parseProjectData() still in App.tsx. Anchor-based gap-fill preserves
+                     #   surviving segment positions across re-sync; PASS 2 tags estimated
+                     #   anchors as 'estimate' so Whisper can realign them later.
     whisperService.ts # alignScenesToTranscript() sliding-window text matcher; applyHeadingTiming() —
                      #   gives [HEADING:] segments fixed 1.0s, 50/50 neighbor absorption, lock-aware.
+                     #   alignScenesToTranscriptAnchorAware() — anchor-respecting variant: segments
+                     #   with anchorSource='whisper' are treated as fixed positions; only
+                     #   'estimate'-sourced segments are realigned within their containing gap.
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
@@ -55,6 +61,10 @@ src/
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
     useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
                              #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
+    useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
+                             #   distributeSegmentTimes, applyHeadingTiming. Generation counter + AbortController
+                             #   for cancellation. Skip-guard: if every segment has anchorSource='whisper'
+                             #   AND audio is unchanged, Whisper is skipped entirely — anchors are authoritative.
   components/
     BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
@@ -179,6 +189,30 @@ const effectiveTransition =
     : (options.globalTransition ?? TransitionType.NONE);
 ```
 `exportPipeline.ts` passes `project.globalTransition` as `options.globalTransition`. This means a user can set the global transition in Settings and get it applied without clicking "Override all per-segment transitions" — but per-segment overrides always take precedence. The "Override all per-segment transitions" button materializes the global value onto each segment's own field (useful for subsequent per-segment divergence).
+
+### Anchor-Based Segment Timing
+
+Each VideoSegment carries two anchor fields that drive re-sync behavior:
+
+- `anchorStart?: number` — audio timestamp (seconds) where this segment's
+  spoken content begins. Internal; not shown in UI.
+- `anchorSource?: 'whisper' | 'estimate'` — provenance label. 'whisper'
+  means precise audio alignment; 'estimate' means character-weight
+  approximation.
+
+On re-sync the stableKey loop (in finalizeSync and handleApplySyncFromFiles)
+restores anchors from previous segments matched by assetId or heading text.
+applyAnchorBasedTiming then recomputes startTime/duration from anchors:
+each surviving segment occupies [its anchor, next anchor], and the last
+segment extends to audioDuration. Locked segments preserve their durations
+EXCEPT when a removal gap opens immediately after — they expand to absorb
+the freed time (one-directional lock exemption).
+
+The Whisper skip-guard in useWhisper.ts fires only when every segment has
+'whisper' source AND audio is unchanged. Otherwise Whisper runs: if any
+'whisper' anchors exist, the anchor-aware aligner treats them as fixed and
+realigns only 'estimate' segments within the gaps; if none exist (fresh
+project), the original full aligner runs.
 
 ---
 
@@ -362,3 +396,5 @@ All dead dependencies removed. No remaining items.
 | Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
 | Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |
 | Phase 6.5 — Bundle ffmpeg sidecar | ✅ Done — 2026-05-27 | c567d5e — evermeet.cx 8.1.1 static build (76 MB, system-libs-only); tauri-build copies to target/debug/ffmpeg; sidecar("ffmpeg") at runtime; portability verified (export works with system ffmpeg disabled) |
+| Divider panel + preview height fixes | ✅ Done — 2026-06-17 | previewHeight initializer from viewport, panel toggle clamps via useEffect (310ms delay), timeline floor 140px enforced during drag and on panel toggle |
+| Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts |

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
   alignScenestoTranscript,
+  alignScenesToTranscriptAnchorAware,
   distributeSegmentTimes,
   applyHeadingTiming,
 } from '../services/whisperService';
@@ -51,6 +52,38 @@ export function useWhisper(): UseWhisperApi {
       onSegmentsUpdated: (segments: VideoSegment[]) => void,
       onProjectUpdated: (updater: (p: Project) => Project) => void,
     ) => {
+      // Capture expected segment IDs at entry — before any async work or Option A branch.
+      // Gates onSegmentsUpdated so a stale alignment result is discarded if the scene
+      // structure changed (e.g. user removed a scene and re-synced) while Whisper ran.
+      const expectedSegmentIds = new Set(segments.map(s => s.id));
+      const expectedCount = segments.length;
+      const segmentSetStillValid = (out: VideoSegment[]): boolean => {
+        if (out.length !== expectedCount) return false;
+        for (const s of out) {
+          if (!expectedSegmentIds.has(s.id)) return false;
+        }
+        return true;
+      };
+
+      // Hybrid skip-guard: if every segment already has an anchor and the audio
+      // hasn't changed, anchors from the previous sync are authoritative. The
+      // applyAnchorBasedTiming pass in App.tsx has already produced correct
+      // startTime/duration values; running Whisper now would only overwrite them
+      // with a fresh full-audio alignment (which is the reported bug).
+      //
+      // This guard intentionally does NOT trigger on the audio-change path —
+      // that case falls through to the full Whisper run below, which is correct.
+      const allWhisperAnchored = segments.length > 0
+        && segments.every(s => s.anchorSource === 'whisper');
+      const audioUnchanged = project.lastTranscribedAssetId === audioAsset.id
+        && Array.isArray(project.transcriptTokens)
+        && project.transcriptTokens.length > 0;
+
+      if (allWhisperAnchored && audioUnchanged) {
+        console.log('[whisper] Skipping — all segments have Whisper anchors, audio unchanged');
+        return;
+      }
+
       // Option A: skip Whisper if audio hasn't changed
       const alreadyTranscribed =
         project.lastTranscribedAssetId === audioAsset.id &&
@@ -60,9 +93,17 @@ export function useWhisper(): UseWhisperApi {
       if (alreadyTranscribed) {
         const tokens = project.transcriptTokens!;
         const silences = await fetchAndDetectSilences(audioAsset);
-        const alignments = alignScenestoTranscript(segments, tokens, silences);
+        const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
+        const alignments = hasAnyWhisperAnchor
+          ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
+          : alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        onSegmentsUpdated(applyHeadingTiming(updated));
+        const finalSegments = applyHeadingTiming(updated);
+        if (!segmentSetStillValid(finalSegments)) {
+          console.warn('[whisper] Discarding Option A alignment — segment set no longer matches');
+          return;
+        }
+        onSegmentsUpdated(finalSegments);
         return;
       }
 
@@ -94,13 +135,22 @@ export function useWhisper(): UseWhisperApi {
 
         const alignments = alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        onSegmentsUpdated(applyHeadingTiming(updated));
+        const finalSegments = applyHeadingTiming(updated);
 
+        // Store transcript tokens before the segment gate — the transcript is valid
+        // for this audio even if alignment is rejected due to a scene structure change.
+        // Preserving tokens here enables Option A caching on the next re-sync.
         onProjectUpdated(p => ({
           ...p,
           lastTranscribedAssetId: audioAsset.id,
           transcriptTokens: tokens,
         }));
+
+        if (segmentSetStillValid(finalSegments)) {
+          onSegmentsUpdated(finalSegments);
+        } else {
+          console.warn('[whisper] Discarding fresh transcription alignment — segment set no longer matches');
+        }
 
         setTranscriptionStatus({ phase: 'done', jobId });
 

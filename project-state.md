@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-01 |
+| Last updated | 2026-06-18 |
 | Current phase | Phase 7 — Active |
 | Hosting target | Desktop app (Tauri DMG/installer) · no web hosting needed for export |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -35,7 +35,14 @@
 
 ## Current Sprint
 
-Sync engine hardening complete (100% accuracy, edit isolation, heading timing+rendering). BottomDrawer cleaned to 8 controls with slip-trim bar and click-outside close. playbackSpeed deferred (UI hidden, code preserved). Next: push to origin/main for CI artifacts, then export-rendering profiling (Task 1).
+Bug 3 (segment gap fill on scene removal) resolved via anchor-based
+segment timing system. VideoSegment now carries anchorStart and anchorSource
+fields; surviving segments retain their Whisper-derived positions across
+re-syncs while removed segments' time is absorbed by the previous surviving
+segment. Whisper skip-guard prevents redundant re-alignment when all
+segments already have precise Whisper anchors; anchor-aware aligner handles
+insertion and partial-restore cases by realigning only 'estimate'-sourced
+segments within fixed Whisper-anchored gaps.
 
 ---
 
@@ -57,6 +64,12 @@ Sync engine hardening complete (100% accuracy, edit isolation, heading timing+re
 
 4. **Preview/audio sync drift** ✅ — Replace 100ms `setInterval` with `requestAnimationFrame` driven by `audioRef.current.currentTime` as master clock. Frame-accurate preview like CapCut/Premiere. Completed Batch C, commit `e961110`.
 
+5. **Segment gap fill after scene removal** ✅ Done — anchor-based timing
+   with provenance tracking. VideoSegment.anchorStart + anchorSource;
+   applyAnchorBasedTiming preserves surviving positions; Whisper skip-guard
+   + anchor-aware aligner handle all re-sync cases (removal, insertion,
+   restore, audio change). Merged 2026-06-18.
+
 ### Features
 
 5. **Multi-project picker window** ✅ Done — multi-project picker (priority-2 branch)
@@ -76,6 +89,7 @@ Sync engine hardening complete (100% accuracy, edit isolation, heading timing+re
 ### Quality of life — landed
 
 - Drawer UX redesign — slip-trim bar, click-outside close, timeline-click open, reduced clutter ✅ Done 2026-06-17
+- Divider + preview height fixes ✅ Done 2026-06-17 — panel toggle clamps previewHeight, 140px timeline floor, useState initializer uses real viewport height
 
 ### Export-rendering implementation
 
@@ -294,6 +308,7 @@ Phase 3 steps:
 - **Video seek on resize drag release** — video preview jumps to near-start of current segment when resize drag releases; audio is unaffected, exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by currentSegment useMemo re-resolving with new startTimes in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
 - ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
 - ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
+- ~~**Bug 3 — Segment gap fill after scene removal**~~ — **Fixed 2026-06-18.** Anchor-based segment timing with provenance tracking. See Completed Work Log entry and CLAUDE.md "Anchor-Based Segment Timing" section.
 
 ---
 
@@ -389,6 +404,7 @@ Phase 3 steps:
 | 2026-06-12 | Task 9a — Independent text layers: textLayers[] added to Project; TextLayersPanel component (collapsible, inline editors, per-segment hide toggle); wired into DropZonePanel segments tab; global layers rendered in PreviewStage at z-45; export pipeline extended (FrameGlobalConfig.globalTextLayers, frameRenderer draws per-frame); collapsible left panel with ChevronLeft/Right toggle strip. |
 | 2026-06-12 | Layout redesign — 3-column percentage layout (20/65/15vw), collapsible left+right panels, full-width header removed (nav lives in panels), Effects tab in left panel (all SettingsPanel controls moved inline), Timeline cleanup (sub-toolbar removed, floating pills, fixed dead rows), real Web Audio API waveform, audio track full-width scroll fix, draggable preview/timeline divider clamped to 16:9 ratio, preview height-driven aspect-video. |
 | 2026-06-17 | Sync engine hardening — whisperService.ts alignScenesToTranscript() sliding-window matcher + applyHeadingTiming() fixed 1.0s with 50/50 neighbor absorption; silenceDetector.ts Web Audio API silence scan for gap-fill; timeline manual-adjustment isolation with cascade + auto-lock; [HEADING:] scene proper timing + rendering; Whisper segment timing decoupled from description text; tag-primary asset matching. BottomDrawer redesign — reduced from ~38 controls to 8; slip-trim visual bar (fixed-width orange window slides over source clip); click-outside backdrop closes drawer; timeline-click opens drawer; reset-button scrolls timeline to 0. playbackSpeed UI hidden (code preserved). |
+| 2026-06-18 | **Bug 3 fix — anchor-based segment timing.** VideoSegment gains anchorStart (audio position) + anchorSource ('whisper' \| 'estimate'). parseProjectData and applyAnchorBasedTiming PASS 2 write 'estimate'; distributeSegmentTimes writes 'whisper'. Both stableKey loops carry anchorSource across re-sync. New applyAnchorBasedTiming in syncEngine.ts recomputes durations from anchors with one-directional locked-segment exemption (locks expand backward over removal gaps but never shrink). New alignScenesToTranscriptAnchorAware in whisperService.ts respects 'whisper' anchors as fixed positions and realigns only 'estimate' segments within gaps. useWhisper.ts skip-guard fires when allWhisperAnchored AND audio unchanged; otherwise Option A routes through anchor-aware aligner when any 'whisper' anchor exists, full aligner otherwise. Fixes the bug where removing middle segments redistributed durations proportionally across the audio. Manual tests A (removal-only), B (mid-removal), C (insertion), and F (restore-after-removal) all pass. |
 
 ---
 

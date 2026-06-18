@@ -48,7 +48,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -195,6 +195,7 @@ const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
 const MIN_PLAYBACK_SPEED = 0.5;
 const MAX_PLAYBACK_SPEED = 2.0;
+const MIN_TIMELINE_HEIGHT = 140; // px — minimum visible timeline height under the divider
 
 // Fuzzy matching helper
 
@@ -366,6 +367,8 @@ const parseProjectData = async (
       id: crypto.randomUUID(),
       startTime: Number(currentTimeAccumulator.toFixed(3)),
       duration: Number(targetDuration.toFixed(3)),
+      anchorStart: Number(currentTimeAccumulator.toFixed(3)), // character-weight bootstrap anchor
+      anchorSource: 'estimate' as const,
       trimStart: 0,
       playbackSpeed,
       order: i,
@@ -542,7 +545,7 @@ export default function App() {
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
-  const [previewHeight, setPreviewHeight] = useState(400);
+  const [previewHeight, setPreviewHeight] = useState(() => Math.floor((window.innerHeight - 4) / 2));
   const isDraggingDivider = useRef(false);
   const centerColRef = useRef<HTMLDivElement>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -1006,12 +1009,8 @@ export default function App() {
       const key = stableKey(s);
       if (!prevByKey.has(key)) prevByKey.set(key, s);
     }
-    const prevByOrder = new Map(
-      projectRef.current.segments.map(s => [s.order, s] as const)
-    );
-
     const syncedSegments = newSegments.map(s => {
-      const prev = prevByKey.get(stableKey(s)) ?? prevByOrder.get(s.order);
+      const prev = prevByKey.get(stableKey(s));
       return {
         ...s,
         assetId: s.assetId,
@@ -1020,8 +1019,14 @@ export default function App() {
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
         locked: (s.heading && !s.text) ? undefined : prev?.locked,
-        duration: prev?.locked && !(s.heading && !s.text) ? (prev.duration ?? s.duration) : s.duration,
-        startTime: prev?.locked && !(s.heading && !s.text) ? (prev.startTime ?? s.startTime) : s.startTime,
+        anchorStart: prev?.anchorStart ?? s.anchorStart,
+        anchorSource: prev?.anchorSource ?? s.anchorSource,
+        duration: prev?.locked && !(s.heading && !s.text)
+          ? (prev.duration ?? s.duration)
+          : s.duration,
+        startTime: prev?.locked && !(s.heading && !s.text)
+          ? (prev.startTime ?? s.startTime)
+          : s.startTime,
       };
     });
 
@@ -1032,21 +1037,43 @@ export default function App() {
       return;
     }
 
-    setProject(prev => ({ ...prev, segments: syncedSegments }));
+    const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
+
+    setProject(prev => ({ ...prev, segments: anchorTimed }));
     setIsSynced(true);
     setIsProcessing(false);
     setSyncStep(4);
     setActiveTab('editor');
 
-    // Trigger transcription (Tauri only) — Option A caching applies
+    // Trigger transcription (Tauri only) — segment-ID gate inside startTranscription guards correctness
     const voiceoverAsset = projectRef.current.assets.find(a => a.id === projectRef.current.voiceoverId);
     if (voiceoverAsset && isTauri()) {
       startTranscription(
         voiceoverAsset,
         audioDuration,
-        syncedSegments,
+        anchorTimed,
         projectRef.current,
-        (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
+        (updated) => {
+          setProject(prev => {
+            // Defense-in-depth: reject the Whisper update if the segment set has
+            // changed since alignment started (primary gate is in startTranscription).
+            if (prev.segments.length !== updated.length) {
+              console.warn('[whisper] Rejecting alignment update — segment count changed', {
+                current: prev.segments.length,
+                incoming: updated.length,
+              });
+              return prev;
+            }
+            const currentIds = new Set(prev.segments.map(s => s.id));
+            for (const seg of updated) {
+              if (!currentIds.has(seg.id)) {
+                console.warn('[whisper] Rejecting alignment update — segment ID mismatch');
+                return prev;
+              }
+            }
+            return { ...prev, segments: updated };
+          });
+        },
         (updater) => setProject(updater),
       );
     }
@@ -1138,11 +1165,8 @@ export default function App() {
       const key = stableKey(s);
       if (!prevByKey.has(key)) prevByKey.set(key, s);
     }
-    const prevByOrder = new Map(
-      projectRef.current.segments.map(s => [s.order, s] as const)
-    );
     const syncedSegments = newSegments.map(s => {
-      const prev = prevByKey.get(stableKey(s)) ?? prevByOrder.get(s.order);
+      const prev = prevByKey.get(stableKey(s));
       return {
         ...s,
         assetId: s.assetId,
@@ -1151,8 +1175,14 @@ export default function App() {
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
         locked: (s.heading && !s.text) ? undefined : prev?.locked,
-        duration: prev?.locked && !(s.heading && !s.text) ? (prev.duration ?? s.duration) : s.duration,
-        startTime: prev?.locked && !(s.heading && !s.text) ? (prev.startTime ?? s.startTime) : s.startTime,
+        anchorStart: prev?.anchorStart ?? s.anchorStart,
+        anchorSource: prev?.anchorSource ?? s.anchorSource,
+        duration: prev?.locked && !(s.heading && !s.text)
+          ? (prev.duration ?? s.duration)
+          : s.duration,
+        startTime: prev?.locked && !(s.heading && !s.text)
+          ? (prev.startTime ?? s.startTime)
+          : s.startTime,
       };
     });
 
@@ -1163,6 +1193,8 @@ export default function App() {
       return;
     }
 
+    const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
+
     // 7. Single atomic state update
     setProject(prev => ({
       ...prev,
@@ -1172,7 +1204,7 @@ export default function App() {
       sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
       assets: allAssets,
       voiceoverId: newVoiceoverId,
-      segments: autoMatchSegments(allAssets, syncedSegments),
+      segments: autoMatchSegments(allAssets, anchorTimed),
     }));
 
     setIsSynced(true);
@@ -1180,14 +1212,34 @@ export default function App() {
     setSyncStep(4);
     setActiveTab('editor');
 
-    // 8. Trigger transcription on voiceover (Tauri only)
+    // 8. Trigger transcription on voiceover (Tauri only) — segment-ID gate inside startTranscription guards correctness
     if (voiceoverAsset && isTauri()) {
       startTranscription(
         voiceoverAsset,
         audioDuration,
-        syncedSegments,
+        anchorTimed,
         projectRef.current,
-        (updated) => { setProject(prev => ({ ...prev, segments: updated })); },
+        (updated) => {
+          setProject(prev => {
+            // Defense-in-depth: reject the Whisper update if the segment set has
+            // changed since alignment started (primary gate is in startTranscription).
+            if (prev.segments.length !== updated.length) {
+              console.warn('[whisper] Rejecting alignment update — segment count changed', {
+                current: prev.segments.length,
+                incoming: updated.length,
+              });
+              return prev;
+            }
+            const currentIds = new Set(prev.segments.map(s => s.id));
+            for (const seg of updated) {
+              if (!currentIds.has(seg.id)) {
+                console.warn('[whisper] Rejecting alignment update — segment ID mismatch');
+                return prev;
+              }
+            }
+            return { ...prev, segments: updated };
+          });
+        },
         (updater) => setProject(updater),
       );
     }
@@ -1575,6 +1627,31 @@ export default function App() {
     return () => clearTimeout(t);
   }, [stockError]);
 
+  // Clamp previewHeight when a panel collapses/expands — the center column changes
+  // size, which changes both the 16:9 aspect cap and the timeline-floor cap. Wait
+  // 310ms so the CSS transition (duration-300) settles before we measure.
+  useEffect(() => {
+    const id = setTimeout(() => {
+      const rect = centerColRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const maxAllowed = Math.floor(rect.width * (9 / 16));
+      const timelineFloor = rect.height - MIN_TIMELINE_HEIGHT - 4;
+      setPreviewHeight(h => Math.min(h, Math.min(maxAllowed, timelineFloor)));
+    }, 310);
+    return () => clearTimeout(id);
+  }, [leftPanelCollapsed, rightPanelCollapsed]);
+
+  // Validate the useState initializer against the real layout after first paint.
+  // window.innerHeight may differ from the center column's actual usable height.
+  useEffect(() => {
+    const rect = centerColRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const maxAllowed = Math.floor(rect.width * (9 / 16));
+    const timelineFloor = rect.height - MIN_TIMELINE_HEIGHT - 4;
+    setPreviewHeight(h => Math.min(h, Math.min(maxAllowed, timelineFloor)));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
   const handleNewProject = (): void => {
@@ -1882,13 +1959,14 @@ export default function App() {
               const onMove = (ev: MouseEvent) => {
                 if (!isDraggingDivider.current) return;
                 const delta = ev.clientY - startY;
-                const centerWidth = centerColRef.current
-                  ? centerColRef.current.getBoundingClientRect().width
-                  : window.innerWidth * 0.65;
+                const rect = centerColRef.current?.getBoundingClientRect();
+                const centerWidth = rect?.width ?? window.innerWidth * 0.65;
+                const centerHeight = rect?.height ?? window.innerHeight;
                 const maxAllowed = Math.floor(centerWidth * (9 / 16));
+                const timelineFloor = centerHeight - MIN_TIMELINE_HEIGHT - 4;
                 const next = Math.min(
                   Math.max(startHeight + delta, 180),
-                  maxAllowed
+                  Math.min(maxAllowed, timelineFloor),
                 );
                 setPreviewHeight(next);
               };

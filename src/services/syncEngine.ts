@@ -34,6 +34,118 @@ export const findAssetByContext = (text: string, assets: Asset[]): Asset | null 
   return null;
 };
 
+/**
+ * Re-derives startTime and duration for each segment from its anchorStart,
+ * preserving surviving scene positions across re-sync after scene add/remove.
+ *
+ * Preconditions:
+ *  - segments are in display order
+ *  - audioDuration > 0
+ *  - each segment has either an anchorStart (surviving from prev sync) or
+ *    undefined anchorStart (brand-new scene from this sync)
+ *
+ * Postconditions:
+ *  - every segment has anchorStart, startTime, duration set
+ *  - startTimes are monotonically non-decreasing and contiguous
+ *  - first segment startTime = 0
+ *  - last segment duration = audioDuration - last.startTime
+ *  - locked segments: duration is preserved UNLESS removal opened a gap
+ *    immediately after the segment, in which case duration grows to absorb it.
+ *    Locked segments never shrink and never move.
+ */
+export function applyAnchorBasedTiming(
+  segments: VideoSegment[],
+  audioDuration: number,
+): VideoSegment[] {
+  if (segments.length === 0) return segments;
+  if (audioDuration <= 0) return segments;
+
+  const out: VideoSegment[] = segments.map(s => ({ ...s }));
+
+  // PASS 1 — normalize first-segment anchor to 0.
+  // If the new first segment was previously not first (its anchor > 0), or is brand-new
+  // (anchor undefined), shift it to 0 so there is never a silent gap at the front.
+  const first = out[0];
+  if (first && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
+    if (first.anchorStart === undefined) first.anchorSource = 'estimate';
+    first.anchorStart = 0;
+  }
+
+  // PASS 2 — fill anchors for brand-new (unanchored) scenes inserted in inner gaps.
+  // Each unanchored segment gets a character-weight share of the gap defined by
+  // the nearest anchored predecessor and successor.
+  for (let i = 1; i < out.length; i++) {
+    const seg = out[i];
+    if (!seg || seg.anchorStart !== undefined) continue;
+
+    let prevAnchorIdx = i - 1;
+    while (prevAnchorIdx >= 0 && out[prevAnchorIdx]?.anchorStart === undefined) {
+      prevAnchorIdx--;
+    }
+    let nextAnchorIdx = i + 1;
+    while (nextAnchorIdx < out.length && out[nextAnchorIdx]?.anchorStart === undefined) {
+      nextAnchorIdx++;
+    }
+
+    const gapStart = prevAnchorIdx >= 0 ? (out[prevAnchorIdx]?.anchorStart ?? 0) : 0;
+    const gapEnd = nextAnchorIdx < out.length
+      ? (out[nextAnchorIdx]?.anchorStart ?? audioDuration)
+      : audioDuration;
+    const gapSpan = Math.max(0, gapEnd - gapStart);
+
+    const unanchoredInGap: number[] = [];
+    for (let k = prevAnchorIdx + 1; k < nextAnchorIdx; k++) {
+      if (out[k]?.anchorStart === undefined) unanchoredInGap.push(k);
+    }
+    if (unanchoredInGap.length === 0) continue;
+
+    const totalText = unanchoredInGap.reduce(
+      (sum, idx) => sum + Math.max(1, out[idx]?.text.length ?? 1),
+      0,
+    );
+
+    let cursor = gapStart;
+    for (const idx of unanchoredInGap) {
+      const s = out[idx];
+      if (!s) continue;
+      const weight = Math.max(1, s.text.length) / totalText;
+      s.anchorStart = Number(cursor.toFixed(3));
+      s.anchorSource = 'estimate';
+      cursor += weight * gapSpan;
+    }
+  }
+
+  // PASS 3 — recompute startTime and duration from anchors.
+  // Locked-segment exemption: locked segments snap their startTime to their anchor
+  // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps
+  // that opened up after them. They never shrink.
+  for (let i = 0; i < out.length; i++) {
+    const seg = out[i];
+    if (!seg) continue;
+    const isLast = i === out.length - 1;
+    const nextAnchor = isLast ? audioDuration : (out[i + 1]?.anchorStart ?? audioDuration);
+    const anchorStart = seg.anchorStart ?? 0;
+
+    if (seg.locked) {
+      seg.startTime = Number(anchorStart.toFixed(3));
+      const preservedDuration = seg.duration ?? 0;
+      const availableSpan = Math.max(0, nextAnchor - seg.startTime);
+      seg.duration = Number(Math.max(preservedDuration, availableSpan).toFixed(3));
+    } else {
+      seg.startTime = Number(anchorStart.toFixed(3));
+      seg.duration = Number(Math.max(0.1, nextAnchor - seg.startTime).toFixed(3));
+    }
+  }
+
+  // PASS 4 — clamp last segment exactly to audioDuration.
+  const last = out[out.length - 1];
+  if (last) {
+    last.duration = Number(Math.max(0.1, audioDuration - last.startTime).toFixed(3));
+  }
+
+  return out;
+}
+
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {
     if (s.assetId) return s;
