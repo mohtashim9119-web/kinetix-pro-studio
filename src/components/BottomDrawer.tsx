@@ -53,6 +53,16 @@ export function BottomDrawer({
   const widthPct = srcDur > 0 && s ? (s.duration / srcDur) * 100 : 0;
   const leftPct  = srcDur > 0 ? (trimStart / srcDur) * 100 : 0;
 
+  const hc = s?.headingConfig;
+  const updateHC = (updates: Partial<NonNullable<VideoSegment['headingConfig']>>) => {
+    if (!s) return;
+    onUpdateSegment(idx, {
+      headingConfig: { ...(hc ?? { text: '', splitAudio: false }), ...updates },
+      ...('text' in updates ? { heading: String(updates.text ?? '') } : {}),
+    });
+  };
+  const fontSizeAuto = !hc?.fontSize;
+
   return (
     <AnimatePresence>
       {s && (
@@ -97,69 +107,193 @@ export function BottomDrawer({
           {/* Scrollable content */}
           <div className="overflow-y-auto p-5 space-y-4" style={{ maxHeight: 'calc(45vh - 52px)' }}>
 
-            {/* Two-column: Asset (left) + Overlay Text (right) */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Standard two-column: Asset + Overlay — hidden for heading segments */}
+            {!s.isHeading && (
+              <div className="grid grid-cols-2 gap-4">
 
-              {/* Left — Visual Asset */}
-              <div className="space-y-2">
-                <label className="text-[7px] uppercase font-bold text-gray-500 block">Visual Asset</label>
-                <select
-                  value={s.assetId ?? ''}
-                  onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26] cursor-pointer"
-                >
-                  <option value="">No Asset</option>
-                  {assets.filter(a => a.type !== 'audio').map(a => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
-                  ))}
-                </select>
-                <button
-                  onClick={() => onOpenStockSearch(s.id)}
-                  className="w-full flex items-center justify-center gap-2 py-2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all"
-                >
-                  <Video size={12} /> Stock Search
-                </button>
-              </div>
+                {/* Left — Visual Asset */}
+                <div className="space-y-2">
+                  <label className="text-[7px] uppercase font-bold text-gray-500 block">Visual Asset</label>
+                  <select
+                    value={s.assetId ?? ''}
+                    onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value })}
+                    className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold outline-none focus:border-[#F27D26] cursor-pointer"
+                  >
+                    <option value="">No Asset</option>
+                    {assets.filter(a => a.type !== 'audio').map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                  <button
+                    onClick={() => onOpenStockSearch(s.id)}
+                    className="w-full flex items-center justify-center gap-2 py-2 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-xl text-[9px] font-black uppercase tracking-widest hover:bg-blue-500 hover:text-white transition-all"
+                  >
+                    <Video size={12} /> Stock Search
+                  </button>
+                </div>
 
-              {/* Right — Overlay Text */}
-              <div className="space-y-2">
-                <label className="text-[7px] uppercase font-bold text-gray-500 block">Overlay Text</label>
-                <textarea
-                  value={s.text}
-                  onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
-                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] h-14 outline-none focus:border-[#F27D26] resize-none"
-                  placeholder="Scene overlay text…"
-                />
-                <button
-                  onClick={() => setFormattingOpen(v => !v)}
-                  className="w-full flex items-center justify-between px-3 py-1.5 bg-[#121212] border border-[#282828] rounded-xl text-[9px] font-bold uppercase tracking-widest text-gray-500 hover:border-[#F27D26] hover:text-gray-300 transition-all"
-                >
-                  <span>Formatting</span>
-                  {formattingOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
-                </button>
-              </div>
-            </div>
-
-            {/* Heading label — only for heading segments (isHeading or legacy heading field) */}
-            {(s.isHeading || s.heading !== undefined) && (
-              <div className="space-y-1">
-                <label className="text-[7px] uppercase font-bold text-gray-500 block">Heading Label</label>
-                <input
-                  value={s.headingConfig?.text ?? s.heading ?? ''}
-                  onChange={(e) => onUpdateSegment(idx, {
-                    heading: e.target.value,
-                    headingConfig: s.headingConfig
-                      ? { ...s.headingConfig, text: e.target.value }
-                      : { text: e.target.value, splitAudio: false },
-                  })}
-                  className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
-                  placeholder="Heading text"
-                />
+                {/* Right — Overlay Text */}
+                <div className="space-y-2">
+                  <label className="text-[7px] uppercase font-bold text-gray-500 block">Overlay Text</label>
+                  <textarea
+                    value={s.text}
+                    onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
+                    className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] h-14 outline-none focus:border-[#F27D26] resize-none"
+                    placeholder="Scene overlay text…"
+                  />
+                  <button
+                    onClick={() => setFormattingOpen(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-1.5 bg-[#121212] border border-[#282828] rounded-xl text-[9px] font-bold uppercase tracking-widest text-gray-500 hover:border-[#F27D26] hover:text-gray-300 transition-all"
+                  >
+                    <span>Formatting</span>
+                    {formattingOpen ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+                  </button>
+                </div>
               </div>
             )}
 
-            {/* Formatting panel — collapsed by default */}
-            {formattingOpen && (
+            {/* Full heading editor — shown for heading segments */}
+            {s.isHeading && (
+              <div className="p-4 bg-[#0D0D0D] border border-[#F27D26]/10 rounded-2xl space-y-3">
+                <p className="text-[7px] font-black uppercase tracking-widest text-[#F27D26]">Heading Style</p>
+
+                {/* Text */}
+                <div className="space-y-1">
+                  <label className="text-[7px] uppercase font-bold text-gray-600">Text</label>
+                  <input
+                    value={hc?.text ?? ''}
+                    onChange={(e) => updateHC({ text: e.target.value })}
+                    className="w-full bg-[#050505] border border-[#282828] px-3 py-2 rounded-xl text-[11px] font-bold outline-none focus:border-[#F27D26]"
+                    placeholder="Heading text"
+                  />
+                </div>
+
+                {/* Font family + weight */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Font</label>
+                    <select
+                      value={hc?.fontFamily ?? 'Inter'}
+                      onChange={(e) => updateHC({ fontFamily: e.target.value })}
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
+                    >
+                      {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Weight</label>
+                    <select
+                      value={String(hc?.fontWeight ?? 'bold')}
+                      onChange={(e) => updateHC({ fontWeight: e.target.value })}
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
+                    >
+                      <option value="normal">Normal</option>
+                      <option value="bold">Bold</option>
+                      <option value="900">Black</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Font size + auto toggle */}
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Size (px)</label>
+                    <input
+                      type="number"
+                      min={8} max={400}
+                      disabled={fontSizeAuto}
+                      value={hc?.fontSize ?? 100}
+                      onChange={(e) => updateHC({ fontSize: Number(e.target.value) || undefined })}
+                      className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px] disabled:opacity-40"
+                    />
+                  </div>
+                  <label className="flex items-center gap-2 cursor-pointer pb-1.5">
+                    <input
+                      type="checkbox"
+                      checked={fontSizeAuto}
+                      onChange={(e) => updateHC({ fontSize: e.target.checked ? undefined : 100 })}
+                      className="accent-[#F27D26]"
+                    />
+                    <span className="text-[8px] uppercase font-bold text-gray-600">Auto fit</span>
+                  </label>
+                </div>
+
+                {/* Text color + BG color */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Text Color</label>
+                    <input
+                      type="color"
+                      value={hc?.color ?? '#ffffff'}
+                      onChange={(e) => updateHC({ color: e.target.value })}
+                      className="w-full h-8 bg-transparent border-none cursor-pointer rounded"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">BG Color</label>
+                    <input
+                      type="color"
+                      value={hc?.backgroundColor ?? '#000000'}
+                      onChange={(e) => updateHC({ backgroundColor: e.target.value })}
+                      className="w-full h-8 bg-transparent border-none cursor-pointer rounded"
+                    />
+                  </div>
+                </div>
+
+                {/* X / Y position sliders */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">X: {hc?.x ?? 50}%</label>
+                    <input
+                      type="range"
+                      min={0} max={100}
+                      value={hc?.x ?? 50}
+                      onChange={(e) => updateHC({ x: Number(e.target.value) })}
+                      className="w-full accent-[#F27D26]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[7px] uppercase font-bold text-gray-600">Y: {hc?.y ?? 50}%</label>
+                    <input
+                      type="range"
+                      min={0} max={100}
+                      value={hc?.y ?? 50}
+                      onChange={(e) => updateHC({ y: Number(e.target.value) })}
+                      className="w-full accent-[#F27D26]"
+                    />
+                  </div>
+                </div>
+
+                {/* Background asset */}
+                <div className="space-y-1">
+                  <label className="text-[7px] uppercase font-bold text-gray-600">BG Asset (optional)</label>
+                  <select
+                    value={hc?.assetId ?? ''}
+                    onChange={(e) => updateHC({ assetId: e.target.value || undefined })}
+                    className="w-full bg-[#050505] border border-[#282828] px-2 py-1.5 rounded-lg text-[10px]"
+                  >
+                    <option value="">None (solid color)</option>
+                    {assets.filter(a => a.type !== 'audio').map(a => (
+                      <option key={a.id} value={a.id}>{a.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Split audio */}
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={hc?.splitAudio ?? false}
+                    onChange={(e) => updateHC({ splitAudio: e.target.checked })}
+                    className="accent-[#F27D26]"
+                  />
+                  <span className="text-[9px] font-bold text-gray-500">Split audio at this heading</span>
+                </label>
+              </div>
+            )}
+
+            {/* Formatting panel — collapsed by default; hidden for heading segments */}
+            {!s.isHeading && formattingOpen && (
               <div className="p-4 bg-[#0D0D0D] border border-[#1E1E1E] rounded-2xl space-y-3">
                 <p className="text-[7px] font-black uppercase tracking-widest text-[#F27D26]">Text Formatting</p>
                 <div className="grid grid-cols-2 gap-3">
@@ -378,20 +512,22 @@ export function BottomDrawer({
               </div>
             )}
 
-            {/* Mute toggle */}
-            <div className="flex items-center pt-1 pb-1">
-              <button
-                onClick={() => onUpdateSegment(idx, { isMuted: !s.isMuted })}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[8px] uppercase font-black tracking-widest transition-all ${
-                  s.isMuted
-                    ? 'bg-red-500/10 text-red-400 border border-red-500/20'
-                    : 'bg-green-500/10 text-green-400 border border-green-500/20'
-                }`}
-              >
-                <Music size={10} className={s.isMuted ? 'opacity-40' : ''} />
-                {s.isMuted ? 'Muted' : 'Audio On'}
-              </button>
-            </div>
+            {/* Mute toggle — hidden for heading segments (no embedded audio) */}
+            {!s.isHeading && (
+              <div className="flex items-center pt-1 pb-1">
+                <button
+                  onClick={() => onUpdateSegment(idx, { isMuted: !s.isMuted })}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[8px] uppercase font-black tracking-widest transition-all ${
+                    s.isMuted
+                      ? 'bg-red-500/10 text-red-400 border border-red-500/20'
+                      : 'bg-green-500/10 text-green-400 border border-green-500/20'
+                  }`}
+                >
+                  <Music size={10} className={s.isMuted ? 'opacity-40' : ''} />
+                  {s.isMuted ? 'Muted' : 'Audio On'}
+                </button>
+              </div>
+            )}
 
           </div>
         </motion.div>
