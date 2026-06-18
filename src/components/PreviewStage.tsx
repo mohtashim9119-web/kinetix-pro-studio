@@ -132,6 +132,7 @@ export function PreviewStage({
   // Neither element is ever unmounted; we swap which is visible on segment change.
   const videoARef = useRef<HTMLVideoElement>(null);
   const videoBRef = useRef<HTMLVideoElement>(null);
+  const headingVideoRef = useRef<HTMLVideoElement>(null);
   const [activeSlot, setActiveSlot] = useState<'a' | 'b'>('a');
   const activeSlotRef = useRef<'a' | 'b'>('a');
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
@@ -394,6 +395,17 @@ export function PreviewStage({
     }
   }, [isPlaying]);
 
+  // Sync heading background video to isPlaying (not covered by the dual-slot effect above).
+  useEffect(() => {
+    const v = headingVideoRef.current;
+    if (!v) return;
+    if (isPlaying) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+    }
+  }, [isPlaying]);
+
   // Sync playbackRate whenever playbackSpeed or global speed changes
   // without re-seeking (seek only happens on segment transition above).
   useEffect(() => {
@@ -517,8 +529,8 @@ export function PreviewStage({
                             asset.type === 'video' ? (
                               <video
                                 key={asset.url}
+                                ref={headingVideoRef}
                                 src={asset.url}
-                                autoPlay
                                 muted
                                 loop
                                 playsInline
