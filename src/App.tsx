@@ -871,7 +871,7 @@ export default function App() {
         duration: actualDur,
         startTime: headingStart,
         anchorStart: headingStart,
-        anchorSource: 'estimate',
+        anchorSource: 'whisper',
         transition: TransitionType.NONE,
         animation: AnimationType.NONE,
       };
