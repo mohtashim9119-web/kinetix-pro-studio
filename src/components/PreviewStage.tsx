@@ -430,7 +430,7 @@ export function PreviewStage({
         ref={stageRef}
         className={isFullscreen
           ? 'fixed inset-0 z-[5000] flex items-center justify-center bg-black overflow-hidden'
-          : 'relative bg-black rounded-xl border border-[#1A1A1A] overflow-hidden shadow-2xl group w-full h-full'}
+          : 'relative bg-black overflow-hidden group w-full h-full'}
       >
         {/* Floating Controls */}
         <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">

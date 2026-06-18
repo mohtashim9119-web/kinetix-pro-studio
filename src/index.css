@@ -15,16 +15,19 @@
 
 .custom-scrollbar::-webkit-scrollbar {
   width: 4px;
+  height: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
+  background: #111111;
+  border-radius: 10px;
+  margin: 0 6px 6px 6px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #1A1A1A;
+  background: #F27D26;
   border-radius: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #222;
+  background: #FF9040;
 }
 
 /* Global keyboard focus ring — visible on all interactive elements when navigated via keyboard.
