@@ -89,6 +89,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
+import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
 import { isTauri } from './services/tauriFfmpeg';
 import { invoke } from '@tauri-apps/api/core';
@@ -563,11 +564,6 @@ export default function App() {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
 
-  // Ref that mirrors project.segments for stable interval closure access.
-  // The playback setInterval reads this instead of closing over the state value
-  // directly, so that segment edits (overlay changes, drag-resize, etc.) no longer
-  // destroy and rebuild the interval on every setProject call. (Finding 13 / Batch A)
-  const segmentsRef = useRef<VideoSegment[]>(project.segments);
   // Ref that mirrors project.assets so useCallback([]) closures can read the
   // latest asset list without project.assets appearing in their dep arrays.
   const assetsRef = useRef<Asset[]>(project.assets);
@@ -577,8 +573,6 @@ export default function App() {
   // Ref that mirrors project.id so stable useCallback([]) closures can pass the
   // correct projectId to IndexedDB calls without project.id in their dep arrays.
   const projectIdRef = useRef<string>(project.id);
-  // Tracks the active requestAnimationFrame handle for the voiceover playback loop.
-  const rafRef = useRef<number | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
   // Cleared via a one-frame rAF delay in handleUp so it stays true through
   // the render that processes the final mousemove setProject call.
@@ -1455,12 +1449,11 @@ export default function App() {
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
 
-  // Sync volatile values into refs on every render so the playback interval can
-  // read them without those values appearing in the interval's dependency array.
+  // Sync volatile values into refs on every render so async handlers and stable
+  // callbacks can read the live state without stale closures.
   // Intentionally no dependency array — must run after every render to stay fresh.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    segmentsRef.current = project.segments;
     assetsRef.current = project.assets;
     projectRef.current = project;
     projectIdRef.current = project.id;
@@ -1489,15 +1482,16 @@ export default function App() {
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
-
-  // --- Playback: audio pause on user stop ---
-  // Fires whenever isPlaying flips to false; no-ops when audioRef is null (no voiceover loaded).
-  // Kept in a separate effect so the rAF loop dep array stays minimal.
-  useEffect(() => {
-    if (!isPlaying && !exportState.isExporting) {
-      audioRef.current?.pause();
-    }
-  }, [isPlaying, exportState.isExporting]);
+  usePlayback({
+    isPlaying,
+    setIsPlaying,
+    setCurrentTime,
+    audioRef,
+    segments: project.segments,
+    voiceover,
+    globalPlaybackSpeed,
+    isExporting: exportState.isExporting,
+  });
 
   // --- Export success toast: auto-dismiss after 10 s ---
   useEffect(() => {
@@ -1505,85 +1499,6 @@ export default function App() {
     const t = setTimeout(() => dismissSuccess(), 10000);
     return () => clearTimeout(t);
   }, [exportState.showExportSuccess, dismissSuccess]);
-
-  // --- Playback: rAF loop — voiceover path (audio element is master clock) ---
-  // Reads audioRef.current.currentTime on every animation frame (~16ms at 60fps).
-  // Replaces the 100ms setInterval, eliminating quantization drift (audit findings 9, 10).
-  // All values inside tick are read via stable refs or setters — no stale closure risk.
-  // segmentsRef not needed here: end-of-audio uses native audio.ended, not segmentsDuration.
-  useEffect(() => {
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-
-    if (!isPlaying || !voiceover) return;
-
-    const tick = () => {
-      const audio = audioRef.current;
-      if (!audio) return;
-
-      const t = audio.currentTime;
-      setCurrentTime(t);
-
-      // Defensive resume: if audio stalled mid-playback for any reason, restart it.
-      // Guard with !audio.ended so a naturally-finished audio is not restarted here.
-      if (audio.paused && !audio.ended) {
-        audio.play().catch(() => {});
-      }
-
-      // End-of-audio detection via native HTMLMediaElement.ended flag.
-      if (audio.ended) {
-        setIsPlaying(false);
-        audio.currentTime = 0;
-        setCurrentTime(0);
-        return; // do not schedule next frame
-      }
-
-      rafRef.current = requestAnimationFrame(tick);
-    };
-
-    rafRef.current = requestAnimationFrame(tick);
-
-    return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-    };
-  }, [isPlaying, voiceover]);
-
-  // --- Playback: setInterval manual-advance — no-voiceover path ---
-  // Only runs when isPlaying is true and no voiceover asset is loaded.
-  // No audio drift concern here; keeps globalPlaybackSpeed and segmentsDuration as before.
-  // (Decision 1 / Batch C: keep no-voiceover path as a separate setInterval, unchanged.)
-  useEffect(() => {
-    if (!isPlaying || voiceover) return;
-
-    const interval = setInterval(() => {
-      const segDur = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
-      const maxDuration = (!segDur || isNaN(segDur) || !isFinite(segDur)) ? 10 : segDur;
-      setCurrentTime(prev => {
-        const next = prev + 0.1 * globalPlaybackSpeed;
-        if (next >= maxDuration) {
-          setIsPlaying(false);
-          return 0;
-        }
-        return next;
-      });
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, [isPlaying, voiceover, globalPlaybackSpeed]);
-
-  // --- Playback: playbackRate sync ---
-  // Separate effect so neither loop gains globalPlaybackSpeed as a dep.
-  // Fires on play-start and whenever the user adjusts speed mid-playback.
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = globalPlaybackSpeed;
-    }
-  }, [isPlaying, globalPlaybackSpeed]);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
