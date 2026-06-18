@@ -785,6 +785,36 @@ export default function App() {
     }));
   }, []);
 
+  const handleInsertHeading = useCallback((afterIndex: number): void => {
+    setProject(prev => {
+      const segs = prev.segments;
+      // Determine insertion position (afterIndex=-1 means before all segments)
+      const insertAt = afterIndex + 1;
+      const prevSeg = segs[afterIndex] as typeof segs[number] | undefined;
+      const startTime = prevSeg ? prevSeg.startTime + prevSeg.duration : 0;
+      const newHeading: VideoSegment = {
+        id: crypto.randomUUID(),
+        order: insertAt,
+        text: '',
+        heading: 'New Heading',
+        isHeading: true,
+        headingConfig: { text: 'New Heading', splitAudio: false, x: 50, y: 50 },
+        duration: HEADING_ONLY_DURATION_SECONDS,
+        startTime,
+        anchorSource: 'estimate',
+        transition: TransitionType.NONE,
+        animation: AnimationType.NONE,
+      };
+      const before = segs.slice(0, insertAt);
+      const after = segs.slice(insertAt).map((s, i) => ({
+        ...s,
+        order: insertAt + 1 + i,
+        startTime: s.startTime + HEADING_ONLY_DURATION_SECONDS,
+      }));
+      return { ...prev, segments: [...before, newHeading, ...after] };
+    });
+  }, []);
+
   const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
     const seg = projectRef.current.segments[segIdx];
     if (!seg) return;
@@ -1758,6 +1788,7 @@ export default function App() {
             onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
             onUnlockAll={handleUnlockAll}
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
+            onInsertHeading={handleInsertHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
             textLayers={project.textLayers ?? []}
             onAddTextLayer={handleAddTextLayer}

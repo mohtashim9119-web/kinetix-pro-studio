@@ -233,6 +233,8 @@ interface Props {
   onLockAll: () => void;
   onUnlockAll: () => void;
   allLocked: boolean;
+  /** Insert a new heading segment at the given index (0 = before all segments). */
+  onInsertHeading: (afterIndex: number) => void;
   // Misc
   selectedSegmentId: string | undefined;
   // Global text layers
@@ -301,6 +303,7 @@ export function DropZonePanel({
   onLockAll,
   onUnlockAll,
   allLocked,
+  onInsertHeading,
   selectedSegmentId,
   textLayers,
   onAddTextLayer,
@@ -351,6 +354,9 @@ export function DropZonePanel({
   const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
+  // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
+  // -1 = before all segments; i = after segment[i].
+  const [hoveredGapIdx, setHoveredGapIdx] = useState<number | null>(null);
 
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
     setStaged(prev => {
@@ -800,51 +806,87 @@ export function DropZonePanel({
           />
 
           {/* Segment list */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2 space-y-1">
-            {segments.map((seg) => {
+          <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2">
+            {/* Permanent "+ Add Heading" at the top */}
+            <button
+              onClick={() => onInsertHeading(-1)}
+              className="w-full mb-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg
+                         border border-dashed border-[#282828] text-[9px] font-bold uppercase tracking-widest
+                         text-[#F27D26]/60 hover:text-[#F27D26] hover:border-[#F27D26]/40
+                         hover:bg-[#F27D26]/5 transition-all"
+              aria-label="Insert heading before all segments"
+            >
+              <span className="text-sm leading-none">+</span> Add Heading
+            </button>
+
+            {segments.map((seg, i) => {
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
               const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
               return (
-                <div
-                  key={seg.id}
-                  onClick={() => onSegmentClick(seg.id)}
-                  className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
-                              transition-all border
-                              ${isSelected
-                                ? 'bg-[#F27D26]/10 border-[#F27D26]/30'
-                                : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
-                              }`}
-                >
-                  <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
-                                  bg-[#1A1A1A] flex items-center justify-center">
-                    {asset?.url && asset.type === 'image'
-                      ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                      : asset?.type === 'video'
-                      ? <Video size={14} className="text-blue-400" />
-                      : isMissing
-                      ? <AlertCircle size={14} className="text-yellow-500" />
-                      : <div className="w-full h-full bg-[#1A1A1A]" />
-                    }
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-bold text-white truncate">
-                      {seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${seg.order + 1}`}
-                    </p>
-                    <p className="text-[9px] text-gray-600 font-mono">
-                      {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
-                    </p>
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
-                    className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
-                    aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
+                <div key={seg.id} className="relative group/gap">
+                  <div
+                    onClick={() => onSegmentClick(seg.id)}
+                    className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
+                                transition-all border
+                                ${isSelected
+                                  ? 'bg-[#F27D26]/10 border-[#F27D26]/30'
+                                  : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
+                                }`}
                   >
-                    {seg.locked
-                      ? <Lock size={12} className="text-[#F27D26]" />
-                      : <Unlock size={12} className="text-gray-600" />
-                    }
-                  </button>
+                    <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
+                                    bg-[#1A1A1A] flex items-center justify-center">
+                      {asset?.url && asset.type === 'image'
+                        ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                        : asset?.type === 'video'
+                        ? <Video size={14} className="text-blue-400" />
+                        : isMissing
+                        ? <AlertCircle size={14} className="text-yellow-500" />
+                        : seg.isHeading
+                        ? <span className="text-[8px] font-black text-[#F27D26]/60 uppercase">H</span>
+                        : <div className="w-full h-full bg-[#1A1A1A]" />
+                      }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[10px] font-bold text-white truncate">
+                        {seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${seg.order + 1}`}
+                      </p>
+                      <p className="text-[9px] text-gray-600 font-mono">
+                        {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
+                      className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
+                      aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
+                    >
+                      {seg.locked
+                        ? <Lock size={12} className="text-[#F27D26]" />
+                        : <Unlock size={12} className="text-gray-600" />
+                      }
+                    </button>
+                  </div>
+
+                  {/* Hover-reveal "+ heading" gap button — appears between segments */}
+                  <div
+                    className="relative h-3 flex items-center justify-center"
+                    onMouseEnter={() => setHoveredGapIdx(i)}
+                    onMouseLeave={() => setHoveredGapIdx(null)}
+                  >
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onInsertHeading(i); }}
+                      className={`absolute flex items-center gap-1 px-2 py-0.5 rounded-md
+                                  text-[8px] font-black uppercase tracking-widest
+                                  bg-[#0A0A0A] border border-[#282828] text-[#F27D26]/70
+                                  hover:text-[#F27D26] hover:border-[#F27D26]/40 hover:bg-[#F27D26]/5
+                                  transition-all z-10
+                                  ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                      aria-label={`Insert heading after segment ${i + 1}`}
+                    >
+                      <span className="text-xs leading-none">+</span> heading
+                    </button>
+                    <div className={`w-full h-px bg-[#F27D26]/20 transition-opacity ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0'}`} />
+                  </div>
                 </div>
               );
             })}
