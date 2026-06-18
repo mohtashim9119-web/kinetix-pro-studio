@@ -467,7 +467,9 @@ export function PreviewStage({
               >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);
-                  const isVideoAsset = !!(asset?.url && asset.type === 'video');
+                  // Heading backgrounds are rendered in their own block below; exclude them
+                  // from the dual-slot system so the imperative src assignment doesn't fire.
+                  const isVideoAsset = !isHeadingSegment && !!(asset?.url && asset.type === 'video');
                   return (
                     <>
                       {/* FIX 1 + FIX 4 — Dual persistent video slots. Both elements stay
@@ -502,42 +504,62 @@ export function PreviewStage({
                           transition={{ duration: 0.4 }}
                         />
                       )}
-                      {/* Heading segment — title card with optional background asset */}
-                      {isHeadingSegment && !asset?.url && (
+                      {/* Heading segment — background (asset or solid color) + text overlay.
+                          Rendered unconditionally when isHeadingSegment; asset and text are
+                          independent so a background image/video does not hide the text. */}
+                      {isHeadingSegment && (
                         <div
                           ref={headingContainerRef}
-                          className="absolute inset-0 z-10"
-                          style={{
-                            backgroundColor: currentSegment.headingConfig?.backgroundColor ?? '#000000',
-                          }}
+                          className="absolute inset-0 z-30"
                         >
-                          <div
-                            className="absolute"
+                          {/* Background layer */}
+                          {asset?.url ? (
+                            asset.type === 'video' ? (
+                              <video
+                                key={asset.url}
+                                src={asset.url}
+                                autoPlay
+                                muted
+                                loop
+                                playsInline
+                                className="absolute inset-0 w-full h-full object-cover"
+                              />
+                            ) : (
+                              <img
+                                src={asset.url}
+                                className="absolute inset-0 w-full h-full object-cover"
+                                alt=""
+                              />
+                            )
+                          ) : (
+                            <div
+                              className="absolute inset-0"
+                              style={{ backgroundColor: currentSegment.headingConfig?.backgroundColor ?? '#000000' }}
+                            />
+                          )}
+                          {/* Text overlay — always rendered on top of whatever background */}
+                          <h1
+                            className="absolute font-bold"
                             style={{
                               left: `${currentSegment.headingConfig?.x ?? 50}%`,
                               top: `${currentSegment.headingConfig?.y ?? 50}%`,
                               transform: 'translate(-50%, -50%)',
                               width: '90%',
                               textAlign: 'center',
+                              zIndex: 1,
+                              fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
+                              fontFamily: currentSegment.headingConfig?.fontFamily ?? globalOverlayConfig.fontFamily ?? 'system-ui, sans-serif',
+                              fontWeight: currentSegment.headingConfig?.fontWeight ?? 'bold',
+                              color: currentSegment.headingConfig?.color ?? '#ffffff',
+                              lineHeight: 1.2,
+                              overflow: 'hidden',
+                              display: '-webkit-box',
+                              WebkitLineClamp: 6,
+                              WebkitBoxOrient: 'vertical' as const,
                             }}
                           >
-                            <h1
-                              className="font-bold"
-                              style={{
-                                fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
-                                fontFamily: currentSegment.headingConfig?.fontFamily ?? globalOverlayConfig.fontFamily ?? 'system-ui, sans-serif',
-                                fontWeight: currentSegment.headingConfig?.fontWeight ?? 'bold',
-                                color: currentSegment.headingConfig?.color ?? '#ffffff',
-                                lineHeight: 1.2,
-                                overflow: 'hidden',
-                                display: '-webkit-box',
-                                WebkitLineClamp: 6,
-                                WebkitBoxOrient: 'vertical' as const,
-                              }}
-                            >
-                              {headingText}
-                            </h1>
-                          </div>
+                            {headingText}
+                          </h1>
                         </div>
                       )}
                       {/* Missing asset placeholder — not shown for heading segments */}
