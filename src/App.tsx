@@ -72,6 +72,7 @@ import {
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
+import { HEADING_DEFAULT_DURATION } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -788,10 +789,58 @@ export default function App() {
   const handleInsertHeading = useCallback((afterIndex: number): void => {
     setProject(prev => {
       const segs = prev.segments;
-      // Determine insertion position (afterIndex=-1 means before all segments)
-      const insertAt = afterIndex + 1;
-      const prevSeg = segs[afterIndex] as typeof segs[number] | undefined;
-      const startTime = prevSeg ? prevSeg.startTime + prevSeg.duration : 0;
+      const insertAt = afterIndex + 1; // -1 → 0 (prepend); i → i+1 (after segment i)
+      const HEADING_DUR = HEADING_DEFAULT_DURATION; // 1.0 s
+      const HALF = HEADING_DUR / 2;                // 0.5 s each side
+      const MIN_DUR = 0.1;
+
+      // Work on a mutable copy so we can adjust neighbor durations.
+      const draft = segs.map(s => ({ ...s }));
+
+      const prevSeg = draft[insertAt - 1] as typeof draft[number] | undefined;
+      const nextSeg = draft[insertAt] as typeof draft[number] | undefined;
+
+      // Steal time from both neighbors. Locked segments are still absorbed — insertion
+      // is a deliberate user action. We warn but do not skip.
+      let prevSteal = 0;
+      let nextSteal = 0;
+
+      if (!prevSeg && !nextSeg) {
+        // Empty timeline — heading just takes 1.0 s of new time, that's fine.
+      } else if (!prevSeg) {
+        // Prepend: take full 1.0 s from next segment.
+        nextSteal = Math.min(HEADING_DUR, (nextSeg!.duration) - MIN_DUR);
+        if (nextSeg?.locked) console.warn('[handleInsertHeading] absorbing from locked segment (next)');
+      } else if (!nextSeg) {
+        // Append: take full 1.0 s from prev segment.
+        prevSteal = Math.min(HEADING_DUR, (prevSeg.duration) - MIN_DUR);
+        if (prevSeg.locked) console.warn('[handleInsertHeading] absorbing from locked segment (prev)');
+      } else {
+        // Middle: try HALF from each; spill remainder to the other.
+        const prevAvail = Math.max(0, prevSeg.duration - MIN_DUR);
+        const nextAvail = Math.max(0, nextSeg.duration - MIN_DUR);
+        prevSteal = Math.min(HALF, prevAvail);
+        const remaining = HEADING_DUR - prevSteal;
+        nextSteal = Math.min(remaining, nextAvail);
+        const stillRemaining = HEADING_DUR - prevSteal - nextSteal;
+        if (stillRemaining > 0) {
+          // spill back to prev if next was short
+          prevSteal += Math.min(stillRemaining, prevAvail - prevSteal);
+        }
+        if (prevSeg.locked || nextSeg?.locked) {
+          console.warn('[handleInsertHeading] absorbing from locked segment(s)');
+        }
+      }
+
+      const actualDur = Number((prevSteal + nextSteal).toFixed(3)) || HEADING_DUR;
+
+      if (prevSeg) prevSeg.duration = Number((prevSeg.duration - prevSteal).toFixed(3));
+      if (nextSeg) nextSeg.duration = Number((nextSeg.duration - nextSteal).toFixed(3));
+
+      const headingStart = prevSeg
+        ? Number((prevSeg.startTime + prevSeg.duration).toFixed(3))
+        : 0;
+
       const newHeading: VideoSegment = {
         id: crypto.randomUUID(),
         order: insertAt,
@@ -799,19 +848,29 @@ export default function App() {
         heading: 'New Heading',
         isHeading: true,
         headingConfig: { text: 'New Heading', splitAudio: false, x: 50, y: 50 },
-        duration: HEADING_ONLY_DURATION_SECONDS,
-        startTime,
+        duration: actualDur,
+        startTime: headingStart,
+        anchorStart: headingStart,
         anchorSource: 'estimate',
         transition: TransitionType.NONE,
         animation: AnimationType.NONE,
       };
-      const before = segs.slice(0, insertAt);
-      const after = segs.slice(insertAt).map((s, i) => ({
-        ...s,
-        order: insertAt + 1 + i,
-        startTime: s.startTime + HEADING_ONLY_DURATION_SECONDS,
-      }));
-      return { ...prev, segments: [...before, newHeading, ...after] };
+
+      const merged = [
+        ...draft.slice(0, insertAt),
+        newHeading,
+        ...draft.slice(insertAt),
+      ];
+
+      // Recompute startTimes via cumulative sum so everything is contiguous.
+      let cursor = 0;
+      const reordered = merged.map((s, i) => {
+        const out = { ...s, order: i, startTime: Number(cursor.toFixed(3)) };
+        cursor += s.duration;
+        return out;
+      });
+
+      return { ...prev, segments: reordered };
     });
   }, []);
 
