@@ -36,6 +36,10 @@ export function usePlayback({
 }: UsePlaybackParams): void {
   const rafRef = useRef<number | null>(null);
   const segmentsRef = useRef<VideoSegment[]>(segments);
+  const holdingRef = useRef<{ startWallClock: number; startCurrentTime: number } | null>(null);
+  // Accumulated extra VIDEO seconds introduced by splitAudio headings already passed.
+  // videoTime = audio.currentTime + splitAudioOffsetRef
+  const splitAudioOffsetRef = useRef(0);
 
   // Keep segmentsRef current so the setInterval closure always reads the latest
   // durations without segments appearing in the interval's dependency array.
@@ -63,12 +67,51 @@ export function usePlayback({
 
     if (!isPlaying || !voiceover) return;
 
+    // Reset offset + hold state when starting from the beginning.
+    if ((audioRef.current?.currentTime ?? 0) < 0.01) {
+      splitAudioOffsetRef.current = 0;
+      holdingRef.current = null;
+    }
+
     const tick = () => {
       const audio = audioRef.current;
       if (!audio) return;
 
-      const t = audio.currentTime;
-      setCurrentTime(t);
+      const audioT = audio.currentTime;
+      // VIDEO time = audio time + accumulated dead time from passed splitAudio headings.
+      const videoT = audioT + splitAudioOffsetRef.current;
+
+      const segs = segmentsRef.current;
+      const currentSeg = segs.find(s => videoT >= s.startTime && videoT < s.startTime + s.duration);
+
+      // splitAudio hold mode: pause audio, advance video by wall clock.
+      if (currentSeg?.isHeading && currentSeg.headingConfig?.splitAudio) {
+        if (!holdingRef.current) {
+          audio.pause();
+          holdingRef.current = { startWallClock: Date.now(), startCurrentTime: videoT };
+        }
+        const elapsed = (Date.now() - holdingRef.current.startWallClock) / 1000;
+        const newVideoT = holdingRef.current.startCurrentTime + elapsed;
+
+        if (newVideoT >= currentSeg.startTime + currentSeg.duration) {
+          // Exit hold: accumulate the heading's duration into the offset and resume.
+          splitAudioOffsetRef.current += currentSeg.duration;
+          holdingRef.current = null;
+          audio.play().catch(() => {});
+          setCurrentTime(currentSeg.startTime + currentSeg.duration);
+        } else {
+          setCurrentTime(newVideoT);
+        }
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      // Normal path: video time tracks audio + accumulated offset.
+      if (holdingRef.current) {
+        holdingRef.current = null;
+        audio.play().catch(() => {});
+      }
+      setCurrentTime(videoT);
 
       // Defensive resume: if audio stalled mid-playback for any reason, restart it.
       // Guard with !audio.ended so a naturally-finished audio is not restarted here.
@@ -80,6 +123,8 @@ export function usePlayback({
       if (audio.ended) {
         setIsPlaying(false);
         audio.currentTime = 0;
+        splitAudioOffsetRef.current = 0;
+        holdingRef.current = null;
         setCurrentTime(0);
         return; // do not schedule next frame
       }

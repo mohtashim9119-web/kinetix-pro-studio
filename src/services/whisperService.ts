@@ -382,6 +382,29 @@ export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
     if (!seg.isHeading && !(seg.heading && !seg.text)) continue; // not a heading-only slide
     if (seg.locked) continue;
 
+    // splitAudio: heading inserts dead video time without stealing from neighbors.
+    // Set duration to HEADING_DEFAULT_DURATION and shift all subsequent segments
+    // forward by the delta so they stay in sync with the audio.
+    if (seg.headingConfig?.splitAudio) {
+      const originalDur = seg.duration;
+      segs[i] = { ...seg, duration: HEADING_DEFAULT_DURATION };
+      const shift = Number((HEADING_DEFAULT_DURATION - originalDur).toFixed(3));
+      if (Math.abs(shift) > 0.001) {
+        for (let j = i + 1; j < segs.length; j++) {
+          const after = segs[j];
+          if (!after) continue;
+          segs[j] = {
+            ...after,
+            startTime: Number((after.startTime + shift).toFixed(3)),
+            ...(after.anchorStart !== undefined
+              ? { anchorStart: Number((after.anchorStart + shift).toFixed(3)) }
+              : {}),
+          };
+        }
+      }
+      continue;
+    }
+
     const prevIdx = nearestContentIdx(segs, i, -1);
     const nextIdx = nearestContentIdx(segs, i, 1);
     const prevSeg = prevIdx >= 0 ? segs[prevIdx]! : null;
