@@ -357,19 +357,21 @@ function nearestContentIdx(segs: VideoSegment[], from: number, step: -1 | 1): nu
 }
 
 /**
- * Post-processing pass that corrects heading-only segment durations after Whisper
- * alignment collapses them to ~0.1 s (heading slides have no spoken text to match).
+ * Post-processing pass that pins heading-only segment durations to exactly
+ * HEADING_DEFAULT_DURATION (1.0 s) after Whisper alignment.
  *
- * Rules:
- *  - Each heading-only slide (seg.heading non-empty, seg.text empty, not locked) is
- *    set to HEADING_DEFAULT_DURATION (1.0 s), taken from adjacent content segments.
- *  - Nearest unlocked content in each direction is found by scanning past adjacent headings.
- *  - 50 / 50 split when both directions are available; any shortfall on one side
- *    is shifted to the other.
- *  - Locked neighbors contribute 0 available space.
- *  - If total available < HEADING_DEFAULT_DURATION, heading is clamped to available space.
- *  - If both neighbors are locked / absent, heading is set to MIN_SEGMENT_DURATION.
- *  - startTimes are recomputed to keep segments contiguous.
+ * Two cases are handled:
+ *
+ * SHRINK (Whisper gave heading the full inter-speech gap, e.g. 1.1 s > 1.0 s):
+ *   - Return the excess to the nearest unlocked previous neighbor; fall back to next.
+ *
+ * GROW (Whisper collapsed heading to ~0.1 s — heading has no spoken text):
+ *   - Grow toward HEADING_DEFAULT_DURATION via 50/50 take from both neighbors.
+ *   - Any shortfall on one side is shifted to the other.
+ *   - Locked neighbors contribute 0 available space.
+ *   - If total available < HEADING_DEFAULT_DURATION, clamp to available space.
+ *
+ * startTimes are recomputed to keep segments contiguous.
  */
 export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
   if (segments.length === 0) return segments;
@@ -377,7 +379,7 @@ export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
 
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i]!;
-    if (!(seg.heading && !seg.text)) continue; // not a heading-only slide
+    if (!(seg.heading && !seg.text)) continue; // not a heading-only slide (isHeading handled via heading alias)
     if (seg.locked) continue;
 
     const prevIdx = nearestContentIdx(segs, i, -1);
@@ -385,6 +387,20 @@ export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
     const prevSeg = prevIdx >= 0 ? segs[prevIdx]! : null;
     const nextSeg = nextIdx >= 0 ? segs[nextIdx]! : null;
 
+    // SHRINK pass: Whisper assigned the heading the full spoken gap (> 1.0 s).
+    // Return excess to previous unlocked neighbor; fall back to next.
+    if (seg.duration > HEADING_DEFAULT_DURATION + 0.001) {
+      const excess = Number((seg.duration - HEADING_DEFAULT_DURATION).toFixed(3));
+      segs[i] = { ...seg, duration: HEADING_DEFAULT_DURATION };
+      if (prevIdx >= 0 && prevSeg !== null && !prevSeg.locked) {
+        segs[prevIdx] = { ...prevSeg, duration: Number((prevSeg.duration + excess).toFixed(3)) };
+      } else if (nextIdx >= 0 && nextSeg !== null && !nextSeg.locked) {
+        segs[nextIdx] = { ...nextSeg, duration: Number((nextSeg.duration + excess).toFixed(3)) };
+      }
+      continue;
+    }
+
+    // GROW pass: Whisper collapsed heading to near zero; build back up to 1.0 s.
     const prevAvail = prevSeg && !prevSeg.locked
       ? Math.max(0, prevSeg.duration - MIN_SEGMENT_DURATION) : 0;
     const nextAvail = nextSeg && !nextSeg.locked
