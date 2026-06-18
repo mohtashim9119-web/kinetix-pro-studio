@@ -36,7 +36,13 @@ export function usePlayback({
 }: UsePlaybackParams): void {
   const rafRef = useRef<number | null>(null);
   const segmentsRef = useRef<VideoSegment[]>(segments);
-  const holdingRef = useRef<{ startWallClock: number; startCurrentTime: number } | null>(null);
+  const holdingRef = useRef<{
+    startWallClock: number;
+    startCurrentTime: number;
+    // Ideal audio position at heading entry (heading.startTime - offset at entry).
+    // Seeked-to on exit so entry-detection lag never propagates as drift.
+    audioAtEntry: number;
+  } | null>(null);
   // Accumulated extra VIDEO seconds introduced by splitAudio headings already passed.
   // videoTime = audio.currentTime + splitAudioOffsetRef
   const splitAudioOffsetRef = useRef(0);
@@ -87,14 +93,22 @@ export function usePlayback({
       // splitAudio hold mode: pause audio, advance video by wall clock.
       if (currentSeg?.isHeading && currentSeg.headingConfig?.splitAudio) {
         if (!holdingRef.current) {
+          // Capture the IDEAL audio position (heading start minus prior offset) before
+          // pausing. Using the segment's known startTime rather than audio.currentTime
+          // eliminates entry-detection lag: even if the rAF fires 1-3 frames late and
+          // audio.currentTime has already crept past heading.startTime, we will seek
+          // back to the ideal position on exit so drift never accumulates.
+          const audioAtEntry = currentSeg.startTime - splitAudioOffsetRef.current;
           audio.pause();
-          holdingRef.current = { startWallClock: Date.now(), startCurrentTime: videoT };
+          holdingRef.current = { startWallClock: Date.now(), startCurrentTime: videoT, audioAtEntry };
         }
         const elapsed = (Date.now() - holdingRef.current.startWallClock) / 1000;
         const newVideoT = holdingRef.current.startCurrentTime + elapsed;
 
         if (newVideoT >= currentSeg.startTime + currentSeg.duration) {
-          // Exit hold: accumulate the heading's duration into the offset and resume.
+          // Exit hold: seek audio back to its ideal entry position so any entry-lag
+          // drift is erased, then accumulate the heading duration and resume.
+          audio.currentTime = holdingRef.current.audioAtEntry;
           splitAudioOffsetRef.current += currentSeg.duration;
           holdingRef.current = null;
           audio.play().catch(() => {});
