@@ -254,25 +254,35 @@ Phase 3 steps:
 
 ## Long-running Deferred Items
 
-<!-- Audited 2026-06-18 — 9 items pruned (2 DONE, 7 LOW-VALUE). -->
+<!-- Audited 2026-06-18 — 9 items pruned (2 DONE, 7 LOW-VALUE). Restructured 2026-06-18 — SaaS items moved to SaaS Readiness Tasks; batch-1-2-3 completed items removed; cosmetic items consolidated here. -->
 
-- ~~**`usePlayback` hook extraction**~~ — **Extracted 2026-06-18 (85fa111).** rAF loop, setInterval, audio-pause, and playbackRate sync effects moved to `src/hooks/usePlayback.ts`; hook owns its own `rafRef` and `segmentsRef`. Zero behavior change.
-- ~~**Segment lock order-index matching**~~ — **Fixed 2026-06-18 (e89ea59).** `getSegmentStableKey()` extracted to `syncEngine.ts`; fallback chain now appends first 40 chars of segment text (`order:N|text:...`) so text-only segments survive adjacent insert/remove without stale lock state.
-- **SaaS-readiness cluster** — Three items that must ship together for public launch: backend API proxy for Pexels/Pixabay keys; auth layer; swap GPL ffmpeg sidecar (libx264) for LGPL-only build (OpenH264 or commercial x264 license). Do not pick off individually.
 - ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
-- **4K export validation** — 1080p verified on Safari and Chrome. 4K path is untested.
 - ~~**Stock API rate-limit handling**~~ — **Fixed Phase 5 step 7.** Exponential backoff retry (3 attempts); discriminated union StockSearchResult; distinct UI for rate_limited/error/ok.
 - ~~**Real mid-export cancellation**~~ — **Fixed Phase 5 step 3.** `worker.terminate()` + generation counter in `useExport`.
 - ~~**Accessibility audit**~~ — **Phase 5 step 8 complete.** ARIA labels, focus rings, aria-live, timeline slider keyboard nav, useFocusTrap on all 4 modals. Pass 2 (screen reader, responsive) deferred to Phase 6.
 - ~~**`AnimationType` values not applied in canvas export**~~ — **Fixed Fidelity Polish Item 4.** `canvasAnimations.ts` applies all 12 AnimationType values via canvas ctx transforms in `frameRenderer.ts`; live preview uses `getAnimationWrapperProps` motion.div wrapper in `PreviewStage.tsx`.
 - ~~**Extra overlays have no drag-to-position UI**~~ — **Fixed Fidelity Polish Item 2.** Pointer Events drag on extra overlays with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires through to App.tsx immutable state update.
-- **Backend proxy for API keys** — Pexels/Pixabay keys are visible in the JS bundle. Acceptable for internal use; required for public launch.
-- **`playbackSpeed` UI hidden** — speed multiplier state + logic is preserved in App.tsx but the UI control (slider/select) was removed from BottomDrawer during the 2026-06-17 redesign to reduce clutter. Re-expose as a compact dropdown if user-testing shows it's needed.
-- ~~**`audioRef.current.duration` synchronous read on upload**~~ — **Fixed 2026-06-18 (d5def92).** `finalizeSync` now falls back to `await getAudioDuration()` when the sync read returns 0; shows toast and aborts if metadata is still unavailable rather than silently using bogus durations.
-- **Video seek on resize drag release** — video preview jumps to near-start of current segment when resize drag releases; audio is unaffected, exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by currentSegment useMemo re-resolving with new startTimes in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
 - ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
 - ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
 - ~~**Bug 3 — Segment gap fill after scene removal**~~ — **Fixed 2026-06-18.** Anchor-based segment timing with provenance tracking. See Completed Work Log entry and CLAUDE.md "Anchor-Based Segment Timing" section.
+- ~~**`usePlayback` hook extraction**~~ — **Extracted 2026-06-18 (85fa111).** rAF loop, setInterval, audio-pause, and playbackRate sync effects moved to `src/hooks/usePlayback.ts`; hook owns its own `rafRef` and `segmentsRef`. Zero behavior change.
+- ~~**Segment lock order-index matching**~~ — **Fixed 2026-06-18 (e89ea59).** `getSegmentStableKey()` extracted to `syncEngine.ts`; fallback chain now appends first 40 chars of segment text (`order:N|text:...`) so text-only segments survive adjacent insert/remove without stale lock state.
+- ~~**`audioRef.current.duration` synchronous read on upload**~~ — **Fixed 2026-06-18 (d5def92).** `finalizeSync` now falls back to `await getAudioDuration()` when the sync read returns 0; shows toast and aborts if metadata is still unavailable rather than silently using bogus durations.
+- **Video seek on resize drag release** — video preview jumps to near-start of current segment when resize drag releases; audio is unaffected, exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by currentSegment useMemo re-resolving with new startTimes in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
+- **Preview transition black flash on video boundaries** — newly-mounted `<video>` element shows ~100–200 ms black before first decoded frame paints during canvas-based transitions. Root cause not isolated after multiple fix attempts (canvas hold + canplay listener + failsafe timeout). Future fix likely requires pre-mounting the next video element offscreen during the pre-roll window, or a dual-video CSS opacity crossfade. Exports are unaffected — preview-only.
+- **Preview letterboxing in normal view** — carried forward from earlier audit; low priority cosmetic issue.
+
+---
+
+## SaaS Readiness Tasks
+
+> Items required before public launch or multi-user distribution. Not scheduled — tracked here so they aren't forgotten.
+
+- **Backend proxy for API keys** — Pexels/Pixabay/Coverr keys currently in JS bundle (VITE_ prefix). Required before public launch.
+- **Auth layer** — No authentication; open access. Required for multi-user.
+- **LGPL ffmpeg swap** — Current sidecar is GPL (libx264). Swap for LGPL-only build (OpenH264 or commercial x264 license) before public distribution.
+- **4K export validation** — 1080p verified on macOS + Windows. 4K UI option exists but untested. Validate before advertising 4K support.
+- **playbackSpeed UI re-expose** — Logic preserved in App.tsx; UI dropdown removed during 2026-06-17 BottomDrawer redesign. Re-expose as compact dropdown if user testing shows it's needed.
 
 ---
 
@@ -370,6 +380,7 @@ Phase 3 steps:
 | 2026-06-17 | Sync engine hardening — whisperService.ts alignScenesToTranscript() sliding-window matcher + applyHeadingTiming() fixed 1.0s with 50/50 neighbor absorption; silenceDetector.ts Web Audio API silence scan for gap-fill; timeline manual-adjustment isolation with cascade + auto-lock; [HEADING:] scene proper timing + rendering; Whisper segment timing decoupled from description text; tag-primary asset matching. BottomDrawer redesign — reduced from ~38 controls to 8; slip-trim visual bar (fixed-width orange window slides over source clip); click-outside backdrop closes drawer; timeline-click opens drawer; reset-button scrolls timeline to 0. playbackSpeed UI hidden (code preserved). |
 | 2026-06-18 | **Bug 3 fix — anchor-based segment timing.** VideoSegment gains anchorStart (audio position) + anchorSource ('whisper' \| 'estimate'). parseProjectData and applyAnchorBasedTiming PASS 2 write 'estimate'; distributeSegmentTimes writes 'whisper'. Both stableKey loops carry anchorSource across re-sync. New applyAnchorBasedTiming in syncEngine.ts recomputes durations from anchors with one-directional locked-segment exemption (locks expand backward over removal gaps but never shrink). New alignScenesToTranscriptAnchorAware in whisperService.ts respects 'whisper' anchors as fixed positions and realigns only 'estimate' segments within gaps. useWhisper.ts skip-guard fires when allWhisperAnchored AND audio unchanged; otherwise Option A routes through anchor-aware aligner when any 'whisper' anchor exists, full aligner otherwise. Fixes the bug where removing middle segments redistributed durations proportionally across the audio. Manual tests A (removal-only), B (mid-removal), C (insertion), and F (restore-after-removal) all pass. |
 | 2026-06-18 | **Deferred audit — `finalizeSync` redundant second-pass startTime accumulation** — Confirmed replaced by `applyAnchorBasedTiming` during Bug 3 fix; no separate action needed. Removed from deferred list. |
+| 2026-06-18 | Manual tests passed for deferred batch (Tasks 1, 2, 3): playback hook regression, stableKey content-hash, audioRef await fix. Commits 85fa111, e89ea59, d5def92. |
 | 2026-06-18 | **Deferred audit — Audio waveform `Math.random()` heights** — Confirmed shipped as real Web Audio API amplitude analysis in Layout Redesign (2026-06-12); removed from deferred list. |
 | 2026-06-18 | **`usePlayback` hook extraction (85fa111)** — rAF loop, setInterval, audio-pause, and playbackRate sync effects extracted from App.tsx to `src/hooks/usePlayback.ts`. Hook owns `rafRef` and `segmentsRef`. Zero behavior change. |
 | 2026-06-18 | **Segment lock order-index matching (e89ea59)** — `getSegmentStableKey()` added to `syncEngine.ts`. Fallback chain: `asset:id` → `heading:text` → `order:N\|text:first40`. Text-only segments now survive adjacent scene insert/remove without stale lock state. |
