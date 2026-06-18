@@ -861,6 +861,10 @@ export default function App() {
         ? Number((prevSeg.startTime + prevSeg.duration).toFixed(3))
         : 0;
 
+      if (nextSeg) {
+        nextSeg.anchorStart = Number((headingStart + actualDur).toFixed(3));
+      }
+
       const newHeading: VideoSegment = {
         id: crypto.randomUUID(),
         order: insertAt,
