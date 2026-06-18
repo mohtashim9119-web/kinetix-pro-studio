@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Lock, Unlock, Video, Music, ChevronDown, ChevronUp } from 'lucide-react';
-import { VideoSegment, Asset } from '../types';
+import { VideoSegment, Asset, HeadingConfig } from '../types';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
 
 interface Props {
@@ -54,12 +54,14 @@ export function BottomDrawer({
   const leftPct  = srcDur > 0 ? (trimStart / srcDur) * 100 : 0;
 
   const hc = s?.headingConfig;
-  const updateHC = (updates: Partial<NonNullable<VideoSegment['headingConfig']>>) => {
+  const updateHC = (updates: Partial<HeadingConfig>) => {
     if (!s) return;
-    onUpdateSegment(idx, {
+    const next: Partial<VideoSegment> = {
       headingConfig: { ...(hc ?? { text: '', splitAudio: false }), ...updates },
       ...('text' in updates ? { heading: String(updates.text ?? '') } : {}),
-    });
+    };
+    if ('assetId' in updates) next.assetId = updates.assetId;
+    onUpdateSegment(idx, next);
   };
   const fontSizeAuto = !hc?.fontSize;
 
