@@ -146,6 +146,21 @@ export function applyAnchorBasedTiming(
   return out;
 }
 
+/**
+ * Derives a stable identity key for a segment across re-syncs.
+ * Fallback chain:
+ *   1. asset:${assetId}              — image/video segments (most stable; assetId never changes)
+ *   2. heading:${text}               — heading-only title cards (content-keyed)
+ *   3. order:${order}|text:${prefix} — text-only segments; first 40 chars of text added so a
+ *                                       segment retains its lock state even when its order index
+ *                                       shifts due to an adjacent scene insert or remove
+ */
+export function getSegmentStableKey(s: VideoSegment): string {
+  if (s.assetId) return `asset:${s.assetId}`;
+  if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
+  return `order:${s.order}|text:${s.text.slice(0, 40)}`;
+}
+
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {
     if (s.assetId) return s;

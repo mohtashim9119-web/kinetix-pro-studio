@@ -48,7 +48,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getSegmentStableKey } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -990,14 +990,9 @@ export default function App() {
     );
 
     // Lock restoration: keyed first by stable identity (assetId for image/video segments,
-    // heading text for title cards), then by order index as fallback. This prevents one
-    // inserted or deleted scene from cascading stale state onto all subsequent segments.
+    // heading text for title cards), then by order+text as fallback. See getSegmentStableKey.
     // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
-    const stableKey = (s: VideoSegment): string => {
-      if (s.assetId) return `asset:${s.assetId}`;
-      if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
-      return `order:${s.order}`;
-    };
+    const stableKey = getSegmentStableKey;
     const prevByKey = new Map<string, VideoSegment>();
     for (const s of projectRef.current.segments) {
       const key = stableKey(s);
@@ -1147,13 +1142,9 @@ export default function App() {
     const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
     // 6. Preserve locked durations: keyed first by stable identity (assetId or heading text),
-    //    then by order index as fallback — same strategy as finalizeSync.
+    //    then by order+text as fallback — same strategy as finalizeSync. See getSegmentStableKey.
     // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
-    const stableKey = (s: VideoSegment): string => {
-      if (s.assetId) return `asset:${s.assetId}`;
-      if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
-      return `order:${s.order}`;
-    };
+    const stableKey = getSegmentStableKey;
     const prevByKey = new Map<string, VideoSegment>();
     for (const s of projectRef.current.segments) {
       const key = stableKey(s);
