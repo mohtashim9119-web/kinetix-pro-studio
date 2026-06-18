@@ -250,6 +250,8 @@ Phase 3 steps:
 
 - **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
 
+- **Heading insertion fails on some existing projects** — On at least one existing project, inserting a heading between segments produced incorrect duration distribution (not the 50/50 absorption). Deleting and recreating the project from scratch worked correctly. Root cause unknown — possibly stale anchor state from a previous Whisper run, or a migration edge case where anchorSource on legacy segments doesn't get set to 'whisper' as expected. Reproducer: open an older project (created before commit 55f49c5), insert a heading, observe duration distribution. Investigate when convenient.
+
 ---
 
 ## Long-running Deferred Items
@@ -385,6 +387,10 @@ Phase 3 steps:
 | 2026-06-18 | **`usePlayback` hook extraction (85fa111)** — rAF loop, setInterval, audio-pause, and playbackRate sync effects extracted from App.tsx to `src/hooks/usePlayback.ts`. Hook owns `rafRef` and `segmentsRef`. Zero behavior change. |
 | 2026-06-18 | **Segment lock order-index matching (e89ea59)** — `getSegmentStableKey()` added to `syncEngine.ts`. Fallback chain: `asset:id` → `heading:text` → `order:N\|text:first40`. Text-only segments now survive adjacent scene insert/remove without stale lock state. |
 | 2026-06-18 | **`audioRef.current.duration` sync read in `finalizeSync` (d5def92)** — Replaced bare sync read with two-stage approach: use loaded value if non-zero, else `await getAudioDuration()`; abort with toast if still 0. |
+| 2026-06-18 | Heading system Round 1: 5-commit implementation (isHeading + headingConfig data model, migration, parser updates, "+ Add Heading" UI, BottomDrawer editor). Commits: 9415a4a, 456982d, 7a00004, 39b99b0, 991c769 |
+| 2026-06-18 | Heading system Round 2: 5 bug fixes (BottomDrawer assetId emit, PreviewStage asset+text decoupling, insertion absorption, sceneDetails persistence, splitAudio mechanics). Commits: dab1787, 9904458, 03604c1, 3e017cd, e603c2f |
+| 2026-06-18 | Heading system Round 3: 3 follow-up fixes — applyHeadingTiming in finalizeSync, anchorSource='whisper' on insert, nextSeg.anchorStart shift on insert. Commits: a9df569, e844f53, 55f49c5 |
+| 2026-06-18 | Heading system Round 4: heading video background respects isPlaying. Commit: 35d262a |
 
 ---
 
