@@ -332,7 +332,7 @@ export function distributeSegmentTimes(
   alignments: Array<{ t0: number; t1: number }>,
   _totalDuration: number,
 ): VideoSegment[] {
-  return segments.map((seg, i) => {
+  const updated = segments.map((seg, i) => {
     if (seg.locked) return seg;
     const a = alignments[i];
     if (!a) return seg;
@@ -345,6 +345,7 @@ export function distributeSegmentTimes(
       anchorSource: 'whisper' as const,
     };
   });
+  return updated;
 }
 
 /** Returns the index of the nearest non-heading-only segment searching from `from` in direction `step`. */
@@ -388,14 +389,36 @@ export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
     const nextSeg = nextIdx >= 0 ? segs[nextIdx]! : null;
 
     // SHRINK pass: Whisper assigned the heading the full spoken gap (> 1.0 s).
-    // Return excess to previous unlocked neighbor; fall back to next.
+    // Split excess between prev and next neighbors, clamped to each neighbor's
+    // available slack. If neither can absorb all of it, the heading retains the
+    // remainder rather than over-inflating a neighbor.
     if (seg.duration > HEADING_DEFAULT_DURATION + 0.001) {
       const excess = Number((seg.duration - HEADING_DEFAULT_DURATION).toFixed(3));
-      segs[i] = { ...seg, duration: HEADING_DEFAULT_DURATION };
-      if (prevIdx >= 0 && prevSeg !== null && !prevSeg.locked) {
-        segs[prevIdx] = { ...prevSeg, duration: Number((prevSeg.duration + excess).toFixed(3)) };
-      } else if (nextIdx >= 0 && nextSeg !== null && !nextSeg.locked) {
-        segs[nextIdx] = { ...nextSeg, duration: Number((nextSeg.duration + excess).toFixed(3)) };
+      const MIN_DUR = 0.1;
+
+      const prevAvail = prevIdx >= 0 && prevSeg !== null && !prevSeg.locked
+        ? Math.max(0, prevSeg.duration - MIN_DUR) : 0;
+      const nextAvail = nextIdx >= 0 && nextSeg !== null && !nextSeg.locked
+        ? Math.max(0, nextSeg.duration - MIN_DUR) : 0;
+
+      let giveToP = Math.min(excess / 2, prevAvail);
+      let giveToN = Math.min(excess - giveToP, nextAvail);
+      // If next is constrained, spill remainder back to prev.
+      if (giveToP + giveToN < excess) {
+        giveToP = Math.min(excess - giveToN, prevAvail);
+      }
+
+      const absorbed = giveToP + giveToN;
+      const headingFinalDuration = absorbed < excess - 0.001
+        ? Number((HEADING_DEFAULT_DURATION + (excess - absorbed)).toFixed(3))
+        : HEADING_DEFAULT_DURATION;
+
+      segs[i] = { ...seg, duration: headingFinalDuration };
+      if (giveToP > 0 && prevIdx >= 0 && prevSeg !== null) {
+        segs[prevIdx] = { ...prevSeg, duration: Number((prevSeg.duration + giveToP).toFixed(3)) };
+      }
+      if (giveToN > 0 && nextIdx >= 0 && nextSeg !== null) {
+        segs[nextIdx] = { ...nextSeg, duration: Number((nextSeg.duration + giveToN).toFixed(3)) };
       }
       continue;
     }

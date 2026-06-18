@@ -119,6 +119,14 @@ export function applyAnchorBasedTiming(
   // Locked-segment exemption: locked segments snap their startTime to their anchor
   // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps
   // that opened up after them. They never shrink.
+  for (let i = 1; i < out.length; i++) {
+    const prev = out[i - 1]!;
+    const cur = out[i]!;
+    if ((cur.anchorStart ?? 0) < (prev.anchorStart ?? 0)) {
+      console.warn('[anchor] out-of-order anchor at i=%d: prev=%s cur=%s id=%s',
+        i, prev.anchorStart, cur.anchorStart, cur.id);
+    }
+  }
   for (let i = 0; i < out.length; i++) {
     const seg = out[i];
     if (!seg) continue;

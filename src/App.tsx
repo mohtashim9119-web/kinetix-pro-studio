@@ -864,13 +864,16 @@ export default function App() {
         nextSeg.anchorStart = Number((headingStart + actualDur).toFixed(3));
       }
 
+      const existingHeadingCount = prev.segments.filter(s => s.isHeading).length;
+      const defaultText = `Heading ${existingHeadingCount + 1}`;
+
       const newHeading: VideoSegment = {
         id: crypto.randomUUID(),
         order: insertAt,
         text: '',
-        heading: 'New Heading',
+        heading: defaultText,
         isHeading: true,
-        headingConfig: { text: 'New Heading', x: 50, y: 50 },
+        headingConfig: { text: defaultText, x: 50, y: 50 },
         duration: actualDur,
         startTime: headingStart,
         anchorStart: headingStart,
@@ -896,7 +899,7 @@ export default function App() {
       const newSceneDetails = insertHeadingIntoSceneDetails(
         prev.sceneDetails,
         insertAt,
-        'New Heading',
+        defaultText,
       );
 
       return { ...prev, segments: reordered, sceneDetails: newSceneDetails };
