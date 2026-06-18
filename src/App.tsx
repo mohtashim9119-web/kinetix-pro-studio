@@ -981,7 +981,22 @@ export default function App() {
   // Calibration logic - Final Step
   const finalizeSync = async () => {
     setIsProcessing(true);
-    const audioDuration = audioRef.current?.duration || 0;
+    // Prefer the synchronous read (already loaded); fall back to an async load
+    // when loadedmetadata has not yet fired (e.g. rapid upload → Apply Sync).
+    let audioDuration = audioRef.current?.duration || 0;
+    if (!audioDuration && projectRef.current.voiceoverId) {
+      const voiceoverForDuration = projectRef.current.assets.find(
+        a => a.id === projectRef.current.voiceoverId,
+      );
+      if (voiceoverForDuration) {
+        audioDuration = await getAudioDuration(voiceoverForDuration.url);
+        if (!audioDuration) {
+          showToast('Voiceover metadata not ready — try again in a moment');
+          setIsProcessing(false);
+          return;
+        }
+      }
+    }
     const newSegments = await parseProjectData(
       projectRef.current.script,
       projectRef.current.sceneDetails,
