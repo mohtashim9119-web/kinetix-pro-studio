@@ -120,7 +120,7 @@ export function Timeline({
             onSeek(Math.max(0, currentTime - step));
           }
         }}
-        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-5 cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+        className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
           const timeline = document.getElementById('timeline-scroll-area');
           if (timeline && !resizingId) {
@@ -174,9 +174,9 @@ export function Timeline({
 
           {/* Visual Track */}
           {!isSynced ? (
-            <div className="flex-1 h-14 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
+            <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
           ) : (
-            <div className="flex gap-1 h-full items-stretch">
+            <div className="flex h-full items-stretch">
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
@@ -185,17 +185,8 @@ export function Timeline({
                 return (
                   <div
                     key={s.id}
-                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      if (trimmingSegmentId === s.id) {
-                        onSetTrimmingSegment(null);
-                        onSetAdjustingTrim(false);
-                      } else {
-                        onSetTrimmingSegment(s.id);
-                        onSetAdjustingTrim(true);
-                      }
-                    }}
+                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
+                    onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
                     onMouseDown={(e) => {
                       if (isAdjustingTrim && trimmingSegmentId === s.id) {
                         e.stopPropagation();
@@ -223,7 +214,7 @@ export function Timeline({
                     }}
                     style={{
                       width: `${s.duration * pixelsPerSecond}px`,
-                      height: '56px',
+                      height: '80px',
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
                       filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
                       transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
@@ -308,13 +299,13 @@ export function Timeline({
 
         {/* Audio Track */}
         {voiceoverName && (
-          <div className="mt-1 h-10 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg relative overflow-visible flex items-center">
+          <div className="mt-1 h-20 w-max bg-[#0A0A0A] ring-1 ring-inset ring-[#1A1A1A] rounded-lg relative overflow-visible flex items-center">
             <div className="flex h-full w-max">
               {segments.map((s) => (
                 <div
                   key={`vo-${s.id}`}
                   style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                  className="h-full border-r border-[#1A1A1A] relative flex items-center group flex-shrink-0"
+                  className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
                 >
                   <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
@@ -334,7 +325,7 @@ export function Timeline({
                             <div
                               key={bi}
                               className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
-                              style={{ height: `${Math.max(2, amp * 32)}px` }}
+                              style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
                             />
                           ))}
                         </div>

@@ -196,7 +196,7 @@ const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
 const MIN_PLAYBACK_SPEED = 0.5;
 const MAX_PLAYBACK_SPEED = 2.0;
-const MIN_TIMELINE_HEIGHT = 140; // px — minimum visible timeline height under the divider
+const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
 
 // Fuzzy matching helper
 
@@ -1556,7 +1556,8 @@ export default function App() {
       const rect = centerColRef.current?.getBoundingClientRect();
       if (!rect) return;
       const maxAllowed = Math.floor(rect.width * (9 / 16));
-      const timelineFloor = rect.height - MIN_TIMELINE_HEIGHT - 4;
+      const minTlH = Math.max(MIN_TIMELINE_HEIGHT, Math.floor(rect.height * 0.30));
+      const timelineFloor = rect.height - minTlH - 4;
       setPreviewHeight(h => Math.min(h, Math.min(maxAllowed, timelineFloor)));
     }, 310);
     return () => clearTimeout(id);
@@ -1568,7 +1569,8 @@ export default function App() {
     const rect = centerColRef.current?.getBoundingClientRect();
     if (!rect) return;
     const maxAllowed = Math.floor(rect.width * (9 / 16));
-    const timelineFloor = rect.height - MIN_TIMELINE_HEIGHT - 4;
+    const minTlH = Math.max(MIN_TIMELINE_HEIGHT, Math.floor(rect.height * 0.30));
+    const timelineFloor = rect.height - minTlH - 4;
     setPreviewHeight(h => Math.min(h, Math.min(maxAllowed, timelineFloor)));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -1804,11 +1806,11 @@ export default function App() {
 
           {/* Preview — height-driven, draggable divider below */}
           <div
-            className="flex-shrink-0 w-full bg-[#020202] relative"
+            className="flex-shrink-0 w-full bg-[#020202] relative pb-[15px]"
             style={{ height: previewHeight + 'px' }}
           >
             <div className="h-full w-full flex items-center justify-center bg-[#020202]">
-              <div className="h-full aspect-video">
+              <div className="h-full aspect-video border border-[#333333]">
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>
@@ -1871,7 +1873,7 @@ export default function App() {
 
           {/* Draggable divider */}
           <div
-            className="h-1 flex-shrink-0 bg-[#1A1A1A] hover:bg-[#F27D26]/40 cursor-row-resize transition-colors"
+            className="h-[6px] flex-shrink-0 bg-[#F27D26] shadow-[0_0_10px_rgba(242,125,38,0.45)] cursor-row-resize"
             onMouseDown={(e) => {
               e.preventDefault();
               isDraggingDivider.current = true;
@@ -1884,7 +1886,8 @@ export default function App() {
                 const centerWidth = rect?.width ?? window.innerWidth * 0.65;
                 const centerHeight = rect?.height ?? window.innerHeight;
                 const maxAllowed = Math.floor(centerWidth * (9 / 16));
-                const timelineFloor = centerHeight - MIN_TIMELINE_HEIGHT - 4;
+                const minTlH = Math.max(MIN_TIMELINE_HEIGHT, Math.floor(centerHeight * 0.30));
+                const timelineFloor = centerHeight - minTlH - 4;
                 const next = Math.min(
                   Math.max(startHeight + delta, 180),
                   Math.min(maxAllowed, timelineFloor),
@@ -1902,7 +1905,7 @@ export default function App() {
           />
 
           {/* Timeline — fills remaining height */}
-          <div className="flex-1 min-h-0 border-t border-[#1A1A1A]">
+          <div className="flex-1 min-h-0 pb-2">
             <ErrorBoundary fallback={(err, reset) => (
               <PanelFallback label="Timeline" error={err} reset={reset} />
             )}>
