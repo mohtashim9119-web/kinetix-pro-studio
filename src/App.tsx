@@ -72,7 +72,7 @@ import {
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
-import { HEADING_DEFAULT_DURATION } from './services/whisperService';
+import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -1170,8 +1170,9 @@ export default function App() {
     }
 
     const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
+    const headingTimed = applyHeadingTiming(anchorTimed);
 
-    setProject(prev => ({ ...prev, segments: anchorTimed }));
+    setProject(prev => ({ ...prev, segments: headingTimed }));
     setIsSynced(true);
     setIsProcessing(false);
     setSyncStep(4);
@@ -1183,7 +1184,7 @@ export default function App() {
       startTranscription(
         voiceoverAsset,
         audioDuration,
-        anchorTimed,
+        headingTimed,
         projectRef.current,
         (updated) => {
           setProject(prev => {
@@ -1322,6 +1323,7 @@ export default function App() {
     }
 
     const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
+    const headingTimed = applyHeadingTiming(anchorTimed);
 
     // 7. Single atomic state update
     setProject(prev => ({
@@ -1332,7 +1334,7 @@ export default function App() {
       sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
       assets: allAssets,
       voiceoverId: newVoiceoverId,
-      segments: autoMatchSegments(allAssets, anchorTimed),
+      segments: autoMatchSegments(allAssets, headingTimed),
     }));
 
     setIsSynced(true);
@@ -1345,7 +1347,7 @@ export default function App() {
       startTranscription(
         voiceoverAsset,
         audioDuration,
-        anchorTimed,
+        headingTimed,
         projectRef.current,
         (updated) => {
           setProject(prev => {
