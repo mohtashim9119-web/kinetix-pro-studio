@@ -182,7 +182,7 @@ export function TextLayersPanel({
                                   : <Eye size={9} className="flex-shrink-0" />
                                 }
                                 <span className="text-[9px] truncate">
-                                  {seg.heading || `Scene ${seg.order + 1}`}
+                                  {seg.headingConfig?.text || seg.heading || `Scene ${seg.order + 1}`}
                                 </span>
                               </button>
                             );

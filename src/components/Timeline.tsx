@@ -180,7 +180,7 @@ export function Timeline({
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
-                const isMissing = !asset && !!(s.text || s.heading);
+                const isMissing = !asset && !!(s.text || s.heading || s.isHeading);
 
                 return (
                   <div
@@ -274,7 +274,7 @@ export function Timeline({
                           </button>
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">{s.heading ?? 'Scene'}</p>
+                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">{s.headingConfig?.text ?? s.heading ?? 'Scene'}</p>
                           <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
                         </div>
                       </div>

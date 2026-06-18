@@ -71,7 +71,7 @@ export function BottomDrawer({
             <div className="flex items-center gap-3">
               <div className="w-8 h-1 rounded-full bg-[#282828]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                {s.heading ? s.heading : `Scene ${idx + 1}`}
+                {s.headingConfig?.text || s.heading || `Scene ${idx + 1}`}
               </span>
               <span className="px-2 py-0.5 bg-[#1A1A1A] rounded text-[9px] font-mono text-gray-500">
                 {s.duration.toFixed(1)}s
@@ -140,13 +140,18 @@ export function BottomDrawer({
               </div>
             </div>
 
-            {/* Heading label — only for [HEADING:] segments */}
-            {s.heading !== undefined && (
+            {/* Heading label — only for heading segments (isHeading or legacy heading field) */}
+            {(s.isHeading || s.heading !== undefined) && (
               <div className="space-y-1">
                 <label className="text-[7px] uppercase font-bold text-gray-500 block">Heading Label</label>
                 <input
-                  value={s.heading}
-                  onChange={(e) => onUpdateSegment(idx, { heading: e.target.value })}
+                  value={s.headingConfig?.text ?? s.heading ?? ''}
+                  onChange={(e) => onUpdateSegment(idx, {
+                    heading: e.target.value,
+                    headingConfig: s.headingConfig
+                      ? { ...s.headingConfig, text: e.target.value }
+                      : { text: e.target.value, splitAudio: false },
+                  })}
                   className="w-full bg-[#121212] border border-[#282828] px-3 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
                   placeholder="Heading text"
                 />

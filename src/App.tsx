@@ -42,6 +42,7 @@ import { motion, AnimatePresence, type Transition } from 'motion/react';
 import {
   Project,
   VideoSegment,
+  HeadingConfig,
   Asset,
   TransitionType,
   AnimationType,
@@ -96,7 +97,9 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
   text: string;
-  heading?: string;
+  heading?: string;           // legacy alias only; prefer isHeading + headingConfig
+  isHeading?: boolean;
+  headingConfig?: HeadingConfig;
   assetId?: string;
   transition: TransitionType;
   animation: AnimationType;
@@ -262,7 +265,10 @@ const parseProjectData = async (
   for (const [idx, scene] of scenes.entries()) {
     let text = scene.description.trim();
 
-    if (!text && !scene.tag.toUpperCase().includes('HEADING')) {
+    const isHeadingTag = scene.tag.toUpperCase().includes('HEADING');
+
+    // Heading scenes carry no spoken text — don't distribute script lines to them.
+    if (!text && !isHeadingTag) {
       if (scriptLines.length === sceneCount) {
         text = scriptLines[idx] ?? '';
       } else if (scriptLines.length > 0) {
@@ -271,13 +277,7 @@ const parseProjectData = async (
         text = scriptLines.slice(startIdx, endIdx).join(' ');
       }
     }
-
-    // Heading scenes never carry text — strip any description the user wrote
-    // and any script text distributed to them. Heading-only timing is owned
-    // by applyHeadingTiming in whisperService.ts.
-    if (scene.tag.toUpperCase().includes('HEADING')) {
-      text = '';
-    }
+    if (isHeadingTag) text = ''; // headings are silent title cards
 
     const current: RawSegment = {
       text,
@@ -294,8 +294,11 @@ const parseProjectData = async (
 
     const specificMatch = detail.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
     if (specificMatch) {
-      if (detail.toUpperCase().includes('HEADING')) {
-        current.heading = specificMatch[1] ?? '';
+      if (isHeadingTag) {
+        const headingText = specificMatch[1] ?? '';
+        current.isHeading = true;
+        current.headingConfig = { text: headingText, splitAudio: false };
+        current.heading = headingText; // keep legacy alias
       } else {
         name = specificMatch[1] ?? '';
       }
@@ -305,11 +308,8 @@ const parseProjectData = async (
       else name = detail;
     }
 
-    // Suppress description-fallback when the structured tag carries an explicit name
-    // (e.g. [IMAGE: foo.jpg]). Only fall back to findAssetByContext when the name
-    // slot is blank ([IMAGE:]) or there is no structured tag at all.
     const hasExplicitTagName = specificMatch !== null &&
-      !detail.toUpperCase().includes('HEADING') &&
+      !isHeadingTag &&
       (specificMatch[1] ?? '').length > 0;
 
     if (name) {
@@ -334,22 +334,17 @@ const parseProjectData = async (
     rawSegments.push(current);
   }
 
-  const headingOnlyScenes = rawSegments.filter(s => s.heading && !s.text);
+  const headingOnlyScenes = rawSegments.filter(s => s.isHeading);
   const textBearingScenes = rawSegments.filter(s => s.text);
   const voDuration = voiceoverDuration > 0 ? voiceoverDuration : rawSegments.length * 5;
 
-  // Allocate fixed time to heading-only scenes, then split the remainder by char-count weight.
+  // Headings get a fixed initial size (applyHeadingTiming will correct to 1.0s after Whisper).
+  // Deduct heading allocation from the text budget so the cumulative durations stay ≤ voDuration.
   let headingDuration = HEADING_ONLY_DURATION_SECONDS;
   let headingTotal = headingOnlyScenes.length * HEADING_ONLY_DURATION_SECONDS;
   if (headingOnlyScenes.length > 0 && voDuration - headingTotal <= 0) {
     headingTotal = voDuration * 0.5;
     headingDuration = headingTotal / headingOnlyScenes.length;
-    console.warn(
-      `[kinetix] Heading-only scenes (${headingOnlyScenes.length} × ${HEADING_ONLY_DURATION_SECONDS}s = ` +
-      `${(headingOnlyScenes.length * HEADING_ONLY_DURATION_SECONDS).toFixed(2)}s) exceed voiceover duration ` +
-      `(${voDuration.toFixed(2)}s). Clamping each heading to ${headingDuration.toFixed(3)}s so headings ` +
-      `stay within 50% of total duration.`
-    );
   }
   const textBudget = Math.max(0.1, voDuration - headingTotal);
   const totalTextLength = textBearingScenes.reduce((acc, s) => acc + s.text.length, 0) || 1;
@@ -360,8 +355,8 @@ const parseProjectData = async (
   for (const [i, s] of rawSegments.entries()) {
     let targetDuration: number;
 
-    if (s.heading && !s.text) {
-      // Heading-only scene: fixed display time, independent of voiceover word count.
+    if (s.isHeading) {
+      // Heading-only scene: fixed initial size; applyHeadingTiming will pin to 1.0 s after Whisper.
       targetDuration = headingDuration;
     } else if (textBearingScenes.length > 0) {
       const weight = s.text.length / totalTextLength;
@@ -398,7 +393,7 @@ const parseProjectData = async (
       sourceDuration,
     };
 
-    if (i === rawSegments.length - 1 && voiceoverDuration > 0 && !segment.heading) {
+    if (i === rawSegments.length - 1 && voiceoverDuration > 0 && !segment.isHeading) {
       segment.duration = Math.max(0.1, Number((voiceoverDuration - segment.startTime).toFixed(3)));
     }
 
@@ -419,7 +414,7 @@ const parseProjectData = async (
     if (count > 1) {
       const duplicatedSegments = finalSegments
         .filter(s => s.assetId === assetId)
-        .map(s => s.heading || s.id)
+        .map(s => s.headingConfig?.text || s.heading || s.id)
         .join(', ');
       console.warn(
         `[parseProjectData] Asset "${assetId}" is assigned to ${count} segments: ` +
@@ -437,7 +432,7 @@ function makeDefaultProject(): Project {
   id: crypto.randomUUID(),
   name: 'Untitled Project',
   script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Headings pause the voiceover during transitions. Text segments stretch to fit your audio duration perfectly.',
-  sceneDetails: '[HEADING: Welcome to Kinetix]\n[IMAGE: intro.jpg]\n[HEADING: Advanced Logic]\n[IMAGE: tech.jpg]',
+  sceneDetails: '[IMAGE: intro.jpg]\n[IMAGE: tech.jpg]',
   segments: [],
   assets: [],
   globalTransition: TransitionType.NONE,
@@ -1040,13 +1035,13 @@ export default function App() {
         trimEnd: prev?.trimEnd ?? s.trimEnd,
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
-        locked: (s.heading && !s.text) ? undefined : prev?.locked,
+        locked: s.isHeading ? undefined : prev?.locked,
         anchorStart: prev?.anchorStart ?? s.anchorStart,
         anchorSource: prev?.anchorSource ?? s.anchorSource,
-        duration: prev?.locked && !(s.heading && !s.text)
+        duration: prev?.locked && !s.isHeading
           ? (prev.duration ?? s.duration)
           : s.duration,
-        startTime: prev?.locked && !(s.heading && !s.text)
+        startTime: prev?.locked && !s.isHeading
           ? (prev.startTime ?? s.startTime)
           : s.startTime,
       };
@@ -1192,13 +1187,13 @@ export default function App() {
         trimEnd: prev?.trimEnd ?? s.trimEnd,
         playbackSpeed: prev?.playbackSpeed ?? s.playbackSpeed,
         isMuted: prev?.isMuted ?? s.isMuted,
-        locked: (s.heading && !s.text) ? undefined : prev?.locked,
+        locked: s.isHeading ? undefined : prev?.locked,
         anchorStart: prev?.anchorStart ?? s.anchorStart,
         anchorSource: prev?.anchorSource ?? s.anchorSource,
-        duration: prev?.locked && !(s.heading && !s.text)
+        duration: prev?.locked && !s.isHeading
           ? (prev.duration ?? s.duration)
           : s.duration,
-        startTime: prev?.locked && !(s.heading && !s.text)
+        startTime: prev?.locked && !s.isHeading
           ? (prev.startTime ?? s.startTime)
           : s.startTime,
       };
@@ -2498,7 +2493,7 @@ export default function App() {
                       )}
                       
                       <div className="absolute inset-x-0 bottom-0 p-12 bg-gradient-to-t from-black/80 to-transparent">
-                          <h2 className="text-3xl font-black uppercase tracking-tighter text-white mb-2">{editingSegment.heading || "Untilted Scene"}</h2>
+                          <h2 className="text-3xl font-black uppercase tracking-tighter text-white mb-2">{editingSegment.headingConfig?.text || editingSegment.heading || "Untitled Scene"}</h2>
                           <p className="text-lg text-gray-300 italic leading-relaxed line-clamp-2">"{editingSegment.text}"</p>
                       </div>
                    </div>
@@ -2611,8 +2606,14 @@ export default function App() {
                       <div className="space-y-4">
                          <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Heading & Script</label>
                          <input 
-                            value={editingSegment.heading || ''} 
-                            onChange={(e) => setEditingSegment({...editingSegment, heading: e.target.value})}
+                            value={editingSegment.headingConfig?.text || editingSegment.heading || ''}
+                            onChange={(e) => setEditingSegment({
+                              ...editingSegment,
+                              heading: e.target.value,
+                              headingConfig: editingSegment.headingConfig
+                                ? { ...editingSegment.headingConfig, text: e.target.value }
+                                : undefined,
+                            })}
                             placeholder="Heading Text"
                             className="w-full bg-white/5 border border-white/5 p-4 rounded-2xl outline-none focus:border-[#F27D26]/50 text-sm font-bold uppercase tracking-widest"
                          />

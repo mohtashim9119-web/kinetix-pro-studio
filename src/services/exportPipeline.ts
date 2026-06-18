@@ -104,14 +104,14 @@ export async function exportProject(
     const asset = segment.assetId ? assetMap.get(segment.assetId) : undefined;
     if (segment.assetId && !asset?.url) {
       return { ok: false, error: { kind: 'asset_missing',
-        message: `Segment "${segment.heading || segment.id}" has no asset` } };
+        message: `Segment "${segment.headingConfig?.text || segment.heading || segment.id}" has no asset` } };
     }
     if (!segment.assetId) {
       // No asset assigned — encode black frames with text overlays only.
       // This is intentional fallback behavior, not an error.
       // Log so the user can diagnose if unexpected.
       console.warn(
-        `[exportPipeline] Segment "${segment.heading || segment.id}" ` +
+        `[exportPipeline] Segment "${segment.headingConfig?.text || segment.heading || segment.id}" ` +
         `(id: ${segment.id}) has no assetId — encoding black frames.`
       );
     }

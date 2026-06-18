@@ -804,7 +804,7 @@ export function DropZonePanel({
             {segments.map((seg) => {
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
-              const isMissing = !asset && !!(seg.text || seg.heading);
+              const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
               return (
                 <div
                   key={seg.id}
@@ -829,7 +829,7 @@ export function DropZonePanel({
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-bold text-white truncate">
-                      {seg.heading || asset?.name || `Scene ${seg.order + 1}`}
+                      {seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${seg.order + 1}`}
                     </p>
                     <p className="text-[9px] text-gray-600 font-mono">
                       {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}

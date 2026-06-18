@@ -115,8 +115,11 @@ export function SegmentEditorPanel({
                 <label className="text-[7px] uppercase font-bold text-gray-500">Heading</label>
                 <input
                   placeholder="Scene Heading"
-                  value={s.heading ?? ''}
-                  onChange={(e) => onUpdateSegment(idx, { heading: e.target.value })}
+                  value={s.headingConfig?.text ?? s.heading ?? ''}
+                  onChange={(e) => onUpdateSegment(idx, {
+                    heading: e.target.value,
+                    headingConfig: s.headingConfig ? { ...s.headingConfig, text: e.target.value } : undefined,
+                  })}
                   className="w-full bg-[#121212] border border-[#282828] p-3 rounded-xl text-[10px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
                 />
               </div>

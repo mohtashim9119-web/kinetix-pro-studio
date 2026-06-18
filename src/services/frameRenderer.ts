@@ -299,27 +299,61 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   ctx.fillRect(0, 0, w, h);
 
   // -------------------------------------------------------------------------
-  // Heading segments: title is primary content — bypass media, overlays, hideAllText.
-  // Black background is already filled above; draw title text then return early.
+  // Heading segments: title is primary content — bypass overlays, hideAllText.
+  // Renders background asset (if set in headingConfig) or solid color fill,
+  // then draws title text at the configured position. Returns early.
   // -------------------------------------------------------------------------
-  if (segment.heading) {
+  if (segment.isHeading || segment.heading) {
+    const hc = segment.headingConfig;
+    const headingText = hc?.text ?? segment.heading ?? '';
+    const bgColor = hc?.backgroundColor ?? '#000000';
+    const textColor = hc?.color ?? '#ffffff';
+    const fontFamily = hc?.fontFamily ?? g.overlayConfig.fontFamily ?? 'sans-serif';
+    const xPct = (hc?.x ?? 50) / 100;
+    const yPct = (hc?.y ?? 50) / 100;
+
+    // Background: draw asset if headingConfig.assetId resolves, else solid color.
+    // (asset is already resolved by the caller from assetMap; headingConfig.assetId
+    //  sets segment.assetId when the user picks a background — the caller passes it.)
+    if (asset?.url) {
+      ctx.filter = 'none';
+      if (asset.type === 'image') {
+        const img = await loadImage(asset.url);
+        drawImageCover(ctx, img, w, h);
+      } else if (asset.type === 'video') {
+        const videoEl = getOrCreateVideo(asset.url);
+        const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+        const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
+        await seekVideo(videoEl, videoTime);
+        drawImageCover(ctx, videoEl, w, h);
+      }
+    } else {
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    if (!headingText) {
+      if (params.transition && params.transition.alpha > 0) {
+        applyTransitionBlend(ctx, params.transition, w, h);
+      }
+      return;
+    }
+
     const maxWidth = w * 0.9;
     const maxHeight = h * 0.8;
-    const fontFamily = g.overlayConfig.fontFamily || 'sans-serif';
-
-    let fontSize = Math.floor(h * 0.10);
+    let fontSize = hc?.fontSize ?? Math.floor(h * 0.10);
     const minFontSize = Math.floor(h * 0.03);
-    // Load font once at max size — covers all smaller sizes (scalable font).
+    const fontWeight = hc?.fontWeight ?? 'bold';
     await ensureFont(fontFamily, fontSize);
 
     let lines: string[] = [];
     ctx.save();
 
-    while (fontSize >= minFontSize) {
-      ctx.font = `bold ${fontSize}px "${fontFamily}"`;
-      lines = [];
+    if (hc?.fontSize) {
+      // Fixed size: wrap without shrinking.
+      ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}"`;
       let currentLine = '';
-      for (const word of segment.heading.split(' ')) {
+      for (const word of headingText.split(' ')) {
         const testLine = currentLine ? `${currentLine} ${word}` : word;
         if (ctx.measureText(testLine).width > maxWidth && currentLine) {
           lines.push(currentLine);
@@ -329,18 +363,36 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
         }
       }
       if (currentLine) lines.push(currentLine);
-      if (lines.length * fontSize * 1.2 <= maxHeight) break;
-      fontSize -= Math.max(4, Math.floor(fontSize * 0.08));
+    } else {
+      // Auto-fit: shrink until text fits within maxHeight.
+      while (fontSize >= minFontSize) {
+        ctx.font = `${fontWeight} ${fontSize}px "${fontFamily}"`;
+        lines = [];
+        let currentLine = '';
+        for (const word of headingText.split(' ')) {
+          const testLine = currentLine ? `${currentLine} ${word}` : word;
+          if (ctx.measureText(testLine).width > maxWidth && currentLine) {
+            lines.push(currentLine);
+            currentLine = word;
+          } else {
+            currentLine = testLine;
+          }
+        }
+        if (currentLine) lines.push(currentLine);
+        if (lines.length * fontSize * 1.2 <= maxHeight) break;
+        fontSize -= Math.max(4, Math.floor(fontSize * 0.08));
+      }
     }
 
-    ctx.fillStyle = '#ffffff';
+    ctx.fillStyle = textColor;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const lineHeight = fontSize * 1.2;
     const totalHeight = lines.length * lineHeight;
-    const startY = h / 2 - totalHeight / 2 + lineHeight / 2;
+    const centerX = w * xPct;
+    const centerY = h * yPct - totalHeight / 2 + lineHeight / 2;
     lines.forEach((line, i) => {
-      ctx.fillText(line, w / 2, startY + i * lineHeight);
+      ctx.fillText(line, centerX, centerY + i * lineHeight);
     });
     ctx.restore();
 

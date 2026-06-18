@@ -414,15 +414,18 @@ export function PreviewStage({
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [currentSegment?.heading]);
+  }, [currentSegment?.isHeading, currentSegment?.heading]);
 
-  const headingLength = currentSegment?.heading?.length ?? 0;
+  const isHeadingSegment = !!(currentSegment?.isHeading || currentSegment?.heading);
+  const headingText = currentSegment?.headingConfig?.text ?? currentSegment?.heading ?? '';
+  const headingLength = headingText.length;
   const baseSize = headingContainerHeight * 0.14;
   const shrinkFactor = Math.max(0.3, 1 - headingLength / 80);
-  const headingFontSize = Math.max(
-    headingContainerHeight * 0.04,
-    Math.min(headingContainerHeight * 0.14, baseSize * shrinkFactor),
-  );
+  const headingFontSize = currentSegment?.headingConfig?.fontSize
+    ?? Math.max(
+      headingContainerHeight * 0.04,
+      Math.min(headingContainerHeight * 0.14, baseSize * shrinkFactor),
+    );
 
   return (
     <div className="w-full h-full">
@@ -499,32 +502,46 @@ export function PreviewStage({
                           transition={{ duration: 0.4 }}
                         />
                       )}
-                      {/* Heading segment — full-screen title on black, bypasses hideAllText */}
-                      {currentSegment.heading && !asset?.url && (
+                      {/* Heading segment — title card with optional background asset */}
+                      {isHeadingSegment && !asset?.url && (
                         <div
                           ref={headingContainerRef}
-                          className="absolute inset-0 bg-black flex items-center justify-center z-10 p-8"
+                          className="absolute inset-0 z-10"
+                          style={{
+                            backgroundColor: currentSegment.headingConfig?.backgroundColor ?? '#000000',
+                          }}
                         >
-                          <h1
-                            className="text-white font-bold text-center"
+                          <div
+                            className="absolute"
                             style={{
-                              fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
-                              fontFamily: globalOverlayConfig.fontFamily || 'system-ui, sans-serif',
-                              lineHeight: 1.2,
-                              maxWidth: '90%',
-                              maxHeight: '80%',
-                              overflow: 'hidden',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 6,
-                              WebkitBoxOrient: 'vertical' as const,
+                              left: `${currentSegment.headingConfig?.x ?? 50}%`,
+                              top: `${currentSegment.headingConfig?.y ?? 50}%`,
+                              transform: 'translate(-50%, -50%)',
+                              width: '90%',
+                              textAlign: 'center',
                             }}
                           >
-                            {currentSegment.heading}
-                          </h1>
+                            <h1
+                              className="font-bold"
+                              style={{
+                                fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
+                                fontFamily: currentSegment.headingConfig?.fontFamily ?? globalOverlayConfig.fontFamily ?? 'system-ui, sans-serif',
+                                fontWeight: currentSegment.headingConfig?.fontWeight ?? 'bold',
+                                color: currentSegment.headingConfig?.color ?? '#ffffff',
+                                lineHeight: 1.2,
+                                overflow: 'hidden',
+                                display: '-webkit-box',
+                                WebkitLineClamp: 6,
+                                WebkitBoxOrient: 'vertical' as const,
+                              }}
+                            >
+                              {headingText}
+                            </h1>
+                          </div>
                         </div>
                       )}
                       {/* Missing asset placeholder — not shown for heading segments */}
-                      {!asset?.url && !currentSegment.heading && (
+                      {!asset?.url && !isHeadingSegment && (
                         <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
                                         flex items-center justify-center p-6 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-60">

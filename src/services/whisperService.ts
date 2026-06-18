@@ -351,7 +351,7 @@ export function distributeSegmentTimes(
 function nearestContentIdx(segs: VideoSegment[], from: number, step: -1 | 1): number {
   for (let ni = from + step; ni >= 0 && ni < segs.length; ni += step) {
     const s = segs[ni];
-    if (s && !(s.heading && !s.text)) return ni;
+    if (s && !s.isHeading && !(s.heading && !s.text)) return ni;
   }
   return -1;
 }
@@ -379,7 +379,7 @@ export function applyHeadingTiming(segments: VideoSegment[]): VideoSegment[] {
 
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i]!;
-    if (!(seg.heading && !seg.text)) continue; // not a heading-only slide (isHeading handled via heading alias)
+    if (!seg.isHeading && !(seg.heading && !seg.text)) continue; // not a heading-only slide
     if (seg.locked) continue;
 
     const prevIdx = nearestContentIdx(segs, i, -1);

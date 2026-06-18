@@ -157,7 +157,8 @@ export function applyAnchorBasedTiming(
  */
 export function getSegmentStableKey(s: VideoSegment): string {
   if (s.assetId) return `asset:${s.assetId}`;
-  if (s.heading) return `heading:${s.heading.trim().toLowerCase()}`;
+  const headingText = s.headingConfig?.text ?? s.heading;
+  if (s.isHeading || headingText) return `heading:${(headingText ?? '').trim().toLowerCase()}`;
   return `order:${s.order}|text:${s.text.slice(0, 40)}`;
 }
 
@@ -165,14 +166,15 @@ export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): Vi
   segments.map(s => {
     if (s.assetId) return s;
 
-    const bracketMatch = (s.heading + s.text).match(/\[(.*?):?\s*(.*?)\]/);
+    const headingLabel = s.headingConfig?.text ?? s.heading ?? '';
+    const bracketMatch = (headingLabel + s.text).match(/\[(.*?):?\s*(.*?)\]/);
     if (bracketMatch) {
       const name = (bracketMatch[2] ?? '').trim();
       const asset = assets.find(a => isFuzzyMatch(name, a.name));
       if (asset) return { ...s, assetId: asset.id };
     }
 
-    const contextAsset = findAssetByContext(s.heading + ' ' + s.text, assets);
+    const contextAsset = findAssetByContext(headingLabel + ' ' + s.text, assets);
     if (contextAsset) return { ...s, assetId: contextAsset.id };
 
     return s;
