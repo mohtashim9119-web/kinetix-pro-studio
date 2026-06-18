@@ -198,7 +198,25 @@ const MIN_PLAYBACK_SPEED = 0.5;
 const MAX_PLAYBACK_SPEED = 2.0;
 const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
 
-// Fuzzy matching helper
+// ---------------------------------------------------------------------------
+// Migration: legacy `heading` string → isHeading + headingConfig
+// ---------------------------------------------------------------------------
+
+/** Upgrades any segment carrying the legacy `heading` string field to the new
+ *  `isHeading + headingConfig` shape.  Safe to call multiple times (idempotent). */
+function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
+  return segments.map(seg => {
+    if (seg.isHeading || !seg.heading) return seg; // already migrated or not a heading
+    return {
+      ...seg,
+      isHeading: true as const,
+      headingConfig: seg.headingConfig ?? {
+        text: seg.heading,
+        splitAudio: false,
+      },
+    };
+  });
+}
 
 // Enhanced parser that handles heading-voiceover logic
 const parseProjectData = async (
@@ -1646,12 +1664,14 @@ export default function App() {
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
 
-    const rehydratedSegments = saved.project.segments.map(seg => {
-      if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-        return { ...seg, assetId: undefined };
-      }
-      return seg;
-    });
+    const rehydratedSegments = migrateSegmentHeadings(
+      saved.project.segments.map(seg => {
+        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+          return { ...seg, assetId: undefined };
+        }
+        return seg;
+      }),
+    );
 
     let rehydratedVoiceoverId = saved.project.voiceoverId;
     if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
