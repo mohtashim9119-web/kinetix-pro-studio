@@ -906,6 +906,60 @@ export default function App() {
     });
   }, []);
 
+  const handleDeleteHeading = useCallback((segmentId: string): void => {
+    setProject(prev => {
+      const idx = prev.segments.findIndex(s => s.id === segmentId);
+      if (idx === -1) return prev;
+      const heading = prev.segments[idx];
+      if (!heading?.isHeading) return prev;
+
+      const headingDur = heading.duration;
+      const headingText = heading.headingConfig?.text ?? heading.heading ?? '';
+
+      const newSegs = [...prev.segments];
+      const prevSeg = newSegs[idx - 1];
+      const nextSeg = newSegs[idx + 1];
+
+      // Return time to neighbors — reverse of the absorption done at insertion.
+      if (prevSeg && nextSeg) {
+        newSegs[idx - 1] = { ...prevSeg, duration: prevSeg.duration + headingDur / 2 };
+        newSegs[idx + 1] = { ...nextSeg, duration: nextSeg.duration + headingDur / 2 };
+      } else if (prevSeg) {
+        newSegs[idx - 1] = { ...prevSeg, duration: prevSeg.duration + headingDur };
+      } else if (nextSeg) {
+        newSegs[idx + 1] = { ...nextSeg, duration: nextSeg.duration + headingDur };
+      }
+
+      // Reverse the anchorStart shift that was applied to next at insertion time.
+      if (nextSeg && nextSeg.anchorStart !== undefined) {
+        const updatedNext = newSegs[idx + 1]!;
+        newSegs[idx + 1] = {
+          ...updatedNext,
+          anchorStart: Number((updatedNext.anchorStart! - headingDur).toFixed(3)),
+        };
+      }
+
+      // Remove heading from array.
+      newSegs.splice(idx, 1);
+
+      // Recompute startTimes cumulatively.
+      let t = 0;
+      for (let i = 0; i < newSegs.length; i++) {
+        newSegs[i] = { ...newSegs[i]!, startTime: Number(t.toFixed(3)) };
+        t += newSegs[i]!.duration;
+      }
+
+      // Remove [HEADING: <text>] tag from sceneDetails.
+      const tagPattern = new RegExp(
+        `\\n?\\[HEADING:\\s*${headingText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\]\\n?`,
+        'i',
+      );
+      const newSceneDetails = prev.sceneDetails.replace(tagPattern, '\n');
+
+      return { ...prev, segments: newSegs, sceneDetails: newSceneDetails };
+    });
+  }, []);
+
   const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
     const seg = projectRef.current.segments[segIdx];
     if (!seg) return;
@@ -1882,6 +1936,7 @@ export default function App() {
             onUnlockAll={handleUnlockAll}
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
             onInsertHeading={handleInsertHeading}
+            onDeleteHeading={handleDeleteHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
             textLayers={project.textLayers ?? []}
             onAddTextLayer={handleAddTextLayer}
@@ -2173,6 +2228,7 @@ export default function App() {
                 onSetTrimmingSegment={setTrimmingSegmentId}
                 onSetAdjustingTrim={setIsAdjustingTrim}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
+                onDeleteHeading={handleDeleteHeading}
               />
             </ErrorBoundary>
           </div>

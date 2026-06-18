@@ -235,6 +235,8 @@ interface Props {
   allLocked: boolean;
   /** Insert a new heading segment at the given index (0 = before all segments). */
   onInsertHeading: (afterIndex: number) => void;
+  /** Delete a heading segment by id — only shown on isHeading tiles. */
+  onDeleteHeading?: (id: string) => void;
   // Misc
   selectedSegmentId: string | undefined;
   // Global text layers
@@ -304,6 +306,7 @@ export function DropZonePanel({
   onUnlockAll,
   allLocked,
   onInsertHeading,
+  onDeleteHeading,
   selectedSegmentId,
   textLayers,
   onAddTextLayer,
@@ -865,6 +868,16 @@ export function DropZonePanel({
                         : <Unlock size={12} className="text-gray-600" />
                       }
                     </button>
+                    {seg.isHeading && onDeleteHeading && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
+                        className="flex-shrink-0 p-1 rounded-lg hover:bg-red-500/10 transition-colors opacity-0 group-hover/gap:opacity-100"
+                        aria-label="Delete heading"
+                        title="Delete heading"
+                      >
+                        <span className="text-red-400 text-sm leading-none">×</span>
+                      </button>
+                    )}
                   </div>
 
                   {/* Hover-reveal "+ heading" gap button — appears between segments */}

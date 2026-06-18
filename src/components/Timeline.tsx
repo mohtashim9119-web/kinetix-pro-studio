@@ -36,6 +36,7 @@ interface Props {
   onSetTrimmingSegment: (id: string | null) => void;
   onSetAdjustingTrim: (v: boolean) => void;
   onSelectSegment?: (id: string) => void;
+  onDeleteHeading?: (id: string) => void;
 }
 
 export function Timeline({
@@ -62,6 +63,7 @@ export function Timeline({
   onSetTrimmingSegment,
   onSetAdjustingTrim,
   onSelectSegment,
+  onDeleteHeading,
 }: Props) {
   const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
   const pixelsPerSecond = 100 * zoomLevel;
@@ -266,12 +268,23 @@ export function Timeline({
                               </span>
                             )}
                           </div>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
-                            className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            Change
-                          </button>
+                          {s.isHeading && onDeleteHeading ? (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onDeleteHeading(s.id); }}
+                              className="px-1.5 py-1 text-red-400 hover:text-red-300 text-sm leading-none pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                              aria-label="Delete heading"
+                              title="Delete heading"
+                            >
+                              ×
+                            </button>
+                          ) : (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
+                              className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              Change
+                            </button>
+                          )}
                         </div>
                         <div className="space-y-0.5">
                           <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">{s.headingConfig?.text ?? s.heading ?? 'Scene'}</p>
