@@ -222,6 +222,26 @@ function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
   });
 }
 
+/**
+ * Inserts a [HEADING: text] tag into sceneDetails at the position
+ * corresponding to insertAtSceneIdx (0 = before all scenes, N = after the
+ * N-th tag, >= matches.length = after all scenes).
+ */
+function insertHeadingIntoSceneDetails(
+  sceneDetails: string,
+  insertAtSceneIdx: number,
+  headingText: string,
+): string {
+  const matches = [...sceneDetails.matchAll(/\[(?:IMAGE|VIDEO|HEADING)\s*:[^\]]*\]/gi)];
+  const insertTag = `\n[HEADING: ${headingText}]\n`;
+  if (insertAtSceneIdx === 0) return insertTag + sceneDetails;
+  if (insertAtSceneIdx >= matches.length) return sceneDetails + insertTag;
+  const targetMatch = matches[insertAtSceneIdx];
+  if (!targetMatch) return sceneDetails + insertTag;
+  const idx = targetMatch.index ?? 0;
+  return sceneDetails.slice(0, idx) + insertTag + sceneDetails.slice(idx);
+}
+
 // Enhanced parser that handles heading-voiceover logic
 const parseProjectData = async (
   script: string,
@@ -870,7 +890,13 @@ export default function App() {
         return out;
       });
 
-      return { ...prev, segments: reordered };
+      const newSceneDetails = insertHeadingIntoSceneDetails(
+        prev.sceneDetails,
+        insertAt,
+        'New Heading',
+      );
+
+      return { ...prev, segments: reordered, sceneDetails: newSceneDetails };
     });
   }, []);
 
