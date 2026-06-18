@@ -145,7 +145,6 @@ export interface HeadingConfig {
   fontWeight?: string | number; // default 'bold'
   x?: number;                  // percent 0-100, default 50 (center)
   y?: number;                  // percent 0-100, default 50 (center)
-  splitAudio?: boolean;        // false = 50/50 neighbor absorption; true = insert dead time
   assetId?: string;            // optional background image/video (overrides black fill)
 }
 

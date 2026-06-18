@@ -57,7 +57,7 @@ export function BottomDrawer({
   const updateHC = (updates: Partial<HeadingConfig>) => {
     if (!s) return;
     const next: Partial<VideoSegment> = {
-      headingConfig: { ...(hc ?? { text: '', splitAudio: false }), ...updates },
+      headingConfig: { ...(hc ?? { text: '' }), ...updates },
       ...('text' in updates ? { heading: String(updates.text ?? '') } : {}),
     };
     if ('assetId' in updates) next.assetId = updates.assetId;
@@ -281,16 +281,6 @@ export function BottomDrawer({
                   </select>
                 </div>
 
-                {/* Split audio */}
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={hc?.splitAudio ?? false}
-                    onChange={(e) => updateHC({ splitAudio: e.target.checked })}
-                    className="accent-[#F27D26]"
-                  />
-                  <span className="text-[9px] font-bold text-gray-500">Split audio at this heading</span>
-                </label>
               </div>
             )}
 

@@ -216,7 +216,6 @@ function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
       isHeading: true as const,
       headingConfig: seg.headingConfig ?? {
         text: seg.heading,
-        splitAudio: false,
       },
     };
   });
@@ -318,7 +317,7 @@ const parseProjectData = async (
       if (isHeadingTag) {
         const headingText = specificMatch[1] ?? '';
         current.isHeading = true;
-        current.headingConfig = { text: headingText, splitAudio: false };
+        current.headingConfig = { text: headingText };
         current.heading = headingText; // keep legacy alias
       } else {
         name = specificMatch[1] ?? '';
@@ -871,7 +870,7 @@ export default function App() {
         text: '',
         heading: 'New Heading',
         isHeading: true,
-        headingConfig: { text: 'New Heading', splitAudio: false, x: 50, y: 50 },
+        headingConfig: { text: 'New Heading', x: 50, y: 50 },
         duration: actualDur,
         startTime: headingStart,
         anchorStart: headingStart,
