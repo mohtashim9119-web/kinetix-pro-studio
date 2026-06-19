@@ -26,6 +26,7 @@ import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '.
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { TextLayersPanel } from './TextLayersPanel';
+import { useFocusTrap } from '../hooks/useFocusTrap';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -202,6 +203,43 @@ function SlotRow({
 }
 
 // ---------------------------------------------------------------------------
+// SaveConfirmDialog — small centered confirm popup for committing a Scene
+// Details edit. Mounted/unmounted on demand so useFocusTrap's mount-effect
+// (which focuses the first control and traps Tab) fires at the right time.
+// ---------------------------------------------------------------------------
+
+function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onCancel: () => void }) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Confirm save"
+      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
+    >
+      <div ref={trapRef} className="bg-[#111] border border-[#282828] rounded-2xl p-6 w-full max-w-xs shadow-2xl">
+        <p className="text-sm text-gray-200 mb-5">Are you sure you want to save the changes?</p>
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 bg-transparent border border-[#282828] py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 bg-[#F27D26] text-black py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#FF9D46] transition-all focus:outline-none focus:ring-2 focus:ring-orange-400"
+          >
+            Yes
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
@@ -218,8 +256,6 @@ interface Props {
   persistedVoiceoverName: string;
   persistedAssetCount: number;
   // Text editing (collapsible sections)
-  onScriptChange: (val: string) => void;
-  onSceneDetailsChange: (val: string) => void;
   onClearScript: () => void;
   onClearSceneDetails: () => void;
   // Asset management
@@ -293,8 +329,6 @@ export function DropZonePanel({
   persistedSceneDetailsName,
   persistedVoiceoverName,
   persistedAssetCount,
-  onScriptChange,
-  onSceneDetailsChange,
   onClearScript,
   onClearSceneDetails,
   onDeleteAsset,
@@ -361,6 +395,11 @@ export function DropZonePanel({
   // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
   // -1 = before all segments; i = after segment[i].
   const [hoveredGapIdx, setHoveredGapIdx] = useState<number | null>(null);
+
+  // ── Scene Details edit-mode state ─────────────────────────────────────────
+  const [isEditingScene, setIsEditingScene] = useState(false);
+  const [sceneDraft, setSceneDraft] = useState('');
+  const [showSaveConfirm, setShowSaveConfirm] = useState(false);
 
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
     setStaged(prev => {
@@ -476,16 +515,34 @@ export function DropZonePanel({
   const clearAllStagedAssets = () =>
     updateStaged(prev => ({ ...prev, assetFiles: [], zipFiles: [] }));
 
-  const handleApplySync = () => {
-    onApplySync(stagedRef.current);
+  // Shared by the Apply Sync button and the Scene Details save-confirm flow —
+  // runs the sync with an explicit snapshot, clears staged files, and switches
+  // to the Segments tab so the result is immediately visible.
+  const triggerSync = (snapshot: StagedFiles) => {
+    onApplySync(snapshot);
     // Clear staged so slots immediately switch to the green persisted indicator.
-    updateStaged(() => ({
-      scriptFile: null,
-      sceneFile: null,
-      voiceoverFile: null,
-      assetFiles: [],
-      zipFiles: [],
-    }));
+    updateStaged(() => EMPTY_STAGED);
+    setActiveTab('segments');
+  };
+
+  const handleApplySync = () => {
+    triggerSync(stagedRef.current);
+  };
+
+  // Commits an edited Scene Details draft by staging it as a synthetic file —
+  // this routes the new text through the same atomic sync path as an uploaded
+  // file (handleApplySyncFromFiles reads project.sceneDetails off a ref that
+  // only updates post-render, so a direct setProject call here could be read
+  // back stale if it raced with the sync trigger).
+  const handleConfirmSaveScene = () => {
+    const fileName = persistedSceneDetailsName || 'scene-details.txt';
+    const sceneFile: StagedFile = {
+      file: new File([sceneDraft], fileName, { type: 'text/plain' }),
+      key: crypto.randomUUID(),
+    };
+    setIsEditingScene(false);
+    setShowSaveConfirm(false);
+    triggerSync({ ...stagedRef.current, sceneFile });
   };
 
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
@@ -585,14 +642,17 @@ export function DropZonePanel({
               expanded={expanded === 'script'}
               onToggle={() => toggle('script')}
             >
-              <textarea
-                value={persistedScript}
-                onChange={(e) => onScriptChange(e.target.value)}
-                placeholder="Paste or type your script here..."
-                className="w-full h-40 bg-transparent text-sm text-gray-300
-                  resize-none border border-gray-700 rounded p-2
-                  focus:outline-none focus:border-orange-500"
-              />
+              {persistedScript ? (
+                <div
+                  className="w-full h-40 overflow-y-auto custom-scrollbar whitespace-pre-wrap
+                    bg-transparent text-sm text-gray-300 border border-gray-700 rounded p-2
+                    cursor-default"
+                >
+                  {persistedScript}
+                </div>
+              ) : (
+                <p className="text-[11px] text-gray-600 italic">No script loaded.</p>
+              )}
             </SlotRow>
 
             {slotError && (
@@ -618,14 +678,57 @@ export function DropZonePanel({
               expanded={expanded === 'scene'}
               onToggle={() => toggle('scene')}
             >
-              <textarea
-                value={persistedSceneDetails}
-                onChange={(e) => onSceneDetailsChange(e.target.value)}
-                placeholder="Paste scene details with [IMAGE:] or [VIDEO:] tags..."
-                className="w-full h-40 bg-transparent text-sm text-gray-300
-                  resize-none border border-gray-700 rounded p-2
-                  focus:outline-none focus:border-teal-500"
-              />
+              {isEditingScene ? (
+                <div className="space-y-2">
+                  <textarea
+                    value={sceneDraft}
+                    onChange={(e) => setSceneDraft(e.target.value)}
+                    placeholder="Paste scene details with [IMAGE:] or [VIDEO:] tags..."
+                    className="w-full h-40 bg-transparent text-sm text-gray-300
+                      resize-none border border-teal-700 rounded p-2
+                      focus:outline-none focus:border-teal-500"
+                    // eslint-disable-next-line jsx-a11y/no-autofocus
+                    autoFocus
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setShowSaveConfirm(true)}
+                      className="flex-1 py-1.5 rounded-lg bg-[#F27D26] text-black text-[9px]
+                                 font-black uppercase tracking-widest hover:bg-[#FF9D46] transition-colors"
+                    >
+                      Save
+                    </button>
+                    <button
+                      onClick={() => setIsEditingScene(false)}
+                      className="flex-1 py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px]
+                                 font-black uppercase tracking-widest text-gray-400 hover:text-white transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {persistedSceneDetails ? (
+                    <div
+                      className="w-full h-40 overflow-y-auto custom-scrollbar whitespace-pre-wrap
+                        bg-transparent text-sm text-gray-300 border border-gray-700 rounded p-2
+                        cursor-default"
+                    >
+                      {persistedSceneDetails}
+                    </div>
+                  ) : (
+                    <p className="text-[11px] text-gray-600 italic">No scene details loaded.</p>
+                  )}
+                  <button
+                    onClick={() => { setSceneDraft(persistedSceneDetails); setIsEditingScene(true); }}
+                    className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-white
+                               border border-[#2A2A2A] rounded px-2 py-1 transition-colors"
+                  >
+                    Edit File
+                  </button>
+                </div>
+              )}
             </SlotRow>
 
             {/* Slot 3 — Voiceover */}
@@ -1088,6 +1191,13 @@ export function DropZonePanel({
           </div>
 
         </div>
+      )}
+
+      {showSaveConfirm && (
+        <SaveConfirmDialog
+          onConfirm={handleConfirmSaveScene}
+          onCancel={() => setShowSaveConfirm(false)}
+        />
       )}
 
     </div>
