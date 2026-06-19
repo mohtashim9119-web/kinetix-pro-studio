@@ -920,15 +920,6 @@ export default function App() {
       const prevSeg = newSegs[idx - 1];
       const nextSeg = newSegs[idx + 1];
 
-      console.log('[DEL-DIAG] entry', {
-        segmentId,
-        idx,
-        headingDur,
-        prevSegBefore: prevSeg && { id: prevSeg.id, duration: prevSeg.duration, anchorStart: prevSeg.anchorStart },
-        nextSegBefore: nextSeg && { id: nextSeg.id, duration: nextSeg.duration, anchorStart: nextSeg.anchorStart },
-        branch: (prevSeg && nextSeg) ? 'both' : prevSeg ? 'prev-only' : nextSeg ? 'next-only' : 'none',
-      });
-
       // Return time to neighbors — reverse of the absorption done at insertion.
       if (prevSeg && nextSeg) {
         newSegs[idx - 1] = { ...prevSeg, duration: prevSeg.duration + headingDur / 2 };
@@ -939,27 +930,23 @@ export default function App() {
         newSegs[idx + 1] = { ...nextSeg, duration: nextSeg.duration + headingDur };
       }
 
-      {
-        const prevSegAfter = newSegs[idx - 1];
-        const nextSegAfter = newSegs[idx + 1];
-        console.log('[DEL-DIAG] after-duration-return', {
-          prevSegAfter: prevSegAfter && { id: prevSegAfter.id, duration: prevSegAfter.duration },
-          nextSegAfter: nextSegAfter && { id: nextSegAfter.id, duration: nextSegAfter.duration },
-        });
+      // Restore next.anchorStart to its true pre-insertion position: prev's restored
+      // anchorStart + prev's restored duration — i.e. where next would sit if the
+      // heading had never existed. (The old formula subtracted headingDur from next's
+      // current anchor, which reproduces the HEADING's own anchor, not next's true one.)
+      const updatedPrev = newSegs[idx - 1];
+      const updatedNext = newSegs[idx + 1];
+      if (updatedNext && updatedPrev) {
+        if (updatedPrev.anchorStart !== undefined) {
+          newSegs[idx + 1] = {
+            ...updatedNext,
+            anchorStart: Number((updatedPrev.anchorStart + updatedPrev.duration).toFixed(3)),
+          };
+        }
+      } else if (updatedNext && !updatedPrev) {
+        // Heading was at position 0 — next becomes the new first segment, anchored at 0.
+        newSegs[idx + 1] = { ...updatedNext, anchorStart: 0 };
       }
-
-      // Reverse the anchorStart shift that was applied to next at insertion time.
-      if (nextSeg && nextSeg.anchorStart !== undefined) {
-        const updatedNext = newSegs[idx + 1]!;
-        newSegs[idx + 1] = {
-          ...updatedNext,
-          anchorStart: Number((updatedNext.anchorStart! - headingDur).toFixed(3)),
-        };
-      }
-
-      console.log('[DEL-DIAG] after-anchor-reversal', {
-        nextSegAnchor: newSegs[idx + 1]?.anchorStart,
-      });
 
       // Remove heading from array.
       newSegs.splice(idx, 1);
@@ -971,28 +958,12 @@ export default function App() {
         t += newSegs[i]!.duration;
       }
 
-      console.log('[DEL-DIAG] final', newSegs.map(s => ({
-        id: s.id,
-        startTime: s.startTime,
-        duration: s.duration,
-        anchorStart: s.anchorStart,
-        isHeading: s.isHeading,
-      })));
-
       // Remove [HEADING: <text>] tag from sceneDetails.
       const tagPattern = new RegExp(
         `\\n?\\[HEADING:\\s*${headingText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\]\\n?`,
         'i',
       );
       const newSceneDetails = prev.sceneDetails.replace(tagPattern, '\n');
-
-      // DEL-DIAG: tests the "tag survived the regex and gets re-parsed into a phantom
-      // heading on next sync" hypothesis (A2/A4 in the audit).
-      console.log('[DEL-DIAG] sceneDetails tag removal', {
-        headingText,
-        tagMatched: tagPattern.test(prev.sceneDetails),
-        changed: newSceneDetails !== prev.sceneDetails,
-      });
 
       return { ...prev, segments: newSegs, sceneDetails: newSceneDetails };
     });
@@ -1230,18 +1201,6 @@ export default function App() {
       audioDuration,
     );
 
-    // DEL-DIAG: tests whether a [HEADING:] tag survived deletion in sceneDetails and got
-    // re-parsed into a brand-new (unanchored) heading segment, which would re-corrupt timing.
-    console.log('[DEL-DIAG] finalizeSync newSegments from parseProjectData', {
-      headingCount: newSegments.filter(s => s.isHeading).length,
-      headings: newSegments.filter(s => s.isHeading).map(s => ({
-        id: s.id,
-        text: s.headingConfig?.text ?? s.heading,
-        anchorStart: s.anchorStart,
-        anchorSource: s.anchorSource,
-      })),
-    });
-
     // Lock restoration: keyed first by stable identity (assetId for image/video segments,
     // heading text for title cards), then by order+text as fallback. See getSegmentStableKey.
     // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
@@ -1279,17 +1238,8 @@ export default function App() {
       return;
     }
 
-    console.log('[DEL-DIAG] finalizeSync before applyAnchorBasedTiming', syncedSegments.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, anchorSource: s.anchorSource, isHeading: s.isHeading,
-    })));
     const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
-    console.log('[DEL-DIAG] finalizeSync after applyAnchorBasedTiming', anchorTimed.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, isHeading: s.isHeading,
-    })));
     const headingTimed = applyHeadingTiming(anchorTimed);
-    console.log('[DEL-DIAG] finalizeSync after applyHeadingTiming', headingTimed.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, isHeading: s.isHeading,
-    })));
 
     setProject(prev => ({ ...prev, segments: headingTimed }));
     setIsSynced(true);
@@ -1404,18 +1354,6 @@ export default function App() {
     // 5. Parse project data with the fresh, complete data
     const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
-    // DEL-DIAG: tests whether a [HEADING:] tag survived deletion in sceneDetails and got
-    // re-parsed into a brand-new (unanchored) heading segment, which would re-corrupt timing.
-    console.log('[DEL-DIAG] handleApplySyncFromFiles newSegments from parseProjectData', {
-      headingCount: newSegments.filter(s => s.isHeading).length,
-      headings: newSegments.filter(s => s.isHeading).map(s => ({
-        id: s.id,
-        text: s.headingConfig?.text ?? s.heading,
-        anchorStart: s.anchorStart,
-        anchorSource: s.anchorSource,
-      })),
-    });
-
     // 6. Preserve locked durations: keyed first by stable identity (assetId or heading text),
     //    then by order+text as fallback — same strategy as finalizeSync. See getSegmentStableKey.
     // First-wins insertion prevents a duplicate assetId from silently overwriting an earlier entry.
@@ -1453,17 +1391,8 @@ export default function App() {
       return;
     }
 
-    console.log('[DEL-DIAG] handleApplySyncFromFiles before applyAnchorBasedTiming', syncedSegments.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, anchorSource: s.anchorSource, isHeading: s.isHeading,
-    })));
     const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
-    console.log('[DEL-DIAG] handleApplySyncFromFiles after applyAnchorBasedTiming', anchorTimed.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, isHeading: s.isHeading,
-    })));
     const headingTimed = applyHeadingTiming(anchorTimed);
-    console.log('[DEL-DIAG] handleApplySyncFromFiles after applyHeadingTiming', headingTimed.map(s => ({
-      id: s.id, duration: s.duration, anchorStart: s.anchorStart, isHeading: s.isHeading,
-    })));
 
     // 7. Single atomic state update
     setProject(prev => ({

@@ -79,12 +79,6 @@ export function useWhisper(): UseWhisperApi {
         && Array.isArray(project.transcriptTokens)
         && project.transcriptTokens.length > 0;
 
-      console.log('[DEL-DIAG] useWhisper skip-guard', {
-        allWhisperAnchored,
-        audioUnchanged,
-        willSkip: allWhisperAnchored && audioUnchanged,
-      });
-
       if (allWhisperAnchored && audioUnchanged) {
         console.log('[whisper] Skipping — all segments have Whisper anchors, audio unchanged');
         return;
@@ -105,12 +99,6 @@ export function useWhisper(): UseWhisperApi {
           : alignScenestoTranscript(segments, tokens, silences);
         const updated = distributeSegmentTimes(segments, alignments, durationSecs);
         const finalSegments = applyHeadingTiming(updated);
-        console.log('[DEL-DIAG] useWhisper Option A result', {
-          hasAnyWhisperAnchor,
-          segments: finalSegments.map(s => ({
-            id: s.id, duration: s.duration, anchorStart: s.anchorStart, anchorSource: s.anchorSource, isHeading: s.isHeading,
-          })),
-        });
         if (!segmentSetStillValid(finalSegments)) {
           console.warn('[whisper] Discarding Option A alignment — segment set no longer matches');
           return;
