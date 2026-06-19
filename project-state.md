@@ -391,6 +391,11 @@ Phase 3 steps:
 | 2026-06-18 | Heading system Round 2: 5 bug fixes (BottomDrawer assetId emit, PreviewStage asset+text decoupling, insertion absorption, sceneDetails persistence, splitAudio mechanics). Commits: dab1787, 9904458, 03604c1, 3e017cd, e603c2f |
 | 2026-06-18 | Heading system Round 3: 3 follow-up fixes — applyHeadingTiming in finalizeSync, anchorSource='whisper' on insert, nextSeg.anchorStart shift on insert. Commits: a9df569, e844f53, 55f49c5 |
 | 2026-06-18 | Heading system Round 4: heading video background respects isPlaying. Commit: 35d262a |
+| 2026-06-19 | Heading system Round 5 (splitAudio removal): ripped out splitAudio entirely. Broke total-duration invariant, produced 4 rounds of drift bugs. Headings now pure overlays with 50/50 absorption only. Commit 26fe2cb |
+| 2026-06-19 | Heading system Round 6 (sync corruption root cause): duplicate "New Heading" text caused prevByKey collision, assigning multiple headings the same anchorStart. Fix: handleInsertHeading auto-names "Heading 1", "Heading 2"... SHRINK pass splits excess 50/50 with availability clamping. Commit 17269fb |
+| 2026-06-19 | Heading system Round 7 (× delete button): per-segment delete button on heading tiles (Timeline + DropZonePanel). Reverses insertion atomically: returns duration to neighbors, removes [HEADING:] tag from sceneDetails. Commit 7a348f8 |
+| 2026-06-19 | Heading system Round 8 (delete anchor math fix): handleDeleteHeading was subtracting headingDur from next.anchorStart, reproducing the heading's own anchor instead of next's pre-insertion anchor. Fixed to derive next.anchorStart from prev.anchorStart + prev.duration. Apply Sync now recovers cleanly after delete. Diagnostic [DEL-DIAG] logs removed. Commit d224ba6 |
+| 2026-06-19 | Heading system Round 9 (UI polish): heading delete button repositioned to left of row (next to lock icon), × replaced with Trash2 icon, hover-only opacity. Same Trash2 in Timeline heading tile. Also fixed pre-existing bug where heading rows/tiles showed yellow/red "missing asset" warning icon instead of an orange Heading1 indicator (isMissing check now evaluated AFTER isHeading check). Commit 70e2285 |
 
 ---
 
