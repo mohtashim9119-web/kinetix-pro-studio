@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Play, Pause, RotateCcw, AlertCircle,
+  Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 
@@ -241,7 +241,11 @@ export function Timeline({
                     />
 
                     <div className="flex-1 relative bg-black/50">
-                      {asset?.url ? (
+                      {s.isHeading ? (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Heading1 size={16} className="text-[#F27D26]/50" />
+                        </div>
+                      ) : asset?.url ? (
                         asset.type === 'video' ? (
                           <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
                         ) : (
@@ -271,11 +275,11 @@ export function Timeline({
                           {s.isHeading && onDeleteHeading ? (
                             <button
                               onClick={(e) => { e.stopPropagation(); onDeleteHeading(s.id); }}
-                              className="px-1.5 py-1 text-red-400 hover:text-red-300 text-sm leading-none pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                              className="px-1.5 py-1 text-red-400 hover:text-red-300 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
                               aria-label="Delete heading"
                               title="Delete heading"
                             >
-                              ×
+                              <Trash2 size={12} />
                             </button>
                           ) : (
                             <button

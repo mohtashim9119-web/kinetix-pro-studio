@@ -19,6 +19,7 @@ import {
   ChevronRight,
   ChevronLeft,
   Trash2,
+  Heading1,
 } from 'lucide-react';
 import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -839,14 +840,14 @@ export function DropZonePanel({
                   >
                     <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
                                     bg-[#1A1A1A] flex items-center justify-center">
-                      {asset?.url && asset.type === 'image'
+                      {seg.isHeading
+                        ? <Heading1 size={14} className="text-[#F27D26]/70" />
+                        : asset?.url && asset.type === 'image'
                         ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
                         : asset?.type === 'video'
                         ? <Video size={14} className="text-blue-400" />
                         : isMissing
                         ? <AlertCircle size={14} className="text-yellow-500" />
-                        : seg.isHeading
-                        ? <span className="text-[8px] font-black text-[#F27D26]/60 uppercase">H</span>
                         : <div className="w-full h-full bg-[#1A1A1A]" />
                       }
                     </div>
@@ -858,6 +859,16 @@ export function DropZonePanel({
                         {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
                       </p>
                     </div>
+                    {seg.isHeading && onDeleteHeading && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
+                        className="flex-shrink-0 p-1 rounded-lg hover:bg-red-500/10 text-red-400 hover:text-red-300 transition-colors opacity-0 group-hover/gap:opacity-100"
+                        aria-label="Delete heading"
+                        title="Delete heading"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
                     <button
                       onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
                       className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
@@ -868,16 +879,6 @@ export function DropZonePanel({
                         : <Unlock size={12} className="text-gray-600" />
                       }
                     </button>
-                    {seg.isHeading && onDeleteHeading && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
-                        className="flex-shrink-0 p-1 rounded-lg hover:bg-red-500/10 transition-colors opacity-0 group-hover/gap:opacity-100"
-                        aria-label="Delete heading"
-                        title="Delete heading"
-                      >
-                        <span className="text-red-400 text-sm leading-none">×</span>
-                      </button>
-                    )}
                   </div>
 
                   {/* Hover-reveal "+ heading" gap button — appears between segments */}
