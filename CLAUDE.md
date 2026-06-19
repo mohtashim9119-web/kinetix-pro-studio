@@ -214,6 +214,15 @@ The Whisper skip-guard in useWhisper.ts fires only when every segment has
 realigns only 'estimate' segments within the gaps; if none exist (fresh
 project), the original full aligner runs.
 
+Heading segments (isHeading) participate in the same anchor system.
+handleInsertHeading auto-names each heading uniquely ("Heading 1",
+"Heading 2"...) so getSegmentStableKey never collides across multiple
+headings on re-sync. The × delete button (handleDeleteHeading) reverses
+insertion atomically: returns the absorbed duration to both neighbors
+(50/50 split) and restores next.anchorStart to prev.anchorStart +
+prev.duration — the position next would occupy had the heading never
+existed.
+
 ---
 
 ## Conventions — Adopt Going Forward
@@ -398,3 +407,4 @@ All dead dependencies removed. No remaining items.
 | Phase 6.5 — Bundle ffmpeg sidecar | ✅ Done — 2026-05-27 | c567d5e — evermeet.cx 8.1.1 static build (76 MB, system-libs-only); tauri-build copies to target/debug/ffmpeg; sidecar("ffmpeg") at runtime; portability verified (export works with system ffmpeg disabled) |
 | Divider panel + preview height fixes | ✅ Done — 2026-06-17 | previewHeight initializer from viewport, panel toggle clamps via useEffect (310ms delay), timeline floor 140px enforced during drag and on panel toggle |
 | Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts |
+| Heading system complete | ✅ Done — 2026-06-19 | 9 rounds; isHeading flag, headingConfig, "+ Add Heading" UI, × delete with anchor restoration; an audio-pause/duration-splitting approach was tried and rejected entirely — pure overlay model with 50/50 absorption shipped instead |

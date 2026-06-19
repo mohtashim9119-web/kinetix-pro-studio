@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-18 |
+| Last updated | 2026-06-19 |
 | Current phase | Phase 7 — Active (3 pending tasks) |
 | Hosting target | Desktop app (Tauri DMG/installer) · no web hosting needed for export |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -35,7 +35,7 @@
 
 ## Current Sprint
 
-Three pending tasks remain in Phase 7: auto-captions investigation/build, export-rendering profiling pass, export-rendering implementation. Bug 3 (anchor-based segment timing) completed 2026-06-18 — two commits pending push to remote (e2b6390, b8f70a6).
+Heading system stable after 9 rounds of fixes. Three pending tasks remain in Phase 7: auto-captions, export profiling, export implementation.
 
 ---
 
@@ -250,26 +250,10 @@ Phase 3 steps:
 
 - **Mux "Failed to fetch" — Phase 5 Step 4 investigation (no repro, root cause identified):** The one observed failure (Phase 4 smoke test, heavily-mutated state) was traced to `exportPipeline.ts:198` — `fetchFile(voiceoverAsset.url)` where the blob URL had already been revoked. The pre-c7515e5 delete handler called `URL.revokeObjectURL(asset.url)` synchronously but did NOT clear `voiceoverId`, leaving the export pipeline holding a revoked URL. c7515e5 (Phase 4 Step 3) fixed the root cause by clearing `voiceoverId` on delete — the mux step now routes to the no-audio branch when `voiceoverId` is absent. Not reproducible with current code. No further action needed.
 
-- **Heading insertion fails on some existing projects** — On at least one existing project, inserting a heading between segments produced incorrect duration distribution (not the 50/50 absorption). Deleting and recreating the project from scratch worked correctly. Root cause unknown — possibly stale anchor state from a previous Whisper run, or a migration edge case where anchorSource on legacy segments doesn't get set to 'whisper' as expected. Reproducer: open an older project (created before commit 55f49c5), insert a heading, observe duration distribution. Investigate when convenient.
-
 ---
 
 ## Long-running Deferred Items
 
-<!-- Audited 2026-06-18 — 9 items pruned (2 DONE, 7 LOW-VALUE). Restructured 2026-06-18 — SaaS items moved to SaaS Readiness Tasks; batch-1-2-3 completed items removed; cosmetic items consolidated here. -->
-
-- ~~**JSZip dynamic-import double-cast**~~ — **Fixed Phase 5 step 5.** Destructure `{ default: JSZip }`; `@types/jszip` removed.
-- ~~**Stock API rate-limit handling**~~ — **Fixed Phase 5 step 7.** Exponential backoff retry (3 attempts); discriminated union StockSearchResult; distinct UI for rate_limited/error/ok.
-- ~~**Real mid-export cancellation**~~ — **Fixed Phase 5 step 3.** `worker.terminate()` + generation counter in `useExport`.
-- ~~**Accessibility audit**~~ — **Phase 5 step 8 complete.** ARIA labels, focus rings, aria-live, timeline slider keyboard nav, useFocusTrap on all 4 modals. Pass 2 (screen reader, responsive) deferred to Phase 6.
-- ~~**`AnimationType` values not applied in canvas export**~~ — **Fixed Fidelity Polish Item 4.** `canvasAnimations.ts` applies all 12 AnimationType values via canvas ctx transforms in `frameRenderer.ts`; live preview uses `getAnimationWrapperProps` motion.div wrapper in `PreviewStage.tsx`.
-- ~~**Extra overlays have no drag-to-position UI**~~ — **Fixed Fidelity Polish Item 2.** Pointer Events drag on extra overlays with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires through to App.tsx immutable state update.
-- ~~**`autoMatchAssets` re-assignment on delete**~~ — **Fixed Phase 5 step 1 (75be8dd).** Effect removed; `autoMatchSegments` called imperatively on upload only. Deletion path is clean.
-- ~~**`asset_missing` ExportError path is defense-in-depth only**~~ — **Updated Phase 5 step 2 (folded into 75be8dd).** With `autoMatchAssets` effect gone, `asset_missing` is now reachable via normal user actions: delete an asset mid-session and export before reload. Comment added at `exportPipeline.ts:80` documenting the trigger path. Error modal already handles it correctly — no further action needed.
-- ~~**Bug 3 — Segment gap fill after scene removal**~~ — **Fixed 2026-06-18.** Anchor-based segment timing with provenance tracking. See Completed Work Log entry and CLAUDE.md "Anchor-Based Segment Timing" section.
-- ~~**`usePlayback` hook extraction**~~ — **Extracted 2026-06-18 (85fa111).** rAF loop, setInterval, audio-pause, and playbackRate sync effects moved to `src/hooks/usePlayback.ts`; hook owns its own `rafRef` and `segmentsRef`. Zero behavior change.
-- ~~**Segment lock order-index matching**~~ — **Fixed 2026-06-18 (e89ea59).** `getSegmentStableKey()` extracted to `syncEngine.ts`; fallback chain now appends first 40 chars of segment text (`order:N|text:...`) so text-only segments survive adjacent insert/remove without stale lock state.
-- ~~**`audioRef.current.duration` synchronous read on upload**~~ — **Fixed 2026-06-18 (d5def92).** `finalizeSync` now falls back to `await getAudioDuration()` when the sync read returns 0; shows toast and aborts if metadata is still unavailable rather than silently using bogus durations.
 - **Video seek on resize drag release** — video preview jumps to near-start of current segment when resize drag releases; audio is unaffected, exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by currentSegment useMemo re-resolving with new startTimes in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
 - **Preview transition black flash on video boundaries** — newly-mounted `<video>` element shows ~100–200 ms black before first decoded frame paints during canvas-based transitions. Root cause not isolated after multiple fix attempts (canvas hold + canplay listener + failsafe timeout). Future fix likely requires pre-mounting the next video element offscreen during the pre-roll window, or a dual-video CSS opacity crossfade. Exports are unaffected — preview-only.
 - **Preview letterboxing in normal view** — carried forward from earlier audit; low priority cosmetic issue.
