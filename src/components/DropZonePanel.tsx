@@ -264,6 +264,12 @@ interface Props {
   onDeleteVoiceover: () => void;
   // File actions
   onApplySync: (staged: StagedFiles) => void;
+  /** Fired the moment a voiceover file is staged (dropped/browsed), before Apply Sync is clicked. */
+  onVoiceoverStaged: (file: File) => void;
+  /** Fired when a staged-but-uncommitted voiceover is removed or replaced. */
+  onVoiceoverUnstaged: () => void;
+  /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
+  applySyncDisabled: boolean;
   // Segment actions
   onSegmentClick: (segmentId: string) => void;
   onToggleLock: (segmentId: string) => void;
@@ -335,6 +341,9 @@ export function DropZonePanel({
   onDeleteAllAssets,
   onDeleteVoiceover,
   onApplySync,
+  onVoiceoverStaged,
+  onVoiceoverUnstaged,
+  applySyncDisabled,
   onSegmentClick,
   onToggleLock,
   onLockAll,
@@ -507,6 +516,13 @@ export function DropZonePanel({
 
       return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
     });
+
+    // Option C — trigger transcription the moment a voiceover is staged,
+    // independent of Apply Sync. Last-one-wins, mirroring the staging loop above.
+    const lastVoiceoverEntry = voiceoverEntries.at(-1);
+    if (lastVoiceoverEntry) {
+      onVoiceoverStaged(lastVoiceoverEntry.file);
+    }
   };
 
   const removeSlot = (slot: 'script' | 'scene' | 'voiceover') =>
@@ -561,6 +577,7 @@ export function DropZonePanel({
 
   const handleVoiceoverClear = () => {
     updateStaged(prev => ({ ...prev, voiceoverFile: null }));
+    onVoiceoverUnstaged();
     onDeleteVoiceover();
   };
 
@@ -866,9 +883,12 @@ export function DropZonePanel({
           <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A]">
             <button
               onClick={handleApplySync}
+              disabled={applySyncDisabled}
+              title={applySyncDisabled ? 'Waiting for transcription to finish…' : undefined}
               className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
                          font-black uppercase tracking-widest hover:bg-[#FF9D46]
-                         transition-all"
+                         transition-all disabled:opacity-40 disabled:cursor-not-allowed
+                         disabled:hover:bg-[#F27D26]"
             >
               Apply Sync
             </button>

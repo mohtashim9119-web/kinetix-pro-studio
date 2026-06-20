@@ -8,7 +8,7 @@ import {
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
-import type { TranscriptionStatus, Asset, VideoSegment, Project } from '../types';
+import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken } from '../types';
 
 async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> {
   try {
@@ -18,6 +18,26 @@ async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> 
   } catch {
     return [];
   }
+}
+
+/**
+ * Re-times `segments` against already-transcribed tokens, with no network/IPC
+ * call. Shared by the live Option-A fast-path below and the Option C direct
+ * pre-commit call from handleApplySyncFromFiles (App.tsx).
+ */
+async function alignSegmentsFromCachedTranscript(
+  audioAsset: Asset,
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+  durationSecs: number,
+): Promise<VideoSegment[]> {
+  const silences = await fetchAndDetectSilences(audioAsset);
+  const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
+  const alignments = hasAnyWhisperAnchor
+    ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
+    : alignScenestoTranscript(segments, tokens, silences);
+  const updated = distributeSegmentTimes(segments, alignments, durationSecs);
+  return applyHeadingTiming(updated);
 }
 
 export interface UseWhisperApi {
@@ -32,6 +52,13 @@ export interface UseWhisperApi {
   ) => Promise<void>;
   cancelTranscription: () => void;
   dismissError: () => void;
+  /** Re-times segments from already-cached tokens — no network/IPC call. */
+  alignFromCache: (
+    audioAsset: Asset,
+    segments: VideoSegment[],
+    tokens: TranscriptToken[],
+    durationSecs: number,
+  ) => Promise<VideoSegment[]>;
 }
 
 export function useWhisper(): UseWhisperApi {
@@ -92,13 +119,7 @@ export function useWhisper(): UseWhisperApi {
 
       if (alreadyTranscribed) {
         const tokens = project.transcriptTokens!;
-        const silences = await fetchAndDetectSilences(audioAsset);
-        const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
-        const alignments = hasAnyWhisperAnchor
-          ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
-          : alignScenestoTranscript(segments, tokens, silences);
-        const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        const finalSegments = applyHeadingTiming(updated);
+        const finalSegments = await alignSegmentsFromCachedTranscript(audioAsset, segments, tokens, durationSecs);
         if (!segmentSetStillValid(finalSegments)) {
           console.warn('[whisper] Discarding Option A alignment — segment set no longer matches');
           return;
@@ -183,5 +204,5 @@ export function useWhisper(): UseWhisperApi {
     setTranscriptionStatus({ phase: 'idle' });
   }, []);
 
-  return { transcriptionStatus, startTranscription, cancelTranscription, dismissError };
+  return { transcriptionStatus, startTranscription, cancelTranscription, dismissError, alignFromCache: alignSegmentsFromCachedTranscript };
 }

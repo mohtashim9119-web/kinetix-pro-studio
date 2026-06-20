@@ -156,6 +156,22 @@ async function persistFileToAsset(
 }
 
 /**
+ * Commits an ephemeral, staging-time voiceover asset (minted by
+ * handleVoiceoverStaged, see Option C) to IndexedDB, reusing its pre-minted
+ * id and blob URL so cached Whisper tokens (keyed by that id) stay valid.
+ * Does NOT call setProject.
+ */
+async function persistPendingVoiceoverAsset(projectId: string, pending: Asset): Promise<Asset | null> {
+  try {
+    await putAsset(projectId, pending.id, pending.file!, { name: pending.name, mimeType: pending.file!.type });
+  } catch (err) {
+    console.error('[persistPendingVoiceoverAsset] IndexedDB write failed, skipping:', pending.name, err);
+    return null;
+  }
+  return pending;
+}
+
+/**
  * Extracts all media files from a zip archive, persists them to IndexedDB,
  * and returns the resulting Asset array. Does NOT call setProject.
  */
@@ -606,6 +622,11 @@ export default function App() {
   // Ref that mirrors project.id so stable useCallback([]) closures can pass the
   // correct projectId to IndexedDB calls without project.id in their dep arrays.
   const projectIdRef = useRef<string>(project.id);
+  // Option C: ephemeral voiceover staged before Apply Sync is clicked — minted by
+  // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
+  // Not part of project state; never persisted until commit.
+  const [pendingVoiceover, setPendingVoiceover] = useState<{ file: File; asset: Asset } | null>(null);
+  const pendingVoiceoverRef = useRef<{ file: File; asset: Asset } | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
   // Cleared via a one-frame rAF delay in handleUp so it stays true through
   // the render that processes the final mousemove setProject call.
@@ -1293,7 +1314,57 @@ export default function App() {
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
 
-  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError } = useWhisper();
+  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError, alignFromCache } = useWhisper();
+
+  // --------------------------------------------------------------------------
+  // Option C — staging-time transcription trigger. Fires the moment a
+  // voiceover file lands in the FILES-tab slot, independent of Apply Sync.
+  // Mints an in-memory Asset (no IndexedDB write yet) so Whisper has
+  // something to fetch; project.assets/voiceoverId stay untouched until
+  // handleApplySyncFromFiles commits. onSegmentsUpdated is a no-op — this
+  // call is cache-only, it never mutates live segments (only Apply Sync does).
+  // --------------------------------------------------------------------------
+  const handleVoiceoverStaged = useCallback((file: File) => {
+    if (!isTauri()) return;
+
+    const previous = pendingVoiceoverRef.current;
+    if (previous) {
+      cancelTranscription();
+      URL.revokeObjectURL(previous.asset.url);
+    }
+
+    const asset: Asset = {
+      id: crypto.randomUUID(),
+      name: file.name,
+      url: URL.createObjectURL(file),
+      type: 'audio',
+      file,
+    };
+    setPendingVoiceover({ file, asset });
+
+    void (async () => {
+      const duration = await getAudioDuration(asset.url);
+      startTranscription(
+        asset,
+        duration,
+        [],
+        projectRef.current,
+        () => {},
+        (updater) => setProject(updater),
+      );
+    })();
+  }, [cancelTranscription, startTranscription]);
+
+  // Cancels an in-flight staging-time transcription and discards the
+  // ephemeral asset — used when the user removes or replaces a staged
+  // voiceover before ever clicking Apply Sync.
+  const handleVoiceoverUnstaged = useCallback(() => {
+    const pending = pendingVoiceoverRef.current;
+    if (!pending) return;
+    cancelTranscription();
+    URL.revokeObjectURL(pending.asset.url);
+    setPendingVoiceover(null);
+  }, [cancelTranscription]);
 
   // --------------------------------------------------------------------------
   // Atomic Apply Sync handler — persists ALL staged files, then runs sync in
@@ -1318,10 +1389,17 @@ export default function App() {
 
     if (staged.voiceoverFile) {
       if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
-        const asset = await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
+        const pending = pendingVoiceoverRef.current;
+        const reusingPending = pending !== null && pending.file === staged.voiceoverFile.file;
+        const asset = reusingPending
+          ? await persistPendingVoiceoverAsset(projectRef.current.id, pending!.asset)
+          : await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
         if (asset) {
           allAssets.push(asset);
           newVoiceoverId = asset.id;
+          // The ephemeral asset is now a real, committed one — forget the
+          // pending reference without revoking its (now in-use) blob URL.
+          if (reusingPending) setPendingVoiceover(null);
         }
       }
     }
@@ -1391,10 +1469,37 @@ export default function App() {
       return;
     }
 
-    const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
-    const headingTimed = applyHeadingTiming(anchorTimed);
+    // 7. Option C — resolve final timing BEFORE the commit, never after.
+    //    If Whisper tokens are already cached for this exact voiceover (the
+    //    normal case: Apply Sync is gated until staging-time transcription
+    //    reaches 'done'), align inline so the very first commit is already
+    //    ms-perfect. No character-based timing ever reaches the screen.
+    const cachedTokensReady = !!voiceoverAsset
+      && projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
+      && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
-    // 7. Single atomic state update
+    let finalTimedSegments: VideoSegment[];
+    if (cachedTokensReady) {
+      finalTimedSegments = await alignFromCache(
+        voiceoverAsset!,
+        syncedSegments,
+        projectRef.current.transcriptTokens!,
+        audioDuration,
+      );
+    } else {
+      // Defensive fallback only — under correct button gating this branch
+      // should be unreachable whenever a voiceover exists in Tauri. Surface
+      // it loudly rather than silently shipping character-based timing.
+      if (voiceoverAsset && isTauri()) {
+        console.warn(
+          '[sync] Apply Sync committed with no cached transcript — falling back to character-based timing',
+          { voiceoverAssetId: voiceoverAsset.id },
+        );
+      }
+      finalTimedSegments = applyHeadingTiming(applyAnchorBasedTiming(syncedSegments, audioDuration));
+    }
+
+    // 8. Single atomic state update — segments are already final.
     setProject(prev => ({
       ...prev,
       script: scriptText,
@@ -1403,45 +1508,13 @@ export default function App() {
       sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
       assets: allAssets,
       voiceoverId: newVoiceoverId,
-      segments: autoMatchSegments(allAssets, headingTimed),
+      segments: autoMatchSegments(allAssets, finalTimedSegments),
     }));
 
     setIsSynced(true);
     setIsProcessing(false);
     setSyncStep(4);
     setActiveTab('editor');
-
-    // 8. Trigger transcription on voiceover (Tauri only) — segment-ID gate inside startTranscription guards correctness
-    if (voiceoverAsset && isTauri()) {
-      startTranscription(
-        voiceoverAsset,
-        audioDuration,
-        headingTimed,
-        projectRef.current,
-        (updated) => {
-          setProject(prev => {
-            // Defense-in-depth: reject the Whisper update if the segment set has
-            // changed since alignment started (primary gate is in startTranscription).
-            if (prev.segments.length !== updated.length) {
-              console.warn('[whisper] Rejecting alignment update — segment count changed', {
-                current: prev.segments.length,
-                incoming: updated.length,
-              });
-              return prev;
-            }
-            const currentIds = new Set(prev.segments.map(s => s.id));
-            for (const seg of updated) {
-              if (!currentIds.has(seg.id)) {
-                console.warn('[whisper] Rejecting alignment update — segment ID mismatch');
-                return prev;
-              }
-            }
-            return { ...prev, segments: updated };
-          });
-        },
-        (updater) => setProject(updater),
-      );
-    }
   };
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
@@ -1662,6 +1735,7 @@ export default function App() {
     assetsRef.current = project.assets;
     projectRef.current = project;
     projectIdRef.current = project.id;
+    pendingVoiceoverRef.current = pendingVoiceover;
   });
 
   // --- Thumbnail: write base64 to meta immediately when first image asset changes ---
@@ -1686,6 +1760,20 @@ export default function App() {
   }, [project.assets, project.confirmed, project.id]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
+
+  // Option C — Apply Sync stays disabled for as long as a voiceover (staged
+  // or already committed) hasn't finished transcribing. The cached-token
+  // clause is load-bearing, not an optimization: it's what lets the button
+  // re-enable correctly on reload/restore, where nothing ever re-runs
+  // transcription (transcriptionStatus.phase stays 'idle' forever otherwise).
+  const effectiveVoiceoverId = pendingVoiceover?.asset.id ?? voiceover?.id;
+  const transcriptionReady =
+    transcriptionStatus.phase === 'done'
+    || transcriptionStatus.phase === 'error'
+    || (effectiveVoiceoverId !== undefined
+        && project.lastTranscribedAssetId === effectiveVoiceoverId
+        && (project.transcriptTokens?.length ?? 0) > 0);
+  const applySyncDisabled = effectiveVoiceoverId !== undefined && !transcriptionReady;
 
   usePlayback({
     isPlaying,
@@ -1937,6 +2025,9 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onApplySync={handleApplySyncFromFiles}
+            onVoiceoverStaged={handleVoiceoverStaged}
+            onVoiceoverUnstaged={handleVoiceoverUnstaged}
+            applySyncDisabled={applySyncDisabled}
             onSegmentClick={(id) => setSelectedSegmentId(id)}
             onToggleLock={handleToggleLock}
             onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
