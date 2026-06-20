@@ -21,6 +21,35 @@ async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> 
 }
 
 /**
+ * Mirrors syncEngine.ts's applyAnchorBasedTiming PASS 1 + the i=0 slice of
+ * PASS 3. The plain text matcher in alignScenestoTranscript ignores
+ * anchorStart entirely and free-floats segment 0 to wherever its first word
+ * lands (e.g. ~0.4s of lead-in silence); distributeSegmentTimes then stamps
+ * that as the new anchor, overwriting applyAnchorBasedTiming's own
+ * front-clamp from earlier in this same click. Without this, segment 0 only
+ * snaps to 0 on the NEXT Apply Sync click (once anchorSource is 'whisper'
+ * and the anchor-aware aligner trusts anchorStart instead of re-matching).
+ */
+function clampFirstSegmentAnchor(segments: VideoSegment[], audioDuration: number): VideoSegment[] {
+  const first = segments[0];
+  if (!first) return segments;
+  if (first.anchorStart !== undefined && first.anchorStart <= 0) return segments;
+
+  const nextAnchor = segments[1]?.anchorStart ?? audioDuration;
+  const duration = first.locked
+    ? Math.max(first.duration ?? 0, nextAnchor)
+    : Math.max(0.1, nextAnchor);
+  const clamped: VideoSegment = {
+    ...first,
+    anchorStart: 0,
+    anchorSource: first.anchorStart === undefined ? 'estimate' : first.anchorSource,
+    startTime: 0,
+    duration: Number(duration.toFixed(3)),
+  };
+  return [clamped, ...segments.slice(1)];
+}
+
+/**
  * Re-times `segments` against already-transcribed tokens, with no network/IPC
  * call. Shared by the live Option-A fast-path below and the Option C direct
  * pre-commit call from handleApplySyncFromFiles (App.tsx).
@@ -37,7 +66,7 @@ async function alignSegmentsFromCachedTranscript(
     ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
     : alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-  return applyHeadingTiming(updated);
+  return applyHeadingTiming(clampFirstSegmentAnchor(updated, durationSecs));
 }
 
 export interface UseWhisperApi {
