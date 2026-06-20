@@ -1480,9 +1480,10 @@ export default function App() {
 
     let finalTimedSegments: VideoSegment[];
     if (cachedTokensReady) {
+      const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
       finalTimedSegments = await alignFromCache(
         voiceoverAsset!,
-        syncedSegments,
+        anchorTimed,
         projectRef.current.transcriptTokens!,
         audioDuration,
       );
