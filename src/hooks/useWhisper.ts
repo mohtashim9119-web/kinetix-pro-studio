@@ -20,6 +20,19 @@ async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> 
   }
 }
 
+/** Diagnostic only — temporary, remove once the click-twice bug is found. */
+function logSyncDiag(stage: string, segments: VideoSegment[]): void {
+  console.log(`[SYNC-DIAG] ${stage}`);
+  console.table(segments.map((s, index) => ({
+    index,
+    startTime: Number(s.startTime.toFixed(3)),
+    duration: Number(s.duration.toFixed(3)),
+    anchorStart: s.anchorStart !== undefined ? Number(s.anchorStart.toFixed(3)) : undefined,
+    anchorSource: s.anchorSource,
+    locked: !!s.locked,
+  })));
+}
+
 /**
  * Mirrors syncEngine.ts's applyAnchorBasedTiming PASS 1 + the i=0 slice of
  * PASS 3. The plain text matcher in alignScenestoTranscript ignores
@@ -62,11 +75,18 @@ async function alignSegmentsFromCachedTranscript(
 ): Promise<VideoSegment[]> {
   const silences = await fetchAndDetectSilences(audioAsset);
   const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
+  const alignerName = hasAnyWhisperAnchor ? 'alignScenesToTranscriptAnchorAware' : 'alignScenestoTranscript';
+  console.log(`[SYNC-DIAG] 3 aligner choice: hasAnyWhisperAnchor=${hasAnyWhisperAnchor} -> ${alignerName}`);
   const alignments = hasAnyWhisperAnchor
     ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
     : alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-  return applyHeadingTiming(clampFirstSegmentAnchor(updated, durationSecs));
+  logSyncDiag('4 after aligner / distributeSegmentTimes', updated);
+  const clamped = clampFirstSegmentAnchor(updated, durationSecs);
+  logSyncDiag('5 after segment-0 clamp', clamped);
+  const final = applyHeadingTiming(clamped);
+  logSyncDiag('6 after applyHeadingTiming', final);
+  return final;
 }
 
 export interface UseWhisperApi {

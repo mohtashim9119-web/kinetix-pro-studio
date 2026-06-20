@@ -523,6 +523,19 @@ function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
   });
 }
 
+/** Diagnostic only — temporary, remove once the click-twice bug is found. */
+function logSyncDiag(stage: string, segments: VideoSegment[]): void {
+  console.log(`[SYNC-DIAG] ${stage}`);
+  console.table(segments.map((s, index) => ({
+    index,
+    startTime: Number(s.startTime.toFixed(3)),
+    duration: Number(s.duration.toFixed(3)),
+    anchorStart: s.anchorStart !== undefined ? Number(s.anchorStart.toFixed(3)) : undefined,
+    anchorSource: s.anchorSource,
+    locked: !!s.locked,
+  })));
+}
+
 /**
  * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
  * Affected segments (dragged + all that absorbed any portion) are auto-locked.
@@ -1478,9 +1491,12 @@ export default function App() {
       && projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
+    logSyncDiag('1 input segments (before applyAnchorBasedTiming)', syncedSegments);
+
     let finalTimedSegments: VideoSegment[];
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(syncedSegments, audioDuration);
+      logSyncDiag('2 after applyAnchorBasedTiming', anchorTimed);
       finalTimedSegments = await alignFromCache(
         voiceoverAsset!,
         anchorTimed,
@@ -1497,8 +1513,13 @@ export default function App() {
           { voiceoverAssetId: voiceoverAsset.id },
         );
       }
-      finalTimedSegments = applyHeadingTiming(applyAnchorBasedTiming(syncedSegments, audioDuration));
+      const anchorTimedFallback = applyAnchorBasedTiming(syncedSegments, audioDuration);
+      logSyncDiag('2 after applyAnchorBasedTiming (fallback branch)', anchorTimedFallback);
+      finalTimedSegments = applyHeadingTiming(anchorTimedFallback);
     }
+
+    const committedSegments = autoMatchSegments(allAssets, finalTimedSegments);
+    logSyncDiag('7 final committed segments', committedSegments);
 
     // 8. Single atomic state update — segments are already final.
     setProject(prev => ({
@@ -1509,7 +1530,7 @@ export default function App() {
       sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
       assets: allAssets,
       voiceoverId: newVoiceoverId,
-      segments: autoMatchSegments(allAssets, finalTimedSegments),
+      segments: committedSegments,
     }));
 
     setIsSynced(true);
