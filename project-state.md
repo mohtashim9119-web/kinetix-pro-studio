@@ -60,6 +60,8 @@ Heading system stable after 9 rounds of fixes. Three pending tasks remain in Pha
 
 ## Pending Tasks
 
+_Option C (Real Projects Readiness Step 1) shipped 2026-06-20 — see Completed Work Log._
+
 1. **Auto-captions** — Not yet built. Investigate current Whisper pipeline status, then implement auto-caption generation. (Whisper transcription already runs for segment timing; auto-captions would surface those tokens as a text layer.)
 
 2. **Export-rendering investigation** — Read-only profiling pass. Instrument the export pipeline to measure per-frame time distribution (canvas render, `canvas.toBlob`, base64 encode, IPC write, ffmpeg exec). Output: data-backed recommendation on OffscreenCanvas vs WebCodecs vs Tauri Channel API. No code changes.
@@ -380,6 +382,9 @@ Phase 3 steps:
 | 2026-06-19 | Heading system Round 7 (× delete button): per-segment delete button on heading tiles (Timeline + DropZonePanel). Reverses insertion atomically: returns duration to neighbors, removes [HEADING:] tag from sceneDetails. Commit 7a348f8 |
 | 2026-06-19 | Heading system Round 8 (delete anchor math fix): handleDeleteHeading was subtracting headingDur from next.anchorStart, reproducing the heading's own anchor instead of next's pre-insertion anchor. Fixed to derive next.anchorStart from prev.anchorStart + prev.duration. Apply Sync now recovers cleanly after delete. Diagnostic [DEL-DIAG] logs removed. Commit d224ba6 |
 | 2026-06-19 | Heading system Round 9 (UI polish): heading delete button repositioned to left of row (next to lock icon), × replaced with Trash2 icon, hover-only opacity. Same Trash2 in Timeline heading tile. Also fixed pre-existing bug where heading rows/tiles showed yellow/red "missing asset" warning icon instead of an orange Heading1 indicator (isMissing check now evaluated AFTER isHeading check). Commit 70e2285 |
+| 2026-06-20 | Phase 7 — Option C (Apply Sync gated on transcription) shipped. Auto-transcribe on voiceover stage; Apply Sync disabled until cached tokens are ready. Single click produces correct alignment on first try. Approach B (ephemeral pre-commit asset). Commit `e56be04`. |
+| 2026-06-20 | Phase 7 — Sync regression fix (`d445d09`). Option C accidentally dropped `applyAnchorBasedTiming` from the cached-token path, leaving anchors un-normalized. Restored the call. Regression found by bisecting against known-good baselines `bb14d31` and `26fe2cb`. |
+| 2026-06-20 | Phase 7 — Single-click correct alignment (`1eb7738`). `applyAnchorBasedTiming` now runs inside `alignSegmentsFromCachedTranscript` between `distributeSegmentTimes` and `applyHeadingTiming`. Click 1 and click 2 now produce identical output — single click is correct, second click is a no-op. Removed obsolete `clampFirstSegmentAnchor` helper (subsumed by `applyAnchorBasedTiming`). |
 
 ---
 
