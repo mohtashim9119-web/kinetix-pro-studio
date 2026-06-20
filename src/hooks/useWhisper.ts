@@ -8,6 +8,7 @@ import {
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
+import { applyAnchorBasedTiming } from '../services/syncEngine';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken } from '../types';
 
 async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> {
@@ -34,35 +35,6 @@ function logSyncDiag(stage: string, segments: VideoSegment[]): void {
 }
 
 /**
- * Mirrors syncEngine.ts's applyAnchorBasedTiming PASS 1 + the i=0 slice of
- * PASS 3. The plain text matcher in alignScenestoTranscript ignores
- * anchorStart entirely and free-floats segment 0 to wherever its first word
- * lands (e.g. ~0.4s of lead-in silence); distributeSegmentTimes then stamps
- * that as the new anchor, overwriting applyAnchorBasedTiming's own
- * front-clamp from earlier in this same click. Without this, segment 0 only
- * snaps to 0 on the NEXT Apply Sync click (once anchorSource is 'whisper'
- * and the anchor-aware aligner trusts anchorStart instead of re-matching).
- */
-function clampFirstSegmentAnchor(segments: VideoSegment[], audioDuration: number): VideoSegment[] {
-  const first = segments[0];
-  if (!first) return segments;
-  if (first.anchorStart !== undefined && first.anchorStart <= 0) return segments;
-
-  const nextAnchor = segments[1]?.anchorStart ?? audioDuration;
-  const duration = first.locked
-    ? Math.max(first.duration ?? 0, nextAnchor)
-    : Math.max(0.1, nextAnchor);
-  const clamped: VideoSegment = {
-    ...first,
-    anchorStart: 0,
-    anchorSource: first.anchorStart === undefined ? 'estimate' : first.anchorSource,
-    startTime: 0,
-    duration: Number(duration.toFixed(3)),
-  };
-  return [clamped, ...segments.slice(1)];
-}
-
-/**
  * Re-times `segments` against already-transcribed tokens, with no network/IPC
  * call. Shared by the live Option-A fast-path below and the Option C direct
  * pre-commit call from handleApplySyncFromFiles (App.tsx).
@@ -82,9 +54,20 @@ async function alignSegmentsFromCachedTranscript(
     : alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
   logSyncDiag('4 after aligner / distributeSegmentTimes', updated);
-  const clamped = clampFirstSegmentAnchor(updated, durationSecs);
-  logSyncDiag('5 after segment-0 clamp', clamped);
-  const final = applyHeadingTiming(clamped);
+  // Re-derive every segment's span from its (now whisper-tagged) anchor — the
+  // same normalization click 2 currently gets for free in App.tsx before
+  // alignFromCache even runs. Click 1 otherwise commits the plain aligner's
+  // raw matched boundaries verbatim; click 2 carries those forward as anchors
+  // and this same pass tightens them — that gap is the click-twice bug.
+  // Running it here, on the same segments, in the same call, makes click 1
+  // match click 2. No extra silence/audio work: applyAnchorBasedTiming is
+  // pure anchor arithmetic (segments + audioDuration in, no tokens/silences).
+  // Subsumes the old segment-0-only clamp (PASS 1 handles index 0 the same
+  // way); for an already-fully-anchored input (click 2) every pass here is a
+  // no-op, since PASS 1-4 just re-derive the same values they're given.
+  const reAnchored = applyAnchorBasedTiming(updated, durationSecs);
+  logSyncDiag('5 after applyAnchorBasedTiming (2nd pass, post-distribute)', reAnchored);
+  const final = applyHeadingTiming(reAnchored);
   logSyncDiag('6 after applyHeadingTiming', final);
   return final;
 }
