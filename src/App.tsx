@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getSegmentStableKey, getFileIdentity } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getSegmentStableKey, getFileIdentity, resolveAnchorSource } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -1255,7 +1255,7 @@ export default function App() {
         isMuted: prev?.isMuted ?? s.isMuted,
         locked: s.isHeading ? undefined : prev?.locked,
         anchorStart: prev?.anchorStart ?? s.anchorStart,
-        anchorSource: prev?.anchorSource ?? s.anchorSource,
+        anchorSource: resolveAnchorSource(prev, s),
         duration: prev?.locked && !s.isHeading
           ? (prev.duration ?? s.duration)
           : s.duration,
@@ -1483,7 +1483,7 @@ export default function App() {
         isMuted: prev?.isMuted ?? s.isMuted,
         locked: s.isHeading ? undefined : prev?.locked,
         anchorStart: prev?.anchorStart ?? s.anchorStart,
-        anchorSource: prev?.anchorSource ?? s.anchorSource,
+        anchorSource: resolveAnchorSource(prev, s),
         duration: prev?.locked && !s.isHeading
           ? (prev.duration ?? s.duration)
           : s.duration,

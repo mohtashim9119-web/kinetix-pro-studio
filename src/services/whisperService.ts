@@ -37,6 +37,24 @@ function parseTimestamp(ts: string): number {
 // Public helpers (also used by useWhisper)
 // ---------------------------------------------------------------------------
 
+export function normalize(s: string): string[] {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ') // replace punctuation with space, not nothing
+    .split(/\s+/)
+    .filter(w => w.length > 0);
+}
+
+/**
+ * True if two strings differ once normalized to the same word-level
+ * representation the aligner matches against (see `normalize`). Used to
+ * decide whether a carried-forward 'whisper' anchor is still trustworthy
+ * after a re-sync changes a segment's underlying text.
+ */
+export function textMateriallyChanged(a: string, b: string): boolean {
+  return normalize(a).join(' ') !== normalize(b).join(' ');
+}
+
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
@@ -44,14 +62,6 @@ export function alignScenestoTranscript(
 ): Array<{ t0: number; t1: number }> {
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({ t0: 0, t1: 0 }));
-  }
-
-  function normalize(s: string): string[] {
-    return s
-      .toLowerCase()
-      .replace(/[^a-z0-9\s]/g, ' ') // replace punctuation with space, not nothing
-      .split(/\s+/)
-      .filter(w => w.length > 0);
   }
 
   // Expand each token into all its words — Whisper tokens may contain multiple

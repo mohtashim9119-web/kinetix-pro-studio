@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyAnchorBasedTiming } from './syncEngine';
+import { applyAnchorBasedTiming, resolveAnchorSource, getSegmentStableKey } from './syncEngine';
 import {
   distributeSegmentTimes,
   applyHeadingTiming,
@@ -180,5 +180,155 @@ describe('cached-token sync pipeline (Apply Sync, Option C)', () => {
 
     const totalDuration = final.reduce((sum, s) => sum + s.duration, 0);
     expect(totalDuration).toBeCloseTo(AUDIO_DURATION, 3);
+  });
+});
+
+// Coverage for commit 2 (text-aware anchor demotion): resolveAnchorSource is
+// the single helper both finalizeSync and handleApplySyncFromFiles (App.tsx)
+// call inside their stable-key merge loops to decide whether a carried-forward
+// 'whisper' anchor is still trustworthy once a segment's text has changed.
+describe('resolveAnchorSource (text-aware anchor demotion)', () => {
+  const OLD_TEXT = 'Get started today and see the difference';
+
+  it('keeps a whisper anchor when an asset-keyed segment\'s text is unchanged', () => {
+    const prev = makeSegment({ id: 'p', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 8, anchorSource: 'whisper' });
+    const next = makeSegment({ id: 'n', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 6, anchorSource: 'estimate' });
+
+    expect(resolveAnchorSource(prev, next)).toBe('whisper');
+  });
+
+  it('demotes a whisper anchor to estimate when an asset-keyed segment\'s text materially changed', () => {
+    const prev = makeSegment({ id: 'p', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 8, anchorSource: 'whisper' });
+    const next = makeSegment({ id: 'n', order: 2, assetId: 'a3', text: 'Sign up now and claim your discount', anchorStart: 6, anchorSource: 'estimate' });
+
+    expect(resolveAnchorSource(prev, next)).toBe('estimate');
+  });
+
+  it('does not demote on cosmetic-only edits — extra whitespace, punctuation, case', () => {
+    const prev = makeSegment({ id: 'p', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 8, anchorSource: 'whisper' });
+    const next = makeSegment({ id: 'n', order: 2, assetId: 'a3', text: '  GET STARTED, today...   and see the difference!! ', anchorStart: 6, anchorSource: 'estimate' });
+
+    // Anti-spurious-demotion guard: normalize() strips case/punctuation/whitespace
+    // before comparison, so this must NOT be treated as a material change.
+    expect(resolveAnchorSource(prev, next)).toBe('whisper');
+  });
+
+  it('treats a heading whose text changed as unmatched upstream — key changes, so resolveAnchorSource sees no prev and keeps the fresh estimate', () => {
+    // getSegmentStableKey keys headings BY their own text, so a renamed heading
+    // can never reach resolveAnchorSource with a mismatched prev/next text pair —
+    // the lookup itself misses. This test exercises that real lookup, not a
+    // hand-fabricated mismatch.
+    const oldHeading = makeSegment({
+      id: 'h-old', order: 1, text: '', isHeading: true,
+      headingConfig: { text: 'Chapter One' }, anchorStart: 3.7, anchorSource: 'whisper',
+    });
+    const prevByKey = new Map<string, VideoSegment>();
+    prevByKey.set(getSegmentStableKey(oldHeading), oldHeading);
+
+    const newHeading = makeSegment({
+      id: 'h-new', order: 1, text: '', isHeading: true,
+      headingConfig: { text: 'Chapter Two' }, // user renamed the heading
+      anchorStart: 3.9, anchorSource: 'estimate', // fresh bootstrap from re-parse
+    });
+
+    const prev = prevByKey.get(getSegmentStableKey(newHeading));
+    expect(prev).toBeUndefined(); // different heading text -> different stable key -> no match
+
+    expect(resolveAnchorSource(prev, newHeading)).toBe('estimate');
+  });
+
+  it('never promotes an estimate anchor back to whisper, regardless of text', () => {
+    const prevUnchanged = makeSegment({ id: 'p1', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 8, anchorSource: 'estimate' });
+    const nextUnchanged = makeSegment({ id: 'n1', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 6, anchorSource: 'estimate' });
+    expect(resolveAnchorSource(prevUnchanged, nextUnchanged)).toBe('estimate');
+
+    const prevChanged = makeSegment({ id: 'p2', order: 2, assetId: 'a3', text: OLD_TEXT, anchorStart: 8, anchorSource: 'estimate' });
+    const nextChanged = makeSegment({ id: 'n2', order: 2, assetId: 'a3', text: 'Totally different wording here', anchorStart: 6, anchorSource: 'estimate' });
+    expect(resolveAnchorSource(prevChanged, nextChanged)).toBe('estimate');
+  });
+
+  // The real per-slot scenario: a re-sync edits one segment's text while its
+  // neighbors are untouched. resolveAnchorSource demotes the edited segment
+  // (driven by an actual text change, not a hardcoded fixture), and the same
+  // cached-token chain from the "mixed-provenance" test above must re-derive
+  // its true position from the unchanged audio while leaving whisper-pinned
+  // neighbors exactly where they are.
+  it('demotes a re-synced segment via resolveAnchorSource, then the anchor-aware chain re-derives its true position while neighbors stay put', () => {
+    const AUDIO_DURATION = 16.0;
+
+    // Prior full sync: this slot (asset a3) was whisper-pinned at 10.5s under
+    // now-stale text.
+    const prevS2 = makeSegment({
+      id: 'old-s2', order: 2, assetId: 'a3',
+      text: 'Pick up your copy now',
+      anchorStart: 10.5, anchorSource: 'whisper',
+    });
+
+    // Re-sync: parseProjectData re-parses the edited script and produces a
+    // fresh segment for the same asset slot — new text, bootstrap estimate anchor.
+    const freshS2 = makeSegment({
+      id: 'new-s2', order: 2, assetId: 'a3',
+      text: OLD_TEXT,
+      anchorStart: 6.0, anchorSource: 'estimate',
+    });
+
+    const resolved = resolveAnchorSource(prevS2, freshS2);
+    expect(resolved).toBe('estimate'); // demoted: text materially changed
+
+    // Mirrors the App.tsx merge loop: anchorStart carries forward from prev
+    // regardless of demotion — this stale 10.5 is exactly what the anchor-aware
+    // aligner must correct using freshS2's new text.
+    const mergedS2: VideoSegment = { ...freshS2, anchorStart: prevS2.anchorStart, anchorSource: resolved };
+
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'Welcome to our amazing product showcase', assetId: 'a1', anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'It changes everything you thought you knew', assetId: 'a2', anchorStart: 4.0, anchorSource: 'whisper' }),
+      mergedS2,
+      makeSegment({ id: 's3', order: 3, text: 'Thanks for watching to the end today', assetId: 'a4', anchorStart: 12.0, anchorSource: 'whisper' }),
+    ];
+
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('Welcome to our amazing product showcase', 0.4, 0.5),
+      ...wordTokens('It changes everything you thought you knew', 4.0, 0.5),
+      ...wordTokens(OLD_TEXT, 8.0, 0.5),
+      ...wordTokens('Thanks for watching to the end today', 12.0, 0.5),
+    ];
+
+    const silences: SilenceInterval[] = [
+      { startSec: 0, endSec: 0.4 },
+      { startSec: 3.4, endSec: 4.0 },
+      { startSec: 7.5, endSec: 8.0 },
+      { startSec: 11.5, endSec: 12.0 },
+    ];
+
+    // Same composition as the "mixed-provenance" test above (App.tsx
+    // handleApplySyncFromFiles + useWhisper.ts alignSegmentsFromCachedTranscript).
+    const anchorTimed = applyAnchorBasedTiming(segments, AUDIO_DURATION);
+    const alignments = alignScenesToTranscriptAnchorAware(anchorTimed, tokens, silences, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(anchorTimed, alignments, AUDIO_DURATION);
+    const reAnchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
+    const final = applyHeadingTiming(reAnchored);
+
+    const result = final.map(s => ({
+      anchorStart: s.anchorStart, anchorSource: s.anchorSource, startTime: s.startTime, duration: s.duration,
+    }));
+
+    expect(result).toEqual([
+      { anchorStart: 0, anchorSource: 'whisper', startTime: 0, duration: 4 },
+      { anchorStart: 4, anchorSource: 'whisper', startTime: 4, duration: 4 },
+      { anchorStart: 8, anchorSource: 'whisper', startTime: 8, duration: 4 },
+      { anchorStart: 12, anchorSource: 'whisper', startTime: 12, duration: 4 },
+    ]);
+
+    // The demoted segment is re-derived to its true position (8.0) — not left
+    // at the stale carried-forward guess (10.5) — and promoted back to
+    // 'whisper' after a confident realignment.
+    expect(result[2]?.anchorStart).toBe(8);
+    expect(result[2]?.anchorSource).toBe('whisper');
+
+    // Whisper-pinned neighbors are untouched.
+    expect(result[0]?.anchorStart).toBe(0);
+    expect(result[1]?.anchorStart).toBe(4);
+    expect(result[3]?.anchorStart).toBe(12);
   });
 });
