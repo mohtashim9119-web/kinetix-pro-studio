@@ -8,7 +8,7 @@ import {
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
-import { applyAnchorBasedTiming } from '../services/syncEngine';
+import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken } from '../types';
 
 async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> {
@@ -196,6 +196,13 @@ export function useWhisper(): UseWhisperApi {
         onProjectUpdated(p => ({
           ...p,
           lastTranscribedAssetId: audioAsset.id,
+          // Only overwrite when we actually have a File to compute from — the
+          // re-sync call site (App.tsx) resolves a committed Asset that may
+          // have lost its File reference across a reload. Falling back to the
+          // existing value avoids erasing a still-valid identity in that case.
+          lastTranscribedFileIdentity: audioAsset.file
+            ? getFileIdentity(audioAsset.file)
+            : p.lastTranscribedFileIdentity,
           transcriptTokens: tokens,
         }));
 

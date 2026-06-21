@@ -170,6 +170,17 @@ export function getSegmentStableKey(s: VideoSegment): string {
   return `order:${s.order}|text:${s.text.slice(0, 40)}`;
 }
 
+/**
+ * Stable identity string for a File, used to detect re-staging the same
+ * underlying file across separate selections. A fresh `File` object (and a
+ * fresh Asset id) is minted on every stage event even when the user picks
+ * the exact same file again, so reference/id equality can't catch this —
+ * name+size+lastModified can.
+ */
+export function getFileIdentity(file: File): string {
+  return `${file.name}|${file.size}|${file.lastModified}`;
+}
+
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {
     if (s.assetId) return s;

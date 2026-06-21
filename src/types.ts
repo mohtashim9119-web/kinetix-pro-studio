@@ -212,6 +212,10 @@ export interface Project {
   voiceoverId?: string;
   lastExportPath?: string;
   lastTranscribedAssetId?: string;
+  /** `${file.name}|${file.size}|${file.lastModified}` of the file that produced
+   *  transcriptTokens — lets re-staging the same file be recognized even though
+   *  every stage event mints a fresh Asset id. See services/syncEngine.ts getFileIdentity. */
+  lastTranscribedFileIdentity?: string;
   transcriptTokens?: TranscriptToken[];
   globalTransition: TransitionType;
   globalTransitionDuration: number;

@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getSegmentStableKey } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getSegmentStableKey, getFileIdentity } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -1340,7 +1340,17 @@ export default function App() {
   const handleVoiceoverStaged = useCallback((file: File) => {
     if (!isTauri()) return;
 
+    const incomingIdentity = getFileIdentity(file);
+
+    // No-op: this exact file is already the pending one (its transcription is
+    // either in-flight or just finished) from an earlier stage event in this
+    // session. Don't cancel/restart an in-flight job or mint a redundant
+    // asset + blob URL for a file we're already tracking.
     const previous = pendingVoiceoverRef.current;
+    if (previous && getFileIdentity(previous.file) === incomingIdentity) {
+      return;
+    }
+
     if (previous) {
       cancelTranscription();
       URL.revokeObjectURL(previous.asset.url);
@@ -1354,6 +1364,14 @@ export default function App() {
       file,
     };
     setPendingVoiceover({ file, asset });
+
+    // Same-file detection: this exact file was already transcribed and its
+    // tokens are still cached — skip the Whisper run entirely. Apply Sync
+    // stays enabled via the lastTranscribedFileIdentity clause below.
+    const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
+    if (projectRef.current.lastTranscribedFileIdentity === incomingIdentity && cachedTokensExist) {
+      return;
+    }
 
     void (async () => {
       const duration = await getAudioDuration(asset.url);
@@ -1794,6 +1812,12 @@ export default function App() {
     || transcriptionStatus.phase === 'error'
     || (effectiveVoiceoverId !== undefined
         && project.lastTranscribedAssetId === effectiveVoiceoverId
+        && (project.transcriptTokens?.length ?? 0) > 0)
+    // Same-file detection (handleVoiceoverStaged): a freshly staged file always
+    // gets a brand-new Asset id, so the clause above never matches it even when
+    // its content was already transcribed and Whisper was deliberately skipped.
+    || (pendingVoiceover !== null
+        && project.lastTranscribedFileIdentity === getFileIdentity(pendingVoiceover.file)
         && (project.transcriptTokens?.length ?? 0) > 0);
   const applySyncDisabled = effectiveVoiceoverId !== undefined && !transcriptionReady;
 

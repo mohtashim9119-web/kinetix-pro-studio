@@ -168,8 +168,8 @@ describe('cached-token sync pipeline (Apply Sync, Option C)', () => {
     // neighbors are not pushed (already covered by (1), restated here as an
     // explicit "no push" check on the gap bounds themselves).
     expect(result[2]?.anchorSource).toBe('whisper'); // promoted after realignment
-    expect(result[2]!.anchorStart).toBeGreaterThan(result[1]!.anchorStart);
-    expect(result[2]!.anchorStart).toBeLessThan(result[3]!.anchorStart);
+    expect(result[2]!.anchorStart!).toBeGreaterThan(result[1]!.anchorStart!);
+    expect(result[2]!.anchorStart!).toBeLessThan(result[3]!.anchorStart!);
     expect(result[1]!.anchorStart).toBe(4); // unpushed
     expect(result[3]!.anchorStart).toBe(12); // unpushed
 
