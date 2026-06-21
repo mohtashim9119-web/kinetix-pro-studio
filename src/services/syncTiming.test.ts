@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { applyAnchorBasedTiming } from './syncEngine';
-import { distributeSegmentTimes, applyHeadingTiming, alignScenestoTranscript } from './whisperService';
+import {
+  distributeSegmentTimes,
+  applyHeadingTiming,
+  alignScenestoTranscript,
+  alignScenesToTranscriptAnchorAware,
+} from './whisperService';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -90,6 +95,88 @@ describe('cached-token sync pipeline (Apply Sync, Option C)', () => {
     expect(result[2]?.anchorSource).toBe('whisper');
     expect(result[2]?.startTime).toBe(4.35);
     expect(result[2]?.duration).toBeCloseTo(3.2, 3);
+
+    const totalDuration = final.reduce((sum, s) => sum + s.duration, 0);
+    expect(totalDuration).toBeCloseTo(AUDIO_DURATION, 3);
+  });
+
+  // Mixed-provenance case: per-slot re-sync will demote exactly one segment
+  // back to 'estimate' while its neighbors keep their precise 'whisper'
+  // anchors from a prior full sync. hasAnyWhisperAnchor (useWhisper.ts
+  // alignSegmentsFromCachedTranscript) must route this through
+  // alignScenesToTranscriptAnchorAware rather than the plain aligner — this
+  // test locks in that the anchor-aware path produces correct, monotonic
+  // output for a real mixed array instead of assuming all-or-nothing.
+  it('realigns a single demoted estimate segment inside its whisper-pinned neighbors without disturbing them', () => {
+    const AUDIO_DURATION = 16.0;
+
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'Welcome to our amazing product showcase', assetId: 'a1', anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'It changes everything you thought you knew', assetId: 'a2', anchorStart: 4.0, anchorSource: 'whisper' }),
+      // Demoted by a per-slot edit: stale/wrong anchor guess, provenance downgraded to 'estimate'.
+      makeSegment({ id: 's2', order: 2, text: 'Get started today and see the difference', assetId: 'a3', anchorStart: 10.5, anchorSource: 'estimate' }),
+      makeSegment({ id: 's3', order: 3, text: 'Thanks for watching to the end today', assetId: 'a4', anchorStart: 12.0, anchorSource: 'whisper' }),
+    ];
+
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('Welcome to our amazing product showcase', 0.4, 0.5),
+      ...wordTokens('It changes everything you thought you knew', 4.0, 0.5),
+      ...wordTokens('Get started today and see the difference', 8.0, 0.5),
+      ...wordTokens('Thanks for watching to the end today', 12.0, 0.5),
+    ];
+
+    const silences: SilenceInterval[] = [
+      { startSec: 0, endSec: 0.4 },
+      { startSec: 3.4, endSec: 4.0 },
+      { startSec: 7.5, endSec: 8.0 },
+      { startSec: 11.5, endSec: 12.0 },
+    ];
+
+    // Production order (App.tsx handleApplySyncFromFiles + useWhisper.ts
+    // alignSegmentsFromCachedTranscript): applyAnchorBasedTiming -> aligner ->
+    // distributeSegmentTimes -> applyAnchorBasedTiming -> applyHeadingTiming.
+    const anchorTimed = applyAnchorBasedTiming(segments, AUDIO_DURATION);
+
+    const hasAnyWhisperAnchor = anchorTimed.some(s => s.anchorSource === 'whisper');
+    expect(hasAnyWhisperAnchor).toBe(true); // confirms this array hits the anchor-aware aligner in production
+
+    const alignments = alignScenesToTranscriptAnchorAware(anchorTimed, tokens, silences, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(anchorTimed, alignments, AUDIO_DURATION);
+    const reAnchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
+    const final = applyHeadingTiming(reAnchored);
+
+    const result = final.map(s => ({
+      anchorStart: s.anchorStart, anchorSource: s.anchorSource, startTime: s.startTime, duration: s.duration,
+    }));
+
+    // Baseline captured from a real run of the chain above.
+    expect(result).toEqual([
+      { anchorStart: 0, anchorSource: 'whisper', startTime: 0, duration: 4 },
+      { anchorStart: 4, anchorSource: 'whisper', startTime: 4, duration: 4 },
+      { anchorStart: 8, anchorSource: 'whisper', startTime: 8, duration: 4 },
+      { anchorStart: 12, anchorSource: 'whisper', startTime: 12, duration: 4 },
+    ]);
+
+    // (1) Whisper-pinned segments keep their original anchor positions —
+    // the anchor-aware aligner must not move a 'whisper' segment's t0.
+    expect(result[0]?.anchorStart).toBe(0);
+    expect(result[1]?.anchorStart).toBe(4);
+    expect(result[3]?.anchorStart).toBe(12);
+
+    // (2) The estimate segment is realigned strictly inside the gap between
+    // its whisper neighbors — not left at its stale guess (10.5) — and the
+    // neighbors are not pushed (already covered by (1), restated here as an
+    // explicit "no push" check on the gap bounds themselves).
+    expect(result[2]?.anchorSource).toBe('whisper'); // promoted after realignment
+    expect(result[2]!.anchorStart).toBeGreaterThan(result[1]!.anchorStart);
+    expect(result[2]!.anchorStart).toBeLessThan(result[3]!.anchorStart);
+    expect(result[1]!.anchorStart).toBe(4); // unpushed
+    expect(result[3]!.anchorStart).toBe(12); // unpushed
+
+    // (3) Seams stay monotonic across the whole array.
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]!.startTime).toBeGreaterThanOrEqual(result[i - 1]!.startTime);
+    }
 
     const totalDuration = final.reduce((sum, s) => sum + s.duration, 0);
     expect(totalDuration).toBeCloseTo(AUDIO_DURATION, 3);
