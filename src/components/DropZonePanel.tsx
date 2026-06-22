@@ -563,6 +563,13 @@ export function DropZonePanel({
 
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];
 
+  // Nothing newly staged — Apply Sync re-running on unchanged persisted data is
+  // harmless (idempotent) but no longer an explicit, intentional trigger. Gate
+  // it out so "Apply Sync only fires on new file upload" is a real invariant,
+  // not just an accident of how staged state happens to reset post-sync.
+  const isStagedEmpty = !staged.scriptFile && !staged.sceneFile && !staged.voiceoverFile
+    && staged.assetFiles.length === 0 && staged.zipFiles.length === 0;
+
   // ── × clear handlers ───────────────────────────────────────────────────────
   // Single click clears both staged file AND persisted project data.
   const handleScriptClear = () => {
@@ -883,8 +890,14 @@ export function DropZonePanel({
           <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A]">
             <button
               onClick={handleApplySync}
-              disabled={applySyncDisabled}
-              title={applySyncDisabled ? 'Waiting for transcription to finish…' : undefined}
+              disabled={applySyncDisabled || isStagedEmpty}
+              title={
+                applySyncDisabled
+                  ? 'Waiting for transcription to finish…'
+                  : isStagedEmpty
+                    ? 'Stage a new file to sync'
+                    : undefined
+              }
               className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
                          font-black uppercase tracking-widest hover:bg-[#FF9D46]
                          transition-all disabled:opacity-40 disabled:cursor-not-allowed
