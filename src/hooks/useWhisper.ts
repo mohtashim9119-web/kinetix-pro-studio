@@ -21,19 +21,6 @@ async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> 
   }
 }
 
-/** Diagnostic only — temporary, remove once the click-twice bug is found. */
-function logSyncDiag(stage: string, segments: VideoSegment[]): void {
-  console.log(`[SYNC-DIAG] ${stage}`);
-  console.table(segments.map((s, index) => ({
-    index,
-    startTime: Number(s.startTime.toFixed(3)),
-    duration: Number(s.duration.toFixed(3)),
-    anchorStart: s.anchorStart !== undefined ? Number(s.anchorStart.toFixed(3)) : undefined,
-    anchorSource: s.anchorSource,
-    locked: !!s.locked,
-  })));
-}
-
 /**
  * Re-times `segments` against already-transcribed tokens, with no network/IPC
  * call. Shared by the live Option-A fast-path below and the Option C direct
@@ -47,13 +34,10 @@ async function alignSegmentsFromCachedTranscript(
 ): Promise<VideoSegment[]> {
   const silences = await fetchAndDetectSilences(audioAsset);
   const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
-  const alignerName = hasAnyWhisperAnchor ? 'alignScenesToTranscriptAnchorAware' : 'alignScenestoTranscript';
-  console.log(`[SYNC-DIAG] 3 aligner choice: hasAnyWhisperAnchor=${hasAnyWhisperAnchor} -> ${alignerName}`);
   const alignments = hasAnyWhisperAnchor
     ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
     : alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-  logSyncDiag('4 after aligner / distributeSegmentTimes', updated);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
   // alignFromCache even runs. Click 1 otherwise commits the plain aligner's
@@ -66,9 +50,7 @@ async function alignSegmentsFromCachedTranscript(
   // way); for an already-fully-anchored input (click 2) every pass here is a
   // no-op, since PASS 1-4 just re-derive the same values they're given.
   const reAnchored = applyAnchorBasedTiming(updated, durationSecs);
-  logSyncDiag('5 after applyAnchorBasedTiming (2nd pass, post-distribute)', reAnchored);
   const final = applyHeadingTiming(reAnchored);
-  logSyncDiag('6 after applyHeadingTiming', final);
   return final;
 }
 
