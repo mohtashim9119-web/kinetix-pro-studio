@@ -639,7 +639,21 @@ export default function App() {
   // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
   // Not part of project state; never persisted until commit.
   const [pendingVoiceover, setPendingVoiceover] = useState<{ file: File; asset: Asset } | null>(null);
+  // Mirrors pendingVoiceover synchronously — written at every setPendingVoiceoverSync
+  // call, not just after the next render's effect. Two stage events firing within the
+  // same render (rapid re-stage, double-fire) must see each other's writes immediately;
+  // a post-render-only mirror lets the second one read a one-render-stale value.
   const pendingVoiceoverRef = useRef<{ file: File; asset: Asset } | null>(null);
+  const setPendingVoiceoverSync = useCallback((value: { file: File; asset: Asset } | null) => {
+    pendingVoiceoverRef.current = value;
+    setPendingVoiceover(value);
+  }, []);
+  // Asset id of whichever voiceover the most recently STARTED real transcription
+  // attempt (either call site) was for. transcriptionStatus.phase is asset-agnostic
+  // (one useWhisper instance backs both handleVoiceoverStaged and finalizeSync), so
+  // transcriptionReady needs this to confirm a done/error phase actually belongs to
+  // the voiceover that's currently relevant, not a stale already-superseded one.
+  const transcriptionTargetIdRef = useRef<string | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
   // Cleared via a one-frame rAF delay in handleUp so it stays true through
   // the render that processes the final mousemove setProject call.
@@ -1284,6 +1298,7 @@ export default function App() {
     // Trigger transcription (Tauri only) — segment-ID gate inside startTranscription guards correctness
     const voiceoverAsset = projectRef.current.assets.find(a => a.id === projectRef.current.voiceoverId);
     if (voiceoverAsset && isTauri()) {
+      transcriptionTargetIdRef.current = voiceoverAsset.id;
       startTranscription(
         voiceoverAsset,
         audioDuration,
@@ -1310,7 +1325,14 @@ export default function App() {
             return { ...prev, segments: updated };
           });
         },
-        (updater) => setProject(updater),
+        (updater) => {
+          // Commit-time ownership guard, mirrored from handleVoiceoverStaged but
+          // using this call site's correct notion of "current": finalizeSync
+          // operates on an already-COMMITTED voiceover, not a staged one, so the
+          // comparison is against project.voiceoverId, not pendingVoiceoverRef.
+          if (projectRef.current.voiceoverId !== voiceoverAsset.id) return;
+          setProject(updater);
+        },
       );
     }
   };
@@ -1363,7 +1385,7 @@ export default function App() {
       type: 'audio',
       file,
     };
-    setPendingVoiceover({ file, asset });
+    setPendingVoiceoverSync({ file, asset });
 
     // Same-file detection: this exact file was already transcribed and its
     // tokens are still cached — skip the Whisper run entirely. Apply Sync
@@ -1389,13 +1411,27 @@ export default function App() {
 
     void (async () => {
       const duration = await getAudioDuration(asset.url);
+      // Entry-ordering recheck: getAudioDuration's resolution order isn't tied
+      // to staging order, so by the time this resolves a later stage event may
+      // have already superseded this file. Don't start a transcription for a
+      // file the user has since moved past.
+      if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+      transcriptionTargetIdRef.current = asset.id;
       startTranscription(
         asset,
         duration,
         [],
         projectRef.current,
         () => {},
-        (updater) => setProject(updater),
+        (updater) => {
+          // Commit-time ownership guard: only write back if `asset` (the file
+          // THIS call started transcribing) is still the current pending
+          // voiceover. A job that loses ownership after starting (a newer
+          // file gets staged mid-transcription) must not resurrect stale
+          // tokens/identity/phase for a file the user has moved past.
+          if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+          setProject(updater);
+        },
       );
     })();
   }, [cancelTranscription, startTranscription]);
@@ -1408,8 +1444,8 @@ export default function App() {
     if (!pending) return;
     cancelTranscription();
     URL.revokeObjectURL(pending.asset.url);
-    setPendingVoiceover(null);
-  }, [cancelTranscription]);
+    setPendingVoiceoverSync(null);
+  }, [cancelTranscription, setPendingVoiceoverSync]);
 
   // --------------------------------------------------------------------------
   // Atomic Apply Sync handler — persists ALL staged files, then runs sync in
@@ -1444,7 +1480,7 @@ export default function App() {
           newVoiceoverId = asset.id;
           // The ephemeral asset is now a real, committed one — forget the
           // pending reference without revoking its (now in-use) blob URL.
-          if (reusingPending) setPendingVoiceover(null);
+          if (reusingPending) setPendingVoiceoverSync(null);
         }
       }
     }
@@ -1789,7 +1825,8 @@ export default function App() {
     assetsRef.current = project.assets;
     projectRef.current = project;
     projectIdRef.current = project.id;
-    pendingVoiceoverRef.current = pendingVoiceover;
+    // pendingVoiceoverRef is no longer mirrored here — setPendingVoiceoverSync
+    // writes it synchronously at every call site instead.
   });
 
   // --- Thumbnail: write base64 to meta immediately when first image asset changes ---
@@ -1822,8 +1859,13 @@ export default function App() {
   // transcription (transcriptionStatus.phase stays 'idle' forever otherwise).
   const effectiveVoiceoverId = pendingVoiceover?.asset.id ?? voiceover?.id;
   const transcriptionReady =
-    transcriptionStatus.phase === 'done'
-    || transcriptionStatus.phase === 'error'
+    // A terminal phase only counts as ready if it belongs to the voiceover
+    // that's actually relevant right now. transcriptionStatus.phase alone is
+    // asset-agnostic — one useWhisper instance backs both handleVoiceoverStaged
+    // and finalizeSync — so without the target-id match this goes true for a
+    // stale done/error left over from a different, already-superseded file.
+    ((transcriptionStatus.phase === 'done' || transcriptionStatus.phase === 'error')
+      && transcriptionTargetIdRef.current === effectiveVoiceoverId)
     || (effectiveVoiceoverId !== undefined
         && project.lastTranscribedAssetId === effectiveVoiceoverId
         && (project.transcriptTokens?.length ?? 0) > 0)
