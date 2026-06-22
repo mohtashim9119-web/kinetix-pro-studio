@@ -1469,19 +1469,25 @@ export default function App() {
     let newVoiceoverId = projectRef.current.voiceoverId;
 
     if (staged.voiceoverFile) {
-      if (!allAssets.some(a => a.name === staged.voiceoverFile!.file.name)) {
-        const pending = pendingVoiceoverRef.current;
-        const reusingPending = pending !== null && pending.file === staged.voiceoverFile.file;
-        const asset = reusingPending
-          ? await persistPendingVoiceoverAsset(projectRef.current.id, pending!.asset)
-          : await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
-        if (asset) {
-          allAssets.push(asset);
-          newVoiceoverId = asset.id;
-          // The ephemeral asset is now a real, committed one — forget the
-          // pending reference without revoking its (now in-use) blob URL.
-          if (reusingPending) setPendingVoiceoverSync(null);
-        }
+      const pending = pendingVoiceoverRef.current;
+      const reusingPending = pending !== null && pending.file === staged.voiceoverFile.file;
+      const asset = reusingPending
+        ? await persistPendingVoiceoverAsset(projectRef.current.id, pending!.asset)
+        : await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
+      if (asset) {
+        // Drop any previously-committed voiceover asset so it doesn't linger as
+        // an orphaned duplicate in project.assets — the name-based dedup this
+        // replaced was matching staged.voiceoverFile.file.name against ALL
+        // assets, which skipped this whole block (and silently kept the OLD
+        // voiceoverId) whenever a re-staged file happened to share a name with
+        // an already-committed asset.
+        const oldIdx = allAssets.findIndex(a => a.id === projectRef.current.voiceoverId);
+        if (oldIdx !== -1) allAssets.splice(oldIdx, 1);
+        allAssets.push(asset);
+        newVoiceoverId = asset.id;
+        // The ephemeral asset is now a real, committed one — forget the
+        // pending reference without revoking its (now in-use) blob URL.
+        if (reusingPending) setPendingVoiceoverSync(null);
       }
     }
     for (const sf of staged.assetFiles) {
@@ -1556,7 +1562,9 @@ export default function App() {
     //    reaches 'done'), align inline so the very first commit is already
     //    ms-perfect. No character-based timing ever reaches the screen.
     const cachedTokensReady = !!voiceoverAsset
-      && projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
+      && (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
+          || (!!voiceoverAsset.file
+              && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
     logSyncDiag('1 input segments (before applyAnchorBasedTiming)', syncedSegments);
