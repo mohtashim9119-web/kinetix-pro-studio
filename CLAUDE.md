@@ -334,6 +334,7 @@ These are known gaps, not bugs to fix immediately. Track here so they aren't for
 | ~~JSZip dynamic-import double-cast~~ | ✅ **Resolved Phase 5** — `{ default: JSZip }` destructure; `moduleResolution: "bundler"` synthesizes `.default` | — |
 | ~~Real mid-export cancellation not implemented~~ | ✅ **Resolved Phase 5** — `worker.terminate()` + generation counter prevents stale state overwrite | — |
 | 4K export unvalidated | 1080p verified on macOS + Windows native; 4K path untested | Validate in Phase 7+ |
+| Known issue (low priority): re-staging audio writes a new IndexedDB blob via `putAsset` with no content dedup; the `oldIdx` splice in `handleApplySyncFromFiles` removes the asset from `project.assets` without calling `deleteAsset`, leaving an orphaned blob | Disk space only — no functional impact; violates the asset-removal invariant in the Persistence Model section above | Pair the splice with `deleteAsset(projectId, oldId)` |
 
 ---
 

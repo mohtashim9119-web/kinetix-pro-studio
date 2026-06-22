@@ -62,11 +62,35 @@ Heading system stable after 9 rounds of fixes. Three pending tasks remain in Pha
 
 _Option C (Real Projects Readiness Step 1) shipped 2026-06-20 — see Completed Work Log._
 
-1. **Auto-captions** — Not yet built. Investigate current Whisper pipeline status, then implement auto-caption generation. (Whisper transcription already runs for segment timing; auto-captions would surface those tokens as a text layer.)
+_Per-Slot Re-Sync series shipped 2026-06-22 — see Completed Work Log._
 
-2. **Export-rendering investigation** — Read-only profiling pass. Instrument the export pipeline to measure per-frame time distribution (canvas render, `canvas.toBlob`, base64 encode, IPC write, ffmpeg exec). Output: data-backed recommendation on OffscreenCanvas vs WebCodecs vs Tauri Channel API. No code changes.
+1. **Architecture shift**
+   - Scene editor becomes read-only after first sync — no more manual text edits causing sync corruption
+   - Headings live array-only, never serialized to sceneDetails text — fixes problem 1 permanently
+   - FILES tab Apply Sync only fires on new file upload — segments array is source of truth post-sync
+   - Auto-recalc timing via `applyAnchorBasedTiming()` on any segment/heading mutation — no manual sync clicks needed
 
-3. **Export-rendering implementation** — Implement whichever approach task 2 recommended. Target >50% speedup on macOS and Windows. Depends on task 2.
+2. **Hard delete segment**
+   - Bin icon on each segment row in segments tab (same as heading delete) — deletes with confirmation dialog
+   - Previous segment absorbs the deleted segment's duration — same as manual `[IMAGE:]` tag removal today
+
+3. **Version snapshots system**
+   - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
+   - Entry 2: Current Progress — auto-updated continuously, single slot, reflects latest state
+   - Entries 3+: Manual Snapshots — user clicks "Save Snapshot", named (default timestamp, renameable)
+   - Storage: `kinetix:project:{id}:versions:v1` in localStorage, per-project scoped, survives reload
+   - Cap: 20 manual snapshots, oldest auto-purges with toast
+   - UI: square rounded-corner icon bottom-left of segments tab, opens popup listing versions newest-first
+   - Each row shows: name/timestamp, restore (↻), rename (✏️), delete (🗑) — lock icon on Entry 1 hides delete
+   - Restore confirmation: "Restore this version? Current state will be saved as 'Before restore — [timestamp]' first." (auto-safety snapshot)
+   - On restore: Entry 2 immediately updates to match restored state, user continues from there
+
+### Deferred (not this session)
+
+- **Recycle bin for granular single-segment restore** — snapshots cover 90% of cases for now
+- **Auto-captions** — Not yet built. Investigate current Whisper pipeline status, then implement auto-caption generation. (Whisper transcription already runs for segment timing; auto-captions would surface those tokens as a text layer.)
+- **Export-rendering investigation** — Read-only profiling pass. Instrument the export pipeline to measure per-frame time distribution (canvas render, `canvas.toBlob`, base64 encode, IPC write, ffmpeg exec). Output: data-backed recommendation on OffscreenCanvas vs WebCodecs vs Tauri Channel API. No code changes.
+- **Export-rendering implementation** — Implement whichever approach the investigation above recommends. Target >50% speedup on macOS and Windows. Depends on the investigation item.
 
 ### Rejected from scope
 
@@ -385,6 +409,7 @@ Phase 3 steps:
 | 2026-06-20 | Phase 7 — Option C (Apply Sync gated on transcription) shipped. Auto-transcribe on voiceover stage; Apply Sync disabled until cached tokens are ready. Single click produces correct alignment on first try. Approach B (ephemeral pre-commit asset). Commit `e56be04`. |
 | 2026-06-20 | Phase 7 — Sync regression fix (`d445d09`). Option C accidentally dropped `applyAnchorBasedTiming` from the cached-token path, leaving anchors un-normalized. Restored the call. Regression found by bisecting against known-good baselines `bb14d31` and `26fe2cb`. |
 | 2026-06-20 | Phase 7 — Single-click correct alignment (`1eb7738`). `applyAnchorBasedTiming` now runs inside `alignSegmentsFromCachedTranscript` between `distributeSegmentTimes` and `applyHeadingTiming`. Click 1 and click 2 now produce identical output — single click is correct, second click is a no-op. Removed obsolete `clampFirstSegmentAnchor` helper (subsumed by `applyAnchorBasedTiming`). |
+| 2026-06-22 | Phase 7 — Per-Slot Re-Sync series COMPLETE. All 6 plan changes shipped (commits 81e6841, 258def1, 36f9b06). Plus two hardening fixes the plan's edge cases required: transcription ownership race (4270add) and re-stage sync drift (cb3a5e8, debug-logging cleanup bab79b0). Verified on live A→B→C→re-stage→swap-back repro — no fallback warning, all segments anchorSource=whisper. 8 vitest regression tests green. Restore tag sync-known-good-2026-06-20 intact. |
 
 ---
 
