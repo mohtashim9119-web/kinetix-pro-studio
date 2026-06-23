@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Lock,
   LockOpen,
@@ -255,6 +255,8 @@ interface Props {
   persistedSceneDetailsName: string;
   persistedVoiceoverName: string;
   persistedAssetCount: number;
+  /** True once the project has completed its first sync — locks the Scene Details editor. */
+  isSynced: boolean;
   // Text editing (collapsible sections)
   onClearScript: () => void;
   onClearSceneDetails: () => void;
@@ -335,6 +337,7 @@ export function DropZonePanel({
   persistedSceneDetailsName,
   persistedVoiceoverName,
   persistedAssetCount,
+  isSynced,
   onClearScript,
   onClearSceneDetails,
   onDeleteAsset,
@@ -409,6 +412,14 @@ export function DropZonePanel({
   const [isEditingScene, setIsEditingScene] = useState(false);
   const [sceneDraft, setSceneDraft] = useState('');
   const [showSaveConfirm, setShowSaveConfirm] = useState(false);
+
+  // Lock-out safety: if a sync completes while the Scene Details editor is
+  // open (e.g. Apply Sync was triggered from a different staged slot mid-edit),
+  // force it closed — otherwise it'd be stuck open with no "Edit File" button
+  // left to ever reach Cancel again.
+  useEffect(() => {
+    if (isSynced) setIsEditingScene(false);
+  }, [isSynced]);
 
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
     setStaged(prev => {
@@ -744,13 +755,15 @@ export function DropZonePanel({
                   ) : (
                     <p className="text-[11px] text-gray-600 italic">No scene details loaded.</p>
                   )}
-                  <button
-                    onClick={() => { setSceneDraft(persistedSceneDetails); setIsEditingScene(true); }}
-                    className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-white
-                               border border-[#2A2A2A] rounded px-2 py-1 transition-colors"
-                  >
-                    Edit File
-                  </button>
+                  {!isSynced && (
+                    <button
+                      onClick={() => { setSceneDraft(persistedSceneDetails); setIsEditingScene(true); }}
+                      className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-white
+                                 border border-[#2A2A2A] rounded px-2 py-1 transition-colors"
+                    >
+                      Edit File
+                    </button>
+                  )}
                 </div>
               )}
             </SlotRow>

@@ -2111,6 +2111,7 @@ export default function App() {
             persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
             persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
             persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
+            isSynced={isSynced}
             onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
             onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
             onDeleteAsset={handleDeleteAsset}
