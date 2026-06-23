@@ -924,13 +924,11 @@ export default function App() {
         ...draft.slice(insertAt),
       ];
 
-      // Recompute startTimes via cumulative sum so everything is contiguous.
-      let cursor = 0;
-      const reordered = merged.map((s, i) => {
-        const out = { ...s, order: i, startTime: Number(cursor.toFixed(3)) };
-        cursor += s.duration;
-        return out;
-      });
+      // Recompute startTime/duration from anchors — single source of truth,
+      // not a separate cumulative-duration pass.
+      const withOrder = merged.map((s, i) => ({ ...s, order: i }));
+      const audioDuration = withOrder.reduce((sum, s) => sum + s.duration, 0);
+      const reordered = applyAnchorBasedTiming(withOrder, audioDuration);
 
       const newSceneDetails = insertHeadingIntoSceneDetails(
         prev.sceneDetails,
@@ -987,12 +985,10 @@ export default function App() {
       // Remove heading from array.
       newSegs.splice(idx, 1);
 
-      // Recompute startTimes cumulatively.
-      let t = 0;
-      for (let i = 0; i < newSegs.length; i++) {
-        newSegs[i] = { ...newSegs[i]!, startTime: Number(t.toFixed(3)) };
-        t += newSegs[i]!.duration;
-      }
+      // Recompute startTime/duration from anchors — single source of truth,
+      // not a separate cumulative-duration pass.
+      const audioDuration = newSegs.reduce((sum, s) => sum + s.duration, 0);
+      const timedSegs = applyAnchorBasedTiming(newSegs, audioDuration);
 
       // Remove [HEADING: <text>] tag from sceneDetails.
       const tagPattern = new RegExp(
@@ -1001,7 +997,7 @@ export default function App() {
       );
       const newSceneDetails = prev.sceneDetails.replace(tagPattern, '\n');
 
-      return { ...prev, segments: newSegs, sceneDetails: newSceneDetails };
+      return { ...prev, segments: timedSegs, sceneDetails: newSceneDetails };
     });
   }, []);
 
