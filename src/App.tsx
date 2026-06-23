@@ -825,12 +825,13 @@ export default function App() {
 
   const handleToggleLock = useCallback((segmentId: string): void => {
     speedBaselineRef.current = null;
-    setProject(prev => ({
-      ...prev,
-      segments: prev.segments.map(s =>
+    setProject(prev => {
+      const toggled = prev.segments.map(s =>
         s.id === segmentId ? { ...s, locked: !s.locked } : s
-      ),
-    }));
+      );
+      const audioDuration = toggled.reduce((sum, s) => sum + s.duration, 0);
+      return { ...prev, segments: applyAnchorBasedTiming(toggled, audioDuration) };
+    });
   }, []);
 
   const handleUnlockAll = useCallback((): void => {
