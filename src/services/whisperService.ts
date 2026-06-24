@@ -188,6 +188,12 @@ export function alignScenestoTranscript(
     // Sentinel -1 indices (empty/heading-only segments) return undefined → fallback to curr.t1/next.t0.
     const lastSpokenEnd   = tokens[curr.lastTokenIdx]?.endSec   ?? curr.t1;
     const nextSpokenStart = tokens[next.firstTokenIdx]?.startSec ?? next.t0;
+    // curr's own first word and next's own last word — outer bounds this boundary's
+    // search may never cross. Without this clamp, the wide radius used below for a
+    // near-zero spokenGapWidth can reach past a short next segment entirely and steal
+    // the silence that belongs to the FOLLOWING boundary, collapsing that segment to ~0.
+    const currFirstSpokenStart = tokens[curr.firstTokenIdx]?.startSec ?? curr.t0;
+    const nextLastSpokenEnd    = tokens[next.lastTokenIdx]?.endSec   ?? next.t1;
 
     // Find silences overlapping a window centered on the spoken-gap midpoint.
     // Whisper word-boundary timestamps are inaccurate by ~300ms, so a silence can extend
@@ -201,8 +207,8 @@ export function alignScenestoTranscript(
     const searchRadius = spokenGapWidth < 0.1
       ? 1.0
       : Math.max(0.5, spokenGapWidth / 2 + 0.4);
-    const searchStart = spokenMid - searchRadius;
-    const searchEnd   = spokenMid + searchRadius;
+    const searchStart = Math.max(spokenMid - searchRadius, currFirstSpokenStart);
+    const searchEnd   = Math.min(spokenMid + searchRadius, nextLastSpokenEnd);
 
     const candidates = silences.filter(
       s => s.endSec > searchStart && s.startSec < searchEnd && !usedSilences.has(s),
