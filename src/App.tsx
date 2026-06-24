@@ -1555,6 +1555,11 @@ export default function App() {
         segments: prev.segments.map(s =>
           s.assetId === assetId ? { ...s, assetId: undefined } : s
         ),
+        ...(prev.voiceoverId === assetId ? {
+          transcriptTokens: undefined,
+          lastTranscribedAssetId: undefined,
+          lastTranscribedFileIdentity: undefined,
+        } : {}),
       };
     });
   }, []);
