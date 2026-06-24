@@ -79,12 +79,8 @@ import { BottomDrawer } from './components/BottomDrawer';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
-const SyncReviewModal = lazy(() =>
-  import('./components/SyncReviewModal').then(m => ({ default: m.SyncReviewModal }))
-);
 import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
-import { SyncWizard } from './components/SyncWizard';
 import { SettingsPanel } from './components/SettingsPanel';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -576,21 +572,9 @@ export default function App() {
   const [globalPlaybackSpeed, setGlobalPlaybackSpeed] = useState(1);
   const [isAdjustingTrim, setIsAdjustingTrim] = useState(false);
   const [syncStep, setSyncStep] = useState<0 | 1 | 2 | 3 | 4>(0);
-  const [showSyncDetails, setShowSyncDetails] = useState(false);
   const [editingSegment, setEditingSegment] = useState<VideoSegment | null>(null);
   const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
   const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
-  const [syncValidation, setSyncValidation] = useState<{
-    voMatch: boolean;
-    scriptScenesMatch: boolean;
-    assetsMatch: boolean;
-    missingAssets: string[];
-  }>({
-    voMatch: false,
-    scriptScenesMatch: false,
-    assetsMatch: false,
-    missingAssets: []
-  });
   const [isSynced, setIsSynced] = useState(false);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
@@ -1129,170 +1113,6 @@ export default function App() {
       ready: missing.length === 0 && !!project.voiceoverId
     };
   }, [project.script, project.assets, project.voiceoverId]);
-
-  const runSyncStep1 = () => {
-    // Step 1: Match Script and Voiceover
-    const hasVO = !!project.voiceoverId;
-    const wordCount = project.script.split(/\s+/).filter(w => w.length > 0).length;
-    const voDuration = audioRef.current?.duration || 0;
-    
-    // Heuristic: Audio should be at least some length for at least 3 words
-    const isPlausible = hasVO && voDuration > 1 && wordCount > 0;
-    
-    setSyncValidation(prev => ({ ...prev, voMatch: isPlausible }));
-    if (isPlausible) {
-      setSyncStep(1);
-    } else {
-      alert(`Sync Failed: ${!hasVO ? 'Please upload a voiceover (mp3/wav).' : 'Script word count (' + wordCount + ') and voiceover duration (' + voDuration.toFixed(1) + 's) mismatch.'}`);
-    }
-  };
-
-  const runSyncStep2 = () => {
-    // Step 2: Match Scene Details and Script
-    const detailsLines = project.sceneDetails.split(/\r?\n\r?\n/).map(l => l.trim()).filter(l => l !== '');
-    const scriptLines = project.script.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-    
-    // Any scenes found?
-    const hasScenes = detailsLines.length > 0;
-    const countMatch = detailsLines.length === scriptLines.length;
-    
-    setSyncValidation(prev => ({ ...prev, scriptScenesMatch: hasScenes }));
-    if (hasScenes) {
-      setSyncStep(2);
-      if (!countMatch) {
-        console.log(`Note: Detail lines (${detailsLines.length}) and script lines (${scriptLines.length}) don't match exactly. Proportional sync will be used.`);
-      }
-    } else {
-      alert("No scene details found. Please add bracketed names like [frozen_train] or [IMAGE: train.mp4] in Scene Details.");
-    }
-  };
-
-  const runSyncStep3 = () => {
-    // Step 3: Match Visual Names and assets
-    const detailsLines = project.sceneDetails.split(/\r?\n\r?\n/).map(l => l.trim()).filter(l => l !== '');
-    
-    const missing: string[] = [];
-    let matchCount = 0;
-    
-    detailsLines.forEach(line => {
-      let name = '';
-      const specificMatch = line.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
-      if (specificMatch) {
-        if (!line.toUpperCase().includes('HEADING')) name = specificMatch[1] ?? '';
-      } else {
-        const simpleMatch = line.match(/\[(.*?)\]/);
-        if (simpleMatch) name = simpleMatch[1] ?? '';
-      }
-
-      if (name) {
-        const found = project.assets.find(a => isFuzzyMatch(name, a.name));
-        if (found) {
-          matchCount++;
-        } else {
-          missing.push(name);
-        }
-      }
-    });
-    
-    const allMatched = missing.length === 0 && matchCount > 0;
-    setSyncValidation(prev => ({ ...prev, assetsMatch: allMatched, missingAssets: missing }));
-    
-    if (matchCount > 0 || detailsLines.length === 0) {
-      setSyncStep(3);
-      if (missing.length > 0) {
-        alert(`Detected ${matchCount} matches. Missing ${missing.length} visuals: ${missing.join(', ')}. Contextual search will fill these.`);
-      }
-    } else {
-      alert("No uploaded visuals match the bracketed names in your Scene Details.");
-    }
-  };
-
-  // Calibration logic - Final Step
-  const finalizeSync = async () => {
-    setIsProcessing(true);
-    // Prefer the synchronous read (already loaded); fall back to an async load
-    // when loadedmetadata has not yet fired (e.g. rapid upload → Apply Sync).
-    let audioDuration = audioRef.current?.duration || 0;
-    if (!audioDuration && projectRef.current.voiceoverId) {
-      const voiceoverForDuration = projectRef.current.assets.find(
-        a => a.id === projectRef.current.voiceoverId,
-      );
-      if (voiceoverForDuration) {
-        audioDuration = await getAudioDuration(voiceoverForDuration.url);
-        if (!audioDuration) {
-          showToast('Voiceover metadata not ready — try again in a moment');
-          setIsProcessing(false);
-          return;
-        }
-      }
-    }
-    const newSegments = await parseProjectData(
-      projectRef.current.script,
-      projectRef.current.sceneDetails,
-      projectRef.current.assets,
-      audioDuration,
-    );
-
-    // Clean-slate: no carry-forward from previous segments. Every re-sync
-    // re-derives everything fresh from the scene doc + audio.
-
-    // Never wipe existing segments if parse produced nothing
-    if (newSegments.length === 0 && projectRef.current.segments.length > 0) {
-      console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
-      setIsProcessing(false);
-      return;
-    }
-
-    const anchorTimed = applyAnchorBasedTiming(newSegments, audioDuration);
-    const headingTimed = applyHeadingTiming(anchorTimed);
-
-    setProject(prev => ({ ...prev, segments: headingTimed }));
-    setIsSynced(true);
-    setIsProcessing(false);
-    setSyncStep(4);
-    setActiveTab('editor');
-
-    // Trigger transcription (Tauri only) — segment-ID gate inside startTranscription guards correctness
-    const voiceoverAsset = projectRef.current.assets.find(a => a.id === projectRef.current.voiceoverId);
-    if (voiceoverAsset && isTauri()) {
-      transcriptionTargetIdRef.current = voiceoverAsset.id;
-      startTranscription(
-        voiceoverAsset,
-        audioDuration,
-        headingTimed,
-        projectRef.current,
-        (updated) => {
-          setProject(prev => {
-            // Defense-in-depth: reject the Whisper update if the segment set has
-            // changed since alignment started (primary gate is in startTranscription).
-            if (prev.segments.length !== updated.length) {
-              console.warn('[whisper] Rejecting alignment update — segment count changed', {
-                current: prev.segments.length,
-                incoming: updated.length,
-              });
-              return prev;
-            }
-            const currentIds = new Set(prev.segments.map(s => s.id));
-            for (const seg of updated) {
-              if (!currentIds.has(seg.id)) {
-                console.warn('[whisper] Rejecting alignment update — segment ID mismatch');
-                return prev;
-              }
-            }
-            return { ...prev, segments: updated };
-          });
-        },
-        (updater) => {
-          // Commit-time ownership guard, mirrored from handleVoiceoverStaged but
-          // using this call site's correct notion of "current": finalizeSync
-          // operates on an already-COMMITTED voiceover, not a staged one, so the
-          // comparison is against project.voiceoverId, not pendingVoiceoverRef.
-          if (projectRef.current.voiceoverId !== voiceoverAsset.id) return;
-          setProject(updater);
-        },
-      );
-    }
-  };
 
   /** '1080p' | '4k' */
   const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
@@ -2754,33 +2574,6 @@ export default function App() {
             <X size={16} />
           </button>
         </div>
-      )}
-
-      {/* Sync Review Modals */}
-      {showSyncDetails && (
-        <Suspense fallback={<ModalLoadingFallback />}>
-        <AnimatePresence>
-          <SyncReviewModal
-            sceneDetails={project.sceneDetails}
-            segments={project.segments}
-            assets={project.assets}
-            voiceoverName={voiceover?.name ?? 'Local Audio'}
-            onClose={() => setShowSyncDetails(false)}
-            onFinalizeSync={finalizeSync}
-            onApplyAdjustments={() => setIsSynced(true)}
-            onOpenStockSearch={(targetId) => {
-              setStockTarget(targetId);
-              setShowStockSearch(true);
-            }}
-            onAssetChange={(segIdx, assetId) => {
-              setProject(prev => ({
-                ...prev,
-                segments: prev.segments.map((s, j) => j === segIdx ? { ...s, assetId: assetId } : s),
-              }));
-            }}
-          />
-        </AnimatePresence>
-        </Suspense>
       )}
 
       {/* Double-click Scene Editor Modal */}
