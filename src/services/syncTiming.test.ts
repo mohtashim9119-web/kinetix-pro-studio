@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { applyAnchorBasedTiming } from './syncEngine';
+import { applyAnchorBasedTiming, computeHeadingAnchors, reinsertHeadings } from './syncEngine';
 import {
   distributeSegmentTimes,
   applyHeadingTiming,
@@ -269,6 +269,37 @@ describe('clean-slate re-sync (real 11→14 scene repro)', () => {
     expect(final[0]!.startTime).toBe(0);
   });
 
+  // Reuses the oldScenes/newScenes fixture above (11→14 scenes, 4 new + 1
+  // reworded boundary) to prove a heading placed in the OLD array survives
+  // computeHeadingAnchors + reinsertHeadings against the NEW array — the
+  // exact "drift" case Step 5/Option 1 exists to handle. '008' (salesman)
+  // and '009' (Civic reveal) are unchanged and adjacent in both versions,
+  // so the heading should land between them in the new array too.
+  it('a heading placed in the 11-scene version survives reinsertion onto the 14-scene version', () => {
+    const heading: VideoSegment = makeSegment({
+      id: 'civic-heading',
+      order: 6,
+      text: '',
+      isHeading: true,
+      headingConfig: { text: 'Decision Time', color: '#ffcc00', x: 50, y: 20 },
+    });
+    const oldWithHeading = [...oldScenes.slice(0, 6), heading, ...oldScenes.slice(6)];
+
+    const anchors = computeHeadingAnchors(oldWithHeading);
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]?.afterAssetId).toBe('008');
+    expect(anchors[0]?.beforeAssetId).toBe('009');
+
+    const freshContent = newScenes.map(s => ({ ...s }));
+    const result = reinsertHeadings(freshContent, anchors);
+
+    const headingIdx = result.findIndex(s => s.isHeading);
+    expect(headingIdx).toBeGreaterThan(-1);
+    expect(result[headingIdx - 1]?.assetId).toBe('008');
+    expect(result[headingIdx + 1]?.assetId).toBe('009');
+    expect(result.find(s => s.isHeading)?.headingConfig?.text).toBe('Decision Time');
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -388,6 +419,149 @@ describe('legacy project — anchorStart undefined on every segment (pre-6/18 sa
 
     const total = result.reduce((sum, s) => sum + s.duration, 0);
     expect(total).toBeCloseTo(AUDIO_DURATION, 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Step 1.1 — computeHeadingAnchors / reinsertHeadings. Pure functions with
+// no callers yet (wired onto the clean-slate pipeline in a later step); the
+// real 11→14 Civic drift case above already exercises them against a real
+// fixture. These cover the remaining placement/invariant/edge-case rules.
+// ---------------------------------------------------------------------------
+describe('computeHeadingAnchors / reinsertHeadings', () => {
+  it('places a heading by assetId anchor even when scenes are inserted before and after it', () => {
+    const previous: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'Intro', assetId: 'x1' }),
+      makeSegment({
+        id: 'h0', order: 1, text: '', isHeading: true, headingConfig: { text: 'Chapter 1' },
+        // Deliberately stale — a real timestamp from the OLD timeline that
+        // has nothing to do with the fresh one below.
+        anchorStart: 999, anchorSource: 'whisper',
+      }),
+      makeSegment({ id: 'p1', order: 2, text: 'Middle', assetId: 'x2' }),
+    ];
+
+    const anchors = computeHeadingAnchors(previous);
+    expect(anchors).toHaveLength(1);
+    expect(anchors[0]?.afterAssetId).toBe('x1');
+    expect(anchors[0]?.beforeAssetId).toBe('x2');
+    expect(anchors[0]?.ordinal).toBe(1);
+
+    // Fresh re-sync inserts a brand-new scene before AND after the anchor pair.
+    const fresh: VideoSegment[] = [
+      makeSegment({ id: 'f0', order: 0, text: 'New intro', assetId: 'x0' }),
+      makeSegment({ id: 'f1', order: 1, text: 'Intro', assetId: 'x1' }),
+      makeSegment({ id: 'f2', order: 2, text: 'Middle', assetId: 'x2' }),
+      makeSegment({ id: 'f3', order: 3, text: 'New outro', assetId: 'x3' }),
+    ];
+
+    const result = reinsertHeadings(fresh, anchors);
+    const headingIdx = result.findIndex(s => s.isHeading);
+    expect(result[headingIdx - 1]?.assetId).toBe('x1');
+    expect(result[headingIdx + 1]?.assetId).toBe('x2');
+
+    // The stale 999 anchor must not survive — the heading's anchor now
+    // reflects its position on THIS fresh timeline.
+    const heading = result[headingIdx]!;
+    expect(heading.anchorStart).toBe(heading.startTime);
+    expect(heading.anchorSource).toBe('estimate');
+  });
+
+  it('falls back to ordinal position when the anchor assetId no longer exists', () => {
+    const previous: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'A', assetId: 'gone1' }),
+      makeSegment({ id: 'p1', order: 1, text: 'B', assetId: 'gone2' }),
+      makeSegment({ id: 'h0', order: 2, text: '', isHeading: true, headingConfig: { text: 'Chapter 1' } }),
+      makeSegment({ id: 'p2', order: 3, text: 'C', assetId: 'gone3' }),
+    ];
+
+    const anchors = computeHeadingAnchors(previous);
+    expect(anchors[0]?.ordinal).toBe(2);
+
+    // Every asset was re-uploaded/renamed — none of the old ids exist anymore.
+    const fresh: VideoSegment[] = [
+      makeSegment({ id: 'f0', order: 0, text: 'A2', assetId: 'new1' }),
+      makeSegment({ id: 'f1', order: 1, text: 'B2', assetId: 'new2' }),
+      makeSegment({ id: 'f2', order: 2, text: 'C2', assetId: 'new3' }),
+      makeSegment({ id: 'f3', order: 3, text: 'D2', assetId: 'new4' }),
+    ];
+
+    const result = reinsertHeadings(fresh, anchors);
+    expect(result.findIndex(s => s.isHeading)).toBe(2);
+  });
+
+  it('preserves total duration — headings borrow time, they do not add it', () => {
+    const previous: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'A', assetId: 'a1', duration: 5 }),
+      makeSegment({ id: 'h0', order: 1, text: '', isHeading: true, headingConfig: { text: 'Chapter 1' }, duration: 1 }),
+      makeSegment({ id: 'p1', order: 2, text: 'B', assetId: 'a2', duration: 5 }),
+    ];
+    const anchors = computeHeadingAnchors(previous);
+
+    const fresh: VideoSegment[] = [
+      makeSegment({ id: 'f0', order: 0, text: 'A2', assetId: 'a1', duration: 4 }),
+      makeSegment({ id: 'f1', order: 1, text: 'B2', assetId: 'a2', duration: 6 }),
+    ];
+    const originalTotal = fresh.reduce((sum, s) => sum + s.duration, 0);
+
+    const result = reinsertHeadings(fresh, anchors);
+    const finalTotal = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(finalTotal).toBeCloseTo(originalTotal, 3);
+  });
+
+  it('round-trips heading styling (color/font/position) through compute + reinsert', () => {
+    const previous: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'A', assetId: 'a1' }),
+      makeSegment({
+        id: 'h0', order: 1, text: '', isHeading: true,
+        headingConfig: {
+          text: 'Big Reveal', color: '#ff00ff', backgroundColor: '#112233',
+          fontFamily: 'Impact', fontSize: 64, fontWeight: 700, x: 25, y: 80,
+        },
+      }),
+      makeSegment({ id: 'p1', order: 2, text: 'B', assetId: 'a2' }),
+    ];
+    const anchors = computeHeadingAnchors(previous);
+
+    const fresh: VideoSegment[] = [
+      makeSegment({ id: 'f0', order: 0, text: 'A2', assetId: 'a1' }),
+      makeSegment({ id: 'f1', order: 1, text: 'B2', assetId: 'a2' }),
+    ];
+
+    const result = reinsertHeadings(fresh, anchors);
+    const heading = result.find(s => s.isHeading);
+    expect(heading?.headingConfig).toEqual({
+      text: 'Big Reveal', color: '#ff00ff', backgroundColor: '#112233',
+      fontFamily: 'Impact', fontSize: 64, fontWeight: 700, x: 25, y: 80,
+    });
+  });
+
+  it('keeps clustered headings (no content between them) in correct relative order', () => {
+    const previous: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'A', assetId: 'a1' }),
+      makeSegment({ id: 'h0', order: 1, text: '', isHeading: true, headingConfig: { text: 'First' } }),
+      makeSegment({ id: 'h1', order: 2, text: '', isHeading: true, headingConfig: { text: 'Second' } }),
+      makeSegment({ id: 'p1', order: 3, text: 'B', assetId: 'a2' }),
+    ];
+    const anchors = computeHeadingAnchors(previous);
+    expect(anchors).toHaveLength(2);
+
+    const fresh: VideoSegment[] = [
+      makeSegment({ id: 'f0', order: 0, text: 'A2', assetId: 'a1', duration: 5 }),
+      makeSegment({ id: 'f1', order: 1, text: 'B2', assetId: 'a2', duration: 5 }),
+    ];
+    const result = reinsertHeadings(fresh, anchors);
+
+    // Duration precision across a cluster is explicitly not asserted here —
+    // only that both headings survive, in order, between the right neighbors.
+    const headingTexts = result.filter(s => s.isHeading).map(s => s.headingConfig?.text);
+    expect(headingTexts).toEqual(['First', 'Second']);
+
+    const idxFirst = result.findIndex(s => s.headingConfig?.text === 'First');
+    const idxSecond = result.findIndex(s => s.headingConfig?.text === 'Second');
+    expect(idxFirst).toBeLessThan(idxSecond);
+    expect(result[idxFirst - 1]?.assetId).toBe('a1');
+    expect(result[idxSecond + 1]?.assetId).toBe('a2');
   });
 });
 

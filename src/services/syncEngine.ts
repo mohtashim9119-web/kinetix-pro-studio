@@ -4,6 +4,7 @@
  */
 
 import { Asset, VideoSegment } from '../types';
+import { HEADING_DEFAULT_DURATION } from './whisperService';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
@@ -138,3 +139,205 @@ export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): Vi
 
     return s;
   });
+
+/**
+ * Captures where a heading sat relative to its surrounding content, so it
+ * can be relocated onto a different (freshly re-synced) content array.
+ */
+export interface HeadingAnchor {
+  heading: VideoSegment;
+  afterAssetId?: string;
+  beforeAssetId?: string;
+  ordinal: number;
+}
+
+/**
+ * For each heading in `previousSegments`, records its full styling/config
+ * plus enough positional context — nearest non-heading neighbor on each
+ * side, and ordinal position among non-heading segments — to relocate it
+ * onto a different content array via reinsertHeadings.
+ */
+export function computeHeadingAnchors(previousSegments: VideoSegment[]): HeadingAnchor[] {
+  const anchors: HeadingAnchor[] = [];
+  let ordinal = 0;
+
+  for (let i = 0; i < previousSegments.length; i++) {
+    const seg = previousSegments[i];
+    if (!seg) continue;
+
+    if (!seg.isHeading) {
+      ordinal++;
+      continue;
+    }
+
+    let afterAssetId: string | undefined;
+    for (let b = i - 1; b >= 0; b--) {
+      const cand = previousSegments[b];
+      if (cand && !cand.isHeading) {
+        afterAssetId = cand.assetId;
+        break;
+      }
+    }
+
+    let beforeAssetId: string | undefined;
+    for (let f = i + 1; f < previousSegments.length; f++) {
+      const cand = previousSegments[f];
+      if (cand && !cand.isHeading) {
+        beforeAssetId = cand.assetId;
+        break;
+      }
+    }
+
+    anchors.push({ heading: { ...seg }, afterAssetId, beforeAssetId, ordinal });
+  }
+
+  return anchors;
+}
+
+function closestIndexToOrdinal(candidates: number[], ordinal: number): number {
+  let best = candidates[0]!;
+  let bestDist = Math.abs(best - ordinal);
+  for (let i = 1; i < candidates.length; i++) {
+    const idx = candidates[i]!;
+    const dist = Math.abs(idx - ordinal);
+    if (dist < bestDist) {
+      best = idx;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function matchingIndices(contentSegments: VideoSegment[], assetId: string): number[] {
+  const indices: number[] = [];
+  for (let i = 0; i < contentSegments.length; i++) {
+    if (contentSegments[i]?.assetId === assetId) indices.push(i);
+  }
+  return indices;
+}
+
+/**
+ * Resolves which gap (0..contentSegments.length; gap g sits immediately
+ * before contentSegments[g]) a heading should land in: prefer the fresh
+ * segment matching afterAssetId (insert after it), else the one matching
+ * beforeAssetId (insert before it), else the recorded ordinal position.
+ * Reused assetIds are disambiguated by proximity to that ordinal.
+ */
+function resolveGapIndex(contentSegments: VideoSegment[], anchor: HeadingAnchor): number {
+  if (anchor.afterAssetId !== undefined) {
+    const candidates = matchingIndices(contentSegments, anchor.afterAssetId);
+    if (candidates.length > 0) {
+      return closestIndexToOrdinal(candidates, anchor.ordinal) + 1;
+    }
+  }
+
+  if (anchor.beforeAssetId !== undefined) {
+    const candidates = matchingIndices(contentSegments, anchor.beforeAssetId);
+    if (candidates.length > 0) {
+      return closestIndexToOrdinal(candidates, anchor.ordinal);
+    }
+  }
+
+  return Math.min(Math.max(anchor.ordinal, 0), contentSegments.length);
+}
+
+/**
+ * Places headings captured by computeHeadingAnchors back into a fresh
+ * content (non-heading) array. Placement prefers the content segment
+ * matching afterAssetId/beforeAssetId, falling back to the recorded
+ * ordinal when neither resolves (asset deleted/renamed); ties among
+ * reused assetIds are broken by proximity to that ordinal.
+ *
+ * Each heading steals duration from its bounding content neighbors using
+ * the same 50/50-with-edge-spillover math as App.tsx handleInsertHeading,
+ * so total duration is unchanged — headings borrow time, they don't add
+ * it. Adjacent (clustered) headings resolve to the same gap and steal from
+ * the same pair of neighbors in sequence, which keeps them ordered without
+ * any cluster-specific casework — duration precision across a cluster is a
+ * side effect of that, not a guarantee.
+ */
+export function reinsertHeadings(
+  contentSegments: VideoSegment[],
+  anchors: HeadingAnchor[],
+): VideoSegment[] {
+  const contentClones = contentSegments.map(s => ({ ...s }));
+  if (anchors.length === 0) return contentClones;
+
+  const buckets: VideoSegment[][] = Array.from({ length: contentClones.length + 1 }, () => []);
+  for (const anchor of anchors) {
+    const gap = resolveGapIndex(contentClones, anchor);
+    const bucket = buckets[gap];
+    if (bucket) bucket.push({ ...anchor.heading });
+  }
+
+  const merged: VideoSegment[] = [];
+  for (let i = 0; i <= contentClones.length; i++) {
+    const bucket = buckets[i];
+    if (bucket) merged.push(...bucket);
+    const content = contentClones[i];
+    if (content) merged.push(content);
+  }
+
+  const HEADING_DUR = HEADING_DEFAULT_DURATION;
+  const HALF = HEADING_DUR / 2;
+  const MIN_DUR = 0.1;
+
+  for (let i = 0; i < merged.length; i++) {
+    const seg = merged[i];
+    if (!seg) continue;
+    if (!seg.isHeading) continue;
+
+    let prevIdx = -1;
+    for (let b = i - 1; b >= 0; b--) {
+      const cand = merged[b];
+      if (cand && !cand.isHeading) { prevIdx = b; break; }
+    }
+    let nextIdx = -1;
+    for (let f = i + 1; f < merged.length; f++) {
+      const cand = merged[f];
+      if (cand && !cand.isHeading) { nextIdx = f; break; }
+    }
+
+    const prevSeg = prevIdx !== -1 ? merged[prevIdx] : undefined;
+    const nextSeg = nextIdx !== -1 ? merged[nextIdx] : undefined;
+
+    let prevSteal = 0;
+    let nextSteal = 0;
+
+    if (prevSeg && nextSeg) {
+      const prevAvail = Math.max(0, prevSeg.duration - MIN_DUR);
+      const nextAvail = Math.max(0, nextSeg.duration - MIN_DUR);
+      prevSteal = Math.min(HALF, prevAvail);
+      const remaining = HEADING_DUR - prevSteal;
+      nextSteal = Math.min(remaining, nextAvail);
+      const stillRemaining = HEADING_DUR - prevSteal - nextSteal;
+      if (stillRemaining > 0) {
+        prevSteal += Math.min(stillRemaining, prevAvail - prevSteal);
+      }
+    } else if (prevSeg && !nextSeg) {
+      prevSteal = Math.max(0, Math.min(HEADING_DUR, prevSeg.duration - MIN_DUR));
+    } else if (!prevSeg && nextSeg) {
+      nextSteal = Math.max(0, Math.min(HEADING_DUR, nextSeg.duration - MIN_DUR));
+    }
+
+    const actualDur = Number((prevSteal + nextSteal).toFixed(3)) || HEADING_DUR;
+
+    if (prevSeg) prevSeg.duration = Number((prevSeg.duration - prevSteal).toFixed(3));
+    if (nextSeg) nextSeg.duration = Number((nextSeg.duration - nextSteal).toFixed(3));
+    seg.duration = actualDur;
+  }
+
+  let cursor = 0;
+  for (const seg of merged) {
+    seg.startTime = Number(cursor.toFixed(3));
+    if (seg.isHeading) {
+      // Reinserted onto a fresh timeline — its old anchor is stale and would
+      // misplace it if anything downstream re-derives timing from anchors.
+      seg.anchorStart = seg.startTime;
+      seg.anchorSource = 'estimate';
+    }
+    cursor += seg.duration;
+  }
+
+  return merged;
+}
