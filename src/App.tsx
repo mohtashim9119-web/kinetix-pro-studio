@@ -233,26 +233,6 @@ function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
   });
 }
 
-/**
- * Inserts a [HEADING: text] tag into sceneDetails at the position
- * corresponding to insertAtSceneIdx (0 = before all scenes, N = after the
- * N-th tag, >= matches.length = after all scenes).
- */
-function insertHeadingIntoSceneDetails(
-  sceneDetails: string,
-  insertAtSceneIdx: number,
-  headingText: string,
-): string {
-  const matches = [...sceneDetails.matchAll(/\[(?:IMAGE|VIDEO|HEADING)\s*:[^\]]*\]/gi)];
-  const insertTag = `\n[HEADING: ${headingText}]\n`;
-  if (insertAtSceneIdx === 0) return insertTag + sceneDetails;
-  if (insertAtSceneIdx >= matches.length) return sceneDetails + insertTag;
-  const targetMatch = matches[insertAtSceneIdx];
-  if (!targetMatch) return sceneDetails + insertTag;
-  const idx = targetMatch.index ?? 0;
-  return sceneDetails.slice(0, idx) + insertTag + sceneDetails.slice(idx);
-}
-
 // Enhanced parser that handles heading-voiceover logic
 const parseProjectData = async (
   script: string,
@@ -914,13 +894,7 @@ export default function App() {
       const audioDuration = withOrder.reduce((sum, s) => sum + s.duration, 0);
       const reordered = applyAnchorBasedTiming(withOrder, audioDuration);
 
-      const newSceneDetails = insertHeadingIntoSceneDetails(
-        prev.sceneDetails,
-        insertAt,
-        defaultText,
-      );
-
-      return { ...prev, segments: reordered, sceneDetails: newSceneDetails };
+      return { ...prev, segments: reordered };
     });
   }, []);
 
@@ -932,7 +906,6 @@ export default function App() {
       if (!heading?.isHeading) return prev;
 
       const headingDur = heading.duration;
-      const headingText = heading.headingConfig?.text ?? heading.heading ?? '';
 
       const newSegs = [...prev.segments];
       const prevSeg = newSegs[idx - 1];
@@ -974,14 +947,7 @@ export default function App() {
       const audioDuration = newSegs.reduce((sum, s) => sum + s.duration, 0);
       const timedSegs = applyAnchorBasedTiming(newSegs, audioDuration);
 
-      // Remove [HEADING: <text>] tag from sceneDetails.
-      const tagPattern = new RegExp(
-        `\\n?\\[HEADING:\\s*${headingText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\]\\n?`,
-        'i',
-      );
-      const newSceneDetails = prev.sceneDetails.replace(tagPattern, '\n');
-
-      return { ...prev, segments: timedSegs, sceneDetails: newSceneDetails };
+      return { ...prev, segments: timedSegs };
     });
   }, []);
 
