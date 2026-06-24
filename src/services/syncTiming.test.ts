@@ -4,8 +4,9 @@ import {
   distributeSegmentTimes,
   applyHeadingTiming,
   alignScenestoTranscript,
+  HEADING_DEFAULT_DURATION,
 } from './whisperService';
-import type { VideoSegment, TranscriptToken } from '../types';
+import type { VideoSegment, TranscriptToken, HeadingConfig } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 
@@ -300,6 +301,34 @@ describe('clean-slate re-sync (real 11→14 scene repro)', () => {
     expect(result.find(s => s.isHeading)?.headingConfig?.text).toBe('Decision Time');
   });
 
+  // Complements the test above with the two properties it doesn't check —
+  // exactly-once survival and the duration invariant — spelled out in the
+  // "heading round-trip simulation" describe block below. Lives here instead
+  // of there because oldScenes/newScenes are local to this closure, not
+  // module-level; this is a genuine reuse of the fixture, not a copy.
+  it('a heading from the 11-scene version lands exactly once in the 14-scene version, duration-neutral', () => {
+    const heading: VideoSegment = makeSegment({
+      id: 'civic-heading-2',
+      order: 6,
+      text: '',
+      isHeading: true,
+      headingConfig: { text: 'Decision Time', color: '#ffcc00', x: 50, y: 20 },
+    });
+    const oldWithHeading = [...oldScenes.slice(0, 6), heading, ...oldScenes.slice(6)];
+
+    const anchors = computeHeadingAnchors(oldWithHeading);
+    expect(anchors).toHaveLength(1);
+
+    const freshContent = newScenes.map(s => ({ ...s }));
+    const contentTotal = freshContent.reduce((sum, s) => sum + s.duration, 0);
+
+    const result = reinsertHeadings(freshContent, anchors);
+
+    expect(result.filter(s => s.isHeading)).toHaveLength(1);
+    const resultTotal = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(resultTotal).toBeCloseTo(contentTotal, 3);
+  });
+
 });
 
 // ---------------------------------------------------------------------------
@@ -563,5 +592,168 @@ describe('computeHeadingAnchors / reinsertHeadings', () => {
     expect(result[idxFirst - 1]?.assetId).toBe('a1');
     expect(result[idxSecond + 1]?.assetId).toBe('a2');
   });
+});
+
+// ---------------------------------------------------------------------------
+// Step 5 Phase 2 — heading round-trip simulation (insert/rename/delete).
+//
+// HONESTY NOTE: handleInsertHeading, handleDeleteHeading, and
+// handleApplySyncFromFiles are useCallback closures inside App.tsx with no
+// test harness in this repo (no jsdom/testing-library) — they cannot be
+// imported and called directly. What follows instead chains the PURE
+// functions those handlers actually call (computeHeadingAnchors,
+// reinsertHeadings), fed with input shaped exactly as each handler shapes
+// it (see makeInsertedHeading below, mirrored from App.tsx
+// handleInsertHeading's newHeading object at App.tsx:890-903, and the
+// neighbor-duration-return math mirrored from handleDeleteHeading at
+// App.tsx:942-944). These tests prove what the pure merge layer produces
+// for each lifecycle step; they do NOT prove the React handlers themselves
+// wire that input together correctly end-to-end.
+//
+// The re-sync half of each test mirrors the real order of operations in
+// App.tsx handleApplySyncFromFiles: previousSegments captured pre-parse →
+// computeHeadingAnchors(previousSegments) → fresh content parsed/timed →
+// reinsertHeadings(timedContent, anchors) (App.tsx:1249-1359) — never the
+// reverse order.
+// ---------------------------------------------------------------------------
+describe('heading round-trip simulation (insert/rename/delete + re-sync)', () => {
+  // Mirrors the exact VideoSegment shape App.tsx handleInsertHeading
+  // constructs, so these tests exercise the merge layer against realistic
+  // input rather than a hand-wavy stand-in.
+  function makeInsertedHeading(opts: {
+    id: string;
+    order: number;
+    startTime: number;
+    duration?: number;
+    headingConfig: HeadingConfig;
+  }): VideoSegment {
+    return {
+      id: opts.id,
+      order: opts.order,
+      text: '',
+      heading: opts.headingConfig.text,
+      isHeading: true,
+      headingConfig: { x: 50, y: 50, ...opts.headingConfig },
+      duration: opts.duration ?? HEADING_DEFAULT_DURATION,
+      startTime: opts.startTime,
+      anchorStart: opts.startTime,
+      anchorSource: 'whisper',
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+    };
+  }
+
+  it('INSERT then RE-SYNC: a freshly-inserted heading survives the next sync in the right place', () => {
+    // Simulates handleInsertHeading(0) on two pre-existing 5s segments —
+    // insert after p0, steal 0.5s from each neighbor (App.tsx:857-868's
+    // "middle" branch) — leaving previousSegments as the committed state
+    // a subsequent Apply Sync would read.
+    const heading = makeInsertedHeading({
+      id: 'h0', order: 1, startTime: 4.5, headingConfig: { text: 'Heading 1' },
+    });
+    const previousSegments: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'Intro', assetId: 'a1', duration: 4.5 }),
+      heading,
+      makeSegment({ id: 'p1', order: 2, text: 'Body', assetId: 'a2', duration: 4.5 }),
+    ];
+
+    const anchors = computeHeadingAnchors(previousSegments);
+    expect(anchors).toHaveLength(1);
+
+    // RE-SYNC: a fresh content-only parse comes back with new durations
+    // (e.g. the voiceover changed length).
+    const freshContent: VideoSegment[] = [
+      makeSegment({ id: 'p0-new', order: 0, text: 'Intro', assetId: 'a1', duration: 6 }),
+      makeSegment({ id: 'p1-new', order: 1, text: 'Body', assetId: 'a2', duration: 6 }),
+    ];
+    const contentTotal = freshContent.reduce((sum, s) => sum + s.duration, 0);
+
+    const result = reinsertHeadings(freshContent, anchors);
+
+    expect(result.filter(s => s.isHeading)).toHaveLength(1);
+    const headingIdx = result.findIndex(s => s.isHeading);
+    expect(result[headingIdx - 1]?.assetId).toBe('a1');
+    expect(result[headingIdx + 1]?.assetId).toBe('a2');
+    expect(result[headingIdx]?.headingConfig?.text).toBe('Heading 1');
+
+    // DURATION INVARIANT — headings borrow time, they do not add it.
+    const resultTotal = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(resultTotal).toBeCloseTo(contentTotal, 3);
+  });
+
+  it('RENAME then RE-SYNC: the renamed text/styling round-trips, not the original', () => {
+    const heading = makeInsertedHeading({
+      id: 'h0', order: 1, startTime: 4.5, headingConfig: { text: 'Heading 1' },
+    });
+    const previousSegments: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'Intro', assetId: 'a1', duration: 4.5 }),
+      heading,
+      makeSegment({ id: 'p1', order: 2, text: 'Body', assetId: 'a2', duration: 4.5 }),
+    ];
+
+    // User renames + restyles via the BottomDrawer "Heading Style" panel
+    // before the next sync — a plain immutable headingConfig update.
+    const renamed = previousSegments.map(s =>
+      s.id === 'h0'
+        ? { ...s, headingConfig: { ...s.headingConfig!, text: 'Chapter Two', color: '#00ffcc' } }
+        : s,
+    );
+
+    const anchors = computeHeadingAnchors(renamed);
+    expect(anchors[0]?.heading.headingConfig?.text).toBe('Chapter Two');
+
+    const freshContent: VideoSegment[] = [
+      makeSegment({ id: 'p0-new', order: 0, text: 'Intro', assetId: 'a1', duration: 6 }),
+      makeSegment({ id: 'p1-new', order: 1, text: 'Body', assetId: 'a2', duration: 6 }),
+    ];
+    const contentTotal = freshContent.reduce((sum, s) => sum + s.duration, 0);
+
+    const result = reinsertHeadings(freshContent, anchors);
+    const reinsertedHeading = result.find(s => s.isHeading);
+    expect(reinsertedHeading?.headingConfig?.text).toBe('Chapter Two');
+    expect(reinsertedHeading?.headingConfig?.color).toBe('#00ffcc');
+    // The stale pre-rename text must not survive anywhere in the output.
+    expect(result.some(s => s.headingConfig?.text === 'Heading 1')).toBe(false);
+
+    const resultTotal = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(resultTotal).toBeCloseTo(contentTotal, 3);
+  });
+
+  it('DELETE then RE-SYNC: a deleted heading does not reappear (no resurrection)', () => {
+    const heading = makeInsertedHeading({
+      id: 'h0', order: 1, startTime: 4.5, headingConfig: { text: 'Heading 1' },
+    });
+
+    // Simulates handleDeleteHeading: heading removed, its duration returned
+    // 50/50 to neighbors (App.tsx:942-944) BEFORE the next sync runs — so
+    // previousSegments below has no heading at all, same as production.
+    const previousSegments: VideoSegment[] = [
+      makeSegment({ id: 'p0', order: 0, text: 'Intro', assetId: 'a1', duration: 4.5 + heading.duration / 2 }),
+      makeSegment({ id: 'p1', order: 1, text: 'Body', assetId: 'a2', duration: 4.5 + heading.duration / 2 }),
+    ];
+
+    const anchors = computeHeadingAnchors(previousSegments);
+    expect(anchors).toHaveLength(0);
+
+    const freshContent: VideoSegment[] = [
+      makeSegment({ id: 'p0-new', order: 0, text: 'Intro', assetId: 'a1', duration: 6 }),
+      makeSegment({ id: 'p1-new', order: 1, text: 'Body', assetId: 'a2', duration: 6 }),
+    ];
+    const contentTotal = freshContent.reduce((sum, s) => sum + s.duration, 0);
+
+    const result = reinsertHeadings(freshContent, anchors);
+    expect(result.some(s => s.isHeading)).toBe(false);
+    expect(result.find(s => s.headingConfig?.text === 'Heading 1')).toBeUndefined();
+
+    const resultTotal = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(resultTotal).toBeCloseTo(contentTotal, 3);
+  });
+
+  // DRIFT is covered separately in the 'clean-slate re-sync (real 11→14
+  // scene repro)' describe block above — it reuses the real Civic
+  // oldScenes/newScenes fixture, which is local to that block's closure and
+  // can't be referenced from here. See the test there named "a heading from
+  // the 11-scene version lands exactly once in the 14-scene version,
+  // duration-neutral".
 });
 
