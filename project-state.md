@@ -10,6 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-24 |
+| Current HEAD | `8a0be46` on `main`, fully pushed to `origin/main`. 3a + 3b complete (clean-slate sync rebuild). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -26,7 +27,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
    - Headings live array-only, never serialized to sceneDetails text — fixes problem 1 permanently
    - FILES tab Apply Sync only fires on new file upload — segments array is source of truth post-sync
    - Auto-recalc timing via `applyAnchorBasedTiming()` on any segment/heading mutation — no manual sync clicks needed
-   - Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward. 4.5b repair fix to be reverted (proven regression). Manual edits NOT preserved across re-sync by design (re-sync rare; edits are post-sync). Confirm-dialog + auto-snapshot are the safety net.
+   - Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward. 4.5b repair fix reverted (proven regression — removed via commit 452e1eb, the same commit as step 3a below). Manual edits NOT preserved across re-sync by design (re-sync rare; edits are post-sync). Confirm-dialog + auto-snapshot are the safety net.
 
 ---
 ### CLEAN-SLATE RE-SYNC — Final Plan (supersedes all prior 4.5a/4.5b/Step 6 work)
@@ -36,7 +37,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 **Why:** The diagnostic (run this session) proved the bug class is caused entirely by carrying stale state forward — fresh char-weight guesses colliding with restored real anchors, frozen 'whisper' anchors copied forward un-rechecked, and PASS 2.5 blaming the wrong segment. Eliminating carry-forward eliminates the entire bug class at the root.
 
 **Steps:**
-1. Revert 4.5b — remove the PASS 2.5 repair fix (proven regression: fixes ~1 of 4 slivers but corrupts previously-correct segments and fabricates new slivers; verified with vs without in the diagnostic).
+1. ✅ Done (452e1eb, same commit as step 3a) — Revert 4.5b: removed the PASS 2.5 repair-pass logic (proven regression: fixed ~1 of 4 slivers but corrupted previously-correct segments and fabricated new slivers; verified with vs without in the diagnostic).
 2. Audit + plan clean-slate re-sync — identify everything to delete: the merge loop (App.tsx ~1509-1534), anchor carry-forward/resolveAnchorSource, PASS 2 (dead code) + PASS 2.5, and any stale-state logic. Define the fresh re-derive path (parse → align fresh against audio → done).
 3. Build clean-slate re-sync — Apply Sync wipes derived state, re-derives all segments fresh from audio. One clean path.
    - 3a ✅ Done (452e1eb) — deleted both merge loops, deleted resolveAnchorSource/getComparableText/getSegmentStableKey, deleted old regression tests 2–8 (only test 1 survived).
@@ -51,6 +52,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 **Dropped as obsolete under clean-slate:** Step 6 (duration-drag re-anchor) and 4.5a (merge-loop prevention) — their only purpose was preserving edits across re-sync, which clean-slate no longer does.
 
 **Restore tag:** sync-known-good-2026-06-23 (commit a1a326d).
+**Newer reference point:** commit `8a0be46` — current `main` HEAD, post 3a+3b (clean-slate sync rebuild complete, pushed to `origin/main`).
 ---
 
 2. **Hard delete segment**
