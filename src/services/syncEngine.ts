@@ -71,50 +71,6 @@ export function applyAnchorBasedTiming(
     first.anchorStart = 0;
   }
 
-  // PASS 2 — fill anchors for brand-new (unanchored) scenes inserted in inner gaps.
-  // Each unanchored segment gets a character-weight share of the gap defined by
-  // the nearest anchored predecessor and successor.
-  for (let i = 1; i < out.length; i++) {
-    const seg = out[i];
-    if (!seg || seg.anchorStart !== undefined) continue;
-
-    let prevAnchorIdx = i - 1;
-    while (prevAnchorIdx >= 0 && out[prevAnchorIdx]?.anchorStart === undefined) {
-      prevAnchorIdx--;
-    }
-    let nextAnchorIdx = i + 1;
-    while (nextAnchorIdx < out.length && out[nextAnchorIdx]?.anchorStart === undefined) {
-      nextAnchorIdx++;
-    }
-
-    const gapStart = prevAnchorIdx >= 0 ? (out[prevAnchorIdx]?.anchorStart ?? 0) : 0;
-    const gapEnd = nextAnchorIdx < out.length
-      ? (out[nextAnchorIdx]?.anchorStart ?? audioDuration)
-      : audioDuration;
-    const gapSpan = Math.max(0, gapEnd - gapStart);
-
-    const unanchoredInGap: number[] = [];
-    for (let k = prevAnchorIdx + 1; k < nextAnchorIdx; k++) {
-      if (out[k]?.anchorStart === undefined) unanchoredInGap.push(k);
-    }
-    if (unanchoredInGap.length === 0) continue;
-
-    const totalText = unanchoredInGap.reduce(
-      (sum, idx) => sum + Math.max(1, out[idx]?.text.length ?? 1),
-      0,
-    );
-
-    let cursor = gapStart;
-    for (const idx of unanchoredInGap) {
-      const s = out[idx];
-      if (!s) continue;
-      const weight = Math.max(1, s.text.length) / totalText;
-      s.anchorStart = Number(cursor.toFixed(3));
-      s.anchorSource = 'estimate';
-      cursor += weight * gapSpan;
-    }
-  }
-
   // PASS 3 — recompute startTime and duration from anchors.
   // Locked-segment exemption: locked segments snap their startTime to their anchor
   // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps

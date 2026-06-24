@@ -345,3 +345,49 @@ describe('clean-slate prevents the stale-anchor-meets-fresh-estimate squeeze (sy
   });
 });
 
+// ---------------------------------------------------------------------------
+// Legacy-project regression: a project saved before anchorStart/anchorSource
+// existed (pre-2026-06-18) loads with anchorStart === undefined on every
+// segment, even though startTime/duration are real, already-synced values.
+// PASS 2 used to paper over this by manufacturing a fresh character-weight
+// anchorStart for every such segment; it was deleted in step 3d-2 now that
+// PASS 3 falls back to a segment's own startTime instead of 0/audioDuration
+// (step 3d-1, commit eb7fc8e). This test guards that fallback directly:
+// without it, every segment here collapses toward the timeline origin
+// (anchorStart ?? 0); with it, the original sequential layout survives.
+// ---------------------------------------------------------------------------
+describe('legacy project — anchorStart undefined on every segment (pre-6/18 save)', () => {
+  it('preserves original sequential startTime/duration via the PASS 3 startTime fallback', () => {
+    const AUDIO_DURATION = 12;
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'l0', order: 0, text: 'Welcome to our amazing product showcase', assetId: 'a1', startTime: 0, duration: 4 }),
+      makeSegment({ id: 'l1', order: 1, text: 'It changes everything you knew', assetId: 'a2', startTime: 4, duration: 4 }),
+      makeSegment({ id: 'l2', order: 2, text: 'Get started today', assetId: 'a3', startTime: 8, duration: 4 }),
+    ];
+
+    expect(segments.every(s => s.anchorStart === undefined)).toBe(true);
+
+    const result = applyAnchorBasedTiming(segments, AUDIO_DURATION);
+
+    // No collapse to the origin — each segment keeps its own startTime.
+    expect(result[0]!.startTime).toBe(0);
+    expect(result[1]!.startTime).toBe(4);
+    expect(result[2]!.startTime).toBe(8);
+
+    // Sequential and non-overlapping: each starts exactly where the last ends.
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]!.startTime).toBeCloseTo(
+        result[i - 1]!.startTime + result[i - 1]!.duration, 3,
+      );
+    }
+
+    // Durations roughly match the original saved values (4s each).
+    for (const seg of result) {
+      expect(seg.duration).toBeCloseTo(4, 1);
+    }
+
+    const total = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(total).toBeCloseTo(AUDIO_DURATION, 3);
+  });
+});
+
