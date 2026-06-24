@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { applyAnchorBasedTiming, computeHeadingAnchors, reinsertHeadings } from './syncEngine';
 import {
   distributeSegmentTimes,
@@ -327,6 +327,63 @@ describe('clean-slate re-sync (real 11→14 scene repro)', () => {
     expect(result.filter(s => s.isHeading)).toHaveLength(1);
     const resultTotal = result.reduce((sum, s) => sum + s.duration, 0);
     expect(resultTotal).toBeCloseTo(contentTotal, 3);
+  });
+
+  // Step 7 — every test above proves one half or the other in isolation:
+  // either the timing pipeline alone (NEW/OLD "synced fresh") or the heading
+  // reinsertion alone (onto raw, untimed newScenes). Neither runs them
+  // together in the real production order (App.tsx handleApplySyncFromFiles:
+  // computeHeadingAnchors on the OLD array -> full timing pipeline on the NEW
+  // array -> reinsertHeadings onto the timed result). This is that combined
+  // run, asserting contiguous/sliver-free/warning-free and correct heading
+  // placement simultaneously on the same final array.
+  it('full pipeline: heading reinsertion survives the real 11->14 timing run, combined timeline stays contiguous/sliver-free/warning-free', () => {
+    const heading: VideoSegment = makeSegment({
+      id: 'civic-heading-e2e',
+      order: 6,
+      text: '',
+      isHeading: true,
+      headingConfig: { text: 'Decision Time', color: '#ffcc00', x: 50, y: 20 },
+    });
+    const oldWithHeading = [...oldScenes.slice(0, 6), heading, ...oldScenes.slice(6)];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const anchors = computeHeadingAnchors(oldWithHeading);
+    const timedContent = runCleanSlatePipeline(newScenes);
+    const result = reinsertHeadings(timedContent, anchors);
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    warnSpy.mockRestore();
+
+    // Contiguous: each segment starts exactly where the previous one ends.
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]!.startTime).toBeCloseTo(
+        result[i - 1]!.startTime + result[i - 1]!.duration, 2,
+      );
+    }
+
+    // Monotonic: no segment starts before the one before it.
+    for (let i = 1; i < result.length; i++) {
+      expect(result[i]!.startTime).toBeGreaterThanOrEqual(result[i - 1]!.startTime);
+    }
+
+    // Sliver-free: every CONTENT segment (excluding the heading, which has
+    // its own fixed-duration target asserted separately below).
+    for (const seg of result) {
+      if (seg.isHeading) continue;
+      expect(seg.duration).toBeGreaterThanOrEqual(0.3);
+    }
+
+    const headingSeg = result.find(s => s.isHeading)!;
+    expect(headingSeg.duration).toBeCloseTo(1.0, 2);
+
+    const total = result.reduce((sum, s) => sum + s.duration, 0);
+    expect(total).toBeCloseTo(AUDIO_DURATION, 2);
+
+    const headingIdx = result.findIndex(s => s.isHeading);
+    expect(result[headingIdx - 1]?.assetId).toBe('008');
+    expect(result[headingIdx + 1]?.assetId).toBe('009');
   });
 
 });

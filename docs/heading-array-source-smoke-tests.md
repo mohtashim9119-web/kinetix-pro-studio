@@ -91,6 +91,38 @@ scenes (e.g. scene `B` and scene `C`).
 
 ---
 
+## 🧪 Manual Test — Real 11→14 scale re-sync (add 3 scenes + reword a boundary)
+
+Scales the test above up to the real case Step 7 targets: several scenes
+changing at once, plus a same-boundary rewording, not just one scene added
+on each side.
+
+**Setup:** A synced project with an 11-scene script/scene-details pair and a
+voiceover. Insert a heading between two scenes that will stay **unchanged**
+in the edit below (e.g. between scene `H` and scene `I`).
+
+1. Edit Scene Details: add three new bracketed scenes anywhere away from the
+   heading's neighbors, and reword one existing scene boundary elsewhere in
+   the file (split the text differently between two adjacent bracket tags —
+   same two tags, different wording). `H` and `I` themselves stay untouched.
+2. Save the Scene Details edit, then re-stage the voiceover (drag it in
+   again) so Apply Sync re-enables, and wait for transcription to reach
+   "done".
+3. Click **Apply Sync**.
+4. **Pass:** Scrub the playhead across the entire timeline. No tile is
+   visually zero-width (a "sliver"), and there are no visible gaps or
+   overlaps between any two adjacent tiles anywhere along the scrub.
+5. **Pass:** Open DevTools (or the terminal running `tauri dev`) and check
+   the console for the sync that just ran. No `[anchor] out-of-order anchor`
+   warning was printed.
+6. **Pass:** The heading still sits immediately after `H` and immediately
+   before `I` — unaffected by the 3 new scenes and the reworded boundary
+   elsewhere in the timeline.
+7. **Pass:** The last segment's end time matches the voiceover's audio
+   duration — the timeline neither falls short of nor overruns the audio.
+
+---
+
 ## 🧪 Manual Test — Delete heading + re-sync, confirm no resurrection
 
 **Setup:** A synced project with a heading present.
@@ -108,18 +140,15 @@ scenes (e.g. scene `B` and scene `C`).
 
 ---
 
-## Known transient (not a bug to file)
+## Resolved — heading-budget transient (pre-Step 5.3/5.4)
 
-Immediately after a re-sync that includes a heading, you may see one
-segment — usually the last one in the timeline — briefly oversized before
-settling. This is expected: the character-weight estimate pass
-(`parseProjectData`) still allocates `HEADING_ONLY_DURATION_SECONDS` (1.5s)
-per legacy `[HEADING:]` scene-text tag before Whisper alignment runs, while
-the final committed duration for any heading is pinned to exactly 1.0s by
-`applyHeadingTiming`. That 0.5s/heading surplus has to land somewhere in the
-interim, and the last segment's clamp-to-audio-duration absorbs it. The
-`[HEADING:]` tag itself is belt-and-suspenders (Step 5.1.3) and slated for
-removal in a later phase of this work, which will remove this transient
-along with the tag. If the *final* committed timeline (after Apply Sync
-settles) has a visibly wrong last-segment duration, that's a real bug —
-file it. A brief flash during the sync itself is not.
+Earlier revisions of this doc warned about a transient ~0.5s/heading
+duration surplus landing on the last segment mid-resync. That no longer
+applies: as of Step 5.3/5.4, `parseProjectData` recognize-and-skips a
+`[HEADING:]` scene-text tag as a pure scene boundary — it materializes no
+segment and allocates no duration for it at all. The only heading-duration
+logic that runs now is `reinsertHeadings`'s 50/50 neighbor-steal (Step
+5.1.3), which lands the heading at exactly 1.0s in the same pass that
+commits the timeline — there's no interim oversized-segment state to see.
+If you observe a wrong last-segment duration after a sync settles, that's
+still a real bug — file it.
