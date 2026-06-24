@@ -71,7 +71,7 @@ import {
 } from './services/projectStore';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
-import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, HEADING_ONLY_DURATION_SECONDS } from './constants';
+import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
@@ -278,9 +278,9 @@ const parseProjectData = async (
     let text = scene.description.trim();
 
     const isHeadingTag = scene.tag.toUpperCase().includes('HEADING');
+    if (isHeadingTag) continue; // still a scene boundary (TAG_REGEX), but headings live only in the segments array now — produce no segment
 
-    // Heading scenes carry no spoken text — don't distribute script lines to them.
-    if (!text && !isHeadingTag) {
+    if (!text) {
       if (scriptLines.length === sceneCount) {
         text = scriptLines[idx] ?? '';
       } else if (scriptLines.length > 0) {
@@ -289,7 +289,6 @@ const parseProjectData = async (
         text = scriptLines.slice(startIdx, endIdx).join(' ');
       }
     }
-    if (isHeadingTag) text = ''; // headings are silent title cards
 
     const current: RawSegment = {
       text,
@@ -306,14 +305,7 @@ const parseProjectData = async (
 
     const specificMatch = detail.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
     if (specificMatch) {
-      if (isHeadingTag) {
-        const headingText = specificMatch[1] ?? '';
-        current.isHeading = true;
-        current.headingConfig = { text: headingText };
-        current.heading = headingText; // keep legacy alias
-      } else {
-        name = specificMatch[1] ?? '';
-      }
+      name = specificMatch[1] ?? '';
     } else {
       const simpleMatch = detail.match(/\[(.*?)\]/);
       if (simpleMatch) name = simpleMatch[1] ?? '';
@@ -321,7 +313,6 @@ const parseProjectData = async (
     }
 
     const hasExplicitTagName = specificMatch !== null &&
-      !isHeadingTag &&
       (specificMatch[1] ?? '').length > 0;
 
     if (name) {
@@ -346,19 +337,10 @@ const parseProjectData = async (
     rawSegments.push(current);
   }
 
-  const headingOnlyScenes = rawSegments.filter(s => s.isHeading);
   const textBearingScenes = rawSegments.filter(s => s.text);
   const voDuration = voiceoverDuration > 0 ? voiceoverDuration : rawSegments.length * 5;
 
-  // Headings get a fixed initial size (applyHeadingTiming will correct to 1.0s after Whisper).
-  // Deduct heading allocation from the text budget so the cumulative durations stay ≤ voDuration.
-  let headingDuration = HEADING_ONLY_DURATION_SECONDS;
-  let headingTotal = headingOnlyScenes.length * HEADING_ONLY_DURATION_SECONDS;
-  if (headingOnlyScenes.length > 0 && voDuration - headingTotal <= 0) {
-    headingTotal = voDuration * 0.5;
-    headingDuration = headingTotal / headingOnlyScenes.length;
-  }
-  const textBudget = Math.max(0.1, voDuration - headingTotal);
+  const textBudget = Math.max(0.1, voDuration);
   const totalTextLength = textBearingScenes.reduce((acc, s) => acc + s.text.length, 0) || 1;
 
   let currentTimeAccumulator = 0;
@@ -367,10 +349,7 @@ const parseProjectData = async (
   for (const [i, s] of rawSegments.entries()) {
     let targetDuration: number;
 
-    if (s.isHeading) {
-      // Heading-only scene: fixed initial size; applyHeadingTiming will pin to 1.0 s after Whisper.
-      targetDuration = headingDuration;
-    } else if (textBearingScenes.length > 0) {
+    if (textBearingScenes.length > 0) {
       const weight = s.text.length / totalTextLength;
       targetDuration = weight * textBudget;
     } else {
@@ -405,7 +384,7 @@ const parseProjectData = async (
       sourceDuration,
     };
 
-    if (i === rawSegments.length - 1 && voiceoverDuration > 0 && !segment.isHeading) {
+    if (i === rawSegments.length - 1 && voiceoverDuration > 0) {
       segment.duration = Math.max(0.1, Number((voiceoverDuration - segment.startTime).toFixed(3)));
     }
 

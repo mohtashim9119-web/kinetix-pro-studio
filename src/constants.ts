@@ -5,9 +5,6 @@
 
 import { TransitionType, AnimationType } from './types';
 
-// Fixed display time (seconds) for scenes with only a [HEADING:] tag and no voiceover text. User can resize on timeline.
-export const HEADING_ONLY_DURATION_SECONDS = 1.5;
-
 export const FONT_FAMILIES = [
   'Inter', 'Anton', 'Space Grotesk', 'JetBrains Mono', 'Playfair Display', 'Outfit',
   'Bebas Neue', 'Montserrat', 'Oswald', 'Roboto', 'Poppins', 'Lato', 'Open Sans',
