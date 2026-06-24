@@ -1352,17 +1352,16 @@ export default function App() {
       return;
     }
 
-    // Genuinely different file (neither guard above fired): every segment's
-    // anchorStart was derived from the PREVIOUS audio's Whisper alignment, so
-    // a 'whisper' anchorSource is no longer trustworthy against this file's
-    // timing — independent of whether segment text changed (that's commit 2's
-    // resolveAnchorSource axis). Demote so the next sync re-derives anchors
-    // from scratch; anchorStart itself is left as-is, it's just a throwaway
-    // guess the new aligner will overwrite. Clear the stale cached transcript
-    // so Apply Sync's gating can't mistake leftover tokens for "ready".
+    // Genuinely different file (neither guard above fired): clear the stale
+    // cached transcript so Apply Sync's gating (applySyncDisabled /
+    // cachedTokensReady) can't mistake leftover tokens — transcribed against
+    // the PREVIOUS audio — for "ready" against this one. This forces
+    // re-transcription before Apply Sync re-enables.
+    // (anchorSource demotion removed in 3e: nothing branches on anchorSource
+    // post-clean-slate, and the next sync rebuilds segments from scratch via
+    // parseProjectData anyway, so demoting the outgoing segments was dead work.)
     setProject(p => ({
       ...p,
-      segments: p.segments.map(s => ({ ...s, anchorSource: 'estimate' as const })),
       transcriptTokens: undefined,
     }));
 
