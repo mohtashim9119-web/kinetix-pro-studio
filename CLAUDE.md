@@ -29,9 +29,9 @@ src/
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming()
-                     #   parseProjectData() still in App.tsx. Anchor-based gap-fill preserves
-                     #   surviving segment positions across re-sync; PASS 2 tags estimated
-                     #   anchors as 'estimate' so Whisper can realign them later.
+                     #   parseProjectData() still in App.tsx. PASS 2 (character-weight anchor
+                     #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
+                     #   back to a segment's own startTime for any missing anchor (3d-1).
     whisperService.ts # alignScenestoTranscript() sliding-window text matcher; applyHeadingTiming() —
                      #   gives [HEADING:] segments fixed 1.0s, 50/50 neighbor absorption, lock-aware.
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
@@ -204,7 +204,10 @@ estimates. applyAnchorBasedTiming then recomputes startTime/duration from anchor
 each surviving segment occupies [its anchor, next anchor], and the last
 segment extends to audioDuration. Locked segments preserve their durations
 EXCEPT when a removal gap opens immediately after — they expand to absorb
-the freed time (one-directional lock exemption).
+the freed time (one-directional lock exemption). If anchorStart is missing
+(e.g. a pre-6/18 persisted project), this pass falls back to the segment's
+own startTime instead of 0 — a missing anchor can no longer collapse a
+segment to the timeline origin (3d-1).
 
 Whisper re-sync now always runs `alignScenestoTranscript` unconditionally.
 The Whisper skip-guard and the anchor-aware aligner described in earlier
@@ -214,8 +217,7 @@ segment can ever reach Whisper alignment already tagged anchorSource='whisper'.
 
 Heading segments (isHeading) participate in the same anchor system.
 handleInsertHeading auto-names each heading uniquely ("Heading 1",
-"Heading 2"...) so getSegmentStableKey never collides across multiple
-headings on re-sync. The × delete button (handleDeleteHeading) reverses
+"Heading 2"...). The × delete button (handleDeleteHeading) reverses
 insertion atomically: returns the absorbed duration to both neighbors
 (50/50 split) and restores next.anchorStart to prev.anchorStart +
 prev.duration — the position next would occupy had the heading never

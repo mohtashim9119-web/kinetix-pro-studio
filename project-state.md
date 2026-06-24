@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-24 |
-| Current HEAD | `8523f39` on `main`, fully pushed to `origin/main`. 3a + 3b + 3c complete (clean-slate sync rebuild; dead carry-forward code removed). |
+| Current HEAD | `f27d557` on `main`, fully pushed to `origin/main`. 3a + 3b + 3c + 3d-1 + 3d-2 complete (clean-slate sync rebuild; dead carry-forward code removed; PASS 2 anchor backfill deleted). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -43,7 +43,8 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
    - 3a ✅ Done (452e1eb) — deleted both merge loops, deleted resolveAnchorSource/getComparableText/getSegmentStableKey, deleted old regression tests 2–8 (only test 1 survived).
    - 3b ✅ Done — 2026-06-24. New clean-slate regression tests added to `src/services/syncTiming.test.ts` (11-OLD / 14-NEW Civic 11→14 repro, plus a small synthetic stale-anchor-squeeze pair). All green. Found and fixed a real, pre-existing bug along the way (not a clean-slate regression — this code predates clean-slate work): in `alignScenestoTranscript` (`whisperService.ts`), the silence gap-fill step's search radius could reach past a short neighboring segment and steal the silence belonging to the NEXT boundary, collapsing that segment to ~0 width. Fixed by clamping each boundary's search window to its two neighboring segments' own spoken edges. Manually verified on the real Civic 10→14 re-sync in the app: correct widths, aligned timeline, no out-of-order warning.
    - 3c ✅ Done — 2026-06-24 (`5da64df` = 3c-1, `8523f39` = 3c-2). Deleted `alignScenesToTranscriptAnchorAware` and collapsed `alignSegmentsFromCachedTranscript`'s caller branch to always use the plain aligner (`alignScenestoTranscript`); separately removed the dead Whisper skip-guard in `startTranscription`. Both were reachable by `tsc` but unreachable at runtime under clean-slate (every caller passes all-`'estimate'` or empty segments). Verified: 5/5 vitest, `tsc --noEmit` clean, manual re-sync in the Tauri app unchanged (contiguous, no slivers, no out-of-order warnings).
-   - 3d ⬜ Not started — delete PASS 2 from applyAnchorBasedTiming (dead under clean-slate).
+   - 3d-1 ✅ Done — 2026-06-24 (`eb7fc8e`). Hardened PASS 3's anchor fallback: a missing `anchorStart` now falls back to the segment's own `startTime` (then `0`) instead of collapsing toward the timeline origin. Inert at the time of this commit — PASS 2 still backfilled every anchor first, so the fallback was unreachable until 3d-2.
+   - 3d-2 ✅ Done — 2026-06-24 (`f27d557`). Deleted PASS 2 (the character-weight anchor backfill) from `applyAnchorBasedTiming` — under clean-slate re-sync no live path produces an unanchored segment, so it was dead for current inputs. The 3d-1 fallback now safely handles any missing anchor (e.g. a pre-6/18 persisted project) without collapsing it to the origin. Added a regression test for that legacy-project case: fails without the 3d-1 fallback, passes with it. Verified: 6/6 vitest, `tsc --noEmit` clean.
    - 3e ⬜ Not started — simplify handleVoiceoverStaged (remove redundant segment demotion; keep transcriptTokens clear).
 4. Step 5 — headings array-only: headings live in the segments array, never serialized into scene-details text.
 5. Fix Failure B — handleDeleteAsset must clear transcriptTokens / lastTranscribedAssetId / lastTranscribedFileIdentity when the deleted asset is the voiceover (currently only cleared on staging a different file, never on delete; same-file re-upload then skips transcription).
@@ -52,7 +53,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 **Dropped as obsolete under clean-slate:** Step 6 (duration-drag re-anchor) and 4.5a (merge-loop prevention) — their only purpose was preserving edits across re-sync, which clean-slate no longer does.
 
 **Restore tag:** sync-known-good-2026-06-23 (commit a1a326d).
-**Newer reference point:** commit `8523f39` — current `main` HEAD, post 3a+3b+3c (clean-slate sync rebuild complete + dead anchor-aware aligner/skip-guard removed, pushed to `origin/main`).
+**Newer reference point:** commit `f27d557` — current `main` HEAD, post 3a+3b+3c+3d-1+3d-2 (clean-slate sync rebuild complete + dead anchor-aware aligner/skip-guard removed + PASS 2 anchor backfill deleted, pushed to `origin/main`).
 ---
 
 2. **Hard delete segment**
@@ -132,7 +133,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 - **(c) Headings are pure overlays** — no audio/duration splitting; insert/delete absorbs duration via a 50/50 split with neighbors (Heading Round 5). *Caveat — flagged for your review:* headings currently still write a `[HEADING:]` tag into `sceneDetails` text for re-sync matching (Round 7). Fully array-only / "never serialized to sceneDetails" is the stated goal of the open Architecture Shift task, not current behavior.
 - **(d) Transcription cache validity is keyed by file identity, not asset id.** `getFileIdentity(file) = \`${file.name}|${file.size}|${file.lastModified}\`` (`src/services/syncEngine.ts:216`), cached as `Project.lastTranscribedFileIdentity` (`src/types.ts:215`). Necessary because every file-stage event mints a fresh `Asset` id even when the user re-picks the identical file — id/reference equality can't catch a re-stage, but name+size+lastModified can.
 - **(e) `anchorSource` provenance only ever moves one direction.** `'whisper'` = precise audio alignment; `'estimate'` = character-weight approximation that Whisper can still realign later. An anchor may be demoted `whisper → estimate` but is never promoted back, regardless of text changes (enforced by `syncTiming.test.ts`).
-  - *Post-3c follow-up note (2026-06-24):* `anchorSource` is now effectively write-only. It's still written by `parseProjectData`, `applyAnchorBasedTiming`, `distributeSegmentTimes`, and `handleInsertHeading` — but no production code branches on `'whisper'` vs `'estimate'` anymore, since the two consumers that did (the anchor-aware aligner and the Whisper skip-guard) were deleted in 3c. Flagged as a cleanup candidate to revisit after 3d — not actioned now.
+  - *Post-3c follow-up note — closed 2026-06-24 (post-3d-2):* `anchorSource` is confirmed effectively write-only — no production code branches on `'whisper'` vs `'estimate'`. Still written by `parseProjectData`, `applyAnchorBasedTiming` PASS 1, `distributeSegmentTimes`, and `handleInsertHeading` (PASS 2, the other writer, was deleted in 3d-2). Now documented directly in the `anchorSource` doc-comment in `src/types.ts`; no further cleanup planned.
 
 ---
 
