@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-22 |
+| Last updated | 2026-06-24 |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -26,10 +26,40 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
    - Headings live array-only, never serialized to sceneDetails text — fixes problem 1 permanently
    - FILES tab Apply Sync only fires on new file upload — segments array is source of truth post-sync
    - Auto-recalc timing via `applyAnchorBasedTiming()` on any segment/heading mutation — no manual sync clicks needed
+   - Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward. 4.5b repair fix to be reverted (proven regression). Manual edits NOT preserved across re-sync by design (re-sync rare; edits are post-sync). Confirm-dialog + auto-snapshot are the safety net.
+
+---
+### CLEAN-SLATE RE-SYNC — Final Plan (supersedes all prior 4.5a/4.5b/Step 6 work)
+
+**Core principle:** Apply Sync = fresh start. On any new file + Apply Sync, wipe ALL derived state and re-derive everything from the audio. Nothing carried forward — no merge loop, no anchor restore, no frozen-anchor repair. Manual edits (drag/lock) are NOT preserved across re-sync by design; re-sync is rare, edits are post-sync. Safety net = confirm-dialog + auto-snapshot (built with Version Snapshots task).
+
+**Why:** The diagnostic (run this session) proved the bug class is caused entirely by carrying stale state forward — fresh char-weight guesses colliding with restored real anchors, frozen 'whisper' anchors copied forward un-rechecked, and PASS 2.5 blaming the wrong segment. Eliminating carry-forward eliminates the entire bug class at the root.
+
+**Steps:**
+1. Revert 4.5b — remove the PASS 2.5 repair fix (proven regression: fixes ~1 of 4 slivers but corrupts previously-correct segments and fabricates new slivers; verified with vs without in the diagnostic).
+2. Audit + plan clean-slate re-sync — identify everything to delete: the merge loop (App.tsx ~1509-1534), anchor carry-forward/resolveAnchorSource, PASS 2 (dead code) + PASS 2.5, and any stale-state logic. Define the fresh re-derive path (parse → align fresh against audio → done).
+3. Build clean-slate re-sync — Apply Sync wipes derived state, re-derives all segments fresh from audio. One clean path.
+   - 3a ✅ Done (452e1eb) — deleted both merge loops, deleted resolveAnchorSource/getComparableText/getSegmentStableKey, deleted old regression tests 2–8 (only test 1 survived).
+   - 3b ✅ Done — 2026-06-24. New clean-slate regression tests added to `src/services/syncTiming.test.ts` (11-OLD / 14-NEW Civic 11→14 repro, plus a small synthetic stale-anchor-squeeze pair). All green. Found and fixed a real, pre-existing bug along the way (not a clean-slate regression — this code predates clean-slate work): in `alignScenestoTranscript` (`whisperService.ts`), the silence gap-fill step's search radius could reach past a short neighboring segment and steal the silence belonging to the NEXT boundary, collapsing that segment to ~0 width. Fixed by clamping each boundary's search window to its two neighboring segments' own spoken edges. Manually verified on the real Civic 10→14 re-sync in the app: correct widths, aligned timeline, no out-of-order warning.
+   - 3c ⬜ Not started — delete alignScenesToTranscriptAnchorAware; simplify alignSegmentsFromCachedTranscript to always use the plain aligner; remove the Whisper skip-guard.
+   - 3d ⬜ Not started — delete PASS 2 from applyAnchorBasedTiming (dead under clean-slate).
+   - 3e ⬜ Not started — simplify handleVoiceoverStaged (remove redundant segment demotion; keep transcriptTokens clear).
+4. Step 5 — headings array-only: headings live in the segments array, never serialized into scene-details text.
+5. Fix Failure B — handleDeleteAsset must clear transcriptTokens / lastTranscribedAssetId / lastTranscribedFileIdentity when the deleted asset is the voiceover (currently only cleared on staging a different file, never on delete; same-file re-upload then skips transcription).
+6. Regression tests — lock the new clean behavior; the real 10→14 repro (4 new scenes + reworded scene 2) must produce a correct, contiguous, sliver-free timeline. ✅ Satisfied by 3b's new tests above (11-OLD / 14-NEW).
+
+**Dropped as obsolete under clean-slate:** Step 6 (duration-drag re-anchor) and 4.5a (merge-loop prevention) — their only purpose was preserving edits across re-sync, which clean-slate no longer does.
+
+**Restore tag:** sync-known-good-2026-06-23 (commit a1a326d).
+---
 
 2. **Hard delete segment**
    - Bin icon on each segment row in segments tab (same as heading delete) — deletes with confirmation dialog
    - Previous segment absorbs the deleted segment's duration — same as manual `[IMAGE:]` tag removal today
+   - Behavior: deleting a segment removes it and the previous segment absorbs its duration (same as removing an `[IMAGE:]` tag).
+   - Confirm dialog before delete.
+   - Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc, nothing carried forward). To delete permanently, the user removes the tag from the scene doc. Document this clearly so it's expected, not a bug.
+   - Follows clean-slate principle: no special stale-state preservation.
 
 3. **Version snapshots system**
    - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
@@ -41,6 +71,12 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
    - Each row shows: name/timestamp, restore (↻), rename (✏️), delete (🗑) — lock icon on Entry 1 hides delete
    - Restore confirmation: "Restore this version? Current state will be saved as 'Before restore — [timestamp]' first." (auto-safety snapshot)
    - On restore: Entry 2 immediately updates to match restored state, user continues from there
+   - **OPEN DECISIONS (decide before building):**
+     1. Asset restoration on snapshot restore — Design A vs B:
+        - Design A: snapshot stores asset LIST only. Restoring after deleting assets = missing/broken assets (deleted blobs are gone). Lower disk use.
+        - Design B: deletes are snapshot-protected — asset blobs persist as long as any snapshot references them. Restoring brings back ALL assets fully working. Higher disk use.
+        - DECISION PENDING — owner will choose later. Default to neither until decided.
+     2. Scene-doc + state on restore is a FULL REWIND (not a merge): restoring rewinds the entire project to that snapshot's exact state (old scene doc, edits, timings). Current state is auto-saved as "Before restore — [timestamp]" first. New scene-doc differences are set aside, not merged.
 
 ---
 
@@ -68,6 +104,8 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 - **Video preview jumps to near-start of current segment on resize drag release** — audio position is unaffected and exports are correct. Three fix approaches attempted (isResizing prop, isResizingRef, stable useCallback ref) — all blocked by the same root cause: `currentSegment` `useMemo` re-resolves with new `startTime`s in the same render that clears the resize guard. Deferred until a larger PreviewStage refactor makes a DOM-direct seek approach feasible.
 
 - **Orphaned IndexedDB blob on audio re-stage** — re-staging audio writes a new IndexedDB blob via `putAsset` with no content dedup; the `oldIdx` splice in `handleApplySyncFromFiles` removes the asset from `project.assets` without calling `deleteAsset`, leaving an orphaned blob. Disk space only — no functional impact; violates the asset-removal invariant documented in `CLAUDE.md`'s Persistence Model section. Future fix: pair the splice with `deleteAsset(projectId, oldId)`.
+
+- **Clipped search window when a new scene is inserted next to an "absorbed" boundary** — `alignScenesToTranscriptAnchorAware` (`src/services/whisperService.ts`) bounds a new/estimate segment's text-matching search window using its nearest surviving whisper-anchored neighbors' `anchorStart` values. If one of those neighbors' anchors was itself positioned by an *earlier* sync's gap-fill pass absorbing audio for content that had no bracket at the time, the resulting window can be narrower than the new segment's own word count — forcing `alignScenestoTranscript`'s sliding-window match to lock onto the wrong (preceding) words instead of the new segment's real content. Confirmed via real-scene-text repro during Step 4.5b investigation (2026-06-23): inserting a new `012_tape_deck` bracket between unchanged `011_cloth_seats` and `013_cd_adapter` — where `013`'s carried-forward anchor had pre-absorbed the (then-unbracketed) "tape deck" audio from the original sync — produced a 0.225s sliver on `011_cloth_seats` and misplaced `012`'s content. Not fixed yet. Decision on whether this folds into the Step 5 (headings array-only) work or needs its own fix is deferred until after Step 5 lands.
 
 ---
 
