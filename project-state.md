@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-24 |
-| Current HEAD | `8a0be46` on `main`, fully pushed to `origin/main`. 3a + 3b complete (clean-slate sync rebuild). |
+| Current HEAD | `8523f39` on `main`, fully pushed to `origin/main`. 3a + 3b + 3c complete (clean-slate sync rebuild; dead carry-forward code removed). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -42,7 +42,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 3. Build clean-slate re-sync — Apply Sync wipes derived state, re-derives all segments fresh from audio. One clean path.
    - 3a ✅ Done (452e1eb) — deleted both merge loops, deleted resolveAnchorSource/getComparableText/getSegmentStableKey, deleted old regression tests 2–8 (only test 1 survived).
    - 3b ✅ Done — 2026-06-24. New clean-slate regression tests added to `src/services/syncTiming.test.ts` (11-OLD / 14-NEW Civic 11→14 repro, plus a small synthetic stale-anchor-squeeze pair). All green. Found and fixed a real, pre-existing bug along the way (not a clean-slate regression — this code predates clean-slate work): in `alignScenestoTranscript` (`whisperService.ts`), the silence gap-fill step's search radius could reach past a short neighboring segment and steal the silence belonging to the NEXT boundary, collapsing that segment to ~0 width. Fixed by clamping each boundary's search window to its two neighboring segments' own spoken edges. Manually verified on the real Civic 10→14 re-sync in the app: correct widths, aligned timeline, no out-of-order warning.
-   - 3c ⬜ Not started — delete alignScenesToTranscriptAnchorAware; simplify alignSegmentsFromCachedTranscript to always use the plain aligner; remove the Whisper skip-guard.
+   - 3c ✅ Done — 2026-06-24 (`5da64df` = 3c-1, `8523f39` = 3c-2). Deleted `alignScenesToTranscriptAnchorAware` and collapsed `alignSegmentsFromCachedTranscript`'s caller branch to always use the plain aligner (`alignScenestoTranscript`); separately removed the dead Whisper skip-guard in `startTranscription`. Both were reachable by `tsc` but unreachable at runtime under clean-slate (every caller passes all-`'estimate'` or empty segments). Verified: 5/5 vitest, `tsc --noEmit` clean, manual re-sync in the Tauri app unchanged (contiguous, no slivers, no out-of-order warnings).
    - 3d ⬜ Not started — delete PASS 2 from applyAnchorBasedTiming (dead under clean-slate).
    - 3e ⬜ Not started — simplify handleVoiceoverStaged (remove redundant segment demotion; keep transcriptTokens clear).
 4. Step 5 — headings array-only: headings live in the segments array, never serialized into scene-details text.
@@ -52,7 +52,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 **Dropped as obsolete under clean-slate:** Step 6 (duration-drag re-anchor) and 4.5a (merge-loop prevention) — their only purpose was preserving edits across re-sync, which clean-slate no longer does.
 
 **Restore tag:** sync-known-good-2026-06-23 (commit a1a326d).
-**Newer reference point:** commit `8a0be46` — current `main` HEAD, post 3a+3b (clean-slate sync rebuild complete, pushed to `origin/main`).
+**Newer reference point:** commit `8523f39` — current `main` HEAD, post 3a+3b+3c (clean-slate sync rebuild complete + dead anchor-aware aligner/skip-guard removed, pushed to `origin/main`).
 ---
 
 2. **Hard delete segment**
@@ -107,7 +107,7 @@ All foundational/export/desktop/sync work is shipped and stable. Active work is 
 
 - **Orphaned IndexedDB blob on audio re-stage** — re-staging audio writes a new IndexedDB blob via `putAsset` with no content dedup; the `oldIdx` splice in `handleApplySyncFromFiles` removes the asset from `project.assets` without calling `deleteAsset`, leaving an orphaned blob. Disk space only — no functional impact; violates the asset-removal invariant documented in `CLAUDE.md`'s Persistence Model section. Future fix: pair the splice with `deleteAsset(projectId, oldId)`.
 
-- **Clipped search window when a new scene is inserted next to an "absorbed" boundary** — `alignScenesToTranscriptAnchorAware` (`src/services/whisperService.ts`) bounds a new/estimate segment's text-matching search window using its nearest surviving whisper-anchored neighbors' `anchorStart` values. If one of those neighbors' anchors was itself positioned by an *earlier* sync's gap-fill pass absorbing audio for content that had no bracket at the time, the resulting window can be narrower than the new segment's own word count — forcing `alignScenestoTranscript`'s sliding-window match to lock onto the wrong (preceding) words instead of the new segment's real content. Confirmed via real-scene-text repro during Step 4.5b investigation (2026-06-23): inserting a new `012_tape_deck` bracket between unchanged `011_cloth_seats` and `013_cd_adapter` — where `013`'s carried-forward anchor had pre-absorbed the (then-unbracketed) "tape deck" audio from the original sync — produced a 0.225s sliver on `011_cloth_seats` and misplaced `012`'s content. Not fixed yet. Decision on whether this folds into the Step 5 (headings array-only) work or needs its own fix is deferred until after Step 5 lands.
+- ~~**Clipped search window when a new scene is inserted next to an "absorbed" boundary**~~ — ✅ **RESOLVED.** Originally attributed to `alignScenesToTranscriptAnchorAware` (`src/services/whisperService.ts`), which bounded a new/estimate segment's text-matching search window using its nearest surviving whisper-anchored neighbors' `anchorStart` values. If one of those neighbors' anchors was itself positioned by an *earlier* sync's gap-fill pass absorbing audio for content that had no bracket at the time, the resulting window could be narrower than the new segment's own word count — forcing `alignScenestoTranscript`'s sliding-window match to lock onto the wrong (preceding) words instead of the new segment's real content. Confirmed via real-scene-text repro during Step 4.5b investigation (2026-06-23): inserting a new `012_tape_deck` bracket between unchanged `011_cloth_seats` and `013_cd_adapter` — where `013`'s carried-forward anchor had pre-absorbed the (then-unbracketed) "tape deck" audio from the original sync — produced a 0.225s sliver on `011_cloth_seats` and misplaced `012`'s content. **Fixed in `8615639`** (clamped each boundary's gap-fill search window to its two neighboring segments' own spoken edges — the bug actually lived in the shared `alignScenestoTranscript` gap-fill logic, not anything unique to the anchor-aware path it was originally attributed to). The anchor-aware function this entry originally named was itself later deleted in clean-slate step 3c (2026-06-24, commits `5da64df`/`8523f39`).
 
 ---
 
@@ -132,6 +132,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 - **(c) Headings are pure overlays** — no audio/duration splitting; insert/delete absorbs duration via a 50/50 split with neighbors (Heading Round 5). *Caveat — flagged for your review:* headings currently still write a `[HEADING:]` tag into `sceneDetails` text for re-sync matching (Round 7). Fully array-only / "never serialized to sceneDetails" is the stated goal of the open Architecture Shift task, not current behavior.
 - **(d) Transcription cache validity is keyed by file identity, not asset id.** `getFileIdentity(file) = \`${file.name}|${file.size}|${file.lastModified}\`` (`src/services/syncEngine.ts:216`), cached as `Project.lastTranscribedFileIdentity` (`src/types.ts:215`). Necessary because every file-stage event mints a fresh `Asset` id even when the user re-picks the identical file — id/reference equality can't catch a re-stage, but name+size+lastModified can.
 - **(e) `anchorSource` provenance only ever moves one direction.** `'whisper'` = precise audio alignment; `'estimate'` = character-weight approximation that Whisper can still realign later. An anchor may be demoted `whisper → estimate` but is never promoted back, regardless of text changes (enforced by `syncTiming.test.ts`).
+  - *Post-3c follow-up note (2026-06-24):* `anchorSource` is now effectively write-only. It's still written by `parseProjectData`, `applyAnchorBasedTiming`, `distributeSegmentTimes`, and `handleInsertHeading` — but no production code branches on `'whisper'` vs `'estimate'` anymore, since the two consumers that did (the anchor-aware aligner and the Whisper skip-guard) were deleted in 3c. Flagged as a cleanup candidate to revisit after 3d — not actioned now.
 
 ---
 

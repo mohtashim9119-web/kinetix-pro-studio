@@ -32,11 +32,8 @@ src/
                      #   parseProjectData() still in App.tsx. Anchor-based gap-fill preserves
                      #   surviving segment positions across re-sync; PASS 2 tags estimated
                      #   anchors as 'estimate' so Whisper can realign them later.
-    whisperService.ts # alignScenesToTranscript() sliding-window text matcher; applyHeadingTiming() —
+    whisperService.ts # alignScenestoTranscript() sliding-window text matcher; applyHeadingTiming() —
                      #   gives [HEADING:] segments fixed 1.0s, 50/50 neighbor absorption, lock-aware.
-                     #   alignScenesToTranscriptAnchorAware() — anchor-respecting variant: segments
-                     #   with anchorSource='whisper' are treated as fixed positions; only
-                     #   'estimate'-sourced segments are realigned within their containing gap.
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
@@ -63,8 +60,7 @@ src/
                              #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes, applyHeadingTiming. Generation counter + AbortController
-                             #   for cancellation. Skip-guard: if every segment has anchorSource='whisper'
-                             #   AND audio is unchanged, Whisper is skipped entirely — anchors are authoritative.
+                             #   for cancellation.
   components/
     BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
@@ -200,19 +196,21 @@ Each VideoSegment carries two anchor fields that drive re-sync behavior:
   means precise audio alignment; 'estimate' means character-weight
   approximation.
 
-On re-sync the stableKey loop (in finalizeSync and handleApplySyncFromFiles)
-restores anchors from previous segments matched by assetId or heading text.
-applyAnchorBasedTiming then recomputes startTime/duration from anchors:
+Under clean-slate re-sync, anchors are never restored from previous
+segments — the stableKey merge loop that used to do this (matching by
+assetId or heading text) was deleted in step 3a (commit 452e1eb); every
+anchor is re-derived fresh each sync from parseProjectData's character-weight
+estimates. applyAnchorBasedTiming then recomputes startTime/duration from anchors:
 each surviving segment occupies [its anchor, next anchor], and the last
 segment extends to audioDuration. Locked segments preserve their durations
 EXCEPT when a removal gap opens immediately after — they expand to absorb
 the freed time (one-directional lock exemption).
 
-The Whisper skip-guard in useWhisper.ts fires only when every segment has
-'whisper' source AND audio is unchanged. Otherwise Whisper runs: if any
-'whisper' anchors exist, the anchor-aware aligner treats them as fixed and
-realigns only 'estimate' segments within the gaps; if none exist (fresh
-project), the original full aligner runs.
+Whisper re-sync now always runs `alignScenestoTranscript` unconditionally.
+The Whisper skip-guard and the anchor-aware aligner described in earlier
+revisions of this doc were deleted in clean-slate step 3c (commits
+5da64df, 8523f39) — under clean-slate nothing is carried forward, so no
+segment can ever reach Whisper alignment already tagged anchorSource='whisper'.
 
 Heading segments (isHeading) participate in the same anchor system.
 handleInsertHeading auto-names each heading uniquely ("Heading 1",
@@ -407,5 +405,5 @@ All dead dependencies removed. No remaining items.
 | Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |
 | Phase 6.5 — Bundle ffmpeg sidecar | ✅ Done — 2026-05-27 | c567d5e — evermeet.cx 8.1.1 static build (76 MB, system-libs-only); tauri-build copies to target/debug/ffmpeg; sidecar("ffmpeg") at runtime; portability verified (export works with system ffmpeg disabled) |
 | Divider panel + preview height fixes | ✅ Done — 2026-06-17 | previewHeight initializer from viewport, panel toggle clamps via useEffect (310ms delay), timeline floor 140px enforced during drag and on panel toggle |
-| Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts |
+| Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts (anchor-aware aligner + skip-guard later removed in clean-slate 3c, 2026-06-24, commits 5da64df/8523f39) |
 | Heading system complete | ✅ Done — 2026-06-19 | 9 rounds; isHeading flag, headingConfig, "+ Add Heading" UI, × delete with anchor restoration; an audio-pause/duration-splitting approach was tried and rejected entirely — pure overlay model with 50/50 absorption shipped instead |
