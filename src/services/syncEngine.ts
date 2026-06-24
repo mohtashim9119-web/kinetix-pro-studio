@@ -131,8 +131,8 @@ export function applyAnchorBasedTiming(
     const seg = out[i];
     if (!seg) continue;
     const isLast = i === out.length - 1;
-    const nextAnchor = isLast ? audioDuration : (out[i + 1]?.anchorStart ?? audioDuration);
-    const anchorStart = seg.anchorStart ?? 0;
+    const nextAnchor = isLast ? audioDuration : (out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? audioDuration);
+    const anchorStart = seg.anchorStart ?? seg.startTime ?? 0;
 
     if (seg.locked) {
       seg.startTime = Number(anchorStart.toFixed(3));
