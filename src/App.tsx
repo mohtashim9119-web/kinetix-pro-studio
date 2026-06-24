@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -1243,6 +1243,10 @@ export default function App() {
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
     const allAssets: Asset[] = [...projectRef.current.assets];
     let newVoiceoverId = projectRef.current.voiceoverId;
+    // Snapshot of pre-sync segments — headings are carried forward from this
+    // array (Step 5.1.3). Captured now, before any await, so it can't observe
+    // state this same sync has already committed.
+    const previousSegments = projectRef.current.segments;
 
     if (staged.voiceoverFile) {
       const pending = pendingVoiceoverRef.current;
@@ -1293,17 +1297,26 @@ export default function App() {
     }
 
     // 5. Parse project data with the fresh, complete data
-    const newSegments = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
+    const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
-    // Clean-slate: no carry-forward from previous segments. Every re-sync
-    // re-derives everything fresh from the scene doc + audio.
+    // Clean-slate: no carry-forward from previous segments, EXCEPT headings —
+    // the array (not the [HEADING:] tag) is now their source of truth across
+    // re-sync (Step 5.1.3); see the split below.
 
     // Never wipe existing segments if parse produced nothing
-    if (newSegments.length === 0 && projectRef.current.segments.length > 0) {
+    if (newSegmentsRaw.length === 0 && projectRef.current.segments.length > 0) {
       console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
       setIsProcessing(false);
       return;
     }
+
+    // Strip tag-derived headings before any timing pass runs; the PREVIOUS
+    // array's headings are reinserted once, after both branches converge
+    // below — never before (running reinsertHeadings earlier corrupts
+    // duration via a stale-anchor squeeze the next applyAnchorBasedTiming
+    // pass would apply).
+    const contentOnly = newSegmentsRaw.filter(s => !s.isHeading);
+    const headingAnchors = computeHeadingAnchors(previousSegments);
 
     // 7. Option C — resolve final timing BEFORE the commit, never after.
     //    If Whisper tokens are already cached for this exact voiceover (the
@@ -1316,10 +1329,10 @@ export default function App() {
               && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
-    let finalTimedSegments: VideoSegment[];
+    let finalTimedContent: VideoSegment[];
     if (cachedTokensReady) {
-      const anchorTimed = applyAnchorBasedTiming(newSegments, audioDuration);
-      finalTimedSegments = await alignFromCache(
+      const anchorTimed = applyAnchorBasedTiming(contentOnly, audioDuration);
+      finalTimedContent = await alignFromCache(
         voiceoverAsset!,
         anchorTimed,
         projectRef.current.transcriptTokens!,
@@ -1335,10 +1348,15 @@ export default function App() {
           { voiceoverAssetId: voiceoverAsset.id },
         );
       }
-      const anchorTimedFallback = applyAnchorBasedTiming(newSegments, audioDuration);
-      finalTimedSegments = applyHeadingTiming(anchorTimedFallback);
+      const anchorTimedFallback = applyAnchorBasedTiming(contentOnly, audioDuration);
+      finalTimedContent = applyHeadingTiming(anchorTimedFallback);
     }
 
+    // Reinsert array-sourced headings onto the FINAL, fully-timed content
+    // array — the last timing-related step. Nothing downstream reads
+    // anchorStart again, so reinsertHeadings' duration math can't be
+    // clobbered or double-applied.
+    const finalTimedSegments = reinsertHeadings(finalTimedContent, headingAnchors);
     const committedSegments = autoMatchSegments(allAssets, finalTimedSegments);
 
     // 8. Single atomic state update — segments are already final.
