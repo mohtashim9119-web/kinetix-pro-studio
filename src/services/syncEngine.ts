@@ -4,7 +4,6 @@
  */
 
 import { Asset, VideoSegment } from '../types';
-import { textMateriallyChanged } from './whisperService';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
@@ -153,56 +152,6 @@ export function applyAnchorBasedTiming(
   }
 
   return out;
-}
-
-/**
- * Derives a stable identity key for a segment across re-syncs.
- * Fallback chain:
- *   1. asset:${assetId}              — image/video segments (most stable; assetId never changes)
- *   2. heading:${text}               — heading-only title cards (content-keyed)
- *   3. order:${order}|text:${prefix} — text-only segments; first 40 chars of text added so a
- *                                       segment retains its lock state even when its order index
- *                                       shifts due to an adjacent scene insert or remove
- */
-export function getSegmentStableKey(s: VideoSegment): string {
-  if (s.assetId) return `asset:${s.assetId}`;
-  const headingText = s.headingConfig?.text ?? s.heading;
-  if (s.isHeading || headingText) return `heading:${(headingText ?? '').trim().toLowerCase()}`;
-  return `order:${s.order}|text:${s.text.slice(0, 40)}`;
-}
-
-// Same heading-text precedence as getSegmentStableKey, so the comparison below
-// looks at exactly the text that identifies the segment, not just s.text.
-function getComparableText(s: VideoSegment): string {
-  const headingText = s.headingConfig?.text ?? s.heading;
-  return (s.isHeading || headingText) ? (headingText ?? '') : s.text;
-}
-
-/**
- * Resolves the anchorSource to carry forward onto a synced segment matched
- * to a previous one by stable key. A carried 'whisper' anchor is demoted to
- * 'estimate' when the segment's text materially changed since that anchor
- * was set — the old audio alignment may no longer correspond to the new
- * content, so the aligner re-derives it on the next Whisper pass. Segments
- * with no previous match (brand new this sync) keep their freshly-parsed
- * anchorSource untouched.
- *
- * In practice this only fires for asset-keyed matches: heading-keyed matches
- * can't reach the 'whisper' + text-changed branch because the heading text
- * IS the stable key (getSegmentStableKey) — a changed heading produces a
- * different key, so prev is undefined and this function is never reached
- * with mismatched heading text.
- */
-export function resolveAnchorSource(
-  prev: VideoSegment | undefined,
-  s: VideoSegment,
-): 'whisper' | 'estimate' | undefined {
-  if (!prev) return s.anchorSource;
-  if (prev.anchorSource !== 'whisper') return prev.anchorSource;
-
-  return textMateriallyChanged(getComparableText(prev), getComparableText(s))
-    ? 'estimate'
-    : 'whisper';
 }
 
 /**
