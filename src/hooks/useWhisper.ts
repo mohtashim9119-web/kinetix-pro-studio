@@ -2,7 +2,6 @@ import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
   alignScenestoTranscript,
-  alignScenesToTranscriptAnchorAware,
   distributeSegmentTimes,
   applyHeadingTiming,
 } from '../services/whisperService';
@@ -33,10 +32,7 @@ async function alignSegmentsFromCachedTranscript(
   durationSecs: number,
 ): Promise<VideoSegment[]> {
   const silences = await fetchAndDetectSilences(audioAsset);
-  const hasAnyWhisperAnchor = segments.some(s => s.anchorSource === 'whisper');
-  const alignments = hasAnyWhisperAnchor
-    ? alignScenesToTranscriptAnchorAware(segments, tokens, silences, durationSecs)
-    : alignScenestoTranscript(segments, tokens, silences);
+  const alignments = alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
