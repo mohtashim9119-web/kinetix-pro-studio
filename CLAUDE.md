@@ -8,7 +8,7 @@
 
 Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite frontend). Workflow:
 1. User provides a script (text), scene details (bracketed asset names like `[IMAGE: hero.jpg]`), and a voiceover audio file
-2. A 3-step sync wizard maps script → scenes → uploaded assets, proportioning segment durations to word count
+2. Apply Sync (the single sync entry point) maps script → scenes → uploaded assets in one pass, proportioning segment durations to word count
 3. User edits segments on a visual timeline (transitions, overlays, filters, animations)
 4. Exports via native ffmpeg (Tauri sidecar) — full H.264/AAC MP4 with overlays, filters, and transitions rendered from canvas
 
@@ -28,7 +28,9 @@ src/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
-    syncEngine.ts    # isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming()
+    syncEngine.ts    # isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming(),
+                     #   computeHeadingAnchors()/reinsertHeadings() — carry headings forward
+                     #   across re-sync from the segments array (Step 5).
                      #   parseProjectData() still in App.tsx. PASS 2 (character-weight anchor
                      #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
                      #   back to a segment's own startTime for any missing anchor (3d-1).
@@ -71,8 +73,6 @@ src/
     SegmentEditorPanel.tsx # Segment list + per-segment controls
     SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
     StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
-    SyncReviewModal.tsx   # Sync mapping review modal — lazy-loaded via React.lazy
-    SyncWizard.tsx        # 3-step sync header buttons + validation
     Timeline.tsx          # Scrollable track + playhead + zoom
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
@@ -117,7 +117,7 @@ project: Project {
 }
 ```
 
-`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. Extracted to `src/services/syncEngine.ts`.
+`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Extracted to `src/services/syncEngine.ts`.
 
 Playback is driven by a `setInterval` (100ms tick) that advances `currentTime`, which `currentSegment` is derived from via `useMemo`.
 
@@ -222,6 +222,15 @@ insertion atomically: returns the absorbed duration to both neighbors
 (50/50 split) and restores next.anchorStart to prev.anchorStart +
 prev.duration — the position next would occupy had the heading never
 existed.
+
+Headings are array-only since Step 5 (done 2026-06-24): the segments
+array is the sole source of truth, never serialized into sceneDetails
+text. On re-sync, computeHeadingAnchors (syncEngine.ts) captures each
+heading's position relative to its content neighbors from the previous
+segments array, and reinsertHeadings places it onto the freshly re-synced
+content with the same 50/50 neighbor-absorption math. The [HEADING:]
+scene-text tag is no longer written (5.3) or read (5.4) —
+parseProjectData recognize-and-skips it as a scene boundary only.
 
 ---
 
