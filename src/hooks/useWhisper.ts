@@ -102,25 +102,6 @@ export function useWhisper(): UseWhisperApi {
         return true;
       };
 
-      // Hybrid skip-guard: if every segment already has an anchor and the audio
-      // hasn't changed, anchors from the previous sync are authoritative. The
-      // applyAnchorBasedTiming pass in App.tsx has already produced correct
-      // startTime/duration values; running Whisper now would only overwrite them
-      // with a fresh full-audio alignment (which is the reported bug).
-      //
-      // This guard intentionally does NOT trigger on the audio-change path —
-      // that case falls through to the full Whisper run below, which is correct.
-      const allWhisperAnchored = segments.length > 0
-        && segments.every(s => s.anchorSource === 'whisper');
-      const audioUnchanged = project.lastTranscribedAssetId === audioAsset.id
-        && Array.isArray(project.transcriptTokens)
-        && project.transcriptTokens.length > 0;
-
-      if (allWhisperAnchored && audioUnchanged) {
-        console.log('[whisper] Skipping — all segments have Whisper anchors, audio unchanged');
-        return;
-      }
-
       // Option A: skip Whisper if audio hasn't changed
       const alreadyTranscribed =
         project.lastTranscribedAssetId === audioAsset.id &&
