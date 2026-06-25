@@ -111,13 +111,13 @@ function ReviewMappingRow({ segment: seg, index: idx, assets, onUpdateSegment, o
   const meta = `${seg.duration.toFixed(1)}s · ${formatTime(seg.startTime)} — ${formatTime(seg.startTime + seg.duration)}`;
 
   return (
-    <div className="flex h-40 rounded-xl border border-[#2A2A2A] bg-[#1A1A1A] overflow-hidden">
-      {/* Left — large thumbnail */}
-      <div className="w-[45%] flex-shrink-0 h-full bg-[#0D0D0D] flex items-center justify-center overflow-hidden">
+    <div className="flex rounded-xl border border-[#2A2A2A] bg-[#1A1A1A] overflow-hidden">
+      {/* Left — fixed 16:9 thumbnail; height follows the right column's content */}
+      <div className="aspect-video flex-shrink-0 rounded-l-xl overflow-hidden bg-[#0D0D0D] flex items-center justify-center">
         {seg.isHeading
           ? <Heading1 size={40} className="text-[#F27D26]/70" />
           : asset?.url && asset.type === 'image'
-          ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+          ? <img src={asset.url} className="w-full h-full object-cover rounded-l-xl" alt="" />
           : asset?.type === 'video'
           ? <Video size={40} className="text-blue-400" />
           : isMissing
@@ -126,19 +126,19 @@ function ReviewMappingRow({ segment: seg, index: idx, assets, onUpdateSegment, o
         }
       </div>
 
-      {/* Right — label/time + asset picker + stock search */}
-      <div className={`flex-1 flex flex-col p-4 ${seg.isHeading ? 'justify-center' : 'justify-between'}`}>
+      {/* Right — label/time + asset picker + stock search, equally spaced */}
+      <div className={`flex-1 flex flex-col gap-3 p-4 ${seg.isHeading ? 'justify-center' : ''}`}>
         <div>
           <p className="text-[13px] font-bold text-white truncate">{label}</p>
-          <p className="text-[10px] text-gray-500 mt-1">{meta}</p>
+          <p className="text-sm text-white/80 mt-1">{meta}</p>
         </div>
 
         {!seg.isHeading && (
-          <div className="space-y-2">
+          <>
             <select
               value={seg.assetId ?? ''}
               onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value })}
-              className="w-full bg-[#2A2A2A] border border-[#3A3A3A] text-white rounded-lg py-2 px-3 text-[11px] font-medium outline-none focus:border-[#F27D26] cursor-pointer"
+              className="w-full bg-[#2A2A2A] border border-[#3A3A3A] text-white rounded-lg py-2.5 px-3 text-sm font-medium outline-none focus:border-[#F27D26] cursor-pointer"
             >
               <option value="">No Asset</option>
               {assets.map(a => (
@@ -147,11 +147,11 @@ function ReviewMappingRow({ segment: seg, index: idx, assets, onUpdateSegment, o
             </select>
             <button
               onClick={() => onOpenStockSearch(seg.id)}
-              className="w-full flex items-center justify-center gap-2 py-2 border border-[#3A3A3A] text-white/70 hover:text-white hover:border-white/50 rounded-lg text-[11px] font-bold uppercase tracking-widest transition-colors"
+              className="w-full flex items-center justify-center gap-2 py-2.5 border border-[#3A3A3A] text-white/70 hover:text-white hover:border-white/50 rounded-lg text-sm font-bold uppercase tracking-widest transition-colors"
             >
               <Search size={13} /> Search Stock Footage
             </button>
-          </div>
+          </>
         )}
       </div>
     </div>
