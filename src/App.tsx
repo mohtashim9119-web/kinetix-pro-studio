@@ -277,7 +277,7 @@ const parseProjectData = async (
   for (const [idx, scene] of scenes.entries()) {
     let text = scene.description.trim();
 
-    const isHeadingTag = scene.tag.toUpperCase().includes('HEADING');
+    const isHeadingTag = /^\[HEADING\s*:/i.test(scene.tag);
     if (isHeadingTag) continue; // still a scene boundary (TAG_REGEX), but headings live only in the segments array now — produce no segment
 
     if (!text) {
