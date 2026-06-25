@@ -2565,8 +2565,10 @@ export default function App() {
         <ReviewMappingModal
           segments={project.segments}
           assets={project.assets}
+          globalOverlayConfig={project.globalOverlayConfig}
           onClose={() => setShowReviewMapping(false)}
           onUpdateSegment={updateSegment}
+          onUpdateSegmentOverlay={updateSegmentOverlay}
           onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
         />
       )}
