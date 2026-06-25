@@ -1207,7 +1207,14 @@ export default function App() {
         // voiceoverId) whenever a re-staged file happened to share a name with
         // an already-committed asset.
         const oldIdx = allAssets.findIndex(a => a.id === projectRef.current.voiceoverId);
-        if (oldIdx !== -1) allAssets.splice(oldIdx, 1);
+        const oldAsset = allAssets[oldIdx];
+        if (oldAsset) {
+          allAssets.splice(oldIdx, 1);
+          URL.revokeObjectURL(oldAsset.url);
+          deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
+            console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
+          );
+        }
         allAssets.push(asset);
         newVoiceoverId = asset.id;
         // The ephemeral asset is now a real, committed one — forget the
