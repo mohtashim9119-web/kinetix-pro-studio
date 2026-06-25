@@ -23,10 +23,10 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 ## Active Tasks
 
 1. **Architecture shift** — ✅ **COMPLETE — 2026-06-24 (Step 7, commit `254ef1b`)**
-   - Scene editor becomes read-only after first sync — no more manual text edits causing sync corruption
+   - **NOT BUILT AS DESCRIBED — SUPERSEDED** (audited 2026-06-25): no `readOnly`/disabled gate exists on the Scene Details editor — `src/components/DropZonePanel.tsx:760` lets the user re-enter edit mode at any time; `:421` only auto-closes the edit view right after a sync completes, it doesn't lock anything. The corruption problem this bullet targeted was solved by a different mechanism instead — see the clean-slate re-sync + confirm-dialog/auto-snapshot bullet below. Edits remain possible; they're just not preserved across re-sync.
    - ✅ Done (Step 5, 2026-06-24) — Headings live array-only, never serialized to sceneDetails text — fixes problem 1 permanently
-   - FILES tab Apply Sync only fires on new file upload — segments array is source of truth post-sync
-   - Auto-recalc timing via `applyAnchorBasedTiming()` on any segment/heading mutation — no manual sync clicks needed
+   - ✅ Done — verified 2026-06-25: `DropZonePanel.tsx`'s `isStagedEmpty` gate (`:581-582`) disables the Apply Sync button (`:906`) unless a script/scene/voiceover/asset file is newly staged; comment at `:577-580` confirms this is an intentional invariant, not an accident.
+   - **STATUS UNVERIFIED — PARTIALLY TRUE** (audited 2026-06-25): `applyAnchorBasedTiming()` does run on lock toggle (`src/App.tsx:776`), heading insert (`:874`), and heading delete (`:927`), plus inside the sync pipeline itself. But the timeline duration drag-resize path (`:2048-2146`) recalculates via a separate `applyDurationChange`/`computeDragCascade` mechanism (`:619`), not `applyAnchorBasedTiming()` — so "any segment/heading mutation" overstates current behavior.
    - Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward. 4.5b repair fix reverted (proven regression — removed via commit 452e1eb, the same commit as step 3a below). Manual edits NOT preserved across re-sync by design (re-sync rare; edits are post-sync). Confirm-dialog + auto-snapshot are the safety net.
 
 ---

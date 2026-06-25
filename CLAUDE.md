@@ -35,7 +35,7 @@ src/
                      #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
                      #   back to a segment's own startTime for any missing anchor (3d-1).
     whisperService.ts # alignScenestoTranscript() sliding-window text matcher; applyHeadingTiming() —
-                     #   gives [HEADING:] segments fixed 1.0s, 50/50 neighbor absorption, lock-aware.
+                     #   gives heading segments (isHeading) fixed 1.0s, 50/50 neighbor absorption, lock-aware.
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
@@ -117,7 +117,7 @@ project: Project {
 }
 ```
 
-`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Extracted to `src/services/syncEngine.ts`.
+`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Still defined in `src/App.tsx` — only the fuzzy-matching and anchor-timing helpers (`isFuzzyMatch`, `findAssetByContext`, `applyAnchorBasedTiming`, the heading-anchor helpers) have been extracted to `src/services/syncEngine.ts`.
 
 Playback is driven by a `setInterval` (100ms tick) that advances `currentTime`, which `currentSegment` is derived from via `useMemo`.
 
