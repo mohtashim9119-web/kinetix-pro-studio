@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { StockResult } from './services/stockService';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings } from './services/syncEngine';
+import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, stealDurationFromNeighbors, giveDurationToNeighbors } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -790,87 +790,65 @@ export default function App() {
       const segs = prev.segments;
       const insertAt = afterIndex + 1; // -1 → 0 (prepend); i → i+1 (after segment i)
       const HEADING_DUR = HEADING_DEFAULT_DURATION; // 1.0 s
-      const HALF = HEADING_DUR / 2;                // 0.5 s each side
-      const MIN_DUR = 0.1;
-
-      // Work on a mutable copy so we can adjust neighbor durations.
-      const draft = segs.map(s => ({ ...s }));
-
-      const prevSeg = draft[insertAt - 1] as typeof draft[number] | undefined;
-      const nextSeg = draft[insertAt] as typeof draft[number] | undefined;
 
       // Steal time from both neighbors. Locked segments are still absorbed — insertion
       // is a deliberate user action. We warn but do not skip.
-      let prevSteal = 0;
-      let nextSteal = 0;
-
-      if (!prevSeg && !nextSeg) {
-        // Empty timeline — heading just takes 1.0 s of new time, that's fine.
-      } else if (!prevSeg) {
-        // Prepend: take full 1.0 s from next segment.
-        nextSteal = Math.min(HEADING_DUR, (nextSeg!.duration) - MIN_DUR);
-        if (nextSeg?.locked) console.warn('[handleInsertHeading] absorbing from locked segment (next)');
-      } else if (!nextSeg) {
-        // Append: take full 1.0 s from prev segment.
-        prevSteal = Math.min(HEADING_DUR, (prevSeg.duration) - MIN_DUR);
-        if (prevSeg.locked) console.warn('[handleInsertHeading] absorbing from locked segment (prev)');
-      } else {
-        // Middle: try HALF from each; spill remainder to the other.
-        const prevAvail = Math.max(0, prevSeg.duration - MIN_DUR);
-        const nextAvail = Math.max(0, nextSeg.duration - MIN_DUR);
-        prevSteal = Math.min(HALF, prevAvail);
-        const remaining = HEADING_DUR - prevSteal;
-        nextSteal = Math.min(remaining, nextAvail);
-        const stillRemaining = HEADING_DUR - prevSteal - nextSteal;
-        if (stillRemaining > 0) {
-          // spill back to prev if next was short
-          prevSteal += Math.min(stillRemaining, prevAvail - prevSteal);
-        }
-        if (prevSeg.locked || nextSeg?.locked) {
-          console.warn('[handleInsertHeading] absorbing from locked segment(s)');
-        }
+      const prevSeg = segs[insertAt - 1];
+      const nextSeg = segs[insertAt];
+      if (prevSeg?.locked || nextSeg?.locked) {
+        console.warn('[handleInsertHeading] absorbing from locked segment(s)');
       }
 
-      const actualDur = Number((prevSteal + nextSteal).toFixed(3)) || HEADING_DUR;
-
-      if (prevSeg) prevSeg.duration = Number((prevSeg.duration - prevSteal).toFixed(3));
-      if (nextSeg) nextSeg.duration = Number((nextSeg.duration - nextSteal).toFixed(3));
-
-      const headingStart = prevSeg
-        ? Number((prevSeg.startTime + prevSeg.duration).toFixed(3))
-        : 0;
-
-      if (nextSeg) {
-        nextSeg.anchorStart = Number((headingStart + actualDur).toFixed(3));
-      }
-
-      const existingHeadingCount = prev.segments.filter(s => s.isHeading).length;
+      const existingHeadingCount = segs.filter(s => s.isHeading).length;
       const defaultText = `Heading ${existingHeadingCount + 1}`;
 
-      const newHeading: VideoSegment = {
+      const placeholderHeading: VideoSegment = {
         id: crypto.randomUUID(),
         order: insertAt,
         text: '',
         heading: defaultText,
         isHeading: true,
         headingConfig: { text: defaultText, x: 50, y: 50 },
-        duration: actualDur,
-        startTime: headingStart,
-        anchorStart: headingStart,
-        anchorSource: 'whisper',
+        duration: HEADING_DUR,
+        startTime: 0,
         transition: TransitionType.NONE,
         animation: AnimationType.NONE,
       };
 
-      const merged = [
-        ...draft.slice(0, insertAt),
-        newHeading,
-        ...draft.slice(insertAt),
+      const draft = [
+        ...segs.slice(0, insertAt),
+        placeholderHeading,
+        ...segs.slice(insertAt),
       ];
+
+      const stolen = stealDurationFromNeighbors(draft, insertAt, HEADING_DUR);
+
+      const newPrev = stolen[insertAt - 1];
+      const headingStart = newPrev
+        ? Number((newPrev.startTime + newPrev.duration).toFixed(3))
+        : 0;
+
+      const heading = stolen[insertAt];
+      if (!heading) return prev;
+      const updatedHeading: VideoSegment = {
+        ...heading,
+        startTime: headingStart,
+        anchorStart: headingStart,
+        anchorSource: 'whisper',
+      };
+      stolen[insertAt] = updatedHeading;
+
+      const newNext = stolen[insertAt + 1];
+      if (newNext) {
+        stolen[insertAt + 1] = {
+          ...newNext,
+          anchorStart: Number((headingStart + updatedHeading.duration).toFixed(3)),
+        };
+      }
 
       // Recompute startTime/duration from anchors — single source of truth,
       // not a separate cumulative-duration pass.
-      const withOrder = merged.map((s, i) => ({ ...s, order: i }));
+      const withOrder = stolen.map((s, i) => ({ ...s, order: i }));
       const audioDuration = withOrder.reduce((sum, s) => sum + s.duration, 0);
       const reordered = applyAnchorBasedTiming(withOrder, audioDuration);
 
@@ -887,19 +865,7 @@ export default function App() {
 
       const headingDur = heading.duration;
 
-      const newSegs = [...prev.segments];
-      const prevSeg = newSegs[idx - 1];
-      const nextSeg = newSegs[idx + 1];
-
-      // Return time to neighbors — reverse of the absorption done at insertion.
-      if (prevSeg && nextSeg) {
-        newSegs[idx - 1] = { ...prevSeg, duration: prevSeg.duration + headingDur / 2 };
-        newSegs[idx + 1] = { ...nextSeg, duration: nextSeg.duration + headingDur / 2 };
-      } else if (prevSeg) {
-        newSegs[idx - 1] = { ...prevSeg, duration: prevSeg.duration + headingDur };
-      } else if (nextSeg) {
-        newSegs[idx + 1] = { ...nextSeg, duration: nextSeg.duration + headingDur };
-      }
+      const newSegs = giveDurationToNeighbors(prev.segments, idx, headingDur);
 
       // Restore next.anchorStart to its true pre-insertion position: prev's restored
       // anchorStart + prev's restored duration — i.e. where next would sit if the

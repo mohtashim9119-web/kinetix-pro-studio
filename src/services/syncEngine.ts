@@ -194,6 +194,102 @@ export function computeHeadingAnchors(previousSegments: VideoSegment[]): Heading
   return anchors;
 }
 
+/** Floor below which a neighbor's duration cannot be steal/give down to. */
+const HEADING_NEIGHBOR_MIN_DURATION = 0.1;
+
+/**
+ * Steals `amount` of duration for the heading already present at
+ * `segments[headingIdx]`, taking it from its immediate array neighbors
+ * (50/50 split, with spillover to the other side if one neighbor can't
+ * cover its half). Sets the heading's own `duration` to the amount
+ * actually realized (which may be less than `amount` if neighbors lack
+ * slack; falls back to the full `amount` if neither neighbor exists).
+ * Mirrors the steal math formerly inlined in handleInsertHeading.
+ *
+ * Operates on literal adjacent indices (headingIdx ± 1), not the nearest
+ * non-heading neighbor — matching handleInsertHeading's existing behavior
+ * when a heading is inserted directly next to another heading.
+ *
+ * Does not mutate `segments`.
+ */
+export function stealDurationFromNeighbors(
+  segments: VideoSegment[],
+  headingIdx: number,
+  amount: number,
+): VideoSegment[] {
+  const out = segments.map(s => ({ ...s }));
+  const heading = out[headingIdx];
+  if (!heading) return out;
+
+  const MIN_DUR = HEADING_NEIGHBOR_MIN_DURATION;
+  const prevSeg = out[headingIdx - 1];
+  const nextSeg = out[headingIdx + 1];
+
+  let prevSteal = 0;
+  let nextSteal = 0;
+
+  if (!prevSeg && !nextSeg) {
+    // No neighbors to steal from — heading keeps the full requested amount as new time.
+  } else if (!prevSeg && nextSeg) {
+    nextSteal = Math.max(0, Math.min(amount, nextSeg.duration - MIN_DUR));
+  } else if (prevSeg && !nextSeg) {
+    prevSteal = Math.max(0, Math.min(amount, prevSeg.duration - MIN_DUR));
+  } else if (prevSeg && nextSeg) {
+    const half = amount / 2;
+    const prevAvail = Math.max(0, prevSeg.duration - MIN_DUR);
+    const nextAvail = Math.max(0, nextSeg.duration - MIN_DUR);
+    prevSteal = Math.min(half, prevAvail);
+    const remaining = amount - prevSteal;
+    nextSteal = Math.min(remaining, nextAvail);
+    const stillRemaining = amount - prevSteal - nextSteal;
+    if (stillRemaining > 0) {
+      prevSteal += Math.min(stillRemaining, prevAvail - prevSteal);
+    }
+  }
+
+  const actualAmount = Number((prevSteal + nextSteal).toFixed(3)) || amount;
+
+  if (prevSeg) {
+    out[headingIdx - 1] = { ...prevSeg, duration: Number((prevSeg.duration - prevSteal).toFixed(3)) };
+  }
+  if (nextSeg) {
+    out[headingIdx + 1] = { ...nextSeg, duration: Number((nextSeg.duration - nextSteal).toFixed(3)) };
+  }
+  out[headingIdx] = { ...heading, duration: actualAmount };
+
+  return out;
+}
+
+/**
+ * Gives `amount` of duration back from the heading at `segments[headingIdx]`
+ * to its immediate array neighbors (50/50 split if both exist, full amount
+ * to whichever exists if only one does). The heading itself is left
+ * untouched — the caller removes it from the array separately. Mirrors the
+ * give-back math formerly inlined in handleDeleteHeading.
+ *
+ * Does not mutate `segments`.
+ */
+export function giveDurationToNeighbors(
+  segments: VideoSegment[],
+  headingIdx: number,
+  amount: number,
+): VideoSegment[] {
+  const out = segments.map(s => ({ ...s }));
+  const prevSeg = out[headingIdx - 1];
+  const nextSeg = out[headingIdx + 1];
+
+  if (prevSeg && nextSeg) {
+    out[headingIdx - 1] = { ...prevSeg, duration: Number((prevSeg.duration + amount / 2).toFixed(3)) };
+    out[headingIdx + 1] = { ...nextSeg, duration: Number((nextSeg.duration + amount / 2).toFixed(3)) };
+  } else if (prevSeg) {
+    out[headingIdx - 1] = { ...prevSeg, duration: Number((prevSeg.duration + amount).toFixed(3)) };
+  } else if (nextSeg) {
+    out[headingIdx + 1] = { ...nextSeg, duration: Number((nextSeg.duration + amount).toFixed(3)) };
+  }
+
+  return out;
+}
+
 function closestIndexToOrdinal(candidates: number[], ordinal: number): number {
   let best = candidates[0]!;
   let bestDist = Math.abs(best - ordinal);
@@ -282,6 +378,11 @@ export function reinsertHeadings(
   const HALF = HEADING_DUR / 2;
   const MIN_DUR = 0.1;
 
+  // Deliberately not using stealDurationFromNeighbors here: that helper steals from
+  // literal adjacent indices (headingIdx ± 1), but a cluster of adjacent headings
+  // resolving to the same gap must all reach past each other to the same pair of
+  // real content neighbors (see doc comment above) — this loop's prevIdx/nextIdx
+  // walk skips past other headings on purpose, which the shared helper does not do.
   for (let i = 0; i < merged.length; i++) {
     const seg = merged[i];
     if (!seg) continue;
