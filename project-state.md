@@ -16,7 +16,7 @@
 | Repo | TBD |
 | Restore tag | `sync-known-good-2026-06-20` → commit `bab79b0` ("chore: remove VO-DIAG/SYNC-DIAG debug logging") |
 
-All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (12 items, ranked).
+All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (11 items, ranked).
 
 ---
 
@@ -62,25 +62,23 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 
 4. **Hard delete segment** — permanently remove a segment with a confirm dialog. Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc. Lowest priority.
 
-5. **[IMPROVEMENT] Mute segment** — per-segment mute toggle on every segment, beside the lock button. Coupled with task 8 (Review Mapping popup includes a mute option per row).
+**[SEGMENTS TAB RESTRUCTURE — tasks 5/6/7 share the same top-rows surface]**
 
-**[SEGMENTS TAB RESTRUCTURE — tasks 6/7/8 share the same top-rows surface]**
+5. **Move "global text layers" row** — move global text layers out of the Segments tab to the right panel (contents TBD). Segments tab stays segments-only.
 
-6. **Move "global text layers" row** — move global text layers out of the Segments tab to the right panel (contents TBD). Segments tab stays segments-only.
+6. **Draggable headings** — "Add heading" currently drops as the 1st segment; make headings drag-and-drop to any position across all segments.
 
-7. **Draggable headings** — "Add heading" currently drops as the 1st segment; make headings drag-and-drop to any position across all segments.
-
-8. **"Review Mapping" button + popup** — button in the center of the Segments tab top row (lock left, segment count right). Opens a large scrollable popup listing all segments; each row shows: larger thumbnail of selected asset, horizontal bar of all uploaded assets to choose from, a stock-footage picker UI below, the segment time range (e.g. 3.85s–7.85s) and total duration (e.g. 4s), and a mute-segment option (depends on task 5).
+7. **"Review Mapping" button + popup** — button in the center of the Segments tab top row (lock left, segment count right). Opens a large scrollable popup listing all segments; each row shows: larger thumbnail of selected asset, horizontal bar of all uploaded assets to choose from, a stock-footage picker UI below, the segment time range (e.g. 3.85s–7.85s) and total duration (e.g. 4s), and a mute-segment option.
 
 **[EFFECT TAB REBUILD — 3 clean options + presets]**
 
-9. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
+8. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
 
-10. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
+9. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
 
-11. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
+10. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
 
-12. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 9/10/11) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
+11. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 8/9/10) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
 
 ---
 
