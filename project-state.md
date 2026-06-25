@@ -9,89 +9,78 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-24 |
-| Current HEAD | `254ef1b` on `main`, fully pushed to `origin/main`. **Step 7 (final regression) done — the clean-slate re-sync Architecture Shift is now fully COMPLETE (all steps 1–7).** Built on: clean-slate sync rebuild (3a–3e); dead sync-wizard UI removed (`4890ea6`) — `handleApplySyncFromFiles` is the single live sync entry point; Step 5 (5.1–5.4) — headings live only in the segments array, dual storage gone; Step 7 — combined-pipeline 11→14 regression locking heading carry-forward + real timing together end-to-end. |
+| Last updated | 2026-06-25 |
+| Current HEAD | `31c2573` on `main`, fully pushed to `origin/main`. Architecture Shift complete (2026-06-24). Post-shift fixes: heading-tag false-positive (`cf75695`), orphaned voiceover blob (`3b0593c`), docs sync (`31c2573`). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
 | Restore tag | `sync-known-good-2026-06-20` → commit `bab79b0` ("chore: remove VO-DIAG/SYNC-DIAG debug logging") |
 
-All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks.
+All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (12 items, ranked).
+
+---
+
+## Completed Work
+
+<details>
+<summary>Architecture shift — ✅ COMPLETE 2026-06-24 (Step 7, commit 254ef1b)</summary>
+
+- **Scene editor read-only:** NOT IMPLEMENTED — superseded. No `readOnly`/disabled gate on the Scene Details editor. Corruption was solved by clean-slate re-sync + confirm-dialog/auto-snapshot instead. Edits remain possible; just not preserved across re-sync.
+- ✅ Done (Step 5) — Headings live array-only, never serialized to sceneDetails text.
+- ✅ Done — `DropZonePanel.tsx`'s `isStagedEmpty` gate disables Apply Sync unless a file is newly staged.
+- **Auto-recalc: PARTIAL.** `applyAnchorBasedTiming()` runs on lock toggle, heading insert/delete, and inside the sync pipeline. But timeline drag-resize uses `applyDurationChange`/`computeDragCascade` — a separate path.
+- Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward.
+
+**Clean-slate steps (all done):** 3a (`452e1eb`) delete merge loops; 3b regression tests; 3c (`5da64df`/`8523f39`) delete anchor-aware aligner + skip-guard; 3d-1 (`eb7fc8e`) anchor fallback; 3d-2 (`f27d557`) delete PASS 2; 3e (`6090250`) dead anchorSource demotion; Step 5 5.1–5.4 headings array-only; Step 7 (`254ef1b`) final regression.
+
+**Restore tags:** `sync-known-good-2026-06-20` → `bab79b0`; `sync-known-good-2026-06-23` → `a1a326d`.
+</details>
 
 ---
 
 ## Active Tasks
 
-1. **Architecture shift** — ✅ **COMPLETE — 2026-06-24 (Step 7, commit `254ef1b`)**
-   - **NOT IMPLEMENTED — superseded.** No `readOnly`/disabled gate exists on the Scene Details editor — `src/components/DropZonePanel.tsx:760` lets the user re-enter edit mode at any time; `:421` only auto-closes the edit view right after a sync completes, it doesn't lock anything. The corruption problem this bullet targeted was solved by a different mechanism instead — see the clean-slate re-sync + confirm-dialog/auto-snapshot bullet below. Edits remain possible; they're just not preserved across re-sync.
-   - ✅ Done (Step 5, 2026-06-24) — Headings live array-only, never serialized to sceneDetails text — fixes problem 1 permanently
-   - ✅ Done — `DropZonePanel.tsx`'s `isStagedEmpty` gate (`:581-582`) disables the Apply Sync button (`:906`) unless a script/scene/voiceover/asset file is newly staged; comment at `:577-580` confirms this is an intentional invariant, not an accident.
-   - **PARTIAL.** `applyAnchorBasedTiming()` runs on lock toggle (`src/App.tsx:776`), heading insert (`:874`), and heading delete (`:927`), plus inside the sync pipeline itself. But the timeline duration drag-resize path (`:2048-2146`) recalculates via a separate `applyDurationChange`/`computeDragCascade` mechanism (`:619`), not `applyAnchorBasedTiming()` — so "any segment/heading mutation" overstates current behavior.
-   - Direction changed to CLEAN-SLATE RE-SYNC — Apply Sync wipes all derived state and re-derives fresh from audio; nothing carried forward. 4.5b repair fix reverted (proven regression — removed via commit 452e1eb, the same commit as step 3a below). Manual edits NOT preserved across re-sync by design (re-sync rare; edits are post-sync). Confirm-dialog + auto-snapshot are the safety net.
+> Ranked by priority. Tasks within a group share a UI surface and should be built together.
 
----
-### CLEAN-SLATE RE-SYNC — Final Plan (supersedes all prior 4.5a/4.5b/Step 6 work)
-
-**Core principle:** Apply Sync = fresh start. On any new file + Apply Sync, wipe ALL derived state and re-derive everything from the audio. Nothing carried forward — no merge loop, no anchor restore, no frozen-anchor repair. Manual edits (drag/lock) are NOT preserved across re-sync by design; re-sync is rare, edits are post-sync. Safety net = confirm-dialog + auto-snapshot (built with Version Snapshots task).
-
-**Why:** The diagnostic (run this session) proved the bug class is caused entirely by carrying stale state forward — fresh char-weight guesses colliding with restored real anchors, frozen 'whisper' anchors copied forward un-rechecked, and PASS 2.5 blaming the wrong segment. Eliminating carry-forward eliminates the entire bug class at the root.
-
-**Steps:**
-1. ✅ Done (452e1eb, same commit as step 3a) — Revert 4.5b: removed the PASS 2.5 repair-pass logic (proven regression: fixed ~1 of 4 slivers but corrupted previously-correct segments and fabricated new slivers; verified with vs without in the diagnostic).
-2. Audit + plan clean-slate re-sync — identify everything to delete: the merge loop (App.tsx ~1509-1534), anchor carry-forward/resolveAnchorSource, PASS 2 (dead code) + PASS 2.5, and any stale-state logic. Define the fresh re-derive path (parse → align fresh against audio → done).
-3. Build clean-slate re-sync — Apply Sync wipes derived state, re-derives all segments fresh from audio. One clean path.
-   - 3a ✅ Done (452e1eb) — deleted both merge loops, deleted resolveAnchorSource/getComparableText/getSegmentStableKey, deleted old regression tests 2–8 (only test 1 survived).
-   - 3b ✅ Done — 2026-06-24. New clean-slate regression tests added to `src/services/syncTiming.test.ts` (11-OLD / 14-NEW Civic 11→14 repro, plus a small synthetic stale-anchor-squeeze pair). All green. Found and fixed a real, pre-existing bug along the way (not a clean-slate regression — this code predates clean-slate work): in `alignScenestoTranscript` (`whisperService.ts`), the silence gap-fill step's search radius could reach past a short neighboring segment and steal the silence belonging to the NEXT boundary, collapsing that segment to ~0 width. Fixed by clamping each boundary's search window to its two neighboring segments' own spoken edges. Manually verified on the real Civic 10→14 re-sync in the app: correct widths, aligned timeline, no out-of-order warning.
-   - 3c ✅ Done — 2026-06-24 (`5da64df` = 3c-1, `8523f39` = 3c-2). Deleted `alignScenesToTranscriptAnchorAware` and collapsed `alignSegmentsFromCachedTranscript`'s caller branch to always use the plain aligner (`alignScenestoTranscript`); separately removed the dead Whisper skip-guard in `startTranscription`. Both were reachable by `tsc` but unreachable at runtime under clean-slate (every caller passes all-`'estimate'` or empty segments). Verified: 5/5 vitest, `tsc --noEmit` clean, manual re-sync in the Tauri app unchanged (contiguous, no slivers, no out-of-order warnings).
-   - 3d-1 ✅ Done — 2026-06-24 (`eb7fc8e`). Hardened PASS 3's anchor fallback: a missing `anchorStart` now falls back to the segment's own `startTime` (then `0`) instead of collapsing toward the timeline origin. Inert at the time of this commit — PASS 2 still backfilled every anchor first, so the fallback was unreachable until 3d-2.
-   - 3d-2 ✅ Done — 2026-06-24 (`f27d557`). Deleted PASS 2 (the character-weight anchor backfill) from `applyAnchorBasedTiming` — under clean-slate re-sync no live path produces an unanchored segment, so it was dead for current inputs. The 3d-1 fallback now safely handles any missing anchor (e.g. a pre-6/18 persisted project) without collapsing it to the origin. Added a regression test for that legacy-project case: fails without the 3d-1 fallback, passes with it. Verified: 6/6 vitest, `tsc --noEmit` clean.
-   - 3e ✅ Done — 2026-06-24 (`6090250`). Removed the dead anchorSource demotion in handleVoiceoverStaged — its only consumer (the anchor-aware aligner) was deleted in 3c; kept the load-bearing transcriptTokens clear.
-4. ✅ Done — 2026-06-24 (5 commits: `b3a13e3` 5.1, `abcc75e` 5.1.3, `72c1fd3` 5.2, `6342c8d` 5.3, `2516a7c` 5.4) — Step 5, headings array-only. The segments array is now the single source of truth for headings: `computeHeadingAnchors`/`reinsertHeadings` (`syncEngine.ts`, 5.1) carry headings forward across re-sync from the previous array (wired into `handleApplySyncFromFiles` in 5.1.3); the `[HEADING:]` scene-text tag is no longer written (5.3) or read (5.4) — `parseProjectData` recognize-and-skips it (still a scene boundary, materializes no segment). 5.4 also deleted the dead heading duration-budget logic and `HEADING_ONLY_DURATION_SECONDS`, fixing a ~1.5s/heading skew. Heading styling now survives re-sync intact. No migration needed for old projects — the array has been the heading source since 5.1.3, so dormant `[HEADING:]` tags left in old `sceneDetails` are inert text. Round-trip tests + smoke-test doc in 5.2 (`docs/heading-array-source-smoke-tests.md`).
-5. ✅ Done — 2026-06-24 (`7aaaf67`). Fix Failure B — handleDeleteAsset now clears transcriptTokens / lastTranscribedAssetId / lastTranscribedFileIdentity when the deleted asset is the voiceover; re-uploading the same file after delete re-transcribes instead of syncing against a stale cached transcript.
-6. Regression tests — lock the new clean behavior; the real 10→14 repro (4 new scenes + reworded scene 2) must produce a correct, contiguous, sliver-free timeline. ✅ Satisfied by 3b's new tests above (11-OLD / 14-NEW).
-
-**Dropped as obsolete under clean-slate:** Step 6 (duration-drag re-anchor) and 4.5a (merge-loop prevention) — their only purpose was preserving edits across re-sync, which clean-slate no longer does.
-
-**Step 7 — final regression:** ✅ Done — 2026-06-24 (`254ef1b`). Combined-pipeline 11→14 regression test (heading carry-forward + real timing run together in production order — `computeHeadingAnchors` on the OLD array → full timing pipeline on the NEW array → `reinsertHeadings` onto the timed result), asserting contiguous/sliver-free timing, correct heading placement, and no `[anchor]` out-of-order warning (`console.warn` spy). Smoke-test doc extended with the real 11→14 manual checklist; stale heading-budget transient note corrected (5.3/5.4 allocate zero heading duration for `[HEADING:]` tags, so there's no interim oversized-segment state). Verified 17/17 vitest, `tsc --noEmit` clean, manual 11→14 re-sync in the Tauri app — all checks passed.
-
-**Architecture Shift status: ✅ COMPLETE — all steps (1–7) done as of 2026-06-24.**
-
-**Restore tag:** sync-known-good-2026-06-23 (commit a1a326d).
-**Newer reference point:** commit `254ef1b` — current `main` HEAD. Closes the clean-slate re-sync Architecture Shift: Step 7 (final regression) on top of 3a+3b+3c+3d-1+3d-2+3e (clean-slate sync rebuild) + dead sync-wizard cleanup (`4890ea6`) + Step 5 5.1–5.4 (headings array-only, dual storage gone), pushed to `origin/main`.
----
-
-2. **Hard delete segment**
-   - Bin icon on each segment row in segments tab (same as heading delete) — deletes with confirmation dialog
-   - Previous segment absorbs the deleted segment's duration — same as manual `[IMAGE:]` tag removal today
-   - Behavior: deleting a segment removes it and the previous segment absorbs its duration (same as removing an `[IMAGE:]` tag).
-   - Confirm dialog before delete.
-   - Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc, nothing carried forward). To delete permanently, the user removes the tag from the scene doc. Document this clearly so it's expected, not a bug.
-   - Follows clean-slate principle: no special stale-state preservation.
-
-3. **Version snapshots system**
+1. **Version snapshots** — named restore points (Initial Sync / Current Progress / Manual), capped at 20, to roll back a project.
    - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
    - Entry 2: Current Progress — auto-updated continuously, single slot, reflects latest state
    - Entries 3+: Manual Snapshots — user clicks "Save Snapshot", named (default timestamp, renameable)
    - Storage: `kinetix:project:{id}:versions:v1` in localStorage, per-project scoped, survives reload
    - Cap: 20 manual snapshots, oldest auto-purges with toast
    - UI: square rounded-corner icon bottom-left of segments tab, opens popup listing versions newest-first
-   - Each row shows: name/timestamp, restore (↻), rename (✏️), delete (🗑) — lock icon on Entry 1 hides delete
+   - Each row shows: name/timestamp, restore, rename, delete — lock icon on Entry 1 hides delete
    - Restore confirmation: "Restore this version? Current state will be saved as 'Before restore — [timestamp]' first." (auto-safety snapshot)
    - On restore: Entry 2 immediately updates to match restored state, user continues from there
    - **OPEN DECISIONS (decide before building):**
-     1. Asset restoration on snapshot restore — Design A vs B:
-        - Design A: snapshot stores asset LIST only. Restoring after deleting assets = missing/broken assets (deleted blobs are gone). Lower disk use.
-        - Design B: deletes are snapshot-protected — asset blobs persist as long as any snapshot references them. Restoring brings back ALL assets fully working. Higher disk use.
-        - DECISION PENDING — owner will choose later. Default to neither until decided.
-     2. Scene-doc + state on restore is a FULL REWIND (not a merge): restoring rewinds the entire project to that snapshot's exact state (old scene doc, edits, timings). Current state is auto-saved as "Before restore — [timestamp]" first. New scene-doc differences are set aside, not merged.
+     1. Asset restoration on snapshot restore — Design A (snapshot stores asset LIST only; restoring after deleting assets = missing/broken assets; lower disk use) vs Design B (deletes are snapshot-protected; asset blobs persist as long as any snapshot references them; higher disk use). DECISION PENDING.
+     2. Scene-doc + state on restore is a FULL REWIND (not a merge). Current state auto-saved as "Before restore — [timestamp]" first.
 
----
+2. **Auto-captions** — auto-generate on-screen captions from the voiceover transcript. Reuses existing Whisper transcript token data (already runs for segment timing). Surfaces tokens as a timed text layer.
 
-## Deferred
+3. **Export rendering speedup** — move export onto OffscreenCanvas + Web Worker for faster render without freezing the UI. Investigation complete (2026-06-01, `docs/phase-7-task-1-export-profiling.md`): pipeline is I/O-bound (`canvas.toBlob` 47%, IPC writes 29%); `convertToBlob` off main thread projected 40–55% speedup (~120s → ~60–70s on macOS Intel). Implementation not started.
 
-- **Auto-captions** — Not yet built. Investigate current Whisper pipeline status, then implement auto-caption generation. (Whisper transcription already runs for segment timing; auto-captions would surface those tokens as a text layer.)
-- **Export-rendering investigation** — ✅ COMPLETE (2026-06-01). Profiling found the export pipeline is I/O-bound, not render-bound: `canvas.toBlob` (47% of frame time) and IPC frame writes (29%) dominate; actual canvas rendering is ~0.1%. Recommendation: OffscreenCanvas + Web Worker (`convertToBlob` off the main thread), projected 40–55% speedup (~120s → ~60–70s on macOS Intel). Full results in `docs/phase-7-task-1-export-profiling.md`.
-- **Export-rendering implementation** — Implement the OffscreenCanvas + Web Worker approach the investigation above recommended. Target >50% speedup on macOS and Windows. Unblocked now that the investigation is complete — still deferred, not started.
+4. **Hard delete segment** — permanently remove a segment with a confirm dialog. Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc. Lowest priority.
+
+5. **[IMPROVEMENT] Mute segment** — per-segment mute toggle on every segment, beside the lock button. Coupled with task 8 (Review Mapping popup includes a mute option per row).
+
+**[SEGMENTS TAB RESTRUCTURE — tasks 6/7/8 share the same top-rows surface]**
+
+6. **Move "global text layers" row** — move global text layers out of the Segments tab to the right panel (contents TBD). Segments tab stays segments-only.
+
+7. **Draggable headings** — "Add heading" currently drops as the 1st segment; make headings drag-and-drop to any position across all segments.
+
+8. **"Review Mapping" button + popup** — button in the center of the Segments tab top row (lock left, segment count right). Opens a large scrollable popup listing all segments; each row shows: larger thumbnail of selected asset, horizontal bar of all uploaded assets to choose from, a stock-footage picker UI below, the segment time range (e.g. 3.85s–7.85s) and total duration (e.g. 4s), and a mute-segment option (depends on task 5).
+
+**[EFFECT TAB REBUILD — 3 clean options + presets]**
+
+9. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
+
+10. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
+
+11. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
+
+12. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 9/10/11) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
 
 ---
 
