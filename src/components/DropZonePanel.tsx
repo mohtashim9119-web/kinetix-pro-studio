@@ -21,6 +21,7 @@ import {
   Trash2,
   Heading1,
   GripVertical,
+  ListChecks,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -293,6 +294,7 @@ interface Props {
   onLockAll: () => void;
   onUnlockAll: () => void;
   allLocked: boolean;
+  onOpenReviewMapping: () => void;
   /** Insert a new heading segment at the given index (0 = before all segments). */
   onInsertHeading: (afterIndex: number) => void;
   /** Delete a heading segment by id — only shown on isHeading tiles. */
@@ -364,6 +366,7 @@ export function DropZonePanel({
   onLockAll,
   onUnlockAll,
   allLocked,
+  onOpenReviewMapping,
   onInsertHeading,
   onDeleteHeading,
   onMoveHeading,
@@ -961,6 +964,14 @@ export function DropZonePanel({
                 ? <LockOpen className="w-4 h-4" />
                 : <Lock className="w-4 h-4" />
               }
+            </button>
+            <button
+              onClick={onOpenReviewMapping}
+              title="Review Mapping"
+              aria-label="Open review mapping"
+              className="p-1.5 rounded-lg text-gray-500 hover:text-[#F27D26] hover:bg-[#1A1A1A] transition-colors"
+            >
+              <ListChecks className="w-4 h-4" />
             </button>
             <span className="ml-auto text-[10px] font-black uppercase tracking-widest text-gray-600">
               {segments.length} Segments

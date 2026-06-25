@@ -75,6 +75,7 @@ import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
 import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
+import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 const StockSearchModal = lazy(() =>
@@ -552,6 +553,7 @@ export default function App() {
   const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
+  const [showReviewMapping, setShowReviewMapping] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -1882,6 +1884,7 @@ export default function App() {
             onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
             onUnlockAll={handleUnlockAll}
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
+            onOpenReviewMapping={() => setShowReviewMapping(true)}
             onInsertHeading={handleInsertHeading}
             onDeleteHeading={handleDeleteHeading}
             onMoveHeading={handleMoveHeading}
@@ -2555,6 +2558,17 @@ export default function App() {
           />
         </AnimatePresence>
         </Suspense>
+      )}
+
+      {/* Review Mapping Modal */}
+      {showReviewMapping && (
+        <ReviewMappingModal
+          segments={project.segments}
+          assets={project.assets}
+          onClose={() => setShowReviewMapping(false)}
+          onUpdateSegment={updateSegment}
+          onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
+        />
       )}
 
       {/* Stock download error banner — auto-dismisses after 5 s */}
