@@ -699,7 +699,7 @@ export function PreviewStage({
               {/* Main heading + body text. Fades out during canvas transition overlay to prevent
                   double-render — same 100ms ease as the canvas fade-in so they crossfade cleanly. */}
               <div
-                className="absolute inset-0 flex flex-col items-center justify-center p-20 text-center pointer-events-none select-none z-10"
+                className="absolute inset-0 pointer-events-none select-none z-10"
                 style={{ opacity: transitionPreview.isActive ? 0 : 1, transition: 'opacity 100ms ease' }}
               >
                 {((!hideAllText && currentSegment.text) || (currentSegment.showOverlay && currentSegment.text)) && (
@@ -707,8 +707,11 @@ export function PreviewStage({
                     initial={{ y: 30, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
-                    className="max-w-3xl px-10 py-6 rounded-3xl"
+                    transformTemplate={(_, generated) => `translate(-50%, -50%) ${generated}`}
+                    className="absolute max-w-3xl px-10 py-6 rounded-3xl text-center"
                     style={{
+                      left: `${currentSegment.overlayConfig?.x ?? 50}%`,
+                      top: `${currentSegment.overlayConfig?.y ?? 78}%`,
                       backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
                     }}
                   >

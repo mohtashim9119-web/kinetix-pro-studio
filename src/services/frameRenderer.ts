@@ -475,6 +475,8 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const fontWeight = oc?.fontWeight ?? 900;
     const fontStyle = oc?.fontStyle ?? 'normal';
     const shadow = oc?.textShadow ?? '0 4px 15px rgba(0,0,0,0.5)';
+    const xPct = (oc?.x ?? 50) / 100;
+    const yPct = (oc?.y ?? 78) / 100;
 
     // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide)
     const bodyPx = Math.round((h / 1080) * 24);
@@ -492,8 +494,10 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       const padY = Math.round(h * 0.03);
       const boxW = maxTextW + padX * 2;
       const boxH = totalH + padY * 2;
-      const boxX = (w - boxW) / 2;
-      const boxY = h * 0.55;
+      const centerX = w * xPct;
+      const centerY = h * yPct;
+      const boxX = centerX - boxW / 2;
+      const boxY = centerY - boxH / 2;
 
       ctx.fillStyle = bgColor;
       drawRoundedRect(ctx, boxX, boxY, boxW, boxH, Math.round(h * 0.025));
@@ -503,7 +507,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       lines.forEach((line, i) => {
-        ctx.fillText(line, w / 2, boxY + padY + i * lineH);
+        ctx.fillText(line, centerX, boxY + padY + i * lineH);
       });
       ctx.restore();
     }

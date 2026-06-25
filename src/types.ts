@@ -173,6 +173,8 @@ export interface VideoSegment {
     fontStyle?: 'normal' | 'italic';
     textShadow?: string;
     animation?: string;
+    x?: number; // percent 0-100, default 50 (center)
+    y?: number; // percent 0-100, default 78 (lower-third)
   };
   extraOverlays?: TextOverlay[];
   playbackSpeed?: number;
