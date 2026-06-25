@@ -21,11 +21,10 @@ import {
   Trash2,
   Heading1,
 } from 'lucide-react';
-import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
-import { TextLayersPanel } from './TextLayersPanel';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 // ---------------------------------------------------------------------------
@@ -284,12 +283,6 @@ interface Props {
   onDeleteHeading?: (id: string) => void;
   // Misc
   selectedSegmentId: string | undefined;
-  // Global text layers
-  textLayers: TextOverlay[];
-  onAddTextLayer: () => void;
-  onUpdateTextLayer: (id: string, updates: Partial<TextOverlay>) => void;
-  onDeleteTextLayer: (id: string) => void;
-  onToggleTextLayerOnSegment: (layerId: string, segmentId: string) => void;
   // Effects tab props
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -355,11 +348,6 @@ export function DropZonePanel({
   onInsertHeading,
   onDeleteHeading,
   selectedSegmentId,
-  textLayers,
-  onAddTextLayer,
-  onUpdateTextLayer,
-  onDeleteTextLayer,
-  onToggleTextLayerOnSegment,
   globalTransition,
   globalTransitionDuration,
   globalAnimation,
@@ -947,16 +935,6 @@ export function DropZonePanel({
               {segments.length} Segments
             </span>
           </div>
-
-          {/* Global text layers */}
-          <TextLayersPanel
-            textLayers={textLayers}
-            segments={segments}
-            onAddTextLayer={onAddTextLayer}
-            onUpdateTextLayer={onUpdateTextLayer}
-            onDeleteTextLayer={onDeleteTextLayer}
-            onToggleTextLayerOnSegment={onToggleTextLayerOnSegment}
-          />
 
           {/* Segment list */}
           <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2">

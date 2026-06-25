@@ -75,6 +75,7 @@ import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
 import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
+import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
@@ -1797,6 +1798,8 @@ export default function App() {
   // latest version of handleSwitchProject.
   handleSwitchProjectRef.current = handleSwitchProject;
 
+  const SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL = false;
+
   if (isHydrating) {
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
@@ -1866,11 +1869,6 @@ export default function App() {
             onInsertHeading={handleInsertHeading}
             onDeleteHeading={handleDeleteHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
-            textLayers={project.textLayers ?? []}
-            onAddTextLayer={handleAddTextLayer}
-            onUpdateTextLayer={handleUpdateTextLayer}
-            onDeleteTextLayer={handleDeleteTextLayer}
-            onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
             globalAnimation={project.globalAnimation ?? 'none'}
@@ -2219,6 +2217,17 @@ export default function App() {
               Export
             </button>
           </div>
+
+          {SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL && (
+            <TextLayersPanel
+              textLayers={project.textLayers ?? []}
+              segments={project.segments}
+              onAddTextLayer={handleAddTextLayer}
+              onUpdateTextLayer={handleUpdateTextLayer}
+              onDeleteTextLayer={handleDeleteTextLayer}
+              onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
+            />
+          )}
         </div>
 
       </div>
