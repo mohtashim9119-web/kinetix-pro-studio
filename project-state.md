@@ -16,7 +16,7 @@
 | Repo | TBD |
 | Restore tag | `sync-known-good-2026-06-20` → commit `bab79b0` ("chore: remove VO-DIAG/SYNC-DIAG debug logging") |
 
-All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (10 items, ranked).
+All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (9 items, ranked).
 
 ---
 
@@ -62,21 +62,17 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 
 4. **Hard delete segment** — permanently remove a segment with a confirm dialog. Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc. Lowest priority.
 
-**[SEGMENTS TAB RESTRUCTURE — tasks 5/6 share the same top-rows surface]**
-
 5. **Move "global text layers" row** — move global text layers out of the Segments tab to the right panel (contents TBD). Segments tab stays segments-only.
-
-6. **"Review Mapping" button + popup** — button in the center of the Segments tab top row (lock left, segment count right). Opens a large scrollable popup listing all segments; each row shows: larger thumbnail of selected asset, horizontal bar of all uploaded assets to choose from, a stock-footage picker UI below, the segment time range (e.g. 3.85s–7.85s) and total duration (e.g. 4s), and a mute-segment option.
 
 **[EFFECT TAB REBUILD — 3 clean options + presets]**
 
-7. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
+6. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
 
-8. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
+7. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
 
-9. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
+8. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
 
-10. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 7/8/9) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
+9. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 6/7/8) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
 
 ---
 
@@ -149,6 +145,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-05-27 | **GPL sidecar for internal distribution:** evermeet.cx build compiled with `--enable-gpl` (includes libx264). GPL is acceptable for internal distribution (closed, no redistribution). Before public SaaS launch: swap for LGPL-only build (OpenH264 or commercial x264 license). Tracked as SaaS readiness item in `src-tauri/binaries/README.md`. |
 | 2026-05-27 | **Branch strategy update:** Continuing short-lived feature branches, but merging directly to `main` with `git merge --no-ff` rather than via PR (single-developer workflow). |
 | 2026-06-26 | **Draggable headings (task 6):** heading rows drag to any position via Pointer Events + setPointerCapture (no new dependency). Duration give-back/steal factored into shared syncEngine helpers (stealDurationFromNeighbors / giveDurationToNeighbors). Post-drag recompute uses anchor-free recomputeStartTimes, not applyAnchorBasedTiming. Stale-anchor behavior on pre-existing projects (locked neighbor edge case) is consistent with clean-slate philosophy — fresh sync resolves it. |
+| 2026-06-26 | **Review Mapping popup (task 7):** new ReviewMappingModal at z-[150] with per-segment thumbnail, horizontal asset bar, stock search trigger (reuses existing StockSearchModal at z-[200] after bump), mute toggle, time range display. Mounted in App.tsx sibling to StockSearchModal. StockSearchModal z-index bumped from z-[100] to z-[200] to clear the new popup. |
 
 ---
 
