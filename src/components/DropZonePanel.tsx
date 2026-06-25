@@ -20,6 +20,7 @@ import {
   ChevronLeft,
   Trash2,
   Heading1,
+  GripVertical,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -68,6 +69,21 @@ const formatBytes = (bytes: number) => {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+/**
+ * Resolves a pointer's vertical position to a gap index (0..rows.length) among
+ * the given row elements — the first row whose vertical midpoint sits below
+ * the pointer wins; falls through to rows.length if the pointer is below all
+ * of them. Rows with no measured element (not yet mounted) are skipped.
+ */
+const computeDropGapIndex = (rows: (HTMLDivElement | null)[], pointerY: number): number => {
+  for (let i = 0; i < rows.length; i++) {
+    const rect = rows[i]?.getBoundingClientRect();
+    if (!rect) continue;
+    if (pointerY < rect.top + rect.height / 2) return i;
+  }
+  return rows.length;
 };
 
 // ---------------------------------------------------------------------------
@@ -281,6 +297,9 @@ interface Props {
   onInsertHeading: (afterIndex: number) => void;
   /** Delete a heading segment by id — only shown on isHeading tiles. */
   onDeleteHeading?: (id: string) => void;
+  /** Move a heading segment to a new gap index (0..segments.length) among the
+   *  current segments array — only shown (drag handle) on isHeading tiles. */
+  onMoveHeading?: (id: string, targetIndex: number) => void;
   // Misc
   selectedSegmentId: string | undefined;
   // Effects tab props
@@ -347,6 +366,7 @@ export function DropZonePanel({
   allLocked,
   onInsertHeading,
   onDeleteHeading,
+  onMoveHeading,
   selectedSegmentId,
   globalTransition,
   globalTransitionDuration,
@@ -395,6 +415,17 @@ export function DropZonePanel({
   // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
   // -1 = before all segments; i = after segment[i].
   const [hoveredGapIdx, setHoveredGapIdx] = useState<number | null>(null);
+
+  // ── Heading drag-to-reorder state ─────────────────────────────────────────
+  // Id of the heading currently being dragged via its grip handle, if any.
+  const [draggingHeadingId, setDraggingHeadingId] = useState<string | null>(null);
+  // Gap index (0..segments.length) the dragged heading would land in if dropped now.
+  const [dropTargetIdx, setDropTargetIdx] = useState<number | null>(null);
+  // Mirrors dropTargetIdx synchronously so onPointerUp always commits the latest value,
+  // independent of whether React has re-rendered between the last move and the up event.
+  const dropTargetIdxRef = useRef<number | null>(null);
+  // Row elements indexed by position, measured on pointer move to resolve dropTargetIdx.
+  const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // ── Scene Details edit-mode state ─────────────────────────────────────────
   const [isEditingScene, setIsEditingScene] = useState(false);
@@ -955,7 +986,14 @@ export function DropZonePanel({
               const isSelected = seg.id === selectedSegmentId;
               const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
               return (
-                <div key={seg.id} className="relative group/gap">
+                <div
+                  key={seg.id}
+                  ref={(el) => { rowRefs.current[i] = el; }}
+                  className="relative group/gap"
+                >
+                  {draggingHeadingId && dropTargetIdx === i && (
+                    <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[#F27D26] rounded-full z-20 pointer-events-none" />
+                  )}
                   <div
                     onClick={() => onSegmentClick(seg.id)}
                     className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
@@ -965,6 +1003,39 @@ export function DropZonePanel({
                                   : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
                                 }`}
                   >
+                    {seg.isHeading && onMoveHeading && (
+                      <button
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          setDraggingHeadingId(seg.id);
+                          dropTargetIdxRef.current = i;
+                          setDropTargetIdx(i);
+                        }}
+                        onPointerMove={(e) => {
+                          if (draggingHeadingId !== seg.id) return;
+                          const idx = computeDropGapIndex(rowRefs.current, e.clientY);
+                          dropTargetIdxRef.current = idx;
+                          setDropTargetIdx(idx);
+                        }}
+                        onPointerUp={(e) => {
+                          if (draggingHeadingId !== seg.id) return;
+                          e.currentTarget.releasePointerCapture(e.pointerId);
+                          const target = dropTargetIdxRef.current;
+                          setDraggingHeadingId(null);
+                          setDropTargetIdx(null);
+                          dropTargetIdxRef.current = null;
+                          if (target !== null) onMoveHeading(seg.id, target);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex-shrink-0 p-1 -ml-1 rounded text-gray-600 hover:text-[#F27D26]
+                                   cursor-grab active:cursor-grabbing touch-none"
+                        aria-label="Drag to reorder heading"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical size={12} />
+                      </button>
+                    )}
                     <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
                                     bg-[#1A1A1A] flex items-center justify-center">
                       {seg.isHeading
@@ -1031,6 +1102,9 @@ export function DropZonePanel({
                 </div>
               );
             })}
+            {draggingHeadingId && dropTargetIdx === segments.length && (
+              <div className="h-0.5 bg-[#F27D26] rounded-full" />
+            )}
             {segments.length === 0 && (
               <p className="text-[10px] text-gray-700 italic px-1 py-2">
                 No segments yet — apply sync to generate.

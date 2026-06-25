@@ -897,6 +897,56 @@ export default function App() {
     });
   }, []);
 
+  /**
+   * Moves a heading already in the segments array to a new gap index
+   * (0..segments.length, same semantics as onInsertHeading's afterIndex+1).
+   * Equivalent to give-back-then-steal: returns the heading's duration to its
+   * old neighbors, removes it, then re-inserts it at the new position and
+   * steals that same amount back from its new neighbors — net zero change to
+   * total duration. Unlike Apply Sync, this is a manual edit: startTimes are
+   * recomputed directly from durations (recomputeStartTimes), not from
+   * anchors — anchors are intentionally left stale here, same as a
+   * timeline resize-drag.
+   */
+  const handleMoveHeading = useCallback((segmentId: string, targetIndex: number): void => {
+    setProject(prev => {
+      const segs = prev.segments;
+      const oldIdx = segs.findIndex(s => s.id === segmentId);
+      if (oldIdx === -1) return prev;
+      const heading = segs[oldIdx];
+      if (!heading?.isHeading) return prev;
+
+      const clampedTarget = Math.max(0, Math.min(targetIndex, segs.length));
+      // Dropping into the gap immediately before or after its own current position is a no-op.
+      if (clampedTarget === oldIdx || clampedTarget === oldIdx + 1) return prev;
+
+      const amount = heading.duration;
+
+      // Return the heading's duration to its OLD neighbors.
+      const withoutHeading = giveDurationToNeighbors(segs, oldIdx, amount);
+      withoutHeading.splice(oldIdx, 1);
+
+      // Adjust the target gap index for the removal shift, then clamp defensively.
+      const rawInsertAt = clampedTarget > oldIdx ? clampedTarget - 1 : clampedTarget;
+      const insertAt = Math.max(0, Math.min(rawInsertAt, withoutHeading.length));
+
+      // Re-insert at the new position, still holding its own (just-vacated) duration.
+      const draft = [
+        ...withoutHeading.slice(0, insertAt),
+        heading,
+        ...withoutHeading.slice(insertAt),
+      ];
+
+      // Steal that same amount back from its NEW neighbors.
+      const stolen = stealDurationFromNeighbors(draft, insertAt, amount);
+
+      const withOrder = stolen.map((s, i) => ({ ...s, order: i }));
+      const recomputed = recomputeStartTimes(withOrder);
+
+      return { ...prev, segments: recomputed };
+    });
+  }, []);
+
   const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
     const seg = projectRef.current.segments[segIdx];
     if (!seg) return;
@@ -1834,6 +1884,7 @@ export default function App() {
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
             onInsertHeading={handleInsertHeading}
             onDeleteHeading={handleDeleteHeading}
+            onMoveHeading={handleMoveHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
