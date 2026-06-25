@@ -112,18 +112,20 @@ function ReviewMappingRow({ segment: seg, index: idx, assets, onUpdateSegment, o
 
   return (
     <div className="flex rounded-xl border border-[#2A2A2A] bg-[#1A1A1A] overflow-hidden">
-      {/* Left — fixed 16:9 thumbnail; height follows the right column's content */}
-      <div className="aspect-video flex-shrink-0 rounded-l-xl overflow-hidden bg-[#0D0D0D] flex items-center justify-center">
-        {seg.isHeading
-          ? <Heading1 size={40} className="text-[#F27D26]/70" />
-          : asset?.url && asset.type === 'image'
-          ? <img src={asset.url} className="w-full h-full object-cover rounded-l-xl" alt="" />
-          : asset?.type === 'video'
-          ? <Video size={40} className="text-blue-400" />
-          : isMissing
-          ? <AlertCircle size={40} className="text-yellow-500" />
-          : <div className="w-full h-full bg-[#0D0D0D]" />
-        }
+      {/* Left — fixed-width column; thumbnail inside is a 16:9 box, not full-height */}
+      <div className="w-56 flex-shrink-0">
+        <div className="w-full aspect-video overflow-hidden rounded-tl-xl rounded-bl-xl bg-[#0D0D0D] flex items-center justify-center">
+          {seg.isHeading
+            ? <Heading1 size={40} className="text-[#F27D26]/70" />
+            : asset?.url && asset.type === 'image'
+            ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+            : asset?.type === 'video'
+            ? <Video size={40} className="text-blue-400" />
+            : isMissing
+            ? <AlertCircle size={40} className="text-yellow-500" />
+            : <div className="w-full h-full bg-[#0D0D0D]" />
+          }
+        </div>
       </div>
 
       {/* Right — label/time + asset picker + stock search, equally spaced */}
