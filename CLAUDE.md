@@ -20,7 +20,7 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~1,550 lines — top-level state, orchestration, playback, export
+  App.tsx            # ~2,777 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
@@ -418,3 +418,6 @@ All dead dependencies removed. No remaining items.
 | Divider panel + preview height fixes | ✅ Done — 2026-06-17 | previewHeight initializer from viewport, panel toggle clamps via useEffect (310ms delay), timeline floor 140px enforced during drag and on panel toggle |
 | Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts (anchor-aware aligner + skip-guard later removed in clean-slate 3c, 2026-06-24, commits 5da64df/8523f39) |
 | Heading system complete | ✅ Done — 2026-06-19 | 9 rounds; isHeading flag, headingConfig, "+ Add Heading" UI, × delete with anchor restoration; an audio-pause/duration-splitting approach was tried and rejected entirely — pure overlay model with 50/50 absorption shipped instead |
+| Clean-slate re-sync rebuild (3a–3e) | ✅ Done — 2026-06-24 | Apply Sync now wipes all derived state and re-derives fresh from audio every time — nothing carried forward. Deleted the merge loops, `resolveAnchorSource`/`getComparableText`/`getSegmentStableKey`, the anchor-aware Whisper aligner + skip-guard, PASS 2 anchor backfill, and the dead `anchorSource` demotion in `handleVoiceoverStaged`. Commits: `452e1eb` (3a), 3b tests, `5da64df`/`8523f39` (3c), `eb7fc8e` (3d-1), `f27d557` (3d-2), `6090250` (3e) |
+| Step 5 — headings array-only | ✅ Done — 2026-06-24 | `b3a13e3`/`abcc75e`/`72c1fd3`/`6342c8d`/`2516a7c` — segments array is now the sole source of truth for headings; `[HEADING:]` scene-text tag no longer written (5.3) or read (5.4); deleted dead heading duration-budget logic, fixing a ~1.5s/heading skew. Heading styling survives re-sync intact |
+| Step 7 — final regression (closes Architecture Shift) | ✅ Done — 2026-06-24 | `254ef1b` — combined-pipeline 11→14 regression test (heading carry-forward + real timing together, production order) + no-out-of-order-warning assertion; smoke-test doc updated; 17/17 vitest; manually verified end-to-end in the Tauri app. **Clean-slate re-sync Architecture Shift is now fully complete (all steps 1–7)** |
