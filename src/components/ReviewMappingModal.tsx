@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, Film, Video, AlertCircle, Image as ImageIcon, Maximize2, Ban } from 'lucide-react';
 import { VideoSegment, Asset, HeadingConfig } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -13,10 +13,36 @@ interface ReviewMappingModalProps {
   segments: VideoSegment[];
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
+  hideAllText: boolean;
   onClose: () => void;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
   onOpenStockSearch: (segmentId: string) => void;
+}
+
+// Both PreviewStage (heading auto-fit) and frameRenderer (scene overlay export, see
+// `h / 1080` in frameRenderer.ts) treat font sizes as calibrated against a 1080-tall
+// reference frame. The thumbnail is far smaller than that, so explicit (non-auto-fit)
+// font sizes are scaled by measuredThumbnailHeight / REFERENCE_PREVIEW_HEIGHT to stay
+// proportionally correct instead of rendering at full literal px.
+const REFERENCE_PREVIEW_HEIGHT = 1080;
+
+// Measures the live rendered height of a thumbnail box so overlay/heading text can be
+// scaled proportionally to it, mirroring how PreviewStage measures its own container.
+function useThumbnailHeight() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return { ref, height };
 }
 
 const formatTime = (seconds: number) => {
@@ -44,6 +70,7 @@ export function ReviewMappingModal({
   segments,
   assets,
   globalOverlayConfig,
+  hideAllText,
   onClose,
   onUpdateSegment,
   onUpdateSegmentOverlay,
@@ -112,6 +139,7 @@ export function ReviewMappingModal({
               index={i}
               assets={nonAudioAssets}
               globalOverlayConfig={globalOverlayConfig}
+              hideAllText={hideAllText}
               onUpdateSegment={onUpdateSegment}
               onUpdateSegmentOverlay={onUpdateSegmentOverlay}
               onOpenStockSearch={onOpenStockSearch}
@@ -137,6 +165,7 @@ interface ReviewMappingRowProps {
   index: number;
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
+  hideAllText: boolean;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
   onOpenStockSearch: (segmentId: string) => void;
@@ -147,10 +176,14 @@ function ReviewMappingRow({
   index: idx,
   assets,
   globalOverlayConfig,
+  hideAllText,
   onUpdateSegment,
   onUpdateSegmentOverlay,
   onOpenStockSearch,
 }: ReviewMappingRowProps) {
+  const { ref: thumbRef, height: thumbHeight } = useThumbnailHeight();
+  const scale = thumbHeight / REFERENCE_PREVIEW_HEIGHT;
+
   const asset = assets.find(a => a.id === seg.assetId);
   const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
   const label = seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${idx + 1}`;
@@ -158,6 +191,23 @@ function ReviewMappingRow({
 
   const hc = seg.headingConfig;
   const isAutoFit = !hc?.fontSize;
+
+  // Live thumbnail overlay math — mirrors PreviewStage's heading font-size formula
+  // (a pure fraction of container height, so it's already proportional) and scales
+  // explicit font sizes by `scale` so they look right at thumbnail size (see
+  // REFERENCE_PREVIEW_HEIGHT above). X/Y need no scaling: percentage + translate(-x%,-y%)
+  // already resolves against this thumbnail's own box, same as PreviewStage's container.
+  const headingText = hc?.text ?? seg.heading ?? '';
+  const headingPosX = hc?.x ?? 50;
+  const headingPosY = hc?.y ?? 50;
+  const headingAutoFitSize = (() => {
+    const baseSize = thumbHeight * 0.14;
+    const shrinkFactor = Math.max(0.3, 1 - headingText.length / 80);
+    return Math.max(thumbHeight * 0.04, Math.min(thumbHeight * 0.14, baseSize * shrinkFactor));
+  })();
+  const headingFontSizePx = thumbHeight === 0
+    ? 0
+    : (hc?.fontSize ? hc.fontSize * scale : headingAutoFitSize);
 
   // Mirrors BottomDrawer's updateHC: an `assetId` write must also land on the
   // segment's top-level assetId — that's the only field PreviewStage/export
@@ -175,6 +225,13 @@ function ReviewMappingRow({
   const oc = seg.overlayConfig;
   const isItalic = oc?.fontStyle === 'italic';
   const isBgNone = oc?.backgroundColor === 'transparent';
+  const overlayPosX = oc?.x ?? 50;
+  const overlayPosY = oc?.y ?? 78;
+  const overlayFontSizePx = (oc?.fontSize ?? 24) * scale;
+  // Base px values mirror PreviewStage's bubble classes (px-5 py-3 rounded-3xl == 20/12/24px).
+  const bubblePadX = 20 * scale;
+  const bubblePadY = 12 * scale;
+  const bubbleRadius = 24 * scale;
 
   return (
     <div
@@ -199,17 +256,22 @@ function ReviewMappingRow({
 
       {/* Body */}
       <div className="flex flex-row items-stretch">
-        {/* Thumbnail — left 35% */}
+        {/* Thumbnail — left 35%. Background asset/color + a live overlay/heading text
+            layer scaled proportionally to this box (see useThumbnailHeight above). */}
         <div className="w-[35%] flex-shrink-0 border-r border-[#1f1f1f] flex items-center">
           <div
-            className={`w-full aspect-video overflow-hidden flex items-center justify-center ${
-              seg.isHeading ? 'bg-black' : 'bg-[#0D0D0D]'
+            ref={thumbRef}
+            className={`relative w-full aspect-video overflow-hidden flex items-center justify-center ${
+              seg.isHeading ? '' : 'bg-[#0D0D0D]'
             }`}
+            style={seg.isHeading ? { backgroundColor: hc?.backgroundColor ?? '#000000' } : undefined}
           >
             {seg.isHeading ? (
-              <span className="text-white font-bold text-[15px] text-center px-1.5 break-words line-clamp-3">
-                {label}
-              </span>
+              asset?.url && asset.type === 'image' ? (
+                <img src={asset.url} className="w-full h-full object-cover" alt="" />
+              ) : asset?.type === 'video' ? (
+                <Video size={22} className="text-blue-400" />
+              ) : null
             ) : asset?.url && asset.type === 'image' ? (
               <img src={asset.url} className="w-full h-full object-cover" alt="" />
             ) : asset?.type === 'video' ? (
@@ -218,6 +280,61 @@ function ReviewMappingRow({
               <AlertCircle size={22} className="text-yellow-500" />
             ) : (
               <ImageIcon size={22} className="text-[#555555]" />
+            )}
+
+            {seg.isHeading && headingText && (
+              <div
+                className="absolute text-center pointer-events-none"
+                style={{
+                  left: `${headingPosX}%`,
+                  top: `${headingPosY}%`,
+                  transform: `translate(-${headingPosX}%, -${headingPosY}%)`,
+                  width: 'max-content',
+                  maxWidth: '90%',
+                  zIndex: 1,
+                  fontSize: `${headingFontSizePx}px`,
+                  fontFamily: hc?.fontFamily || globalOverlayConfig.fontFamily,
+                  fontWeight: hc?.fontWeight ?? 'bold',
+                  color: hc?.color ?? '#ffffff',
+                  lineHeight: 1.2,
+                  overflow: 'hidden',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 6,
+                  WebkitBoxOrient: 'vertical',
+                }}
+              >
+                {headingText}
+              </div>
+            )}
+
+            {!seg.isHeading && seg.text && (!hideAllText || seg.showOverlay) && (
+              <div
+                className="absolute text-center pointer-events-none"
+                style={{
+                  left: `${overlayPosX}%`,
+                  top: `${overlayPosY}%`,
+                  transform: `translate(-${overlayPosX}%, -${overlayPosY}%)`,
+                  width: 'max-content',
+                  maxWidth: '90%',
+                  zIndex: 1,
+                  backgroundColor: oc?.backgroundColor || globalOverlayConfig.backgroundColor,
+                  padding: `${bubblePadY}px ${bubblePadX}px`,
+                  borderRadius: `${bubbleRadius}px`,
+                }}
+              >
+                <span
+                  style={{
+                    fontFamily: oc?.fontFamily || globalOverlayConfig.fontFamily,
+                    color: oc?.color || globalOverlayConfig.color,
+                    fontSize: `${overlayFontSizePx}px`,
+                    fontWeight: oc?.fontWeight || 'normal',
+                    fontStyle: oc?.fontStyle || 'italic',
+                    lineHeight: 1.3,
+                  }}
+                >
+                  {seg.text}
+                </span>
+              </div>
             )}
           </div>
         </div>

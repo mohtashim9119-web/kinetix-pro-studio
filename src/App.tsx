@@ -2566,6 +2566,7 @@ export default function App() {
           segments={project.segments}
           assets={project.assets}
           globalOverlayConfig={project.globalOverlayConfig}
+          hideAllText={project.hideAllText ?? false}
           onClose={() => setShowReviewMapping(false)}
           onUpdateSegment={updateSegment}
           onUpdateSegmentOverlay={updateSegmentOverlay}
