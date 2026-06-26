@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useRef } from 'react';
-import { X, Film, Eye, Video, AlertCircle, Image as ImageIcon, Maximize2 } from 'lucide-react';
+import { useEffect } from 'react';
+import { X, Film, Video, AlertCircle, Image as ImageIcon, Maximize2 } from 'lucide-react';
 import { VideoSegment, Asset, HeadingConfig } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
@@ -39,11 +39,13 @@ const extractShadowHex = (shadow: string | undefined): string => {
 // ---------------------------------------------------------------------------
 const FIELD = 'h-[32px] bg-[#2a2a2a] border border-[#3a3a3a] rounded-[7px] px-[9px] text-[12px] outline-none focus:border-[#e07c3a]';
 const SELECT = `${FIELD} text-[#e0e0e0] cursor-pointer`;
-const NUMBER = 'h-[32px] w-[46px] flex-shrink-0 bg-[#2a2a2a] border border-[#3a3a3a] rounded-[7px] px-1 text-center text-[12px] text-white outline-none focus:border-[#e07c3a] disabled:opacity-40';
-const ICON_BTN = 'w-[32px] h-[32px] flex-shrink-0 flex items-center justify-center rounded-[7px] border transition-colors';
+const NUMBER = 'h-[32px] bg-[#2a2a2a] border border-[#3a3a3a] rounded-[7px] px-1 text-center text-[12px] text-white outline-none focus:border-[#e07c3a] disabled:opacity-40';
+const BTN_BASE = 'h-[32px] flex items-center justify-center rounded-[7px] border transition-colors';
+const ICON_BTN = `${BTN_BASE} w-[32px] flex-shrink-0`;
 const ICON_IDLE = 'bg-[#2a2a2a] border-[#3a3a3a] text-[#aaa] hover:text-white hover:border-white/40';
 const TOGGLE_ON = 'bg-[#e07c3a] border-[#e07c3a] text-white';
 const TOGGLE_OFF = 'bg-transparent border-[#3a3a3a] text-[#aaa] hover:text-white hover:border-white/40';
+const SWATCH = 'rm-swatch w-[32px] h-[32px] flex-shrink-0 rounded-[7px] border border-[#3a3a3a] bg-[#2a2a2a] cursor-pointer';
 
 export function ReviewMappingModal({
   segments,
@@ -85,6 +87,10 @@ export function ReviewMappingModal({
           .rm-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #e07c3a; }
           .rm-slider::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid #e07c3a; }
           .rm-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #e07c3a; }
+          .rm-swatch { padding: 2px; }
+          .rm-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+          .rm-swatch::-webkit-color-swatch { border: none; border-radius: 5px; }
+          .rm-swatch::-moz-color-swatch { border: none; border-radius: 5px; }
         `}</style>
 
         {/* Header */}
@@ -126,11 +132,10 @@ export function ReviewMappingModal({
 
 // ---------------------------------------------------------------------------
 // ReviewMappingRow — one segment's mapping review card. All controls are
-// always visible (no formatting toggle). Scene cards expose asset + stock
-// search, overlay text + visibility toggle, and overlay-text formatting
-// (font/weight/size/animation, text + shadow color, italic). Heading cards
-// expose heading text, background asset + stock search, heading-text
-// formatting (font/weight/size/autofit), text + bg color, and X/Y position.
+// always visible (no formatting toggle). Both card types share a 35%
+// thumbnail + 65% controls column with four rows: asset/stock (50/50),
+// text + visibility, formatting (font/weight/size + animation|autofit),
+// and colors + position.
 // ---------------------------------------------------------------------------
 
 interface ReviewMappingRowProps {
@@ -152,10 +157,6 @@ function ReviewMappingRow({
   onUpdateSegmentOverlay,
   onOpenStockSearch,
 }: ReviewMappingRowProps) {
-  const textColorRef = useRef<HTMLInputElement>(null);
-  const bgColorRef = useRef<HTMLInputElement>(null);
-  const shadowColorRef = useRef<HTMLInputElement>(null);
-
   const asset = assets.find(a => a.id === seg.assetId);
   const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
   const label = seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${idx + 1}`;
@@ -241,7 +242,7 @@ function ReviewMappingRow({
                 className={`${FIELD} text-white w-full`}
               />
 
-              {/* Row 2 — background asset + stock search */}
+              {/* Row 2 — background asset (50%) + stock search (50%) */}
               <div className="flex items-center gap-[7px]">
                 <select
                   value={hc?.assetId ?? ''}
@@ -259,9 +260,9 @@ function ReviewMappingRow({
                   onClick={() => onOpenStockSearch(seg.id)}
                   title="Search stock footage"
                   aria-label="Search stock footage"
-                  className={`${ICON_BTN} ${ICON_IDLE}`}
+                  className={`${BTN_BASE} ${ICON_IDLE} gap-[5px] text-[12px] flex-1 min-w-0`}
                 >
-                  <Film size={14} />
+                  <Film size={14} /> <span className="truncate">Stock</span>
                 </button>
               </div>
 
@@ -271,7 +272,7 @@ function ReviewMappingRow({
                   value={hc?.fontFamily ?? 'Inter'}
                   onChange={(e) => updateHC({ fontFamily: e.target.value })}
                   aria-label="Heading font family"
-                  className={`${SELECT} flex-[2] min-w-0`}
+                  className={`${SELECT} flex-[4] min-w-0`}
                 >
                   {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
@@ -279,7 +280,7 @@ function ReviewMappingRow({
                   value={String(hc?.fontWeight ?? 'bold')}
                   onChange={(e) => updateHC({ fontWeight: e.target.value })}
                   aria-label="Heading font weight"
-                  className={`${SELECT} flex-[1.3] min-w-0`}
+                  className={`${SELECT} flex-[3] min-w-0`}
                 >
                   <option value="normal">Normal</option>
                   <option value="bold">Bold</option>
@@ -293,7 +294,7 @@ function ReviewMappingRow({
                   value={hc?.fontSize ?? 100}
                   onChange={(e) => updateHC({ fontSize: Number(e.target.value) || undefined })}
                   aria-label="Heading font size"
-                  className={NUMBER}
+                  className={`${NUMBER} flex-[3] min-w-0`}
                 />
                 <button
                   type="button"
@@ -301,52 +302,30 @@ function ReviewMappingRow({
                   title="Auto fit"
                   aria-pressed={isAutoFit}
                   aria-label="Toggle auto-fit font size"
-                  className={`${ICON_BTN} ${isAutoFit ? TOGGLE_ON : TOGGLE_OFF}`}
+                  className={`${BTN_BASE} flex-[3] min-w-0 ${isAutoFit ? TOGGLE_ON : TOGGLE_OFF}`}
                 >
                   <Maximize2 size={14} />
                 </button>
               </div>
 
-              {/* Row 4 — colors + X/Y position */}
+              {/* Row 4 — colors (inline) + X/Y position */}
               <div className="flex items-center gap-[7px]">
-                <div className="relative w-[32px] h-[32px] flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => textColorRef.current?.click()}
-                    title="Text color"
-                    aria-label="Heading text color"
-                    style={{ background: hc?.color ?? '#ffffff' }}
-                    className="w-full h-full rounded-[7px] border border-[#3a3a3a]"
-                  />
-                  <input
-                    ref={textColorRef}
-                    type="color"
-                    value={hc?.color ?? '#ffffff'}
-                    onChange={(e) => updateHC({ color: e.target.value })}
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
-                  />
-                </div>
-                <div className="relative w-[32px] h-[32px] flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => bgColorRef.current?.click()}
-                    title="BG color"
-                    aria-label="Heading background color"
-                    style={{ background: hc?.backgroundColor ?? '#000000' }}
-                    className="w-full h-full rounded-[7px] border border-[#3a3a3a]"
-                  />
-                  <input
-                    ref={bgColorRef}
-                    type="color"
-                    value={hc?.backgroundColor ?? '#000000'}
-                    onChange={(e) => updateHC({ backgroundColor: e.target.value })}
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
-                  />
-                </div>
+                <input
+                  type="color"
+                  value={hc?.color ?? '#ffffff'}
+                  onChange={(e) => updateHC({ color: e.target.value })}
+                  title="Text color"
+                  aria-label="Heading text color"
+                  className={SWATCH}
+                />
+                <input
+                  type="color"
+                  value={hc?.backgroundColor ?? '#000000'}
+                  onChange={(e) => updateHC({ backgroundColor: e.target.value })}
+                  title="BG color"
+                  aria-label="Heading background color"
+                  className={SWATCH}
+                />
 
                 <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">X</span>
                 <input
@@ -379,7 +358,7 @@ function ReviewMappingRow({
             </>
           ) : (
             <>
-              {/* Row 1 — asset + stock search */}
+              {/* Row 1 — asset (50%) + stock search (50%) */}
               <div className="flex items-center gap-[7px]">
                 <select
                   value={seg.assetId ?? ''}
@@ -397,13 +376,13 @@ function ReviewMappingRow({
                   onClick={() => onOpenStockSearch(seg.id)}
                   title="Search stock footage"
                   aria-label="Search stock footage"
-                  className={`${ICON_BTN} ${ICON_IDLE}`}
+                  className={`${BTN_BASE} ${ICON_IDLE} gap-[5px] text-[12px] flex-1 min-w-0`}
                 >
-                  <Film size={14} />
+                  <Film size={14} /> <span className="truncate">Stock</span>
                 </button>
               </div>
 
-              {/* Row 2 — overlay text + visibility toggle */}
+              {/* Row 2 — overlay text + visibility toggle switch */}
               <div className="flex items-center gap-[7px]">
                 <input
                   type="text"
@@ -416,12 +395,19 @@ function ReviewMappingRow({
                 <button
                   type="button"
                   onClick={() => onUpdateSegment(idx, { showOverlay: !seg.showOverlay })}
-                  title={seg.showOverlay ? 'Overlay text shown' : 'Overlay text hidden'}
-                  aria-pressed={!!seg.showOverlay}
+                  role="switch"
+                  aria-checked={!!seg.showOverlay}
                   aria-label="Toggle overlay text visibility"
-                  className={`${ICON_BTN} ${seg.showOverlay ? TOGGLE_ON : TOGGLE_OFF}`}
+                  title={seg.showOverlay ? 'Overlay text shown' : 'Overlay text hidden'}
+                  className={`relative w-10 h-5 flex-shrink-0 rounded-full border transition-colors ${
+                    seg.showOverlay ? 'bg-[#e07c3a] border-[#e07c3a]' : 'bg-[#2a2a2a] border-[#3a3a3a]'
+                  }`}
                 >
-                  <Eye size={14} />
+                  <span
+                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white transition-all ${
+                      seg.showOverlay ? 'left-[22px]' : 'left-[3px]'
+                    }`}
+                  />
                 </button>
               </div>
 
@@ -431,7 +417,7 @@ function ReviewMappingRow({
                   value={oc?.fontFamily ?? globalOverlayConfig.fontFamily}
                   onChange={(e) => onUpdateSegmentOverlay(idx, { fontFamily: e.target.value })}
                   aria-label="Overlay font family"
-                  className={`${SELECT} flex-[2] min-w-0`}
+                  className={`${SELECT} flex-[4] min-w-0`}
                 >
                   {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
@@ -439,7 +425,7 @@ function ReviewMappingRow({
                   value={String(oc?.fontWeight ?? 'bold')}
                   onChange={(e) => onUpdateSegmentOverlay(idx, { fontWeight: e.target.value })}
                   aria-label="Overlay font weight"
-                  className={`${SELECT} flex-[1.3] min-w-0`}
+                  className={`${SELECT} flex-[3] min-w-0`}
                 >
                   <option value="normal">Normal</option>
                   <option value="bold">Bold</option>
@@ -452,13 +438,13 @@ function ReviewMappingRow({
                   value={oc?.fontSize ?? 60}
                   onChange={(e) => onUpdateSegmentOverlay(idx, { fontSize: Number(e.target.value) || 60 })}
                   aria-label="Overlay font size"
-                  className={NUMBER}
+                  className={`${NUMBER} flex-[3] min-w-0`}
                 />
                 <select
                   value={oc?.animation ?? 'fade'}
                   onChange={(e) => onUpdateSegmentOverlay(idx, { animation: e.target.value })}
                   aria-label="Overlay text animation"
-                  className={`${SELECT} flex-[1.3] min-w-0`}
+                  className={`${SELECT} flex-[3] min-w-0`}
                 >
                   {TEXT_ANIMATIONS.map(a => (
                     <option key={a} value={a}>{a.replace(/-/g, ' ')}</option>
@@ -466,46 +452,32 @@ function ReviewMappingRow({
                 </select>
               </div>
 
-              {/* Row 4 — text color + shadow color + italic */}
+              {/* Row 4 — colors (inline) + shadow + italic */}
               <div className="flex items-center gap-[7px]">
-                <div className="relative w-[32px] h-[32px] flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => textColorRef.current?.click()}
-                    title="Text color"
-                    aria-label="Overlay text color"
-                    style={{ background: oc?.color ?? '#FFFFFF' }}
-                    className="w-full h-full rounded-[7px] border border-[#3a3a3a]"
-                  />
-                  <input
-                    ref={textColorRef}
-                    type="color"
-                    value={oc?.color ?? '#FFFFFF'}
-                    onChange={(e) => onUpdateSegmentOverlay(idx, { color: e.target.value })}
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
-                  />
-                </div>
-                <div className="relative w-[32px] h-[32px] flex-shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => shadowColorRef.current?.click()}
-                    title="Shadow color"
-                    aria-label="Overlay text shadow color"
-                    style={{ background: shadowHex }}
-                    className="w-full h-full rounded-[7px] border border-[#3a3a3a]"
-                  />
-                  <input
-                    ref={shadowColorRef}
-                    type="color"
-                    value={shadowHex}
-                    onChange={(e) => onUpdateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
-                    tabIndex={-1}
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full opacity-0 pointer-events-none"
-                  />
-                </div>
+                <input
+                  type="color"
+                  value={oc?.color ?? '#FFFFFF'}
+                  onChange={(e) => onUpdateSegmentOverlay(idx, { color: e.target.value })}
+                  title="Text color"
+                  aria-label="Overlay text color"
+                  className={SWATCH}
+                />
+                <input
+                  type="color"
+                  value={oc?.backgroundColor ?? '#000000'}
+                  onChange={(e) => onUpdateSegmentOverlay(idx, { backgroundColor: e.target.value })}
+                  title="BG color"
+                  aria-label="Overlay background color"
+                  className={SWATCH}
+                />
+                <input
+                  type="color"
+                  value={shadowHex}
+                  onChange={(e) => onUpdateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
+                  title="Shadow color"
+                  aria-label="Overlay text shadow color"
+                  className={SWATCH}
+                />
                 <button
                   type="button"
                   onClick={() => onUpdateSegmentOverlay(idx, { fontStyle: isItalic ? 'normal' : 'italic' })}
