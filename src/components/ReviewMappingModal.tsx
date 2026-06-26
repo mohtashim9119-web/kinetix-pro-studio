@@ -25,13 +25,6 @@ const formatTime = (seconds: number) => {
   return `${m}:${s}`;
 };
 
-// Pull a #rrggbb out of a CSS text-shadow string for the swatch display.
-// Falls back to black for empty / rgba()-style shadows (input[type=color] needs hex).
-const extractShadowHex = (shadow: string | undefined): string => {
-  const m = shadow?.match(/#[0-9a-fA-F]{6}/);
-  return m?.[0] ?? '#000000';
-};
-
 // ---------------------------------------------------------------------------
 // Shared control styling — single source of truth so nothing drifts.
 // Every control: 32px tall, 7px radius, 1px #3a3a3a border, #2a2a2a bg, one
@@ -133,9 +126,10 @@ export function ReviewMappingModal({
 // ---------------------------------------------------------------------------
 // ReviewMappingRow — one segment's mapping review card. All controls are
 // always visible (no formatting toggle). Both card types share a 35%
-// thumbnail + 65% controls column with four rows: asset/stock (50/50),
-// text + visibility, formatting (font/weight/size + animation|autofit),
-// and colors + position.
+// thumbnail + 65% controls column with four rows: text + visibility,
+// asset/stock (50/50), formatting (font/weight/italic/size + animation,
+// or font/weight/size + autofit for heading — heading has no italic yet),
+// and colors/no-bg + X/Y position.
 // ---------------------------------------------------------------------------
 
 interface ReviewMappingRowProps {
@@ -180,7 +174,6 @@ function ReviewMappingRow({
   // Scene overlay-text formatting state (falls back to global config / defaults).
   const oc = seg.overlayConfig;
   const isItalic = oc?.fontStyle === 'italic';
-  const shadowHex = extractShadowHex(oc?.textShadow);
   const isBgNone = oc?.backgroundColor === 'transparent';
 
   return (
@@ -376,13 +369,13 @@ function ReviewMappingRow({
                   aria-checked={!!seg.showOverlay}
                   aria-label="Toggle overlay text visibility"
                   title={seg.showOverlay ? 'Overlay text shown' : 'Overlay text hidden'}
-                  className={`relative w-10 h-5 flex-shrink-0 rounded-[7px] border transition-colors ${
+                  className={`relative w-10 h-[32px] flex-shrink-0 rounded-[7px] border transition-colors ${
                     seg.showOverlay ? 'bg-[#e07c3a] border-[#e07c3a]' : 'bg-[#2a2a2a] border-[#3a3a3a]'
                   }`}
                 >
                   <span
-                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-[3px] bg-white transition-all ${
-                      seg.showOverlay ? 'left-[22px]' : 'left-[3px]'
+                    className={`absolute top-1/2 -translate-y-1/2 w-[14px] h-6 rounded-[3px] bg-white transition-all ${
+                      seg.showOverlay ? 'left-[22px]' : 'left-[4px]'
                     }`}
                   />
                 </button>
@@ -412,7 +405,7 @@ function ReviewMappingRow({
                 </button>
               </div>
 
-              {/* Row 3 — font + weight + size + animation */}
+              {/* Row 3 — font + weight + italic + size + animation */}
               <div className="flex items-center gap-[7px]">
                 <select
                   value={oc?.fontFamily ?? globalOverlayConfig.fontFamily}
@@ -432,6 +425,16 @@ function ReviewMappingRow({
                   <option value="bold">Bold</option>
                   <option value="900">Black</option>
                 </select>
+                <button
+                  type="button"
+                  onClick={() => onUpdateSegmentOverlay(idx, { fontStyle: isItalic ? 'normal' : 'italic' })}
+                  title="Italic"
+                  aria-pressed={isItalic}
+                  aria-label="Toggle italic overlay text"
+                  className={`${ICON_BTN} ${isItalic ? TOGGLE_ON : TOGGLE_OFF} font-serif italic text-[14px]`}
+                >
+                  I
+                </button>
                 <input
                   type="number"
                   min={8}
@@ -453,7 +456,7 @@ function ReviewMappingRow({
                 </select>
               </div>
 
-              {/* Row 4 — colors (inline) + shadow + italic */}
+              {/* Row 4 — colors + no-bg toggle + X/Y position */}
               <div className="flex items-center gap-[7px]">
                 <input
                   type="color"
@@ -481,28 +484,7 @@ function ReviewMappingRow({
                 >
                   <Ban size={14} />
                 </button>
-                <input
-                  type="color"
-                  value={shadowHex}
-                  onChange={(e) => onUpdateSegmentOverlay(idx, { textShadow: `0 4px 15px ${e.target.value}` })}
-                  title="Shadow color"
-                  aria-label="Overlay text shadow color"
-                  className={SWATCH}
-                />
-                <button
-                  type="button"
-                  onClick={() => onUpdateSegmentOverlay(idx, { fontStyle: isItalic ? 'normal' : 'italic' })}
-                  title="Italic"
-                  aria-pressed={isItalic}
-                  aria-label="Toggle italic overlay text"
-                  className={`${ICON_BTN} ${isItalic ? TOGGLE_ON : TOGGLE_OFF} font-serif italic text-[14px]`}
-                >
-                  I
-                </button>
-              </div>
 
-              {/* Row 5 — X/Y position */}
-              <div className="flex items-center gap-[7px]">
                 <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">X</span>
                 <input
                   type="range"
