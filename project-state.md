@@ -9,14 +9,14 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-25 |
-| Current HEAD | `67c4547` on `main`. **NOT pushed to `origin/main`** — pushes are blocked by a billing issue (known infra block, not a code/process problem). Every commit past `31c2573` (including this session's Review Mapping polish) is local-only until that's resolved. Architecture Shift complete (2026-06-24). Post-shift fixes: heading-tag false-positive (`cf75695`), orphaned voiceover blob (`3b0593c`), docs sync (`31c2573`). |
+| Last updated | 2026-06-27 |
+| Current HEAD | `23c8227` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: Review Mapping post-ship polish (`67c4547`), live thumbnail 3b (`23c8227`). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
 | Restore tag | `sync-known-good-2026-06-20` → commit `bab79b0` ("chore: remove VO-DIAG/SYNC-DIAG debug logging") |
 
-All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (9 items, ranked).
+All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (6 items, ranked).
 
 ---
 
@@ -42,7 +42,15 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 
 > Ranked by priority. Tasks within a group share a UI surface and should be built together.
 
-1. **Version snapshots** — named restore points (Initial Sync / Current Progress / Manual), capped at 20, to roll back a project.
+1. **Effects tab rebuild — 3 clean boxes + cross-project presets.** A 3rd left-panel tab showing exactly three bordered boxes (clean minimal layout):
+   - **Transitions** — fade in, fade out, camera shutter; applicable to a single segment or all segments.
+   - **Effects** — zoom in, zoom out, adjustable speed; applicable to a single segment or the full video / all segments.
+   - **Overlays** — dust particles, fire particles, spark, etc.; applicable to a single segment or all segments.
+   - Below the three boxes: a "Save preset" button (saves all 3 settings under a custom name) + a dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
+
+2. **Bottom drawer redesign** — heading + scene cards rendered at equal height. Designed, not built.
+
+3. **Version snapshots** — named restore points (Initial Sync / Current Progress / Manual), capped at 20, to roll back a project.
    - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
    - Entry 2: Current Progress — auto-updated continuously, single slot, reflects latest state
    - Entries 3+: Manual Snapshots — user clicks "Save Snapshot", named (default timestamp, renameable)
@@ -56,30 +64,17 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
      1. Asset restoration on snapshot restore — Design A (snapshot stores asset LIST only; restoring after deleting assets = missing/broken assets; lower disk use) vs Design B (deletes are snapshot-protected; asset blobs persist as long as any snapshot references them; higher disk use). DECISION PENDING.
      2. Scene-doc + state on restore is a FULL REWIND (not a merge). Current state auto-saved as "Before restore — [timestamp]" first.
 
-2. **Auto-captions** — auto-generate on-screen captions from the voiceover transcript. Reuses existing Whisper transcript token data (already runs for segment timing). Surfaces tokens as a timed text layer.
+4. **Auto-captions** — auto-generate on-screen captions from the voiceover transcript. Reuses existing Whisper transcript token data (already runs for segment timing). Surfaces tokens as a timed text layer.
 
-3. **Export rendering speedup** — move export onto OffscreenCanvas + Web Worker for faster render without freezing the UI. Investigation complete (2026-06-01, `docs/phase-7-task-1-export-profiling.md`): pipeline is I/O-bound (`canvas.toBlob` 47%, IPC writes 29%); `convertToBlob` off main thread projected 40–55% speedup (~120s → ~60–70s on macOS Intel). Implementation not started.
+5. **Export rendering speedup** — move export onto OffscreenCanvas + Web Worker for faster render without freezing the UI. Investigation complete (2026-06-01, `docs/phase-7-task-1-export-profiling.md`): pipeline is I/O-bound (`canvas.toBlob` 47%, IPC writes 29%); `convertToBlob` off main thread projected 40–55% speedup (~120s → ~60–70s on macOS Intel). Implementation not started.
 
-4. **Hard delete segment** — permanently remove a segment with a confirm dialog. Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc. Lowest priority.
+6. **Hard delete segment** — permanently remove a segment with a confirm dialog (lowest priority). Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc.
 
-5. **Move "global text layers" row** — move global text layers out of the Segments tab to the right panel (contents TBD). Segments tab stays segments-only.
+### Review Mapping modal — feature-complete
 
-**[EFFECT TAB REBUILD — 3 clean options + presets]**
+The Review Mapping modal (task 7, shipped then delisted) is now **feature-complete**. Its final follow-up closed this session:
 
-6. **Transitions** — fade in, fade out, camera shutter; applicable to single segment or all segments.
-
-7. **Effects** — zoom in, zoom out, adjustable speed; applicable to single segment or full video/all segments.
-
-8. **Overlays** — dust particles, fire particles, spark, etc.; applicable to single segment or all segments.
-
-9. **Effect-tab layout + presets** — 3rd left-panel tab shows only these three (tasks 6/7/8) as 3 bordered boxes (clean minimal layout). Below: "Save preset" button (saves all 3 settings under a custom name) + dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
-
-### Smaller follow-ups (unranked, not part of the priority list above)
-
-Scoped polish/debt items on the already-shipped, already-delisted Review Mapping feature (task 7) — not re-added to the ranked list above.
-
-- **Live thumbnail in ReviewMappingModal** — the popup's per-segment thumbnail is currently a static image; it should become a live overlay render (text, font, color, position) that updates as the user edits the row, mirroring `PreviewStage`. Not started.
-- **Heading italic wire-up** — `HeadingConfig` (`types.ts`) has no `fontStyle` field. Scene overlay text already supports italic end-to-end; heading text does not. Needs: `fontStyle` added to `HeadingConfig`, applied in `PreviewStage`'s heading `<h1>` style and in `frameRenderer.ts`'s heading canvas font-string construction, plus a modal toggle. Deliberately not added as a UI control yet — without the render-side wiring it would be a dead control (visible, does nothing).
+- ✅ **Live thumbnail in ReviewMappingModal** — DONE (3b, commit `23c8227`). Each per-segment thumbnail now renders a live overlay/heading text layer (font, weight, italic, size, color, bg, bg-None, x/y) scaled proportionally to the thumbnail box, updating in real time as the row is edited. Positioning/sizing math is mirrored locally in the modal — `PreviewStage`, `frameRenderer`, and `types.ts` are untouched. Heading italic is intentionally not rendered (it is unwired everywhere).
 
 ---
 
@@ -99,9 +94,15 @@ Scoped polish/debt items on the already-shipped, already-delisted Review Mapping
 
 - ~~**Orphaned IndexedDB blob on audio re-stage**~~ — ✅ **RESOLVED (`3b0593c`).** Re-staging audio writes a new IndexedDB blob via `putAsset` with no content dedup; the `oldIdx` splice in `handleApplySyncFromFiles` removed the asset from `project.assets` without calling `deleteAsset`, leaving an orphaned blob. Fixed by pairing the splice with `URL.revokeObjectURL` + fire-and-forget `deleteAsset(projectId, oldId)`, mirroring the existing `processMediaFile` pattern.
 
-- **Export caption styling gap — fontWeight/fontStyle/textShadow not applied for the main overlay caption.** `frameRenderer.ts` computes `fontWeight`, `fontStyle`, and `shadow` from `segment.overlayConfig` (lines 475–477) but never applies any of the three to the canvas context: the canvas font string at line 488 is hardcoded to `` `italic normal ${bodyPx}px "${fontFamily}"` `` — every exported caption renders italic + normal-weight regardless of the user's actual weight/italic settings — and `shadow` is read into a local var that's never used at all (dead code). This is a preview/export mismatch: `PreviewStage.tsx`'s `<p>` for the same caption correctly applies `fontWeight`/`fontStyle` dynamically via inline style, so the modal and live preview both show the configured look while the exported MP4 won't match. Not fixed this session — flagged only. Export was not manually tested this session.
-
 - ~~**Clipped search window when a new scene is inserted next to an "absorbed" boundary**~~ — ✅ **RESOLVED.** Originally attributed to `alignScenesToTranscriptAnchorAware` (`src/services/whisperService.ts`), which bounded a new/estimate segment's text-matching search window using its nearest surviving whisper-anchored neighbors' `anchorStart` values. If one of those neighbors' anchors was itself positioned by an *earlier* sync's gap-fill pass absorbing audio for content that had no bracket at the time, the resulting window could be narrower than the new segment's own word count — forcing `alignScenestoTranscript`'s sliding-window match to lock onto the wrong (preceding) words instead of the new segment's real content. Confirmed via real-scene-text repro during Step 4.5b investigation (2026-06-23): inserting a new `012_tape_deck` bracket between unchanged `011_cloth_seats` and `013_cd_adapter` — where `013`'s carried-forward anchor had pre-absorbed the (then-unbracketed) "tape deck" audio from the original sync — produced a 0.225s sliver on `011_cloth_seats` and misplaced `012`'s content. **Fixed in `8615639`** (clamped each boundary's gap-fill search window to its two neighboring segments' own spoken edges — the bug actually lived in the shared `alignScenestoTranscript` gap-fill logic, not anything unique to the anchor-aware path it was originally attributed to). The anchor-aware function this entry originally named was itself later deleted in clean-slate step 3c (2026-06-24, commits `5da64df`/`8523f39`).
+
+---
+
+## Deferred (Non-Blocking)
+
+> Recorded debt that is intentionally NOT on the active backlog. Revisit when convenient — these don't block any current work.
+
+- **Export caption styling gap — fontWeight/fontStyle/textShadow not applied for the main overlay caption.** `frameRenderer.ts` computes `fontWeight`, `fontStyle`, and `shadow` from `segment.overlayConfig` (lines 475–477) but never applies any of the three to the canvas context: the canvas font string at line 488 is hardcoded to `` `italic normal ${bodyPx}px "${fontFamily}"` `` — every exported caption renders italic + normal-weight regardless of the user's actual weight/italic settings — and `shadow` is read into a local var that's never used at all (dead code). Preview/export mismatch: `PreviewStage.tsx`'s `<p>` for the same caption correctly applies `fontWeight`/`fontStyle` dynamically via inline style, so the modal and live preview show the configured look while the exported MP4 won't match. Fix is small (wire weight/style into the canvas font string + call `applyTextShadow`), but export was not manually retested when last flagged. **Deferred — recorded, not active.**
 
 ---
 
@@ -156,6 +157,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-26 | **Draggable headings (task 6):** heading rows drag to any position via Pointer Events + setPointerCapture (no new dependency). Duration give-back/steal factored into shared syncEngine helpers (stealDurationFromNeighbors / giveDurationToNeighbors). Post-drag recompute uses anchor-free recomputeStartTimes, not applyAnchorBasedTiming. Stale-anchor behavior on pre-existing projects (locked neighbor edge case) is consistent with clean-slate philosophy — fresh sync resolves it. |
 | 2026-06-26 | **Review Mapping popup (task 7):** new ReviewMappingModal at z-[150] with per-segment thumbnail, horizontal asset bar, stock search trigger (reuses existing StockSearchModal at z-[200] after bump), time range display. Mounted in App.tsx sibling to StockSearchModal. StockSearchModal z-index bumped from z-[100] to z-[200] to clear the new popup. *(The initial ship also had a mute toggle; it was removed in the `947082c` card-layout redesign and is not present in the current modal.)* |
 | 2026-06-26 | **Review Mapping popup — post-ship polish (this session):** refinement of the already-delisted task 7 feature, not a new backlog item. Scene overlay x/y position wiring, lower-third default y=78, preview+export (`55aacc1`). Swatch/toggle/stock-split polish + overlay bg-color editor (`88169fd`). Overlay caption font-size wiring, bubble auto-width, bg-None option, removed auto-quotes (`603a268`). Square toggle, scene row reorder, scene X/Y sliders (`5bb778e`). Scene overlay + heading text edge-to-edge X/Y positioning + width fix in PreviewStage (`df52dc1`). Scene row consolidation — italic moved into formatting row, color+XY rows merged into one, shadow swatch removed, ban toggle relocated next to bg swatch, square toggle thumb sizing fixed (`1447813`). Review Mapping control converted from icon to a centered text button in the Segments tab header (`67c4547`). |
+| 2026-06-27 | **Billing block resolved + CI made manual-only.** The push-blocking billing issue is fixed — `origin/main` now tracks local HEAD again. To prevent recurring metered usage, the build workflow was switched to manual-only (`workflow_dispatch`, commit `e725a46`); CI no longer runs on push. Live thumbnail 3b (`23c8227`) is the first feature pushed under the restored flow. |
 
 ---
 
