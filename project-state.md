@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-27 |
-| Current HEAD | `23c8227` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: Review Mapping post-ship polish (`67c4547`), live thumbnail 3b (`23c8227`). |
+| Current HEAD | `4887d33` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -36,6 +36,15 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 **Restore tags:** `sync-known-good-2026-06-20` → `bab79b0`; `sync-known-good-2026-06-23` → `a1a326d`.
 </details>
 
+<details>
+<summary>Bottom drawer + shared controls — ✅ DONE 2026-06-27 (commit 4887d33)</summary>
+
+- ✅ **Shared `SegmentControls` extraction** — the controls portion of `ReviewMappingRow` (both scene-card and heading-card layouts, the field/button/swatch style consts, `updateHC`, and the `.rm-slider`/`.rm-swatch` `<style>` block) is now `src/components/SegmentControls.tsx`. `ReviewMappingModal` renders thumbnail + `<SegmentControls/>` (modal appearance/behavior unchanged — pure move); the bottom drawer renders `<SegmentControls/>` only (no thumbnail, full width). Non-audio asset filtering lives once, inside `SegmentControls`. The drawer's old `<textarea>` overlay input became the shared single-line input, and its phantom shadow control (export never applied it) was dropped.
+- ✅ **Bottom drawer centered at 50vw, viewport-anchored** — wrapper switched from `absolute bottom-0 left-0 right-0` to `fixed bottom-0` with `left: 50%`, `width: 50vw`; centering expressed through Framer Motion (`x: '-50%'` on all three keyframes) since motion owns the element transform. Drawer position is now independent of side-panel collapse state.
+- ✅ **Mute toggle moved to drawer header** — sits to the left of the lock icon, scene-only (headings have no embedded audio); the old body mute row was removed so scene and heading drawers are the same height.
+- ✅ **Left-panel segment click syncs preview + timeline** — clicking a row now calls `handleSegmentClick` (App.tsx), which sets `selectedSegmentId` AND seeks the time-driven preview to the segment's `startTime` (mirrors the timeline onSeek pattern). `Timeline.tsx` gained an effect that auto-scrolls the active segment into view on `currentSegmentId` change (only when off-screen, so it never fights manual scrubbing).
+</details>
+
 ---
 
 ## Active Tasks
@@ -48,7 +57,7 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
    - **Overlays** — dust particles, fire particles, spark, etc.; applicable to a single segment or all segments.
    - Below the three boxes: a "Save preset" button (saves all 3 settings under a custom name) + a dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
 
-2. **Bottom drawer redesign** — heading + scene cards rendered at equal height. Designed, not built.
+2. ~~**Bottom drawer redesign** — heading + scene cards rendered at equal height.~~ — ✅ DONE (`4887d33`). Shipped via shared `SegmentControls` + header-mute relocation (scene/heading drawers now equal height). See Completed Work.
 
 3. **Version snapshots** — named restore points (Initial Sync / Current Progress / Manual), capped at 20, to roll back a project.
    - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
@@ -158,6 +167,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-26 | **Review Mapping popup (task 7):** new ReviewMappingModal at z-[150] with per-segment thumbnail, horizontal asset bar, stock search trigger (reuses existing StockSearchModal at z-[200] after bump), time range display. Mounted in App.tsx sibling to StockSearchModal. StockSearchModal z-index bumped from z-[100] to z-[200] to clear the new popup. *(The initial ship also had a mute toggle; it was removed in the `947082c` card-layout redesign and is not present in the current modal.)* |
 | 2026-06-26 | **Review Mapping popup — post-ship polish (this session):** refinement of the already-delisted task 7 feature, not a new backlog item. Scene overlay x/y position wiring, lower-third default y=78, preview+export (`55aacc1`). Swatch/toggle/stock-split polish + overlay bg-color editor (`88169fd`). Overlay caption font-size wiring, bubble auto-width, bg-None option, removed auto-quotes (`603a268`). Square toggle, scene row reorder, scene X/Y sliders (`5bb778e`). Scene overlay + heading text edge-to-edge X/Y positioning + width fix in PreviewStage (`df52dc1`). Scene row consolidation — italic moved into formatting row, color+XY rows merged into one, shadow swatch removed, ban toggle relocated next to bg swatch, square toggle thumb sizing fixed (`1447813`). Review Mapping control converted from icon to a centered text button in the Segments tab header (`67c4547`). |
 | 2026-06-27 | **Billing block resolved + CI made manual-only.** The push-blocking billing issue is fixed — `origin/main` now tracks local HEAD again. To prevent recurring metered usage, the build workflow was switched to manual-only (`workflow_dispatch`, commit `e725a46`); CI no longer runs on push. Live thumbnail 3b (`23c8227`) is the first feature pushed under the restored flow. |
+| 2026-06-27 | **Shared SegmentControls + drawer/preview/timeline sync (commit `4887d33`).** Extracted the Review Mapping card's controls into a shared `SegmentControls` component reused by both the modal and the bottom drawer (modal unchanged — pure move; drawer is controls-only, no thumbnail). Bottom drawer recentered to a viewport-anchored 50vw block (motion-owned `x: '-50%'`), independent of side-panel state. Mute toggle relocated to the drawer header (scene-only); body mute row removed so scene/heading drawers match height. Left-panel segment click now seeks the time-driven preview to the segment and auto-scrolls the timeline to bring it into view. Closes backlog item 2 (bottom drawer redesign). |
 
 ---
 
@@ -176,7 +186,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 2,777 |
+| `src/App.tsx` LOC | 2,838 |
 | Project persistence | Per-project scoped: `kinetix:project:{id}:v1` + registry `kinetix:projects:v1` in localStorage (legacy single-project key `kinetix:project:v1` retained for one-time migration only) |
 | IndexedDB | `kinetix-assets` DB v2, store `assets-v2`, compound keyPath `['projectId','id']` (legacy v1 store retained for migration) |
 | Total dependencies | 6 prod + 12 dev |
