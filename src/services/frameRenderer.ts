@@ -3,7 +3,7 @@ import { getFilterStyle } from '../constants';
 import { applySegmentAnimation } from './canvasAnimations';
 
 export interface FrameGlobalConfig {
-  overlayConfig: { color: string; backgroundColor: string; fontFamily: string };
+  overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
   hideAllText: boolean;
   globalOverlayFilter?: string;
   globalTextLayers?: TextOverlay[];
@@ -479,10 +479,10 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const yPct = (oc?.y ?? 78) / 100;
 
     // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide)
-    const bodyPx = Math.round((h / 1080) * 24);
+    const bodyPx = Math.round((h / 1080) * (oc?.fontSize ?? 24));
 
     if (segment.text) {
-      const displayText = `“${segment.text}”`;
+      const displayText = segment.text;
       await ensureFont(fontFamily, bodyPx);
       ctx.save();
       ctx.font = `italic normal ${bodyPx}px "${fontFamily}"`;
@@ -490,18 +490,21 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       const lines = wrapText(ctx, displayText, maxTextW);
       const lineH = bodyPx * 1.5;
       const totalH = lines.length * lineH;
-      const padX = Math.round(w * 0.05);
-      const padY = Math.round(h * 0.03);
-      const boxW = maxTextW + padX * 2;
+      const textW = Math.max(...lines.map(line => ctx.measureText(line).width));
+      const padX = Math.round(w * 0.02);
+      const padY = Math.round(h * 0.015);
+      const boxW = textW + padX * 2;
       const boxH = totalH + padY * 2;
       const centerX = w * xPct;
       const centerY = h * yPct;
       const boxX = centerX - boxW / 2;
       const boxY = centerY - boxH / 2;
 
-      ctx.fillStyle = bgColor;
-      drawRoundedRect(ctx, boxX, boxY, boxW, boxH, Math.round(h * 0.025));
-      ctx.fill();
+      if (bgColor !== 'transparent') {
+        ctx.fillStyle = bgColor;
+        drawRoundedRect(ctx, boxX, boxY, boxW, boxH, Math.round(h * 0.025));
+        ctx.fill();
+      }
 
       ctx.fillStyle = color;
       ctx.textAlign = 'center';

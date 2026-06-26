@@ -708,7 +708,7 @@ export function PreviewStage({
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
                     transformTemplate={(_, generated) => `translate(-50%, -50%) ${generated}`}
-                    className="absolute max-w-3xl px-10 py-6 rounded-3xl text-center"
+                    className="absolute max-w-3xl px-5 py-3 rounded-3xl text-center"
                     style={{
                       left: `${currentSegment.overlayConfig?.x ?? 50}%`,
                       top: `${currentSegment.overlayConfig?.y ?? 78}%`,
@@ -720,12 +720,12 @@ export function PreviewStage({
                       style={{
                         fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
                         color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
-                        fontSize: `${isFullscreen ? 32 : 24}px`,
+                        fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * (isFullscreen ? 32 / 24 : 1)}px`,
                         fontWeight: currentSegment.overlayConfig?.fontWeight || 'normal',
                         fontStyle: currentSegment.overlayConfig?.fontStyle || 'italic',
                       }}
                     >
-                      &ldquo;{currentSegment.text}&rdquo;
+                      {currentSegment.text}
                     </p>
                   </motion.div>
                 )}

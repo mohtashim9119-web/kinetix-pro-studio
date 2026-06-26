@@ -4,7 +4,7 @@
  */
 
 import { useEffect } from 'react';
-import { X, Film, Video, AlertCircle, Image as ImageIcon, Maximize2 } from 'lucide-react';
+import { X, Film, Video, AlertCircle, Image as ImageIcon, Maximize2, Ban } from 'lucide-react';
 import { VideoSegment, Asset, HeadingConfig } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
@@ -181,6 +181,7 @@ function ReviewMappingRow({
   const oc = seg.overlayConfig;
   const isItalic = oc?.fontStyle === 'italic';
   const shadowHex = extractShadowHex(oc?.textShadow);
+  const isBgNone = oc?.backgroundColor === 'transparent';
 
   return (
     <div
@@ -464,12 +465,22 @@ function ReviewMappingRow({
                 />
                 <input
                   type="color"
-                  value={oc?.backgroundColor ?? '#000000'}
+                  value={isBgNone ? '#000000' : (oc?.backgroundColor ?? '#000000')}
                   onChange={(e) => onUpdateSegmentOverlay(idx, { backgroundColor: e.target.value })}
                   title="BG color"
                   aria-label="Overlay background color"
-                  className={SWATCH}
+                  className={`${SWATCH} ${isBgNone ? 'opacity-40' : ''}`}
                 />
+                <button
+                  type="button"
+                  onClick={() => onUpdateSegmentOverlay(idx, { backgroundColor: isBgNone ? '#000000' : 'transparent' })}
+                  title="No background"
+                  aria-pressed={isBgNone}
+                  aria-label="Toggle no background"
+                  className={`${ICON_BTN} ${isBgNone ? TOGGLE_ON : TOGGLE_OFF}`}
+                >
+                  <Ban size={14} />
+                </button>
                 <input
                   type="color"
                   value={shadowHex}
