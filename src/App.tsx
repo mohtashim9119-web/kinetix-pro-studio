@@ -780,6 +780,17 @@ export default function App() {
     });
   }, []);
 
+  // Left-panel segment click: open the drawer AND jump the time-driven preview
+  // to the segment, mirroring the timeline onSeek pattern (setCurrentTime + audio resync).
+  const handleSegmentClick = useCallback((id: string): void => {
+    setSelectedSegmentId(id);
+    const seg = project.segments.find(s => s.id === id);
+    if (seg) {
+      setCurrentTime(seg.startTime);
+      if (audioRef.current) audioRef.current.currentTime = seg.startTime;
+    }
+  }, [project.segments]);
+
   const handleUnlockAll = useCallback((): void => {
     setProject(prev => ({
       ...prev,
@@ -1879,7 +1890,7 @@ export default function App() {
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}
             applySyncDisabled={applySyncDisabled}
-            onSegmentClick={(id) => setSelectedSegmentId(id)}
+            onSegmentClick={handleSegmentClick}
             onToggleLock={handleToggleLock}
             onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
             onUnlockAll={handleUnlockAll}

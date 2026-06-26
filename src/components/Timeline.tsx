@@ -100,6 +100,27 @@ export function Timeline({
     return () => { cancelled = true; };
   }, [voiceoverUrl]);
 
+  // Keep the active segment visible: when the current segment changes (a segment
+  // clicked in the left-panel list, a timeline click, or playback crossing a
+  // boundary), scroll the timeline horizontally so it comes into view. Only
+  // scrolls when the segment is off-screen, so it never fights manual scrubbing.
+  useEffect(() => {
+    if (!currentSegmentId) return;
+    const seg = segments.find(s => s.id === currentSegmentId);
+    if (!seg) return;
+    const container = document.getElementById('timeline-scroll-area');
+    if (!container) return;
+    const left = seg.startTime * pixelsPerSecond;
+    const right = (seg.startTime + seg.duration) * pixelsPerSecond;
+    const viewLeft = container.scrollLeft;
+    const viewRight = viewLeft + container.clientWidth;
+    if (left < viewLeft) {
+      container.scrollTo({ left: Math.max(0, left - 24), behavior: 'smooth' });
+    } else if (right > viewRight) {
+      container.scrollTo({ left: right - container.clientWidth + 24, behavior: 'smooth' });
+    }
+  }, [currentSegmentId, pixelsPerSecond, segments]);
+
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Tracks Area */}
