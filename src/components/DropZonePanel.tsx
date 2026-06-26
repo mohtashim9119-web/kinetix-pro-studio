@@ -21,7 +21,6 @@ import {
   Trash2,
   Heading1,
   GripVertical,
-  ListChecks,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -950,7 +949,7 @@ export function DropZonePanel({
         <div className="flex flex-col flex-1 min-h-0">
 
           {/* Header */}
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
+          <div className="relative flex items-center gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
             <button
               onClick={() => allLocked ? onUnlockAll() : onLockAll()}
               title={allLocked ? 'Unlock All' : 'Lock All'}
@@ -969,9 +968,9 @@ export function DropZonePanel({
               onClick={onOpenReviewMapping}
               title="Review Mapping"
               aria-label="Open review mapping"
-              className="p-1.5 rounded-lg text-gray-500 hover:text-[#F27D26] hover:bg-[#1A1A1A] transition-colors"
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-[#F27D26] hover:bg-[#1A1A1A] transition-colors"
             >
-              <ListChecks className="w-4 h-4" />
+              Review Mapping
             </button>
             <span className="ml-auto text-[10px] font-black uppercase tracking-widest text-gray-600">
               {segments.length} Segments
