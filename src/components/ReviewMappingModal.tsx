@@ -359,7 +359,36 @@ function ReviewMappingRow({
             </>
           ) : (
             <>
-              {/* Row 1 — asset (50%) + stock search (50%) */}
+              {/* Row 1 — overlay text + visibility toggle switch */}
+              <div className="flex items-center gap-[7px]">
+                <input
+                  type="text"
+                  value={seg.text}
+                  onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
+                  placeholder="Overlay text"
+                  aria-label="Overlay text"
+                  className={`${FIELD} text-white flex-1 min-w-0`}
+                />
+                <button
+                  type="button"
+                  onClick={() => onUpdateSegment(idx, { showOverlay: !seg.showOverlay })}
+                  role="switch"
+                  aria-checked={!!seg.showOverlay}
+                  aria-label="Toggle overlay text visibility"
+                  title={seg.showOverlay ? 'Overlay text shown' : 'Overlay text hidden'}
+                  className={`relative w-10 h-5 flex-shrink-0 rounded-[7px] border transition-colors ${
+                    seg.showOverlay ? 'bg-[#e07c3a] border-[#e07c3a]' : 'bg-[#2a2a2a] border-[#3a3a3a]'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-[3px] bg-white transition-all ${
+                      seg.showOverlay ? 'left-[22px]' : 'left-[3px]'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Row 2 — asset (50%) + stock search (50%) */}
               <div className="flex items-center gap-[7px]">
                 <select
                   value={seg.assetId ?? ''}
@@ -380,35 +409,6 @@ function ReviewMappingRow({
                   className={`${BTN_BASE} ${ICON_IDLE} gap-[5px] text-[12px] flex-1 min-w-0`}
                 >
                   <Film size={14} /> <span className="truncate">Stock</span>
-                </button>
-              </div>
-
-              {/* Row 2 — overlay text + visibility toggle switch */}
-              <div className="flex items-center gap-[7px]">
-                <input
-                  type="text"
-                  value={seg.text}
-                  onChange={(e) => onUpdateSegment(idx, { text: e.target.value })}
-                  placeholder="Overlay text"
-                  aria-label="Overlay text"
-                  className={`${FIELD} text-white flex-1 min-w-0`}
-                />
-                <button
-                  type="button"
-                  onClick={() => onUpdateSegment(idx, { showOverlay: !seg.showOverlay })}
-                  role="switch"
-                  aria-checked={!!seg.showOverlay}
-                  aria-label="Toggle overlay text visibility"
-                  title={seg.showOverlay ? 'Overlay text shown' : 'Overlay text hidden'}
-                  className={`relative w-10 h-5 flex-shrink-0 rounded-full border transition-colors ${
-                    seg.showOverlay ? 'bg-[#e07c3a] border-[#e07c3a]' : 'bg-[#2a2a2a] border-[#3a3a3a]'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white transition-all ${
-                      seg.showOverlay ? 'left-[22px]' : 'left-[3px]'
-                    }`}
-                  />
                 </button>
               </div>
 
@@ -499,6 +499,37 @@ function ReviewMappingRow({
                 >
                   I
                 </button>
+              </div>
+
+              {/* Row 5 — X/Y position */}
+              <div className="flex items-center gap-[7px]">
+                <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">X</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={oc?.x ?? 50}
+                  onChange={(e) => onUpdateSegmentOverlay(idx, { x: Number(e.target.value) })}
+                  aria-label="Overlay horizontal position"
+                  className="rm-slider flex-1 min-w-0"
+                />
+                <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
+                  {oc?.x ?? 50}%
+                </span>
+
+                <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">Y</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={oc?.y ?? 78}
+                  onChange={(e) => onUpdateSegmentOverlay(idx, { y: Number(e.target.value) })}
+                  aria-label="Overlay vertical position"
+                  className="rm-slider flex-1 min-w-0"
+                />
+                <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
+                  {oc?.y ?? 78}%
+                </span>
               </div>
             </>
           )}
