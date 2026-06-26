@@ -439,6 +439,14 @@ export function PreviewStage({
       Math.min(headingContainerHeight * 0.14, baseSize * shrinkFactor),
     );
 
+  // Position-aware anchor: translate(-x%, -y%) scales the inset with the box's own
+  // rendered size, so at 0% the box's near edge sits at the preview edge, at 100% the
+  // far edge sits at the opposite edge, and at 50% it's centered — fully inside at every value.
+  const headingPosX = currentSegment?.headingConfig?.x ?? 50;
+  const headingPosY = currentSegment?.headingConfig?.y ?? 50;
+  const overlayPosX = currentSegment?.overlayConfig?.x ?? 50;
+  const overlayPosY = currentSegment?.overlayConfig?.y ?? 78;
+
   return (
     <div className="w-full h-full">
       <div
@@ -553,10 +561,11 @@ export function PreviewStage({
                           <h1
                             className="absolute font-bold"
                             style={{
-                              left: `${currentSegment.headingConfig?.x ?? 50}%`,
-                              top: `${currentSegment.headingConfig?.y ?? 50}%`,
-                              transform: 'translate(-50%, -50%)',
-                              width: '90%',
+                              left: `${headingPosX}%`,
+                              top: `${headingPosY}%`,
+                              transform: `translate(-${headingPosX}%, -${headingPosY}%)`,
+                              width: 'max-content',
+                              maxWidth: '90%',
                               textAlign: 'center',
                               zIndex: 1,
                               fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
@@ -707,11 +716,12 @@ export function PreviewStage({
                     initial={{ y: 30, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
-                    transformTemplate={(_, generated) => `translate(-50%, -50%) ${generated}`}
+                    transformTemplate={(_, generated) => `translate(-${overlayPosX}%, -${overlayPosY}%) ${generated}`}
                     className="absolute max-w-3xl px-5 py-3 rounded-3xl text-center"
                     style={{
-                      left: `${currentSegment.overlayConfig?.x ?? 50}%`,
-                      top: `${currentSegment.overlayConfig?.y ?? 78}%`,
+                      left: `${overlayPosX}%`,
+                      top: `${overlayPosY}%`,
+                      width: 'max-content',
                       backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
                     }}
                   >
