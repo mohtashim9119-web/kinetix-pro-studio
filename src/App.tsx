@@ -865,11 +865,6 @@ export default function App() {
   }, []);
 
   const handleApplyEffect = useCallback((e: ApplyEvent): void => {
-    if (e.type === 'preset') {
-      console.debug('[effects] "preset" not wired yet (step 7)');
-      return;
-    }
-
     setProject(p => {
       const segments = p.segments.map(s => {
         // Skip headings — they have no video/image asset to effect
@@ -892,6 +887,17 @@ export default function App() {
           case 'randomize-animations': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
             return { ...s, effectAnimation: slug, effectAnimationDuration: s.effectAnimationDuration };
+          }
+          case 'preset': {
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
+            return {
+              ...s,
+              effectTransition: e.preset.transition,
+              effectTransitionDuration: e.preset.transitionDur,
+              effectAnimation: e.preset.animation,
+              effectAnimationDuration: e.preset.animationDur,
+              effectOverlay: e.preset.overlay,
+            };
           }
           default:
             return s;

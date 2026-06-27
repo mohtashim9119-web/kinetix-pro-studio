@@ -29,6 +29,7 @@ import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent } from './EffectsPanel';
+import { loadLookPresets, saveLookPreset, deleteLookPreset, type LookPreset } from '../services/lookPresetService';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
@@ -430,6 +431,24 @@ export function DropZonePanel({
   const stagedRef = useRef<StagedFiles>(EMPTY_STAGED);
   const addAssetsRef = useRef<HTMLInputElement>(null);
   const [assetsDragOver, setAssetsDragOver] = useState(false);
+  // Combined-look effect presets — loaded from lookPresetService on mount, kept in
+  // sync with localStorage on every add/remove from EffectsPanel.
+  const [lookPresets, setLookPresets] = useState<LookPreset[]>(() => loadLookPresets());
+
+  const handleLookPresetsChange = (next: EffectsPreset[]): void => {
+    const prevIds = new Set(lookPresets.map((p) => p.id));
+    const nextIds = new Set(next.map((p) => p.id));
+
+    for (const id of prevIds) {
+      if (!nextIds.has(id)) deleteLookPreset(id);
+    }
+    for (const preset of next) {
+      if (!prevIds.has(preset.id)) {
+        saveLookPreset(preset);
+      }
+    }
+    setLookPresets(loadLookPresets());
+  };
   // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
   // -1 = before all segments; i = after segment[i].
   const [hoveredGapIdx, setHoveredGapIdx] = useState<number | null>(null);
@@ -1196,10 +1215,10 @@ export function DropZonePanel({
           {/* ── EFFECTS REBUILD (Step 1: UI landing, inert stubs) ──────────── */}
           <div className="p-3">
             <EffectsPanel
-              initialPresets={[]}
+              initialPresets={lookPresets}
               selectedCount={selectedSegmentIds.size}
               onApply={onApplyEffect}
-              onPresetsChange={(_p: EffectsPreset[]) => { /* Step 1: no-op — wired in Step 7 */ }}
+              onPresetsChange={handleLookPresetsChange}
             />
           </div>
 

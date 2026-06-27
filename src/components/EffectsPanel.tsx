@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, type ReactNode } from "react";
+import { useState, useRef, useMemo, useEffect, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Shuffle, ChevronDown, Save, Trash2 } from "lucide-react";
 import { TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE, type EffectOption } from "../effectsOptions";
@@ -16,9 +16,9 @@ export interface Preset {
   id: string;
   name: string;
   transition: string;
-  transitionDur: string;
+  transitionDur: number;
   animation: string;
-  animationDur: string;
+  animationDur: number;
   overlay: string;
 }
 
@@ -319,6 +319,12 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
   const [activeId, setActiveId] = useState<string | null>(null);
   const [presetName, setPresetName] = useState("");
 
+  // The parent owns persistence and is the source of truth (e.g. after a save is
+  // refused by the cap). Re-sync whenever it re-supplies the authoritative list.
+  useEffect(() => {
+    setPresets(initialPresets);
+  }, [initialPresets]);
+
   const activePreset = useMemo(() => presets.find((p) => p.id === activeId) ?? null, [presets, activeId]);
 
   const togglePick = (set: Set<string>, setter: (s: Set<string>) => void, name: string) => {
@@ -338,9 +344,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
       id: crypto.randomUUID(),
       name: presetName.trim() || `Preset ${presets.length + 1}`,
       transition,
-      transitionDur,
+      transitionDur: Number(transitionDur),
       animation,
-      animationDur,
+      animationDur: Number(animationDur),
       overlay,
     };
     commitPresets([...presets, preset]);
@@ -351,9 +357,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
 
   const restorePreset = (p: Preset) => {
     setTransition(p.transition);
-    setTransitionDur(p.transitionDur);
+    setTransitionDur(String(p.transitionDur));
     setAnimation(p.animation);
-    setAnimationDur(p.animationDur);
+    setAnimationDur(String(p.animationDur));
     setOverlay(p.overlay);
     setActiveId(p.id);
   };
