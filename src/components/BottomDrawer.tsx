@@ -5,9 +5,10 @@
 
 import { useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Lock, Unlock, Music } from 'lucide-react';
+import { X, Lock, Unlock, Music, ArrowLeftRight, Sparkles, Layers } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 import { SegmentControls } from './SegmentControls';
+import { labelOf, TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE } from '../effectsOptions';
 
 interface Props {
   segment: VideoSegment | null;
@@ -39,6 +40,18 @@ export function BottomDrawer({
   const s = segment;
   const idx = segmentIndex;
 
+  const effectPills = s && !s.isHeading ? [
+    s.effectTransition && s.effectTransition !== TRANSITION_NONE
+      ? { icon: ArrowLeftRight, label: labelOf(TRANSITIONS, s.effectTransition) }
+      : null,
+    s.effectAnimation && s.effectAnimation !== ANIMATION_NONE
+      ? { icon: Sparkles, label: labelOf(ANIMATIONS, s.effectAnimation) }
+      : null,
+    s.effectOverlay && s.effectOverlay !== OVERLAY_NONE
+      ? { icon: Layers, label: labelOf(OVERLAYS, s.effectOverlay) }
+      : null,
+  ].filter((p): p is { icon: typeof ArrowLeftRight; label: string } => p !== null && p.label !== undefined) : [];
+
   const asset = s ? assets.find(a => a.id === s.assetId) : undefined;
   const isVideo = asset?.type === 'video';
   const srcDur = s?.sourceDuration ?? 60;
@@ -61,8 +74,8 @@ export function BottomDrawer({
           style={{ maxHeight: '45vh', left: '50%', width: '50vw' }}
         >
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-3 border-b border-[#1A1A1A]">
-            <div className="flex items-center gap-3">
+          <div className="grid grid-cols-3 items-center px-6 py-3 border-b border-[#1A1A1A]">
+            <div className="flex items-center gap-3 justify-self-start">
               <div className="w-8 h-1 rounded-full bg-[#282828]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
                 {s.headingConfig?.text || s.heading || `Scene ${idx + 1}`}
@@ -71,7 +84,22 @@ export function BottomDrawer({
                 {s.duration.toFixed(1)}s
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 justify-self-center">
+              {effectPills.map(({ icon: Icon, label }, i) => (
+                <div
+                  key={i}
+                  title={label}
+                  className="flex items-center justify-center gap-1.5 px-2 py-1.5 w-[110px]
+                             rounded-lg border border-[#282828] bg-[#1A1A1A]
+                             text-[9px] font-black uppercase tracking-widest
+                             whitespace-nowrap overflow-hidden text-gray-400"
+                >
+                  <Icon className="w-3 h-3 shrink-0 text-gray-500" />
+                  <span className="truncate">{label}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 justify-self-end">
               {/* Mute toggle — scene-only (headings have no embedded audio) */}
               {!s.isHeading && (
                 <button

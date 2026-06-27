@@ -58,3 +58,9 @@ export const OVERLAYS: EffectOption[] = [
   { label: 'Weather (Rain/Fog/Snow)', value: 'weather',   disabled: true },
   { label: 'Fire / Embers',         value: 'fire-embers', disabled: true },
 ];
+
+/** Slug -> label lookup. Returns undefined if value is undefined or has no match. */
+export function labelOf(opts: EffectOption[], value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return opts.find((o) => o.value === value)?.label;
+}
