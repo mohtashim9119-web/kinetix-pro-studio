@@ -21,6 +21,9 @@ import {
   Trash2,
   Heading1,
   GripVertical,
+  ListChecks,
+  CheckSquare,
+  Square,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -304,6 +307,11 @@ interface Props {
   onMoveHeading?: (id: string, targetIndex: number) => void;
   // Misc
   selectedSegmentId: string | undefined;
+  // Batch (multi-)selection for Effects tab — separate from selectedSegmentId.
+  selectedSegmentIds: Set<string>;
+  onToggleSegmentSelect: (id: string) => void;
+  onSelectAllSegments: () => void;
+  onClearSegmentSelection: () => void;
   // Effects tab props
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -371,6 +379,10 @@ export function DropZonePanel({
   onDeleteHeading,
   onMoveHeading,
   selectedSegmentId,
+  selectedSegmentIds,
+  onToggleSegmentSelect,
+  onSelectAllSegments,
+  onClearSegmentSelection,
   globalTransition,
   globalTransitionDuration,
   globalAnimation,
@@ -949,33 +961,65 @@ export function DropZonePanel({
       {activeTab === 'segments' && (
         <div className="flex flex-col flex-1 min-h-0">
 
-          {/* Header */}
-          <div className="relative flex items-center gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
-            <button
-              onClick={() => allLocked ? onUnlockAll() : onLockAll()}
-              title={allLocked ? 'Unlock All' : 'Lock All'}
-              aria-label={allLocked ? 'Unlock all segments' : 'Lock all segments'}
-              className={`p-1.5 rounded-lg hover:bg-[#1A1A1A] transition-colors
-                          ${allLocked
-                            ? 'text-amber-500 hover:text-amber-400'
-                            : 'text-indigo-400 hover:text-indigo-300'}`}
-            >
-              {allLocked
-                ? <LockOpen className="w-4 h-4" />
-                : <Lock className="w-4 h-4" />
-              }
-            </button>
-            <button
-              onClick={onOpenReviewMapping}
-              title="Review Mapping"
-              aria-label="Open review mapping"
-              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-[#F27D26] hover:bg-[#1A1A1A] transition-colors"
-            >
-              Review Mapping
-            </button>
-            <span className="ml-auto text-[10px] font-black uppercase tracking-widest text-gray-600">
+          {/* Header — two rows: (1) segment count, (2) three equal action boxes */}
+          <div className="flex flex-col gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
+            {/* Row 1 — segment count only */}
+            <div className="text-right text-[10px] font-black uppercase tracking-widest text-gray-600">
               {segments.length} Segments
-            </span>
+            </div>
+
+            {/* Row 2 — three equal-width action boxes */}
+            <div className="flex items-stretch gap-2">
+              {/* Box 1 — Lock all / Unlock all */}
+              <button
+                onClick={() => allLocked ? onUnlockAll() : onLockAll()}
+                title={allLocked ? 'Unlock All' : 'Lock All'}
+                aria-label={allLocked ? 'Unlock all segments' : 'Lock all segments'}
+                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
+                            border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
+                            whitespace-nowrap overflow-hidden transition-colors
+                            ${allLocked
+                              ? 'text-amber-500 hover:text-amber-400 hover:bg-[#222]'
+                              : 'text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]'}`}
+              >
+                {allLocked
+                  ? <LockOpen className="w-3 h-3 flex-shrink-0" />
+                  : <Lock className="w-3 h-3 flex-shrink-0" />
+                }
+                <span className="truncate">{allLocked ? 'Unlock all' : 'Lock all'}</span>
+              </button>
+
+              {/* Box 2 — Review Mapping */}
+              <button
+                onClick={onOpenReviewMapping}
+                title="Review Mapping"
+                aria-label="Open review mapping"
+                className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
+                           border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
+                           text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]
+                           whitespace-nowrap overflow-hidden transition-colors"
+              >
+                <ListChecks className="w-3 h-3 flex-shrink-0" />
+                <span className="truncate">Review</span>
+              </button>
+
+              {/* Box 3 — Select all / Clear */}
+              <button
+                onClick={() => (selectedSegmentIds.size > 0 ? onClearSegmentSelection() : onSelectAllSegments())}
+                title={selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments'}
+                aria-label={selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments'}
+                className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
+                           border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
+                           text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]
+                           whitespace-nowrap overflow-hidden transition-colors"
+              >
+                {selectedSegmentIds.size > 0
+                  ? <CheckSquare className="w-3 h-3 flex-shrink-0" />
+                  : <Square className="w-3 h-3 flex-shrink-0" />
+                }
+                <span className="truncate">{selectedSegmentIds.size > 0 ? 'Clear' : 'Select all'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Segment list */}
@@ -995,6 +1039,7 @@ export function DropZonePanel({
             {segments.map((seg, i) => {
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
+              const isChecked = selectedSegmentIds.has(seg.id);
               const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
               return (
                 <div
@@ -1014,6 +1059,21 @@ export function DropZonePanel({
                                   : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
                                 }`}
                   >
+                    {/* Batch-select checkbox — always the first element; hover-reveal
+                        unless checked. stopPropagation so it never triggers row seek. */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onToggleSegmentSelect(seg.id); }}
+                      role="checkbox"
+                      aria-checked={isChecked}
+                      aria-label={isChecked ? 'Deselect segment' : 'Select segment'}
+                      title={isChecked ? 'Deselect' : 'Select'}
+                      className={`flex-shrink-0 w-4 h-4 rounded flex items-center justify-center border transition-all
+                                  ${isChecked
+                                    ? 'bg-[#e07c3a] border-[#e07c3a] opacity-100'
+                                    : 'bg-transparent border-[#3a3a40] opacity-0 group-hover/gap:opacity-100'}`}
+                    >
+                      {isChecked && <Check size={11} className="text-black" strokeWidth={3} />}
+                    </button>
                     {seg.isHeading && onMoveHeading && (
                       <button
                         onPointerDown={(e) => {
@@ -1134,6 +1194,7 @@ export function DropZonePanel({
           <div className="p-3">
             <EffectsPanel
               initialPresets={[]}
+              selectedCount={selectedSegmentIds.size}
               onApply={(_e: EffectsApplyEvent) => { /* Step 1: no-op — wired in Steps 5-7 */ }}
               onPresetsChange={(_p: EffectsPreset[]) => { /* Step 1: no-op — wired in Step 7 */ }}
             />

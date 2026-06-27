@@ -37,6 +37,9 @@ export interface EffectsPanelProps {
   onPresetsChange?: (presets: Preset[]) => void;
   /** Fired when any "Apply" button is pressed. Wire this to your timeline. */
   onApply?: (event: ApplyEvent) => void;
+  /** Count of segments currently batch-selected (drives "Apply to selected (N)").
+   *  Distinct from the per-block randomize `picks` Set. */
+  selectedCount?: number;
 }
 
 /* ---------- Effect data (Step 2: from shared effectsOptions source) ---------- */
@@ -64,7 +67,7 @@ const cls = {
   textInput:
     "flex-1 min-w-0 h-10 px-3 bg-[#0e0e10] text-[#f0f0f2] border-[0.5px] border-[#34343a] rounded-lg text-[14px] outline-none focus:border-[#e07c3a] placeholder:text-[#6e6e76]",
   btn:
-    "flex-1 inline-flex items-center justify-center h-10 px-3.5 bg-[#232327] border-[0.5px] border-[#3a3a40] rounded-lg text-[14px] text-[#e8e8ec] cursor-pointer transition-colors hover:bg-[#2c2c31] hover:border-[#48484f] active:scale-[0.98]",
+    "flex-1 inline-flex items-center justify-center h-10 px-3.5 bg-[#232327] border-[0.5px] border-[#3a3a40] rounded-lg text-[12px] whitespace-nowrap text-[#e8e8ec] cursor-pointer transition-colors hover:bg-[#2c2c31] hover:border-[#48484f] active:scale-[0.98]",
   btnAccent:
     "w-full inline-flex items-center justify-center h-10 mt-2.5 bg-[rgba(224,124,58,0.1)] border-[0.5px] border-[#5a3a1e] rounded-lg text-[14px] text-[#e07c3a] cursor-pointer transition-colors hover:bg-[rgba(224,124,58,0.18)] active:scale-[0.98]",
   toggle:
@@ -78,10 +81,12 @@ function FlashButton({
   onAction,
   children,
   className = "",
+  disabled = false,
 }: {
   onAction: () => { text: string; warn?: boolean };
   children: ReactNode;
   className?: string;
+  disabled?: boolean;
 }) {
   const [flash, setFlash] = useState<{ text: string; warn?: boolean } | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,9 +94,11 @@ function FlashButton({
   return (
     <button
       type="button"
-      className={className}
+      disabled={disabled}
+      className={`${className}${disabled ? " opacity-40 cursor-not-allowed pointer-events-none" : ""}`}
       style={flash ? { color: flash.warn ? "#e07c3a" : "#6fd089" } : undefined}
       onClick={() => {
+        if (disabled) return;
         const res = onAction();
         setFlash(res);
         if (timer.current) clearTimeout(timer.current);
@@ -138,21 +145,24 @@ function ApplyPair({
   isNone,
   onSelected,
   onAll,
+  selectedCount,
 }: {
   isNone: boolean;
   onSelected: () => void;
   onAll: () => void;
+  selectedCount: number;
 }) {
   return (
     <div className="flex gap-2">
       <FlashButton
         className={cls.btn}
+        disabled={selectedCount === 0}
         onAction={() => {
           onSelected();
           return { text: "Applied to selected ✓" };
         }}
       >
-        Apply to selected
+        Apply to selected ({selectedCount})
       </FlashButton>
       <FlashButton
         className={cls.btn}
@@ -182,6 +192,7 @@ function EffectSection({
   picks,
   onTogglePick,
   onApply,
+  selectedCount,
 }: {
   kind: "transition" | "animation";
   title: string;
@@ -196,6 +207,7 @@ function EffectSection({
   picks: Set<string>;
   onTogglePick: (name: string) => void;
   onApply?: (event: ApplyEvent) => void;
+  selectedCount: number;
 }) {
   const [open, setOpen] = useState(false);
   const isNone = noneValue != null && value === noneValue;
@@ -224,6 +236,7 @@ function EffectSection({
 
       <ApplyPair
         isNone={isNone}
+        selectedCount={selectedCount}
         onSelected={() => onApply?.({ type: kind, scope: "selected", value, duration: parseFloat(duration) || 0 })}
         onAll={() => onApply?.({ type: kind, scope: "all", value, duration: parseFloat(duration) || 0 })}
       />
@@ -292,7 +305,7 @@ function EffectSection({
 
 /* ---------- Main panel ---------- */
 
-export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply }: EffectsPanelProps) {
+export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply, selectedCount = 0 }: EffectsPanelProps) {
   const [transition, setTransition] = useState(TRANSITIONS[0]!.value);
   const [transitionDur, setTransitionDur] = useState("0.5");
   const [animation, setAnimation] = useState(ANIMATIONS[0]!.value);
@@ -371,6 +384,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           picks={transitionPicks}
           onTogglePick={(n) => togglePick(transitionPicks, setTransitionPicks, n)}
           onApply={onApply}
+          selectedCount={selectedCount}
         />
 
         <EffectSection
@@ -386,6 +400,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           picks={animationPicks}
           onTogglePick={(n) => togglePick(animationPicks, setAnimationPicks, n)}
           onApply={onApply}
+          selectedCount={selectedCount}
         />
 
         {/* Overlays */}
@@ -394,6 +409,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           <SelectField className="mb-2.5" ariaLabel="Overlay effect" value={overlay} onChange={setOverlay} options={OVERLAYS} />
           <ApplyPair
             isNone={overlay === OVERLAY_NONE}
+            selectedCount={selectedCount}
             onSelected={() => onApply?.({ type: "overlay", scope: "selected", value: overlay })}
             onAll={() => onApply?.({ type: "overlay", scope: "all", value: overlay })}
           />
@@ -483,6 +499,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
                   </p>
                   <ApplyPair
                     isNone={false}
+                    selectedCount={selectedCount}
                     onSelected={() => onApply?.({ type: "preset", scope: "selected", preset: activePreset })}
                     onAll={() => onApply?.({ type: "preset", scope: "all", preset: activePreset })}
                   />

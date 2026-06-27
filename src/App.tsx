@@ -538,6 +538,9 @@ export default function App() {
   const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [isSynced, setIsSynced] = useState(false);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  // Batch (multi-)selection for the Effects tab — separate from selectedSegmentId
+  // (which drives drawer + seek). Driven only by row checkboxes / select-all.
+  const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set());
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   const [previewHeight, setPreviewHeight] = useState(() => Math.floor((window.innerHeight - 4) / 2));
@@ -790,6 +793,24 @@ export default function App() {
       if (audioRef.current) audioRef.current.currentTime = seg.startTime;
     }
   }, [project.segments]);
+
+  // Batch selection (Effects tab) — checkbox toggle / select-all / clear.
+  // Independent of selectedSegmentId; never affects the drawer or seek.
+  const onToggleSegmentSelect = useCallback((id: string): void => {
+    setSelectedSegmentIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }, []);
+
+  const onSelectAllSegments = useCallback((): void => {
+    setSelectedSegmentIds(new Set(project.segments.map(s => s.id)));
+  }, [project.segments]);
+
+  const onClearSegmentSelection = useCallback((): void => {
+    setSelectedSegmentIds(new Set());
+  }, []);
 
   const handleUnlockAll = useCallback((): void => {
     setProject(prev => ({
@@ -1900,6 +1921,10 @@ export default function App() {
             onDeleteHeading={handleDeleteHeading}
             onMoveHeading={handleMoveHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
+            selectedSegmentIds={selectedSegmentIds}
+            onToggleSegmentSelect={onToggleSegmentSelect}
+            onSelectAllSegments={onSelectAllSegments}
+            onClearSegmentSelection={onClearSegmentSelection}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
             globalAnimation={project.globalAnimation ?? 'none'}
