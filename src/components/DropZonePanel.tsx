@@ -25,6 +25,7 @@ import {
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
+import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent } from './EffectsPanel';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
@@ -1129,126 +1130,12 @@ export function DropZonePanel({
       {activeTab === 'effects' && (
         <div className="flex-1 overflow-y-auto custom-scrollbar">
 
-          {/* Section: Transition */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Transition</p>
-            <select
-              value={globalTransition}
-              onChange={(e) => onTransitionChange(e.target.value as TransitionType)}
-              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
-            >
-              {TRANSITION_OPTIONS.map(t => (
-                <option key={t} value={t}>{t === TransitionType.NONE ? 'instant (none)' : t}</option>
-              ))}
-            </select>
-            <div className="flex items-center gap-2">
-              <label className="text-[9px] text-gray-600 uppercase tracking-widest">Duration (s)</label>
-              <input
-                type="number" step="0.1" min="0.1" max="2"
-                value={globalTransitionDuration}
-                onChange={(e) => onTransitionDurationChange(parseFloat(e.target.value) || 0.1)}
-                className="w-20 bg-[#111] border border-[#222] p-1.5 rounded-lg text-[10px] font-bold outline-none focus:border-[#F27D26]"
-              />
-            </div>
-            <button
-              onClick={onApplyTransitionToAll}
-              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
-            >
-              Apply to all segments
-            </button>
-            <PresetPicker
-              category="transition"
-              label="Transition"
-              currentValue={currentTransition}
-              onApply={(v) => onApplyTransitionPreset(v as string)}
-            />
-          </div>
-
-          {/* Section: Animation */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Animation</p>
-            <select
-              value={globalAnimation}
-              onChange={(e) => onAnimationChange(e.target.value)}
-              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
-            >
-              {ANIMATION_OPTIONS.map(a => (
-                <option key={a} value={a}>{a === AnimationType.NONE ? 'static (none)' : a.replace('-', ' ')}</option>
-              ))}
-            </select>
-            <button
-              onClick={onApplyAnimationToAll}
-              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
-            >
-              Apply to all segments
-            </button>
-            <PresetPicker
-              category="animation"
-              label="Animation"
-              currentValue={currentAnimation}
-              onApply={(v) => onApplyAnimationPreset(v as string)}
-            />
-          </div>
-
-          {/* Section: Overlay Filter */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Filter</p>
-            <select
-              value={globalOverlayFilter || 'none'}
-              onChange={(e) => onFilterChange(e.target.value)}
-              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] uppercase font-bold tracking-widest outline-none focus:border-[#F27D26]"
-            >
-              {FILTERS.map(f => <option key={f} value={f}>{f.replace('-', ' ')}</option>)}
-            </select>
-            <button
-              onClick={onApplyFilterToAll}
-              className="w-full py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px] font-black uppercase tracking-widest text-[#F27D26] hover:bg-[#F27D26] hover:text-white transition-all"
-            >
-              Apply to all segments
-            </button>
-            <PresetPicker
-              category="overlayFilter"
-              label="Overlay Filter"
-              currentValue={currentOverlayFilter}
-              onApply={(v) => onApplyOverlayFilterPreset(v as string)}
-            />
-          </div>
-
-          {/* Section: Overlay Style */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Overlay Style</p>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-[8px] uppercase tracking-widest text-gray-600">Text Color</label>
-                <input
-                  type="color"
-                  value={globalOverlayConfig.color}
-                  onChange={(e) => onOverlayConfigChange({ color: e.target.value })}
-                  className="w-full h-7 bg-transparent border-none cursor-pointer"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[8px] uppercase tracking-widest text-gray-600">Bg Color</label>
-                <input
-                  type="color"
-                  value={globalOverlayConfig.backgroundColor}
-                  onChange={(e) => onOverlayConfigChange({ backgroundColor: e.target.value })}
-                  className="w-full h-7 bg-transparent border-none cursor-pointer"
-                />
-              </div>
-            </div>
-            <select
-              value={globalOverlayConfig.fontFamily}
-              onChange={(e) => onOverlayConfigChange({ fontFamily: e.target.value })}
-              className="w-full bg-[#111] border border-[#222] p-2 rounded-lg text-[10px] font-bold outline-none focus:border-[#F27D26]"
-            >
-              {FONT_FAMILIES.map(f => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
-            </select>
-            <PresetPicker
-              category="overlayConfig"
-              label="Overlay Style"
-              currentValue={currentOverlayConfig}
-              onApply={(v) => onApplyOverlayConfigPreset(v as OverlayConfigPreset)}
+          {/* ── EFFECTS REBUILD (Step 1: UI landing, inert stubs) ──────────── */}
+          <div className="p-3">
+            <EffectsPanel
+              initialPresets={[]}
+              onApply={(_e: EffectsApplyEvent) => { /* Step 1: no-op — wired in Steps 5-7 */ }}
+              onPresetsChange={(_p: EffectsPreset[]) => { /* Step 1: no-op — wired in Step 7 */ }}
             />
           </div>
 
