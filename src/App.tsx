@@ -865,9 +865,8 @@ export default function App() {
   }, []);
 
   const handleApplyEffect = useCallback((e: ApplyEvent): void => {
-    // Step 6/7 events — not wired yet
-    if (e.type === 'randomize-transitions' || e.type === 'randomize-animations' || e.type === 'preset') {
-      console.debug(`[effects] "${e.type}" not wired yet (step ${e.type === 'preset' ? 7 : 6})`);
+    if (e.type === 'preset') {
+      console.debug('[effects] "preset" not wired yet (step 7)');
       return;
     }
 
@@ -875,16 +874,25 @@ export default function App() {
       const segments = p.segments.map(s => {
         // Skip headings — they have no video/image asset to effect
         if (s.isHeading) return s;
-        // Skip segments not in scope
-        if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
 
         switch (e.type) {
           case 'transition':
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             return { ...s, effectTransition: e.value, effectTransitionDuration: e.duration };
           case 'animation':
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration };
           case 'overlay':
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             return { ...s, effectOverlay: e.value };
+          case 'randomize-transitions': {
+            const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
+            return { ...s, effectTransition: slug, effectTransitionDuration: s.effectTransitionDuration };
+          }
+          case 'randomize-animations': {
+            const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
+            return { ...s, effectAnimation: slug, effectAnimationDuration: s.effectAnimationDuration };
+          }
           default:
             return s;
         }
