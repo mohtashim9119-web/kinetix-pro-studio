@@ -193,6 +193,14 @@ export interface VideoSegment {
    *  write-only: no production code branches on this value post-3c. */
   anchorSource?: 'whisper' | 'estimate';
   sourceDuration?: number;
+  /** Effects Tab Rebuild — slug-valued per-segment effect selections (effectsOptions.ts
+   *  values, e.g. 'cross-dissolve', 'ken-burns'). Additive alongside the legacy
+   *  enum fields above; carried across Apply Sync by unique-assetId match. */
+  effectTransition?: string;
+  effectTransitionDuration?: number;
+  effectAnimation?: string;
+  effectAnimationDuration?: number;
+  effectOverlay?: string;
 }
 
 export interface TranscriptToken {

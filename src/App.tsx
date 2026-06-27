@@ -470,6 +470,57 @@ function getExportErrorSummary(error: ExportError): string {
   }
 }
 
+/**
+ * Carries the five slug-valued effect fields forward across an Apply Sync
+ * clean-slate rebuild. parseProjectData mints fresh segments with fresh ids, so
+ * the only stable identity between the previous and the freshly-parsed arrays is
+ * `assetId` (id is regenerated; index breaks on add/remove/reorder).
+ *
+ * Match is restricted to assetIds that are UNIQUE on BOTH sides — an assetId
+ * appearing >1× on either side is ambiguous (e.g. the duplicate-assetId case that
+ * arises when the unused-asset pool is exhausted after a deletion), so we fail
+ * safe and leave those segments at parse defaults rather than risk assigning a
+ * segment's effects to the wrong scene. Segments without an assetId (headings,
+ * unmatched scenes) also get no carry-forward. Pure.
+ */
+function preserveEffectFields(
+  committed: VideoSegment[],
+  previousSegments: VideoSegment[],
+): VideoSegment[] {
+  // Old segments keyed by assetId, excluding undefined / non-unique assetIds.
+  const oldByAsset = new Map<string, VideoSegment>();
+  const seenOld = new Set<string>();
+  for (const seg of previousSegments) {
+    if (!seg.assetId) continue;
+    if (seenOld.has(seg.assetId)) {
+      oldByAsset.delete(seg.assetId); // now non-unique — drop it
+      continue;
+    }
+    seenOld.add(seg.assetId);
+    oldByAsset.set(seg.assetId, seg);
+  }
+
+  // assetIds appearing >1× in the freshly-committed array — ambiguous targets.
+  const newCounts = new Map<string, number>();
+  committed.forEach(seg => {
+    if (seg.assetId) newCounts.set(seg.assetId, (newCounts.get(seg.assetId) ?? 0) + 1);
+  });
+
+  return committed.map(seg => {
+    if (!seg.assetId || (newCounts.get(seg.assetId) ?? 0) > 1) return seg;
+    const prev = oldByAsset.get(seg.assetId);
+    if (!prev) return seg;
+    return {
+      ...seg,
+      effectTransition: prev.effectTransition,
+      effectTransitionDuration: prev.effectTransitionDuration,
+      effectAnimation: prev.effectAnimation,
+      effectAnimationDuration: prev.effectAnimationDuration,
+      effectOverlay: prev.effectOverlay,
+    };
+  });
+}
+
 /** Recomputes sequential startTimes from accumulated durations. Pure. */
 function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
   let acc = 0;
@@ -1360,7 +1411,10 @@ export default function App() {
     // anchorStart again, so reinsertHeadings' duration math can't be
     // clobbered or double-applied.
     const finalTimedSegments = reinsertHeadings(finalTimedContent, headingAnchors);
-    const committedSegments = autoMatchSegments(allAssets, finalTimedSegments);
+    const committedSegments = preserveEffectFields(
+      autoMatchSegments(allAssets, finalTimedSegments),
+      previousSegments,
+    );
 
     // 8. Single atomic state update — segments are already final.
     setProject(prev => ({
