@@ -75,6 +75,7 @@ import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps
 import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
 import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
+import type { ApplyEvent } from './components/EffectsPanel';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -862,6 +863,35 @@ export default function App() {
   const onClearSegmentSelection = useCallback((): void => {
     setSelectedSegmentIds(new Set());
   }, []);
+
+  const handleApplyEffect = useCallback((e: ApplyEvent): void => {
+    // Step 6/7 events — not wired yet
+    if (e.type === 'randomize-transitions' || e.type === 'randomize-animations' || e.type === 'preset') {
+      console.debug(`[effects] "${e.type}" not wired yet (step ${e.type === 'preset' ? 7 : 6})`);
+      return;
+    }
+
+    setProject(p => {
+      const segments = p.segments.map(s => {
+        // Skip headings — they have no video/image asset to effect
+        if (s.isHeading) return s;
+        // Skip segments not in scope
+        if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
+
+        switch (e.type) {
+          case 'transition':
+            return { ...s, effectTransition: e.value, effectTransitionDuration: e.duration };
+          case 'animation':
+            return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration };
+          case 'overlay':
+            return { ...s, effectOverlay: e.value };
+          default:
+            return s;
+        }
+      });
+      return { ...p, segments };
+    });
+  }, [selectedSegmentIds]);
 
   const handleUnlockAll = useCallback((): void => {
     setProject(prev => ({
@@ -1979,6 +2009,7 @@ export default function App() {
             onToggleSegmentSelect={onToggleSegmentSelect}
             onSelectAllSegments={onSelectAllSegments}
             onClearSegmentSelection={onClearSegmentSelection}
+            onApplyEffect={handleApplyEffect}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
             globalAnimation={project.globalAnimation ?? 'none'}

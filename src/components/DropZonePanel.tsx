@@ -312,6 +312,8 @@ interface Props {
   onToggleSegmentSelect: (id: string) => void;
   onSelectAllSegments: () => void;
   onClearSegmentSelection: () => void;
+  // Effects Tab Rebuild — Step 5: writes effect fields onto segments.
+  onApplyEffect: (e: EffectsApplyEvent) => void;
   // Effects tab props
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -383,6 +385,7 @@ export function DropZonePanel({
   onToggleSegmentSelect,
   onSelectAllSegments,
   onClearSegmentSelection,
+  onApplyEffect,
   globalTransition,
   globalTransitionDuration,
   globalAnimation,
@@ -1195,7 +1198,7 @@ export function DropZonePanel({
             <EffectsPanel
               initialPresets={[]}
               selectedCount={selectedSegmentIds.size}
-              onApply={(_e: EffectsApplyEvent) => { /* Step 1: no-op — wired in Steps 5-7 */ }}
+              onApply={onApplyEffect}
               onPresetsChange={(_p: EffectsPreset[]) => { /* Step 1: no-op — wired in Step 7 */ }}
             />
           </div>
