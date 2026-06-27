@@ -87,6 +87,89 @@ The Review Mapping modal (task 7, shipped then delisted) is now **feature-comple
 
 ---
 
+## Effects Tab Rebuild — Plan (Active Task 1)
+
+The Effects tab already exists and works (global-only) in DropZonePanel.tsx.
+This is a guided rebuild to a new fixed UI (from mockup.tsx, design-locked) made
+fully functional in steps. UI layout/structure stays exactly as designed; only
+the accent is re-tokened to the app branding orange (#e07c3a), reconciling the
+existing #F27D26 / #ee8b3f variants.
+
+KEY DECISIONS (locked):
+- "Apply to selected" = TRUE MULTI-SELECT of segments (selectedSegmentId becomes
+  a Set).
+- Per-segment effect fields MUST survive both reload AND Apply Sync — requires
+  patching parseProjectData to preserve them (fixes the isMuted-style clean-slate
+  wipe).
+- Dropdowns/randomize-pools/presets all read ONE shared option source; no entry
+  is ever wired to a renderer case that does nothing (no phantom enums).
+- Accent canonical = #e07c3a.
+- Presets = COMBINED LOOK: capture one option from each of the 3 dropdowns
+  (transition + animation + overlay) + custom name; up to 20; selecting restores
+  the 3 dropdown values, then exposes Apply to selected / Apply to all. Does NOT
+  capture overlay style/color (likely a new combined-preset store rather than
+  bending the legacy single-category presetService).
+
+OVERLAY BACKGROUND HANDLING (important):
+- Stock overlays ship with a black/white/green background; it is NOT removed
+  automatically.
+- Asset-backed overlays MUST be sourced as BLACK-BACKGROUND screen-blend footage.
+- REQUIRED FUNCTION: the renderer must remove the black background by compositing
+  the overlay with a "screen" blend mode — ctx.globalCompositeOperation='screen'
+  in export (frameRenderer) and mix-blend-mode:screen in preview (PreviewStage).
+  Pure black becomes transparent; bright areas show through. Each asset overlay
+  carries a blend-mode setting (default 'screen'; 'multiply' available for
+  white-background assets).
+- Green-screen / chroma-key removal is EXPLICITLY OUT OF SCOPE (per-pixel keying;
+  dropped earlier). Do not source green-screen overlays.
+
+EFFECT LISTS (final, feasibility-resolved):
+Transitions (10, all buildable): Hard Cut, Cross Dissolve, Dip to Black,
+  Dip to White, Wipe, Slide/Push, Glitch/RGB Split, Whip Pan, Zoom, Light Leak
+  (Light Leak via procedural radial-gradient flash if no asset).
+Clip Effects (10, all buildable): Color Correction/Grading, Zoom In, Zoom Out,
+  Ken Burns, Speed Ramping (maps to playbackSpeed — interacts with sync auto-fit;
+  handle carefully), Gaussian Blur, Pixelate/Mosaic, Duotone/Color Wash,
+  Sepia/Vintage, Invert.
+Overlays (10): PROCEDURAL-now (4): Letterbox, Vignette, CRT/Scanlines, Viewfinder.
+  ASSET-BACKED-later (6, shown DISABLED until media uploaded; black-bg screen-blend
+  only): Film Grain, Light Leaks, Film Damage, Atmospheric Particles,
+  Weather (Rain/Fog/Snow), Fire/Embers.
+Dropped as non-feasible in this engine: Match Cut, Morph Cut, Crop, Masking &
+  Tracking, Warp Stabilizer, Chroma Key.
+
+STEPS:
+1. Land UI — mount EffectsPanel (from mockup.tsx) in place of the inline Effects
+   section in DropZonePanel.tsx; retoken accent to #e07c3a; all buttons no-op
+   stubs; placeholder labels OK. tsc + vitest clean. Commit.
+2. Real option arrays — replace placeholders with the final lists above as
+   {label,value} from one shared source; asset-backed overlays marked disabled.
+   No renderer work.
+3. Multi-select model — convert selectedSegmentId (single) to a Set; wire
+   multi-select in the segment list/timeline; feed count into panel "N selected".
+4. Per-segment persistence — patch parseProjectData to preserve effect fields
+   (transition/animation/overlay/duration); verify round-trip through projectStore
+   AND survival across Apply Sync. (Structural backbone — isolate, test hard.)
+5. Apply to selected/all — replace stubs with real handlers writing to the
+   selected Set or all segments via setProject(...map...). Depends on 3 + 4.
+6. Randomize across segments — wire per-block randomize from checked pool across
+   all segments; same persistence path.
+7. Combined-look presets — new localStorage store (cap 20): save = 3 dropdown
+   values + name; select = restore dropdowns; apply reuses step-5 handlers.
+   Decide fate of legacy presetService here.
+8. Renderer implementation (small batches, each in BOTH PreviewStage + frameRenderer
+   before enabling its dropdown entry): transitions → clip effects → procedural
+   overlays → (later) asset-backed overlays once media supplied. Asset overlays
+   use screen-blend compositing to remove black backgrounds (see above).
+9. Docs sync + cleanup.
+
+SEQUENCING: Steps 1-2 fast/safe (UI+data). Steps 3-4 are the structural backbone
+everything depends on (highest risk — isolate + test). Steps 5-7 wire on top.
+Step 8 largest/most open-ended, partly gated on user-supplied black-bg overlay
+assets. Each step = own commit with tsc + vitest + manual test before proceeding.
+
+---
+
 ## Rejected from Scope
 
 - **Multi-window simultaneous projects** — 5–10 parallel webviews + renders would thrash the machine. Use tabs in one window or a render queue instead. Revisit only if single-window UX proves insufficient.
