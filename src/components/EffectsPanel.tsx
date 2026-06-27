@@ -1,6 +1,7 @@
 import { useState, useRef, useMemo, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Shuffle, ChevronDown, Save, Trash2 } from "lucide-react";
+import { TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE, type EffectOption } from "../effectsOptions";
 
 /* ============================================================
    Kinetix Pro Studio — Effects Panel
@@ -38,13 +39,16 @@ export interface EffectsPanelProps {
   onApply?: (event: ApplyEvent) => void;
 }
 
-/* ---------- Effect data ---------- */
+/* ---------- Effect data (Step 2: from shared effectsOptions source) ---------- */
 
-const TRANSITION_OPTIONS = ["Instant (none)", "Fade", "Dissolve", "Slide left", "Slide right", "Zoom in", "Zoom out", "Wipe", "Glitch", "Spin"];
-const TRANSITION_POOL = ["Fade", "Dissolve", "Slide left", "Slide right", "Zoom in", "Zoom out", "Wipe", "Glitch", "Spin", "Push"];
-const ANIMATION_OPTIONS = ["Static (none)", "Ken Burns", "Pan left", "Pan right", "Bounce", "Pulse", "Shake", "Float", "Rotate", "Pop"];
-const ANIMATION_POOL = ["Ken Burns", "Pan left", "Pan right", "Bounce", "Pulse", "Shake", "Float", "Rotate", "Pop", "Drift"];
-const OVERLAY_OPTIONS = ["None", "Cyber", "Retro", "Bold", "VHS", "Film grain", "Neon", "Vignette"];
+// Each list's "None"/"Hard Cut" off-state is excluded from its randomize pool
+// (you don't shuffle "no effect" onto segments).
+const TRANSITION_POOL: EffectOption[] = TRANSITIONS.slice(1);
+const ANIMATION_POOL: EffectOption[] = ANIMATIONS.slice(1);
+
+/** Look up a display label by stored value; falls back to the raw value. */
+const labelOf = (opts: EffectOption[], value: string): string =>
+  opts.find((o) => o.value === value)?.label ?? value;
 
 const MAX_PRESETS = 20;
 
@@ -110,7 +114,7 @@ function SelectField({
 }: {
   value: string;
   onChange: (v: string) => void;
-  options: string[];
+  options: EffectOption[];
   className?: string;
   ariaLabel: string;
 }) {
@@ -118,8 +122,8 @@ function SelectField({
     <div className={`relative ${className}`}>
       <select aria-label={ariaLabel} value={value} onChange={(e) => onChange(e.target.value)} className={cls.select}>
         {options.map((o) => (
-          <option key={o} value={o}>
-            {o}
+          <option key={o.value} value={o.value} disabled={o.disabled}>
+            {o.label}
           </option>
         ))}
       </select>
@@ -170,6 +174,7 @@ function EffectSection({
   title,
   options,
   pool,
+  noneValue,
   value,
   onValueChange,
   duration,
@@ -180,8 +185,10 @@ function EffectSection({
 }: {
   kind: "transition" | "animation";
   title: string;
-  options: string[];
-  pool: string[];
+  options: EffectOption[];
+  pool: EffectOption[];
+  /** Value treated as the "no effect" baseline (e.g. Hard Cut); omit if none. */
+  noneValue?: string;
   value: string;
   onValueChange: (v: string) => void;
   duration: string;
@@ -191,7 +198,7 @@ function EffectSection({
   onApply?: (event: ApplyEvent) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const isNone = value.toLowerCase().includes("none");
+  const isNone = noneValue != null && value === noneValue;
   const randType = kind === "transition" ? "randomize-transitions" : "randomize-animations";
 
   return (
@@ -248,19 +255,19 @@ function EffectSection({
             className="overflow-hidden"
           >
             <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-              {pool.map((name) => {
-                const checked = picks.has(name);
+              {pool.map((opt) => {
+                const checked = picks.has(opt.value);
                 return (
                   <label
-                    key={name}
+                    key={opt.value}
                     className="flex items-center gap-[7px] px-[9px] py-[7px] rounded-lg text-[12px] text-[#c8c8ce] cursor-pointer select-none border-[0.5px] transition-colors"
                     style={{
                       background: checked ? "rgba(224,124,58,0.08)" : "#0e0e10",
                       borderColor: checked ? "#5a3a1e" : "#2a2a2e",
                     }}
                   >
-                    <input type="checkbox" checked={checked} onChange={() => onTogglePick(name)} className="w-3.5 h-3.5 cursor-pointer accent-[#e07c3a]" />
-                    <span>{name}</span>
+                    <input type="checkbox" checked={checked} onChange={() => onTogglePick(opt.value)} className="w-3.5 h-3.5 cursor-pointer accent-[#e07c3a]" />
+                    <span>{opt.label}</span>
                   </label>
                 );
               })}
@@ -286,11 +293,11 @@ function EffectSection({
 /* ---------- Main panel ---------- */
 
 export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply }: EffectsPanelProps) {
-  const [transition, setTransition] = useState(TRANSITION_OPTIONS[0]!);
+  const [transition, setTransition] = useState(TRANSITIONS[0]!.value);
   const [transitionDur, setTransitionDur] = useState("0.5");
-  const [animation, setAnimation] = useState(ANIMATION_OPTIONS[0]!);
+  const [animation, setAnimation] = useState(ANIMATIONS[0]!.value);
   const [animationDur, setAnimationDur] = useState("1.0");
-  const [overlay, setOverlay] = useState(OVERLAY_OPTIONS[0]!);
+  const [overlay, setOverlay] = useState(OVERLAYS[0]!.value);
 
   const [transitionPicks, setTransitionPicks] = useState<Set<string>>(new Set());
   const [animationPicks, setAnimationPicks] = useState<Set<string>>(new Set());
@@ -354,8 +361,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
         <EffectSection
           kind="transition"
           title="TRANSITIONS"
-          options={TRANSITION_OPTIONS}
+          options={TRANSITIONS}
           pool={TRANSITION_POOL}
+          noneValue={TRANSITION_NONE}
           value={transition}
           onValueChange={setTransition}
           duration={transitionDur}
@@ -368,8 +376,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
         <EffectSection
           kind="animation"
           title="ANIMATIONS"
-          options={ANIMATION_OPTIONS}
+          options={ANIMATIONS}
           pool={ANIMATION_POOL}
+          noneValue={ANIMATION_NONE}
           value={animation}
           onValueChange={setAnimation}
           duration={animationDur}
@@ -382,9 +391,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
         {/* Overlays */}
         <section className={cls.box}>
           <h3 className={`${cls.label} mb-3`}>OVERLAYS</h3>
-          <SelectField className="mb-2.5" ariaLabel="Overlay effect" value={overlay} onChange={setOverlay} options={OVERLAY_OPTIONS} />
+          <SelectField className="mb-2.5" ariaLabel="Overlay effect" value={overlay} onChange={setOverlay} options={OVERLAYS} />
           <ApplyPair
-            isNone={overlay.toLowerCase().includes("none")}
+            isNone={overlay === OVERLAY_NONE}
             onSelected={() => onApply?.({ type: "overlay", scope: "selected", value: overlay })}
             onAll={() => onApply?.({ type: "overlay", scope: "all", value: overlay })}
           />
@@ -439,7 +448,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
                         {p.name}
                       </div>
                       <div className="text-[11px] text-[#7a7a82] truncate mt-0.5">
-                        {p.transition} · {p.animation} · {p.overlay}
+                        {labelOf(TRANSITIONS, p.transition)} · {labelOf(ANIMATIONS, p.animation)} · {labelOf(OVERLAYS, p.overlay)}
                       </div>
                     </div>
                     <button
