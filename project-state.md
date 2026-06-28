@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-27 |
-| Current HEAD | `4887d33` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`). |
+| Last updated | 2026-06-28 |
+| Current HEAD | `ce64de4` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`), Windows dev environment setup committed (`ce64de4`) — vcvars linker fix, Vite watcher EBUSY fix, dev.bat launch script. |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -227,6 +227,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 
 | Date | Decision |
 |---|---|
+| 2026-06-28 | Windows dev environment: vcvars64.bat must be sourced before every cargo invocation on this machine (MSVC toolchain at custom D:\VSBuildTools2026b path, not on bare PATH). Permanent fix: .cargo/config.toml sets the linker path; dev.bat at project root sources vcvars64.bat then runs npm run tauri:dev — double-click to launch. Vite watcher configured to ignore src-tauri/target/** (EBUSY race condition on Windows). git identity set repo-scoped only on the Windows machine. |
 | 2026-05-16 | **Hosting:** Cloudflare Pages for frontend. Free tier, edge CDN, unlimited bandwidth. Render backend deferred to Phase 3. |
 | 2026-05-16 | **Target users:** YouTube creators. Initial private use across 5–10 channels owned by user's team. |
 | 2026-05-16 | **Export approach:** ffmpeg.wasm in browser for Phase 3. Slower than native (3-5×) but $0 infra, works offline, no server. Pipeline code will port to native ffmpeg in Phase 6 with minimal changes. |
