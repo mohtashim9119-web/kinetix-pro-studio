@@ -230,7 +230,6 @@ export interface Project {
   globalTransitionDuration: number;
   globalAnimation: AnimationType;
   globalOverlayFilter?: string;
-  hideAllText?: boolean;
   textLayers?: TextOverlay[];
   globalOverlayConfig: {
     color: string;

@@ -78,19 +78,6 @@ export function SettingsPanel({
           />
         </div>
         <div className="space-y-3">
-          <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold block flex justify-between items-center">
-            Hide On-Screen Text
-            <button
-              onClick={() => onProjectChange({ hideAllText: !project.hideAllText })}
-              aria-label={project.hideAllText ? 'Show on-screen text' : 'Hide on-screen text'}
-              aria-pressed={project.hideAllText}
-              className={`w-10 h-5 rounded-full transition-colors relative ${project.hideAllText ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
-            >
-              <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${project.hideAllText ? 'translate-x-5' : ''}`} />
-            </button>
-          </label>
-        </div>
-        <div className="space-y-3">
           <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold block">Transition Style</label>
           <select
             value={project.globalTransition}

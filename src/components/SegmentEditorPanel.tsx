@@ -153,13 +153,6 @@ export function SegmentEditorPanel({
               >
                 <Video size={14} />
               </button>
-              <button
-                onClick={() => onToggleOverlay(idx)}
-                className={`p-2 rounded-lg border transition-all ${s.showOverlay ? 'bg-[#F27D26] border-[#F27D26] text-white' : 'bg-[#121212] border-[#282828] text-gray-500'}`}
-                title="Toggle Main Text Overlay"
-              >
-                <Type size={14} />
-              </button>
             </div>
 
             {s.showOverlay && (

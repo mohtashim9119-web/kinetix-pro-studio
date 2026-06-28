@@ -80,7 +80,6 @@ export async function exportProject(
 
   const globalConfig: FrameGlobalConfig = {
     overlayConfig: project.globalOverlayConfig,
-    hideAllText: project.hideAllText ?? false,
     globalOverlayFilter: project.globalOverlayFilter,
     globalTextLayers: project.textLayers ?? [],
   };

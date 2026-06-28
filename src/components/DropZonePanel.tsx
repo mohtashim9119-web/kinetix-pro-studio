@@ -321,7 +321,6 @@ interface Props {
   globalAnimation: string;
   globalOverlayFilter: string;
   globalOverlayConfig: { color: string; backgroundColor: string; fontFamily: string };
-  hideAllText: boolean;
   exportResolution: string;
   exportFps: number;
   currentTransition: string;
@@ -336,7 +335,8 @@ interface Props {
   onFilterChange: (v: string) => void;
   onApplyFilterToAll: () => void;
   onOverlayConfigChange: (v: Partial<{ color: string; backgroundColor: string; fontFamily: string }>) => void;
-  onHideAllTextChange: (v: boolean) => void;
+  /** Master "Overlay Text Display" setter — bulk-writes showOverlay across all segments. */
+  onSetAllOverlay: (value: boolean) => void;
   onExportResolutionChange: (v: string) => void;
   onExportFpsChange: (v: number) => void;
   onApplyTransitionPreset: (preset: OverlayConfigPreset | string) => void;
@@ -392,7 +392,6 @@ export function DropZonePanel({
   globalAnimation,
   globalOverlayFilter,
   globalOverlayConfig,
-  hideAllText,
   exportResolution,
   exportFps,
   currentTransition,
@@ -407,7 +406,7 @@ export function DropZonePanel({
   onFilterChange,
   onApplyFilterToAll,
   onOverlayConfigChange,
-  onHideAllTextChange,
+  onSetAllOverlay,
   onExportResolutionChange,
   onExportFpsChange,
   onApplyTransitionPreset,
@@ -419,6 +418,10 @@ export function DropZonePanel({
 }: Props) {
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments' | 'effects'>('files');
+
+  // Master "Overlay Text Display" state: ON only when every segment shows its overlay.
+  // Empty segments → true (vacuously), which is harmless — there is nothing to toggle.
+  const allOverlayOn = segments.every((s) => s.showOverlay);
 
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
@@ -1256,14 +1259,14 @@ export function DropZonePanel({
           <div className="px-4 py-3 space-y-2">
             <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Display</p>
             <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-              Hide On-Screen Text
+              Overlay Text Display (Default)
               <button
-                onClick={() => onHideAllTextChange(!hideAllText)}
-                aria-label={hideAllText ? 'Show on-screen text' : 'Hide on-screen text'}
-                aria-pressed={hideAllText}
-                className={`w-10 h-5 rounded-full transition-colors relative ${hideAllText ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
+                onClick={() => onSetAllOverlay(!allOverlayOn)}
+                aria-label={allOverlayOn ? 'Hide overlay text on all segments' : 'Show overlay text on all segments'}
+                aria-pressed={allOverlayOn}
+                className={`w-10 h-5 rounded-full transition-colors relative ${allOverlayOn ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
               >
-                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${hideAllText ? 'translate-x-5' : ''}`} />
+                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${allOverlayOn ? 'translate-x-5' : ''}`} />
               </button>
             </label>
           </div>

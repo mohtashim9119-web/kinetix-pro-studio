@@ -98,7 +98,6 @@ interface Props {
   globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalOverlayConfig: GlobalOverlayConfig;
-  hideAllText: boolean;
   assets: Asset[];
   isPlaying: boolean;
   isResizingRef: React.RefObject<boolean>;
@@ -116,7 +115,6 @@ export function PreviewStage({
   globalTransition,
   globalTransitionDuration,
   globalOverlayConfig,
-  hideAllText,
   assets,
   isPlaying,
   isResizingRef,
@@ -220,7 +218,6 @@ export function PreviewStage({
   // ---------------------------------------------------------------------------
   const globalConfig = {
     overlayConfig: globalOverlayConfig,
-    hideAllText,
     globalOverlayFilter: undefined as string | undefined,
   };
 
@@ -720,7 +717,7 @@ export function PreviewStage({
           Snapshots already contain text+overlays rendered via frameRenderer, so the CSS layer
           is intentionally still visible here — they fade together (canvas fades in as CSS fades
           out naturally with AnimatePresence exit). For a fully correct double-render prevention,
-          see the hideAllText prop path; complete CSS suppression during canvas transition is not
+          see the showOverlay gate; complete CSS suppression during canvas transition is not
           needed because the CSS segment motion.div is already exiting via AnimatePresence.
         */}
         <canvas
@@ -746,7 +743,7 @@ export function PreviewStage({
             reads as steady throughout the crossfade. The transition snapshot bakes no
             caption text (skipCaption, see useTransitionPreview.ts), so there's no second
             caption underneath to dissolve against. */}
-        {currentSegment && ((!hideAllText && currentSegment.text) || (currentSegment.showOverlay && currentSegment.text)) && (
+        {currentSegment && currentSegment.showOverlay && currentSegment.text && (
           <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 46 }}>
             <motion.div
               initial={{ y: 30, opacity: 0 }}

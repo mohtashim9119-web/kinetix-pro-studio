@@ -17,7 +17,6 @@ interface ReviewMappingModalProps {
   segments: VideoSegment[];
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
-  hideAllText: boolean;
   onClose: () => void;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
@@ -59,7 +58,6 @@ export function ReviewMappingModal({
   segments,
   assets,
   globalOverlayConfig,
-  hideAllText,
   onClose,
   onUpdateSegment,
   onUpdateSegmentOverlay,
@@ -114,7 +112,6 @@ export function ReviewMappingModal({
               index={i}
               assets={assets}
               globalOverlayConfig={globalOverlayConfig}
-              hideAllText={hideAllText}
               onUpdateSegment={onUpdateSegment}
               onUpdateSegmentOverlay={onUpdateSegmentOverlay}
               onOpenStockSearch={onOpenStockSearch}
@@ -140,7 +137,6 @@ interface ReviewMappingRowProps {
   index: number;
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
-  hideAllText: boolean;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
   onOpenStockSearch: (segmentId: string) => void;
@@ -151,7 +147,6 @@ function ReviewMappingRow({
   index: idx,
   assets,
   globalOverlayConfig,
-  hideAllText,
   onUpdateSegment,
   onUpdateSegmentOverlay,
   onOpenStockSearch,
@@ -267,7 +262,7 @@ function ReviewMappingRow({
               </div>
             )}
 
-            {!seg.isHeading && seg.text && (!hideAllText || seg.showOverlay) && (
+            {!seg.isHeading && seg.text && seg.showOverlay && (
               <div
                 className="absolute text-center pointer-events-none"
                 style={{

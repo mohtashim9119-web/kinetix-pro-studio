@@ -432,7 +432,6 @@ function makeDefaultProject(): Project {
   globalTransition: TransitionType.NONE,
   globalTransitionDuration: 0.5,
   globalAnimation: AnimationType.NONE,
-  hideAllText: true,
   textLayers: [],
   globalOverlayConfig: {
     color: '#FFFFFF',
@@ -789,6 +788,12 @@ export default function App() {
           : s
       ),
     }));
+  };
+
+  // Master "Overlay Text Display" setter — bulk-writes showOverlay across every
+  // segment. This is the single source of truth now that hideAllText is gone.
+  const handleSetAllOverlay = (value: boolean): void => {
+    setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, showOverlay: value })) }));
   };
 
   const updateExtraOverlay = (segIdx: number, oIdx: number, updates: Partial<TextOverlay>): void => {
@@ -2037,7 +2042,6 @@ export default function App() {
             globalAnimation={project.globalAnimation ?? 'none'}
             globalOverlayFilter={project.globalOverlayFilter ?? 'none'}
             globalOverlayConfig={project.globalOverlayConfig}
-            hideAllText={project.hideAllText ?? false}
             exportResolution={exportResolution}
             exportFps={exportFps}
             currentTransition={project.globalTransition}
@@ -2052,7 +2056,7 @@ export default function App() {
             onFilterChange={(v) => setProject(p => ({ ...p, globalOverlayFilter: v }))}
             onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
             onOverlayConfigChange={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
-            onHideAllTextChange={(v) => setProject(p => ({ ...p, hideAllText: v }))}
+            onSetAllOverlay={handleSetAllOverlay}
             onExportResolutionChange={(v) => setExportResolution(v as ExportResolution)}
             onExportFpsChange={(v) => setExportFps(v as ExportFps)}
             onApplyTransitionPreset={(v) => setProject(p => ({ ...p, globalTransition: v as TransitionType }))}
@@ -2105,7 +2109,6 @@ export default function App() {
                   globalTransition={project.globalTransition}
                   globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
                   globalOverlayConfig={project.globalOverlayConfig}
-                  hideAllText={project.hideAllText ?? false}
                   assets={project.assets}
                   isPlaying={isPlaying}
                   isResizingRef={isResizingRef}
@@ -2709,7 +2712,6 @@ export default function App() {
           segments={project.segments}
           assets={project.assets}
           globalOverlayConfig={project.globalOverlayConfig}
-          hideAllText={project.hideAllText ?? false}
           onClose={() => setShowReviewMapping(false)}
           onUpdateSegment={updateSegment}
           onUpdateSegmentOverlay={updateSegmentOverlay}

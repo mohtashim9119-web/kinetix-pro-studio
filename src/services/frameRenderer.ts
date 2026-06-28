@@ -5,7 +5,6 @@ import { TRANSITION_NONE } from '../effectsOptions';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
-  hideAllText: boolean;
   globalOverlayFilter?: string;
   globalTextLayers?: TextOverlay[];
 }
@@ -326,7 +325,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   ctx.fillRect(0, 0, w, h);
 
   // -------------------------------------------------------------------------
-  // Heading segments: title is primary content — bypass overlays, hideAllText.
+  // Heading segments: title is primary content — bypass overlays and the showOverlay gate.
   // Renders background asset (if set in headingConfig) or solid color fill,
   // then draws title text at the configured position. Returns early.
   // -------------------------------------------------------------------------
@@ -493,7 +492,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   // -------------------------------------------------------------------------
   // Main heading + body text (mirrors PreviewStage layout)
   // -------------------------------------------------------------------------
-  const showText = !g.hideAllText || segment.showOverlay;
+  const showText = segment.showOverlay ?? false;
   if (showText) {
     const oc = segment.overlayConfig;
     const fontFamily = oc?.fontFamily ?? g.overlayConfig.fontFamily;
