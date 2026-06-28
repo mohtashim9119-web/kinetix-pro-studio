@@ -1,5 +1,6 @@
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from './frameRenderer';
+import { resolveEffectiveTransition } from './transitionResolver';
 
 /**
  * Minimal ffmpeg FS/exec interface.  Both a direct `FFmpeg` instance and the
@@ -73,14 +74,8 @@ export async function encodeSegment(
   let blendCanvas: HTMLCanvasElement | null = null;
   let blendCtx: CanvasRenderingContext2D | null = null;
 
-  const effectiveTransition =
-    segment.transition && segment.transition !== TransitionType.NONE
-      ? segment.transition
-      : (options.globalTransition ?? TransitionType.NONE);
-  const transitionDuration =
-    effectiveTransition !== TransitionType.NONE
-      ? (segment.transitionDuration ?? globalTransitionDuration)
-      : 0;
+  const { transition: effectiveTransition, duration: transitionDuration } =
+    resolveEffectiveTransition(segment, options.globalTransition, globalTransitionDuration);
   const hasTransition = effectiveTransition !== TransitionType.NONE && !!options.nextSegment && transitionDuration > 0;
 
   if (hasTransition) {

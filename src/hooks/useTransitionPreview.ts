@@ -13,6 +13,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer';
+import { resolveEffectiveTransition } from '../services/transitionResolver';
 
 /** Snapshot resolution — 16:9 half-HD. Full resolution is unnecessary
  *  for preview-quality blending. */
@@ -86,15 +87,8 @@ export function useTransitionPreview({
         .find(s => s.startTime >= currentSeg.startTime + currentSeg.duration - 0.001 && s.id !== currentSeg.id)
     : undefined;
 
-  const effectiveTransition: TransitionType =
-    currentSeg?.transition && currentSeg.transition !== TransitionType.NONE
-      ? currentSeg.transition
-      : (globalTransition ?? TransitionType.NONE);
-
-  const transitionDuration =
-    effectiveTransition !== TransitionType.NONE
-      ? (currentSeg?.transitionDuration ?? globalTransitionDuration)
-      : 0;
+  const { transition: effectiveTransition, duration: transitionDuration } =
+    resolveEffectiveTransition(currentSeg, globalTransition, globalTransitionDuration);
 
   const transitionStart = nextSeg ? nextSeg.startTime - transitionDuration : Infinity;
   const transitionEnd = nextSeg ? nextSeg.startTime : Infinity;

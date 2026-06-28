@@ -1,6 +1,7 @@
 import { Project, Asset, VideoSegment, TransitionType } from '../types';
 import { encodeSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
+import { resolveEffectiveTransition } from './transitionResolver';
 
 export interface ExportOptions {
   width?: number;
@@ -44,8 +45,8 @@ function causeString(err: unknown): string {
  * Resolves the effective outgoing transition duration for `segment` into
  * `next`. Returns 0 when there is no next segment, when the effective
  * transition is NONE, or when the resolved duration is 0/undefined.
- * Mirrors the precedence logic in segmentEncoder.ts (per-segment first,
- * global fallback when segment.transition is NONE).
+ * Delegates the per-segment/global precedence to the shared
+ * resolveEffectiveTransition resolver (transitionResolver.ts).
  */
 function effectiveTransitionOut(
   segment: VideoSegment,
@@ -54,12 +55,7 @@ function effectiveTransitionOut(
   globalTransitionDuration: number,
 ): number {
   if (!next) return 0;
-  const effTrans =
-    segment.transition && segment.transition !== TransitionType.NONE
-      ? segment.transition
-      : globalTransition;
-  if (effTrans === TransitionType.NONE) return 0;
-  return segment.transitionDuration ?? globalTransitionDuration;
+  return resolveEffectiveTransition(segment, globalTransition, globalTransitionDuration).duration;
 }
 
 /**
