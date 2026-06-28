@@ -37,6 +37,18 @@ export interface FrameRenderParams {
   global: FrameGlobalConfig;
   /** Optional: blend with an adjacent segment's frame for transitions. */
   transition?: TransitionBlendParams;
+  /**
+   * Reference height for the body-caption font-size formula (bodyPx =
+   * textRefHeight/1080 * fontSize). Defaults to `height` when omitted —
+   * correct for export and any full-resolution render, where the canvas
+   * pixel height IS the final output height with no further stretch.
+   * Pass this separately from `height` when the canvas is a smaller
+   * bitmap that gets stretched back up before being displayed (e.g. the
+   * half-res transition preview snapshot) — otherwise the caption bakes
+   * in at the bitmap's own (smaller) scale and then gets stretched too,
+   * landing at the wrong on-screen size relative to the live DOM caption.
+   */
+  textRefHeight?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -292,7 +304,7 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
  * Resolves when the frame is fully drawn (video seeking is async).
  */
 export async function renderSegmentFrame(params: FrameRenderParams): Promise<void> {
-  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g } = params;
+  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight } = params;
 
   // Background
   ctx.clearRect(0, 0, w, h);
@@ -479,8 +491,11 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const xPct = (oc?.x ?? 50) / 100;
     const yPct = (oc?.y ?? 78) / 100;
 
-    // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide)
-    const bodyPx = Math.round((h / 1080) * (oc?.fontSize ?? 24));
+    // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide).
+    // Uses textRefHeight when the caller supplies one (a smaller bitmap that gets stretched
+    // back up before display, e.g. the transition preview snapshot) — falls back to the
+    // canvas's own height otherwise, which is exactly today's formula for export.
+    const bodyPx = Math.round(((textRefHeight ?? h) / 1080) * (oc?.fontSize ?? 24));
 
     if (segment.text) {
       const displayText = segment.text;

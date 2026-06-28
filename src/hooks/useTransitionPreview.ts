@@ -167,6 +167,11 @@ export function useTransitionPreview({
             ctx: outCtx,
             width: SNAP_W,
             height: SNAP_H,
+            // Bake caption text at the 1080-reference scale even though this bitmap is
+            // half-res — it gets stretched back up to the actual on-screen canvas size
+            // before display, so baking at SNAP_H's own scale would double-shrink it
+            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
+            textRefHeight: 1080,
             global: globalConfig,
           });
           await renderSegmentFrame({
@@ -176,6 +181,11 @@ export function useTransitionPreview({
             ctx: inCtx,
             width: SNAP_W,
             height: SNAP_H,
+            // Bake caption text at the 1080-reference scale even though this bitmap is
+            // half-res — it gets stretched back up to the actual on-screen canvas size
+            // before display, so baking at SNAP_H's own scale would double-shrink it
+            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
+            textRefHeight: 1080,
             global: globalConfig,
           });
         } else {
@@ -187,6 +197,11 @@ export function useTransitionPreview({
             ctx: outCtx,
             width: SNAP_W,
             height: SNAP_H,
+            // Bake caption text at the 1080-reference scale even though this bitmap is
+            // half-res — it gets stretched back up to the actual on-screen canvas size
+            // before display, so baking at SNAP_H's own scale would double-shrink it
+            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
+            textRefHeight: 1080,
             global: globalConfig,
           });
 
@@ -197,6 +212,11 @@ export function useTransitionPreview({
             ctx: inCtx,
             width: SNAP_W,
             height: SNAP_H,
+            // Bake caption text at the 1080-reference scale even though this bitmap is
+            // half-res — it gets stretched back up to the actual on-screen canvas size
+            // before display, so baking at SNAP_H's own scale would double-shrink it
+            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
+            textRefHeight: 1080,
             global: globalConfig,
           });
 
