@@ -704,42 +704,6 @@ export function PreviewStage({
                     ))}
                 </div>
               )}
-
-              {/* Main heading + body text. Fades out during canvas transition overlay to prevent
-                  double-render — same 100ms ease as the canvas fade-in so they crossfade cleanly. */}
-              <div
-                className="absolute inset-0 pointer-events-none select-none z-10"
-                style={{ opacity: transitionPreview.isActive ? 0 : 1, transition: 'opacity 100ms ease' }}
-              >
-                {((!hideAllText && currentSegment.text) || (currentSegment.showOverlay && currentSegment.text)) && (
-                  <motion.div
-                    initial={{ y: 30, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                    transformTemplate={(_, generated) => `translate(-${overlayPosX}%, -${overlayPosY}%) ${generated}`}
-                    className="absolute max-w-3xl px-5 py-3 rounded-3xl text-center"
-                    style={{
-                      left: `${overlayPosX}%`,
-                      top: `${overlayPosY}%`,
-                      width: 'max-content',
-                      backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
-                    }}
-                  >
-                    <p
-                      className="font-light leading-relaxed tracking-wide drop-shadow-md italic"
-                      style={{
-                        fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
-                        color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
-                        fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * (isFullscreen ? 32 / 24 : 1)}px`,
-                        fontWeight: currentSegment.overlayConfig?.fontWeight || 'normal',
-                        fontStyle: currentSegment.overlayConfig?.fontStyle || 'italic',
-                      }}
-                    >
-                      {currentSegment.text}
-                    </p>
-                  </motion.div>
-                )}
-              </div>
             </motion.div>
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-6">
@@ -768,6 +732,50 @@ export function PreviewStage({
             transition: 'opacity 100ms ease',
           }}
         />
+
+        {/* Main body caption — hoisted to be a direct sibling of the transition overlay
+            canvas above (not nested inside the per-segment motion.div) so it can paint
+            above it. The motion.div sets no z-index of its own, but framer-motion gives
+            it a `transform`, which independently forms its own stacking context — a
+            z-index on a caption nested inside it would only rank among that motion.div's
+            own children and could never outrank this canvas sibling. zIndex 46 clears the
+            canvas's 45 while staying below Corner Stats (50). Stays visible through the
+            whole transition (no opacity fade); always reflects currentSegment's own
+            text/position, which only changes the instant currentSegment flips to the
+            incoming segment — exactly when the transition window ends — so the caption
+            reads as steady throughout the crossfade. The transition snapshot bakes no
+            caption text (skipCaption, see useTransitionPreview.ts), so there's no second
+            caption underneath to dissolve against. */}
+        {currentSegment && ((!hideAllText && currentSegment.text) || (currentSegment.showOverlay && currentSegment.text)) && (
+          <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 46 }}>
+            <motion.div
+              initial={{ y: 30, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ delay: 0.3 }}
+              transformTemplate={(_, generated) => `translate(-${overlayPosX}%, -${overlayPosY}%) ${generated}`}
+              className="absolute max-w-3xl px-5 py-3 rounded-3xl text-center"
+              style={{
+                left: `${overlayPosX}%`,
+                top: `${overlayPosY}%`,
+                width: 'max-content',
+                backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
+              }}
+            >
+              <p
+                className="font-light leading-relaxed tracking-wide drop-shadow-md italic"
+                style={{
+                  fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
+                  color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
+                  fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * (isFullscreen ? 32 / 24 : 1)}px`,
+                  fontWeight: currentSegment.overlayConfig?.fontWeight || 'normal',
+                  fontStyle: currentSegment.overlayConfig?.fontStyle || 'italic',
+                }}
+              >
+                {currentSegment.text}
+              </p>
+            </motion.div>
+          </div>
+        )}
 
         {/* Corner Stats */}
         <div className="absolute bottom-10 right-10 flex flex-col items-end gap-2" style={{ zIndex: 50 }}>
