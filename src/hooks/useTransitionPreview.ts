@@ -167,11 +167,12 @@ export function useTransitionPreview({
             ctx: outCtx,
             width: SNAP_W,
             height: SNAP_H,
-            // Bake caption text at the 1080-reference scale even though this bitmap is
-            // half-res — it gets stretched back up to the actual on-screen canvas size
-            // before display, so baking at SNAP_H's own scale would double-shrink it
-            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
-            textRefHeight: 1080,
+            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+            // transition, so this snapshot must not bake its own copy of the body
+            // caption underneath it — a size/position mismatch between the two was the
+            // source of a visible "pop" at the transition's end. Headings and extra
+            // overlays are unaffected by this flag.
+            skipCaption: true,
             global: globalConfig,
           });
           await renderSegmentFrame({
@@ -181,11 +182,12 @@ export function useTransitionPreview({
             ctx: inCtx,
             width: SNAP_W,
             height: SNAP_H,
-            // Bake caption text at the 1080-reference scale even though this bitmap is
-            // half-res — it gets stretched back up to the actual on-screen canvas size
-            // before display, so baking at SNAP_H's own scale would double-shrink it
-            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
-            textRefHeight: 1080,
+            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+            // transition, so this snapshot must not bake its own copy of the body
+            // caption underneath it — a size/position mismatch between the two was the
+            // source of a visible "pop" at the transition's end. Headings and extra
+            // overlays are unaffected by this flag.
+            skipCaption: true,
             global: globalConfig,
           });
         } else {
@@ -197,11 +199,12 @@ export function useTransitionPreview({
             ctx: outCtx,
             width: SNAP_W,
             height: SNAP_H,
-            // Bake caption text at the 1080-reference scale even though this bitmap is
-            // half-res — it gets stretched back up to the actual on-screen canvas size
-            // before display, so baking at SNAP_H's own scale would double-shrink it
-            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
-            textRefHeight: 1080,
+            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+            // transition, so this snapshot must not bake its own copy of the body
+            // caption underneath it — a size/position mismatch between the two was the
+            // source of a visible "pop" at the transition's end. Headings and extra
+            // overlays are unaffected by this flag.
+            skipCaption: true,
             global: globalConfig,
           });
 
@@ -212,11 +215,12 @@ export function useTransitionPreview({
             ctx: inCtx,
             width: SNAP_W,
             height: SNAP_H,
-            // Bake caption text at the 1080-reference scale even though this bitmap is
-            // half-res — it gets stretched back up to the actual on-screen canvas size
-            // before display, so baking at SNAP_H's own scale would double-shrink it
-            // relative to the live DOM caption (see frameRenderer.ts FrameRenderParams).
-            textRefHeight: 1080,
+            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+            // transition, so this snapshot must not bake its own copy of the body
+            // caption underneath it — a size/position mismatch between the two was the
+            // source of a visible "pop" at the transition's end. Headings and extra
+            // overlays are unaffected by this flag.
+            skipCaption: true,
             global: globalConfig,
           });
 

@@ -41,14 +41,28 @@ export interface FrameRenderParams {
    * Reference height for the body-caption font-size formula (bodyPx =
    * textRefHeight/1080 * fontSize). Defaults to `height` when omitted —
    * correct for export and any full-resolution render, where the canvas
-   * pixel height IS the final output height with no further stretch.
-   * Pass this separately from `height` when the canvas is a smaller
-   * bitmap that gets stretched back up before being displayed (e.g. the
-   * half-res transition preview snapshot) — otherwise the caption bakes
-   * in at the bitmap's own (smaller) scale and then gets stretched too,
-   * landing at the wrong on-screen size relative to the live DOM caption.
+   * pixel height IS the final output height with no further stretch. Pass
+   * this separately from `height` for a caller that bakes captions onto a
+   * smaller bitmap which then gets stretched back up before display
+   * (otherwise the caption bakes in at the bitmap's own smaller scale and
+   * lands too small once stretched). Not currently exercised by any call
+   * site — the transition-preview snapshot (the bitmap case this was built
+   * for) now sets `skipCaption: true` instead and bakes no caption at all.
    */
   textRefHeight?: number;
+  /**
+   * When true, skips drawing the main body-caption pill + text only (the
+   * block gated by `segment.text` below). Headings, extra overlays, and
+   * global text layers are unaffected — they're drawn elsewhere in this
+   * function and never check this flag. Set by the transition-preview
+   * snapshot path (useTransitionPreview.ts): the live DOM caption is now
+   * the single visible caption layer throughout a transition, so the
+   * snapshot must not bake its own copy underneath it — a size/position
+   * mismatch between the two was the source of a visible "pop" at the
+   * transition's end. Export (segmentEncoder.ts) never sets this — export
+   * has no DOM caption, so it still bakes the body caption exactly as before.
+   */
+  skipCaption?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -304,7 +318,7 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
  * Resolves when the frame is fully drawn (video seeking is async).
  */
 export async function renderSegmentFrame(params: FrameRenderParams): Promise<void> {
-  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight } = params;
+  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight, skipCaption } = params;
 
   // Background
   ctx.clearRect(0, 0, w, h);
@@ -498,7 +512,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const refScale = (textRefHeight ?? h) / 1080;
     const bodyPx = Math.round(refScale * (oc?.fontSize ?? 24));
 
-    if (segment.text) {
+    if (segment.text && !skipCaption) {
       const displayText = segment.text;
       await ensureFont(fontFamily, bodyPx);
       ctx.save();
