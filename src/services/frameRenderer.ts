@@ -557,6 +557,42 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   }
 }
 
+// ---------------------------------------------------------------------------
+// glitch-rgb scratch canvases — created once, resized only when w×h changes,
+// and reused across every frame/call rather than allocated fresh each time.
+// Module-level (not segmentEncoder.ts-local) because applyTransitionBlend is
+// shared by both the export path and the preview-overlay path
+// (useTransitionPreview/PreviewStage), and both need the same reuse
+// guarantee across their own frame loops.
+// ---------------------------------------------------------------------------
+let glitchRedCanvas: HTMLCanvasElement | null = null;
+let glitchBlueCanvas: HTMLCanvasElement | null = null;
+
+function getGlitchScratchCanvases(
+  w: number,
+  h: number,
+): {
+  redCanvas: HTMLCanvasElement;
+  redCtx: CanvasRenderingContext2D;
+  blueCanvas: HTMLCanvasElement;
+  blueCtx: CanvasRenderingContext2D;
+} | null {
+  if (!glitchRedCanvas) glitchRedCanvas = document.createElement('canvas');
+  if (!glitchBlueCanvas) glitchBlueCanvas = document.createElement('canvas');
+  if (glitchRedCanvas.width !== w || glitchRedCanvas.height !== h) {
+    glitchRedCanvas.width = w;
+    glitchRedCanvas.height = h;
+  }
+  if (glitchBlueCanvas.width !== w || glitchBlueCanvas.height !== h) {
+    glitchBlueCanvas.width = w;
+    glitchBlueCanvas.height = h;
+  }
+  const redCtx = glitchRedCanvas.getContext('2d');
+  const blueCtx = glitchBlueCanvas.getContext('2d');
+  if (!redCtx || !blueCtx) return null;
+  return { redCanvas: glitchRedCanvas, redCtx, blueCanvas: glitchBlueCanvas, blueCtx };
+}
+
 /**
  * Composites the adjacent segment's canvas onto the current frame.
  * Called after all overlays have been drawn for the current frame.
@@ -711,10 +747,86 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Not yet implemented: the 2 remaining deferred slugs (glitch-rgb,
-    // light-leak), any other legacy enum member without a canvas
-    // implementation, or a genuinely unknown value — all expected-not-yet-
-    // built states, not errors, so no warn.
+    // ── Glitch / RGB split ───────────────────────────────────────────────────
+    // Compositing-only fake (no getImageData): two scratch canvases hold a
+    // red-tinted and a blue-tinted copy of the incoming frame, each drawn
+    // back onto ctx with 'screen' at a small horizontal offset that peaks
+    // mid-transition (alpha*(1-alpha), same parabolic shape as whip-pan's
+    // blur above) and converges to 0 at both ends. A final low-alpha clean
+    // copy of the incoming frame is layered on top so the result isn't pure
+    // chromatic noise.
+    case 'glitch-rgb': {
+      const scratch = getGlitchScratchCanvases(w, h);
+      if (!scratch) {
+        // Scratch 2D context unavailable — fall back to a plain crossfade
+        // rather than dropping the incoming frame entirely.
+        ctx.globalAlpha = alpha;
+        ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+        break;
+      }
+      const { redCanvas, redCtx, blueCanvas, blueCtx } = scratch;
+      const dx = Math.round(w * 0.03 * alpha * (1 - alpha) * 4);
+
+      // Reset to 'source-over' before each tint draw — these scratch
+      // contexts are reused across frames/calls, and the previous frame's
+      // 'multiply' tint pass would otherwise corrupt this frame's drawImage.
+      redCtx.globalCompositeOperation = 'source-over';
+      redCtx.drawImage(adjacentCanvas, 0, 0, w, h);
+      redCtx.globalCompositeOperation = 'multiply';
+      redCtx.fillStyle = 'rgba(255, 0, 0, 0.6)';
+      redCtx.fillRect(0, 0, w, h);
+
+      blueCtx.globalCompositeOperation = 'source-over';
+      blueCtx.drawImage(adjacentCanvas, 0, 0, w, h);
+      blueCtx.globalCompositeOperation = 'multiply';
+      blueCtx.fillStyle = 'rgba(0, 0, 255, 0.6)';
+      blueCtx.fillRect(0, 0, w, h);
+
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(redCanvas, -dx, 0, w, h);
+      ctx.drawImage(blueCanvas, dx, 0, w, h);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = alpha * 0.5;
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    // ── Light leak ───────────────────────────────────────────────────────────
+    // Base crossfade (same body as the cross-dissolve case above) plus a
+    // warm radial-gradient bloom overlaid with 'screen' so it adds light
+    // rather than occluding the frame. Bloom strength follows the same
+    // alpha*(1-alpha) peak-at-midpoint shape, scaled to peak at 1.0.
+    case 'light-leak': {
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+
+      const bloomAlpha = alpha * (1 - alpha) * 4;
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = bloomAlpha;
+      const gradient = ctx.createRadialGradient(
+        w * 0.35, h * 0.25, 0,
+        w * 0.35, h * 0.25, w * 0.7,
+      );
+      gradient.addColorStop(0, 'rgba(255, 240, 200, 1.0)');
+      gradient.addColorStop(0.3, 'rgba(255, 160, 60, 0.6)');
+      gradient.addColorStop(1.0, 'rgba(255, 100, 20, 0)');
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, w, h);
+
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
+      break;
+    }
+
+    // ── Not yet implemented: any legacy TransitionType enum member without
+    // a canvas implementation (FLIP, RANDOM, PIXELATE, SPIRAL, etc.), or a
+    // genuinely unknown value — all expected-not-yet-built states, not
+    // errors, so no warn. All 10 new slugs are now implemented above.
     default: {
       if (alpha >= 0.5) {
         ctx.drawImage(adjacentCanvas, 0, 0, w, h);
