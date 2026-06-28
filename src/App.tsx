@@ -873,7 +873,12 @@ export default function App() {
         switch (e.type) {
           case 'transition':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
-            return { ...s, effectTransition: e.value, effectTransitionDuration: e.duration };
+            // Reset the legacy field so a stale segment.transition (e.g. from
+            // "Override all per-segment transitions") can never override an
+            // explicit slug choice here — including Hard Cut, which the
+            // resolver otherwise treats as "no slug chosen" and falls back
+            // to this same legacy field.
+            return { ...s, effectTransition: e.value, effectTransitionDuration: e.duration, transition: TransitionType.NONE };
           case 'animation':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration };
@@ -882,7 +887,8 @@ export default function App() {
             return { ...s, effectOverlay: e.value };
           case 'randomize-transitions': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
-            return { ...s, effectTransition: slug, effectTransitionDuration: s.effectTransitionDuration };
+            // See the 'transition' case above — same legacy-field reset.
+            return { ...s, effectTransition: slug, effectTransitionDuration: s.effectTransitionDuration, transition: TransitionType.NONE };
           }
           case 'randomize-animations': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
@@ -890,6 +896,7 @@ export default function App() {
           }
           case 'preset': {
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
+            // See the 'transition' case above — same legacy-field reset.
             return {
               ...s,
               effectTransition: e.preset.transition,
@@ -897,6 +904,7 @@ export default function App() {
               effectAnimation: e.preset.animation,
               effectAnimationDuration: e.preset.animationDur,
               effectOverlay: e.preset.overlay,
+              transition: TransitionType.NONE,
             };
           }
           default:

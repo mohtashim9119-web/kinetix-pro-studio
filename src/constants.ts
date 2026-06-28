@@ -202,10 +202,6 @@ if (import.meta.env.DEV) {
   }
 
   for (const t of TRANSITION_OPTIONS) {
-    // SUPPORTED_TRANSITIONS is defined inside frameRenderer.ts; we can't import it
-    // here without a circular dep risk. Guard by asserting the value appears in the
-    // TransitionType enum (which it always will since we source from the enum directly)
-    // and document that TRANSITION_OPTIONS must match frameRenderer.ts SUPPORTED_TRANSITIONS.
     console.assert(
       Object.values(TransitionType).includes(t),
       `[constants] TRANSITION_OPTIONS contains "${t}" which is not a valid TransitionType enum value.`,
