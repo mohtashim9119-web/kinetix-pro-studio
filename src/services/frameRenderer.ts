@@ -491,34 +491,37 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const xPct = (oc?.x ?? 50) / 100;
     const yPct = (oc?.y ?? 78) / 100;
 
-    // Scale font size relative to 1080p reference (PreviewStage uses 24 px CSS at ~1024px wide).
-    // Uses textRefHeight when the caller supplies one (a smaller bitmap that gets stretched
-    // back up before display, e.g. the transition preview snapshot) — falls back to the
-    // canvas's own height otherwise, which is exactly today's formula for export.
-    const bodyPx = Math.round(((textRefHeight ?? h) / 1080) * (oc?.fontSize ?? 24));
+    // refScale converts PreviewStage's fixed DOM CSS px (24px font, 768px wrap cap,
+    // 20/12px padding, 24px radius — PreviewStage.tsx:719-733) into canvas px at the
+    // current render resolution. Uses textRefHeight when supplied (snapshot bitmaps
+    // get stretched up before display) else the canvas's own height (export).
+    const refScale = (textRefHeight ?? h) / 1080;
+    const bodyPx = Math.round(refScale * (oc?.fontSize ?? 24));
 
     if (segment.text) {
       const displayText = segment.text;
       await ensureFont(fontFamily, bodyPx);
       ctx.save();
       ctx.font = `italic normal ${bodyPx}px "${fontFamily}"`;
-      const maxTextW = w * 0.60;
+      const maxTextW = 768 * refScale; // matches DOM's max-w-3xl
       const lines = wrapText(ctx, displayText, maxTextW);
       const lineH = bodyPx * 1.5;
       const totalH = lines.length * lineH;
       const textW = Math.max(...lines.map(line => ctx.measureText(line).width));
-      const padX = Math.round(w * 0.02);
-      const padY = Math.round(h * 0.015);
+      const padX = Math.round(20 * refScale); // matches DOM's px-5
+      const padY = Math.round(12 * refScale); // matches DOM's py-3
       const boxW = textW + padX * 2;
       const boxH = totalH + padY * 2;
-      const centerX = w * xPct;
-      const centerY = h * yPct;
-      const boxX = centerX - boxW / 2;
-      const boxY = centerY - boxH / 2;
+      // Position-aware anchor (mirrors PreviewStage.tsx:719's translate(-xPct%, -yPct%)):
+      // box's near edge sits at the frame edge at 0%, far edge at 100%, centered at 50%.
+      // A fixed own-center anchor (the old w*xPct - boxW/2) only agreed with this at 50%.
+      const boxX = xPct * (w - boxW);
+      const boxY = yPct * (h - boxH);
+      const centerX = boxX + boxW / 2;
 
       if (bgColor !== 'transparent') {
         ctx.fillStyle = bgColor;
-        drawRoundedRect(ctx, boxX, boxY, boxW, boxH, Math.round(h * 0.025));
+        drawRoundedRect(ctx, boxX, boxY, boxW, boxH, Math.round(24 * refScale)); // matches DOM's rounded-3xl
         ctx.fill();
       }
 
