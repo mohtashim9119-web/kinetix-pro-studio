@@ -20,10 +20,12 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~2,838 lines — top-level state, orchestration, playback, export
+  App.tsx            # ~2,962 lines — top-level state, orchestration, playback, export
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
+  effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
+                     #   dropdowns/randomize-pools — Effects Tab Rebuild Step 2) + NONE sentinels.
   services/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
@@ -52,6 +54,13 @@ src/
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
     exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
                      #   Returns ExportResult (never throws). ExportErrorKind: ffmpeg_load|encode|concat|mux|asset_missing|unknown.
+    lookPresetService.ts # Combined-look effect presets (Effects Tab Rebuild Step 7): localStorage
+                     #   key kinetix:lookPresets:v1, global across projects, cap MAX_LOOK_PRESETS=20.
+                     #   loadLookPresets/saveLookPreset/deleteLookPreset. saveLookPreset persists the
+                     #   caller-supplied id as-is (no internal re-mint) so EffectsPanel's activeId stays
+                     #   valid after the round-trip; same-id save is a no-op (returns the existing record,
+                     #   no duplicate row). Deliberately separate from the legacy presetService.ts
+                     #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
   hooks/
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
     useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
@@ -68,6 +77,12 @@ src/
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
                      #   bar (fixed-width orange window slides over source); mute toggle. Heading input
                      #   shown only for [HEADING:] segments. Click-outside backdrop closes drawer.
+                     #   Header also shows a read-only effect-pills row (icon+label per applied
+                     #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
+    EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
+                     #   selected/all, randomize-from-checked-pool, combined-look presets section).
+                     #   Mounted by DropZonePanel.tsx, which owns lookPresetService persistence —
+                     #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
     PreviewStage.tsx      # Video/image display + overlay rendering
     SegmentEditorPanel.tsx # Segment list + per-segment controls
@@ -428,3 +443,4 @@ All dead dependencies removed. No remaining items.
 | Review Mapping popup — post-ship polish | ✅ Done — 2026-06-26 | `55aacc1`/`88169fd`/`603a268`/`5bb778e`/`df52dc1`/`1447813`/`67c4547` — scene overlay x/y wiring (lower-third default y=78, preview+export), swatch/toggle/stock-split + bg-color editor + None option, font-size/bubble-width/quote fixes, square toggle + scene row reorder + X/Y sliders, PreviewStage edge-to-edge X/Y positioning + content-based width fix (heading + scene), scene row consolidation (italic moved into formatting row, color+XY rows merged, shadow swatch removed, ban toggle relocated, toggle thumb sizing fixed), Review Mapping control converted from icon to a centered text button. Refinement of the already-delisted task 7 feature — not a new Active Task. Pushed to `origin/main` (billing block resolved; CI now manual-only `workflow_dispatch`, `e725a46`) |
 | Review Mapping — live thumbnail (3b) | ✅ Done — 2026-06-27 | `23c8227` — per-segment thumbnails render a live overlay/heading text layer scaled to the thumbnail box, real-time on edit; modal-only (`PreviewStage`/`frameRenderer`/`types.ts` untouched). Review Mapping modal now feature-complete. `tsc` clean, 17/17 vitest. Pushed to `origin/main` |
 | Shared SegmentControls + drawer/preview/timeline sync | ✅ Done — 2026-06-27 | `4887d33` — extracted the Review Mapping card controls (scene + heading layouts) into shared `src/components/SegmentControls.tsx`, reused by both the modal (thumbnail + controls; pure move, unchanged) and the bottom drawer (controls-only, no thumbnail). Drawer recentered to viewport-anchored 50vw (motion `x: '-50%'`), independent of side panels; mute toggle moved to drawer header (scene-only), body mute row removed (scene/heading drawers equal height); dropped the drawer's phantom shadow control. Left-panel segment click seeks the time-driven preview (`handleSegmentClick`) and `Timeline` auto-scrolls the active segment into view on `currentSegmentId` change. `tsc` clean, 17/17 vitest. Pushed to `origin/main`. Closes backlog item 2 (bottom drawer redesign) |
+| Effects Tab Rebuild Steps 5–7 + drawer effect-pills | ✅ Done — 2026-06-27 | `dd903b2` (Step 5, Apply to selected/all), `d0d8ca2` (Step 6, randomize across segments), `d750ce3` (bonus, read-only drawer effect-pills), `4b13cb0` (Step 7, combined-look presets via new `src/services/lookPresetService.ts`, 20-cap, client-generated id preserved across the service round-trip so the active "Restored" highlight survives a save). `tsc` clean, 17/17 vitest after each commit. **Local on `main`, NOT pushed** — `origin/main` still at `1e249df`. Step 8 (renderer implementation) is the only remaining step in the Effects Tab Rebuild plan |

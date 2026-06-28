@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-06-28 |
-| Current HEAD | `ce64de4` on `main`, **fully pushed to `origin/main`** (origin matches local HEAD). Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`), Windows dev environment setup committed (`ce64de4`) — vcvars linker fix, Vite watcher EBUSY fix, dev.bat launch script. |
+| Current HEAD | `4b13cb0` (Effects Steps 5–7) rebased onto `main`'s Windows dev-setup commits (`ce64de4`/`c7065af`); rebase in progress this session — local history diverged from `origin/main` and is being replayed on top, will push once complete. Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`), Windows dev environment setup (`ce64de4`), Effects Tab Rebuild Steps 5–7 (`dd903b2`, `d0d8ca2`, `4b13cb0`) + drawer effect-pills (`d750ce3`). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -43,6 +43,16 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 - ✅ **Bottom drawer centered at 50vw, viewport-anchored** — wrapper switched from `absolute bottom-0 left-0 right-0` to `fixed bottom-0` with `left: 50%`, `width: 50vw`; centering expressed through Framer Motion (`x: '-50%'` on all three keyframes) since motion owns the element transform. Drawer position is now independent of side-panel collapse state.
 - ✅ **Mute toggle moved to drawer header** — sits to the left of the lock icon, scene-only (headings have no embedded audio); the old body mute row was removed so scene and heading drawers are the same height.
 - ✅ **Left-panel segment click syncs preview + timeline** — clicking a row now calls `handleSegmentClick` (App.tsx), which sets `selectedSegmentId` AND seeks the time-driven preview to the segment's `startTime` (mirrors the timeline onSeek pattern). `Timeline.tsx` gained an effect that auto-scrolls the active segment into view on `currentSegmentId` change (only when off-screen, so it never fights manual scrubbing).
+</details>
+
+<details>
+<summary>Effects Tab Rebuild — Steps 5–7 + drawer pills — DONE 2026-06-27 (commits dd903b2, d0d8ca2, d750ce3, 4b13cb0)</summary>
+
+- Step 5 — Apply to selected/all (`dd903b2`) — EffectsPanel's Apply buttons now write real segment effect fields (`effectTransition`/`effectTransitionDuration`, `effectAnimation`/`effectAnimationDuration`, `effectOverlay`) via `setProject(...map...)` in `App.tsx`'s `handleApplyEffect`, scoped to the multi-select Set ("selected") or every non-heading segment ("all"). Headings are always skipped.
+- Step 6 — Randomize across segments (`d0d8ca2`) — per-segment random slug pulled from the checked pool, written the same way as Step 5; existing per-segment duration preserved; headings skipped.
+- Step 7 — Combined-look presets (`4b13cb0`) — new dedicated service `src/services/lookPresetService.ts` (localStorage key `kinetix:lookPresets:v1`, global across projects, cap `MAX_LOOK_PRESETS = 20`). `EffectsPanel.tsx`'s preset UI (save/restore/delete, name input, "Restored {name}" panel) round-trips through `DropZonePanel.tsx`'s `handleLookPresetsChange`, which diffs the incoming list against the previously-known ids to add/remove only what changed, then re-reads the authoritative list back down as `initialPresets`. `App.tsx`'s preset branch in `handleApplyEffect` writes all five effect fields from the preset in one pass, respecting the same selected/all + heading-skip rules as Steps 5–6. Fixed same-session: the service originally re-minted a `crypto.randomUUID()` on every save, orphaning the id `EffectsPanel` had already generated and breaking the "Restored" active-row highlight right after saving — `saveLookPreset` now accepts and persists the caller-supplied id as-is (with a same-id guard against duplicate rows on a re-fired save). Legacy `presetService.ts` (single-category `StylePreset`, used for overlay-config font presets) is untouched — combined-look presets got their own store rather than bending that shape to fit three slugs + two durations.
+- Bonus — drawer header effect-pills (`d750ce3`) — read-only pill row in the bottom drawer header surfaces the currently-applied transition/animation/overlay per segment (icon + label, centered grid, off-states hidden).
+- `tsc --noEmit` clean and 17/17 vitest passing after each commit. All four commits are local on `main`, **not yet pushed** — `origin/main` is still at `1e249df`.
 </details>
 
 ---
@@ -139,34 +149,41 @@ Dropped as non-feasible in this engine: Match Cut, Morph Cut, Crop, Masking &
   Tracking, Warp Stabilizer, Chroma Key.
 
 STEPS:
-1. Land UI — mount EffectsPanel (from mockup.tsx) in place of the inline Effects
-   section in DropZonePanel.tsx; retoken accent to #e07c3a; all buttons no-op
-   stubs; placeholder labels OK. tsc + vitest clean. Commit.
-2. Real option arrays — replace placeholders with the final lists above as
-   {label,value} from one shared source; asset-backed overlays marked disabled.
-   No renderer work.
-3. Multi-select model — convert selectedSegmentId (single) to a Set; wire
-   multi-select in the segment list/timeline; feed count into panel "N selected".
-4. Per-segment persistence — patch parseProjectData to preserve effect fields
-   (transition/animation/overlay/duration); verify round-trip through projectStore
-   AND survival across Apply Sync. (Structural backbone — isolate, test hard.)
-5. Apply to selected/all — replace stubs with real handlers writing to the
-   selected Set or all segments via setProject(...map...). Depends on 3 + 4.
-6. Randomize across segments — wire per-block randomize from checked pool across
-   all segments; same persistence path.
-7. Combined-look presets — new localStorage store (cap 20): save = 3 dropdown
-   values + name; select = restore dropdowns; apply reuses step-5 handlers.
-   Decide fate of legacy presetService here.
-8. Renderer implementation (small batches, each in BOTH PreviewStage + frameRenderer
-   before enabling its dropdown entry): transitions → clip effects → procedural
-   overlays → (later) asset-backed overlays once media supplied. Asset overlays
-   use screen-blend compositing to remove black backgrounds (see above).
-9. Docs sync + cleanup.
+1. ✅ DONE (`3bbd926`) — Land UI — mount EffectsPanel (from mockup.tsx) in place
+   of the inline Effects section in DropZonePanel.tsx; retoken accent to #e07c3a;
+   all buttons no-op stubs; placeholder labels OK. tsc + vitest clean.
+2. ✅ DONE (`3c0d3af`) — Real option arrays — replace placeholders with the final
+   lists above as {label,value} from one shared source (`effectsOptions.ts`);
+   asset-backed overlays marked disabled. No renderer work.
+3. ✅ DONE (`330c79e`) — Multi-select model — convert selectedSegmentId (single)
+   to a Set; wire multi-select in the segment list/timeline; feed count into
+   panel "N selected".
+4. ✅ DONE (`f2dd193`) — Per-segment persistence — patch parseProjectData to
+   preserve effect fields (transition/animation/overlay/duration); verify
+   round-trip through projectStore AND survival across Apply Sync.
+5. ✅ DONE (`dd903b2`) — Apply to selected/all — replace stubs with real handlers
+   writing to the selected Set or all segments via setProject(...map...).
+6. ✅ DONE (`d0d8ca2`) — Randomize across segments — wire per-block randomize from
+   checked pool across all segments; same persistence path.
+7. ✅ DONE (`4b13cb0`) — Combined-look presets — new dedicated localStorage store
+   (`src/services/lookPresetService.ts`, key `kinetix:lookPresets:v1`, cap 20):
+   save = 3 dropdown values + name; select = restore dropdowns; apply reuses
+   step-5 handlers. Legacy `presetService.ts` left untouched/unrelated — combined
+   look got its own store rather than bending the single-category service.
+   Bonus (same arc, commit `d750ce3`): read-only effect pills in the bottom
+   drawer header surface the applied transition/animation/overlay per segment.
+8. ⬜ NEXT — Renderer implementation (small batches, each in BOTH PreviewStage +
+   frameRenderer before enabling its dropdown entry): transitions → clip effects
+   → procedural overlays → (later) asset-backed overlays once media supplied.
+   Asset overlays use screen-blend compositing to remove black backgrounds
+   (see above). Only remaining step before Docs sync (Step 9).
+9. ⬜ PENDING — Docs sync + cleanup.
 
-SEQUENCING: Steps 1-2 fast/safe (UI+data). Steps 3-4 are the structural backbone
-everything depends on (highest risk — isolate + test). Steps 5-7 wire on top.
-Step 8 largest/most open-ended, partly gated on user-supplied black-bg overlay
-assets. Each step = own commit with tsc + vitest + manual test before proceeding.
+SEQUENCING: Steps 1-2 fast/safe (UI+data) — done. Steps 3-4 structural backbone —
+done. Steps 5-7 wire on top — done (this session). Step 8 largest/most
+open-ended, partly gated on user-supplied black-bg overlay assets, is now the
+only remaining implementation step. Each step = own commit with tsc + vitest +
+manual test before proceeding.
 
 ---
 
@@ -252,6 +269,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-26 | **Review Mapping popup — post-ship polish (this session):** refinement of the already-delisted task 7 feature, not a new backlog item. Scene overlay x/y position wiring, lower-third default y=78, preview+export (`55aacc1`). Swatch/toggle/stock-split polish + overlay bg-color editor (`88169fd`). Overlay caption font-size wiring, bubble auto-width, bg-None option, removed auto-quotes (`603a268`). Square toggle, scene row reorder, scene X/Y sliders (`5bb778e`). Scene overlay + heading text edge-to-edge X/Y positioning + width fix in PreviewStage (`df52dc1`). Scene row consolidation — italic moved into formatting row, color+XY rows merged into one, shadow swatch removed, ban toggle relocated next to bg swatch, square toggle thumb sizing fixed (`1447813`). Review Mapping control converted from icon to a centered text button in the Segments tab header (`67c4547`). |
 | 2026-06-27 | **Billing block resolved + CI made manual-only.** The push-blocking billing issue is fixed — `origin/main` now tracks local HEAD again. To prevent recurring metered usage, the build workflow was switched to manual-only (`workflow_dispatch`, commit `e725a46`); CI no longer runs on push. Live thumbnail 3b (`23c8227`) is the first feature pushed under the restored flow. |
 | 2026-06-27 | **Shared SegmentControls + drawer/preview/timeline sync (commit `4887d33`).** Extracted the Review Mapping card's controls into a shared `SegmentControls` component reused by both the modal and the bottom drawer (modal unchanged — pure move; drawer is controls-only, no thumbnail). Bottom drawer recentered to a viewport-anchored 50vw block (motion-owned `x: '-50%'`), independent of side-panel state. Mute toggle relocated to the drawer header (scene-only); body mute row removed so scene/heading drawers match height. Left-panel segment click now seeks the time-driven preview to the segment and auto-scrolls the timeline to bring it into view. Closes backlog item 2 (bottom drawer redesign). |
+| 2026-06-27 | **Effects Tab Rebuild Steps 5–7 + drawer effect-pills (commits `dd903b2`, `d0d8ca2`, `d750ce3`, `4b13cb0`).** Apply-to-selected/all and randomize now write real per-segment effect fields; combined-look presets (transition + animation + overlay slugs + 2 durations) persist globally via a new `src/services/lookPresetService.ts` (dedicated localStorage store, 20-cap, kept separate from the legacy single-category `presetService.ts`). Mid-session fix: preset ids are now preserved end-to-end through the service round-trip (the service no longer re-mints its own id), so the active "Restored" highlight survives a save. Bottom drawer header also gained a read-only effect-pills row. Step 8 (renderer implementation) is now the only remaining step in the Effects Tab Rebuild plan. All four commits are local-only — not yet pushed to `origin/main` (still at `1e249df`). |
 
 ---
 
@@ -270,7 +288,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 2,838 |
+| `src/App.tsx` LOC | 2,962 (was 2,838 prior to Effects Tab Rebuild Steps 5–7) |
 | Project persistence | Per-project scoped: `kinetix:project:{id}:v1` + registry `kinetix:projects:v1` in localStorage (legacy single-project key `kinetix:project:v1` retained for one-time migration only) |
 | IndexedDB | `kinetix-assets` DB v2, store `assets-v2`, compound keyPath `['projectId','id']` (legacy v1 store retained for migration) |
 | Total dependencies | 6 prod + 12 dev |
