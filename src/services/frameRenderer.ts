@@ -604,7 +604,9 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Slide family (legacy enum only — no ready slug this slice) ──────────
+    // ── Slide family ─────────────────────────────────────────────────────────
+    // SLIDE/SLIDE_UP/SLIDE_DOWN (legacy enum only) keep the outgoing layer
+    // static and only slide the incoming layer over it (curtain reveal).
     case TransitionType.SLIDE: {
       // Adjacent slides in from the right
       ctx.drawImage(adjacentCanvas, (1 - alpha) * w, 0, w, h);
@@ -618,6 +620,19 @@ export function applyTransitionBlend(
     case TransitionType.SLIDE_DOWN: {
       // Adjacent slides in from the top
       ctx.drawImage(adjacentCanvas, 0, -(alpha * h), w, h);
+      break;
+    }
+    case 'slide-push': {
+      // True synchronized push (unlike the curtain-style SLIDE above): the
+      // outgoing layer also moves, exiting left while incoming enters from
+      // the right. Self-blit is well-defined per spec — drawImage snapshots
+      // its source before writing, so reading ctx.canvas as the source for
+      // a draw back onto the same ctx does not feed back into itself. Must
+      // run before the incoming draw below: the self-blit reads the FULL
+      // current canvas, so if incoming were drawn first, the self-blit would
+      // also pick up and shift a copy of the incoming pixels.
+      ctx.drawImage(ctx.canvas, -alpha * w, 0, w, h);
+      ctx.drawImage(adjacentCanvas, (1 - alpha) * w, 0, w, h);
       break;
     }
 
@@ -634,12 +649,41 @@ export function applyTransitionBlend(
       break;
     }
 
+    // ── Wipe ─────────────────────────────────────────────────────────────────
+    // TransitionType.WIPE's enum value IS the string 'wipe', so this case
+    // already matches the slug too — no separate slug case needed/possible
+    // (same situation as ZOOM above). Advancing left-to-right clip reveal.
+    // Uses its OWN save/restore around the clip specifically — ctx.clip()
+    // intersects with any existing clip path and is otherwise permanent for
+    // the rest of this save level, so it must not leak past this case.
+    case TransitionType.WIPE: {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, alpha * w, h);
+      ctx.clip();
+      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      ctx.restore();
+      break;
+    }
+
     // ── Blur cross-dissolve (legacy enum only) ──────────────────────────────
     case TransitionType.BLUR: {
       const blurPx = Math.round((1 - alpha) * 20);
       if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
       ctx.globalAlpha = alpha;
       ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      break;
+    }
+    case 'whip-pan': {
+      // Fast horizontal pan with motion blur peaking mid-transition and
+      // tapering to zero at both ends (alpha * (1 - alpha), max 0.25 at
+      // alpha=0.5) — distinct from the BLUR case above, which is a static
+      // crossfade with blur fading out linearly from frame 0. Positioning
+      // reuses the legacy SLIDE x-offset formula at full opacity (no
+      // globalAlpha) — a spatial reveal, not a fade.
+      const blurPx = Math.round(alpha * (1 - alpha) * 80); // 0 at edges, 20px peak at alpha=0.5
+      if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
+      ctx.drawImage(adjacentCanvas, (1 - alpha) * w, 0, w, h);
       break;
     }
 
@@ -667,10 +711,10 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Not yet implemented: the 5 deferred slugs (wipe, slide-push,
-    // glitch-rgb, whip-pan, light-leak), any other legacy enum member
-    // without a canvas implementation, or a genuinely unknown value — all
-    // expected-not-yet-built states, not errors, so no warn.
+    // ── Not yet implemented: the 2 remaining deferred slugs (glitch-rgb,
+    // light-leak), any other legacy enum member without a canvas
+    // implementation, or a genuinely unknown value — all expected-not-yet-
+    // built states, not errors, so no warn.
     default: {
       if (alpha >= 0.5) {
         ctx.drawImage(adjacentCanvas, 0, 0, w, h);
