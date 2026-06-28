@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-28 |
-| Current HEAD | `4b13cb0` (Effects Steps 5–7) rebased onto `main`'s Windows dev-setup commits (`ce64de4`/`c7065af`); rebase in progress this session — local history diverged from `origin/main` and is being replayed on top, will push once complete. Billing block is resolved — pushes work; CI is now manual-only (`workflow_dispatch`, commit `e725a46`) so no metered usage. Architecture Shift complete (2026-06-24). Recent: live thumbnail 3b (`23c8227`), shared SegmentControls + drawer/preview/timeline sync (`4887d33`), Windows dev environment setup (`ce64de4`), Effects Tab Rebuild Steps 5–7 (`dd903b2`, `d0d8ca2`, `4b13cb0`) + drawer effect-pills (`d750ce3`). |
+| Last updated | 2026-06-29 |
+| Current HEAD | `25ca2b0` ("docs: move transition 100/0 timing issue to Deferred, expand context"). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10): Batch A — hard-cut, cross-dissolve, zoom, dip-black, dip-white, slide-push, whip-pan, wipe (commits `675e322`…`c0ab24f`) — and Batch B — glitch-rgb, light-leak (`76ccf16`) — plus caption-rendering fixes (`6c88da0`, `4a65379`, `f1676a9`, `a61bfe8`) and two docs commits (`fb961ef`, `25ca2b0`) recording the 100/0 transition-timing tradeoff as a deferred known issue. Local `main` is 8 commits ahead of `origin/main` (this batch not yet pushed). Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -53,6 +53,22 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 - Step 7 — Combined-look presets (`4b13cb0`) — new dedicated service `src/services/lookPresetService.ts` (localStorage key `kinetix:lookPresets:v1`, global across projects, cap `MAX_LOOK_PRESETS = 20`). `EffectsPanel.tsx`'s preset UI (save/restore/delete, name input, "Restored {name}" panel) round-trips through `DropZonePanel.tsx`'s `handleLookPresetsChange`, which diffs the incoming list against the previously-known ids to add/remove only what changed, then re-reads the authoritative list back down as `initialPresets`. `App.tsx`'s preset branch in `handleApplyEffect` writes all five effect fields from the preset in one pass, respecting the same selected/all + heading-skip rules as Steps 5–6. Fixed same-session: the service originally re-minted a `crypto.randomUUID()` on every save, orphaning the id `EffectsPanel` had already generated and breaking the "Restored" active-row highlight right after saving — `saveLookPreset` now accepts and persists the caller-supplied id as-is (with a same-id guard against duplicate rows on a re-fired save). Legacy `presetService.ts` (single-category `StylePreset`, used for overlay-config font presets) is untouched — combined-look presets got their own store rather than bending that shape to fit three slugs + two durations.
 - Bonus — drawer header effect-pills (`d750ce3`) — read-only pill row in the bottom drawer header surfaces the currently-applied transition/animation/overlay per segment (icon + label, centered grid, off-states hidden).
 - `tsc --noEmit` clean and 17/17 vitest passing after each commit. All four commits are local on `main`, **not yet pushed** — `origin/main` is still at `1e249df`.
+</details>
+
+<details>
+<summary>Effects Step 8 — transitions complete (10/10, commit 76ccf16)</summary>
+
+All 10 transition slugs rendered in `frameRenderer.ts` (`applyTransitionBlend`)
+and `useTransitionPreview.ts`/`PreviewStage.tsx`:
+- Batch A: hard-cut, cross-dissolve, zoom, dip-black, dip-white, slide-push,
+  whip-pan, wipe (commits 3779222, f928546, c0ab24f range)
+- Batch B: glitch-rgb (lazy scratch-canvas compositing, screen blend, no
+  getImageData), light-leak (radial gradient bloom, screen blend, peaks at
+  alpha=0.5) — commit 76ccf16
+- Caption fixes landed alongside: 6c88da0, 4a65379, f1676a9, a61bfe8
+- First use of globalCompositeOperation='screen' in frameRenderer.ts
+- Known issue logged: transition timing is 100/0 split, not true 50/50
+  (see Deferred)
 </details>
 
 ---
@@ -172,11 +188,12 @@ STEPS:
    look got its own store rather than bending the single-category service.
    Bonus (same arc, commit `d750ce3`): read-only effect pills in the bottom
    drawer header surface the applied transition/animation/overlay per segment.
-8. ⬜ NEXT — Renderer implementation (small batches, each in BOTH PreviewStage +
-   frameRenderer before enabling its dropdown entry): transitions → clip effects
-   → procedural overlays → (later) asset-backed overlays once media supplied.
-   Asset overlays use screen-blend compositing to remove black backgrounds
-   (see above). Only remaining step before Docs sync (Step 9).
+8. ⬜ IN PROGRESS — Renderer implementation. Transitions: all 10 done (hard-cut,
+   cross-dissolve, zoom, dip-black, dip-white, slide-push, whip-pan, wipe,
+   glitch-rgb, light-leak — commits 675e322…76ccf16). Remaining: clip effects
+   (10) → procedural overlays (4) → asset-backed overlays (6, blocked on
+   black-bg footage). Each batch lands in BOTH PreviewStage + frameRenderer
+   before its dropdown entry is enabled.
 9. ⬜ PENDING — Docs sync + cleanup.
 
 SEQUENCING: Steps 1-2 fast/safe (UI+data) — done. Steps 3-4 structural backbone —
@@ -272,6 +289,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-27 | **Billing block resolved + CI made manual-only.** The push-blocking billing issue is fixed — `origin/main` now tracks local HEAD again. To prevent recurring metered usage, the build workflow was switched to manual-only (`workflow_dispatch`, commit `e725a46`); CI no longer runs on push. Live thumbnail 3b (`23c8227`) is the first feature pushed under the restored flow. |
 | 2026-06-27 | **Shared SegmentControls + drawer/preview/timeline sync (commit `4887d33`).** Extracted the Review Mapping card's controls into a shared `SegmentControls` component reused by both the modal and the bottom drawer (modal unchanged — pure move; drawer is controls-only, no thumbnail). Bottom drawer recentered to a viewport-anchored 50vw block (motion-owned `x: '-50%'`), independent of side-panel state. Mute toggle relocated to the drawer header (scene-only); body mute row removed so scene/heading drawers match height. Left-panel segment click now seeks the time-driven preview to the segment and auto-scrolls the timeline to bring it into view. Closes backlog item 2 (bottom drawer redesign). |
 | 2026-06-27 | **Effects Tab Rebuild Steps 5–7 + drawer effect-pills (commits `dd903b2`, `d0d8ca2`, `d750ce3`, `4b13cb0`).** Apply-to-selected/all and randomize now write real per-segment effect fields; combined-look presets (transition + animation + overlay slugs + 2 durations) persist globally via a new `src/services/lookPresetService.ts` (dedicated localStorage store, 20-cap, kept separate from the legacy single-category `presetService.ts`). Mid-session fix: preset ids are now preserved end-to-end through the service round-trip (the service no longer re-mints its own id), so the active "Restored" highlight survives a save. Bottom drawer header also gained a read-only effect-pills row. Step 8 (renderer implementation) is now the only remaining step in the Effects Tab Rebuild plan. All four commits are local-only — not yet pushed to `origin/main` (still at `1e249df`). |
+| 2026-06-29 | **Effects Step 8 — transition renderer (Batch A + B):** All 10 transitions implemented in `applyTransitionBlend` (frameRenderer.ts) via pure canvas compositing — no getImageData/pixel readback anywhere. glitch-rgb uses lazy module-level scratch canvases + screen blend (cheap fake, visually indistinguishable at transition speeds). light-leak uses radial gradient bloom + screen blend, opacity shaped by alpha*(1-alpha)*4. Transition timing is Path B (100/0 split — entire window on A's trailing extension in export, last D seconds of A in preview) — documented as deferred known issue, not a regression. |
 
 ---
 
