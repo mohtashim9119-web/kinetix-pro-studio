@@ -1,6 +1,7 @@
 import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
 import { getFilterStyle } from '../constants';
 import { applySegmentAnimation } from './canvasAnimations';
+import { TRANSITION_NONE } from '../effectsOptions';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
@@ -524,28 +525,19 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   }
 }
 
-// ---------------------------------------------------------------------------
-// Supported transition types for canvas blending.
-// All others fall back to a hard cut (blend params are ignored with a warning).
-// ---------------------------------------------------------------------------
-const SUPPORTED_TRANSITIONS = new Set<string>([
-  TransitionType.FADE,
-  TransitionType.CROSSFADE,
-  TransitionType.DISSOLVE,
-  TransitionType.NONE,
-  TransitionType.SLIDE,
-  TransitionType.SLIDE_UP,
-  TransitionType.SLIDE_DOWN,
-  TransitionType.ZOOM,
-  TransitionType.ZOOM_WIPE,
-  TransitionType.BLUR,
-]);
-
 /**
  * Composites the adjacent segment's canvas onto the current frame.
  * Called after all overlays have been drawn for the current frame.
  *
  * alpha=0 → fully current; alpha=1 → fully adjacent (incoming segment).
+ *
+ * `type` is keyed on the new slug strings (effectTransition) first; legacy
+ * TransitionType enum values are kept as equal-weight cases for backward
+ * compatibility (old projects, and the Settings global-transition dropdown,
+ * both still emit enum values via resolveEffectiveTransition's fallback
+ * path). Slugs not yet implemented this slice, and any other unrecognized
+ * value, fall through to the `default` hard-cut — that path is deliberately
+ * silent (see note above the switch).
  *
  * Exported for use by the preview transition canvas overlay
  * (useTransitionPreview / PreviewStage). The encoder calls this indirectly
@@ -560,30 +552,27 @@ export function applyTransitionBlend(
   const { adjacentCanvas, alpha, type } = blend;
   if (alpha <= 0) return;
 
-  const t = type as TransitionType;
-
-  if (!SUPPORTED_TRANSITIONS.has(t) && type !== '') {
-    console.warn(`[frameRenderer] unsupported transition "${type}" — using hard cut`);
-    if (alpha >= 0.5) {
-      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
-    }
-    return;
-  }
-
   ctx.save();
 
-  switch (t) {
-    // ── Cross-dissolve family ──────────────────────────────────────────────
+  switch (type) {
+    // ── Hard cut / cross-dissolve family ────────────────────────────────────
+    // hard-cut reuses the exact same code NONE already used — today that's
+    // an alpha blend, not a true instant cut (see transitionResolver.ts: the
+    // resolver currently always routes hard-cut to the legacy NONE branch
+    // before it would reach here, so this slug case is defensive/forward-
+    // looking rather than reachable today).
     case TransitionType.FADE:
     case TransitionType.CROSSFADE:
     case TransitionType.DISSOLVE:
-    case TransitionType.NONE: {
+    case TransitionType.NONE:
+    case TRANSITION_NONE: // 'hard-cut' slug
+    case 'cross-dissolve': {
       ctx.globalAlpha = alpha;
       ctx.drawImage(adjacentCanvas, 0, 0, w, h);
       break;
     }
 
-    // ── Slide family ───────────────────────────────────────────────────────
+    // ── Slide family (legacy enum only — no ready slug this slice) ──────────
     case TransitionType.SLIDE: {
       // Adjacent slides in from the right
       ctx.drawImage(adjacentCanvas, (1 - alpha) * w, 0, w, h);
@@ -600,7 +589,9 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Zoom family ────────────────────────────────────────────────────────
+    // ── Zoom family ──────────────────────────────────────────────────────────
+    // TransitionType.ZOOM's enum value IS the string 'zoom', so this case
+    // already matches the slug too — no separate slug case needed/possible.
     case TransitionType.ZOOM:
     case TransitionType.ZOOM_WIPE: {
       const scale = 0.5 + 0.5 * alpha; // 0.5 → 1.0
@@ -611,7 +602,7 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Blur cross-dissolve ────────────────────────────────────────────────
+    // ── Blur cross-dissolve (legacy enum only) ──────────────────────────────
     case TransitionType.BLUR: {
       const blurPx = Math.round((1 - alpha) * 20);
       if (blurPx > 0) ctx.filter = `blur(${blurPx}px)`;
@@ -620,9 +611,15 @@ export function applyTransitionBlend(
       break;
     }
 
+    // ── Not yet implemented: the 7 deferred slugs (dip-black, dip-white,
+    // wipe, slide-push, glitch-rgb, whip-pan, light-leak), any other legacy
+    // enum member without a canvas implementation, or a genuinely unknown
+    // value — all expected-not-yet-built states, not errors, so no warn.
     default: {
-      ctx.globalAlpha = alpha;
-      ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      if (alpha >= 0.5) {
+        ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      }
+      break;
     }
   }
 

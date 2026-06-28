@@ -42,8 +42,8 @@ export interface TransitionPreviewInfo {
   outgoing: HTMLCanvasElement | null;
   /** Pre-rendered incoming frame (first frame of next segment). */
   incoming: HTMLCanvasElement | null;
-  /** The resolved transition type to apply. */
-  effectiveTransition: TransitionType;
+  /** The resolved transition type to apply (slug string or legacy enum). */
+  effectiveTransition: TransitionType | string;
 }
 
 interface Params {
