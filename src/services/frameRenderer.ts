@@ -629,10 +629,34 @@ export function applyTransitionBlend(
       break;
     }
 
-    // ── Not yet implemented: the 7 deferred slugs (dip-black, dip-white,
-    // wipe, slide-push, glitch-rgb, whip-pan, light-leak), any other legacy
-    // enum member without a canvas implementation, or a genuinely unknown
-    // value — all expected-not-yet-built states, not errors, so no warn.
+    // ── Dip family ───────────────────────────────────────────────────────────
+    // First half (alpha 0→0.5): fade the outgoing frame, already on ctx, to a
+    // solid color. Second half (0.5→1): a full-alpha fill of that color erases
+    // the outgoing frame entirely (it becomes the new base), then the incoming
+    // frame fades in over it. The solid-color fill mediates instead of a direct
+    // crossfade, giving a true hold on black/white at the mid-point rather than
+    // the two frames ever blending directly into each other.
+    case 'dip-black':
+    case 'dip-white': {
+      const dipColor = type === 'dip-white' ? '#ffffff' : '#000000';
+      if (alpha < 0.5) {
+        ctx.globalAlpha = alpha / 0.5;
+        ctx.fillStyle = dipColor;
+        ctx.fillRect(0, 0, w, h);
+      } else {
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = dipColor;
+        ctx.fillRect(0, 0, w, h);
+        ctx.globalAlpha = (alpha - 0.5) / 0.5;
+        ctx.drawImage(adjacentCanvas, 0, 0, w, h);
+      }
+      break;
+    }
+
+    // ── Not yet implemented: the 5 deferred slugs (wipe, slide-push,
+    // glitch-rgb, whip-pan, light-leak), any other legacy enum member
+    // without a canvas implementation, or a genuinely unknown value — all
+    // expected-not-yet-built states, not errors, so no warn.
     default: {
       if (alpha >= 0.5) {
         ctx.drawImage(adjacentCanvas, 0, 0, w, h);
