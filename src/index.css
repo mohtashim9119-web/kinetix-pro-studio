@@ -13,21 +13,60 @@
   }
 }
 
+/* ─── Kinetix design tokens ─────────────────────────────────────── */
+:root {
+  /* Surfaces — deepest to lightest */
+  --kx-bg:         #0a0c10;   /* app shell / behind panel */
+  --kx-panel:      #0d1015;   /* left panel column */
+  --kx-surface:    #14181f;   /* row cards, action boxes */
+  --kx-surface-2:  #191e26;   /* selected row bg */
+  --kx-hover:      #1d232d;   /* row/button hover fill */
+
+  /* Borders */
+  --kx-line:       rgba(255,255,255,.065);   /* panel dividers, row default border */
+  --kx-line-2:     rgba(255,255,255,.11);    /* hover border */
+
+  /* Text */
+  --kx-text:       #eef1f6;   /* primary (titles, active labels) */
+  --kx-muted:      #8a93a2;   /* secondary (filenames, timecodes, button labels) */
+  --kx-faint:      #59616f;   /* tertiary (empty-state copy, decorative labels) */
+
+  /* Brand accent — ONE orange */
+  --kx-accent:          #ff8a3c;
+  --kx-accent-2:        #ffb072;              /* lighter for text-on-dark */
+  --kx-accent-soft:     rgba(255,138,60,.13); /* row selected bg, badge bg */
+  --kx-accent-line:     rgba(255,138,60,.45); /* selected/active border */
+  --kx-accent-hover:    #ff9d50;              /* replaces the 3 different hover-oranges */
+
+  /* Per-type colors — Files tab slot icons */
+  --kx-type-script:  #fb923c;   /* orange-400 — kept, matches existing */
+  --kx-type-scene:   #2dd4bf;   /* teal-400 — kept */
+  --kx-type-voice:   #fbbf24;   /* amber-400 — kept */
+  --kx-type-media:   #c084fc;   /* purple-400 — kept */
+
+  /* Semantic */
+  --kx-ready:      #54d19a;              /* success/synced state */
+  --kx-ready-soft: rgba(84,209,154,.13);
+  --kx-danger:     #ff6b6b;              /* remove/delete */
+  --kx-warning:    #fbbf24;              /* missing asset */
+}
+
 .custom-scrollbar::-webkit-scrollbar {
-  width: 4px;
+  width: 9px;
   height: 10px;
 }
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #111111;
-  border-radius: 10px;
-  margin: 0 6px 6px 6px;
+  background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #F27D26;
-  border-radius: 10px;
+  background: rgba(255,255,255,.08);
+  border-radius: 9px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #FF9040;
+  background: rgba(255,255,255,.16);
+  background-clip: padding-box;
 }
 
 /* Global keyboard focus ring — visible on all interactive elements when navigated via keyboard.

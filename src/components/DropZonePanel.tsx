@@ -7,15 +7,14 @@ import { useState, useRef, useEffect } from 'react';
 import {
   Lock,
   LockOpen,
-  Unlock,
   FileText,
   Music,
   Image as ImageIcon,
   Video,
+  Film,
   AlertCircle,
   Check,
   X,
-  ChevronDown,
   ChevronRight,
   ChevronLeft,
   Trash2,
@@ -24,6 +23,8 @@ import {
   ListChecks,
   CheckSquare,
   Square,
+  Plus,
+  RefreshCw,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -70,10 +71,31 @@ const formatTime = (seconds: number) => {
   return `${m}:${s}`;
 };
 
-const formatBytes = (bytes: number) => {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+const formatFileDate = (ms: number) =>
+  new Date(ms).toLocaleString('en-US', {
+    month: 'short', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  });
+
+/**
+ * Human-readable segment title for the Segments tab row. Heading segments use their
+ * own text; content segments fall back through the asset filename (cleaned of leading
+ * index codes / trailing timestamps / extension) to a positional "Scene N" label.
+ * VideoSegment has no filename/sceneLine field of its own — the filename lives on the
+ * looked-up Asset.
+ */
+const humanTitle = (seg: VideoSegment, asset: Asset | undefined): string => {
+  if (seg.isHeading) return seg.headingConfig?.text || seg.heading || `Heading ${seg.order + 1}`;
+  if (asset?.name) {
+    const cleaned = asset.name
+      .replace(/\.[a-zA-Z0-9]+$/, '')      // extension
+      .replace(/^\d{2,4}[_-]/, '')          // leading index code
+      .replace(/[_-]\d{8,}$/, '')           // trailing timestamp
+      .replace(/[_-]+/g, ' ')
+      .trim();
+    if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  return seg.heading || `Scene ${seg.order + 1}`;
 };
 
 /**
@@ -132,7 +154,7 @@ function SlotRow({
   onFile,
   onDropFiles,
   onDelete,
-  color = 'text-gray-500',
+  color = '#8a93a2',
   multiFile = false,
   expanded,
   onToggle,
@@ -142,10 +164,14 @@ function SlotRow({
   const [isDragOver, setIsDragOver] = useState(false);
 
   const showDelete = !!stagedFile || (!!persistedLabel && canDeletePersisted);
+  const hasContent = !!stagedFile || !!persistedLabel;
+  const subLine = stagedFile ? stagedFile.file.name : (persistedLabel || subtitle);
 
   return (
     <div
-      className={`border-b border-[#111] transition-colors ${isDragOver ? 'bg-[#F27D26]/5' : ''}`}
+      className={`mx-3 mb-2 rounded-[13px] border overflow-hidden transition-colors
+                  bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)]
+                  ${isDragOver ? 'bg-[var(--kx-accent-soft)]' : ''}`}
       onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={() => setIsDragOver(false)}
       onDrop={(e) => {
@@ -154,69 +180,97 @@ function SlotRow({
         onDropFiles(Array.from(e.dataTransfer.files));
       }}
     >
-      {/* Line 1: chevron + icon + label + [×] [Browse/Add] */}
-      <div className="flex items-center gap-2 px-4 pt-3 pb-1 cursor-pointer" onClick={onToggle}>
-        {expanded
-          ? <ChevronDown size={12} className="flex-shrink-0 text-gray-500" />
-          : <ChevronRight size={12} className="flex-shrink-0 text-gray-500" />
-        }
-        <span className={`flex-shrink-0 ${color}`}>{icon}</span>
-        <span className={`flex-1 text-[10px] font-bold uppercase tracking-widest ${color}`}>
-          {label}
-        </span>
+      {/* Header — chevron + type tile + label/sub-line + status chip + action buttons.
+          Action buttons (Replace/Browse/+Add/×) are always visible, independent of
+          `expanded` — only the body below the header shows/hides on toggle. */}
+      <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
+        <button onClick={onToggle} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
+          <span className="flex-none w-6 flex items-center justify-center">
+            <ChevronRight
+              size={13}
+              className={`transition-transform ${expanded ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
+            />
+          </span>
+          <span
+            className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
+            style={{ background: `${color}26`, color }}
+          >
+            {icon}
+          </span>
+          <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+            <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">{label}</span>
+            <span className="text-[11.5px] text-[var(--kx-muted)] truncate">{subLine}</span>
+          </span>
+        </button>
+
+        {stagedFile ? (
+          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                           bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
+            <RefreshCw size={11} /> Pending
+          </span>
+        ) : persistedLabel ? (
+          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                           bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
+            <Check size={11} /> Ready
+          </span>
+        ) : (
+          <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                           bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
+            <AlertCircle size={11} /> Empty
+          </span>
+        )}
+
+        <button
+          onClick={(e) => { e.stopPropagation(); ref.current?.click(); }}
+          aria-label={multiFile ? `Add ${label} file` : (hasContent ? `Replace ${label} file` : `Browse for ${label} file`)}
+          className={multiFile
+            ? `flex items-center justify-center w-8 h-8 rounded-[8px]
+               bg-[var(--kx-accent-soft)] border border-[var(--kx-accent-line)]
+               text-[var(--kx-accent-2)] hover:bg-[rgba(255,138,60,.2)]
+               transition-colors flex-shrink-0`
+            : `flex items-center justify-center w-8 h-8 rounded-[8px]
+               bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
+               text-[var(--kx-muted)] hover:text-[var(--kx-text)]
+               hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0`
+          }
+        >
+          {multiFile ? <Plus size={13} /> : <RefreshCw size={13} />}
+        </button>
+
         {showDelete && (
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(); }}
             aria-label={`Remove ${label} file`}
-            className="flex-shrink-0 flex items-center text-[9px] uppercase tracking-widest
-                       text-red-500 border border-red-500 rounded px-2 py-0.5
-                       hover:bg-red-500/10 transition-colors"
+            className="flex items-center justify-center w-8 h-8 rounded-[8px]
+                       bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
+                       text-[var(--kx-faint)] hover:text-[var(--kx-danger)]
+                       hover:border-[var(--kx-danger)] transition-colors flex-shrink-0"
           >
-            <X size={11} />
+            <X size={13} />
           </button>
         )}
-        <button
-          onClick={(e) => { e.stopPropagation(); ref.current?.click(); }}
-          className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600
-                     hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
-        >
-          {multiFile ? '+ Add' : 'Browse'}
-        </button>
-        <input
-          ref={ref}
-          type="file"
-          accept={accept}
-          multiple={multiFile}
-          className="hidden"
-          onChange={(e) => {
-            if (multiFile) {
-              const files = Array.from(e.target.files ?? []);
-              if (files.length > 0) { onDropFiles(files); e.target.value = ''; }
-            } else {
-              const f = e.target.files?.[0];
-              if (f) { onFile(f); e.target.value = ''; }
-            }
-          }}
-        />
       </div>
 
-      {/* Line 2: subtitle / staged filename / persisted indicator */}
-      <div className="flex items-center pl-10 pr-4 pb-2.5 cursor-pointer" onClick={onToggle}>
-        {stagedFile ? (
-          <span className="flex-1 text-[10px] truncate text-gray-300">{stagedFile.file.name}</span>
-        ) : persistedLabel ? (
-          <span className="flex-1 text-[10px] truncate text-green-500/70 flex items-center gap-1">
-            <Check size={10} className="flex-shrink-0" />
-            {persistedLabel}
-          </span>
-        ) : (
-          <span className="flex-1 text-[10px] truncate text-gray-600">{subtitle}</span>
-        )}
-      </div>
+      <input
+        ref={ref}
+        type="file"
+        accept={accept}
+        multiple={multiFile}
+        className="hidden"
+        onChange={(e) => {
+          if (multiFile) {
+            const files = Array.from(e.target.files ?? []);
+            if (files.length > 0) { onDropFiles(files); e.target.value = ''; }
+          } else {
+            const f = e.target.files?.[0];
+            if (f) { onFile(f); e.target.value = ''; }
+          }
+        }}
+      />
 
-      {/* Expanded content */}
+      {/* Expanded body — per-slot content only; action buttons live in the header above */}
       {expanded && (
-        <div className="px-4 pb-3">{children}</div>
+        <div className="px-3 pb-3">{children}</div>
       )}
     </div>
   );
@@ -238,18 +292,18 @@ function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onC
       aria-label="Confirm save"
       className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
     >
-      <div ref={trapRef} className="bg-[#111] border border-[#282828] rounded-2xl p-6 w-full max-w-xs shadow-2xl">
-        <p className="text-sm text-gray-200 mb-5">Are you sure you want to save the changes?</p>
+      <div ref={trapRef} className="bg-[var(--kx-surface)] border border-[var(--kx-line-2)] rounded-2xl p-6 w-full max-w-xs shadow-2xl">
+        <p className="text-[14px] text-[var(--kx-text)] mb-5">Are you sure you want to save the changes?</p>
         <div className="flex gap-3">
           <button
             onClick={onCancel}
-            className="flex-1 bg-transparent border border-[#282828] py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all focus:outline-none focus:ring-2 focus:ring-gray-500"
+            className="flex-1 bg-transparent border border-[var(--kx-line-2)] py-2.5 rounded-xl text-[12.5px] font-semibold text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-muted)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-line-2)]"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="flex-1 bg-[#F27D26] text-black py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-[#FF9D46] transition-all focus:outline-none focus:ring-2 focus:ring-orange-400"
+            className="flex-1 bg-[var(--kx-accent)] text-[#1a1003] py-2.5 rounded-xl text-[12.5px] font-semibold hover:bg-[var(--kx-accent-hover)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--kx-accent-line)]"
           >
             Yes
           </button>
@@ -271,8 +325,12 @@ interface Props {
   script: string;
   persistedScript: string;
   persistedScriptName: string;
+  /** Epoch ms (`file.lastModified`) of the script file last committed via Apply Sync. */
+  persistedScriptUpdatedAt: number | undefined;
   persistedSceneDetails: string;
   persistedSceneDetailsName: string;
+  /** Epoch ms (`file.lastModified`) of the scene-details file last committed via Apply Sync. */
+  persistedSceneDetailsUpdatedAt: number | undefined;
   persistedVoiceoverName: string;
   persistedAssetCount: number;
   /** True once the project has completed its first sync — locks the Scene Details editor. */
@@ -358,8 +416,10 @@ export function DropZonePanel({
   script,
   persistedScript,
   persistedScriptName,
+  persistedScriptUpdatedAt,
   persistedSceneDetails,
   persistedSceneDetailsName,
+  persistedSceneDetailsUpdatedAt,
   persistedVoiceoverName,
   persistedAssetCount,
   isSynced,
@@ -422,6 +482,8 @@ export function DropZonePanel({
   // Master "Overlay Text Display" state: ON only when every segment shows its overlay.
   // Empty segments → true (vacuously), which is harmless — there is nothing to toggle.
   const allOverlayOn = segments.every((s) => s.showOverlay);
+  const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
+  const maxSegmentDuration = Math.max(1, ...segments.map((s) => s.duration));
 
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
@@ -674,39 +736,54 @@ export function DropZonePanel({
 
   const voiceoverAsset = assets.find(a => a.id === voiceoverId);
   const nonAudioAssets = assets.filter(a => a.type !== 'audio');
+  const voiceoverExt = voiceoverAsset?.name.split('.').pop()?.toUpperCase();
+  // addedAt survives a reload (plain number); file.lastModified only survives the
+  // same session — file itself is dropped during IndexedDB rehydration.
+  const voiceoverUpdatedAtMs = voiceoverAsset?.addedAt ?? voiceoverAsset?.file?.lastModified;
+
+  const scriptWordCount = persistedScript.trim().length > 0
+    ? persistedScript.trim().split(/\s+/).length
+    : undefined;
 
   const toggle = (key: Exclude<ExpandKey, null>) =>
     setExpanded(prev => (prev === key ? null : key));
+
+  // ── Files tab summary row ───────────────────────────────────────────────────
+  const readyCount = [!!scriptPersisted, !!scenePersisted, !!voiceoverPersisted, persistedAssetCount > 0]
+    .filter(Boolean).length;
+  const fileCount = (scriptPersisted ? 1 : 0) + (scenePersisted ? 1 : 0)
+    + (voiceoverPersisted ? 1 : 0) + persistedAssetCount;
+  const allReady = readyCount === 4;
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col bg-[#080808] overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col bg-[var(--kx-panel)] overflow-hidden">
 
       {/* Panel header — back button + project name */}
-      <div className="flex-shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#1A1A1A]">
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-[var(--kx-line)]">
         <button
           onClick={onBackToProjects}
-          className="flex items-center gap-1 text-xs text-zinc-400 hover:text-white transition-colors"
+          className="flex items-center gap-1.5 text-[13px] text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
         >
           <ChevronLeft size={12} />
           <span>Projects</span>
         </button>
-        <span className="text-xs text-zinc-500 truncate max-w-[120px]">{projectName}</span>
+        <span className="text-[12px] text-[var(--kx-faint)] font-medium truncate max-w-[120px]">{projectName}</span>
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
-      <div className="flex flex-shrink-0 border-b border-[#1A1A1A]">
+      <div className="flex flex-shrink-0 border-b border-[var(--kx-line)]">
         {(['files', 'segments', 'effects'] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`flex-1 py-2.5 text-[10px] font-black uppercase tracking-widest transition-colors
+            className={`flex-1 py-3 text-[13px] font-semibold tracking-[0.3px] capitalize transition-colors
                         ${activeTab === tab
-                          ? 'text-white border-b-2 border-[#F27D26] -mb-px'
-                          : 'text-gray-600 hover:text-gray-400'}`}
+                          ? 'text-[var(--kx-text)] border-b-2 border-[var(--kx-accent)] -mb-px'
+                          : 'text-[var(--kx-faint)] hover:text-[var(--kx-muted)]'}`}
           >
             {tab}
           </button>
@@ -717,12 +794,35 @@ export function DropZonePanel({
       {activeTab === 'files' && (
         <div className="flex flex-col flex-1 min-h-0">
 
+          {/* Summary row */}
+          <div className="flex items-center justify-between px-4 pt-3 pb-2">
+            <div className="flex items-center gap-1.5 text-[13px]">
+              <span className="font-semibold text-[var(--kx-text)]">{readyCount}</span>
+              <span className="text-[var(--kx-muted)]">sources</span>
+              <span className="text-[var(--kx-faint)]">·</span>
+              <span className="text-[var(--kx-muted)]">{fileCount} files</span>
+            </div>
+            <span className={`flex items-center gap-1 text-[12px] font-semibold
+                             ${allReady ? 'text-[var(--kx-ready)]' : 'text-[var(--kx-accent-2)]'}`}>
+              {allReady ? <Check size={13} /> : <AlertCircle size={13} />}
+              {allReady ? 'All ready' : `${readyCount} of 4 ready`}
+            </span>
+          </div>
+          {/* Progress bar */}
+          <div className="mx-4 mb-3 h-[4px] rounded-full bg-[rgba(255,255,255,.07)] overflow-hidden">
+            <div className={`h-full rounded-full transition-all duration-500
+                            ${allReady
+                              ? 'bg-gradient-to-r from-[var(--kx-ready)] to-[#7ee3b8]'
+                              : 'bg-gradient-to-r from-[var(--kx-accent)] to-[var(--kx-accent-2)]'}`}
+                 style={{ width: `${(readyCount / 4) * 100}%` }} />
+          </div>
+
           {/* Scrollable slots area */}
           <div className="flex-1 overflow-y-auto custom-scrollbar">
 
             {/* Slot 1 — Script */}
             <SlotRow
-              icon={<FileText size={12} />}
+              icon={<FileText size={18} />}
               label="Script"
               subtitle="Plain text voiceover script"
               accept=".txt,.rtf"
@@ -732,33 +832,43 @@ export function DropZonePanel({
               onFile={(f) => void addFiles([f], 'script')}
               onDropFiles={(files) => void addFiles(files, 'script')}
               onDelete={handleScriptClear}
-              color="text-orange-400"
+              color="#fb923c"
               expanded={expanded === 'script'}
               onToggle={() => toggle('script')}
             >
               {persistedScript ? (
-                <div
-                  className="w-full h-40 overflow-y-auto custom-scrollbar whitespace-pre-wrap
-                    bg-transparent text-sm text-gray-300 border border-gray-700 rounded p-2
-                    cursor-default"
-                >
-                  {persistedScript}
+                <div className="space-y-1">
+                  {[
+                    { label: 'Format', value: 'Plain text' },
+                    { label: 'Words', value: scriptWordCount ?? '—' },
+                    {
+                      label: 'Updated',
+                      value: persistedScriptUpdatedAt
+                        ? formatFileDate(persistedScriptUpdatedAt)
+                        : (persistedScriptName || 'Script loaded'),
+                    },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="flex justify-between items-center py-1 text-[12px]">
+                      <span className="text-[var(--kx-faint)]">{label}</span>
+                      <span className="text-[var(--kx-muted)]">{value}</span>
+                    </div>
+                  ))}
                 </div>
               ) : (
-                <p className="text-[11px] text-gray-600 italic">No script loaded.</p>
+                <p className="text-[12px] text-[var(--kx-faint)] italic">No script loaded.</p>
               )}
             </SlotRow>
 
             {slotError && (
-              <div className="mx-4 mb-2 px-3 py-2 rounded bg-red-900/60 border border-red-500/50 text-red-300 text-xs flex items-center justify-between gap-2">
+              <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(255,107,107,.12)] border border-[rgba(255,107,107,.35)] text-[var(--kx-danger)] text-[12.5px] flex items-center justify-between gap-2">
                 <span>{slotError}</span>
-                <button onClick={() => setSlotError(null)} className="text-red-400 hover:text-red-200 shrink-0">✕</button>
+                <button onClick={() => setSlotError(null)} className="hover:opacity-70 shrink-0">✕</button>
               </div>
             )}
 
             {/* Slot 2 — Scene Details */}
             <SlotRow
-              icon={<FileText size={12} />}
+              icon={<FileText size={18} />}
               label="Scene Details"
               subtitle="File with [IMAGE:] or [VIDEO:] tags"
               accept=".txt,.rtf"
@@ -768,7 +878,7 @@ export function DropZonePanel({
               onFile={(f) => void addFiles([f], 'scene')}
               onDropFiles={(files) => void addFiles(files, 'scene')}
               onDelete={handleSceneClear}
-              color="text-teal-400"
+              color="#2dd4bf"
               expanded={expanded === 'scene'}
               onToggle={() => toggle('scene')}
             >
@@ -778,24 +888,24 @@ export function DropZonePanel({
                     value={sceneDraft}
                     onChange={(e) => setSceneDraft(e.target.value)}
                     placeholder="Paste scene details with [IMAGE:] or [VIDEO:] tags..."
-                    className="w-full h-40 bg-transparent text-sm text-gray-300
-                      resize-none border border-teal-700 rounded p-2
-                      focus:outline-none focus:border-teal-500"
+                    className="w-full h-40 bg-[var(--kx-surface-2)] text-[13px] text-[var(--kx-muted)]
+                      resize-none border border-[var(--kx-line-2)] rounded-[9px] p-2.5
+                      focus:outline-none focus:border-[var(--kx-type-scene)]"
                     // eslint-disable-next-line jsx-a11y/no-autofocus
                     autoFocus
                   />
                   <div className="flex gap-2">
                     <button
                       onClick={() => setShowSaveConfirm(true)}
-                      className="flex-1 py-1.5 rounded-lg bg-[#F27D26] text-black text-[9px]
-                                 font-black uppercase tracking-widest hover:bg-[#FF9D46] transition-colors"
+                      className="flex-1 h-8 rounded-[9px] bg-[var(--kx-accent)] text-[#1a1003] text-[12px]
+                                 font-semibold hover:bg-[var(--kx-accent-hover)] transition-colors"
                     >
                       Save
                     </button>
                     <button
                       onClick={() => setIsEditingScene(false)}
-                      className="flex-1 py-1.5 rounded-lg bg-[#1A1A1A] border border-[#282828] text-[9px]
-                                 font-black uppercase tracking-widest text-gray-400 hover:text-white transition-colors"
+                      className="flex-1 h-8 rounded-[9px] bg-[var(--kx-surface-2)] border border-[var(--kx-line)] text-[12px]
+                                 font-semibold text-[var(--kx-muted)] hover:text-[var(--kx-text)] transition-colors"
                     >
                       Cancel
                     </button>
@@ -804,23 +914,33 @@ export function DropZonePanel({
               ) : (
                 <div className="space-y-2">
                   {persistedSceneDetails ? (
-                    <div
-                      className="w-full h-40 overflow-y-auto custom-scrollbar whitespace-pre-wrap
-                        bg-transparent text-sm text-gray-300 border border-gray-700 rounded p-2
-                        cursor-default"
-                    >
-                      {persistedSceneDetails}
+                    <div className="space-y-1">
+                      {[
+                        { label: 'Format', value: 'Plain text' },
+                        { label: 'Scenes', value: String(segments.length) },
+                        {
+                          label: 'Updated',
+                          value: persistedSceneDetailsUpdatedAt
+                            ? formatFileDate(persistedSceneDetailsUpdatedAt)
+                            : (persistedSceneDetailsName || 'Scene loaded'),
+                        },
+                      ].map(({ label, value }) => (
+                        <div key={label} className="flex justify-between items-center py-1 text-[12px]">
+                          <span className="text-[var(--kx-faint)]">{label}</span>
+                          <span className="text-[var(--kx-muted)]">{value}</span>
+                        </div>
+                      ))}
                     </div>
                   ) : (
-                    <p className="text-[11px] text-gray-600 italic">No scene details loaded.</p>
+                    <p className="text-[12px] text-[var(--kx-faint)] italic">No scene details loaded.</p>
                   )}
                   {!isSynced && (
                     <button
                       onClick={() => { setSceneDraft(persistedSceneDetails); setIsEditingScene(true); }}
-                      className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-white
-                                 border border-[#2A2A2A] rounded px-2 py-1 transition-colors"
+                      className="text-[12px] font-medium text-[var(--kx-muted)] hover:text-[var(--kx-text)]
+                                 border border-[var(--kx-line)] rounded-[8px] px-2.5 py-1.5 transition-colors"
                     >
-                      Edit File
+                      Edit file
                     </button>
                   )}
                 </div>
@@ -829,7 +949,7 @@ export function DropZonePanel({
 
             {/* Slot 3 — Voiceover */}
             <SlotRow
-              icon={<Music size={12} />}
+              icon={<Music size={18} />}
               label="Voiceover"
               subtitle="MP3, WAV, M4A or OGG"
               accept="audio/*"
@@ -839,31 +959,38 @@ export function DropZonePanel({
               onFile={(f) => void addFiles([f])}
               onDropFiles={(files) => void addFiles(files)}
               onDelete={handleVoiceoverClear}
-              color="text-amber-400"
+              color="#fbbf24"
               expanded={expanded === 'voiceover'}
               onToggle={() => toggle('voiceover')}
             >
               {voiceoverAsset ? (
-                <div className="text-[11px] text-gray-400 space-y-1">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-gray-600">File</span>
-                    <span className="truncate text-gray-300">{voiceoverAsset.name}</span>
-                  </div>
-                  {voiceoverAsset.file && (
-                    <div className="flex justify-between gap-2">
-                      <span className="text-gray-600">Size</span>
-                      <span className="text-gray-300">{formatBytes(voiceoverAsset.file.size)}</span>
+                <div className="space-y-1">
+                  {[
+                    { label: 'Duration', value: segments.length > 0 ? formatTime(totalDuration) : '—' },
+                    { label: 'Format', value: voiceoverExt ?? '—' },
+                    {
+                      label: 'Updated',
+                      value: voiceoverUpdatedAtMs ? formatFileDate(voiceoverUpdatedAtMs) : voiceoverAsset.name,
+                    },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="flex justify-between items-center py-1 text-[12px]">
+                      <span className="text-[var(--kx-faint)]">{label}</span>
+                      <span className="text-[var(--kx-muted)]">{value}</span>
                     </div>
-                  )}
+                  ))}
                 </div>
               ) : (
-                <p className="text-[11px] text-gray-600 italic">No voiceover loaded.</p>
+                <p className="text-[12px] text-[var(--kx-faint)] italic">No voiceover loaded.</p>
               )}
             </SlotRow>
 
-            {/* Slot 4 — Images & Videos (multi-file, inline drag state) */}
+            {/* Slot 4 — Images & Videos (multi-file, inline drag state). Hand-rolled (not
+                SlotRow) since it needs the asset-list + multi-file staged count, but shares
+                SlotRow's header/chip visual language and always-visible action buttons. */}
             <div
-              className={`border-b border-[#111] transition-colors ${assetsDragOver ? 'bg-[#F27D26]/5' : ''}`}
+              className={`mx-3 mb-2 rounded-[13px] border overflow-hidden transition-colors
+                          bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)]
+                          ${assetsDragOver ? 'bg-[var(--kx-accent-soft)]' : ''}`}
               onDragOver={(e) => { e.preventDefault(); setAssetsDragOver(true); }}
               onDragLeave={() => setAssetsDragOver(false)}
               onDrop={(e) => {
@@ -872,82 +999,107 @@ export function DropZonePanel({
                 void addFiles(Array.from(e.dataTransfer.files));
               }}
             >
-              {/* Line 1 */}
-              <div className="flex items-center gap-2 px-4 pt-3 pb-1 cursor-pointer" onClick={() => toggle('assets')}>
-                {expanded === 'assets'
-                  ? <ChevronDown size={12} className="flex-shrink-0 text-gray-500" />
-                  : <ChevronRight size={12} className="flex-shrink-0 text-gray-500" />
-                }
-                <ImageIcon size={12} className="flex-shrink-0 text-purple-400" />
-                <span className="flex-1 text-[10px] font-bold uppercase tracking-widest text-purple-400">
-                  Images &amp; Videos
-                </span>
+              <div className="w-full flex items-center gap-2.5 px-3 py-2.5">
+                <button onClick={() => toggle('assets')} className="flex-1 min-w-0 flex items-center gap-2.5 text-left">
+                  <span className="flex-none w-6 flex items-center justify-center">
+                    <ChevronRight
+                      size={13}
+                      className={`transition-transform ${expanded === 'assets' ? 'rotate-90 text-[var(--kx-accent)]' : 'text-[var(--kx-faint)]'}`}
+                    />
+                  </span>
+                  <span
+                    className="flex-none w-9 h-9 rounded-[10px] flex items-center justify-center"
+                    style={{ background: '#c084fc26', color: '#c084fc' }}
+                  >
+                    <ImageIcon size={18} />
+                  </span>
+                  <span className="flex-1 min-w-0 flex flex-col gap-0.5">
+                    <span className="text-[14px] font-semibold text-[var(--kx-text)] min-w-0 truncate">Images &amp; Videos</span>
+                    <span className="text-[11.5px] text-[var(--kx-muted)] truncate">
+                      {allStagedAssets.length > 0
+                        ? `${allStagedAssets.length} file${allStagedAssets.length !== 1 ? 's' : ''}`
+                        : persistedAssetCount > 0
+                          ? `${persistedAssetCount} file${persistedAssetCount !== 1 ? 's' : ''}`
+                          : 'Images, videos, or ZIP archive'}
+                    </span>
+                  </span>
+                </button>
+
+                {allStagedAssets.length > 0 ? (
+                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                                   bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
+                    <RefreshCw size={11} /> Pending
+                  </span>
+                ) : persistedAssetCount > 0 ? (
+                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                                   bg-[var(--kx-ready-soft)] text-[var(--kx-ready)]">
+                    <Check size={11} /> Ready
+                  </span>
+                ) : (
+                  <span className="flex-shrink-0 flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-[6px]
+                                   bg-[var(--kx-surface-2)] text-[var(--kx-faint)]">
+                    <AlertCircle size={11} /> Empty
+                  </span>
+                )}
+
+                <button
+                  onClick={(e) => { e.stopPropagation(); addAssetsRef.current?.click(); }}
+                  aria-label="Add images or videos"
+                  className="flex items-center justify-center w-8 h-8 rounded-[8px]
+                             bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
+                             text-[var(--kx-muted)] hover:text-[var(--kx-text)]
+                             hover:border-[var(--kx-line-2)] transition-colors flex-shrink-0"
+                >
+                  <Plus size={13} />
+                </button>
+
                 {(allStagedAssets.length > 0 || persistedAssetCount > 0) && (
                   <button
                     onClick={(e) => { e.stopPropagation(); handleAssetsClear(); }}
                     aria-label={allStagedAssets.length > 0 ? 'Clear staged assets' : 'Delete all project assets'}
-                    className="flex-shrink-0 flex items-center text-[9px] uppercase tracking-widest
-                               text-red-500 border border-red-500 rounded px-2 py-0.5
-                               hover:bg-red-500/10 transition-colors"
+                    className="flex items-center justify-center w-8 h-8 rounded-[8px]
+                               bg-[var(--kx-surface-2)] border border-[var(--kx-line)]
+                               text-[var(--kx-faint)] hover:text-[var(--kx-danger)]
+                               hover:border-[var(--kx-danger)] transition-colors flex-shrink-0"
                   >
-                    <X size={11} />
+                    <X size={13} />
                   </button>
                 )}
-                <button
-                  onClick={(e) => { e.stopPropagation(); addAssetsRef.current?.click(); }}
-                  className="flex-shrink-0 text-[9px] uppercase tracking-widest text-gray-600
-                             hover:text-white border border-[#2A2A2A] rounded px-2 py-0.5 transition-colors"
-                >
-                  + Add
-                </button>
-                <input
-                  ref={addAssetsRef}
-                  type="file"
-                  multiple
-                  accept="image/*,video/*,.zip"
-                  className="hidden"
-                  onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
-                />
               </div>
-              {/* Line 2 */}
-              <div className="flex items-center pl-10 pr-4 pb-2.5 cursor-pointer" onClick={() => toggle('assets')}>
-                {allStagedAssets.length > 0 ? (
-                  <span className="flex-1 text-[10px] text-gray-300">
-                    {allStagedAssets.length} file{allStagedAssets.length !== 1 ? 's' : ''}
-                  </span>
-                ) : persistedAssetCount > 0 ? (
-                  <span className="flex-1 text-[10px] text-green-500/70 flex items-center gap-1">
-                    <Check size={10} className="flex-shrink-0" />
-                    {persistedAssetCount} file{persistedAssetCount !== 1 ? 's' : ''}
-                  </span>
-                ) : (
-                  <span className="flex-1 text-[10px] text-gray-600">Images, videos, or ZIP archive</span>
-                )}
-              </div>
-              {/* Expanded: project asset list (non-audio) */}
+
+              <input
+                ref={addAssetsRef}
+                type="file"
+                multiple
+                accept="image/*,video/*,.zip"
+                className="hidden"
+                onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }}
+              />
+
               {expanded === 'assets' && (
-                <div className="px-4 pb-3">
-                  <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                <div className="px-3 pb-3">
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar">
                     {nonAudioAssets.length === 0 && (
-                      <p className="text-[10px] text-gray-600 italic px-1">No images or videos loaded.</p>
+                      <p className="text-[11px] text-[var(--kx-faint)] italic px-1">No images or videos loaded.</p>
                     )}
                     {nonAudioAssets.map((asset) => (
-                      <div key={asset.id} className="flex items-center gap-2">
-                        <div className="w-10 h-10 rounded overflow-hidden flex-shrink-0
-                                        bg-[#1A1A1A] flex items-center justify-center">
+                      <div key={asset.id} className="flex items-center gap-2.5 px-3 py-1.5">
+                        <div className="w-8 h-8 rounded-[7px] overflow-hidden flex-shrink-0
+                                        bg-[var(--kx-surface-2)] flex items-center justify-center">
                           {asset.type === 'image'
                             ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                            : <Video size={16} className="text-blue-400" />
+                            : <Film size={13} className="text-[var(--kx-faint)]" />
                           }
                         </div>
-                        <span className="flex-1 text-[10px] text-gray-300 truncate">{asset.name}</span>
+                        <span className="flex-1 min-w-0 text-[12px] text-[var(--kx-muted)] truncate">{asset.name}</span>
                         <button
                           onClick={() => onDeleteAsset(asset.id)}
                           aria-label={`Delete ${asset.name}`}
-                          className="flex-shrink-0 p-1 rounded hover:bg-red-900/40 text-red-600
-                                     hover:text-red-400 transition-colors"
+                          className="flex-shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center
+                                     text-[var(--kx-faint)] hover:text-[var(--kx-danger)] hover:bg-[rgba(255,107,107,.1)]
+                                     transition-colors"
                         >
-                          <Trash2 size={12} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     ))}
@@ -959,7 +1111,14 @@ export function DropZonePanel({
           </div>{/* end scrollable */}
 
           {/* Pinned bottom: Apply Sync */}
-          <div className="flex-shrink-0 px-4 py-3 border-t border-[#1A1A1A]">
+          <div className="flex-shrink-0 px-4 pb-4 pt-3 border-t border-[var(--kx-line)]">
+            <p className="text-center text-[11.5px] text-[var(--kx-faint)] mb-2.5">
+              Generates{' '}
+              <span className="text-[var(--kx-muted)] font-medium">{segments.length} segments</span>
+              {' · '}
+              <span className="text-[var(--kx-muted)] font-medium">{formatTime(totalDuration)}</span>
+              {' '}timeline
+            </p>
             <button
               onClick={handleApplySync}
               disabled={applySyncDisabled || isStagedEmpty}
@@ -970,12 +1129,17 @@ export function DropZonePanel({
                     ? 'Stage a new file to sync'
                     : undefined
               }
-              className="w-full py-3 rounded-xl bg-[#F27D26] text-black text-xs
-                         font-black uppercase tracking-widest hover:bg-[#FF9D46]
-                         transition-all disabled:opacity-40 disabled:cursor-not-allowed
-                         disabled:hover:bg-[#F27D26]"
+              className="w-full h-12 rounded-[13px] flex items-center justify-center gap-2.5
+                         font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]
+                         bg-gradient-to-b from-[var(--kx-accent-2)] to-[var(--kx-accent)]
+                         shadow-[0_6px_20px_rgba(255,138,60,.28),inset_0_1px_0_rgba(255,255,255,.22)]
+                         hover:brightness-105 active:scale-[.99]
+                         disabled:bg-none disabled:bg-[var(--kx-surface-2)]
+                         disabled:text-[var(--kx-faint)] disabled:shadow-none disabled:cursor-not-allowed
+                         transition-all"
             >
-              Apply Sync
+              <RefreshCw size={17} className={applySyncDisabled ? 'animate-spin' : ''} />
+              {applySyncDisabled ? 'Syncing…' : 'Apply sync'}
             </button>
           </div>
 
@@ -986,64 +1150,57 @@ export function DropZonePanel({
       {activeTab === 'segments' && (
         <div className="flex flex-col flex-1 min-h-0">
 
-          {/* Header — two rows: (1) segment count, (2) three equal action boxes */}
-          <div className="flex flex-col gap-2 px-4 py-3 border-b border-[#1A1A1A] flex-shrink-0">
-            {/* Row 1 — segment count only */}
-            <div className="text-right text-[10px] font-black uppercase tracking-widest text-gray-600">
-              {segments.length} Segments
+          {/* Header — count/runtime + 3 unified action buttons */}
+          <div className="flex items-center justify-between px-4 py-3.5 border-b border-[var(--kx-line)] flex-shrink-0">
+            <div className="flex items-baseline gap-2 min-w-0">
+              <span className="font-semibold text-[15px] text-[var(--kx-text)]">{segments.length}</span>
+              <span className="text-[12.5px] text-[var(--kx-muted)]">segment{segments.length !== 1 ? 's' : ''}</span>
+              <span className="text-[var(--kx-faint)]">·</span>
+              <span className="font-mono text-[12px] text-[var(--kx-muted)]">{formatTime(totalDuration)}</span>
             </div>
-
-            {/* Row 2 — three equal-width action boxes */}
-            <div className="flex items-stretch gap-2">
-              {/* Box 1 — Lock all / Unlock all */}
-              <button
-                onClick={() => allLocked ? onUnlockAll() : onLockAll()}
-                title={allLocked ? 'Unlock All' : 'Lock All'}
-                aria-label={allLocked ? 'Unlock all segments' : 'Lock all segments'}
-                className={`flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
-                            border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
-                            whitespace-nowrap overflow-hidden transition-colors
-                            ${allLocked
-                              ? 'text-amber-500 hover:text-amber-400 hover:bg-[#222]'
-                              : 'text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]'}`}
-              >
-                {allLocked
-                  ? <LockOpen className="w-3 h-3 flex-shrink-0" />
-                  : <Lock className="w-3 h-3 flex-shrink-0" />
-                }
-                <span className="truncate">{allLocked ? 'Unlock all' : 'Lock all'}</span>
-              </button>
-
-              {/* Box 2 — Review Mapping */}
-              <button
-                onClick={onOpenReviewMapping}
-                title="Review Mapping"
-                aria-label="Open review mapping"
-                className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
-                           border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
-                           text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]
-                           whitespace-nowrap overflow-hidden transition-colors"
-              >
-                <ListChecks className="w-3 h-3 flex-shrink-0" />
-                <span className="truncate">Review</span>
-              </button>
-
-              {/* Box 3 — Select all / Clear */}
-              <button
-                onClick={() => (selectedSegmentIds.size > 0 ? onClearSegmentSelection() : onSelectAllSegments())}
-                title={selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments'}
-                aria-label={selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments'}
-                className="flex-1 min-w-0 flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-lg
-                           border border-[#282828] bg-[#1A1A1A] text-[9px] font-black uppercase tracking-widest
-                           text-gray-500 hover:text-[#e07c3a] hover:bg-[#222]
-                           whitespace-nowrap overflow-hidden transition-colors"
-              >
-                {selectedSegmentIds.size > 0
-                  ? <CheckSquare className="w-3 h-3 flex-shrink-0" />
-                  : <Square className="w-3 h-3 flex-shrink-0" />
-                }
-                <span className="truncate">{selectedSegmentIds.size > 0 ? 'Clear' : 'Select all'}</span>
-              </button>
+            <div className="flex gap-1.5 flex-shrink-0">
+              {([
+                {
+                  key: 'lock',
+                  label: allLocked ? 'Unlock all' : 'Lock all',
+                  Icon: allLocked ? LockOpen : Lock,
+                  active: allLocked,
+                  title: allLocked ? 'Unlock All' : 'Lock All',
+                  onClick: () => (allLocked ? onUnlockAll() : onLockAll()),
+                },
+                {
+                  key: 'review',
+                  label: 'Review',
+                  Icon: ListChecks,
+                  active: false,
+                  title: 'Review Mapping',
+                  onClick: onOpenReviewMapping,
+                },
+                {
+                  key: 'select',
+                  label: selectedSegmentIds.size > 0 ? 'Clear' : 'Select all',
+                  Icon: selectedSegmentIds.size > 0 ? CheckSquare : Square,
+                  active: selectedSegmentIds.size > 0,
+                  title: selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments',
+                  onClick: () => (selectedSegmentIds.size > 0 ? onClearSegmentSelection() : onSelectAllSegments()),
+                },
+              ] as const).map(({ key, label, Icon, active, title, onClick }) => (
+                <button
+                  key={key}
+                  onClick={onClick}
+                  title={title}
+                  aria-label={title}
+                  className={`flex items-center gap-1.5 h-[34px] px-3 rounded-[9px] text-[12.5px]
+                              font-medium border transition-colors
+                              ${active
+                                ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
+                                : 'bg-[var(--kx-surface)] border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
+                              }`}
+                >
+                  <Icon size={14} />
+                  <span>{label}</span>
+                </button>
+              ))}
             </div>
           </div>
 
@@ -1052,13 +1209,13 @@ export function DropZonePanel({
             {/* Permanent "+ Add Heading" at the top */}
             <button
               onClick={() => onInsertHeading(-1)}
-              className="w-full mb-1 flex items-center justify-center gap-1.5 py-1.5 px-3 rounded-lg
-                         border border-dashed border-[#282828] text-[9px] font-bold uppercase tracking-widest
-                         text-[#F27D26]/60 hover:text-[#F27D26] hover:border-[#F27D26]/40
-                         hover:bg-[#F27D26]/5 transition-all"
+              className="w-full h-[42px] mb-1.5 flex items-center justify-center gap-2 rounded-[11px]
+                         border border-dashed border-[var(--kx-line-2)] text-[12.5px] font-medium
+                         text-[var(--kx-muted)] hover:text-[var(--kx-accent-2)] hover:border-[var(--kx-accent-line)]
+                         hover:bg-[var(--kx-accent-soft)] transition-all"
               aria-label="Insert heading before all segments"
             >
-              <span className="text-sm leading-none">+</span> Add Heading
+              <Plus size={15} /> Add heading
             </button>
 
             {segments.map((seg, i) => {
@@ -1066,6 +1223,7 @@ export function DropZonePanel({
               const isSelected = seg.id === selectedSegmentId;
               const isChecked = selectedSegmentIds.has(seg.id);
               const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
+              const title = humanTitle(seg, asset);
               return (
                 <div
                   key={seg.id}
@@ -1073,106 +1231,138 @@ export function DropZonePanel({
                   className="relative group/gap"
                 >
                   {draggingHeadingId && dropTargetIdx === i && (
-                    <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[#F27D26] rounded-full z-20 pointer-events-none" />
+                    <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--kx-accent)] rounded-full z-20 pointer-events-none" />
                   )}
                   <div
                     onClick={() => onSegmentClick(seg.id)}
-                    className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer
-                                transition-all border
+                    className={`relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
+                                cursor-pointer transition-colors
                                 ${isSelected
-                                  ? 'bg-[#F27D26]/10 border-[#F27D26]/30'
-                                  : 'bg-[#0A0A0A] border-[#1A1A1A] hover:border-[#282828]'
+                                  ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
+                                  : 'bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
                                 }`}
                   >
-                    {/* Batch-select checkbox — always the first element; hover-reveal
-                        unless checked. stopPropagation so it never triggers row seek. */}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onToggleSegmentSelect(seg.id); }}
-                      role="checkbox"
-                      aria-checked={isChecked}
-                      aria-label={isChecked ? 'Deselect segment' : 'Select segment'}
-                      title={isChecked ? 'Deselect' : 'Select'}
-                      className={`flex-shrink-0 w-4 h-4 rounded flex items-center justify-center border transition-all
-                                  ${isChecked
-                                    ? 'bg-[#e07c3a] border-[#e07c3a] opacity-100'
-                                    : 'bg-transparent border-[#3a3a40] opacity-0 group-hover/gap:opacity-100'}`}
-                    >
-                      {isChecked && <Check size={11} className="text-black" strokeWidth={3} />}
-                    </button>
-                    {seg.isHeading && onMoveHeading && (
-                      <button
-                        onPointerDown={(e) => {
-                          e.stopPropagation();
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                          setDraggingHeadingId(seg.id);
-                          dropTargetIdxRef.current = i;
-                          setDropTargetIdx(i);
-                        }}
-                        onPointerMove={(e) => {
-                          if (draggingHeadingId !== seg.id) return;
-                          const idx = computeDropGapIndex(rowRefs.current, e.clientY);
-                          dropTargetIdxRef.current = idx;
-                          setDropTargetIdx(idx);
-                        }}
-                        onPointerUp={(e) => {
-                          if (draggingHeadingId !== seg.id) return;
-                          e.currentTarget.releasePointerCapture(e.pointerId);
-                          const target = dropTargetIdxRef.current;
-                          setDraggingHeadingId(null);
-                          setDropTargetIdx(null);
-                          dropTargetIdxRef.current = null;
-                          if (target !== null) onMoveHeading(seg.id, target);
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                        className="flex-shrink-0 p-1 -ml-1 rounded text-gray-600 hover:text-[#F27D26]
-                                   cursor-grab active:cursor-grabbing touch-none"
-                        aria-label="Drag to reorder heading"
-                        title="Drag to reorder"
-                      >
-                        <GripVertical size={12} />
-                      </button>
-                    )}
-                    <div className="w-10 h-8 rounded-lg overflow-hidden flex-shrink-0
-                                    bg-[#1A1A1A] flex items-center justify-center">
+                    {/* Left spine — drag handle (headings) or index + duration bar + start time */}
+                    <div className="flex-none flex flex-col items-center justify-center gap-1.5 w-[40px] py-2.5 border-r border-[var(--kx-line)]">
+                      {seg.isHeading && onMoveHeading ? (
+                        <button
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                            setDraggingHeadingId(seg.id);
+                            dropTargetIdxRef.current = i;
+                            setDropTargetIdx(i);
+                          }}
+                          onPointerMove={(e) => {
+                            if (draggingHeadingId !== seg.id) return;
+                            const idx = computeDropGapIndex(rowRefs.current, e.clientY);
+                            dropTargetIdxRef.current = idx;
+                            setDropTargetIdx(idx);
+                          }}
+                          onPointerUp={(e) => {
+                            if (draggingHeadingId !== seg.id) return;
+                            e.currentTarget.releasePointerCapture(e.pointerId);
+                            const target = dropTargetIdxRef.current;
+                            setDraggingHeadingId(null);
+                            setDropTargetIdx(null);
+                            dropTargetIdxRef.current = null;
+                            if (target !== null) onMoveHeading(seg.id, target);
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          className="flex items-center justify-center text-[var(--kx-faint)] hover:text-[var(--kx-accent)]
+                                     cursor-grab active:cursor-grabbing touch-none transition-colors"
+                          aria-label="Drag to reorder heading"
+                          title="Drag to reorder"
+                        >
+                          <GripVertical size={16} />
+                        </button>
+                      ) : (
+                        <>
+                          <span className="font-mono text-[10px] text-[var(--kx-faint)]">{String(i + 1).padStart(2, '0')}</span>
+                          <span
+                            className={`w-1 rounded-[2px] ${isSelected ? 'bg-[var(--kx-accent)]' : 'bg-[rgba(255,255,255,.13)]'}`}
+                            style={{ height: Math.max(10, Math.min(32, (seg.duration / maxSegmentDuration) * 32)) }}
+                          />
+                          <span className="font-mono text-[9px] text-[var(--kx-faint)]">{formatTime(seg.startTime)}</span>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Thumbnail */}
+                    <div className="flex-none w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] overflow-hidden flex-shrink-0
+                                    bg-[var(--kx-surface-2)] flex items-center justify-center
+                                    shadow-[inset_0_0_0_1px_rgba(255,255,255,.07)]">
                       {seg.isHeading
-                        ? <Heading1 size={14} className="text-[#F27D26]/70" />
+                        ? <Heading1 size={20} className="text-[var(--kx-accent-2)]" />
                         : asset?.url && asset.type === 'image'
                         ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
                         : asset?.type === 'video'
-                        ? <Video size={14} className="text-blue-400" />
+                        ? <Video size={18} className="text-blue-400" />
                         : isMissing
-                        ? <AlertCircle size={14} className="text-yellow-500" />
-                        : <div className="w-full h-full bg-[#1A1A1A]" />
+                        ? <AlertCircle size={18} className="text-[var(--kx-warning)]" />
+                        : <div className="w-full h-full bg-[var(--kx-surface-2)]" />
                       }
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-[10px] font-bold text-white truncate">
-                        {seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${seg.order + 1}`}
-                      </p>
-                      <p className="text-[9px] text-gray-600 font-mono">
-                        {formatTime(seg.startTime)} — {formatTime(seg.startTime + seg.duration)}
-                      </p>
+
+                    {/* Meta */}
+                    <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-2.5 pr-2">
+                      <p className="text-[14px] font-semibold text-[var(--kx-text)] truncate">{title}</p>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px] text-[var(--kx-muted)]">
+                          {formatTime(seg.startTime)}<span className="text-[var(--kx-faint)] mx-0.5">→</span>{formatTime(seg.startTime + seg.duration)}
+                        </span>
+                        <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-[5px] bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
+                          {seg.duration.toFixed(1)}s
+                        </span>
+                      </div>
+                      {!seg.isHeading && asset?.name && (
+                        <span className="font-mono text-[10px] text-[var(--kx-faint)] truncate
+                                         opacity-0 group-hover/gap:opacity-100 transition-opacity">
+                          {asset.name}
+                        </span>
+                      )}
                     </div>
-                    {seg.isHeading && onDeleteHeading && (
+
+                    {/* Right controls */}
+                    <div className="flex-none flex flex-col items-center justify-center gap-2 px-3 py-2.5">
+                      {seg.isHeading && onDeleteHeading && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
+                          className="w-8 h-8 rounded-[8px] flex items-center justify-center
+                                     text-[var(--kx-faint)] hover:bg-[rgba(255,107,107,.1)] hover:text-[var(--kx-danger)]
+                                     transition-colors opacity-0 group-hover/gap:opacity-100"
+                          aria-label="Delete heading"
+                          title="Delete heading"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                       <button
-                        onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
-                        className="flex-shrink-0 p-1 rounded-lg hover:bg-red-500/10 text-red-400 hover:text-red-300 transition-colors opacity-0 group-hover/gap:opacity-100"
-                        aria-label="Delete heading"
-                        title="Delete heading"
+                        onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
+                        className={`w-8 h-8 rounded-[8px] flex items-center justify-center border transition-all
+                                    ${seg.locked
+                                      ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
+                                      : 'bg-transparent border-[var(--kx-line)] text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
+                                    }`}
+                        aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
                       >
-                        <Trash2 size={11} />
+                        {seg.locked ? <Lock size={14} /> : <LockOpen size={14} />}
                       </button>
-                    )}
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
-                      className="flex-shrink-0 p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
-                      aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
-                    >
-                      {seg.locked
-                        ? <Lock size={12} className="text-[#F27D26]" />
-                        : <Unlock size={12} className="text-gray-600" />
-                      }
-                    </button>
+                      {/* Batch-select checkbox — hover-reveal unless checked. stopPropagation so it never triggers row seek. */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); onToggleSegmentSelect(seg.id); }}
+                        role="checkbox"
+                        aria-checked={isChecked}
+                        aria-label={isChecked ? 'Deselect segment' : 'Select segment'}
+                        title={isChecked ? 'Deselect' : 'Select'}
+                        className={`w-[18px] h-[18px] rounded-[5px] flex items-center justify-center border transition-all
+                                    ${isChecked
+                                      ? 'bg-[var(--kx-accent)] border-[var(--kx-accent)] opacity-100'
+                                      : 'bg-transparent border-[var(--kx-line-2)] opacity-0 group-hover/gap:opacity-100 hover:border-[var(--kx-muted)]'}`}
+                      >
+                        {isChecked && <Check size={11} className="text-[#1a1003]" strokeWidth={3} />}
+                      </button>
+                    </div>
                   </div>
 
                   {/* Hover-reveal "+ heading" gap button — appears between segments */}
@@ -1183,26 +1373,26 @@ export function DropZonePanel({
                   >
                     <button
                       onClick={(e) => { e.stopPropagation(); onInsertHeading(i); }}
-                      className={`absolute flex items-center gap-1 px-2 py-0.5 rounded-md
-                                  text-[8px] font-black uppercase tracking-widest
-                                  bg-[#0A0A0A] border border-[#282828] text-[#F27D26]/70
-                                  hover:text-[#F27D26] hover:border-[#F27D26]/40 hover:bg-[#F27D26]/5
+                      className={`absolute flex items-center gap-1 px-2 py-0.5 rounded-[6px]
+                                  text-[10px] font-medium
+                                  bg-[var(--kx-surface)] border border-[var(--kx-line-2)] text-[var(--kx-muted)]
+                                  hover:text-[var(--kx-accent-2)] hover:border-[var(--kx-accent-line)] hover:bg-[var(--kx-accent-soft)]
                                   transition-all z-10
                                   ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
                       aria-label={`Insert heading after segment ${i + 1}`}
                     >
-                      <span className="text-xs leading-none">+</span> heading
+                      <Plus size={11} /> heading
                     </button>
-                    <div className={`w-full h-px bg-[#F27D26]/20 transition-opacity ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0'}`} />
+                    <div className={`w-full h-px bg-[var(--kx-line-2)] transition-opacity ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0'}`} />
                   </div>
                 </div>
               );
             })}
             {draggingHeadingId && dropTargetIdx === segments.length && (
-              <div className="h-0.5 bg-[#F27D26] rounded-full" />
+              <div className="h-0.5 bg-[var(--kx-accent)] rounded-full" />
             )}
             {segments.length === 0 && (
-              <p className="text-[10px] text-gray-700 italic px-1 py-2">
+              <p className="text-[12px] text-[var(--kx-faint)] italic px-1 py-2">
                 No segments yet — apply sync to generate.
               </p>
             )}
