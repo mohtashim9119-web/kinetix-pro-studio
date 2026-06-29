@@ -62,6 +62,7 @@ src/
                      #   no duplicate row). Deliberately separate from the legacy presetService.ts
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
   hooks/
+    usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
     useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
                              #   calls exportProject(), invokes save_bytes_to_disk IPC for native save dialog.
@@ -134,7 +135,7 @@ project: Project {
 
 `parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Still defined in `src/App.tsx` — only the fuzzy-matching and anchor-timing helpers (`isFuzzyMatch`, `findAssetByContext`, `applyAnchorBasedTiming`, the heading-anchor helpers) have been extracted to `src/services/syncEngine.ts`.
 
-Playback is driven by a `setInterval` (100ms tick) that advances `currentTime`, which `currentSegment` is derived from via `useMemo`.
+Playback uses a ~16ms requestAnimationFrame loop when a voiceover is loaded; `currentSegment` is derived from `currentTime` via `useMemo`.
 
 Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3.
 
@@ -394,7 +395,7 @@ All dead dependencies removed. No remaining items.
 | Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
 | Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
 | Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ⬜ Deferred — Phase 7+ | Playback interval + audio sync still in App.tsx; not done during Phase 6 |
+| Extract `usePlayback.ts` hook | ✅ Done | RAF loop (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar |
 | Extract `useExport.ts` hook | ✅ Done — 2026-05-17 | ab8d4d9 — lazy worker, snapshot semantics, ExportError re-export |
 | Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
 | Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |

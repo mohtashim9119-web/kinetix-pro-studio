@@ -16,7 +16,7 @@
 | Repo | TBD |
 | Restore tag | `sync-known-good-2026-06-20` → commit `bab79b0` ("chore: remove VO-DIAG/SYNC-DIAG debug logging") |
 
-All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Active work is feature tasks only — see Active Tasks (6 items, ranked).
+All foundational/export/desktop/sync work is shipped and stable, including the clean-slate re-sync Architecture Shift (closed 2026-06-24, commit `254ef1b`). Effects Tab Rebuild is complete (transitions 10/10, clip effects 7/7). Active work is feature tasks only — see Active Tasks.
 
 ---
 
@@ -75,35 +75,25 @@ and `useTransitionPreview.ts`/`PreviewStage.tsx`:
 
 ## Active Tasks
 
-> Ranked by priority. Tasks within a group share a UI surface and should be built together.
+- Left-panel UI restructure; permanently drop recycle bin
 
-1. **Effects tab rebuild — 3 clean boxes + cross-project presets.** A 3rd left-panel tab showing exactly three bordered boxes (clean minimal layout):
-   - **Transitions** — fade in, fade out, camera shutter; applicable to a single segment or all segments.
-   - **Effects** — zoom in, zoom out, adjustable speed; applicable to a single segment or the full video / all segments.
-   - **Overlays** — dust particles, fire particles, spark, etc.; applicable to a single segment or all segments.
-   - Below the three boxes: a "Save preset" button (saves all 3 settings under a custom name) + a dropdown of saved presets that apply instantly in future projects. Presets require cross-project persistence — storage decision pending (localStorage vs project store).
+## Deferred Polish Features
 
-2. ~~**Bottom drawer redesign** — heading + scene cards rendered at equal height.~~ — ✅ DONE (`4887d33`). Shipped via shared `SegmentControls` + header-mute relocation (scene/heading drawers now equal height). See Completed Work.
+- Version snapshots (2 open design decisions before building: asset-restoration Design A vs B, and full-rewind-on-restore)
+- Auto-captions (reuse Whisper transcript tokens as a timed text layer)
+- Procedural overlays: 4 remaining — Letterbox, Vignette, CRT/Scanlines, Viewfinder (pure canvas draw ops, no legacy-twin interactions)
+- Asset-backed overlays: 6 blocked — Film Grain, Light Leaks, Film Damage, Atmospheric Particles, Weather, Fire/Embers (waiting on user-supplied black-bg screen-blend footage; render via ctx.globalCompositeOperation='screen')
+- Color-grade parametric: brightness/contrast/saturation sliders per segment (currently ships as fixed cinematic preset; parametric needs new VideoSegment fields + UI panel)
+- Export speedup: OffscreenCanvas/Worker (profiling done — I/O-bound, convertToBlob off main thread projected 40–55% faster)
 
-3. **Version snapshots** — named restore points (Initial Sync / Current Progress / Manual), capped at 20, to roll back a project.
-   - Entry 1: Initial Sync — auto-saved immediately after Apply Sync completes, locked, undeletable
-   - Entry 2: Current Progress — auto-updated continuously, single slot, reflects latest state
-   - Entries 3+: Manual Snapshots — user clicks "Save Snapshot", named (default timestamp, renameable)
-   - Storage: `kinetix:project:{id}:versions:v1` in localStorage, per-project scoped, survives reload
-   - Cap: 20 manual snapshots, oldest auto-purges with toast
-   - UI: square rounded-corner icon bottom-left of segments tab, opens popup listing versions newest-first
-   - Each row shows: name/timestamp, restore, rename, delete — lock icon on Entry 1 hides delete
-   - Restore confirmation: "Restore this version? Current state will be saved as 'Before restore — [timestamp]' first." (auto-safety snapshot)
-   - On restore: Entry 2 immediately updates to match restored state, user continues from there
-   - **OPEN DECISIONS (decide before building):**
-     1. Asset restoration on snapshot restore — Design A (snapshot stores asset LIST only; restoring after deleting assets = missing/broken assets; lower disk use) vs Design B (deletes are snapshot-protected; asset blobs persist as long as any snapshot references them; higher disk use). DECISION PENDING.
-     2. Scene-doc + state on restore is a FULL REWIND (not a merge). Current state auto-saved as "Before restore — [timestamp]" first.
+## Deferred Known Bugs
 
-4. **Auto-captions** — auto-generate on-screen captions from the voiceover transcript. Reuses existing Whisper transcript token data (already runs for segment timing). Surfaces tokens as a timed text layer.
-
-5. **Export rendering speedup** — move export onto OffscreenCanvas + Web Worker for faster render without freezing the UI. Investigation complete (2026-06-01, `docs/phase-7-task-1-export-profiling.md`): pipeline is I/O-bound (`canvas.toBlob` 47%, IPC writes 29%); `convertToBlob` off main thread projected 40–55% speedup (~120s → ~60–70s on macOS Intel). Implementation not started.
-
-6. **Hard delete segment** — permanently remove a segment with a confirm dialog (lowest priority). Previous segment absorbs the deleted segment's duration. Clean-slate interaction: a hard-deleted segment will REAPPEAR on the next Apply Sync if its scene tag still exists in the scene doc (re-sync rebuilds from the doc). To delete permanently, user removes the tag from the scene doc.
+- Export caption styling: fontWeight/fontStyle/textShadow ignored in frameRenderer.ts
+- Timeline ruler overflows content by a few px — user can manually drag-scroll a sliver and re-clip segment 1 (root cause: ruler tick overflow past segment content width; fix: size ruler to match segment track exactly)
+- glitch-rgb color cast tail: at alpha→1 the red/blue tint passes don't fully cancel; noted as stylistic artifact
+- Transition timing 100/0 split: industry standard is 50/50 centered on the cut; this app puts the whole window on one side (Path B, preserves Σduration invariant); true 50/50 needs clip handles or breaking the invariant — deferred to future timeline redesign
+- Caption-switch perceptual lag: inherent to dissolve, accepted
+- Preview-only: transition black flash on video boundaries; preview letterboxing; video preview jump on resize-drag release
 
 ### Review Mapping modal — feature-complete
 
@@ -188,19 +178,17 @@ STEPS:
    look got its own store rather than bending the single-category service.
    Bonus (same arc, commit `d750ce3`): read-only effect pills in the bottom
    drawer header surface the applied transition/animation/overlay per segment.
-8. ⬜ IN PROGRESS — Renderer implementation. Transitions: all 10 done (hard-cut,
+8. ✅ DONE — Renderer implementation. Transitions: 10/10 complete (hard-cut,
    cross-dissolve, zoom, dip-black, dip-white, slide-push, whip-pan, wipe,
-   glitch-rgb, light-leak — commits 675e322…76ccf16). Remaining: clip effects
-   (10) → procedural overlays (4) → asset-backed overlays (6, blocked on
-   black-bg footage). Each batch lands in BOTH PreviewStage + frameRenderer
-   before its dropdown entry is enabled.
-9. ⬜ PENDING — Docs sync + cleanup.
+   glitch-rgb, light-leak — commits 675e322…76ccf16). Clip effects: 7/7
+   complete (`e748345`, `8d98365`, `34910de`) — pixelate and speed-ramp were
+   removed (pixelate unsupported in WebKit preview, speed-ramp excluded by
+   design). Procedural overlays (4) and asset-backed overlays (6) moved to
+   Deferred Polish Features.
 
 SEQUENCING: Steps 1-2 fast/safe (UI+data) — done. Steps 3-4 structural backbone —
-done. Steps 5-7 wire on top — done (this session). Step 8 largest/most
-open-ended, partly gated on user-supplied black-bg overlay assets, is now the
-only remaining implementation step. Each step = own commit with tsc + vitest +
-manual test before proceeding.
+done. Steps 5-7 wire on top — done. Step 8 (renderer implementation) — done.
+Effects Tab Rebuild plan is now complete.
 
 ---
 
