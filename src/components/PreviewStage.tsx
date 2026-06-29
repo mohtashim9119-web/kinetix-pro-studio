@@ -99,8 +99,8 @@ function getAnimationWrapperProps(
 /**
  * Live-preview CSS for the filter/pixel clip effects (effectAnimation slug).
  * Zoom/ken-burns return {} — those are driven by the Framer Motion wrapper
- * (getAnimationWrapperProps) instead. pixelate/duotone are CSS approximations
- * of the canvas pixel ops; preview ≠ export pixel-perfect by design.
+ * (getAnimationWrapperProps) instead. duotone is a CSS approximation of the
+ * canvas pixel op; preview ≠ export pixel-perfect by design.
  */
 function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
   switch (slug) {
@@ -112,23 +112,6 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
       return { filter: 'sepia(0.85)' };
     case 'invert':
       return { filter: 'invert(1)' };
-    case 'pixelate':
-      // imageRendering alone is a no-op without upscaling. Use the classic
-      // inline-SVG mosaic filter (feFlood/feComposite/feTile/feMorphology) —
-      // reliable in the Chromium webview this app ships in. Approximates the
-      // canvas pixel-block op (export does the real thing); ~10px blocks.
-      return {
-        imageRendering: 'pixelated',
-        filter:
-          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'>" +
-          "<filter id='kx-pixelate' x='0' y='0'>" +
-          "<feFlood x='4' y='4' height='2' width='2'/>" +
-          "<feComposite width='10' height='10'/>" +
-          "<feTile result='a'/>" +
-          "<feComposite in='SourceGraphic' in2='a' operator='in'/>" +
-          "<feMorphology operator='dilate' radius='5'/>" +
-          "</filter></svg>#kx-pixelate\")",
-      };
     case 'duotone':
       // CSS approximation: sepia + hue-rotate gives a duotone-like look.
       return { filter: 'sepia(1) hue-rotate(200deg) saturate(3)' };

@@ -314,8 +314,8 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
 /**
  * Resolves a CSS-filter string for the filter-based clip effects
  * (effectAnimation slugs). Returns 'none' for any slug that is not a
- * filter effect (zoom/ken-burns are transforms; pixelate/duotone are
- * scratch-canvas pixel ops handled separately after the media draw).
+ * filter effect (zoom/ken-burns are transforms; duotone is a
+ * scratch-canvas pixel op handled separately after the media draw).
  */
 function resolveClipEffectFilter(slug: string | undefined): string {
   switch (slug) {
@@ -330,24 +330,6 @@ function resolveClipEffectFilter(slug: string | undefined): string {
     default:
       return 'none';
   }
-}
-
-function applyPixelate(ctx: CanvasRenderingContext2D, w: number, h: number, blockSize: number): void {
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-  for (let y = 0; y < h; y += blockSize) {
-    for (let x = 0; x < w; x += blockSize) {
-      const idx = (y * w + x) * 4;
-      const r = data[idx]!, g = data[idx + 1]!, b = data[idx + 2]!;
-      for (let dy = 0; dy < blockSize && y + dy < h; dy++) {
-        for (let dx = 0; dx < blockSize && x + dx < w; dx++) {
-          const i = ((y + dy) * w + (x + dx)) * 4;
-          data[i] = r; data[i + 1] = g; data[i + 2] = b;
-        }
-      }
-    }
-  }
-  ctx.putImageData(imageData, 0, 0);
 }
 
 function applyDuotone(ctx: CanvasRenderingContext2D, w: number, h: number): void {
@@ -541,9 +523,6 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
 
   // Pixel-op clip effects that can't be expressed as a CSS filter string.
   // Applied to the drawn media only, before vignette/overlay compositing.
-  if (segment.effectAnimation === 'pixelate') {
-    applyPixelate(ctx, w, h, 12);
-  }
   if (segment.effectAnimation === 'duotone') {
     applyDuotone(ctx, w, h);
   }
