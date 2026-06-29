@@ -41,6 +41,24 @@ function getAnimationWrapperProps(
         style: { transformOrigin: 'center center' },
       };
 
+    case AnimationType.ZOOM_IN:
+      // Mirrors canvasAnimations ZOOM_IN: 1.0 → 1.3 over segment duration.
+      return {
+        initial: { scale: 1.0 },
+        animate: { scale: 1.3 },
+        transition: { duration: segmentDuration, ease: 'linear' },
+        style: { transformOrigin: 'center center' },
+      };
+
+    case AnimationType.ZOOM_OUT:
+      // Mirrors canvasAnimations ZOOM_OUT: 1.3 → 1.0 over segment duration.
+      return {
+        initial: { scale: 1.3 },
+        animate: { scale: 1.0 },
+        transition: { duration: segmentDuration, ease: 'linear' },
+        style: { transformOrigin: 'center center' },
+      };
+
     case AnimationType.FLOAT:
       return getMotionProps('float');
 
@@ -76,6 +94,37 @@ function getAnimationWrapperProps(
         transition: { duration: 1.5, repeat: Infinity },
       };
 
+    default:
+      return {};
+  }
+}
+
+/**
+ * Live-preview CSS for the filter/pixel clip effects (effectAnimation slug).
+ * Zoom/ken-burns return {} — those are driven by the Framer Motion wrapper
+ * (getAnimationWrapperProps) instead. pixelate/duotone are CSS approximations
+ * of the canvas pixel ops; preview ≠ export pixel-perfect by design.
+ */
+function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
+  switch (slug) {
+    case 'color-grade':
+      return { filter: 'brightness(1.05) contrast(1.15) saturate(1.25)' };
+    case 'gaussian-blur':
+      return { filter: 'blur(6px)' };
+    case 'sepia':
+      return { filter: 'sepia(0.85)' };
+    case 'invert':
+      return { filter: 'invert(1)' };
+    case 'pixelate':
+      // CSS-only approximation: nearest-neighbour scaling hint.
+      return { imageRendering: 'pixelated' };
+    case 'duotone':
+      // CSS approximation: sepia + hue-rotate gives a duotone-like look.
+      return { filter: 'sepia(1) hue-rotate(200deg) saturate(3)' };
+    case 'zoom-in':
+    case 'zoom-out':
+    case 'ken-burns':
+      return {}; // handled by Framer Motion wrapper (getAnimationWrapperProps)
     default:
       return {};
   }
@@ -478,7 +527,11 @@ export function PreviewStage({
               <motion.div
                 className="absolute inset-0 overflow-hidden"
                 {...(suppressMotionAnim ? {} : getAnimationWrapperProps(
-                  currentSegment.animation ?? AnimationType.NONE,
+                  // effectAnimation slug wins over the legacy segment.animation
+                  // (same resolution as the export path in frameRenderer.ts).
+                  ((currentSegment.effectAnimation && currentSegment.effectAnimation !== 'none')
+                    ? currentSegment.effectAnimation as AnimationType
+                    : currentSegment.animation) ?? AnimationType.NONE,
                   currentSegment.duration,
                 ))}
               >
@@ -497,6 +550,7 @@ export function PreviewStage({
                       <video
                         ref={videoARef}
                         className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'a' ? '' : ' opacity-0 pointer-events-none'}`}
+                        style={getClipEffectStyle(currentSegment.effectAnimation)}
                         muted
                         playsInline
                         preload="auto"
@@ -504,6 +558,7 @@ export function PreviewStage({
                       <video
                         ref={videoBRef}
                         className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'b' ? '' : ' opacity-0 pointer-events-none'}`}
+                        style={getClipEffectStyle(currentSegment.effectAnimation)}
                         muted
                         playsInline
                         preload="auto"
@@ -516,6 +571,7 @@ export function PreviewStage({
                         <motion.img
                           src={asset.url}
                           className="w-full h-full object-cover"
+                          style={getClipEffectStyle(currentSegment.effectAnimation)}
                           initial={{ opacity: suppressMotionAnim ? 1 : 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ duration: 0.4 }}

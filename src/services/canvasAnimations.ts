@@ -21,6 +21,8 @@ import { AnimationType } from '../types';
 const IMPLEMENTED_ANIMATIONS = new Set<AnimationType>([
   AnimationType.NONE,
   AnimationType.KEN_BURNS,
+  AnimationType.ZOOM_IN,
+  AnimationType.ZOOM_OUT,
   AnimationType.FLOAT,
   AnimationType.BOUNCE,
   AnimationType.PULSE,
@@ -128,6 +130,24 @@ export function applySegmentAnimation(
       // Slow zoom: 1.0 → 1.1 over the full segment duration
       const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
       const scale = 1.0 + 0.1 * progress;
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(scale, scale);
+      ctx.translate(-w / 2, -h / 2);
+      return {};
+    }
+
+    case AnimationType.ZOOM_IN: {
+      const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
+      const scale = 1.0 + 0.3 * progress;
+      ctx.translate(w / 2, h / 2);
+      ctx.scale(scale, scale);
+      ctx.translate(-w / 2, -h / 2);
+      return {};
+    }
+
+    case AnimationType.ZOOM_OUT: {
+      const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
+      const scale = 1.3 - 0.3 * progress;
       ctx.translate(w / 2, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);

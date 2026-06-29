@@ -893,10 +893,13 @@ export default function App() {
             return { ...s, effectTransition: e.value, effectTransitionDuration: e.duration, transition: TransitionType.NONE };
           case 'animation':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
-            return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration };
+            // Reset the legacy twin so a stale segment.animation can't compete
+            // with the slug the renderer now reads (effectAnimation wins).
+            return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration, animation: AnimationType.NONE };
           case 'overlay':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
-            return { ...s, effectOverlay: e.value };
+            // Reset the legacy twin (segment.overlayFilter) for the same reason.
+            return { ...s, effectOverlay: e.value, overlayFilter: 'none' };
           case 'randomize-transitions': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
             // See the 'transition' case above — same legacy-field reset.
@@ -904,11 +907,13 @@ export default function App() {
           }
           case 'randomize-animations': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
-            return { ...s, effectAnimation: slug, effectAnimationDuration: s.effectAnimationDuration };
+            // See the 'animation' case above — same legacy-twin reset.
+            return { ...s, effectAnimation: slug, effectAnimationDuration: s.effectAnimationDuration, animation: AnimationType.NONE };
           }
           case 'preset': {
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
-            // See the 'transition' case above — same legacy-field reset.
+            // See the 'transition' case above — same legacy-field reset, now
+            // extended to the animation + overlay legacy twins.
             return {
               ...s,
               effectTransition: e.preset.transition,
@@ -917,6 +922,8 @@ export default function App() {
               effectAnimationDuration: e.preset.animationDur,
               effectOverlay: e.preset.overlay,
               transition: TransitionType.NONE,
+              animation: AnimationType.NONE,
+              overlayFilter: 'none',
             };
           }
           default:

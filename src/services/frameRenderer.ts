@@ -308,6 +308,63 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
 }
 
 // ---------------------------------------------------------------------------
+// Clip-effect helpers (effectAnimation slug → canvas ops)
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolves a CSS-filter string for the filter-based clip effects
+ * (effectAnimation slugs). Returns 'none' for any slug that is not a
+ * filter effect (zoom/ken-burns are transforms; pixelate/duotone are
+ * scratch-canvas pixel ops handled separately after the media draw).
+ */
+function resolveClipEffectFilter(slug: string | undefined): string {
+  switch (slug) {
+    case 'color-grade':
+      return 'brightness(1.05) contrast(1.15) saturate(1.25)';
+    case 'gaussian-blur':
+      return 'blur(6px)';
+    case 'sepia':
+      return 'sepia(0.85)';
+    case 'invert':
+      return 'invert(1)';
+    default:
+      return 'none';
+  }
+}
+
+function applyPixelate(ctx: CanvasRenderingContext2D, w: number, h: number, blockSize: number): void {
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  for (let y = 0; y < h; y += blockSize) {
+    for (let x = 0; x < w; x += blockSize) {
+      const idx = (y * w + x) * 4;
+      const r = data[idx]!, g = data[idx + 1]!, b = data[idx + 2]!;
+      for (let dy = 0; dy < blockSize && y + dy < h; dy++) {
+        for (let dx = 0; dx < blockSize && x + dx < w; dx++) {
+          const i = ((y + dy) * w + (x + dx)) * 4;
+          data[i] = r; data[i + 1] = g; data[i + 2] = b;
+        }
+      }
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyDuotone(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  // Shadow color: deep blue (20,20,80) / Highlight color: warm cream (255,240,200)
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const lum = 0.299 * data[i]! + 0.587 * data[i + 1]! + 0.114 * data[i + 2]!;
+    const t = lum / 255;
+    data[i]     = Math.round(20  + t * (255 - 20));
+    data[i + 1] = Math.round(20  + t * (240 - 20));
+    data[i + 2] = Math.round(80  + t * (200 - 80));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+// ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
@@ -431,13 +488,22 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   // -------------------------------------------------------------------------
   // Visual layer (filter applied only to the media, not the text overlays)
   // -------------------------------------------------------------------------
-  const filterStr = getFilterStyle(segment.overlayFilter ?? g.globalOverlayFilter);
+  // Resolve clip effect filter (effectAnimation slug wins over legacy overlayFilter)
+  const clipEffectFilter = resolveClipEffectFilter(segment.effectAnimation);
+  const filterStr = clipEffectFilter !== 'none'
+    ? clipEffectFilter
+    : getFilterStyle(segment.overlayFilter ?? g.globalOverlayFilter);
   ctx.filter = filterStr !== 'none' ? filterStr : 'none';
 
   if (asset?.url) {
     // Apply segment animation transform around media draw.
     // NONE and undefined both produce identity (no transform).
-    const animation = segment.animation ?? AnimationType.NONE;
+    // effectAnimation slug wins over the legacy segment.animation when set
+    // (filter/pixel slugs cast harmlessly to identity in applySegmentAnimation).
+    const effectiveAnimation = (segment.effectAnimation && segment.effectAnimation !== 'none')
+      ? segment.effectAnimation as AnimationType
+      : segment.animation;
+    const animation = effectiveAnimation ?? AnimationType.NONE;
     ctx.save();
     const animResult = applySegmentAnimation(ctx, {
       animation,
@@ -472,6 +538,15 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
 
   // All overlays drawn without the media filter
   ctx.filter = 'none';
+
+  // Pixel-op clip effects that can't be expressed as a CSS filter string.
+  // Applied to the drawn media only, before vignette/overlay compositing.
+  if (segment.effectAnimation === 'pixelate') {
+    applyPixelate(ctx, w, h, 12);
+  }
+  if (segment.effectAnimation === 'duotone') {
+    applyDuotone(ctx, w, h);
+  }
 
   // Gradient vignette (matches the overlay in PreviewStage)
   drawGradientVignette(ctx, w, h);
