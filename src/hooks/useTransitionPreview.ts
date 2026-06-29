@@ -236,8 +236,12 @@ export function useTransitionPreview({
         if (pendingKeyRef.current === key) pendingKeyRef.current = '';
       }
     })();
+  // currentSeg/nextSeg effectAnimation are included so changing a clip effect
+  // re-renders the snapshot — otherwise a cached snapshot keeps showing the old
+  // (or absent) filter through the transition. renderSegmentFrame bakes
+  // resolveClipEffectFilter into the snapshot, so a fresh render is all that's needed.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsPreRoll, currentSeg?.id, nextSeg?.id, effectiveTransition]);
+  }, [needsPreRoll, currentSeg?.id, nextSeg?.id, effectiveTransition, currentSeg?.effectAnimation, nextSeg?.effectAnimation]);
 
   // Clear stale snapshots when the boundary changes (e.g. user seeks back)
   useEffect(() => {

@@ -28,36 +28,33 @@ import { useTransitionPreview } from '../hooks/useTransitionPreview';
 function getAnimationWrapperProps(
   animation: AnimationType,
   segmentDuration: number,
+  timeInSegment: number,
 ): Record<string, unknown> {
   switch (animation) {
     case AnimationType.NONE:
       return {};
 
-    case AnimationType.KEN_BURNS:
-      return {
-        initial: { scale: 1 },
-        animate: { scale: 1.1 },
-        transition: { duration: segmentDuration, ease: 'linear' },
-        style: { transformOrigin: 'center center' },
-      };
+    // Zoom / Ken Burns are driven by timeInSegment (the playhead position
+    // within the segment), NOT Framer Motion's wall-clock. A plain static
+    // `transform` recomputed each render keeps preview in lockstep with the
+    // playhead — pauses freeze, seeks jump correctly, speed follows playback —
+    // and mirrors the export canvas math in canvasAnimations.ts (0.05/sec).
+    case AnimationType.KEN_BURNS: {
+      const scale = 1.0 + 0.05 * timeInSegment;
+      const translateX = 0.5 * timeInSegment; // slow pan right, px
+      return { style: { transform: `scale(${scale}) translateX(${translateX}px)`, transformOrigin: 'center center' } };
+    }
 
-    case AnimationType.ZOOM_IN:
-      // Mirrors canvasAnimations ZOOM_IN: 1.0 → 1.3 over segment duration.
-      return {
-        initial: { scale: 1.0 },
-        animate: { scale: 1.3 },
-        transition: { duration: segmentDuration, ease: 'linear' },
-        style: { transformOrigin: 'center center' },
-      };
+    case AnimationType.ZOOM_IN: {
+      const scale = 1.0 + 0.05 * timeInSegment;
+      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
+    }
 
-    case AnimationType.ZOOM_OUT:
-      // Mirrors canvasAnimations ZOOM_OUT: 1.3 → 1.0 over segment duration.
-      return {
-        initial: { scale: 1.3 },
-        animate: { scale: 1.0 },
-        transition: { duration: segmentDuration, ease: 'linear' },
-        style: { transformOrigin: 'center center' },
-      };
+    case AnimationType.ZOOM_OUT: {
+      const endScale = 1.0 + 0.05 * segmentDuration;
+      const scale = endScale - 0.05 * timeInSegment;
+      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
+    }
 
     case AnimationType.FLOAT:
       return getMotionProps('float');
@@ -116,8 +113,22 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
     case 'invert':
       return { filter: 'invert(1)' };
     case 'pixelate':
-      // CSS-only approximation: nearest-neighbour scaling hint.
-      return { imageRendering: 'pixelated' };
+      // imageRendering alone is a no-op without upscaling. Use the classic
+      // inline-SVG mosaic filter (feFlood/feComposite/feTile/feMorphology) —
+      // reliable in the Chromium webview this app ships in. Approximates the
+      // canvas pixel-block op (export does the real thing); ~10px blocks.
+      return {
+        imageRendering: 'pixelated',
+        filter:
+          "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg'>" +
+          "<filter id='kx-pixelate' x='0' y='0'>" +
+          "<feFlood x='4' y='4' height='2' width='2'/>" +
+          "<feComposite width='10' height='10'/>" +
+          "<feTile result='a'/>" +
+          "<feComposite in='SourceGraphic' in2='a' operator='in'/>" +
+          "<feMorphology operator='dilate' radius='5'/>" +
+          "</filter></svg>#kx-pixelate\")",
+      };
     case 'duotone':
       // CSS approximation: sepia + hue-rotate gives a duotone-like look.
       return { filter: 'sepia(1) hue-rotate(200deg) saturate(3)' };
@@ -533,6 +544,8 @@ export function PreviewStage({
                     ? currentSegment.effectAnimation as AnimationType
                     : currentSegment.animation) ?? AnimationType.NONE,
                   currentSegment.duration,
+                  // timeInSegment: playhead position within this segment, clamped ≥ 0.
+                  Math.max(0, currentTime - (currentSegment.startTime ?? 0)),
                 ))}
               >
                 {(() => {

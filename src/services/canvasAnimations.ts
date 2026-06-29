@@ -127,18 +127,21 @@ export function applySegmentAnimation(
       return {};
 
     case AnimationType.KEN_BURNS: {
-      // Slow zoom: 1.0 → 1.1 over the full segment duration
-      const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
-      const scale = 1.0 + 0.1 * progress;
-      ctx.translate(w / 2, h / 2);
+      // Rate-based zoom + slow horizontal pan, matching the preview side
+      // (PreviewStage getAnimationWrapperProps). Pan is scaled to canvas size:
+      // (w * 0.002) * t ≈ 3.8px/sec on a 1920px canvas, equivalent to the
+      // preview's DOM pan of 0.5px/sec on its ~960px stage.
+      const scale = 1.0 + 0.05 * t;
+      const panX = (w * 0.002) * t;
+      ctx.translate(w / 2 + panX, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);
       return {};
     }
 
     case AnimationType.ZOOM_IN: {
-      const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
-      const scale = 1.0 + 0.3 * progress;
+      // 0.05/sec rate, matching the preview side (PreviewStage getAnimationWrapperProps).
+      const scale = 1.0 + 0.05 * t;
       ctx.translate(w / 2, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);
@@ -146,8 +149,9 @@ export function applySegmentAnimation(
     }
 
     case AnimationType.ZOOM_OUT: {
-      const progress = dur > 0 ? Math.min(t / dur, 1) : 0;
-      const scale = 1.3 - 0.3 * progress;
+      // 0.05/sec rate; starts at the end-scale a matching zoom-in would reach.
+      const endScale = 1.0 + 0.05 * dur;
+      const scale = endScale - 0.05 * t;
       ctx.translate(w / 2, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);
