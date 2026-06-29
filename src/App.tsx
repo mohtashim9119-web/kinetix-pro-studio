@@ -2083,6 +2083,7 @@ export default function App() {
             onDeleteHeading={handleDeleteHeading}
             onMoveHeading={handleMoveHeading}
             selectedSegmentId={selectedSegmentId ?? undefined}
+            currentSegmentId={currentSegment?.id}
             selectedSegmentIds={selectedSegmentIds}
             onToggleSegmentSelect={onToggleSegmentSelect}
             onSelectAllSegments={onSelectAllSegments}

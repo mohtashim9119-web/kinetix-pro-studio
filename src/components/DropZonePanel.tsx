@@ -18,8 +18,6 @@ import {
   ChevronRight,
   ChevronLeft,
   Trash2,
-  Heading1,
-  GripVertical,
   ListChecks,
   CheckSquare,
   Square,
@@ -366,6 +364,8 @@ interface Props {
   onMoveHeading?: (id: string, targetIndex: number) => void;
   // Misc
   selectedSegmentId: string | undefined;
+  // Currently playing/active segment id (derived from playback time in App.tsx).
+  currentSegmentId?: string;
   // Batch (multi-)selection for Effects tab — separate from selectedSegmentId.
   selectedSegmentIds: Set<string>;
   onToggleSegmentSelect: (id: string) => void;
@@ -442,6 +442,7 @@ export function DropZonePanel({
   onDeleteHeading,
   onMoveHeading,
   selectedSegmentId,
+  currentSegmentId,
   selectedSegmentIds,
   onToggleSegmentSelect,
   onSelectAllSegments,
@@ -1221,8 +1222,8 @@ export function DropZonePanel({
             {segments.map((seg, i) => {
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
+              const isActive = seg.id === currentSegmentId;
               const isChecked = selectedSegmentIds.has(seg.id);
-              const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
               const title = humanTitle(seg, asset);
               return (
                 <div
@@ -1235,74 +1236,79 @@ export function DropZonePanel({
                   )}
                   <div
                     onClick={() => onSegmentClick(seg.id)}
-                    className={`relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
+                    className={`group relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
                                 cursor-pointer transition-colors
-                                ${isSelected
-                                  ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)]'
-                                  : 'bg-[var(--kx-surface)] border-[var(--kx-line)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
-                                }`}
+                                ${seg.isHeading ? 'select-none' : ''}
+                                ${isActive
+                                  ? 'border-[var(--kx-accent-line)]'
+                                  : isSelected
+                                    ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)]'
+                                    : 'border-[var(--kx-line)] hover:border-[var(--kx-line-2)]'
+                                }
+                                ${!isActive && !isSelected ? 'bg-[var(--kx-surface)] hover:bg-[var(--kx-hover)]' : ''}`}
+                    {...(seg.isHeading && onMoveHeading ? {
+                      onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+                        if ((e.target as HTMLElement).closest('button')) return;
+                        e.preventDefault();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        setDraggingHeadingId(seg.id);
+                        dropTargetIdxRef.current = i;
+                        setDropTargetIdx(i);
+                      },
+                      onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+                        if (draggingHeadingId !== seg.id) return;
+                        const idx = computeDropGapIndex(rowRefs.current, e.clientY);
+                        if (idx !== dropTargetIdxRef.current) {
+                          dropTargetIdxRef.current = idx;
+                          setDropTargetIdx(idx);
+                        }
+                      },
+                      onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+                        e.currentTarget.releasePointerCapture(e.pointerId);
+                        if (draggingHeadingId === seg.id && onMoveHeading) {
+                          onMoveHeading(seg.id, dropTargetIdxRef.current ?? i);
+                        }
+                        setDraggingHeadingId(null);
+                        setDropTargetIdx(null);
+                      },
+                      style: { cursor: draggingHeadingId === seg.id ? 'grabbing' : 'grab' },
+                    } : {})}
                   >
+                    {isActive && (
+                      <span className="absolute left-0 top-[8px] bottom-[8px] w-[3px]
+                                       bg-[var(--kx-accent)] rounded-r-[3px] z-10" />
+                    )}
+                    {!isActive && isSelected && (
+                      <span className="absolute left-0 top-[8px] bottom-[8px] w-[3px] bg-[var(--kx-accent)] rounded-r-[3px]" />
+                    )}
                     {/* Left spine — drag handle (headings) or index + duration bar + start time */}
                     <div className="flex-none flex flex-col items-center justify-center gap-1.5 w-[40px] py-2.5 border-r border-[var(--kx-line)]">
-                      {seg.isHeading && onMoveHeading ? (
-                        <button
-                          onPointerDown={(e) => {
-                            e.stopPropagation();
-                            e.currentTarget.setPointerCapture(e.pointerId);
-                            setDraggingHeadingId(seg.id);
-                            dropTargetIdxRef.current = i;
-                            setDropTargetIdx(i);
-                          }}
-                          onPointerMove={(e) => {
-                            if (draggingHeadingId !== seg.id) return;
-                            const idx = computeDropGapIndex(rowRefs.current, e.clientY);
-                            dropTargetIdxRef.current = idx;
-                            setDropTargetIdx(idx);
-                          }}
-                          onPointerUp={(e) => {
-                            if (draggingHeadingId !== seg.id) return;
-                            e.currentTarget.releasePointerCapture(e.pointerId);
-                            const target = dropTargetIdxRef.current;
-                            setDraggingHeadingId(null);
-                            setDropTargetIdx(null);
-                            dropTargetIdxRef.current = null;
-                            if (target !== null) onMoveHeading(seg.id, target);
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          className="flex items-center justify-center text-[var(--kx-faint)] hover:text-[var(--kx-accent)]
-                                     cursor-grab active:cursor-grabbing touch-none transition-colors"
-                          aria-label="Drag to reorder heading"
-                          title="Drag to reorder"
-                        >
-                          <GripVertical size={16} />
-                        </button>
-                      ) : (
-                        <>
-                          <span className="font-mono text-[10px] text-[var(--kx-faint)]">{String(i + 1).padStart(2, '0')}</span>
-                          <span
-                            className={`w-1 rounded-[2px] ${isSelected ? 'bg-[var(--kx-accent)]' : 'bg-[rgba(255,255,255,.13)]'}`}
-                            style={{ height: Math.max(10, Math.min(32, (seg.duration / maxSegmentDuration) * 32)) }}
-                          />
-                          <span className="font-mono text-[9px] text-[var(--kx-faint)]">{formatTime(seg.startTime)}</span>
-                        </>
-                      )}
+                      <span className={`font-mono text-[10px] ${isActive ? 'text-[var(--kx-accent-2)]' : isSelected ? 'text-[var(--kx-accent-2)]' : 'text-[var(--kx-faint)]'}`}>{String(i + 1).padStart(2, '0')}</span>
+                      <span
+                        className={`w-1 rounded-[2px] ${isActive || isSelected || isChecked ? 'bg-[var(--kx-accent)]' : 'bg-[rgba(255,255,255,.13)]'}`}
+                        style={{ height: Math.max(10, Math.min(32, (seg.duration / maxSegmentDuration) * 32)) }}
+                      />
+                      <span className="font-mono text-[9px] text-[var(--kx-faint)]">{formatTime(seg.startTime)}</span>
                     </div>
 
                     {/* Thumbnail */}
-                    <div className="flex-none w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] overflow-hidden flex-shrink-0
-                                    bg-[var(--kx-surface-2)] flex items-center justify-center
-                                    shadow-[inset_0_0_0_1px_rgba(255,255,255,.07)]">
-                      {seg.isHeading
-                        ? <Heading1 size={20} className="text-[var(--kx-accent-2)]" />
-                        : asset?.url && asset.type === 'image'
-                        ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                        : asset?.type === 'video'
-                        ? <Video size={18} className="text-blue-400" />
-                        : isMissing
-                        ? <AlertCircle size={18} className="text-[var(--kx-warning)]" />
-                        : <div className="w-full h-full bg-[var(--kx-surface-2)]" />
-                      }
-                    </div>
+                    {seg.isHeading ? (
+                      <div className="w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] flex-shrink-0
+                                      bg-[var(--kx-accent)] flex items-center justify-center">
+                        <span className="text-white font-bold text-[18px] tracking-tight">H1</span>
+                      </div>
+                    ) : (
+                      <div className="flex-none w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] overflow-hidden flex-shrink-0
+                                      bg-[var(--kx-surface-2)] flex items-center justify-center
+                                      shadow-[inset_0_0_0_1px_rgba(255,255,255,.07)]">
+                        {asset?.url && asset.type === 'image'
+                          ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                          : asset?.type === 'video'
+                          ? <Video size={18} className="text-blue-400" />
+                          : <div className="w-full h-full rounded-[9px] bg-[var(--kx-surface-2)]" />
+                        }
+                      </div>
+                    )}
 
                     {/* Meta */}
                     <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-2.5 pr-2">
@@ -1325,29 +1331,32 @@ export function DropZonePanel({
 
                     {/* Right controls */}
                     <div className="flex-none flex flex-col items-center justify-center gap-2 px-3 py-2.5">
-                      {seg.isHeading && onDeleteHeading && (
+                      <div className="relative flex items-center justify-center">
+                        {seg.isHeading && onDeleteHeading && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
+                            className="absolute right-full mr-1 opacity-0 group-hover:opacity-100 transition-opacity
+                                       p-1.5 rounded-[6px] text-[var(--kx-faint)]
+                                       hover:text-[var(--kx-danger)]
+                                       hover:bg-[rgba(255,107,107,0.1)]"
+                            aria-label="Delete heading"
+                            title="Delete heading"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        )}
                         <button
-                          onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
-                          className="w-8 h-8 rounded-[8px] flex items-center justify-center
-                                     text-[var(--kx-faint)] hover:bg-[rgba(255,107,107,.1)] hover:text-[var(--kx-danger)]
-                                     transition-colors opacity-0 group-hover/gap:opacity-100"
-                          aria-label="Delete heading"
-                          title="Delete heading"
+                          onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
+                          className={`w-8 h-8 rounded-[8px] flex items-center justify-center border transition-all
+                                      ${seg.locked
+                                        ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
+                                        : 'bg-transparent border-[var(--kx-line)] text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
+                                      }`}
+                          aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
                         >
-                          <Trash2 size={14} />
+                          {seg.locked ? <Lock size={14} /> : <LockOpen size={14} />}
                         </button>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
-                        className={`w-8 h-8 rounded-[8px] flex items-center justify-center border transition-all
-                                    ${seg.locked
-                                      ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
-                                      : 'bg-transparent border-[var(--kx-line)] text-[var(--kx-faint)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
-                                    }`}
-                        aria-label={seg.locked ? 'Unlock segment' : 'Lock segment'}
-                      >
-                        {seg.locked ? <Lock size={14} /> : <LockOpen size={14} />}
-                      </button>
+                      </div>
                       {/* Batch-select checkbox — hover-reveal unless checked. stopPropagation so it never triggers row seek. */}
                       <button
                         onClick={(e) => { e.stopPropagation(); onToggleSegmentSelect(seg.id); }}
