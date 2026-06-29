@@ -23,6 +23,7 @@ import {
   Square,
   Plus,
   RefreshCw,
+  Search,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -479,6 +480,7 @@ export function DropZonePanel({
 }: Props) {
   // ── Tab state ─────────────────────────────────────────────────────────────
   const [activeTab, setActiveTab] = useState<'files' | 'segments' | 'effects'>('files');
+  const [segmentSearch, setSegmentSearch] = useState('');
 
   // Master "Overlay Text Display" state: ON only when every segment shows its overlay.
   // Empty segments → true (vacuously), which is harmless — there is nothing to toggle.
@@ -1151,58 +1153,72 @@ export function DropZonePanel({
       {activeTab === 'segments' && (
         <div className="flex flex-col flex-1 min-h-0">
 
-          {/* Header — count/runtime + 3 unified action buttons */}
-          <div className="flex items-center justify-between px-4 py-3.5 border-b border-[var(--kx-line)] flex-shrink-0">
+          {/* Header row 1 — count/runtime + search */}
+          <div className="flex items-center justify-between px-4 pt-3.5 pb-2 flex-shrink-0">
             <div className="flex items-baseline gap-2 min-w-0">
               <span className="font-semibold text-[15px] text-[var(--kx-text)]">{segments.length}</span>
               <span className="text-[12.5px] text-[var(--kx-muted)]">segment{segments.length !== 1 ? 's' : ''}</span>
               <span className="text-[var(--kx-faint)]">·</span>
               <span className="font-mono text-[12px] text-[var(--kx-muted)]">{formatTime(totalDuration)}</span>
             </div>
-            <div className="flex gap-1.5 flex-shrink-0">
-              {([
-                {
-                  key: 'lock',
-                  label: allLocked ? 'Unlock all' : 'Lock all',
-                  Icon: allLocked ? LockOpen : Lock,
-                  active: allLocked,
-                  title: allLocked ? 'Unlock All' : 'Lock All',
-                  onClick: () => (allLocked ? onUnlockAll() : onLockAll()),
-                },
-                {
-                  key: 'review',
-                  label: 'Review',
-                  Icon: ListChecks,
-                  active: false,
-                  title: 'Review Mapping',
-                  onClick: onOpenReviewMapping,
-                },
-                {
-                  key: 'select',
-                  label: selectedSegmentIds.size > 0 ? 'Clear' : 'Select all',
-                  Icon: selectedSegmentIds.size > 0 ? CheckSquare : Square,
-                  active: selectedSegmentIds.size > 0,
-                  title: selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments',
-                  onClick: () => (selectedSegmentIds.size > 0 ? onClearSegmentSelection() : onSelectAllSegments()),
-                },
-              ] as const).map(({ key, label, Icon, active, title, onClick }) => (
-                <button
-                  key={key}
-                  onClick={onClick}
-                  title={title}
-                  aria-label={title}
-                  className={`flex items-center gap-1.5 h-[34px] px-3 rounded-[9px] text-[12.5px]
-                              font-medium border transition-colors
-                              ${active
-                                ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
-                                : 'bg-[var(--kx-surface)] border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
-                              }`}
-                >
-                  <Icon size={14} />
-                  <span>{label}</span>
-                </button>
-              ))}
+            <div className="relative flex-shrink-0">
+              <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--kx-faint)] pointer-events-none" />
+              <input
+                type="text"
+                value={segmentSearch}
+                onChange={(e) => setSegmentSearch(e.target.value)}
+                placeholder="Search segments…"
+                className="h-[28px] w-[160px] pl-7 pr-3 rounded-full text-[12px]
+                           bg-[var(--kx-surface)] border border-[var(--kx-line)] text-[var(--kx-text)]
+                           placeholder:text-[var(--kx-faint)] focus:outline-none focus:border-[var(--kx-line-2)]"
+              />
             </div>
+          </div>
+
+          {/* Header row 2 — 3 unified action buttons */}
+          <div className="flex gap-2 px-4 pb-3 flex-shrink-0 border-b border-[var(--kx-line)]">
+            {([
+              {
+                key: 'lock',
+                label: allLocked ? 'Unlock all' : 'Lock all',
+                Icon: allLocked ? LockOpen : Lock,
+                active: allLocked,
+                title: allLocked ? 'Unlock All' : 'Lock All',
+                onClick: () => (allLocked ? onUnlockAll() : onLockAll()),
+              },
+              {
+                key: 'review',
+                label: 'Review',
+                Icon: ListChecks,
+                active: false,
+                title: 'Review Mapping',
+                onClick: onOpenReviewMapping,
+              },
+              {
+                key: 'select',
+                label: selectedSegmentIds.size > 0 ? 'Clear' : 'Select all',
+                Icon: selectedSegmentIds.size > 0 ? CheckSquare : Square,
+                active: selectedSegmentIds.size > 0,
+                title: selectedSegmentIds.size > 0 ? 'Clear selection' : 'Select all segments',
+                onClick: () => (selectedSegmentIds.size > 0 ? onClearSegmentSelection() : onSelectAllSegments()),
+              },
+            ] as const).map(({ key, label, Icon, active, title, onClick }) => (
+              <button
+                key={key}
+                onClick={onClick}
+                title={title}
+                aria-label={title}
+                className={`flex-1 flex items-center justify-center gap-1.5 h-[34px] px-3 rounded-[9px] text-[12.5px]
+                            font-medium border transition-colors
+                            ${active
+                              ? 'bg-[var(--kx-accent-soft)] border-[var(--kx-accent-line)] text-[var(--kx-accent-2)]'
+                              : 'bg-[var(--kx-surface)] border-[var(--kx-line)] text-[var(--kx-muted)] hover:text-[var(--kx-text)] hover:border-[var(--kx-line-2)] hover:bg-[var(--kx-hover)]'
+                            }`}
+              >
+                <Icon size={14} />
+                <span>{label}</span>
+              </button>
+            ))}
           </div>
 
           {/* Segment list */}
@@ -1220,6 +1236,7 @@ export function DropZonePanel({
             </button>
 
             {segments.map((seg, i) => {
+              if (segmentSearch && !seg.text?.toLowerCase().includes(segmentSearch.toLowerCase())) return null;
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
               const isActive = seg.id === currentSegmentId;
