@@ -56,6 +56,17 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 </details>
 
 <details>
+<summary>Left-panel UI restructure — ✅ DONE 2026-06-30 (commits 0c577e9, f0ee59c, 65d5d66, 8fe8a78)</summary>
+
+- Files tab redesign — compact headers, metadata rows, timestamps, Apply Sync gradient (`0c577e9`).
+- Apply Sync stuck-in-syncing fix — clear pending voiceover on project switch and cache-hit re-stage (`f0ee59c`).
+- Left panel redesign — heading rows, accent bar, Files tab polish, sync button fix (`65d5d66`).
+- Segments tab header restructured into two rows: count/runtime + search input on row 1, the three unified action buttons (lock/unlock all, review, select-all/clear) stretched `flex-1` across row 2 (`8fe8a78`). Added `segmentSearch` state filtering the segment list by `seg.text`, preserving the original array index (`i`) through a `return null` guard inline in the existing `.map()` so `rowRefs`, `dropTargetIdx`, and `onMoveHeading` heading-drag logic stay correct while filtered.
+- Recycle bin permanently dropped (no longer present in DropZonePanel.tsx).
+- `tsc --noEmit` clean and 17/17 vitest passing.
+</details>
+
+<details>
 <summary>Effects Step 8 — transitions complete (10/10, commit 76ccf16)</summary>
 
 All 10 transition slugs rendered in `frameRenderer.ts` (`applyTransitionBlend`)
@@ -75,7 +86,7 @@ and `useTransitionPreview.ts`/`PreviewStage.tsx`:
 
 ## Active Tasks
 
-- Left-panel UI restructure; permanently drop recycle bin
+None currently — see Completed Work for the left-panel UI restructure (closed 2026-06-30).
 
 ## Deferred Polish Features
 
