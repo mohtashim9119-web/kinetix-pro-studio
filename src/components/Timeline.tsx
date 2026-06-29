@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
@@ -19,7 +19,8 @@ interface Props {
   currentTime: number;
   isPlaying: boolean;
   isSynced: boolean;
-  zoomLevel: number;
+  sliderT: number;
+  onPixelsPerSecondChange: (pps: number) => void;
   globalPlaybackSpeed: number;
   resizingId: string | null;
   resizingType: 'start' | 'end' | null;
@@ -29,7 +30,6 @@ interface Props {
   voiceoverUrl?: string;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
-  onZoomChange: (zoom: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
@@ -46,7 +46,8 @@ export function Timeline({
   currentTime,
   isPlaying,
   isSynced,
-  zoomLevel,
+  sliderT,
+  onPixelsPerSecondChange,
   globalPlaybackSpeed,
   resizingId,
   resizingType,
@@ -56,7 +57,6 @@ export function Timeline({
   voiceoverUrl,
   onTogglePlay,
   onSeek,
-  onZoomChange,
   onResizeStart,
   onSegmentUpdate,
   onOpenStockSearch,
@@ -65,8 +65,42 @@ export function Timeline({
   onSelectSegment,
   onDeleteHeading,
 }: Props) {
-  const totalDuration = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
-  const pixelsPerSecond = 100 * zoomLevel;
+  const totalDuration = useMemo(
+    () => segments.reduce((acc, s) => acc + s.duration, 0) || 1,
+    [segments],
+  );
+
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  // Measure the scroll container so the zoom formula can derive ppsMin from the
+  // available width. Falls back to 800 until the first observation lands.
+  useEffect(() => {
+    const container = document.getElementById('timeline-scroll-area');
+    if (!container) return;
+    const ro = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) setContainerWidth(entry.contentRect.width);
+    });
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, []);
+
+  // Single source of truth for zoom: exponential interpolation between ppsMin
+  // (fit-to-width) and ppsMax (100). When ppsMin >= ppsMax the project is short
+  // enough to fit, so the slider is a no-op pinned at 100.
+  const pixelsPerSecond = useMemo(() => {
+    const totalDur = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
+    const width = containerWidth || 800;
+    const ppsMin = Math.min((width * 0.95) / totalDur, 100);
+    const ppsMax = 100;
+    if (ppsMin >= ppsMax) return ppsMax;
+    return ppsMin * Math.pow(ppsMax / ppsMin, sliderT);
+  }, [sliderT, containerWidth, segments]);
+
+  // Keep App's pixelsPerSecond ref in sync for its non-rendering consumer sites.
+  useEffect(() => {
+    onPixelsPerSecondChange(pixelsPerSecond);
+  }, [pixelsPerSecond, onPixelsPerSecondChange]);
 
   const [waveformBars, setWaveformBars] = useState<number[]>([]);
   // useRef available for future use (e.g. AudioContext ref)
@@ -114,12 +148,37 @@ export function Timeline({
     const right = (seg.startTime + seg.duration) * pixelsPerSecond;
     const viewLeft = container.scrollLeft;
     const viewRight = viewLeft + container.clientWidth;
+    // Clamp to the timeline CONTENT width (segments), not container.scrollWidth —
+    // the decorative ruler overflows the content by a few px, and using scrollWidth
+    // let that overflow scroll segment 1 off the left edge.
+    const maxScroll = Math.max(0, totalDuration * pixelsPerSecond - container.clientWidth);
     if (left < viewLeft) {
-      container.scrollTo({ left: Math.max(0, left - 24), behavior: 'smooth' });
+      container.scrollTo({ left: Math.min(maxScroll, Math.max(0, left - 24)), behavior: 'smooth' });
     } else if (right > viewRight) {
-      container.scrollTo({ left: right - container.clientWidth + 24, behavior: 'smooth' });
+      container.scrollTo({ left: Math.min(maxScroll, Math.max(0, right - container.clientWidth + 24)), behavior: 'smooth' });
     }
   }, [currentSegmentId, pixelsPerSecond, segments]);
+
+  // Center the active segment when the zoom slider moves. Fires ONLY on sliderT
+  // change (not pixelsPerSecond/currentSegmentId/segments) so it never fights the
+  // active-segment effect above, which has a different trigger. Instant, not smooth.
+  useEffect(() => {
+    const container = document.getElementById('timeline-scroll-area');
+    if (!container || !currentSegmentId) return;
+    const seg = segments.find(s => s.id === currentSegmentId);
+    if (!seg) return;
+    const segStart = segments
+      .slice(0, segments.indexOf(seg))
+      .reduce((acc, s) => acc + s.duration, 0);
+    const segCenterX = (segStart + seg.duration / 2) * pixelsPerSecond;
+    const targetScrollLeft = segCenterX - container.clientWidth / 2;
+    // Clamp to the timeline CONTENT width (segments), not container.scrollWidth —
+    // the decorative ruler overflows by a few px; when the content fits the viewport
+    // maxScroll is 0 and segment 1 stays pinned to the left edge.
+    const maxScroll = Math.max(0, totalDuration * pixelsPerSecond - container.clientWidth);
+    container.scrollLeft = Math.min(maxScroll, Math.max(0, targetScrollLeft));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sliderT]);
 
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
@@ -173,7 +232,7 @@ export function Timeline({
       >
         {/* Time Ruler */}
         <div className="absolute top-4 left-6 right-6 h-4 border-b border-[#1A1A1A] flex items-end">
-          {Array.from({ length: Math.ceil(segments.reduce((acc, s) => acc + s.duration, 0) || 30) + 1 }).map((_, i) => (
+          {Array.from({ length: Math.ceil(totalDuration) + 1 }).map((_, i) => (
             <div key={i} className="flex-shrink-0" style={{ width: `${pixelsPerSecond}px` }}>
               <div className="h-2 w-px bg-gray-800" />
               <span className="text-[7px] text-gray-700 absolute -bottom-1 transform -translate-x-1/2 font-mono">{(i * 1).toFixed(1)}s</span>
@@ -351,10 +410,9 @@ export function Timeline({
                     onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
                   <div className="flex-1 flex items-center px-1">
                     {(() => {
-                      const totalDur = segments.reduce((a, seg) => a + seg.duration, 0);
                       const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
-                      const startBar = Math.floor((segStart / totalDur) * waveformBars.length);
-                      const endBar = Math.floor(((segStart + s.duration) / totalDur) * waveformBars.length);
+                      const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
+                      const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
                       const bars = waveformBars.slice(startBar, endBar);
                       if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
                       return (

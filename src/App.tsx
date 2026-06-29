@@ -580,7 +580,14 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1);
+  const [sliderT, setSliderT] = useState(0.5);
+  // Live pixels-per-second value from Timeline's zoom formula. Held in a ref so
+  // App's two consumer sites (playback auto-scroll, resize-drag) read the current
+  // value without re-rendering App on every zoom tick.
+  const pixelsPerSecondRef = useRef(100);
+  const onPixelsPerSecondChange = useCallback((pps: number) => {
+    pixelsPerSecondRef.current = pps;
+  }, []);
   const [globalPlaybackSpeed, setGlobalPlaybackSpeed] = useState(1);
   const [isAdjustingTrim, setIsAdjustingTrim] = useState(false);
   const [syncStep, setSyncStep] = useState<0 | 1 | 2 | 3 | 4>(0);
@@ -1800,25 +1807,39 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
+  // Reset zoom to the default midpoint whenever the active project changes.
+  useEffect(() => {
+    setSliderT(0.5);
+  }, [project.id]);
+
   // Auto-scroll timeline to keep playhead in view during playback
   useEffect(() => {
     if (isPlaying) {
       const scrollArea = document.getElementById('timeline-scroll-area');
       if (scrollArea) {
-        const pixelsPerSecond = 100 * zoomLevel;
+        const pixelsPerSecond = pixelsPerSecondRef.current;
         const playheadX = currentTime * pixelsPerSecond;
         const viewWidth = scrollArea.clientWidth;
         const scrollLeft = scrollArea.scrollLeft;
         const padding = 150; // threshold from edge to start scrolling
+        // Max meaningful scroll, measured from the actual timeline CONTENT width
+        // (segments, starting at x=0) — NOT scrollArea.scrollWidth. The decorative
+        // time ruler overflows the content by a few px, so scrollWidth stays > view
+        // even when the timeline visually fits, which let the auto-scroll nudge
+        // segment 1 off the left edge near playback end. Content width = 0 maxScroll
+        // when it fits, pinning scrollLeft to 0.
+        const totalDur = projectRef.current.segments.reduce((acc, s) => acc + s.duration, 0);
+        const contentWidth = totalDur * pixelsPerSecond;
+        const maxScroll = Math.max(0, contentWidth - viewWidth);
 
         if (playheadX > scrollLeft + viewWidth - padding) {
-          scrollArea.scrollLeft = playheadX - viewWidth + padding;
+          scrollArea.scrollLeft = Math.min(maxScroll, Math.max(0, playheadX - viewWidth + padding));
         } else if (playheadX < scrollLeft + (padding / 2)) {
-          scrollArea.scrollLeft = Math.max(0, playheadX - (padding / 2));
+          scrollArea.scrollLeft = Math.min(maxScroll, Math.max(0, playheadX - (padding / 2)));
         }
       }
     }
-  }, [currentTime, isPlaying, zoomLevel]);
+  }, [currentTime, isPlaying, sliderT]);
 
   useEffect(() => {
     if (!stockError) return;
@@ -2149,9 +2170,9 @@ export default function App() {
             <div className="absolute bottom-3 right-3 z-30 flex items-center gap-2 bg-[#0D0D0D]/90 backdrop-blur-sm border border-[#2A2A2A] rounded-full px-3 py-1.5 shadow-lg">
               <span className="text-[10px] text-zinc-500">Zoom</span>
               <input
-                type="range" min={0.5} max={10} step={0.1}
-                value={zoomLevel}
-                onChange={e => setZoomLevel(parseFloat(e.target.value))}
+                type="range" min={0} max={1} step={0.01}
+                value={sliderT}
+                onChange={e => setSliderT(parseFloat(e.target.value))}
                 className="w-20 accent-[#F27D26] h-1"
               />
             </div>
@@ -2202,7 +2223,8 @@ export default function App() {
                 currentTime={currentTime}
                 isPlaying={isPlaying}
                 isSynced={isSynced}
-                zoomLevel={zoomLevel}
+                sliderT={sliderT}
+                onPixelsPerSecondChange={onPixelsPerSecondChange}
                 globalPlaybackSpeed={globalPlaybackSpeed}
                 resizingId={resizingId}
                 resizingType={resizingType}
@@ -2215,7 +2237,6 @@ export default function App() {
                   setCurrentTime(time);
                   if (audioRef.current) audioRef.current.currentTime = time;
                 }}
-                onZoomChange={setZoomLevel}
                 onResizeStart={(id, type) => {
                   setResizingId(id);
                   setResizingType(type);
@@ -2225,7 +2246,7 @@ export default function App() {
                   const draggedIdx = originalSegments.findIndex(s => s.id === id);
                   const originalTarget = originalSegments[draggedIdx];
                   if (draggedIdx < 0 || !originalTarget) return;
-                  const pps = 100 * zoomLevel;
+                  const pps = pixelsPerSecondRef.current;
                   let lastX = 0;
                   let hasMoved = false;
                   // Capture video context at drag-start for speed coupling.
