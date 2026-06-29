@@ -115,6 +115,9 @@ export interface Asset {
   url: string;
   type: 'image' | 'video' | 'audio';
   file?: File;
+  /** Epoch ms captured at upload time (`file.lastModified`) — survives the
+   *  localStorage/IndexedDB round-trip that drops `file` itself. */
+  addedAt?: number;
 }
 
 export interface TextOverlay {
@@ -216,6 +219,11 @@ export interface Project {
   sceneDetails: string;
   scriptFileName?: string;
   sceneDetailsFileName?: string;
+  /** Epoch ms (`file.lastModified`) of the script/scene-details file last
+   *  committed via Apply Sync — these have no Asset entry of their own, so the
+   *  timestamp is tracked on Project directly instead. */
+  scriptUpdatedAt?: number;
+  sceneDetailsUpdatedAt?: number;
   segments: VideoSegment[];
   assets: Asset[];
   voiceoverId?: string;

@@ -151,7 +151,7 @@ async function persistFileToAsset(
     URL.revokeObjectURL(url);
     return null;
   }
-  return { id, name: file.name, url, type, file };
+  return { id, name: file.name, url, type, file, addedAt: Date.now() };
 }
 
 /**
@@ -1279,6 +1279,7 @@ export default function App() {
       url: URL.createObjectURL(file),
       type: 'audio',
       file,
+      addedAt: Date.now(),
     };
     setPendingVoiceoverSync({ file, asset });
 
@@ -1287,6 +1288,13 @@ export default function App() {
     // stays enabled via the lastTranscribedFileIdentity clause below.
     const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
     if (projectRef.current.lastTranscribedFileIdentity === incomingIdentity && cachedTokensExist) {
+      // The asset above just minted a BRAND NEW ephemeral id — startTranscription
+      // (which normally moves lastTranscribedAssetId forward) never runs on this
+      // path, so without this, lastTranscribedAssetId is left pointing at the OLD
+      // asset id forever. Once this new asset is committed by Apply Sync,
+      // transcriptionReady's id comparisons can never match again, and the button
+      // gets stuck disabled with no event left that could re-enable it.
+      setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
       return;
     }
 
@@ -1494,6 +1502,8 @@ export default function App() {
       sceneDetails: sceneText,
       scriptFileName: staged.scriptFile?.file.name ?? prev.scriptFileName ?? '',
       sceneDetailsFileName: staged.sceneFile?.file.name ?? prev.sceneDetailsFileName ?? '',
+      scriptUpdatedAt: staged.scriptFile ? Date.now() : prev.scriptUpdatedAt,
+      sceneDetailsUpdatedAt: staged.sceneFile ? Date.now() : prev.sceneDetailsUpdatedAt,
       assets: allAssets,
       voiceoverId: newVoiceoverId,
       segments: committedSegments,
@@ -1891,6 +1901,11 @@ export default function App() {
 
   const handleNewProjectConfirm = (name: string): void => {
     setShowNewProjectModal(false);
+    // Discard any staging-time voiceover transcription left over from the
+    // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
+    // ephemeral asset id, which can never match the new project's
+    // lastTranscribedAssetId, leaving Apply Sync stuck disabled forever.
+    handleVoiceoverUnstaged();
     // Revoke current project's blob URLs (they belong to the old session).
     project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
     // Build the new project and register it immediately — don't wait for the
@@ -1918,6 +1933,12 @@ export default function App() {
   const handleSwitchProject = async (id: string): Promise<void> => {
     setShowDashboard(false);
     if (id === project.id) return;
+
+    // Discard any staging-time voiceover transcription left over from the
+    // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
+    // ephemeral asset id, which can never match the target project's
+    // lastTranscribedAssetId, leaving Apply Sync stuck disabled forever.
+    handleVoiceoverUnstaged();
 
     // Save current project before switching — only if it was confirmed by the user.
     if (project.confirmed) {
@@ -2014,20 +2035,20 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-[#E4E3E0] font-sans selection:bg-[#F27D26] selection:text-white flex overflow-hidden h-screen">
+    <div className="min-h-screen bg-[var(--kx-bg)] text-[#E4E3E0] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen">
 
       {/* Body — 3 columns, full height */}
       <div className="flex flex-1 overflow-hidden h-full">
 
         {/* Left panel — 20vw collapsible */}
         <ErrorBoundary fallback={(err, reset) => (
-          <div style={{ width: '20vw' }} className="flex-shrink-0 flex flex-col h-full border-r border-[#1A1A1A] bg-[#080808]">
+          <div style={{ width: '20vw' }} className="flex-shrink-0 flex flex-col h-full border-r border-[var(--kx-line)] bg-[var(--kx-panel)]">
             <PanelFallback label="Left panel" error={err} reset={reset} />
           </div>
         )}>
         <div
           style={{ width: leftPanelCollapsed ? 0 : '20vw' }}
-          className="flex-shrink-0 flex flex-col h-full border-r border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
+          className="flex-shrink-0 flex flex-col h-full border-r border-[var(--kx-line)] bg-[var(--kx-panel)] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
           <DropZonePanel
             segments={project.segments}
@@ -2036,13 +2057,15 @@ export default function App() {
             script={project.script}
             persistedScript={project.script}
             persistedScriptName={project.scriptFileName ?? ''}
+            persistedScriptUpdatedAt={project.scriptUpdatedAt}
             persistedSceneDetails={project.sceneDetails}
             persistedSceneDetailsName={project.sceneDetailsFileName ?? ''}
+            persistedSceneDetailsUpdatedAt={project.sceneDetailsUpdatedAt}
             persistedVoiceoverName={project.assets.find(a => a.id === project.voiceoverId)?.name ?? ''}
             persistedAssetCount={project.assets.filter(a => a.type !== 'audio').length}
             isSynced={isSynced}
-            onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '' }))}
-            onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '' }))}
+            onClearScript={() => setProject(p => ({ ...p, script: '', scriptFileName: '', scriptUpdatedAt: undefined }))}
+            onClearSceneDetails={() => setProject(p => ({ ...p, sceneDetails: '', sceneDetailsFileName: '', sceneDetailsUpdatedAt: undefined }))}
             onDeleteAsset={handleDeleteAsset}
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
