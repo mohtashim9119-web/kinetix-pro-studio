@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
-import { getMotionProps } from '../constants';
+import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 
@@ -141,6 +141,7 @@ interface Props {
   globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalOverlayConfig: GlobalOverlayConfig;
+  globalOverlayFilter?: string;
   assets: Asset[];
   isPlaying: boolean;
   isResizingRef: React.RefObject<boolean>;
@@ -158,6 +159,7 @@ export function PreviewStage({
   globalTransition,
   globalTransitionDuration,
   globalOverlayConfig,
+  globalOverlayFilter,
   assets,
   isPlaying,
   isResizingRef,
@@ -259,9 +261,10 @@ export function PreviewStage({
   // ---------------------------------------------------------------------------
   // Transition preview — pre-roll snapshot blend
   // ---------------------------------------------------------------------------
+  const computedFilter = globalOverlayFilter ? getFilterStyle(globalOverlayFilter) : undefined;
   const globalConfig = {
     overlayConfig: globalOverlayConfig,
-    globalOverlayFilter: undefined as string | undefined,
+    globalOverlayFilter: (computedFilter && computedFilter !== 'none') ? computedFilter : undefined,
   };
 
   const transitionPreview = useTransitionPreview({

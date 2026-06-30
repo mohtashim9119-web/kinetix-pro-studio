@@ -75,6 +75,14 @@ export function usePlayback({
         audio.play().catch(() => {});
       }
 
+      const segDur = segmentsRef.current.reduce((a, s) => a + s.duration, 0);
+      if (segDur > 0 && audio.currentTime >= segDur) {
+        setIsPlaying(false);
+        audio.currentTime = 0;
+        setCurrentTime(0);
+        return;
+      }
+
       // End-of-audio detection via native HTMLMediaElement.ended flag.
       if (audio.ended) {
         setIsPlaying(false);

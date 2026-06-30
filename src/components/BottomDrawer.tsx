@@ -57,7 +57,7 @@ export function BottomDrawer({
   const srcDur = s?.sourceDuration ?? 60;
   const trimStart = s?.trimStart ?? 0;
   // Bar width is always fixed = segment.duration (slip model — only position slides)
-  const widthPct = srcDur > 0 && s ? (s.duration / srcDur) * 100 : 0;
+  const widthPct = srcDur > 0 && s ? (s.duration * (s.playbackSpeed ?? 1) / srcDur) * 100 : 0;
   const leftPct  = srcDur > 0 ? (trimStart / srcDur) * 100 : 0;
 
   return (
