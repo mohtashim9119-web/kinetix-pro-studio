@@ -421,11 +421,18 @@ export async function transcribeWithProgress(
   onProgress: (percent: number) => void,
   signal: AbortSignal,
 ): Promise<TranscriptToken[]> {
-  const response = await fetch(audioAsset.url);
-  if (!response.ok) {
-    throw new Error(`Failed to fetch audio: ${response.statusText}`);
+  let buffer: ArrayBuffer;
+  if (audioAsset.file) {
+    // Prefer the raw File object — avoids blob URL fetch restrictions in WebView2 (Windows)
+    buffer = await audioAsset.file.arrayBuffer();
+  } else {
+    // Fallback: fetch blob URL (works on macOS WebView, may fail on Windows)
+    const response = await fetch(audioAsset.url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audio: ${response.statusText}`);
+    }
+    buffer = await response.arrayBuffer();
   }
-  const buffer = await response.arrayBuffer();
   const audiob64 = arrayBufferToBase64(buffer);
 
   return new Promise<TranscriptToken[]>((resolve, reject) => {

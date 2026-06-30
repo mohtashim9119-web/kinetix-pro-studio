@@ -955,7 +955,7 @@ export function DropZonePanel({
               icon={<Music size={18} />}
               label="Voiceover"
               subtitle="MP3, WAV, M4A or OGG"
-              accept="audio/*"
+              accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac,.wma,.opus,.aiff,.aif"
               stagedFile={staged.voiceoverFile}
               persistedLabel={voiceoverPersisted}
               canDeletePersisted

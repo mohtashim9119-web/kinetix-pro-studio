@@ -41,6 +41,12 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::Manager;
+                app.get_webview_window("main")
+                   .map(|w| w.open_devtools());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

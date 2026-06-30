@@ -68,6 +68,9 @@ jobs:
             /tmp/ffmpeg-x64/ffmpeg \
             -output src-tauri/binaries/ffmpeg-universal-apple-darwin
           chmod +x src-tauri/binaries/ffmpeg-universal-apple-darwin
+          # Also provide arch-specific names Tauri may resolve during aarch64 sub-build
+          cp src-tauri/binaries/ffmpeg-universal-apple-darwin src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+          cp src-tauri/binaries/ffmpeg-universal-apple-darwin src-tauri/binaries/ffmpeg-x86_64-apple-darwin
 
       - name: Provision whisper sidecar (macOS universal)
         if: matrix.os == 'macos-latest'
@@ -100,6 +103,10 @@ jobs:
             -output "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin"
           chmod +x \
             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin"
+          cp "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin" \
+             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
+          cp "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin" \
+             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
           # Download base.en model
           curl -L -o "$GITHUB_WORKSPACE/src-tauri/models/ggml-base.en.bin" \
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
