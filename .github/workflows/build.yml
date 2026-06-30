@@ -82,7 +82,13 @@ jobs:
           cmake -B build-x64 \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_METAL=OFF \
-            -DCMAKE_OSX_ARCHITECTURES=x86_64
+            -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+            -DGGML_NATIVE=OFF \
+            -DGGML_AVX=OFF \
+            -DGGML_AVX2=OFF \
+            -DGGML_AVX512=OFF \
+            -DGGML_FMA=OFF \
+            -DGGML_F16C=OFF
           cmake --build build-x64 --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
           cp build-x64/bin/whisper-cli \
             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
