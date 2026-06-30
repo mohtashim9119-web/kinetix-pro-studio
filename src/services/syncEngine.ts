@@ -63,7 +63,7 @@ export function applyAnchorBasedTiming(
 
   const out: VideoSegment[] = segments.map(s => ({ ...s }));
 
-  // PASS 1 — normalize first-segment anchor to 0.
+  // PASS 1 — normalize first-segment anchor to 0. (PASS 2 deleted in 3d-2)
   // If the new first segment was previously not first (its anchor > 0), or is brand-new
   // (anchor undefined), shift it to 0 so there is never a silent gap at the front.
   const first = out[0];
@@ -72,7 +72,7 @@ export function applyAnchorBasedTiming(
     first.anchorStart = 0;
   }
 
-  // PASS 3 — recompute startTime and duration from anchors.
+  // PASS 2 — recompute startTime and duration from anchors.
   // Locked-segment exemption: locked segments snap their startTime to their anchor
   // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps
   // that opened up after them. They never shrink.
@@ -102,7 +102,7 @@ export function applyAnchorBasedTiming(
     }
   }
 
-  // PASS 4 — clamp last segment exactly to audioDuration.
+  // PASS 3 — clamp last segment exactly to audioDuration.
   const last = out[out.length - 1];
   if (last) {
     last.duration = Number(Math.max(0.1, audioDuration - last.startTime).toFixed(3));

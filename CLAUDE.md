@@ -102,10 +102,16 @@ src-tauri/
   capabilities/
     default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
   src/
-    lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all ffmpeg commands
-    ffmpeg.rs        # 7 Tauri commands: create_session, write_file (b64), read_file, delete_file,
-                     #   exec (sidecar), destroy_session, save_bytes_to_disk (rfd native save dialog).
-                     #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal validation.
+    lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
+                     #   (12 total: 9 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
+                     #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
+    ffmpeg.rs        # 9 Tauri commands: create_session, write_file (b64), read_file, delete_file,
+                     #   exec (sidecar), destroy_session, pick_save_path, save_bytes_to_disk (rfd),
+                     #   reveal_in_finder. Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/);
+                     #   path traversal validation.
+    whisper.rs       # 2 Tauri commands: whisper_transcribe (streams progress via Channel),
+                     #   whisper_cancel. WhisperState holds the running child process for cancellation.
+                     #   Sidecar: binaries/whisper; model files: models/*.
   binaries/
     README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binaries.
     ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 (76 MB, Intel macOS).
@@ -114,7 +120,7 @@ src-tauri/
 docs/
   phase-4-safari-test.md         # Safari validation procedure + decision matrix (result: PASS)
   fidelity-polish-smoke-tests.md # Fidelity Polish manual smoke test procedures (Items 1–5)
-.env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY
+.env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY, VITE_COVERR_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
 
@@ -377,6 +383,7 @@ All dead dependencies removed. No remaining items.
 |---|---|---|
 | `VITE_PEXELS_API_KEY` | `src/services/stockService.ts` | Optional — stock search silently disabled if missing |
 | `VITE_PIXABAY_API_KEY` | `src/services/stockService.ts` | Optional — stock search silently disabled if missing |
+| `VITE_COVERR_API_KEY` | `src/services/stockService.ts` | Optional — Coverr video search silently skipped if missing |
 | ~~`GEMINI_API_KEY`~~ | Removed in Phase 1 — `define` block stripped from `vite.config.ts` | — |
 
 ---
@@ -428,7 +435,7 @@ All dead dependencies removed. No remaining items.
 | Fidelity Polish smoke test doc | ✅ Done — 2026-05-21 | docs/fidelity-polish-smoke-tests.md |
 | Main bundle size (post Phase 6.4) | ✅ 442.18 kB / 134.73 kB gzip (post Phase 6.4 wasm removal) | Current measured value; down from 443.50 kB / 135.70 kB at Fidelity Polish |
 | Phase 6.1 — Tauri v2 scaffold | ✅ Done — 2026-05-26 | tauri init, tauri.conf.json, npm scripts, smoke test |
-| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (7 commands incl. save_bytes_to_disk); TauriFfmpeg class; IPC smoke test (10/10) |
+| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (9 commands incl. save_bytes_to_disk, pick_save_path, reveal_in_finder); TauriFfmpeg class; IPC smoke test (10/10) |
 | Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
 | Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
 | Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |
