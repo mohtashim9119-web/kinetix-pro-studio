@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-06-29 |
-| Current HEAD | `25ca2b0` ("docs: move transition 100/0 timing issue to Deferred, expand context"). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10): Batch A — hard-cut, cross-dissolve, zoom, dip-black, dip-white, slide-push, whip-pan, wipe (commits `675e322`…`c0ab24f`) — and Batch B — glitch-rgb, light-leak (`76ccf16`) — plus caption-rendering fixes (`6c88da0`, `4a65379`, `f1676a9`, `a61bfe8`) and two docs commits (`fb961ef`, `25ca2b0`) recording the 100/0 transition-timing tradeoff as a deferred known issue. Local `main` is 8 commits ahead of `origin/main` (this batch not yet pushed). Architecture Shift complete (2026-06-24). |
+| Last updated | 2026-06-30 |
+| Current HEAD | `614e380` ("docs: update CLAUDE.md and project state for UI bug fixes (2026-06-30)"). Four UI bugs fixed: cancel ghost project, inline project rename, UI state persistence (kinetix:ui:v1), left-panel auto-scroll (commits `66fdabf`, `e967a8d`, `ddfde06`). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -67,6 +67,15 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 </details>
 
 <details>
+<summary>Four UI bugs fixed — ✅ DONE 2026-06-30 (commits 66fdabf, e967a8d, ddfde06)</summary>
+
+* ✅ Bug 1 — Cancel on new-project popup no longer creates a ghost project. Mount effect zero-projects branch now shows empty dashboard instead of auto-opening the modal.
+* ✅ Bug 2 — Project name is inline editable from top-left panel (click to edit, blur/Enter saves, Escape discards). Top-right display is read-only and updates reactively.
+* ✅ Bug 3 — UI state fully persists on reload: active tab, left/right panel collapse state, preview divider height, currentTime, selectedSegmentId, timeline horizontal scroll. handleSwitchProject gained a preserveUiState flag — reload preserves position, dashboard switch resets to 0:00.
+* ✅ Bug 4 — Left panel segment list auto-scrolls to active segment during playback AND on manual timeline click while paused. Timeline horizontal scroll persists via debounced listener in Timeline.tsx, restored at 300ms after mount.
+</details>
+
+<details>
 <summary>Effects Step 8 — transitions complete (10/10, commit 76ccf16)</summary>
 
 All 10 transition slugs rendered in `frameRenderer.ts` (`applyTransitionBlend`)
@@ -86,7 +95,7 @@ and `useTransitionPreview.ts`/`PreviewStage.tsx`:
 
 ## Active Tasks
 
-None currently — see Completed Work for the left-panel UI restructure (closed 2026-06-30).
+None currently.
 
 ## Deferred Polish Features
 
@@ -289,6 +298,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-27 | **Shared SegmentControls + drawer/preview/timeline sync (commit `4887d33`).** Extracted the Review Mapping card's controls into a shared `SegmentControls` component reused by both the modal and the bottom drawer (modal unchanged — pure move; drawer is controls-only, no thumbnail). Bottom drawer recentered to a viewport-anchored 50vw block (motion-owned `x: '-50%'`), independent of side-panel state. Mute toggle relocated to the drawer header (scene-only); body mute row removed so scene/heading drawers match height. Left-panel segment click now seeks the time-driven preview to the segment and auto-scrolls the timeline to bring it into view. Closes backlog item 2 (bottom drawer redesign). |
 | 2026-06-27 | **Effects Tab Rebuild Steps 5–7 + drawer effect-pills (commits `dd903b2`, `d0d8ca2`, `d750ce3`, `4b13cb0`).** Apply-to-selected/all and randomize now write real per-segment effect fields; combined-look presets (transition + animation + overlay slugs + 2 durations) persist globally via a new `src/services/lookPresetService.ts` (dedicated localStorage store, 20-cap, kept separate from the legacy single-category `presetService.ts`). Mid-session fix: preset ids are now preserved end-to-end through the service round-trip (the service no longer re-mints its own id), so the active "Restored" highlight survives a save. Bottom drawer header also gained a read-only effect-pills row. Step 8 (renderer implementation) is now the only remaining step in the Effects Tab Rebuild plan. All four commits are local-only — not yet pushed to `origin/main` (still at `1e249df`). |
 | 2026-06-29 | **Effects Step 8 — transition renderer (Batch A + B):** All 10 transitions implemented in `applyTransitionBlend` (frameRenderer.ts) via pure canvas compositing — no getImageData/pixel readback anywhere. glitch-rgb uses lazy module-level scratch canvases + screen blend (cheap fake, visually indistinguishable at transition speeds). light-leak uses radial gradient bloom + screen blend, opacity shaped by alpha*(1-alpha)*4. Transition timing is Path B (100/0 split — entire window on A's trailing extension in export, last D seconds of A in preview) — documented as deferred known issue, not a regression. |
+| 2026-06-30 | UI state persistence: kinetix:ui:v1 localStorage key stores activeLeftTab, leftPanelCollapsed, rightPanelCollapsed, previewHeight, currentTime, selectedSegmentId, timelineScrollLeft. handleSwitchProject preserveUiState flag distinguishes reload (preserve) from dashboard switch (reset). Timeline scroll listener lives in Timeline.tsx because timeline-scroll-area does not exist in DOM when App.tsx mounts. Restore deferred 300ms via setTimeout to let layout settle after double-mount caused by unbatched async hydration state updates. |
 
 ---
 
