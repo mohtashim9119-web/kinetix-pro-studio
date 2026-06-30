@@ -49,18 +49,23 @@ pub enum WhisperEvent {
 // ---------------------------------------------------------------------------
 
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    eprintln!("[model_path] starting resolution");
     // Production: resource_dir bundled by tauri
     if let Ok(resource_dir) = app.path().resource_dir() {
         let model = resource_dir.join("models").join("ggml-base.en.bin");
+        eprintln!("[model_path] checking resource_dir path: {:?} exists={}", model, model.exists());
         if model.exists() {
             return Ok(model);
         }
         // Windows: Tauri v2 resource_dir may include a _up_ segment — try one level up too
         #[cfg(target_os = "windows")]
-        if let Some(parent) = resource_dir.parent() {
-            let model = parent.join("models").join("ggml-base.en.bin");
-            if model.exists() {
-                return Ok(model);
+        {
+            if let Some(parent) = resource_dir.parent() {
+                let model = parent.join("models").join("ggml-base.en.bin");
+                eprintln!("[model_path] checking windows parent path: {:?} exists={}", model, model.exists());
+                if model.exists() {
+                    return Ok(model);
+                }
             }
         }
     }
@@ -74,6 +79,7 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .unwrap_or(&exe)
         .join("models")
         .join("ggml-base.en.bin");
+    eprintln!("[model_path] checking prod (exe-relative) path: {:?} exists={}", prod_model, prod_model.exists());
     if prod_model.exists() {
         return Ok(prod_model);
     }
@@ -85,10 +91,12 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .parent().unwrap_or(&exe)   // src-tauri/
         .join("models")
         .join("ggml-base.en.bin");
+    eprintln!("[model_path] checking dev path: {:?} exists={}", dev_model, dev_model.exists());
     if dev_model.exists() {
         return Ok(dev_model);
     }
 
+    eprintln!("[model_path] no model found at any path");
     Err(
         "ggml-base.en.bin not found. \
          Run: curl -L -o src-tauri/models/ggml-base.en.bin \

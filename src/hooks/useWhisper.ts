@@ -142,6 +142,23 @@ export function useWhisper(): UseWhisperApi {
 
         if (generationRef.current !== generation) return;
 
+        if (tokens.length === 0) {
+          // Whisper returned no tokens — keep the existing character-weight
+          // estimate timings instead of overwriting with zero-collapsed
+          // alignment results (alignScenestoTranscript maps every segment to
+          // {t0:0,t1:0} when tokens is empty). Mark the job done — not left
+          // stuck at 'transcribing' — so Apply Sync's gating re-enables and its
+          // own no-cached-tokens branch applies the character-based fallback.
+          console.warn('[whisper] empty token array received — keeping estimate timings');
+          setTranscriptionStatus({ phase: 'done', jobId });
+          setTimeout(() => {
+            if (generationRef.current === generation) {
+              setTranscriptionStatus({ phase: 'idle' });
+            }
+          }, 3000);
+          return;
+        }
+
         const silences = await fetchAndDetectSilences(audioAsset);
         if (generationRef.current !== generation) return;
 

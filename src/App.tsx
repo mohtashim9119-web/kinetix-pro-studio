@@ -2265,6 +2265,7 @@ export default function App() {
                 isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
                 voiceoverUrl={voiceover?.url}
+                voiceoverFile={voiceover?.file}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);

@@ -28,6 +28,7 @@ interface Props {
   isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
   voiceoverUrl?: string;
+  voiceoverFile?: File;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
@@ -55,6 +56,7 @@ export function Timeline({
   isAdjustingTrim,
   voiceoverName,
   voiceoverUrl,
+  voiceoverFile,
   onTogglePlay,
   onSeek,
   onResizeStart,
@@ -111,8 +113,14 @@ export function Timeline({
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(voiceoverUrl);
-        const arrayBuf = await res.arrayBuffer();
+        let arrayBuf: ArrayBuffer;
+        if (voiceoverFile) {
+          // Prefer the raw File — avoids blob URL fetch restrictions in WebView2 (Windows)
+          arrayBuf = await voiceoverFile.arrayBuffer();
+        } else {
+          const res = await fetch(voiceoverUrl);
+          arrayBuf = await res.arrayBuffer();
+        }
         const audioCtx = new AudioContext();
         const decoded = await audioCtx.decodeAudioData(arrayBuf);
         await audioCtx.close();
@@ -132,7 +140,7 @@ export function Timeline({
       }
     })();
     return () => { cancelled = true; };
-  }, [voiceoverUrl]);
+  }, [voiceoverUrl, voiceoverFile]);
 
   // Keep the active segment visible: when the current segment changes (a segment
   // clicked in the left-panel list, a timeline click, or playback crossing a
