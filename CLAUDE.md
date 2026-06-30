@@ -337,37 +337,7 @@ App.tsx                    — top-level state + orchestration only
 
 ---
 
-## Known Bugs (Fix Before Shipping)
-
-- ~~**Trim End**~~: **Fixed Fidelity Polish Item 5** — `trimEnd` UI (slider + reset button, video-only) in SegmentEditorPanel; `frameRenderer.ts` clamps `videoTime = Math.min(rawTime, segment.trimEnd)` before seek; encoder path flows through frameRenderer automatically.
-- ~~**`autoMatchAssets` effect at `App.tsx:350–355`**~~: **Fixed Phase 5 step 1** — removed the effect; `autoMatchSegments` is now called imperatively inside each upload handler only. Deletion path is clean.
-- ~~**Line ~908 dead branch**~~: **Fixed Phase 1 Step 3** — `Math.abs(audioRef.current.currentTime - currentTime) > 0.2` check removed from playback interval. No such check exists in current code.
-- ~~**`togglePlay` listener churn**~~: **Fixed Phase 1 Step 3** — keyboard `useEffect` at App.tsx:817 uses `setIsPlaying(p => !p)` directly with `[]` dep array; listener attaches once on mount. No churn.
-- ~~**`storyMap` unused param**~~: **Fixed Phase 1 Step 3** — `parseProjectData` signature has no `storyMap` parameter. Removed in Phase 1.
-
----
-
-## Known Limitations (Intentionally Deferred)
-
-These are known gaps, not bugs to fix immediately. Track here so they aren't forgotten.
-
-| Limitation | Impact | Future Fix |
-|---|---|---|
-| ~~Export fidelity limited to what `frameRenderer.ts` implements~~ | ✅ **Resolved Phase 4** — phantom entries pruned from all UI dropdowns; only implemented transitions/filters/animations are shown | — |
-| ~~Safari export untested~~ | ✅ **Resolved Phase 4** — Safari verified 2026-05-17; `crossOriginIsolated=true`, full export works | — |
-| ~~Segments referencing a deleted asset not cleaned up until reload~~ | ✅ **Resolved Phase 4 (c7515e5)** — cleaned up at delete time | — |
-| ~~No error boundaries~~ | ✅ **Resolved Phase 4 (a42ed66)** — `ErrorBoundary` wraps left panel, PreviewStage, Timeline | — |
-| Client-side API keys | Keys visible in JS bundle | Backend proxy endpoint (deferred — required before public launch) |
-| No authentication | Open access | Add auth layer before public launch / multi-user (tracked in SaaS readiness) |
-| ~~`AnimationType` values not applied in canvas export~~ | ✅ **Resolved Fidelity Polish Item 1** — `canvasAnimations.ts` applies KEN_BURNS/FLOAT/BOUNCE/PULSE/HEARTBEAT/WOBBLE/SHAKE/SKEW/GLITCH/NEON_FLICKER/ROTATE via ctx transforms in frameRenderer; live preview uses `getAnimationWrapperProps` in PreviewStage. | — |
-| ~~Extra overlays have no drag-to-position UI~~ | ✅ **Resolved Fidelity Polish Item 4** — Pointer Events drag in PreviewStage with hard-clamp `[halfW/2, 100-halfW/2]`; `updateExtraOverlayPosition` callback wires to App.tsx immutable state update. | — |
-| ~~No rate-limit handling in stockService~~ | ✅ **Resolved Phase 5** — exponential backoff retry (3 attempts); discriminated union surface rate_limited/error/ok | — |
-| ~~JSZip dynamic-import double-cast~~ | ✅ **Resolved Phase 5** — `{ default: JSZip }` destructure; `moduleResolution: "bundler"` synthesizes `.default` | — |
-| ~~Real mid-export cancellation not implemented~~ | ✅ **Resolved Phase 5** — `worker.terminate()` + generation counter prevents stale state overwrite | — |
-| 4K export unvalidated | 1080p verified on macOS + Windows native; 4K path untested | Validate in Phase 7+ |
-| ~~Re-staging audio writes a new IndexedDB blob via `putAsset` with no content dedup; the `oldIdx` splice in `handleApplySyncFromFiles` removed the asset from `project.assets` without calling `deleteAsset`, leaving an orphaned blob~~ | ✅ **Resolved (`3b0593c`)** — splice now pairs with `URL.revokeObjectURL` + fire-and-forget `deleteAsset(projectId, oldId)` | — |
-| ~~ReviewMappingModal thumbnail is a static image, not a live overlay render~~ | ✅ **Resolved 3b (`23c8227`)** — each thumbnail now renders a live overlay/heading text layer (font/weight/italic/size/color/bg/bg-None/x/y) scaled proportionally to the thumbnail box and updating in real time on edit. Positioning math is mirrored locally in the modal; `PreviewStage`/`frameRenderer`/`types.ts` untouched. Heading italic intentionally not rendered (unwired everywhere). | — |
-| Export ignores fontWeight/fontStyle/textShadow on the main overlay caption (DEFERRED — non-blocking) | `frameRenderer.ts:475-477` computes `fontWeight`/`fontStyle`/`shadow` from `overlayConfig` but the canvas font string at line 488 is hardcoded to `` `italic normal ${bodyPx}px "${fontFamily}"` `` — exported captions are always italic+normal-weight regardless of user settings, and `shadow` is never applied at all (dead read). `PreviewStage`'s `<p>` for the same caption *does* apply these dynamically, so preview/modal show the right look but the exported MP4 won't match. Export not manually retested when last flagged | Wire `fontWeight`/`fontStyle` into the canvas font string and call `applyTextShadow(ctx, shadow)` (existing helper, already used for extra overlays at line 278), mirroring `PreviewStage` |
+> Bug & task tracking lives in project-state.md (single source of truth). This file is architecture, conventions, invariants, and refactor history only.
 
 ---
 
