@@ -578,7 +578,10 @@ export default function App() {
   const [isHydrating, setIsHydrating] = useState(true);
   const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
   const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [currentTime, setCurrentTime] = useState<number>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').currentTime ?? 0; }
+    catch { return 0; }
+  });
   const [isProcessing, setIsProcessing] = useState(false);
   const [sliderT, setSliderT] = useState(0.5);
   // Live pixels-per-second value from Timeline's zoom formula. Held in a ref so
@@ -595,13 +598,66 @@ export default function App() {
   const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
   const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [isSynced, setIsSynced] = useState(false);
-  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').selectedSegmentId ?? null; }
+    catch { return null; }
+  });
   // Batch (multi-)selection for the Effects tab — separate from selectedSegmentId
   // (which drives drawer + seek). Driven only by row checkboxes / select-all.
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set());
-  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState(false);
-  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
-  const [previewHeight, setPreviewHeight] = useState(() => Math.floor((window.innerHeight - 4) / 2));
+
+  // ── Persisted UI state (kinetix:ui:v1) ──────────────────────────────────────
+  const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').leftPanelCollapsed ?? false; }
+    catch { return false; }
+  });
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState<boolean>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').rightPanelCollapsed ?? false; }
+    catch { return false; }
+  });
+  const [previewHeight, setPreviewHeight] = useState<number>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').previewHeight ?? Math.floor((window.innerHeight - 4) / 2); }
+    catch { return Math.floor((window.innerHeight - 4) / 2); }
+  });
+  const [activeLeftTab, setActiveLeftTab] = useState<'files' | 'segments' | 'effects'>(() => {
+    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').activeLeftTab ?? 'files'; }
+    catch { return 'files'; }
+  });
+
+  // Timeline scroll position — read once on mount; passed to <Timeline> as initialScrollLeft.
+  // Persistence (scroll listener + localStorage write) lives in Timeline.tsx where
+  // timeline-scroll-area is guaranteed to exist.
+  const initialTimelineScrollLeft = (() => {
+    try { return (JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').timelineScrollLeft as number) ?? 0; }
+    catch { return 0; }
+  })();
+
+  // Persist UI state to localStorage whenever any of the tracked values change.
+  useEffect(() => {
+    try {
+      const prev = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
+      localStorage.setItem('kinetix:ui:v1', JSON.stringify({
+        ...prev,
+        leftPanelCollapsed,
+        rightPanelCollapsed,
+        previewHeight,
+        activeLeftTab,
+        selectedSegmentId,
+      }));
+    } catch { /* quota exceeded or SSR — ignore */ }
+  }, [leftPanelCollapsed, rightPanelCollapsed, previewHeight, activeLeftTab, selectedSegmentId]);
+
+  // Persist currentTime when paused or seeking (not on every 16ms playback tick).
+  // Fires when isPlaying transitions to false (pause/end) or when currentTime
+  // changes while already paused (seek). Bails immediately during playback.
+  useEffect(() => {
+    if (isPlaying) return;
+    try {
+      const ui = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
+      localStorage.setItem('kinetix:ui:v1', JSON.stringify({ ...ui, currentTime }));
+    } catch { /* ignore */ }
+  }, [isPlaying, currentTime]);
+
   const isDraggingDivider = useRef(false);
   const centerColRef = useRef<HTMLDivElement>(null);
   const [showSettings, setShowSettings] = useState(false);
@@ -756,9 +812,8 @@ export default function App() {
       const lastId = getLastOpenedProjectId();
 
       if (allMetas.length === 0) {
-        // First ever launch — no projects yet.
-        setShowDashboard(false);
-        setShowNewProjectModal(true);
+        // No projects yet — show empty dashboard; user clicks "New Project" there.
+        setShowDashboard(true);
         setIsHydrating(false);
         return;
       }
@@ -2119,6 +2174,10 @@ export default function App() {
             onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
             onBackToProjects={() => { if (project.confirmed) saveNow(); clearLastOpenedProjectId(); setShowDashboard(true); }}
             projectName={project.name}
+            onRename={(name) => setProject(p => ({ ...p, name }))}
+            activeLeftTab={activeLeftTab}
+            onActiveLeftTabChange={setActiveLeftTab}
+            isPlaying={isPlaying}
           />
           {transcriptionStatus.phase !== 'idle' && (
             <div className="flex-shrink-0">
@@ -2250,6 +2309,7 @@ export default function App() {
               <PanelFallback label="Timeline" error={err} reset={reset} />
             )}>
               <Timeline
+                initialScrollLeft={initialTimelineScrollLeft}
                 segments={project.segments}
                 assets={project.assets}
                 currentSegmentId={currentSegment?.id}
@@ -2694,7 +2754,7 @@ export default function App() {
       {showNewProjectModal && (
         <NewProjectModal
           onConfirm={handleNewProjectConfirm}
-          onCancel={() => setShowNewProjectModal(false)}
+          onCancel={() => { setShowNewProjectModal(false); setShowDashboard(true); }}
         />
       )}
 

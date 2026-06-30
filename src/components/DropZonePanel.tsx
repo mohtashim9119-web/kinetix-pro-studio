@@ -404,6 +404,10 @@ interface Props {
   onApplyOverlayConfigPreset: (preset: OverlayConfigPreset) => void;
   onBackToProjects: () => void;
   projectName: string;
+  onRename: (name: string) => void;
+  activeLeftTab: 'files' | 'segments' | 'effects';
+  onActiveLeftTabChange: (tab: 'files' | 'segments' | 'effects') => void;
+  isPlaying: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -477,9 +481,18 @@ export function DropZonePanel({
   onApplyOverlayConfigPreset,
   onBackToProjects,
   projectName,
+  onRename,
+  activeLeftTab,
+  onActiveLeftTabChange,
+  isPlaying,
 }: Props) {
-  // ── Tab state ─────────────────────────────────────────────────────────────
-  const [activeTab, setActiveTab] = useState<'files' | 'segments' | 'effects'>('files');
+  // ── Tab state (controlled from App.tsx for persistence) ───────────────────
+  const activeTab = activeLeftTab;
+  const setActiveTab = onActiveLeftTabChange;
+  // ── Inline project-name edit state ────────────────────────────────────────
+  const [isEditingName, setIsEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(projectName);
+  const nameInputRef = useRef<HTMLInputElement>(null);
   const [segmentSearch, setSegmentSearch] = useState('');
 
   // Master "Overlay Text Display" state: ON only when every segment shows its overlay.
@@ -531,6 +544,23 @@ export function DropZonePanel({
   const dropTargetIdxRef = useRef<number | null>(null);
   // Row elements indexed by position, measured on pointer move to resolve dropTargetIdx.
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Auto-scroll the active segment into view during playback (Bug 4).
+  useEffect(() => {
+    if (!isPlaying || !currentSegmentId) return;
+    const idx = segments.findIndex(s => s.id === currentSegmentId);
+    if (idx < 0) return;
+    const row = rowRefs.current[idx];
+    const container = document.getElementById('segment-list-scroll');
+    if (!row || !container) return;
+    const rowTop = row.offsetTop;
+    const rowBottom = rowTop + row.offsetHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+    if (rowTop < viewTop || rowBottom > viewBottom) {
+      container.scrollTo({ top: rowTop - container.clientHeight / 2, behavior: 'smooth' });
+    }
+  }, [currentSegmentId, isPlaying, segments]);
 
   // ── Scene Details edit-mode state ─────────────────────────────────────────
   const [isEditingScene, setIsEditingScene] = useState(false);
@@ -774,7 +804,30 @@ export function DropZonePanel({
           <ChevronLeft size={12} />
           <span>Projects</span>
         </button>
-        <span className="text-[12px] text-[var(--kx-faint)] font-medium truncate max-w-[120px]">{projectName}</span>
+        {isEditingName ? (
+          <input
+            ref={nameInputRef}
+            type="text"
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onBlur={() => { onRename(nameDraft.trim() || projectName); setIsEditingName(false); }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { onRename(nameDraft.trim() || projectName); setIsEditingName(false); }
+              if (e.key === 'Escape') { setNameDraft(projectName); setIsEditingName(false); }
+            }}
+            className="text-[12px] text-[var(--kx-text)] font-medium bg-[var(--kx-line)] border border-[var(--kx-accent)] rounded px-1.5 py-0.5 max-w-[120px] outline-none"
+            // eslint-disable-next-line jsx-a11y/no-autofocus
+            autoFocus
+          />
+        ) : (
+          <button
+            onClick={() => { setNameDraft(projectName); setIsEditingName(true); }}
+            title="Rename project"
+            className="text-[12px] text-[var(--kx-faint)] font-medium truncate max-w-[120px] hover:text-[var(--kx-text)] transition-colors text-left"
+          >
+            {projectName}
+          </button>
+        )}
       </div>
 
       {/* ── Tab bar ─────────────────────────────────────────────────────────── */}
@@ -1222,7 +1275,7 @@ export function DropZonePanel({
           </div>
 
           {/* Segment list */}
-          <div className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2">
+          <div id="segment-list-scroll" className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2">
             {/* Permanent "+ Add Heading" at the top */}
             <button
               onClick={() => onInsertHeading(-1)}

@@ -38,6 +38,7 @@ interface Props {
   onSetAdjustingTrim: (v: boolean) => void;
   onSelectSegment?: (id: string) => void;
   onDeleteHeading?: (id: string) => void;
+  initialScrollLeft?: number;
 }
 
 export function Timeline({
@@ -66,6 +67,7 @@ export function Timeline({
   onSetAdjustingTrim,
   onSelectSegment,
   onDeleteHeading,
+  initialScrollLeft,
 }: Props) {
   const totalDuration = useMemo(
     () => segments.reduce((acc, s) => acc + s.duration, 0) || 1,
@@ -142,11 +144,49 @@ export function Timeline({
     return () => { cancelled = true; };
   }, [voiceoverUrl, voiceoverFile]);
 
+  // Restore persisted scroll position and attach the scroll listener here,
+  // where timeline-scroll-area is guaranteed to exist in the DOM.
+  useEffect(() => {
+    const el = document.getElementById('timeline-scroll-area');
+    if (!el) return;
+    // Restore after a short delay so layout has settled post-hydration.
+    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
+    if (initialScrollLeft) {
+      restoreTimer = setTimeout(() => {
+        const elNow = document.getElementById('timeline-scroll-area');
+        if (elNow) elNow.scrollLeft = initialScrollLeft;
+      }, 300);
+    }
+    // Persist on scroll (debounced 300ms)
+    let timer: ReturnType<typeof setTimeout>;
+    const handleScroll = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        try {
+          const prev = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
+          localStorage.setItem('kinetix:ui:v1', JSON.stringify({ ...prev, timelineScrollLeft: el.scrollLeft }));
+        } catch { /* ignore */ }
+      }, 300);
+    };
+    el.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      clearTimeout(timer);
+      if (restoreTimer) clearTimeout(restoreTimer);
+      el.removeEventListener('scroll', handleScroll);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Skip the first execution on mount so the restored scrollLeft from
+  // kinetix:ui:v1 is never overwritten before the user has interacted.
+  const hasMountedRef = useRef(false);
+
   // Keep the active segment visible: when the current segment changes (a segment
   // clicked in the left-panel list, a timeline click, or playback crossing a
   // boundary), scroll the timeline horizontally so it comes into view. Only
   // scrolls when the segment is off-screen, so it never fights manual scrubbing.
   useEffect(() => {
+    if (!hasMountedRef.current) { hasMountedRef.current = true; return; }
     if (!currentSegmentId) return;
     const seg = segments.find(s => s.id === currentSegmentId);
     if (!seg) return;
