@@ -719,7 +719,7 @@ export default function App() {
   // Ref bridge so the mount-only hydration effect ([] deps) can call
   // handleSwitchProject, which is defined later in the component body.
   // The ref is updated every render so it always holds the latest version.
-  const handleSwitchProjectRef = useRef<(id: string) => Promise<void>>(async () => {});
+  const handleSwitchProjectRef = useRef<(id: string, opts?: { preserveUiState?: boolean }) => Promise<void>>(async () => {});
 
   const showToast = useCallback((
     message: string,
@@ -820,7 +820,7 @@ export default function App() {
 
       if (lastId && allMetas.some(m => m.id === lastId)) {
         // Reload case — reopen the last active project directly.
-        await handleSwitchProjectRef.current(lastId);
+        await handleSwitchProjectRef.current(lastId, { preserveUiState: true });
         setShowDashboard(false);
         setIsHydrating(false);
         return;
@@ -1985,7 +1985,7 @@ export default function App() {
     setSelectedSegmentId(null);
   };
 
-  const handleSwitchProject = async (id: string): Promise<void> => {
+  const handleSwitchProject = async (id: string, opts?: { preserveUiState?: boolean }): Promise<void> => {
     setShowDashboard(false);
     if (id === project.id) return;
 
@@ -2055,9 +2055,19 @@ export default function App() {
     });
     setLastOpenedProjectId(saved.project.id);
     setIsSynced(rehydratedSegments.length > 0);
-    setCurrentTime(0);
     setIsPlaying(false);
-    setSelectedSegmentId(null);
+    if (opts?.preserveUiState) {
+      // Reload of the last-open project: keep the user's playhead + selection,
+      // already restored from kinetix:ui:v1 by the useState initializers. Only
+      // clear a dangling selection whose segment no longer exists.
+      setSelectedSegmentId(prev =>
+        prev && rehydratedSegments.some(s => s.id === prev) ? prev : null,
+      );
+    } else {
+      // Explicit switch to a (possibly different) project: reset to the start.
+      setCurrentTime(0);
+      setSelectedSegmentId(null);
+    }
   };
 
   // Keep the ref up to date every render so the mount-only hydration effect
