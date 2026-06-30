@@ -49,7 +49,7 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Provision ffmpeg sidecar (macOS arm64)
+      - name: Provision ffmpeg sidecar (macOS universal)
         if: matrix.os == 'macos-latest'
         run: |
           mkdir -p src-tauri/binaries
@@ -57,8 +57,12 @@ jobs:
           unzip /tmp/ffmpeg.zip -d /tmp/ffmpeg-arm64/
           cp /tmp/ffmpeg-arm64/ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
           chmod +x src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+          curl -L -o /tmp/ffmpeg-x64.zip https://evermeet.cx/ffmpeg/getrelease/zip
+          unzip /tmp/ffmpeg-x64.zip -d /tmp/ffmpeg-x64/
+          cp /tmp/ffmpeg-x64/ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+          chmod +x src-tauri/binaries/ffmpeg-x86_64-apple-darwin
 
-      - name: Provision whisper sidecar (macOS arm64)
+      - name: Provision whisper sidecar (macOS universal)
         if: matrix.os == 'macos-latest'
         run: |
           mkdir -p src-tauri/binaries src-tauri/models
@@ -75,6 +79,15 @@ jobs:
             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
           chmod +x \
             "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
+          cmake -B build-x64 \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_METAL=OFF \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64
+          cmake --build build-x64 --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
+          cp build-x64/bin/whisper-cli \
+            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
+          chmod +x \
+            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
           # Download base.en model
           curl -L -o "$GITHUB_WORKSPACE/src-tauri/models/ggml-base.en.bin" \
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
