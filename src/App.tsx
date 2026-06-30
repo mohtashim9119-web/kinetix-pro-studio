@@ -48,7 +48,7 @@ import {
   AnimationType,
   TextOverlay,
 } from './types';
-import { StockResult } from './services/stockService';
+import { clearFrameRendererCache } from './services/frameRenderer';
 import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, stealDurationFromNeighbors, giveDurationToNeighbors } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -73,7 +73,6 @@ import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProje
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
-import { SegmentEditorPanel } from './components/SegmentEditorPanel';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import type { ApplyEvent } from './components/EffectsPanel';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
@@ -84,7 +83,6 @@ const StockSearchModal = lazy(() =>
 );
 import { Timeline } from './components/Timeline';
 import { PreviewStage } from './components/PreviewStage';
-import { SettingsPanel } from './components/SettingsPanel';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
@@ -576,7 +574,6 @@ export default function App() {
   const [project, setProject] = useState<Project>(makeDefaultProject);
 
   const [isHydrating, setIsHydrating] = useState(true);
-  const [activeTab, setActiveTab] = useState<'script' | 'assets' | 'settings' | 'editor'>('script');
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState<number>(() => {
     try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').currentTime ?? 0; }
@@ -1567,7 +1564,6 @@ export default function App() {
     setIsSynced(true);
     setIsProcessing(false);
     setSyncStep(4);
-    setActiveTab('editor');
   };
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
@@ -1579,6 +1575,7 @@ export default function App() {
       deleteAsset(projectIdRef.current, assetId).catch(err =>
         console.error('Failed to delete asset from IndexedDB:', err)
       );
+      clearFrameRendererCache();
       return {
         ...prev,
         assets: prev.assets.filter(a => a.id !== assetId),
@@ -1601,6 +1598,7 @@ export default function App() {
     Promise.all(nonAudio.map(a => deleteAsset(projectIdRef.current, a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
+    clearFrameRendererCache();
     setProject(prev => ({
       ...prev,
       assets: prev.assets.filter(a => a.type === 'audio'),
@@ -1649,7 +1647,7 @@ export default function App() {
     });
   }, []);
 
-  /** Core zip-extraction logic shared by handleZipUpload and handleDropFiles. */
+  /** Core zip-extraction logic for handleZipUpload. */
   const processZipFile = useCallback(async (file: File): Promise<void> => {
     setIsProcessing(true);
     try {
@@ -1715,67 +1713,6 @@ export default function App() {
     if (!file) return;
     await processZipFile(file);
   };
-
-  const handleFileUpload = async (e: ChangeEvent<HTMLInputElement>, type: Asset['type'] | 'script' | 'story' | 'details') => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (type === 'script') {
-      const reader = new FileReader();
-      reader.onload = (e) => setProject(prev => ({ ...prev, script: e.target?.result as string }));
-      reader.readAsText(file);
-    } else if (type === 'details') {
-      const reader = new FileReader();
-      reader.onload = (e) => setProject(prev => ({ ...prev, sceneDetails: e.target?.result as string }));
-      reader.readAsText(file);
-    } else if (type === 'story') {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = JSON.parse(e.target?.result as string);
-          if (Array.isArray(data)) {
-            // Assume it's a full scene export
-            setProject(prev => ({ ...prev, segments: data }));
-            setIsSynced(true);
-          } else {
-            // Story map format not yet implemented
-          }
-        } catch {
-          console.error("Invalid JSON for story map");
-        }
-      };
-      reader.readAsText(file);
-    } else {
-      let detectedType: Asset['type'] = type as Asset['type'];
-      if (file.type.startsWith('video/')) detectedType = 'video';
-      else if (file.type.startsWith('audio/')) detectedType = 'audio';
-      else if (file.type.startsWith('image/')) detectedType = 'image';
-      await processMediaFile(file, detectedType);
-    }
-  };
-
-  // DEAD CODE — kept for reference, not called anywhere.
-  // All file ingestion now goes through DropZonePanel staged
-  // state → handleApplySyncFromFiles.
-  // Do not delete — may be useful for future drag-drop
-  // onto timeline feature.
-  const handleDropFiles = useCallback(async (files: File[]): Promise<void> => {
-    for (const file of files) {
-      const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
-      if (ext === 'txt') {
-        const text = await file.text();
-        setProject(prev => ({ ...prev, sceneDetails: text }));
-      } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
-        await processMediaFile(file, 'audio');
-      } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
-        await processMediaFile(file, 'image');
-      } else if (['mp4', 'mov', 'webm', 'm4v'].includes(ext)) {
-        await processMediaFile(file, 'video');
-      } else if (ext === 'zip') {
-        await processZipFile(file);
-      }
-    }
-  }, [processMediaFile, processZipFile]);
 
   const currentSegment = useMemo(() => {
     const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration);
@@ -2522,95 +2459,6 @@ export default function App() {
         </div>
 
       </div>
-
-      {/* Legacy left panel content — hidden in new UX, preserved for rollback */}
-      {false && (
-      <div className="w-[450px] border-right border-[#1A1A1A] flex flex-col bg-[#050505]">
-        <div className="p-8 h-full flex flex-col">
-          <div className="flex-1 overflow-y-auto custom-scrollbar pr-4">
-            {activeTab === 'editor' && (
-              <SegmentEditorPanel
-                script={project.script}
-                segments={project.segments}
-                assets={project.assets}
-                globalOverlayConfig={project.globalOverlayConfig}
-                onAddSegment={(seg) => setProject(prev => ({ ...prev, segments: [...prev.segments, seg] }))}
-                onDeleteSegment={(id) => setProject(p => ({ ...p, segments: p.segments.filter(seg => seg.id !== id) }))}
-                onEditSegment={setEditingSegment}
-                onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
-                onUpdateSegment={updateSegment}
-                onUpdateSegmentOverlay={updateSegmentOverlay}
-                onUpdateExtraOverlay={updateExtraOverlay}
-                onSegmentDurationChange={(idx, val) => setProject(prev => {
-                  const updated = prev.segments.map((seg, i) => i === idx ? { ...seg, duration: val } : seg);
-                  let acc = 0;
-                  return { ...prev, segments: updated.map(seg => { const start = acc; acc += seg.duration; return { ...seg, startTime: Number(start.toFixed(3)) }; }) };
-                })}
-                onToggleOverlay={(idx) => setProject(prev => ({
-                  ...prev,
-                  segments: prev.segments.map((seg, i) =>
-                    i === idx ? { ...seg, showOverlay: !seg.showOverlay, overlayConfig: seg.overlayConfig ?? { ...prev.globalOverlayConfig } } : seg
-                  ),
-                }))}
-                onSetOverlayPreset={(idx, preset) => setProject(prev => ({
-                  ...prev,
-                  segments: prev.segments.map((seg, i) => {
-                    if (i !== idx) return seg;
-                    const base = { ...prev.globalOverlayConfig };
-                    if (preset === 'cyber') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#00FF00', backgroundColor: '#000000', fontFamily: 'Bangers', fontSize: 80, textShadow: '0 0 20px #00FF00', animation: 'glitch' } };
-                    if (preset === 'retro') return { ...seg, showOverlay: true, overlayConfig: { ...base, color: '#FF00FF', backgroundColor: 'white', fontFamily: 'Monoton', fontSize: 70, textShadow: '0 0 10px #FF00FF', animation: 'neon-flicker' } };
-                    return { ...seg, showOverlay: true, overlayConfig: { ...base, color: 'black', backgroundColor: '#F27D26', fontFamily: 'Anton', fontSize: 90, fontWeight: 900, animation: 'slide-up' } };
-                  }),
-                }))}
-                onAddExtraOverlay={(idx) => setProject(prev => ({
-                  ...prev,
-                  segments: prev.segments.map((seg, i) =>
-                    i === idx ? { ...seg, extraOverlays: [...(seg.extraOverlays ?? []), { id: crypto.randomUUID(), text: 'New Text', color: '#FFFFFF', backgroundColor: '#000000', fontFamily: 'Inter', fontSize: 24, position: { x: 50, y: 50 } }] } : seg
-                  ),
-                }))}
-              />
-            )}
-            {activeTab === 'settings' && (
-              <SettingsPanel
-                project={project}
-                onProjectChange={(updates) => setProject(p => ({ ...p, ...updates }))}
-                onApplyTransitionToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, transition: p.globalTransition })) }))}
-                onApplyAnimationToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, animation: p.globalAnimation })) }))}
-                onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
-                onNewProject={handleNewProject}
-                onOpenDashboard={() => { clearLastOpenedProjectId(); setShowDashboard(true); }}
-                onExportScenesJson={() => {
-                  const blob = new Blob([JSON.stringify(project.segments, null, 2)], { type: 'application/json' });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `${project.name.replace(/\s+/g, '_')}_scenes.json`;
-                  a.click();
-                }}
-                onImportScenesJson={(e) => handleFileUpload(e, 'story')}
-                exportResolution={exportResolution}
-                onExportResolutionChange={setExportResolution}
-                exportFps={exportFps}
-                onExportFpsChange={setExportFps}
-                onApplyTransitionPreset={(value) => setProject(p => ({ ...p, globalTransition: value as TransitionType }))}
-                onApplyAnimationPreset={(value) => setProject(p => ({ ...p, globalAnimation: value as AnimationType }))}
-                onApplyOverlayFilterPreset={(value) => setProject(p => ({ ...p, globalOverlayFilter: value }))}
-                onApplyOverlayConfigPreset={(value) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...value } }))}
-                currentTransition={project.globalTransition}
-                currentAnimation={project.globalAnimation}
-                currentOverlayFilter={project.globalOverlayFilter ?? ''}
-                currentOverlayConfig={project.globalOverlayConfig}
-              />
-            )}
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* Settings modal — tombstoned (controls moved to Effects tab) */}
-      {false && showSettings && (
-        <div onClick={() => setShowSettings(false)} />
-      )}
 
       {/* Persistence Audio */}
       {voiceover && (
