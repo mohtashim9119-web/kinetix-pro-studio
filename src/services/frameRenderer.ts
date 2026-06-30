@@ -573,7 +573,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       const displayText = segment.text;
       await ensureFont(fontFamily, bodyPx);
       ctx.save();
-      ctx.font = `italic normal ${bodyPx}px "${fontFamily}"`;
+      ctx.font = `${fontStyle} ${fontWeight} ${bodyPx}px "${fontFamily}"`;
       const maxTextW = 768 * refScale; // matches DOM's max-w-3xl
       const lines = wrapText(ctx, displayText, maxTextW);
       const lineH = bodyPx * 1.5;
@@ -599,9 +599,11 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       ctx.fillStyle = color;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
+      applyTextShadow(ctx, shadow);
       lines.forEach((line, i) => {
         ctx.fillText(line, centerX, boxY + padY + i * lineH);
       });
+      clearShadow(ctx);
       ctx.restore();
     }
   }

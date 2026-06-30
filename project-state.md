@@ -107,7 +107,7 @@ None currently.
 
 - Version snapshots (2 open design decisions before building: asset-restoration Design A vs B, and full-rewind-on-restore)
 - Auto-captions (reuse Whisper transcript tokens as a timed text layer)
-- Procedural overlays: 4 remaining — Letterbox, Vignette, CRT/Scanlines, Viewfinder (pure canvas draw ops, no legacy-twin interactions) *(renderer not yet wired — also tracked as deferred bug D2)*
+- Procedural overlays: 4 remaining — Letterbox, Vignette, CRT/Scanlines, Viewfinder (pure canvas draw ops, no legacy-twin interactions) *(renderer not yet wired)*
 - Asset-backed overlays: 6 blocked — Film Grain, Light Leaks, Film Damage, Atmospheric Particles, Weather, Fire/Embers (waiting on user-supplied black-bg screen-blend footage; render via ctx.globalCompositeOperation='screen')
 - Color-grade parametric: brightness/contrast/saturation sliders per segment (currently ships as fixed cinematic preset; parametric needs new VideoSegment fields + UI panel)
 - Export speedup: OffscreenCanvas/Worker (profiling done — I/O-bound, convertToBlob off main thread projected 40–55% faster)
@@ -118,12 +118,10 @@ Real behavioral bugs — each needs design before a fix can be written.
 
 - **D4 — Lock/heading ops revert drag edits:** toggling lock or inserting/deleting a heading calls `applyAnchorBasedTiming`, which re-derives all timings from stale `anchorStart` values, silently discarding prior manual drag-resizes. `App.tsx`, `syncEngine.ts`
 - **D5 — Locked-segment duration grows but never shrinks:** `applyAnchorBasedTiming` uses `Math.max(preserved, span)` for locked segments, so a locked segment whose preserved duration exceeds its anchor span inflates the running total and threatens invariant (b). `syncEngine.ts`
-- **D2 — effectOverlay never rendered (Overlays category is a no-op):** all four Overlays options (Letterbox, Vignette, CRT/Scanlines, Viewfinder) write `effectOverlay` on the segment but no renderer reads it — preview and export are both silent no-ops. *(Also tracked as a Deferred Polish Feature.)* `EffectsPanel.tsx`, `App.tsx`, `frameRenderer.ts`, `PreviewStage.tsx`
 - **D12 — Video preview jumps to near-start on resize-drag release:** after a timeline resize drag, `currentSegment` re-resolves with new `startTime`s in the same render that clears the resize guard, causing the video to seek back to the segment start; audio and export are unaffected. `PreviewStage.tsx`, `App.tsx`
 - **D3 — isMuted has no consumer:** the per-segment mute toggle persists `isMuted` on the segment, but export muxes only the global voiceover and preview `<video>` elements are always `muted` — the flag does nothing. `BottomDrawer.tsx`, `exportPipeline.ts`, `PreviewStage.tsx`
 - **D10 — Preview transition black flash on video boundaries:** when a transition ends on a video segment, the newly-mounted `<video>` element shows ~100–200ms of black before its first decoded frame paints; export is unaffected. `PreviewStage.tsx`, `useTransitionPreview.ts`
 - **D6 — kinetix:ui:v1 lost-update race:** three independent read-modify-write effects/listeners (panel-state in App.tsx, currentTime in App.tsx, scroll in Timeline.tsx) each snapshot, spread, and write back the UI key — concurrent fires during playback can clobber a just-written field. `App.tsx`, `Timeline.tsx`
-- **D1 — Export caption fontWeight/fontStyle/textShadow ignored:** `frameRenderer.ts` computes the three values but the canvas font string is hardcoded to `italic normal` and the shadow helper is never called — exported captions always render italic + normal-weight regardless of user settings; preview correctly reflects them. `frameRenderer.ts`
 
 ---
 
