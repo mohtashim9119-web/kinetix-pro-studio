@@ -545,9 +545,13 @@ export function DropZonePanel({
   // Row elements indexed by position, measured on pointer move to resolve dropTargetIdx.
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
 
-  // Auto-scroll the active segment into view during playback (Bug 4).
+  // Auto-scroll the active segment into view whenever it changes — during
+  // playback, on a timeline click, or while scrubbing. Fires only on
+  // currentSegmentId change (manual scrolling of this list never changes it),
+  // and the off-screen guard below skips rows that are already visible, so it
+  // never fights the user's own scrolling.
   useEffect(() => {
-    if (!isPlaying || !currentSegmentId) return;
+    if (!currentSegmentId) return;
     const idx = segments.findIndex(s => s.id === currentSegmentId);
     if (idx < 0) return;
     const row = rowRefs.current[idx];
@@ -560,7 +564,7 @@ export function DropZonePanel({
     if (rowTop < viewTop || rowBottom > viewBottom) {
       container.scrollTo({ top: rowTop - container.clientHeight / 2, behavior: 'smooth' });
     }
-  }, [currentSegmentId, isPlaying, segments]);
+  }, [currentSegmentId, segments]);
 
   // ── Scene Details edit-mode state ─────────────────────────────────────────
   const [isEditingScene, setIsEditingScene] = useState(false);
