@@ -41,7 +41,7 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            #[cfg(target_os = "windows")]
+            #[cfg(all(target_os = "windows", feature = "devtools"))]
             {
                 use tauri::Manager;
                 app.get_webview_window("main")
