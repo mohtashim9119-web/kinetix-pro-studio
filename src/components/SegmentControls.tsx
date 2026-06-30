@@ -251,7 +251,7 @@ export function SegmentControls({
             <div className="flex items-center gap-[7px]">
               <select
                 value={seg.assetId ?? ''}
-                onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value })}
+                onChange={(e) => onUpdateSegment(idx, { assetId: e.target.value || undefined })}
                 aria-label="Scene asset"
                 className={`${SELECT} flex-1 min-w-0`}
               >

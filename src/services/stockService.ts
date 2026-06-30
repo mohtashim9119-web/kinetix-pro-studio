@@ -217,11 +217,10 @@ export async function searchAllStock(
     return { status: 'rate_limited' };
   }
 
-  const allResults = sources
-    .filter((s): s is { status: 'ok'; results: StockResult[] } => s.status === 'ok')
-    .flatMap((s) => s.results);
+  const okSources = sources.filter((s): s is { status: 'ok'; results: StockResult[] } => s.status === 'ok');
+  const allResults = okSources.flatMap((s) => s.results);
 
-  if (allResults.length === 0) {
+  if (okSources.length === 0) {
     return { status: 'error', message: 'All stock providers returned errors.' };
   }
 

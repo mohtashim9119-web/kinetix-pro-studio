@@ -157,14 +157,18 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
   let target = time;
   if (el.duration > 0 && !isNaN(el.duration) && target > el.duration) {
     target = Math.max(0, el.duration - 0.05);
-    console.debug(`[seek] clamped ${time.toFixed(3)}s → ${target.toFixed(3)}s (duration=${el.duration}s)`);
+    if (import.meta.env.DEV) {
+      console.debug(`[seek] clamped ${time.toFixed(3)}s → ${target.toFixed(3)}s (duration=${el.duration}s)`);
+    }
   }
 
-  console.debug(
-    `[seek] target=${target.toFixed(3)}s videoDuration=${el.duration}s` +
-    ` readyState=${el.readyState} networkState=${el.networkState}` +
-    ` src=${el.src.slice(0, 80)}`,
-  );
+  if (import.meta.env.DEV) {
+    console.debug(
+      `[seek] target=${target.toFixed(3)}s videoDuration=${el.duration}s` +
+      ` readyState=${el.readyState} networkState=${el.networkState}` +
+      ` src=${el.src.slice(0, 80)}`,
+    );
+  }
 
   // Step 3: if already exactly at target, nudge first so `seeked` fires.
   // A seek to the current position is a no-op — the browser never fires `seeked`.

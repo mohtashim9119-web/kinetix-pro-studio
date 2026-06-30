@@ -252,13 +252,6 @@ export function Timeline({
         }}
         className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDown={(e) => {
-          const timeline = document.getElementById('timeline-scroll-area');
-          if (timeline && !resizingId) {
-            const rect = timeline.getBoundingClientRect();
-            const x = e.clientX - rect.left + timeline.scrollLeft;
-            const time = Math.max(0, x / pixelsPerSecond);
-            onSeek(time);
-          }
           if (resizingId) return;
           const rect = e.currentTarget.getBoundingClientRect();
           const scrollLeft = e.currentTarget.scrollLeft;

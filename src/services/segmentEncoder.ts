@@ -99,11 +99,13 @@ export async function encodeSegment(
   for (let i = 0; i < totalFrames; i++) {
     const timeInSegment = encodeStart + i / fps;
 
-    console.debug(
-      `[encode] frame ${i + 1}/${totalFrames} time=${timeInSegment.toFixed(3)}s` +
-      ` (offset=${startTimeOffset.toFixed(3)} ext=${trailingExtension.toFixed(3)})` +
-      ` asset=${asset ? `${asset.type}:${asset.name}` : 'none'}`,
-    );
+    if (import.meta.env.DEV) {
+      console.debug(
+        `[encode] frame ${i + 1}/${totalFrames} time=${timeInSegment.toFixed(3)}s` +
+        ` (offset=${startTimeOffset.toFixed(3)} ext=${trailingExtension.toFixed(3)})` +
+        ` asset=${asset ? `${asset.type}:${asset.name}` : 'none'}`,
+      );
+    }
 
     // Compute transition blend alpha for frames in the trailing extension window.
     // Path B: the outgoing segment extends trailingExtension seconds past segment.duration

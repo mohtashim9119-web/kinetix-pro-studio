@@ -1495,6 +1495,7 @@ export function DropZonePanel({
               selectedCount={selectedSegmentIds.size}
               onApply={onApplyEffect}
               onPresetsChange={handleLookPresetsChange}
+              projectName={projectName}
             />
           </div>
 

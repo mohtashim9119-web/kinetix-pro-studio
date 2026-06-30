@@ -40,6 +40,8 @@ export interface EffectsPanelProps {
   /** Count of segments currently batch-selected (drives "Apply to selected (N)").
    *  Distinct from the per-block randomize `picks` Set. */
   selectedCount?: number;
+  /** Displayed in the panel header. */
+  projectName?: string;
 }
 
 /* ---------- Effect data (Step 2: from shared effectsOptions source) ---------- */
@@ -305,7 +307,7 @@ function EffectSection({
 
 /* ---------- Main panel ---------- */
 
-export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply, selectedCount = 0 }: EffectsPanelProps) {
+export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply, selectedCount = 0, projectName }: EffectsPanelProps) {
   const [transition, setTransition] = useState(TRANSITIONS[0]!.value);
   const [transitionDur, setTransitionDur] = useState("0.5");
   const [animation, setAnimation] = useState(ANIMATIONS[0]!.value);
@@ -373,7 +375,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
     <div className="bg-[#121214] border-[0.5px] border-[#2a2a2e] rounded-2xl p-3.5 max-w-[420px] text-[#f0f0f2] font-sans">
       <header className="flex items-center justify-between px-1 pb-3">
         <span className="text-[13px] font-medium tracking-[0.06em] text-[#a8a8b0]">EFFECTS</span>
-        <span className="text-[12px] text-[#6e6e76]">Untitled Project</span>
+        <span className="text-[12px] text-[#6e6e76]">{projectName ?? 'Untitled Project'}</span>
       </header>
 
       <div className="flex flex-col gap-3">
