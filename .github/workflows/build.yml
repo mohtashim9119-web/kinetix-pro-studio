@@ -53,14 +53,21 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           mkdir -p src-tauri/binaries
-          curl -L -o /tmp/ffmpeg.zip https://www.osxexperts.net/ffmpeg711arm.zip
-          unzip /tmp/ffmpeg.zip -d /tmp/ffmpeg-arm64/
-          cp /tmp/ffmpeg-arm64/ffmpeg src-tauri/binaries/ffmpeg-aarch64-apple-darwin
-          chmod +x src-tauri/binaries/ffmpeg-aarch64-apple-darwin
+
+          # Download arm64 ffmpeg
+          curl -L -o /tmp/ffmpeg-arm64.zip https://www.osxexperts.net/ffmpeg711arm.zip
+          unzip /tmp/ffmpeg-arm64.zip -d /tmp/ffmpeg-arm64/
+
+          # Download x86_64 ffmpeg
           curl -L -o /tmp/ffmpeg-x64.zip https://evermeet.cx/ffmpeg/getrelease/zip
           unzip /tmp/ffmpeg-x64.zip -d /tmp/ffmpeg-x64/
-          cp /tmp/ffmpeg-x64/ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
-          chmod +x src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+
+          # Combine into a universal binary using lipo
+          lipo -create \
+            /tmp/ffmpeg-arm64/ffmpeg \
+            /tmp/ffmpeg-x64/ffmpeg \
+            -output src-tauri/binaries/ffmpeg-universal-apple-darwin
+          chmod +x src-tauri/binaries/ffmpeg-universal-apple-darwin
 
       - name: Provision whisper sidecar (macOS universal)
         if: matrix.os == 'macos-latest'
@@ -75,10 +82,6 @@ jobs:
             -DGGML_METAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES=arm64
           cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
-          cp build-static/bin/whisper-cli \
-            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
-          chmod +x \
-            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
           cmake -B build-x64 \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_METAL=OFF \
@@ -90,10 +93,13 @@ jobs:
             -DGGML_FMA=OFF \
             -DGGML_F16C=OFF
           cmake --build build-x64 --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
-          cp build-x64/bin/whisper-cli \
-            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
+          # Combine arm64 and x86_64 whisper into a universal binary
+          lipo -create \
+            build-static/bin/whisper-cli \
+            build-x64/bin/whisper-cli \
+            -output "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin"
           chmod +x \
-            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
+            "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin"
           # Download base.en model
           curl -L -o "$GITHUB_WORKSPACE/src-tauri/models/ggml-base.en.bin" \
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
