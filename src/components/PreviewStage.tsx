@@ -186,6 +186,10 @@ export function PreviewStage({
   const [headingContainerHeight, setHeadingContainerHeight] = useState(0);
   const headingContainerRef = useRef<HTMLDivElement>(null);
 
+  // Stage height measurement — ResizeObserver so caption font/bubble scale
+  // proportionally to the live stage size, mirroring frameRenderer's refScale math.
+  const [stageHeight, setStageHeight] = useState(0);
+
   // Ref for the stage container — used for percentage coordinate calculation
   const stageRef = useRef<HTMLDivElement>(null);
   // Refs for individual overlay elements — keyed by overlay.id
@@ -471,6 +475,21 @@ export function PreviewStage({
     return () => ro.disconnect();
   }, [currentSegment?.isHeading, currentSegment?.heading]);
 
+  // Observe the stage element once (it is always mounted for the lifetime of
+  // PreviewStage). Fires on divider-drag resize AND on fullscreen enter/exit
+  // because the stage's className switches to fixed inset-0, changing its
+  // layout size — ResizeObserver sees that geometry change automatically.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const entry = entries[0];
+      if (entry) setStageHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const isHeadingSegment = !!(currentSegment?.isHeading || currentSegment?.heading);
   const headingText = currentSegment?.headingConfig?.text ?? currentSegment?.heading ?? '';
   const headingLength = headingText.length;
@@ -489,6 +508,9 @@ export function PreviewStage({
   const headingPosY = currentSegment?.headingConfig?.y ?? 50;
   const overlayPosX = currentSegment?.overlayConfig?.x ?? 50;
   const overlayPosY = currentSegment?.overlayConfig?.y ?? 78;
+  // Mirrors frameRenderer's refScale = h / 1080. Defaults to 1 (unscaled)
+  // until the ResizeObserver fires after first mount.
+  const captionScale = stageHeight > 0 ? stageHeight / 1080 : 1;
 
   return (
     <div className="w-full h-full">
@@ -805,11 +827,14 @@ export function PreviewStage({
               animate={{ y: 0, opacity: 1 }}
               transition={{ delay: 0.3 }}
               transformTemplate={(_, generated) => `translate(-${overlayPosX}%, -${overlayPosY}%) ${generated}`}
-              className="absolute max-w-3xl px-5 py-3 rounded-3xl text-center"
+              className="absolute text-center"
               style={{
                 left: `${overlayPosX}%`,
                 top: `${overlayPosY}%`,
                 width: 'max-content',
+                maxWidth: `${768 * captionScale}px`,
+                padding: `${Math.round(12 * captionScale)}px ${Math.round(20 * captionScale)}px`,
+                borderRadius: `${Math.round(24 * captionScale)}px`,
                 backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
               }}
             >
@@ -818,7 +843,7 @@ export function PreviewStage({
                 style={{
                   fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
                   color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
-                  fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * (isFullscreen ? 32 / 24 : 1)}px`,
+                  fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * captionScale}px`,
                   fontWeight: currentSegment.overlayConfig?.fontWeight || 'normal',
                   fontStyle: currentSegment.overlayConfig?.fontStyle || 'italic',
                 }}
