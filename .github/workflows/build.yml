@@ -13,10 +13,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-latest      # Apple Silicon (arm64) runner
-            target: aarch64-apple-darwin
-            artifact-name: kinetix-macos-arm64
-            artifact-path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          - os: macos-latest
+            target: universal-apple-darwin
+            artifact-name: kinetix-macos-universal
+            artifact-path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact-name: kinetix-windows-x64
@@ -33,7 +33,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2

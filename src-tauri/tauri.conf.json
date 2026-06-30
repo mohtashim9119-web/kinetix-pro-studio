@@ -37,6 +37,9 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/ffmpeg", "binaries/whisper"],
+    "resources": {
+      "models/*": "models/"
+    },
     "android": {
       "debugApplicationIdSuffix": ".debug"
     }
