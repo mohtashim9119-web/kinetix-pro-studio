@@ -1969,7 +1969,9 @@ export default function App() {
           droppedIds.add(asset.id);
           return null;
         }
-        return { ...asset, url: URL.createObjectURL(stored.blob) };
+        const rehydratedUrl = URL.createObjectURL(stored.blob);
+        const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
+        return { ...asset, url: rehydratedUrl, file: rehydratedFile };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
 

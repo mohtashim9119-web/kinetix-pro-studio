@@ -55,6 +55,14 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         if model.exists() {
             return Ok(model);
         }
+        // Windows: Tauri v2 resource_dir may include a _up_ segment — try one level up too
+        #[cfg(target_os = "windows")]
+        if let Some(parent) = resource_dir.parent() {
+            let model = parent.join("models").join("ggml-base.en.bin");
+            if model.exists() {
+                return Ok(model);
+            }
+        }
     }
 
     let exe = std::env::current_exe()
@@ -123,23 +131,43 @@ pub async fn whisper_transcribe(
     let tmp_dir = std::env::temp_dir().join(format!("kinetix-whisper-{}", tmp_id));
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
 
-    // Detect audio format from magic bytes and use correct extension
-    let audio_ext = if audio_bytes.starts_with(b"RIFF") {
-        "wav"
+    // Detect audio format from magic bytes, map to MIME, then resolve extension
+    let mime = if audio_bytes.starts_with(b"RIFF") {
+        "audio/wav"
     } else if audio_bytes.starts_with(b"ID3")
         || audio_bytes.starts_with(b"\xff\xfb")
         || audio_bytes.starts_with(b"\xff\xf3")
         || audio_bytes.starts_with(b"\xff\xf2")
     {
-        "mp3"
+        "audio/mpeg"
     } else if audio_bytes.starts_with(b"\x00\x00\x00")
         && audio_bytes.get(4..8) == Some(b"ftyp")
     {
-        "m4a"
+        "audio/mp4"
     } else if audio_bytes.starts_with(b"OggS") {
-        "ogg"
+        "audio/ogg"
+    } else if audio_bytes.starts_with(b"fLaC") {
+        "audio/flac"
+    } else if audio_bytes.starts_with(b"FORM")
+        && (audio_bytes.get(8..12) == Some(b"AIFF") || audio_bytes.get(8..12) == Some(b"AIFC"))
+    {
+        "audio/aiff"
+    } else if audio_bytes.starts_with(b"\x1a\x45\xdf\xa3") {
+        "audio/webm"
     } else {
-        "wav" // fallback — let whisper try
+        "audio/wav" // fallback — let whisper try
+    };
+
+    let audio_ext = match mime {
+        "audio/mpeg" | "audio/mp3"                  => "mp3",
+        "audio/wav"  | "audio/wave" | "audio/x-wav" => "wav",
+        "audio/ogg"  | "audio/vorbis"               => "ogg",
+        "audio/flac" | "audio/x-flac"               => "flac",
+        "audio/mp4"  | "audio/x-m4a" | "audio/aac" => "m4a",
+        "audio/aiff" | "audio/x-aiff"               => "aiff",
+        "audio/opus"                                 => "opus",
+        "audio/webm"                                 => "webm",
+        _                                            => "wav",
     };
 
     let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
