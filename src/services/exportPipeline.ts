@@ -1,8 +1,8 @@
 import { Project, Asset, VideoSegment, TransitionType } from '../types';
-import { encodeSegment, encodePlainVideoSegment, FfmpegLike } from './segmentEncoder';
+import { encodeSegment, encodePlainVideoSegment, encodeStaticImageSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
-import { isPlainVideoSegment } from './plainSegment';
+import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
 
 export interface ExportOptions {
   width?: number;
@@ -147,9 +147,21 @@ export async function exportProject(
       asset.type === 'video' &&
       isPlainVideoSegment(segment, prevSegment, nextSegment, project);
 
+    // Tier 2: a plain full-frame image segment (same no-compositing conditions
+    // as Tier 1) is byte-identical every frame, so render one frame and let
+    // ffmpeg loop it for the duration instead of writing N identical PNGs.
+    // Animated/captioned/filtered/transitioned image segments stay on the
+    // canvas path below.
+    const isPlainImage =
+      !!asset &&
+      asset.type === 'image' &&
+      isPlainImageSegment(segment, prevSegment, nextSegment, project);
+
     try {
       const mp4Bytes = isPlain
         ? await encodePlainVideoSegment(segment, asset!, ffmpeg, { fps, width, height })
+        : isPlainImage
+        ? await encodeStaticImageSegment(segment, asset!, globalConfig, ffmpeg, { fps, width, height })
         : await encodeSegment(
             segment,
             asset,

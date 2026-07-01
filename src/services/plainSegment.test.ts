@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isPlainVideoSegment } from './plainSegment';
+import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
 import { TransitionType, AnimationType } from '../types';
 import type { VideoSegment, Project, Asset, TextOverlay } from '../types';
 
@@ -17,6 +17,11 @@ function makeSegment(partial: Partial<VideoSegment> & { id: string }): VideoSegm
     assetId: 'v1',
     ...partial,
   };
+}
+
+/** Image-asset variant: defaults assetId to the image asset. */
+function makeImageSegment(partial: Partial<VideoSegment> & { id: string }): VideoSegment {
+  return makeSegment({ assetId: 'i1', ...partial });
 }
 
 function makeProject(partial: Partial<Project> = {}): Project {
@@ -165,5 +170,123 @@ describe('isPlainVideoSegment', () => {
   it('stays plain when playbackSpeed is explicitly 1', () => {
     const seg = makeSegment({ id: 's', playbackSpeed: 1 });
     expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+});
+
+describe('isPlainImageSegment', () => {
+  it('returns true for a bare full-frame image segment with no neighbours', () => {
+    const seg = makeImageSegment({ id: 's0' });
+    const project = makeProject({ segments: [seg] });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(true);
+  });
+
+  it('stays plain with plain image neighbours and no transitions', () => {
+    const prev = makeImageSegment({ id: 'prev', order: 0 });
+    const seg = makeImageSegment({ id: 's1', order: 1 });
+    const next = makeImageSegment({ id: 'next', order: 2 });
+    const project = makeProject({ segments: [prev, seg, next] });
+    expect(isPlainImageSegment(seg, prev, next, project)).toBe(true);
+  });
+
+  // ── Each failing condition flips it to false ───────────────────────────────
+
+  it('false for a heading segment', () => {
+    const seg = makeImageSegment({ id: 's', isHeading: true, headingConfig: { text: 'Title' } });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when the asset is a video, not an image', () => {
+    const seg = makeSegment({ id: 's', assetId: 'v1' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when the segment has no asset', () => {
+    const seg = makeImageSegment({ id: 's', assetId: undefined });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when a caption is shown (showOverlay + text)', () => {
+    const seg = makeImageSegment({ id: 's', showOverlay: true, text: 'A caption' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('stays plain when showOverlay is true but text is empty', () => {
+    const seg = makeImageSegment({ id: 's', showOverlay: true, text: '' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
+  it('false when the segment has extra overlays', () => {
+    const overlay: TextOverlay = {
+      id: 'o1', text: 'hi', color: '#fff', backgroundColor: '#000',
+      fontFamily: 'sans-serif', fontSize: 24, position: { x: 50, y: 50 },
+    };
+    const seg = makeImageSegment({ id: 's', extraOverlays: [overlay] });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when a global text layer is visible on this segment', () => {
+    const layer: TextOverlay = {
+      id: 'g1', text: 'watermark', color: '#fff', backgroundColor: 'transparent',
+      fontFamily: 'sans-serif', fontSize: 18, position: { x: 90, y: 90 },
+    };
+    const seg = makeImageSegment({ id: 's' });
+    const project = makeProject({ textLayers: [layer] });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('stays plain when the only global text layer is hidden on this segment', () => {
+    const layer: TextOverlay = {
+      id: 'g1', text: 'watermark', color: '#fff', backgroundColor: 'transparent',
+      fontFamily: 'sans-serif', fontSize: 18, position: { x: 90, y: 90 },
+      hiddenOnSegments: ['s'],
+    };
+    const seg = makeImageSegment({ id: 's' });
+    const project = makeProject({ textLayers: [layer] });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(true);
+  });
+
+  it('false when a legacy animation is set (Ken Burns)', () => {
+    const seg = makeImageSegment({ id: 's', animation: AnimationType.KEN_BURNS });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when an effectAnimation slug is set', () => {
+    const seg = makeImageSegment({ id: 's', effectAnimation: 'ken-burns' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('stays plain when effectAnimation is the "none" sentinel', () => {
+    const seg = makeImageSegment({ id: 's', effectAnimation: 'none' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
+  it('false when a per-segment overlayFilter is set', () => {
+    const seg = makeImageSegment({ id: 's', overlayFilter: 'grayscale' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when a global overlay filter is set', () => {
+    const seg = makeImageSegment({ id: 's' });
+    const project = makeProject({ globalOverlayFilter: 'sepia' });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('false when an outgoing transition overlaps the tail (own transition + next)', () => {
+    const seg = makeImageSegment({ id: 's', transition: TransitionType.FADE, transitionDuration: 0.5 });
+    const next = makeImageSegment({ id: 'next', order: 1 });
+    expect(isPlainImageSegment(seg, undefined, next, makeProject())).toBe(false);
+  });
+
+  it('false when an incoming transition overlaps the head (prev transition into it)', () => {
+    const prev = makeImageSegment({ id: 'prev', order: 0, transition: TransitionType.FADE, transitionDuration: 0.5 });
+    const seg = makeImageSegment({ id: 's', order: 1 });
+    expect(isPlainImageSegment(seg, prev, undefined, makeProject())).toBe(false);
+  });
+
+  it('false when a global transition applies and there is a next segment', () => {
+    const seg = makeImageSegment({ id: 's', order: 0 });
+    const next = makeImageSegment({ id: 'next', order: 1 });
+    const project = makeProject({ globalTransition: TransitionType.FADE, globalTransitionDuration: 0.5 });
+    expect(isPlainImageSegment(seg, undefined, next, project)).toBe(false);
   });
 });

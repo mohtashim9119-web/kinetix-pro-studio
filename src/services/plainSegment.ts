@@ -27,14 +27,57 @@ export function isPlainVideoSegment(
   nextSegment: VideoSegment | undefined,
   project: Project,
 ): boolean {
+  return isPlainMediaSegment(segment, prevSegment, nextSegment, project, 'video');
+}
+
+/**
+ * Tier-2 "plain image" predicate — the image counterpart of
+ * isPlainVideoSegment. A plain image segment is a full-frame image clip with
+ * no per-frame compositing, so its every exported frame is byte-identical: the
+ * cover-fit still and nothing else. Such a segment can be produced by rendering
+ * ONE frame and letting ffmpeg loop it for the segment's duration (see
+ * encodeStaticImageSegment in segmentEncoder.ts), skipping the N-identical-PNG
+ * render/IPC/disk churn the canvas path would otherwise do.
+ *
+ * Shares every condition with isPlainVideoSegment via isPlainMediaSegment; the
+ * only difference is the required asset type ('image'). Unlike video, an image
+ * media draw has no time dependence at all, so the same no-caption/no-overlay/
+ * no-global-layer/no-animation/no-filter/no-transition-edge/normal-speed gates
+ * are sufficient to guarantee frame-identity.
+ *
+ * Pure: no I/O, no mutation. Returns false for anything it is not certain is
+ * plain — the canvas path remains the safe default.
+ */
+export function isPlainImageSegment(
+  segment: VideoSegment,
+  prevSegment: VideoSegment | undefined,
+  nextSegment: VideoSegment | undefined,
+  project: Project,
+): boolean {
+  return isPlainMediaSegment(segment, prevSegment, nextSegment, project, 'image');
+}
+
+/**
+ * Shared core for the plain-video and plain-image predicates. Identical logic
+ * for both; `mediaType` selects the required asset type. Keeping this in one
+ * place means the two fast paths can never drift apart on the compositing
+ * checks that guarantee frame-identity.
+ */
+function isPlainMediaSegment(
+  segment: VideoSegment,
+  prevSegment: VideoSegment | undefined,
+  nextSegment: VideoSegment | undefined,
+  project: Project,
+  mediaType: 'video' | 'image',
+): boolean {
   // Not a heading (headings are title cards, not full-frame media).
   if (segment.isHeading || segment.heading) return false;
 
-  // Must resolve to a usable video asset.
+  // Must resolve to a usable asset of the expected media type.
   const asset = segment.assetId
     ? project.assets.find(a => a.id === segment.assetId)
     : undefined;
-  if (!asset || asset.type !== 'video' || !asset.url) return false;
+  if (!asset || asset.type !== mediaType || !asset.url) return false;
 
   // No body caption drawn (showOverlay + non-empty text is the caption gate).
   if (segment.showOverlay && segment.text) return false;

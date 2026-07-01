@@ -289,6 +289,106 @@ export async function encodePlainVideoSegment(
   return mp4Bytes;
 }
 
+export interface EncodeStaticImageOptions {
+  fps?: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Tier-2 fast path: encodes a "plain" image segment (see isPlainImageSegment in
+ * plainSegment.ts) by rendering ONE frame and looping it, instead of rendering,
+ * PNG-encoding, and IPC-writing N byte-identical frames.
+ *
+ * For a plain image the media draw has no time dependence at all, so a single
+ * renderSegmentFrame at t=0 reproduces exactly what the per-frame canvas loop
+ * would emit for every frame. That one W×H PNG is written once, then a single
+ * ffmpeg `-loop 1` encode synthesizes the segment's full duration.
+ *
+ * Output flags are kept byte-for-byte compatible with the canvas path's segment
+ * mp4s (libx264 / preset fast / crf 16 / yuv420p / bt709 color / +faststart) so
+ * all three paths (canvas, Tier-1 video, Tier-2 image) join under the concat
+ * demuxer with `-c copy`. The single rendered frame is already exactly W×H with
+ * square pixels, so — unlike the Tier-1 video path — no scale/crop/setsar filter
+ * is needed. The frame count is capped with `-frames:v N` using the SAME
+ * N = max(1, round(duration*fps)) the exportPipeline/canvas path computes, so
+ * the segment's duration is frame-exact (preserves audio sync under -shortest).
+ *
+ * @returns Raw MP4 bytes for the segment (same contract as encodeSegment).
+ */
+export async function encodeStaticImageSegment(
+  segment: VideoSegment,
+  asset: Asset,
+  globalConfig: FrameGlobalConfig,
+  ffmpeg: FfmpegLike,
+  options: EncodeStaticImageOptions = {},
+): Promise<Uint8Array> {
+  const fps = options.fps ?? 30;
+  const width = options.width ?? 1920;
+  const height = options.height ?? 1080;
+
+  // Width and height must both be even for yuv420p — match the canvas path.
+  const w = width % 2 === 0 ? width : width - 1;
+  const h = height % 2 === 0 ? height : height - 1;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('encodeStaticImageSegment: failed to get 2D canvas context');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+
+  // Render the single representative frame. A plain image segment has no
+  // startTimeOffset/trailingExtension (no transition edge), so t=0 is the
+  // exact frame the canvas loop would produce at every step.
+  await renderSegmentFrame({
+    segment,
+    asset,
+    timeInSegment: 0,
+    ctx,
+    width: w,
+    height: h,
+    global: globalConfig,
+  });
+
+  const pngBytes = await canvasToPng(canvas);
+  const frameFile = `static_img_${segment.id}.png`;
+  const outputFile = `static_out_${segment.id}.mp4`;
+  await ffmpeg.writeFile(frameFile, pngBytes);
+
+  // Frame-exact count: identical to segmentFrameCount in exportPipeline and to
+  // the canvas path's totalFrames, so segment duration matches to the frame.
+  const totalFrames = Math.max(1, Math.round(segment.duration * fps));
+
+  await ffmpeg.exec([
+    '-loop', '1',
+    '-framerate', String(fps),
+    '-i', frameFile,
+    '-frames:v', String(totalFrames),
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '16',
+    '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
+    '-movflags', '+faststart',
+    '-y',
+    outputFile,
+  ]);
+
+  const fileData = await ffmpeg.readFile(outputFile);
+  const mp4Bytes =
+    fileData instanceof Uint8Array
+      ? fileData
+      : new TextEncoder().encode(fileData as string);
+
+  await cleanupFiles(ffmpeg, [frameFile, outputFile]);
+
+  return mp4Bytes;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
