@@ -20,7 +20,18 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~2,962 lines — top-level state, orchestration, playback, export
+  App.tsx            # ~2,962 lines — top-level state, orchestration, playback, export.
+                     #   isResizingRef guards the timeline resize-drag gesture: set true
+                     #   synchronously in onResizeStart (mousedown), cleared by a resizingId-keyed
+                     #   effect (fires after PreviewStage's child effects in the same commit —
+                     #   deterministic, not the old racy rAF clear). currentSegment is frozen on
+                     #   this same ref during a drag (lastStableSegmentRef + a one-shot
+                     #   resizeSettleTick recompute right after release), since PreviewStage reads
+                     #   currentSegment directly in many places beyond the seek effect. handleUp
+                     #   also arms a one-time, capture-phase window 'click' listener whenever the
+                     #   drag actually moved the mouse — swallows the native ghost-click a
+                     #   left-edge resize otherwise fires on a segment row (Timeline.tsx), whose
+                     #   onClick calls onSeek(s.startTime) directly (D12 fix, commit be45b07).
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
@@ -72,6 +83,10 @@ src/
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
     useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
                              #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
+                             #   Takes isResizingRef; forces inTransitionWindow/needsPreRoll/isActive false while a
+                             #   timeline resize-drag is in progress (plain per-render read, not an effect dep) —
+                             #   otherwise a drag's transient segment-boundary geometry could sweep currentTime into
+                             #   a bogus transition window and swap in the wrong segment's snapshot (D12, be45b07).
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes, applyHeadingTiming. Generation counter + AbortController
                              #   for cancellation.
@@ -87,11 +102,20 @@ src/
                      #   Mounted by DropZonePanel.tsx, which owns lookPresetService persistence —
                      #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
-    PreviewStage.tsx      # Video/image display + overlay rendering
+    PreviewStage.tsx      # Video/image display + overlay rendering. Dual-slot video-swap seek
+                     #   effect (~line 449, dep [currentSegment?.id]) skips reseeking while
+                     #   isResizingRef.current is true — currentSegment can flip transiently
+                     #   during a timeline resize-drag; guard prevents an unwanted reseek to the
+                     #   wrong segment's start (D12 fix, commit be45b07).
     SegmentEditorPanel.tsx # Segment list + per-segment controls
     SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
     StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
-    Timeline.tsx          # Scrollable track + playhead + zoom
+    Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
+                     #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
+                     #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with
+                     #   the cursor far from the (fixed-position) left handle, so the browser's
+                     #   native click synthesized right after mouseup lands on this row's body
+                     #   instead of the handle, firing an unwanted seek (fixed in be45b07).
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
 index.html           # Title: "Kinetix Pro Studio"
