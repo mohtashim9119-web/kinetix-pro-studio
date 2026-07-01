@@ -22,6 +22,10 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 
 ## Completed Work
 
+D4 + D5 converted into the Path B: Separate Heading Layer roadmap (`docs/path-b-heading-layer-plan.md`) — they are symptoms of heading/segment coupling that Path B removes. Not fixed individually (targeted fixes rejected as low-value). Path B is PLANNED but deferred; current focus pivoting to export/runtime performance. (2026-07-02)
+
+Heading architecture roadmap: see `docs/path-b-heading-layer-plan.md`.
+
 <details>
 <summary>D12 fixed — preview/playhead jump on timeline resize-drag — ✅ DONE 2026-07-01 (commit be45b07)</summary>
 
@@ -140,10 +144,7 @@ None currently.
 
 ## Deferred Known Bugs
 
-Real behavioral bugs — each needs design before a fix can be written.
-
-- **D4 — Lock/heading ops revert drag edits:** toggling lock or inserting/deleting a heading calls `applyAnchorBasedTiming`, which re-derives all timings from stale `anchorStart` values, silently discarding prior manual drag-resizes. `App.tsx`, `syncEngine.ts`
-- **D5 — Locked-segment duration grows but never shrinks:** `applyAnchorBasedTiming` uses `Math.max(preserved, span)` for locked segments, so a locked segment whose preserved duration exceeds its anchor span inflates the running total and threatens invariant (b). `syncEngine.ts`
+None — see Path B roadmap (`docs/path-b-heading-layer-plan.md`). D4 and D5 were folded into that roadmap on 2026-07-02 rather than fixed individually — see Decisions Log.
 
 ---
 
@@ -304,6 +305,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-30 | UI-state persistence consolidated into `src/services/uiStateStore.ts` — single source for `kinetix:ui:v1` read/merge/write. Closes D6 and the structural risk of independent RMW writers (future async storage backend would otherwise reintroduce a real clobber). No behavior change. |
 | 2026-06-30 | D10 fixed via pre-seek + requestVideoFrameCallback reveal-gating in PreviewStage dual-video slots (was: canplay-gated, which fires before paint). Canvas-hold kept as fallback. Preview-only; export untouched. |
 | 2026-07-01 | D12 root cause was a native ghost click racing ahead of React state, not a derived-state timing bug — a browser `click` synthesized right after `mouseup` can hit-test onto a completely different element than the one `mousedown` targeted if the pointer drifted during the gesture (exactly what a left-edge timeline resize does, since that handle's DOM position never tracks the cursor). Three earlier fix attempts targeting `currentSegment`/`useTransitionPreview` staleness were real but not the dominant cause, because native DOM event dispatch isn't gated by any React state/effect timing at all. **Reusable pattern:** when a drag-release intermittently triggers an unrelated click-handler side effect, suspect a native ghost-click before assuming a React state race — fix by arming a one-time, capture-phase `window` `click` listener in the drag's mouseup handler (only when the drag actually moved the pointer) that swallows the very next click before any bubble-phase React handler sees it. Commit `be45b07`. |
+| 2026-07-02 | D4/D5 will NOT get targeted fixes. Both fold into Path B (separate heading layer, `docs/path-b-heading-layer-plan.md`), deferred. Active-bug list now empty; next focus = export speed + app performance. |
 
 ---
 
