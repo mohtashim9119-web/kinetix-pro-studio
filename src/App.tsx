@@ -688,9 +688,42 @@ export default function App() {
   // the voiceover that's currently relevant, not a stale already-superseded one.
   const transcriptionTargetIdRef = useRef<string | null>(null);
   // Synchronous guard: true while a timeline resize drag is in progress.
-  // Cleared via a one-frame rAF delay in handleUp so it stays true through
-  // the render that processes the final mousemove setProject call.
+  // Set true unconditionally on mousedown (onResizeStart, below). Cleared by
+  // the resizingId effect below — NOT by a rAF in handleUp (that raced against
+  // PreviewStage's id-keyed seek effect in the same commit; see D12 fix).
   const isResizingRef = useRef(false);
+  // D12 fix (round 3) — currentSegment itself must not track the transient,
+  // resize-distorted segment geometry: PreviewStage's JSX reads currentSegment
+  // directly in many un-gated places (image src, captions, heading text, the
+  // Ken Burns/zoom transform, and the outer motion.div's animate/exit props),
+  // not just the one imperative video-seek effect. Gating individual
+  // consumers (rounds 1 and 2) is fragile and was proven incomplete — the
+  // round-2 fix incidentally exposed this because suppressMotionAnim used to
+  // (accidentally, via the round-1-unguarded transition-preview bug) also
+  // freeze the Framer Motion props. Freeze the resolved segment at the
+  // source instead: while isResizingRef.current is true, the useMemo below
+  // returns the last value it resolved before the drag started, so every
+  // downstream consumer — present and future — is stable for free.
+  const lastStableSegmentRef = useRef<VideoSegment | null>(null);
+  // Bumped once, right after isResizingRef clears, to force exactly one
+  // fresh currentSegment recompute using the now-final (already-committed)
+  // segments/currentTime — otherwise the frozen value would never update
+  // again until some unrelated render happens to occur (a mutated ref alone
+  // doesn't trigger a re-render).
+  const [resizeSettleTick, setResizeSettleTick] = useState(0);
+  // D12 fix — deterministic clearer for isResizingRef. resizingId and the final
+  // cascaded `segments` update (applyDurationChange, called from handleUp) are
+  // set in the same batched commit, so React flushes PreviewStage's (child)
+  // passive effects — including the id-keyed seek effect that reads
+  // isResizingRef — before this (parent) effect runs. That ordering is a React
+  // guarantee, unlike the old rAF clear which raced the browser's own paint
+  // scheduling against React's effect flush.
+  useEffect(() => {
+    if (resizingId === null) {
+      isResizingRef.current = false;
+      setResizeSettleTick(t => t + 1);
+    }
+  }, [resizingId]);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Baseline for speed-slider drag: captured on the FIRST tick of a new drag gesture
   // so that all subsequent ticks divide by the same original clipLen, preventing the
@@ -1701,9 +1734,16 @@ export default function App() {
   };
 
   const currentSegment = useMemo(() => {
-    const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration);
-    return seg || null;
-  }, [currentTime, project.segments]);
+    if (isResizingRef.current) {
+      // Frozen for the whole gesture — see isResizingRef/lastStableSegmentRef
+      // comment above. Re-resolves once, right after release, via resizeSettleTick.
+      return lastStableSegmentRef.current;
+    }
+    const seg = project.segments.find(s => currentTime >= s.startTime && currentTime < s.startTime + s.duration) ?? null;
+    lastStableSegmentRef.current = seg;
+    return seg;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentTime, project.segments, resizeSettleTick]);
 
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
@@ -2323,7 +2363,31 @@ export default function App() {
                     document.body.classList.remove('resizing');
                     window.removeEventListener('mousemove', handleMove);
                     window.removeEventListener('mouseup', handleUp);
-                    requestAnimationFrame(() => { isResizingRef.current = false; });
+                    // isResizingRef is cleared by the resizingId effect below,
+                    // not here — see D12 fix note there.
+                    // D12 fix (round 4) — the real cause of the "playhead jumps to
+                    // wherever I dragged" report: each segment row is a flex item, so
+                    // its on-screen left edge is the sum of every PRECEDING row's width,
+                    // which never changes while THIS row is being resized. The right-edge
+                    // handle sits at `right-0`, so it tracks the cursor continuously (row
+                    // width is driven live by cursor x) and the mouseup lands on it. The
+                    // left-edge handle sits at a fixed `left-0` that never moves during
+                    // the drag, so after any meaningful left-edge drag the cursor ends up
+                    // far from it at release. The browser fires a native 'click' right
+                    // after this mouseup, hit-tested at the release position — for a
+                    // left-edge drag that lands on the segment ROW body, not the handle,
+                    // whose onClick is onSeek(s.startTime) (Timeline.tsx) — a real,
+                    // direct setCurrentTime call, unrelated to anything currentSegment-
+                    // or transition-preview-derived. Swallow exactly that one ghost click
+                    // before any React handler (row onClick, ruler onMouseDown-installed
+                    // handlers, etc.) can see it.
+                    if (hasMoved) {
+                      const swallowGhostClick = (clickEvent: MouseEvent) => {
+                        clickEvent.stopPropagation();
+                        clickEvent.preventDefault();
+                      };
+                      window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
+                    }
                     if (!hasMoved) return;
                     // Compute final duration from last known mouse position.
                     let finalDuration: number;

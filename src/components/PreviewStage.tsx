@@ -336,6 +336,7 @@ export function PreviewStage({
     globalTransition,
     globalTransitionDuration,
     globalConfig,
+    isResizingRef,
   });
 
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
@@ -450,6 +451,14 @@ export function PreviewStage({
     if (!currentSegment) return;
     const currentAsset = assets.find(a => a.id === currentSegment.assetId);
     if (currentAsset?.type !== 'video') return;
+    // D12 fix — a timeline resize-drag rewrites startTime for every segment
+    // after the dragged one while currentTime stays put, which can flip
+    // currentSegment?.id to a neighbor purely from the boundary shift (not a
+    // real playhead move). Skip this run so we don't hard-seek to the new
+    // segment's start; App clears isResizingRef (after this effect, same
+    // commit — see the resizingId effect in App.tsx) once the drag settles,
+    // so the next genuine currentTime change resolves normally.
+    if (isResizingRef.current) return;
 
     // Swap slots: the idle slot was preloading this segment — promote it to active.
     const prevSlot = activeSlotRef.current;

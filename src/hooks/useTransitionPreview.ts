@@ -53,6 +53,13 @@ interface Params {
   globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalConfig: FrameGlobalConfig;
+  /** D12 fix — true while a timeline resize-drag is in progress. Segment
+   *  boundaries are transiently distorted during a drag (cascade compensation
+   *  is deferred to release), which can sweep currentTime into a bogus
+   *  transition window. Suppress activation entirely while true; read
+   *  directly at render time (not an effect dep) so there's no ordering
+   *  concern like the seek-effect guard had to work around. */
+  isResizingRef: React.RefObject<boolean>;
 }
 
 export function useTransitionPreview({
@@ -62,6 +69,7 @@ export function useTransitionPreview({
   globalTransition,
   globalTransitionDuration,
   globalConfig,
+  isResizingRef,
 }: Params): TransitionPreviewInfo {
   const [snapshots, setSnapshots] = useState<SnapshotPair | null>(null);
   // Prevent concurrent or duplicate snapshot renders
@@ -94,6 +102,7 @@ export function useTransitionPreview({
   const transitionEnd = nextSeg ? nextSeg.startTime : Infinity;
 
   const inTransitionWindow =
+    !isResizingRef.current &&
     nextSeg !== undefined &&
     effectiveTransition !== TransitionType.NONE &&
     transitionDuration > 0 &&
@@ -108,6 +117,7 @@ export function useTransitionPreview({
   // Pre-roll: render snapshots once when approaching the transition window
   // ---------------------------------------------------------------------------
   const needsPreRoll =
+    !isResizingRef.current &&
     nextSeg !== undefined &&
     effectiveTransition !== TransitionType.NONE &&
     transitionDuration > 0 &&
