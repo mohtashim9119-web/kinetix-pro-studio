@@ -124,6 +124,57 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
   }
 }
 
+/**
+ * D10 fix — resolves once a video element has actually painted a frame at
+ * its current seek target, not merely "buffered enough to maybe play" (all
+ * 'canplay' guarantees — it can fire before anything is decoded/presented,
+ * which is why an earlier canplay-based mitigation for the preview
+ * transition black-flash never engaged reliably).
+ *
+ * Fallback chain: requestVideoFrameCallback (fires only after a frame is
+ * submitted for compositing) -> 'seeked' + one rAF tick as a best-effort
+ * proxy on engines without rVFC -> a fixed timeout so callers never hang.
+ * Never rejects.
+ */
+function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let settled = false;
+    let rvfcHandle: number | undefined;
+    let onSeeked: (() => void) | undefined;
+
+    const rvfcVideo = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (callback: () => void) => number;
+      cancelVideoFrameCallback?: (handle: number) => void;
+    };
+
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      if (rvfcHandle !== undefined) {
+        rvfcVideo.cancelVideoFrameCallback?.(rvfcHandle);
+      }
+      if (onSeeked) {
+        video.removeEventListener('seeked', onSeeked);
+      }
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    if (typeof rvfcVideo.requestVideoFrameCallback === 'function') {
+      rvfcHandle = rvfcVideo.requestVideoFrameCallback(() => finish());
+    } else {
+      onSeeked = () => requestAnimationFrame(() => finish());
+      video.addEventListener('seeked', onSeeked);
+    }
+
+    const timeoutId = setTimeout(finish, 400);
+  });
+}
+
 interface GlobalOverlayConfig {
   fontFamily: string;
   color: string;
@@ -178,6 +229,13 @@ export function PreviewStage({
   const headingVideoRef = useRef<HTMLVideoElement>(null);
   const [activeSlot, setActiveSlot] = useState<'a' | 'b'>('a');
   const activeSlotRef = useRef<'a' | 'b'>('a');
+  // D10 fix — tracks which segment id each video slot has been pre-seeked
+  // and confirmed-painted for, so the swap effect can reveal instantly on
+  // the common (warmed) path instead of racing video decode.
+  const warmedSegmentIdRef = useRef<{ a: string | null; b: string | null }>({ a: null, b: null });
+  // Per-slot generation counter — invalidates a pending warm/reveal wait
+  // when a later effect run repurposes the same slot before it resolves.
+  const videoOpGenerationRef = useRef<{ a: number; b: number }>({ a: 0, b: 0 });
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
   const currentTimeRef = useRef(currentTime);
 
@@ -380,6 +438,14 @@ export function PreviewStage({
   // Dep array is intentionally [currentSegment?.id] — volatile values (assets,
   // segments, isPlaying, globalPlaybackSpeed) are read at effect-run time; including
   // them would re-fire on every state update and defeat the preload optimisation.
+  //
+  // D10 fix — the idle slot is now pre-seeked (not just loaded) to the next
+  // segment's start time during preload, and the active-slot reveal is gated
+  // on an actual painted frame (waitForVideoFrame) rather than flipped
+  // synchronously with the seek. On the common path (segment was warmed
+  // during the previous segment's playback) the reveal is immediate; the
+  // canvas "do NOT clearRect" hold (see the transition-blend effect above)
+  // remains as the fallback visual for the rare unwarmed case.
   useEffect(() => {
     if (!currentSegment) return;
     const currentAsset = assets.find(a => a.id === currentSegment.assetId);
@@ -388,8 +454,6 @@ export function PreviewStage({
     // Swap slots: the idle slot was preloading this segment — promote it to active.
     const prevSlot = activeSlotRef.current;
     const newSlot: 'a' | 'b' = prevSlot === 'a' ? 'b' : 'a';
-    activeSlotRef.current = newSlot;
-    setActiveSlot(newSlot);
 
     const activeEl  = newSlot === 'a' ? videoARef.current : videoBRef.current;
     const inactiveEl = newSlot === 'a' ? videoBRef.current : videoARef.current;
@@ -397,9 +461,11 @@ export function PreviewStage({
     if (!activeEl) return;
 
     // Load current segment (no-op when preload already set the correct src).
-    if (activeEl.src !== currentAsset.url) {
+    const isNewActiveSrc = activeEl.src !== currentAsset.url;
+    if (isNewActiveSrc) {
       activeEl.src = currentAsset.url;
       activeEl.load();
+      warmedSegmentIdRef.current[newSlot] = null;
     }
 
     // Seek to the correct intra-segment position.
@@ -408,7 +474,8 @@ export function PreviewStage({
     const videoTime = currentSegment.trimEnd !== undefined
       ? Math.min(rawTime, currentSegment.trimEnd)
       : rawTime;
-    seekToTime(activeEl, Math.max(0, videoTime));
+    const clampedVideoTime = Math.max(0, videoTime);
+    seekToTime(activeEl, clampedVideoTime);
 
     activeEl.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
 
@@ -418,16 +485,53 @@ export function PreviewStage({
       activeEl.pause();
     }
 
-    // Preload the next video segment into the idle slot.
+    // Reveal gate: if this exact segment's content was already warmed (pre-
+    // seeked + painted) onto this slot while it was idle, flip visibility
+    // immediately — the common path, no perceptible wait. Otherwise (very
+    // short segment, a scrub that skipped normal playthrough, or the first
+    // video of the timeline) wait for a real painted frame before revealing.
+    const alreadyWarmed = !isNewActiveSrc && warmedSegmentIdRef.current[newSlot] === currentSegment.id;
+    const revealGeneration = ++videoOpGenerationRef.current[newSlot];
+    const reveal = () => {
+      if (videoOpGenerationRef.current[newSlot] !== revealGeneration) return; // superseded
+      activeSlotRef.current = newSlot;
+      setActiveSlot(newSlot);
+    };
+
+    if (alreadyWarmed) {
+      reveal();
+    } else {
+      void waitForVideoFrame(activeEl).then(reveal);
+    }
+
+    // Preload the next video segment into the idle slot, and pre-seek it to
+    // its own start time so it has already painted a frame by the time it
+    // becomes active (this is what makes `alreadyWarmed` true above on the
+    // next segment change).
     const currentSegmentIndex = segments.findIndex(s => s.id === currentSegment.id);
     const nextSeg = segments[currentSegmentIndex + 1];
     const nextAsset = nextSeg ? assets.find(a => a.id === nextSeg.assetId) : null;
     const nextVideoUrl = nextAsset?.type === 'video' ? nextAsset.url : null;
+    const inactiveSlotName: 'a' | 'b' = newSlot === 'a' ? 'b' : 'a';
 
-    if (inactiveEl && nextVideoUrl && inactiveEl.src !== nextVideoUrl) {
-      inactiveEl.src = nextVideoUrl;
-      inactiveEl.preload = 'auto';
-      inactiveEl.load();
+    if (inactiveEl && nextSeg && nextVideoUrl) {
+      const isNewInactiveSrc = inactiveEl.src !== nextVideoUrl;
+      if (isNewInactiveSrc) {
+        inactiveEl.src = nextVideoUrl;
+        inactiveEl.preload = 'auto';
+        inactiveEl.load();
+        warmedSegmentIdRef.current[inactiveSlotName] = null;
+      }
+
+      if (warmedSegmentIdRef.current[inactiveSlotName] !== nextSeg.id) {
+        const warmGeneration = ++videoOpGenerationRef.current[inactiveSlotName];
+        const nextTargetTime = Math.max(0, nextSeg.trimStart || 0);
+        seekToTime(inactiveEl, nextTargetTime);
+        void waitForVideoFrame(inactiveEl).then(() => {
+          if (videoOpGenerationRef.current[inactiveSlotName] !== warmGeneration) return; // superseded
+          warmedSegmentIdRef.current[inactiveSlotName] = nextSeg.id;
+        });
+      }
     }
   }, [currentSegment?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 

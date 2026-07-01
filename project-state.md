@@ -29,6 +29,12 @@ Export caption now honors `fontWeight`/`fontStyle`/`textShadow` (D1, commit `60a
 </details>
 
 <details>
+<summary>D10 fixed — preview transition black flash on video boundaries — ✅ DONE 2026-06-30</summary>
+
+D10 fixed — preview transition black flash on video→video boundaries eliminated. Root cause: the idle video slot was preloaded (bytes buffered) but never pre-seeked, so seek+first-paint was deferred to the swap moment; the prior canvas-hold attempt gated on 'canplay' (fires before paint). Fix (`PreviewStage.tsx`): warm the idle dual-video slot ahead of time (seek to `nextSeg.trimStart||0` during preload) and gate the reveal on an actual painted frame via `requestVideoFrameCallback`, with a 'seeked'+rAF fallback and 400ms failsafe; warmed common path reveals synchronously (no added latency); existing canvas-hold retained as fallback for unwarmed edge cases (short segments/scrubbing). Image/color paths untouched. Verified acceptable on macOS; Windows/WebView2 spot-check not separately performed (rVFC+fallbacks are engine-agnostic).
+</details>
+
+<details>
 <summary>D6 fixed — kinetix:ui:v1 lost-update race closed — ✅ DONE 2026-06-30 (commit 3b0702f)</summary>
 
 D6 fixed — kinetix:ui:v1 lost-update/structural race closed by consolidating the three read-modify-write writers (2 in App.tsx, 1 in Timeline.tsx) plus all 7 lazy-initializer reads into a single standalone module `src/services/uiStateStore.ts` (`readUiState`/`patchUiState`). Behavior unchanged (same fields, same write timing, same isPlaying gating, same 300ms scroll-restore); only the read-merge-write mechanics are now centralized and atomic per call. Manually verified: reload preserves panel/scroll/playhead/tab; dashboard project-switch resets to 0:00. Commit `3b0702f`.
@@ -131,7 +137,6 @@ Real behavioral bugs — each needs design before a fix can be written.
 - **D4 — Lock/heading ops revert drag edits:** toggling lock or inserting/deleting a heading calls `applyAnchorBasedTiming`, which re-derives all timings from stale `anchorStart` values, silently discarding prior manual drag-resizes. `App.tsx`, `syncEngine.ts`
 - **D5 — Locked-segment duration grows but never shrinks:** `applyAnchorBasedTiming` uses `Math.max(preserved, span)` for locked segments, so a locked segment whose preserved duration exceeds its anchor span inflates the running total and threatens invariant (b). `syncEngine.ts`
 - **D12 — Video preview jumps to near-start on resize-drag release:** after a timeline resize drag, `currentSegment` re-resolves with new `startTime`s in the same render that clears the resize guard, causing the video to seek back to the segment start; audio and export are unaffected. `PreviewStage.tsx`, `App.tsx`
-- **D10 — Preview transition black flash on video boundaries:** when a transition ends on a video segment, the newly-mounted `<video>` element shows ~100–200ms of black before its first decoded frame paints; export is unaffected. `PreviewStage.tsx`, `useTransitionPreview.ts`
 
 ---
 
@@ -290,6 +295,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-30 | UI state persistence: kinetix:ui:v1 localStorage key stores activeLeftTab, leftPanelCollapsed, rightPanelCollapsed, previewHeight, currentTime, selectedSegmentId, timelineScrollLeft. handleSwitchProject preserveUiState flag distinguishes reload (preserve) from dashboard switch (reset). Timeline scroll listener lives in Timeline.tsx because timeline-scroll-area does not exist in DOM when App.tsx mounts. Restore deferred 300ms via setTimeout to let layout settle after double-mount caused by unbatched async hydration state updates. |
 | 2026-06-30 | Caption max-width = 70% of render width (was 768px @1080p ≈40%). Applied identically in PreviewStage (CSS `maxWidth: '70%'`, resolves against inset-0 stage box, no JS) and frameRenderer (`w * 0.7`). Font-size/padding/radius remain height-scaled via refScale. Long captions now wrap later than before; preview/export parity preserved. |
 | 2026-06-30 | UI-state persistence consolidated into `src/services/uiStateStore.ts` — single source for `kinetix:ui:v1` read/merge/write. Closes D6 and the structural risk of independent RMW writers (future async storage backend would otherwise reintroduce a real clobber). No behavior change. |
+| 2026-06-30 | D10 fixed via pre-seek + requestVideoFrameCallback reveal-gating in PreviewStage dual-video slots (was: canplay-gated, which fires before paint). Canvas-hold kept as fallback. Preview-only; export untouched. |
 
 ---
 
