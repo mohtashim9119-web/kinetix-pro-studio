@@ -47,7 +47,7 @@ Export caption now honors `fontWeight`/`fontStyle`/`textShadow` (D1, commit `60a
 
 - ✅ **Shared `SegmentControls` extraction** — the controls portion of `ReviewMappingRow` (both scene-card and heading-card layouts, the field/button/swatch style consts, `updateHC`, and the `.rm-slider`/`.rm-swatch` `<style>` block) is now `src/components/SegmentControls.tsx`. `ReviewMappingModal` renders thumbnail + `<SegmentControls/>` (modal appearance/behavior unchanged — pure move); the bottom drawer renders `<SegmentControls/>` only (no thumbnail, full width). Non-audio asset filtering lives once, inside `SegmentControls`. The drawer's old `<textarea>` overlay input became the shared single-line input, and its phantom shadow control (export never applied it) was dropped.
 - ✅ **Bottom drawer centered at 50vw, viewport-anchored** — wrapper switched from `absolute bottom-0 left-0 right-0` to `fixed bottom-0` with `left: 50%`, `width: 50vw`; centering expressed through Framer Motion (`x: '-50%'` on all three keyframes) since motion owns the element transform. Drawer position is now independent of side-panel collapse state.
-- ✅ **Mute toggle moved to drawer header** — sits to the left of the lock icon, scene-only (headings have no embedded audio); the old body mute row was removed so scene and heading drawers are the same height.
+- ✅ **Mute toggle moved to drawer header** — sits to the left of the lock icon, scene-only (headings have no embedded audio); the old body mute row was removed so scene and heading drawers are the same height. *(The mute toggle itself — and the underlying `isMuted` field — was removed entirely on 2026-07-01 as dead code with no consumer; formerly tracked as D3.)*
 - ✅ **Left-panel segment click syncs preview + timeline** — clicking a row now calls `handleSegmentClick` (App.tsx), which sets `selectedSegmentId` AND seeks the time-driven preview to the segment's `startTime` (mirrors the timeline onSeek pattern). `Timeline.tsx` gained an effect that auto-scrolls the active segment into view on `currentSegmentId` change (only when off-screen, so it never fights manual scrubbing).
 </details>
 
@@ -125,7 +125,6 @@ Real behavioral bugs — each needs design before a fix can be written.
 - **D4 — Lock/heading ops revert drag edits:** toggling lock or inserting/deleting a heading calls `applyAnchorBasedTiming`, which re-derives all timings from stale `anchorStart` values, silently discarding prior manual drag-resizes. `App.tsx`, `syncEngine.ts`
 - **D5 — Locked-segment duration grows but never shrinks:** `applyAnchorBasedTiming` uses `Math.max(preserved, span)` for locked segments, so a locked segment whose preserved duration exceeds its anchor span inflates the running total and threatens invariant (b). `syncEngine.ts`
 - **D12 — Video preview jumps to near-start on resize-drag release:** after a timeline resize drag, `currentSegment` re-resolves with new `startTime`s in the same render that clears the resize guard, causing the video to seek back to the segment start; audio and export are unaffected. `PreviewStage.tsx`, `App.tsx`
-- **D3 — isMuted has no consumer:** the per-segment mute toggle persists `isMuted` on the segment, but export muxes only the global voiceover and preview `<video>` elements are always `muted` — the flag does nothing. `BottomDrawer.tsx`, `exportPipeline.ts`, `PreviewStage.tsx`
 - **D10 — Preview transition black flash on video boundaries:** when a transition ends on a video segment, the newly-mounted `<video>` element shows ~100–200ms of black before its first decoded frame paints; export is unaffected. `PreviewStage.tsx`, `useTransitionPreview.ts`
 - **D6 — kinetix:ui:v1 lost-update race:** three independent read-modify-write effects/listeners (panel-state in App.tsx, currentTime in App.tsx, scroll in Timeline.tsx) each snapshot, spread, and write back the UI key — concurrent fires during playback can clobber a just-written field. `App.tsx`, `Timeline.tsx`
 
@@ -143,8 +142,8 @@ KEY DECISIONS (locked):
 - "Apply to selected" = TRUE MULTI-SELECT of segments (selectedSegmentId becomes
   a Set).
 - Per-segment effect fields MUST survive both reload AND Apply Sync — requires
-  patching parseProjectData to preserve them (fixes the isMuted-style clean-slate
-  wipe).
+  patching parseProjectData to preserve them (fixes clean-slate wipe of
+  per-segment fields).
 - Dropdowns/randomize-pools/presets all read ONE shared option source; no entry
   is ever wired to a renderer case that does nothing (no phantom enums).
 - Accent canonical = #e07c3a.

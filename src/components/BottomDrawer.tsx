@@ -5,7 +5,7 @@
 
 import { useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { X, Lock, Unlock, Music, ArrowLeftRight, Sparkles, Layers } from 'lucide-react';
+import { X, Lock, Unlock, ArrowLeftRight, Sparkles, Layers } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
 import { SegmentControls } from './SegmentControls';
 import { labelOf, TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE } from '../effectsOptions';
@@ -100,17 +100,6 @@ export function BottomDrawer({
               ))}
             </div>
             <div className="flex items-center gap-2 justify-self-end">
-              {/* Mute toggle — scene-only (headings have no embedded audio) */}
-              {!s.isHeading && (
-                <button
-                  onClick={() => onUpdateSegment(idx, { isMuted: !s.isMuted })}
-                  className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors"
-                  style={{ color: s.isMuted ? '#F87171' : '#4ADE80' }}
-                >
-                  <Music size={10} className={s.isMuted ? 'opacity-40' : ''} />
-                  {s.isMuted ? 'Muted' : 'Audio'}
-                </button>
-              )}
               <button
                 onClick={() => onToggleLock(s.id)}
                 className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors"

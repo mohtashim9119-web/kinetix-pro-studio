@@ -76,7 +76,7 @@ src/
   components/
     BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
-                     #   bar (fixed-width orange window slides over source); mute toggle. Heading input
+                     #   bar (fixed-width orange window slides over source). Heading input
                      #   shown only for [HEADING:] segments. Click-outside backdrop closes drawer.
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.

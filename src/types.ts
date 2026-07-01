@@ -184,7 +184,6 @@ export interface VideoSegment {
   transitionDuration?: number;
   trimStart?: number;
   trimEnd?: number;
-  isMuted?: boolean;
   locked?: boolean; // true = manual adjustment applied; re-sync skips this segment
   /** Audio timestamp (seconds) where this segment's content begins in the voiceover.
    *  Set by parseProjectData (character-weight) and overwritten by Whisper alignment (t0).

@@ -103,7 +103,6 @@ interface RawSegment {
   animation: AnimationType;
   playbackSpeed: number;
   trimStart: number;
-  isMuted: boolean;
   extraOverlays: TextOverlay[];
   sourceDuration?: number;
 }
@@ -297,7 +296,6 @@ const parseProjectData = async (
       animation: AnimationType.NONE,
       playbackSpeed: 1,
       trimStart: 0,
-      isMuted: true,
       extraOverlays: [],
     };
 
@@ -2665,7 +2663,7 @@ export default function App() {
                 const newAssets = [...p.assets, newAsset];
                 const afterTarget = p.segments.map(s =>
                   s.id === targetId
-                    ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0, isMuted: true }
+                    ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0 }
                     : s
                 );
                 return {
