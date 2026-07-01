@@ -832,7 +832,7 @@ export function PreviewStage({
                 left: `${overlayPosX}%`,
                 top: `${overlayPosY}%`,
                 width: 'max-content',
-                maxWidth: `${768 * captionScale}px`,
+                maxWidth: '70%',
                 padding: `${Math.round(12 * captionScale)}px ${Math.round(20 * captionScale)}px`,
                 borderRadius: `${Math.round(24 * captionScale)}px`,
                 backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,

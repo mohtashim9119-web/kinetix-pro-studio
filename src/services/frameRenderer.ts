@@ -562,10 +562,13 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     const xPct = (oc?.x ?? 50) / 100;
     const yPct = (oc?.y ?? 78) / 100;
 
-    // refScale converts PreviewStage's fixed DOM CSS px (24px font, 768px wrap cap,
-    // 20/12px padding, 24px radius — PreviewStage.tsx:719-733) into canvas px at the
+    // refScale converts PreviewStage's fixed DOM CSS px (24px font, 20/12px
+    // padding, 24px radius — PreviewStage.tsx:719-733) into canvas px at the
     // current render resolution. Uses textRefHeight when supplied (snapshot bitmaps
     // get stretched up before display) else the canvas's own height (export).
+    // The wrap cap itself is not part of this height-based scale — it's 70% of
+    // the render width `w`, matching PreviewStage's `maxWidth: '70%'` (both are
+    // percentages of their own stage/canvas width, so they wrap at the same point).
     const refScale = (textRefHeight ?? h) / 1080;
     const bodyPx = Math.round(refScale * (oc?.fontSize ?? 24));
 
@@ -574,7 +577,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       await ensureFont(fontFamily, bodyPx);
       ctx.save();
       ctx.font = `${fontStyle} ${fontWeight} ${bodyPx}px "${fontFamily}"`;
-      const maxTextW = 768 * refScale; // matches DOM's max-w-3xl
+      const maxTextW = w * 0.7; // matches DOM's maxWidth: '70%'
       const lines = wrapText(ctx, displayText, maxTextW);
       const lineH = bodyPx * 1.5;
       const totalH = lines.length * lineH;
