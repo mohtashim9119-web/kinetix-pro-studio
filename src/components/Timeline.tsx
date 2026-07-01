@@ -9,6 +9,7 @@ import {
   Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
 } from 'lucide-react';
 import { VideoSegment, Asset } from '../types';
+import { patchUiState } from '../services/uiStateStore';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
@@ -162,10 +163,7 @@ export function Timeline({
     const handleScroll = () => {
       clearTimeout(timer);
       timer = setTimeout(() => {
-        try {
-          const prev = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
-          localStorage.setItem('kinetix:ui:v1', JSON.stringify({ ...prev, timelineScrollLeft: el.scrollLeft }));
-        } catch { /* ignore */ }
+        patchUiState({ timelineScrollLeft: el.scrollLeft });
       }, 300);
     };
     el.addEventListener('scroll', handleScroll, { passive: true });

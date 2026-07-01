@@ -91,6 +91,7 @@ import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
 import { isTauri } from './services/tauriFfmpeg';
+import { readUiState, patchUiState } from './services/uiStateStore';
 import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
@@ -574,7 +575,7 @@ export default function App() {
   const [isHydrating, setIsHydrating] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState<number>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').currentTime ?? 0; }
+    try { return (readUiState().currentTime as number) ?? 0; }
     catch { return 0; }
   });
   const [isProcessing, setIsProcessing] = useState(false);
@@ -594,7 +595,7 @@ export default function App() {
   const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [isSynced, setIsSynced] = useState(false);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').selectedSegmentId ?? null; }
+    try { return (readUiState().selectedSegmentId as string | null) ?? null; }
     catch { return null; }
   });
   // Batch (multi-)selection for the Effects tab — separate from selectedSegmentId
@@ -603,19 +604,19 @@ export default function App() {
 
   // ── Persisted UI state (kinetix:ui:v1) ──────────────────────────────────────
   const [leftPanelCollapsed, setLeftPanelCollapsed] = useState<boolean>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').leftPanelCollapsed ?? false; }
+    try { return (readUiState().leftPanelCollapsed as boolean) ?? false; }
     catch { return false; }
   });
   const [rightPanelCollapsed, setRightPanelCollapsed] = useState<boolean>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').rightPanelCollapsed ?? false; }
+    try { return (readUiState().rightPanelCollapsed as boolean) ?? false; }
     catch { return false; }
   });
   const [previewHeight, setPreviewHeight] = useState<number>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').previewHeight ?? Math.floor((window.innerHeight - 4) / 2); }
+    try { return (readUiState().previewHeight as number) ?? Math.floor((window.innerHeight - 4) / 2); }
     catch { return Math.floor((window.innerHeight - 4) / 2); }
   });
   const [activeLeftTab, setActiveLeftTab] = useState<'files' | 'segments' | 'effects'>(() => {
-    try { return JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').activeLeftTab ?? 'files'; }
+    try { return (readUiState().activeLeftTab as 'files' | 'segments' | 'effects') ?? 'files'; }
     catch { return 'files'; }
   });
 
@@ -623,23 +624,13 @@ export default function App() {
   // Persistence (scroll listener + localStorage write) lives in Timeline.tsx where
   // timeline-scroll-area is guaranteed to exist.
   const initialTimelineScrollLeft = (() => {
-    try { return (JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}').timelineScrollLeft as number) ?? 0; }
+    try { return (readUiState().timelineScrollLeft as number) ?? 0; }
     catch { return 0; }
   })();
 
   // Persist UI state to localStorage whenever any of the tracked values change.
   useEffect(() => {
-    try {
-      const prev = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
-      localStorage.setItem('kinetix:ui:v1', JSON.stringify({
-        ...prev,
-        leftPanelCollapsed,
-        rightPanelCollapsed,
-        previewHeight,
-        activeLeftTab,
-        selectedSegmentId,
-      }));
-    } catch { /* quota exceeded or SSR — ignore */ }
+    patchUiState({ leftPanelCollapsed, rightPanelCollapsed, previewHeight, activeLeftTab, selectedSegmentId });
   }, [leftPanelCollapsed, rightPanelCollapsed, previewHeight, activeLeftTab, selectedSegmentId]);
 
   // Persist currentTime when paused or seeking (not on every 16ms playback tick).
@@ -647,10 +638,7 @@ export default function App() {
   // changes while already paused (seek). Bails immediately during playback.
   useEffect(() => {
     if (isPlaying) return;
-    try {
-      const ui = JSON.parse(localStorage.getItem('kinetix:ui:v1') ?? '{}') as Record<string, unknown>;
-      localStorage.setItem('kinetix:ui:v1', JSON.stringify({ ...ui, currentTime }));
-    } catch { /* ignore */ }
+    patchUiState({ currentTime });
   }, [isPlaying, currentTime]);
 
   const isDraggingDivider = useRef(false);
