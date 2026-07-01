@@ -203,9 +203,107 @@ export async function encodeSegment(
   return mp4Bytes;
 }
 
+export interface EncodePlainVideoOptions {
+  fps?: number;
+  width?: number;
+  height?: number;
+}
+
+/**
+ * Tier-1 fast path: encodes a "plain" video segment (see isPlainVideoSegment in
+ * plainSegment.ts) with a single ffmpeg trim+scale call, bypassing the per-frame
+ * canvas/PNG/IPC pipeline entirely.
+ *
+ * The source video bytes are written into the ffmpeg session FS, then a single
+ * exec trims [trimStart, trimStart+duration] and cover-fits to W×H via Lanczos.
+ * Output flags are kept byte-for-byte compatible with the canvas path's segment
+ * mp4s (libx264 / yuv420p / same W×H / bt709 color / forced fps / video-only)
+ * so both can be joined by the concat demuxer with `-c copy`.
+ *
+ * Trim accuracy: input-side `-ss` with `-accurate_seek` is frame-accurate under
+ * re-encode (the decoder discards up to the exact target frame) and far faster
+ * than output-side seeking, which would decode from t=0.
+ *
+ * @returns Raw MP4 bytes for the segment (same contract as encodeSegment).
+ */
+export async function encodePlainVideoSegment(
+  segment: VideoSegment,
+  asset: Asset,
+  ffmpeg: FfmpegLike,
+  options: EncodePlainVideoOptions = {},
+): Promise<Uint8Array> {
+  const fps = options.fps ?? 30;
+  const width = options.width ?? 1920;
+  const height = options.height ?? 1080;
+
+  // Width and height must both be even for yuv420p — match the canvas path.
+  const w = width % 2 === 0 ? width : width - 1;
+  const h = height % 2 === 0 ? height : height - 1;
+
+  const ext = safeVideoExt(asset.name);
+  const srcFile = `tier1_src_${segment.id}.${ext}`;
+  const outputFile = `tier1_out_${segment.id}.mp4`;
+
+  // Pull the source bytes out of the blob URL and into the session FS so the
+  // native ffmpeg process can read the file directly (same fetch→writeFile
+  // pattern the audio-mux step uses in exportPipeline).
+  const resp = await fetch(asset.url);
+  const srcBytes = new Uint8Array(await resp.arrayBuffer());
+  await ffmpeg.writeFile(srcFile, srcBytes);
+
+  const trimStart = segment.trimStart ?? 0;
+  const duration = segment.duration;
+
+  // Cover-fit: scale up until both dims cover W×H (Lanczos), then centre-crop to
+  // exactly W×H, then normalize SAR. Mirrors frameRenderer.ts drawImageCover.
+  const vf = `scale=${w}:${h}:force_original_aspect_ratio=increase:flags=lanczos,crop=${w}:${h},setsar=1`;
+
+  await ffmpeg.exec([
+    '-accurate_seek',
+    '-ss', String(trimStart),
+    '-i', srcFile,
+    '-t', String(duration),
+    '-vf', vf,
+    '-r', String(fps),
+    '-an',
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '16',
+    '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
+    '-movflags', '+faststart',
+    '-y',
+    outputFile,
+  ]);
+
+  const fileData = await ffmpeg.readFile(outputFile);
+  const mp4Bytes =
+    fileData instanceof Uint8Array
+      ? fileData
+      : new TextEncoder().encode(fileData as string);
+
+  await cleanupFiles(ffmpeg, [srcFile, outputFile]);
+
+  return mp4Bytes;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Derives a safe, session-FS-legal file extension from an asset name.
+ * validate_path (ffmpeg.rs) only permits [A-Za-z0-9_.-], so the extension is
+ * lower-cased and sanity-checked; anything unusable falls back to 'mp4'.
+ * ffmpeg probes input by content, so an imperfect extension is non-fatal.
+ */
+function safeVideoExt(name: string): string {
+  const m = /\.([A-Za-z0-9]{1,5})$/.exec(name);
+  const ext = m ? m[1]!.toLowerCase() : 'mp4';
+  return /^[a-z0-9]+$/.test(ext) ? ext : 'mp4';
+}
 
 function canvasToPng(canvas: HTMLCanvasElement): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {

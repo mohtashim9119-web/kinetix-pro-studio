@@ -1,7 +1,8 @@
 import { Project, Asset, VideoSegment, TransitionType } from '../types';
-import { encodeSegment, FfmpegLike } from './segmentEncoder';
+import { encodeSegment, encodePlainVideoSegment, FfmpegLike } from './segmentEncoder';
 import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
+import { isPlainVideoSegment } from './plainSegment';
 
 export interface ExportOptions {
   width?: number;
@@ -136,33 +137,45 @@ export async function exportProject(
       totalFrames: segmentFrameCount,
     });
 
+    // Tier 1: a plain full-frame video segment (no caption/overlay/animation/
+    // filter/transition/speed change) is produced by a single ffmpeg trim+scale
+    // call instead of the per-frame canvas pipeline. Output flags match the
+    // canvas path exactly so both concat cleanly. Everything else — composited
+    // segments, images, headings — stays on the unchanged canvas path below.
+    const isPlain =
+      !!asset &&
+      asset.type === 'video' &&
+      isPlainVideoSegment(segment, prevSegment, nextSegment, project);
+
     try {
-      const mp4Bytes = await encodeSegment(
-        segment,
-        asset,
-        ffmpeg,
-        globalConfig,
-        {
-          fps,
-          width,
-          height,
-          nextSegment,
-          nextAsset,
-          globalTransitionDuration: project.globalTransitionDuration,
-          globalTransition: project.globalTransition,
-          startTimeOffset,
-          trailingExtension,
-          onProgress: (frame, totalFrames) => {
-            onProgress({
-              type: 'encoding_segment',
-              index: i,
-              total: segments.length,
-              frame,
-              totalFrames,
-            });
-          },
-        },
-      );
+      const mp4Bytes = isPlain
+        ? await encodePlainVideoSegment(segment, asset!, ffmpeg, { fps, width, height })
+        : await encodeSegment(
+            segment,
+            asset,
+            ffmpeg,
+            globalConfig,
+            {
+              fps,
+              width,
+              height,
+              nextSegment,
+              nextAsset,
+              globalTransitionDuration: project.globalTransitionDuration,
+              globalTransition: project.globalTransition,
+              startTimeOffset,
+              trailingExtension,
+              onProgress: (frame, totalFrames) => {
+                onProgress({
+                  type: 'encoding_segment',
+                  index: i,
+                  total: segments.length,
+                  frame,
+                  totalFrames,
+                });
+              },
+            },
+          );
       await ffmpeg.writeFile(segFile, mp4Bytes);
     } catch (err) {
       return {
