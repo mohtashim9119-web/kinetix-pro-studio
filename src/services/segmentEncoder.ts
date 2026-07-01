@@ -68,6 +68,8 @@ export async function encodeSegment(
   canvas.height = h;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('segmentEncoder: failed to get 2D canvas context');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
 
   // Separate canvas for rendering the adjacent (incoming) segment's frame
   // during transition blending. Created lazily only when needed.
@@ -83,6 +85,10 @@ export async function encodeSegment(
     blendCanvas.width = w;
     blendCanvas.height = h;
     blendCtx = blendCanvas.getContext('2d');
+    if (blendCtx) {
+      blendCtx.imageSmoothingEnabled = true;
+      blendCtx.imageSmoothingQuality = 'high';
+    }
   }
 
   const startTimeOffset = options.startTimeOffset ?? 0;
@@ -173,8 +179,11 @@ export async function encodeSegment(
     '-i', 'frame_%05d.png',
     '-c:v', 'libx264',
     '-preset', 'fast',
-    '-crf', '23',
+    '-crf', '16',
     '-pix_fmt', 'yuv420p',
+    '-colorspace', 'bt709',
+    '-color_primaries', 'bt709',
+    '-color_trc', 'bt709',
     '-movflags', '+faststart',
     '-y',
     outputFile,

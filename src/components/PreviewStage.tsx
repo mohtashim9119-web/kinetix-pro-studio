@@ -803,9 +803,6 @@ export function PreviewStage({
                 })()}
               </motion.div>
 
-              {/* Main Overlays Gradient */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-black/40 pointer-events-none" />
-
               {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided.
                   Wrapper fades out with the canvas overlay during transitions to prevent
                   double-render (canvas snapshot already contains extra overlays). */}

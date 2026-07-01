@@ -211,16 +211,6 @@ function drawImageCover(
   ctx.drawImage(img, (w - drawW) / 2, (h - drawH) / 2, drawW, drawH);
 }
 
-function drawGradientVignette(ctx: CanvasRenderingContext2D, w: number, h: number): void {
-  // Matches PreviewStage: bg-gradient-to-t from-black/80 via-transparent to-black/40
-  const grad = ctx.createLinearGradient(0, h, 0, 0);
-  grad.addColorStop(0, 'rgba(0,0,0,0.80)');
-  grad.addColorStop(0.4, 'rgba(0,0,0,0)');
-  grad.addColorStop(1, 'rgba(0,0,0,0.40)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-}
-
 function drawRoundedRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
   ctx.moveTo(x + r, y);
@@ -526,13 +516,10 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   ctx.filter = 'none';
 
   // Pixel-op clip effects that can't be expressed as a CSS filter string.
-  // Applied to the drawn media only, before vignette/overlay compositing.
+  // Applied to the drawn media only, before overlay compositing.
   if (segment.effectAnimation === 'duotone') {
     applyDuotone(ctx, w, h);
   }
-
-  // Gradient vignette (matches the overlay in PreviewStage)
-  drawGradientVignette(ctx, w, h);
 
   // Extra positioned overlays
   for (const overlay of segment.extraOverlays ?? []) {
