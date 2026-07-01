@@ -61,6 +61,8 @@ src/
                      #   valid after the round-trip; same-id save is a no-op (returns the existing record,
                      #   no duplicate row). Deliberately separate from the legacy presetService.ts
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
+    uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
+                     #   single source for UI-state persistence (D6 fix).
   hooks/
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
