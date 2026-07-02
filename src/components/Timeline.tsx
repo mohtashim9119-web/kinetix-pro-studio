@@ -145,15 +145,22 @@ export function Timeline({
     return () => { cancelled = true; };
   }, [voiceoverUrl, voiceoverFile]);
 
-  // Restore persisted scroll position synchronously before first paint —
-  // #timeline-scroll-area is in this component's own tree, so it exists when
-  // layout effects run. Restoring here (instead of a post-paint setTimeout)
-  // avoids the visible scroll "jump then settle" on reload.
+  // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
+  // from the ResizeObserver above — only then are pixelsPerSecond and the segment
+  // (content) widths final. Restoring earlier (against the 800px fallback layout)
+  // let the browser clamp scrollLeft to 0 because the content didn't yet overflow
+  // the real viewport, producing the "0 then scroll" flash. useLayoutEffect
+  // applies it before the paint of the measured frame; the two auto-scroll effects
+  // below are gated on didRestoreRef so neither can clobber it before it lands.
+  const didRestoreRef = useRef(false);
   useLayoutEffect(() => {
+    if (didRestoreRef.current || containerWidth === 0) return;
     const el = document.getElementById('timeline-scroll-area');
-    if (el && initialScrollLeft) el.scrollLeft = initialScrollLeft;
+    if (!el) return;
+    if (initialScrollLeft) el.scrollLeft = initialScrollLeft;
+    didRestoreRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [containerWidth]);
 
   // Attach the scroll listener here, where timeline-scroll-area is guaranteed
   // to exist in the DOM.
@@ -185,6 +192,11 @@ export function Timeline({
   // boundary), scroll the timeline horizontally so it comes into view. Only
   // scrolls when the segment is off-screen, so it never fights manual scrubbing.
   useEffect(() => {
+    // Gate until the one-shot scroll restore has applied, so the mount-time and
+    // width-settle runs can't override it. Checked before hasMountedRef so those
+    // pre-restore runs don't consume the mount-skip; the first run AFTER restore
+    // (the ResizeObserver pixelsPerSecond settle) is then absorbed by hasMountedRef.
+    if (!didRestoreRef.current) return;
     if (!hasMountedRef.current) { hasMountedRef.current = true; return; }
     if (!currentSegmentId) return;
     const seg = segments.find(s => s.id === currentSegmentId);
@@ -210,6 +222,11 @@ export function Timeline({
   // change (not pixelsPerSecond/currentSegmentId/segments) so it never fights the
   // active-segment effect above, which has a different trigger. Instant, not smooth.
   useEffect(() => {
+    // Gate until the one-shot scroll restore has applied — this effect has no
+    // mount guard of its own, so on reload it would otherwise center the current
+    // segment and override the restored scroll. sliderT is stable through the
+    // mount settle, so after restore this fires only on genuine zoom changes.
+    if (!didRestoreRef.current) return;
     const container = document.getElementById('timeline-scroll-area');
     if (!container || !currentSegmentId) return;
     const seg = segments.find(s => s.id === currentSegmentId);
