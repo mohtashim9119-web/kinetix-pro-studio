@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
@@ -145,19 +145,21 @@ export function Timeline({
     return () => { cancelled = true; };
   }, [voiceoverUrl, voiceoverFile]);
 
-  // Restore persisted scroll position and attach the scroll listener here,
-  // where timeline-scroll-area is guaranteed to exist in the DOM.
+  // Restore persisted scroll position synchronously before first paint —
+  // #timeline-scroll-area is in this component's own tree, so it exists when
+  // layout effects run. Restoring here (instead of a post-paint setTimeout)
+  // avoids the visible scroll "jump then settle" on reload.
+  useLayoutEffect(() => {
+    const el = document.getElementById('timeline-scroll-area');
+    if (el && initialScrollLeft) el.scrollLeft = initialScrollLeft;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Attach the scroll listener here, where timeline-scroll-area is guaranteed
+  // to exist in the DOM.
   useEffect(() => {
     const el = document.getElementById('timeline-scroll-area');
     if (!el) return;
-    // Restore after a short delay so layout has settled post-hydration.
-    let restoreTimer: ReturnType<typeof setTimeout> | undefined;
-    if (initialScrollLeft) {
-      restoreTimer = setTimeout(() => {
-        const elNow = document.getElementById('timeline-scroll-area');
-        if (elNow) elNow.scrollLeft = initialScrollLeft;
-      }, 300);
-    }
     // Persist on scroll (debounced 300ms)
     let timer: ReturnType<typeof setTimeout>;
     const handleScroll = () => {
@@ -169,7 +171,6 @@ export function Timeline({
     el.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       clearTimeout(timer);
-      if (restoreTimer) clearTimeout(restoreTimer);
       el.removeEventListener('scroll', handleScroll);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, ChangeEvent, lazy, Suspense, type ReactElement } from 'react';
 import { 
   Play, 
   Pause, 
@@ -1897,9 +1897,11 @@ export default function App() {
     return () => clearTimeout(id);
   }, [leftPanelCollapsed, rightPanelCollapsed]);
 
-  // Validate the useState initializer against the real layout after first paint.
+  // Validate the useState initializer against the real layout BEFORE first paint.
   // window.innerHeight may differ from the center column's actual usable height.
-  useEffect(() => {
+  // useLayoutEffect runs synchronously after DOM mutation but before the browser
+  // paints, so the corrected height is applied without a visible "jump then settle".
+  useLayoutEffect(() => {
     const rect = centerColRef.current?.getBoundingClientRect();
     if (!rect) return;
     const maxAllowed = Math.floor(rect.width * (9 / 16));
