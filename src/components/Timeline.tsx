@@ -307,6 +307,7 @@ export function Timeline({
                 return (
                   <div
                     key={s.id}
+                    data-seg-id={s.id}
                     onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
                     onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
                     onMouseDown={(e) => {
@@ -441,6 +442,7 @@ export function Timeline({
               {segments.map((s) => (
                 <div
                   key={`vo-${s.id}`}
+                  data-seg-id={s.id}
                   style={{ width: `${s.duration * pixelsPerSecond}px` }}
                   className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
                 >

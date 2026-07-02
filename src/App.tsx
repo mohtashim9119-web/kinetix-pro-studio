@@ -2254,23 +2254,37 @@ export default function App() {
               isDraggingDivider.current = true;
               const startY = e.clientY;
               const startHeight = previewHeight;
+              // B3 — measure the center column ONCE; its box doesn't change while the
+              // divider is being dragged, so the clamp bounds are constant for the gesture.
+              const rect = centerColRef.current?.getBoundingClientRect();
+              const centerWidth = rect?.width ?? window.innerWidth * 0.65;
+              const centerHeight = rect?.height ?? window.innerHeight;
+              const maxAllowed = Math.floor(centerWidth * (9 / 16));
+              const minTlH = Math.max(MIN_TIMELINE_HEIGHT, Math.floor(centerHeight * 0.30));
+              const timelineFloor = centerHeight - minTlH - 4;
+              const clampHeight = (y: number): number => Math.min(
+                Math.max(startHeight + (y - startY), 180),
+                Math.min(maxAllowed, timelineFloor),
+              );
+              // B5 — coalesce mousemoves into one setPreviewHeight per animation frame.
+              let rafId: number | null = null;
+              let pendingY = startY;
+              const applyFrame = () => {
+                rafId = null;
+                if (!isDraggingDivider.current) return;
+                setPreviewHeight(clampHeight(pendingY));
+              };
               const onMove = (ev: MouseEvent) => {
                 if (!isDraggingDivider.current) return;
-                const delta = ev.clientY - startY;
-                const rect = centerColRef.current?.getBoundingClientRect();
-                const centerWidth = rect?.width ?? window.innerWidth * 0.65;
-                const centerHeight = rect?.height ?? window.innerHeight;
-                const maxAllowed = Math.floor(centerWidth * (9 / 16));
-                const minTlH = Math.max(MIN_TIMELINE_HEIGHT, Math.floor(centerHeight * 0.30));
-                const timelineFloor = centerHeight - minTlH - 4;
-                const next = Math.min(
-                  Math.max(startHeight + delta, 180),
-                  Math.min(maxAllowed, timelineFloor),
-                );
-                setPreviewHeight(next);
+                pendingY = ev.clientY;
+                if (rafId === null) rafId = requestAnimationFrame(applyFrame);
               };
               const onUp = () => {
                 isDraggingDivider.current = false;
+                if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+                // Land exactly on the release position, even if the last frame was
+                // still pending.
+                setPreviewHeight(clampHeight(pendingY));
                 window.removeEventListener('mousemove', onMove);
                 window.removeEventListener('mouseup', onUp);
               };
@@ -2317,49 +2331,77 @@ export default function App() {
                   const originalTarget = originalSegments[draggedIdx];
                   if (draggedIdx < 0 || !originalTarget) return;
                   const pps = pixelsPerSecondRef.current;
+                  // B3 — cache the timeline element + its left edge ONCE at drag start.
+                  // rect.left is stable for the whole gesture, so re-measuring it (a
+                  // layout read) on every mousemove was pure thrash. scrollLeft is still
+                  // read live, but only at the top of each rAF frame, before any write.
+                  const timeline = document.getElementById('timeline-scroll-area');
+                  if (!timeline) return;
+                  const rectLeft = timeline.getBoundingClientRect().left;
+                  // B1 — elements whose width we update directly during the drag (visual
+                  // row + waveform row share the same data-seg-id), so we avoid a
+                  // per-frame setProject/full re-render. The real state change is
+                  // committed ONCE on mouseup via applyDurationChange (unchanged, below).
+                  const liveEls = Array.from(
+                    timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
+                  );
                   let lastX = 0;
                   let hasMoved = false;
                   // Capture video context at drag-start for speed coupling.
                   const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
                   const isVideoSeg = dragAsset?.type === 'video';
                   const srcDur = originalTarget.sourceDuration ?? 0;
-                  const handleMove = (e: MouseEvent) => {
-                    const timeline = document.getElementById('timeline-scroll-area');
-                    if (!timeline) return;
-                    const rect = timeline.getBoundingClientRect();
-                    lastX = e.clientX - rect.left + timeline.scrollLeft - 24;
+
+                  // Pointer clientX -> content-space x (same formula + -24 gutter as before).
+                  const computeX = (clientX: number): number =>
+                    clientX - rectLeft + timeline.scrollLeft - 24;
+                  // Live duration implied by a content-space x — mirrors the mouseup math
+                  // so the width shown during the drag matches the value committed on drop.
+                  // Used for the visual width ONLY; the committed state is computed
+                  // independently in handleUp (kept identical to the pre-change path).
+                  const liveDurationForX = (x: number): number => {
+                    let liveDuration: number;
+                    let liveTrimStart: number = originalTarget.trimStart ?? 0;
+                    if (type === 'end') {
+                      liveDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
+                    } else {
+                      const rawDelta = (x / pps) - originalTarget.startTime;
+                      liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+                      liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+                    }
+                    if (isVideoSeg && srcDur > 0) {
+                      const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
+                      if (liveClipLen > 0) {
+                        const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
+                        const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
+                        liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
+                      }
+                    }
+                    return liveDuration;
+                  };
+
+                  // B5 — coalesce mousemoves into a single rAF; only the latest pointer
+                  // position matters per frame.
+                  let rafId: number | null = null;
+                  let pendingEvent: MouseEvent | null = null;
+                  const applyFrame = (): void => {
+                    rafId = null;
+                    if (!pendingEvent) return;
+                    lastX = computeX(pendingEvent.clientX);
+                    const w = `${liveDurationForX(lastX) * pps}px`;
+                    for (const el of liveEls) el.style.width = w;
+                  };
+                  const handleMove = (e: MouseEvent): void => {
+                    pendingEvent = e;
                     hasMoved = true;
-                    // Live preview: update only the dragged segment. Cascade applies on mouseup.
-                    setProject(prev => {
-                      const updated = prev.segments.map(s => {
-                        if (s.id !== id) return s;
-                        let liveDuration: number;
-                        let liveTrimStart: number = originalTarget.trimStart ?? 0;
-                        if (type === 'end') {
-                          liveDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
-                        } else {
-                          const rawDelta = (lastX / pps) - originalTarget.startTime;
-                          liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
-                          liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
-                        }
-                        // Speed coupling: clamp duration by [0.75×, 4×] bounds for video.
-                        if (isVideoSeg && srcDur > 0) {
-                          const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
-                          if (liveClipLen > 0) {
-                            const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
-                            const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
-                            liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
-                            const liveSpeed = liveClipLen / liveDuration;
-                            return { ...s, duration: liveDuration, trimStart: liveTrimStart, playbackSpeed: liveSpeed };
-                          }
-                        }
-                        return { ...s, duration: liveDuration, trimStart: liveTrimStart };
-                      });
-                      let acc = 0;
-                      return { ...prev, segments: updated.map(s => { const start = acc; acc += s.duration; return { ...s, startTime: Number(start.toFixed(3)) }; }) };
-                    });
+                    if (rafId === null) rafId = requestAnimationFrame(applyFrame);
                   };
                   const handleUp = () => {
+                    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+                    // Ensure lastX reflects the final pointer position even if the last
+                    // mousemove's rAF frame had not fired yet — so the committed size
+                    // matches exactly where the user released.
+                    if (pendingEvent) lastX = computeX(pendingEvent.clientX);
                     setResizingId(null);
                     setResizingType(null);
                     document.body.classList.remove('resizing');
