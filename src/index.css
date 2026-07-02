@@ -51,6 +51,22 @@
   --kx-warning:    #fbbf24;              /* missing asset */
 }
 
+/* ─── Disable native text/element selection app-wide ─────────────────
+   Click-drag gestures (timeline resize, dashboard, etc.) otherwise trigger
+   accidental text selection. Selection is re-enabled below for inputs and
+   editable text so typing/copy still works. */
+#root {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 .custom-scrollbar::-webkit-scrollbar {
   width: 9px;
   height: 10px;

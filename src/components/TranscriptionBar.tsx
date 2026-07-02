@@ -60,7 +60,7 @@ export function TranscriptionBar({
         aria-live="assertive"
         className="flex items-center justify-between gap-3 px-4 py-1.5 bg-red-950/90 border-b border-red-800/50 text-xs text-red-300"
       >
-        <span className="truncate">Transcription failed: {status.message}</span>
+        <span className="truncate select-text">Transcription failed: {status.message}</span>
         <button
           onClick={onDismiss}
           className="shrink-0 px-2 py-0.5 rounded border border-red-700 hover:bg-red-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-400 transition-colors"

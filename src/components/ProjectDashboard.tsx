@@ -130,6 +130,7 @@ export function ProjectDashboard({
                   <img
                     src={meta.thumbnailUrl}
                     alt={meta.name}
+                    draggable={false}
                     className="w-full h-full object-cover"
                   />
                 ) : (
