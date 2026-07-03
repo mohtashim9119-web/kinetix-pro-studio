@@ -10,6 +10,7 @@ import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from 
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
+import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
 
 // Live-preview side of the animation pipeline. The export side
 // lives in src/services/canvasAnimations.ts (applySegmentAnimation).
@@ -239,6 +240,17 @@ export function PreviewStage({
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
   const currentTimeRef = useRef(currentTime);
 
+  // //FFCACHE — First-frame cache (Phase 1 correctness layer). Warms a cached
+  // frame per video segment at sync/idle time; `coverState` tracks which segment
+  // (if any) we are currently masking with a cached frame while its live <video>
+  // slot decodes. Rendered ABOVE both video slots (not below, per the naive
+  // z-order) because the existing ping-pong keeps the OUTGOING slot visible until
+  // the incoming slot paints — the cover must hide that stale frame. url is read
+  // live from the cache at render time (below) so a frame that finishes decoding
+  // after the cover is armed still appears without re-arming.
+  const { getFirstFrame } = useFirstFrameCache(segments, assets, isPlaying);
+  const [coverState, setCoverState] = useState<{ segmentId: string } | null>(null);
+
   // Heading container measurement — ResizeObserver drives px font sizing so
   // the heading scales with the preview container, not the viewport (vh units).
   const [headingContainerHeight, setHeadingContainerHeight] = useState(0);
@@ -448,9 +460,11 @@ export function PreviewStage({
   // canvas "do NOT clearRect" hold (see the transition-blend effect above)
   // remains as the fallback visual for the rare unwarmed case.
   useEffect(() => {
-    if (!currentSegment) return;
+    // //FFCACHE — leaving a video segment (to nothing / image / color / missing):
+    // drop any cached-frame cover so it can't linger over the new content.
+    if (!currentSegment) { setCoverState(null); return; }
     const currentAsset = assets.find(a => a.id === currentSegment.assetId);
-    if (currentAsset?.type !== 'video') return;
+    if (currentAsset?.type !== 'video') { setCoverState(null); return; }
     // D12 fix — a timeline resize-drag rewrites startTime for every segment
     // after the dragged one while currentTime stays put, which can flip
     // currentSegment?.id to a neighbor purely from the boundary shift (not a
@@ -494,22 +508,61 @@ export function PreviewStage({
       activeEl.pause();
     }
 
-    // Reveal gate: if this exact segment's content was already warmed (pre-
-    // seeked + painted) onto this slot while it was idle, flip visibility
-    // immediately — the common path, no perceptible wait. Otherwise (very
-    // short segment, a scrub that skipped normal playthrough, or the first
-    // video of the timeline) wait for a real painted frame before revealing.
-    const alreadyWarmed = !isNewActiveSrc && warmedSegmentIdRef.current[newSlot] === currentSegment.id;
+    const segId = currentSegment.id;
+    const isHeadingSeg = !!(currentSegment.isHeading || currentSegment.heading);
+
+    // //FFCACHE — the live slot is genuinely showing THIS segment only when it
+    // was preloaded+painted for this exact id (warmedSegmentIdRef) AND is still
+    // decode-ready (readyState>=2). Anything less — a fresh src, a short-clip
+    // race where preload hadn't painted yet, a scrub — means the visible slot is
+    // still the OUTGOING frame, so we must mask it. This is evaluated on EVERY
+    // segment change (playing OR paused) — the previous code short-circuited the
+    // warmed path with an immediate reveal and never armed the cover during
+    // playback, which is exactly why short clips black-screened.
+    const liveReady =
+      !isNewActiveSrc &&
+      warmedSegmentIdRef.current[newSlot] === segId &&
+      activeEl.readyState >= 2;
+
     const revealGeneration = ++videoOpGenerationRef.current[newSlot];
     const reveal = () => {
       if (videoOpGenerationRef.current[newSlot] !== revealGeneration) return; // superseded
       activeSlotRef.current = newSlot;
       setActiveSlot(newSlot);
+      // //FFCACHE — live slot has painted THIS segment's frame: cross-swap off
+      // the cached-frame cover. id-guarded so a late reveal from a superseded
+      // ping-pong run can't tear down a cover armed for a newer segment.
+      setCoverState(prev => {
+        if (prev && prev.segmentId === segId) {
+          console.log(`//FFCACHE segment ${segId}: cover swapped -> live`);
+          return null;
+        }
+        return prev;
+      });
     };
 
-    if (alreadyWarmed) {
+    if (isHeadingSeg) {
+      // Heading segments render their own background layer — no cover; just
+      // clear any cover armed for this id and reveal per the existing engine.
+      console.log(`//FFCACHE segment ${segId}: heading (no cover)`);
+      setCoverState(prev => (prev && prev.segmentId === segId) ? null : prev);
+      reveal();
+    } else if (liveReady) {
+      // //FFCACHE — live slot already holds the correct painted frame: show it
+      // immediately, no cover needed. Clear any stale cover from a prior segment.
+      console.log(`//FFCACHE segment ${segId}: live-immediate (slot painted, readyState>=2, playing=${isPlaying})`);
+      setCoverState(prev => (prev && prev.segmentId !== segId) ? null : prev);
       reveal();
     } else {
+      // //FFCACHE — mask the still-visible OUTGOING slot with THIS segment's
+      // cached first frame (or bg-black if the cache isn't ready — truthful,
+      // never the wrong clip) until the live slot paints the correct frame.
+      // Runs in the playing path too.
+      const cached = getFirstFrame(segId);
+      console.log(
+        `//FFCACHE segment ${segId}: painting ${cached ? 'cached-frame' : 'bg-black-fallback (cache not ready)'} while live slot decodes (playing=${isPlaying})`,
+      );
+      setCoverState({ segmentId: segId });
       void waitForVideoFrame(activeEl).then(reveal);
     }
 
@@ -697,6 +750,29 @@ export function PreviewStage({
                         playsInline
                         preload="auto"
                       />
+                      {/* //FFCACHE — Cached first-frame cover (Phase 1 correctness layer).
+                          Painted ABOVE both video slots (later sibling → paints on top) while
+                          the live slot for THIS segment is still decoding, so the preview shows
+                          the CORRECT clip's frame instead of the outgoing slot's stale frame.
+                          Cross-swapped off by `reveal()` the instant the live slot paints. When
+                          the cache isn't ready yet it renders bg-black (truthful) — never a wrong
+                          clip. Inside the animation wrapper so it inherits the same ken-burns /
+                          zoom transform as the video it masks. */}
+                      {isVideoAsset && coverState?.segmentId === currentSegment.id && (
+                        (() => {
+                          const coverUrl = getFirstFrame(coverState.segmentId);
+                          return coverUrl ? (
+                            <img
+                              src={coverUrl}
+                              className="absolute inset-0 w-full h-full object-cover"
+                              style={getClipEffectStyle(currentSegment.effectAnimation)}
+                              alt=""
+                            />
+                          ) : (
+                            <div className="absolute inset-0 bg-black" />
+                          );
+                        })()
+                      )}
                       {/* Image segments */}
                       {asset?.url && !isVideoAsset && (
                         // Fade-in on segment enter; suppressed when canvas just handled the
