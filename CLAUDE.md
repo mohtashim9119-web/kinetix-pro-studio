@@ -32,6 +32,11 @@ src/
                      #   drag actually moved the mouse — swallows the native ghost-click a
                      #   left-edge resize otherwise fires on a segment row (Timeline.tsx), whose
                      #   onClick calls onSeek(s.startTime) directly (D12 fix, commit be45b07).
+                     #   Segment-resize and divider drags do NOT call setProject per mousemove —
+                     #   live width is written directly via data-seg-id-tagged DOM refs, rAF-
+                     #   coalesced, with the timeline rect/pps cached once at drag start; the real
+                     #   state commit happens exactly once on mouseup via applyDurationChange
+                     #   (perf fix, commit f4da926).
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
@@ -63,8 +68,19 @@ src/
                      #   applySegmentAnimation() — ctx.save/restore wrapper, easing helpers, dev-only assert guard.
     segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array.
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
+                     #   Also hosts encodePlainVideoSegment/encodeStaticImageSegment — the Tier 1
+                     #   fast-path encoders used when plainSegment.ts predicates return true.
+    plainSegment.ts  # isPlainVideoSegment/isPlainImageSegment (Tier 1 fast-path predicates, both
+                     #   backed by a shared internal isPlainMediaSegment core) — true when a segment
+                     #   has no per-frame compositing (no caption/overlay/filter/animation/speed
+                     #   change, no transition on either edge), so exportPipeline.ts can skip the
+                     #   canvas/PNG/IPC pipeline and hand it to ffmpeg directly (one trim+encode for
+                     #   video, one frame + -loop/-frames:v for images). Conservative by design —
+                     #   anything not certain to be plain falls back to the canvas path.
     exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
                      #   Returns ExportResult (never throws). ExportErrorKind: ffmpeg_load|encode|concat|mux|asset_missing|unknown.
+                     #   Routes each segment through plainSegment.ts's predicates first; plain
+                     #   segments bypass frameRenderer.ts entirely (Tier 1 fast path).
     lookPresetService.ts # Combined-look effect presets (Effects Tab Rebuild Step 7): localStorage
                      #   key kinetix:lookPresets:v1, global across projects, cap MAX_LOOK_PRESETS=20.
                      #   loadLookPresets/saveLookPreset/deleteLookPreset. saveLookPreset persists the
@@ -116,6 +132,15 @@ src/
                      #   the cursor far from the (fixed-position) left handle, so the browser's
                      #   native click synthesized right after mouseup lands on this row's body
                      #   instead of the handle, firing an unwanted seek (fixed in be45b07).
+                     #   Both track rows carry data-seg-id={s.id} so App.tsx's drag handler can
+                     #   write live width directly to the DOM during a resize (commit f4da926).
+                     #   The reload scroll restore is a one-shot effect gated behind a
+                     #   didRestoreRef, deferred until containerWidth's ResizeObserver first fires
+                     #   (real pixelsPerSecond, not the 800px zoom fallback) — restoring earlier let
+                     #   the browser clamp scrollLeft to 0, then two auto-scroll effects (segment-
+                     #   follow, zoom-center) would re-scroll shortly after, producing a visible
+                     #   "0 then scroll" flash. Both auto-scroll effects check didRestoreRef before
+                     #   running (fixed in 34206ee, on top of the fb6abbb useLayoutEffect timing fix).
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point
 index.html           # Title: "Kinetix Pro Studio"
@@ -202,7 +227,12 @@ App.tsx handleExport()  [via useExport hook]
                     │       │           └─ BLUR: ctx.filter blur + globalAlpha
                     │       ├─ writes frame_00001.png … frame_NNNNN.png via IPC (base64-encoded)
                     │       │     IPC: ffmpeg_write_file  →  $TMPDIR/kinetix-export-<uuid>/frame_NNNNN.png
-                    │       └─ IPC: ffmpeg_exec  →  sidecar ffmpeg  →  libx264 fast crf23 yuv420p → seg_N.mp4
+                    │       └─ IPC: ffmpeg_exec  →  sidecar ffmpeg  →  libx264 fast crf16 yuv420p bt709 → seg_N.mp4
+                    │
+                    │   (Tier 1 fast path — plainSegment.ts predicates true — skips all of the
+                    │    above per-frame steps for that segment: one direct ffmpeg trim+encode
+                    │    for plain video, one frame + -loop/-frames:v for plain image, same
+                    │    CRF/bt709/CFR flags for clean concat.)
                     │
                     ├── if >1 segment: ffmpeg concat demuxer → concat_video.mp4
                     │
@@ -219,7 +249,7 @@ App.tsx handleExport()  [via useExport hook]
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
 
-**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested.
+**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested. These figures predate the Tier 1 fast path (2026-07-02) and describe the full per-frame canvas pipeline — they still apply to composited segments, but plain segments (no caption/overlay/transition/filter/animation/speed change) now bypass this path entirely; measured 3m44s → 40s on a mixed 4-video/10-image project.
 
 ### Transition Handling
 
@@ -453,3 +483,10 @@ All dead dependencies removed. No remaining items.
 | Bug 2 fix — inline project rename | ✅ Done — 2026-06-30 | Top-left name is inline editable (click/blur/Enter saves, Escape discards); top-right is read-only reactive label; onRename prop added to DropZonePanel |
 | Bug 3 fix — UI state persistence | ✅ Done — 2026-06-30 | activeLeftTab, leftPanelCollapsed, rightPanelCollapsed, previewHeight persisted to kinetix:ui:v1; lazy useState initializers on mount; handleSwitchProject preserveUiState flag preserves currentTime + selectedSegmentId on reload vs reset on project switch |
 | Bug 4 fix — left panel auto-scroll | ✅ Done — 2026-06-30 | scrollIntoView on currentSegmentId change in DropZonePanel; isPlaying guard removed so it fires on manual timeline click while paused too; timeline horizontal scroll persists via listener in Timeline.tsx restored at 300ms after mount |
+| Export quality raise + vignette removal | ✅ Done — 2026-07-02 | `fbc96db` — removed unconditional edge-darkening vignette (export canvas + preview CSS scrim); `-crf 23` → `-crf 16`; `imageSmoothingQuality: 'high'`; pinned bt709 colorspace/primaries/transfer on export |
+| Tier 1 fast path — plain video segments | ✅ Done — 2026-07-02 | `e8eba95` — `isPlainVideoSegment` (`src/services/plainSegment.ts`) bypasses per-frame canvas/PNG/IPC for a single ffmpeg trim+cover-fit encode at CRF 16; flags matched to canvas path for clean concat; desktop-verified A/V sync, no boundary seam |
+| Tier 1 fast path — plain image segments | ✅ Done — 2026-07-02 | `bf003d1` — `isPlainImageSegment` shares `isPlainMediaSegment` core with the video predicate; renders one frame + `-loop 1 -frames:v N` (N = segmentFrameCount) at CRF 16; desktop-verified 3m44s → 40s on a 4-video/10-image project |
+| App-wide native selection disabled | ✅ Done — 2026-07-02 | `b62bd95` — `#root` `user-select: none`, re-enabled for input/textarea/contenteditable + transcription-error message; `draggable={false}` on Timeline segment thumbnails and dashboard project thumbnails |
+| Reload jump fix — preview height + timeline scroll | ✅ Done — 2026-07-02 | `fb6abbb` — `previewHeight` measurement effect and timeline `scrollLeft` restore moved from post-paint `useEffect`/`setTimeout` to pre-paint `useLayoutEffect` |
+| Timeline drag perf — ref+rAF, commit on mouseup only | ✅ Done — 2026-07-02 | `f4da926` — segment-resize and divider drags write live width via `data-seg-id` DOM refs (rAF-coalesced) instead of `setProject` per mousemove; timeline rect/pps cached once at drag start; real commit unchanged (mouseup, `applyDurationChange`) |
+| Timeline scroll-restore race fix | ✅ Done — 2026-07-02 | `34206ee` — one-shot reload scroll restore deferred until `containerWidth`'s `ResizeObserver` first fires (was racing the 800px zoom fallback and getting clamped to 0); both auto-scroll effects gated on `didRestoreRef` so neither overrides the restore |

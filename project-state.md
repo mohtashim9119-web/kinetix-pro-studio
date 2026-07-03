@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-01 |
-| Current HEAD | `be45b07` ("fix: eliminate preview/playhead jump on timeline resize-drag (D12)"). Root cause was a native ghost click on the timeline's left-edge resize handle firing `onSeek` directly on mouseup; fixed with a capture-phase click-swallower, alongside three secondary hardening fixes (seek-effect guard, transition-preview gate, frozen `currentSegment` during resize). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
+| Last updated | 2026-07-02 |
+| Current HEAD | `34206ee` ("fix: restore timeline scroll after width measured, gate auto-scroll (no 0-then-scroll flicker)"). Session pivoted from bug-fixing to export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass for plain segments — 3m44s→40s on a mixed 4-video/10-image project) and UI smoothness (reload "jump then settle" fix, ref+rAF timeline drag, scroll-restore race fix). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -25,6 +25,33 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 D4 + D5 converted into the Path B: Separate Heading Layer roadmap (`docs/path-b-heading-layer-plan.md`) — they are symptoms of heading/segment coupling that Path B removes. Not fixed individually (targeted fixes rejected as low-value). Path B is PLANNED but deferred; current focus pivoting to export/runtime performance. (2026-07-02)
 
 Heading architecture roadmap: see `docs/path-b-heading-layer-plan.md`.
+
+<details>
+<summary>Timeline smoothness — reload scroll + drag perf — ✅ DONE 2026-07-02 (commits fb6abbb, f4da926, 34206ee)</summary>
+
+Three-part fix for a UI "jump then settle" feel on reload and laggy timeline drag:
+- **Reload jump (`fb6abbb`):** the `previewHeight` measurement effect and the timeline `scrollLeft` restore both moved from post-paint `useEffect`/`setTimeout` to pre-paint `useLayoutEffect`, so the corrected preview height and saved scroll position apply before first paint instead of visibly snapping into place after.
+- **Timeline drag perf (`f4da926`):** segment-resize and divider drags no longer call `setProject` on every `mousemove` (which rebuilt the whole segments array and re-rendered the full app every frame, with no memoized children). Live width during a drag is now written directly to the DOM via `data-seg-id`-tagged elements; `mousemove` is coalesced into one `requestAnimationFrame` per frame; the timeline rect and pixels-per-second are cached once at drag start instead of re-measured (`getBoundingClientRect`) on every move. The real state change still commits exactly once, on mouseup, through the existing `applyDurationChange` cascade — final drop values are unchanged from before.
+- **Scroll-restore race (`34206ee`):** the `fb6abbb` restore ran while `containerWidth` was still 0 (Timeline's 800px zoom-formula fallback before its `ResizeObserver` first fires), so the browser clamped `scrollLeft` to 0 at restore time; two auto-scroll effects (segment-follow, zoom-center) then re-scrolled to the current position shortly after the real width landed, producing a visible "0 then scroll" flash. Fixed by deferring the one-shot restore until the `ResizeObserver`'s first real measurement, and gating both auto-scroll effects on a `didRestoreRef` so neither can fire before the restore has applied.
+
+`tsc --noEmit` clean and 56/56 vitest after each commit. Drag feel and the reload flash can't be proven by automated tests — flagged for manual verification (drag smoothness + exact drop values; reload with a non-zero saved scroll position; playback/zoom/segment-select auto-scroll still work post-restore).
+</details>
+
+<details>
+<summary>App-wide native selection disabled — ✅ DONE 2026-07-02 (commit b62bd95)</summary>
+
+Click-drag gestures in the timeline and dashboard were triggering native text selection. `#root` now sets `user-select: none`, re-enabled for `input`/`textarea`/`[contenteditable="true"]` and, individually, the transcription-error message (`TranscriptionBar.tsx`) so users can still copy it. `draggable={false}` added to Timeline segment thumbnails and dashboard project thumbnails — the two primary drag surfaces — to stop native ghost-image drag. Review Mapping / preview / dropzone / stock-search thumbnails intentionally left untouched (lower drag-surface risk, out of scope for this pass).
+</details>
+
+<details>
+<summary>Export quality raise + Tier 1 fast-path speedup — ✅ DONE 2026-07-02 (commits fbc96db, e8eba95, bf003d1)</summary>
+
+- **Quality (`fbc96db`):** removed the unconditional edge-darkening vignette burn-in from both the export canvas path (`frameRenderer.ts`, `drawGradientVignette`) and the preview-only CSS scrim (`PreviewStage.tsx`), restoring preview/export parity. `libx264 -crf 23` → `-crf 16` (visually-lossless YouTube master, per the CRF-16 decision below). `imageSmoothingQuality: 'high'` set on both the main and blend canvases. Pinned `-colorspace`/`-color_primaries`/`-color_trc bt709` on export for consistent color reproduction.
+- **Tier 1 fast path — plain video (`e8eba95`):** segments with no caption/overlay/transition/filter/animation/speed change (`isPlainVideoSegment`) bypass the per-frame canvas/PNG/IPC pipeline entirely — one direct ffmpeg trim + cover-fit encode at CRF 16, flags matched to the canvas path (`-an`, bt709, CFR, `setsar`) so concat still seams cleanly.
+- **Tier 1 fast path — plain image (`bf003d1`):** plain image segments (`isPlainImageSegment`, sharing a common `isPlainMediaSegment` predicate core with the video check) render ONE frame and encode with `-loop 1 -frames:v N` at CRF 16, `N = segmentFrameCount` for byte-exact duration parity under `-shortest` (no audio drift). Desktop-verified: **3m44s → 40s** on a 4-video/10-image project, output correct (A/V sync, no boundary seam) on both fast-path commits.
+
+New service: `src/services/plainSegment.ts` — the shared `isPlainMediaSegment`/`isPlainVideoSegment`/`isPlainImageSegment` predicates, with dedicated test coverage (`plainSegment.test.ts`).
+</details>
 
 <details>
 <summary>D12 fixed — preview/playhead jump on timeline resize-drag — ✅ DONE 2026-07-01 (commit be45b07)</summary>
@@ -144,7 +171,11 @@ None currently.
 
 ## Deferred Known Bugs
 
-None — see Path B roadmap (`docs/path-b-heading-layer-plan.md`). D4 and D5 were folded into that roadmap on 2026-07-02 rather than fixed individually — see Decisions Log.
+D4 and D5 — see Path B roadmap (`docs/path-b-heading-layer-plan.md`); folded into that roadmap on 2026-07-02 rather than fixed individually — see Decisions Log.
+
+Newly logged 2026-07-02, not yet root-caused or triaged into a D-number in this repo:
+- **Exported-video judder** — reported FPS mismatch between source and export causing visible judder in rendered output (referenced as "finding #6"). Not yet reproduced/investigated against a specific commit here — needs a dedicated repro (source fps vs. `exportFps` setting vs. actual encoded frame timing) before a fix is scoped.
+- **Preview black-screen during playback** — a black-screen symptom during playback, distinct from the already-fixed D10 (D10 was specifically the transition-boundary flash between two segments, closed 2026-06-30 via pre-seek + `requestVideoFrameCallback` gating). This is a related but separate class of preview-video issue; not yet root-caused.
 
 ---
 
@@ -306,6 +337,9 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 | 2026-06-30 | D10 fixed via pre-seek + requestVideoFrameCallback reveal-gating in PreviewStage dual-video slots (was: canplay-gated, which fires before paint). Canvas-hold kept as fallback. Preview-only; export untouched. |
 | 2026-07-01 | D12 root cause was a native ghost click racing ahead of React state, not a derived-state timing bug — a browser `click` synthesized right after `mouseup` can hit-test onto a completely different element than the one `mousedown` targeted if the pointer drifted during the gesture (exactly what a left-edge timeline resize does, since that handle's DOM position never tracks the cursor). Three earlier fix attempts targeting `currentSegment`/`useTransitionPreview` staleness were real but not the dominant cause, because native DOM event dispatch isn't gated by any React state/effect timing at all. **Reusable pattern:** when a drag-release intermittently triggers an unrelated click-handler side effect, suspect a native ghost-click before assuming a React state race — fix by arming a one-time, capture-phase `window` `click` listener in the drag's mouseup handler (only when the drag actually moved the pointer) that swallows the very next click before any bubble-phase React handler sees it. Commit `be45b07`. |
 | 2026-07-02 | D4/D5 will NOT get targeted fixes. Both fold into Path B (separate heading layer, `docs/path-b-heading-layer-plan.md`), deferred. Active-bug list now empty; next focus = export speed + app performance. |
+| 2026-07-02 | **CRF 16 for export, not pixel-identical:** chose `libx264 -crf 16` (visually-lossless YouTube master) over chasing a pixel-identical re-encode. A truly pixel-identical path would require JPEG-frame passthrough or a hardware encoder, both ruled out — JPEG intermediates reintroduce generational loss before libx264 ever sees the frame, and hardware encoders (VideoToolbox/NVENC/QSV) aren't guaranteed present or bit-consistent across the Windows/macOS Intel/macOS arm64 targets this app ships to. CRF 16 gets visual quality close enough for the intended use (YouTube upload) without either tradeoff. |
+| 2026-07-02 | **Two-tier export: plain segments bypass canvas entirely.** Any segment with no per-frame compositing (no caption, overlay, transition edge, filter, animation, or speed change) now skips the canvas/PNG/IPC render pipeline and goes through ffmpeg directly — one trim+encode for video (`e8eba95`), one frame + `-loop`/`-frames:v` for images (`bf003d1`). Composited segments (anything with an active effect) still render through the full per-frame `frameRenderer.ts` canvas path unchanged. The predicate (`isPlainMediaSegment` in `src/services/plainSegment.ts`) is deliberately conservative — anything it isn't certain is plain falls back to the canvas path, so quality/correctness never regresses, only speed varies. |
+| 2026-07-02 | **Live timeline drag stays off React state.** Resize/divider drags no longer route their per-`mousemove` live-preview through `setProject` — App.tsx isn't decomposed/memoized, so any state update during a drag re-rendered the entire tree every frame. Live visual feedback is now a direct DOM write (`el.style.width` via `data-seg-id`, rAF-coalesced); the real state commit still happens exactly once, on mouseup, through the pre-existing `applyDurationChange` cascade — so final dropped values are provably unchanged (Phase A audit confirmed mouseup already fully committed independent of the per-move state, `f4da926`). Memoizing the heavy children (`PreviewStage`, `DropZonePanel`, `Timeline`, `BottomDrawer`) so `setProject` mid-drag would be cheap was considered and deliberately deferred — the ref/DOM approach is a superset fix that also eliminates the per-frame reflow width causes, not just the re-render cost. |
 
 ---
 
@@ -350,3 +384,4 @@ Low/no-risk — intentionally not scheduled. Revisit only if a user reports impa
 - **D11 — Preview letterboxing in normal view:** the preview stage shows letterbox bars in the non-fullscreen layout; under-documented placeholder behavior, not a regression. `PreviewStage.tsx`
 - **D13 — Export cancel doesn't kill the in-flight ffmpeg subprocess:** the generation counter and session teardown fire immediately, but the running `ffmpeg_exec` sidecar continues to completion against the torn-down temp dir; the resulting error is swallowed. `useExport.ts`, `ffmpeg.rs`
 - **D14 — Timeline ruler overflows track by a few px:** `Math.ceil(totalDuration) + 1` ticks each `pixelsPerSecond` wide exceed the segment content width; cosmetic, auto-scroll clamps correctly. `Timeline.tsx`
+- **D15 — Timeline scroll-restore assumes default zoom:** the one-shot reload scroll restore (`34206ee`) applies a raw persisted `scrollLeft` pixel value that's only valid at `sliderT = 0.5` (the value it's reset to on every `project.id` change); `sliderT` itself is never persisted. If a user zooms before reloading, the saved pixel offset maps to a different timeline position after reload and gets silently clamped by `maxScroll` — no crash, just minor scroll drift. Full fix would require persisting `sliderT` alongside `timelineScrollLeft`. `Timeline.tsx`, `App.tsx`
