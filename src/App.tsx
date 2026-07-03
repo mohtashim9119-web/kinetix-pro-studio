@@ -529,6 +529,24 @@ function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
 }
 
 /**
+ * Resolves the audioDuration to feed into applyAnchorBasedTiming, preferring
+ * the real, live <audio> element duration (same source Apply Sync uses,
+ * App.tsx:1498) over a self-referential Σ duration of the segments array.
+ * A locked segment can carry duration > its available span (locks never
+ * shrink — see syncEngine.ts's applyAnchorBasedTiming), which inflates
+ * Σ duration by that overlap amount; feeding the inflated sum back into
+ * PASS 3 bakes it into the last segment's declared end, making it claim to
+ * run past where the real audio actually ends (silent early cutoff). Falls
+ * back to the Σ duration when no live audio duration is available yet
+ * (no-voiceover projects), leaving that case unchanged.
+ */
+function resolveAudioDuration(audioEl: HTMLAudioElement | null, fallbackSegments: VideoSegment[]): number {
+  const live = audioEl?.duration;
+  if (live !== undefined && isFinite(live) && live > 0) return live;
+  return fallbackSegments.reduce((sum, s) => sum + s.duration, 0);
+}
+
+/**
  * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
  * Affected segments (dragged + all that absorbed any portion) are auto-locked.
  * Returns the updated array, or null if a locked neighbor blocked the cascade
@@ -913,7 +931,7 @@ export default function App() {
       const toggled = prev.segments.map(s =>
         s.id === segmentId ? { ...s, locked: !s.locked } : s
       );
-      const audioDuration = toggled.reduce((sum, s) => sum + s.duration, 0);
+      const audioDuration = resolveAudioDuration(audioRef.current, toggled);
       return { ...prev, segments: applyAnchorBasedTiming(toggled, audioDuration) };
     });
   }, []);
@@ -1076,7 +1094,7 @@ export default function App() {
       // Recompute startTime/duration from anchors — single source of truth,
       // not a separate cumulative-duration pass.
       const withOrder = stolen.map((s, i) => ({ ...s, order: i }));
-      const audioDuration = withOrder.reduce((sum, s) => sum + s.duration, 0);
+      const audioDuration = resolveAudioDuration(audioRef.current, withOrder);
       const reordered = applyAnchorBasedTiming(withOrder, audioDuration);
 
       return { ...prev, segments: reordered };
@@ -1117,7 +1135,7 @@ export default function App() {
 
       // Recompute startTime/duration from anchors — single source of truth,
       // not a separate cumulative-duration pass.
-      const audioDuration = newSegs.reduce((sum, s) => sum + s.duration, 0);
+      const audioDuration = resolveAudioDuration(audioRef.current, newSegs);
       const timedSegs = applyAnchorBasedTiming(newSegs, audioDuration);
 
       return { ...prev, segments: timedSegs };
