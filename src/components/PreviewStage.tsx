@@ -5,12 +5,32 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
+import { Maximize, Minimize, MonitorPlay, Zap } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
+import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
+import { useWebCodecsPreview } from '../hooks/useWebCodecsPreview';
+import { PreviewCanvas } from './PreviewCanvas';
+
+/**
+ * Phase 1+2 WebCodecs preview path — dev-only toggle (docs/webcodecs-architecture-plan.md
+ * Section 3.2/3.3). Combined with isWebCodecsPreviewSupported() so the new path
+ * never activates for a real user during development; Phase 7 removes this toggle
+ * and leaves the capability check as the sole gate. Persisted to localStorage so
+ * it survives a reload while testing.
+ */
+const WEBCODECS_DEV_TOGGLE_KEY = 'kinetix:dev:webcodecsPreview';
+
+function readWebCodecsDevToggle(): boolean {
+  try {
+    return window.localStorage.getItem(WEBCODECS_DEV_TOGGLE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 // Live-preview side of the animation pipeline. The export side
 // lives in src/services/canvasAnimations.ts (applySegmentAnimation).
@@ -220,6 +240,18 @@ export function PreviewStage({
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  // Phase 1+2 WebCodecs preview path — capability check is memoized/pure,
+  // safe to call on every render; devToggle is user-controlled (see the
+  // floating toggle button below) and persisted to localStorage.
+  const webCodecsSupported = isWebCodecsPreviewSupported();
+  const [webCodecsDevToggle, setWebCodecsDevToggle] = useState(readWebCodecsDevToggle);
+  const useWebCodecsPath = webCodecsSupported && webCodecsDevToggle;
+  // Read inside the legacy segment-change effect (dep array intentionally
+  // excludes it, same rationale as currentTimeRef below) so flipping the
+  // toggle mid-session doesn't require a currentSegment change to take effect.
+  const useWebCodecsPathRef = useRef(useWebCodecsPath);
+  useEffect(() => { useWebCodecsPathRef.current = useWebCodecsPath; }, [useWebCodecsPath]);
+
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -351,6 +383,20 @@ export function PreviewStage({
     isResizingRef,
   });
 
+  // Phase 1+2 WebCodecs preview path. `enabled` gates ALL work inside the
+  // hook (including decode session creation) — when false, this call is
+  // inert. useTransitionPreview above is unaffected either way: it renders
+  // its own offscreen snapshots via frameRenderer.ts independently of which
+  // video path is currently painting the live segment (see the WebCodecs
+  // progress tracker's Phase 1+2 entry for the compatibility note).
+  const webCodecsPreview = useWebCodecsPreview({
+    segments,
+    assets,
+    currentSegment,
+    currentTime,
+    enabled: useWebCodecsPath,
+  });
+
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
   // The canvas is sized to match the stage via CSS (position:absolute inset-0).
   useEffect(() => {
@@ -465,6 +511,13 @@ export function PreviewStage({
     if (!currentSegment) { setCoverState(null); return; }
     const currentAsset = assets.find(a => a.id === currentSegment.assetId);
     if (currentAsset?.type !== 'video') { setCoverState(null); return; }
+    // Phase 1+2 WebCodecs preview path — when active, useWebCodecsPreview
+    // owns decode/paint for this segment's video via PreviewCanvas (rendered
+    // below); the legacy dual <video>-slot machinery below must not also
+    // load/seek/play these elements. Read via ref (not a dep) so toggling
+    // the dev flag mid-session doesn't require a currentSegment change to
+    // take effect — same rationale as currentTimeRef's ref-read pattern.
+    if (useWebCodecsPathRef.current) { setCoverState(null); return; }
     // D12 fix — a timeline resize-drag rewrites startTime for every segment
     // after the dragged one while currentTime stays put, which can flip
     // currentSegment?.id to a neighbor purely from the boundary shift (not a
@@ -688,6 +741,28 @@ export function PreviewStage({
       >
         {/* Floating Controls */}
         <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+          {/* Phase 1+2 WebCodecs preview path — dev-only toggle (Section 3.2/3.3
+              of docs/webcodecs-architecture-plan.md). Only rendered in dev builds
+              and only when the runtime capability check passes, since toggling it
+              on an unsupported runtime would do nothing. Persisted to localStorage. */}
+          {import.meta.env.DEV && webCodecsSupported && (
+            <button
+              onClick={() => setWebCodecsDevToggle(prev => {
+                const next = !prev;
+                try { window.localStorage.setItem(WEBCODECS_DEV_TOGGLE_KEY, next ? '1' : '0'); } catch { /* noop */ }
+                return next;
+              })}
+              aria-label={webCodecsDevToggle ? 'Disable WebCodecs preview (dev)' : 'Enable WebCodecs preview (dev)'}
+              title={webCodecsDevToggle ? 'WebCodecs preview: ON (dev-only)' : 'WebCodecs preview: OFF (dev-only)'}
+              className={`p-3 backdrop-blur-md rounded-xl border transition-all ${
+                webCodecsDevToggle
+                  ? 'bg-[#F27D26] text-black border-[#F27D26]'
+                  : 'bg-black/50 text-white border-white/10 hover:bg-white/10'
+              }`}
+            >
+              <Zap size={20} />
+            </button>
+          )}
           <button
             onClick={toggleNativeFullscreen}
             aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
@@ -696,6 +771,15 @@ export function PreviewStage({
             {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
           </button>
         </div>
+
+        {/* Persistent (not hover-gated) indicator that the new path is live —
+            deliberately always visible while active so a manual test session
+            can't mistake which path is painting the preview. */}
+        {import.meta.env.DEV && useWebCodecsPath && (
+          <div className="absolute top-6 left-6 z-[1001] px-3 py-1.5 rounded-lg bg-[#F27D26] text-black text-[10px] font-black uppercase tracking-wider">
+            WebCodecs Preview (dev)
+          </div>
+        )}
 
         <AnimatePresence mode="popLayout" initial={false}>
           {currentSegment ? (
@@ -772,6 +856,18 @@ export function PreviewStage({
                             <div className="absolute inset-0 bg-black" />
                           );
                         })()
+                      )}
+                      {/* Phase 1+2 WebCodecs preview path (dev-toggle gated) — paints
+                          above the (inert, in this branch) legacy video slots and cover.
+                          Overlays/filters/animations baked into the canvas are Phase 5;
+                          getClipEffectStyle is passed through so CSS clip-effect filters
+                          keep applying, matching the legacy path's parity intent. */}
+                      {isVideoAsset && useWebCodecsPath && webCodecsPreview.isVideoSegment && (
+                        <PreviewCanvas
+                          frame={webCodecsPreview.frame}
+                          className="absolute inset-0 w-full h-full"
+                          style={getClipEffectStyle(currentSegment.effectAnimation)}
+                        />
                       )}
                       {/* Image segments */}
                       {asset?.url && !isVideoAsset && (
