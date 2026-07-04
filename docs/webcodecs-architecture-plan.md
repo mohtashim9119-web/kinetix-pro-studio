@@ -1,12 +1,49 @@
 # WebCodecs Architecture Shift — Phased Migration Plan
 
-**Status:** Planning only. No implementation has started. This document is the deliverable of a planning task; Phase 0 (spike) begins in a follow-up session after this plan is reviewed.
+**Status:** Phase 0 (proof-of-concept spike) complete and confirmed GO on **both** Chromium and the real Tauri app's WKWebView; see "Phase 0 Results" and "WKWebView Cross-Check" below, and the Progress Tracker immediately below this line for current state at a glance. No integration into the real app has started — `PreviewStage.tsx` and all other app code are untouched. Phase 1 has not begun.
 
 **Branch:** `webcodecs-api` (off `main` @ `d8cc5db`). `main` is not touched until this effort is reviewed and merged.
 
 **Scope:** Preview playback only (`PreviewStage.tsx` and the hooks that feed it). The export pipeline (`frameRenderer.ts`, `segmentEncoder.ts`, `exportPipeline.ts`, `plainSegment.ts`, the native ffmpeg sidecar) is out of scope and must not be modified or behaviorally affected by any phase of this work.
 
 **Origin of this effort:** `docs/bugs/preview-cold-start-clock-freeze.md` — a confirmed, root-caused bug where a `<video>` element that has never played will not reliably start its media clock on `.play()` inside the Tauri webview, even at `readyState=4`. Every patch attempted at the `<video>`-element layer either failed or traded the freeze for a different regression (see that doc's "Fixes Attempted" log). This plan treats that bug as unfixable at the `<video>`-element layer and replaces the layer instead of patching it further.
+
+---
+
+## Progress Tracker — Read This First
+
+This section is the single source of truth for where this effort stands, independent of any chat session or Claude Code instance. Read this first before reading anything else in the document or in past chat history. The detailed sections below (numbered 1–7, plus "Phase 0 Results" and "WKWebView Cross-Check") hold the full reasoning and evidence — this tracker only summarizes and points to them; it does not replace their detail, and it is not itself a substitute for reading Section 5 before implementing a phase.
+
+### ✅ COMPLETED
+
+- **Phase 0 — Proof-of-concept spike.** Full detail in the "Phase 0 Results" and "WKWebView Cross-Check" sections below. Concrete outcomes:
+  - `VideoDecoder`/`EncodedVideoChunk` confirmed present and a real `configure()`/`decode()` cycle confirmed working, on **both** Chromium and the real Tauri app's WKWebView.
+  - `mp4box.js` integrated as the demuxer (chosen per Section 1.4, no alternative needed). Two non-obvious integration bugs found and fixed — both documented inline in `src/dev/webcodecsSpike/main.ts` for whoever builds Phase 1: (1) calling `flush()` after a single whole-file `appendBuffer()` caused mp4box to discard buffered `mdat` bytes before extraction ran — fixed by calling `setExtractionOptions()`/`start()` from inside `onReady` and never calling `flush()` for a single-shot append; (2) `createFile()`'s default `keepMdatData: false` discards the bytes a non-streamed caller needs back — fixed with `createFile(true)`.
+  - Decoded `VideoFrame`s paint correctly to canvas on both engines (312/312 real frames from a real Pexels H.264 asset, visually confirmed via screenshot on Chromium and via Console-log readback on WKWebView).
+  - **B-frame reordering confirmed correct (monotonic presentation-order output) on both Chromium and WKWebView** — this was the single biggest open risk this plan flagged (Sections 1.1, 1.2, and the Section 6 risk register), and it is now resolved for both engines this app ships to.
+  - Throughput measured: ~365–380 fps on Chromium, ~303 fps on WKWebView (both comfortably above 10× the source's 30fps — not a feasibility concern at this single-video scale; says nothing yet about Phase 6's multi-segment decode-ahead load).
+  - **Read this if you find old logs/screenshots that look like a failure:** an intermediate WKWebView run appeared to show "Check 4: false" with "936 chunks fed" instead of the real 312. This was **never a WKWebView defect** — it was a test-harness bug (the harness's `result` object was declared at module scope and never reset between repeated manual "Re-run" clicks, so three runs' worth of samples concatenated into one array and broke monotonicity at the run boundaries, purely as an artifact of the harness, not the decoder). The harness was fixed (fresh `SpikeResult` object constructed inside every `runSpike()` call, plus a logged per-run invocation counter) before the clean, trusted result was captured. If you encounter any earlier artifact claiming WKWebView reordering failed, it predates this fix — trust the "Clean single-run WKWebView result" table in the "WKWebView Cross-Check" section instead, not any "936"/`false` reading.
+  - Committed together with this tracker entry in the commit titled `docs+spike: Phase 0 WebCodecs feasibility spike complete (Chromium + WKWebView confirmed) + progress tracker` — run `git log --oneline -- docs/webcodecs-architecture-plan.md` for the exact hash (not embedded literally here since this tracker entry is itself part of that same commit's content).
+
+### 🟡 IN PROGRESS / PARTIAL
+
+None — Phase 0 fully closed, Phase 1 not yet started.
+
+### ⬜ NOT STARTED / PENDING
+
+Grouped per this session's execution plan (a consolidated grouping for tracking purposes only — Section 5 below still describes each of Phases 1–8 independently in full implementation detail; nothing here overrides that):
+
+- **Phase 1+2 (combined)** — Single-segment WebCodecs playback behind a feature flag, then extended to multi-segment sequences with boundary-crossing and transition (`useTransitionPreview.ts`) handling.
+- **Phase 3 (standalone)** — Audio-sync integration hardening against the existing `usePlayback.ts` clock: no drift over long timelines, correct behavior across play/pause/scrub/speed-change.
+- **Phase 4+6 (combined)** — Scrubbing/seeking support, together with the frame cache + LRU eviction design for 500+ segment scale (includes building the synthetic 500-segment test project). Combined because Section 6 of this plan already flags that scrub-stress and the decode-ahead window/eviction design are tightly coupled — designing one without the other risks a rework.
+- **Phase 5 (standalone)** — Overlays/filters/animations/captions re-integration onto the canvas paint step.
+- **Phase 7+8 (combined)** — Full cutover (remove the dev-only toggle, legacy `<video>` path stays in the tree for capability-unsupported runtimes) together with the full regression pass and at-scale performance validation.
+- **Deferred/open items carried forward from Phase 0** (not blocking Phase 1, but must be closed before Section 7's merge-to-`main` gate):
+  - Older macOS versions below the tested floor — this cross-check validated only macOS 26.5.2 (very current WebKit); Section 1.2's concern about older-WebKit B-frame bugs has not been re-tested on an actual older OS.
+  - Windows/WebView2 — not tested at all yet in any pass. Low risk per Section 1.2 (evergreen Chromium), but still literally untested.
+  - Arbitrary/non-clean user-uploaded container or codec shapes — untested on either engine (Section 6 risk register).
+
+**Maintenance instruction:** update this tracker at the end of every phase, before committing that phase's work, so this document alone reflects true project state without needing chat history. Move completed items into ✅, update 🟡 to reflect whatever is genuinely mid-flight, and keep the "committed in commit ___" reference current.
 
 ---
 
@@ -262,3 +299,90 @@ Because `main` is never touched during this effort, infeasibility at any phase h
 - **If Phase 0 fails on all platforms** (unlikely given Windows/Chromium's mature support, but the honest worst case): the branch is parked, `docs/bugs/preview-cold-start-clock-freeze.md` reverts to "Direction B" (reveal-first, hide-after-motion — the pragmatic mitigation that bug doc already identified as a fallback if a deeper fix isn't viable) as the interim mitigation on `main`, applied as a separate, much smaller piece of work outside this branch.
 - **If a mid-range phase (2–6) proves infeasible** (e.g. audio drift can't be eliminated, or memory ceiling can't be hit at 500+ segments): the capability flag (Section 1.6) can be shipped as permanently "off" (or scoped to only the specific case that does work, e.g. "only for projects under N segments") without discarding the completed earlier phases' code — Phase 0–1's proof-of-concept work and Phase 2's boundary-handling logic remain valid, reusable groundwork even if the full 500-segment scaling goal (Phase 6) doesn't pan out on the original timeline.
 - In every case, rollback is "don't merge this branch" — there is no `main`-side revert needed, because `main` was never modified. This is the direct benefit of the dedicated-branch approach requested for this effort.
+
+---
+
+## Phase 0 Results
+
+**Date:** 2026-07-04. **Verdict: GO — confirmed on both Chromium and the real Tauri app's WKWebView.** Real app code untouched — this was a fully standalone harness, never wired into `PreviewStage.tsx`, `App.tsx`, or any other file under `src/` outside the new throwaway files listed below. (This section originally shipped with a Chromium-only verdict and an explicit "unconfirmed on WKWebView" caveat; the WKWebView cross-check below was completed in a follow-up pass on the same date and the verdict has been updated in place.)
+
+### What was built (throwaway, delete before Phase 1 lands)
+
+- [spike-webcodecs.html](../spike-webcodecs.html) — new HTML entry at repo root. Vite's dev server serves any root-level `.html` file automatically; it is not referenced by `vite.config.ts` and is not part of `npm run build`'s output (build only bundles `index.html` unless configured otherwise), so it cannot affect the production app.
+- [src/dev/webcodecsSpike/main.ts](../src/dev/webcodecsSpike/main.ts) — the actual spike logic (demux → decode → paint → measure). Not imported by any real app file.
+- `public/_spike/sample.mp4` — a **real** test asset, not synthetic: fetched live from the Pexels video API (the same API `src/services/stockService.ts` already integrates with, using the existing `VITE_PEXELS_API_KEY` from `.env.local`) via the exact request shape `stockService.ts` uses. Confirmed via `ffprobe` before use: H.264 **High profile**, 1280×720, 30fps, `yuv420p`, and critically a real B-frame GOP structure (`I,B,B,B,P,B,B,B,P,B,B,B,P,P,P,P,P,B,P,...`) — this is what makes Check 4 (frame-reorder correctness) a real test rather than a trivial all-I-frame case. This file is gitignored (`public/_spike/`, added to `.gitignore` in this change) and was never staged.
+- `mp4box` (v2.4.1) added to `package.json` dependencies — the demuxer library. Chosen over hand-rolled MP4 box parsing per Section 1.4's recommendation; no alternative was evaluated because this one worked correctly once the two issues below were resolved, and it's the same library the official [W3C WebCodecs samples repo](https://github.com/w3c/webcodecs) uses in its reference `MP4Demuxer`, which this spike's demux logic is directly adapted from.
+
+### Results against Section 1.5's four checks (Chromium, via this environment's preview tooling)
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `VideoDecoder`/`EncodedVideoChunk` present, real `configure()`/`decode()` cycle succeeds | **Pass.** `isConfigSupported` returned `true` for `avc1.640020` (H.264 High profile) at 1280×720; decoder configured and ran without error. |
+| 2 | mp4box.js extracts chunks + avcC description from a real asset | **Pass**, after two fixes not anticipated in the original plan (see Deviations). Demuxed 312 samples, codec string `avc1.640020`, correct 1280×720 dimensions, avcC description extracted and accepted by `VideoDecoder.isConfigSupported`. |
+| 3 | Decoded `VideoFrame`s paint to canvas | **Pass.** All 312 frames painted via `drawImage`; visually confirmed via screenshot (sharp, uncorrupted city-skyline footage, no artifacts, no misordered/jumbled content). |
+| 4 | Frames arrive in correct presentation order despite real B-frames | **Pass.** Fed (decode-order) timestamps for the first 32 samples are visibly non-monotonic — `[67, 200, 133, 100, 167, 334, 267, 234, 300, 467, 400, 367, ...]` ms — proving the B-frame GOP genuinely exercised decode/presentation-order divergence. Output (presentation) order for the same frames is cleanly monotonic ascending — `[67, 100, 133, 167, 200, 234, 267, 300, 334, 367, 400, 434, ...]` ms. Chromium's `VideoDecoder` reordered correctly. |
+
+**Throughput:** 312 frames decoded in ~820–860ms wall time across repeated runs (~365–380 fps), for a 1280×720 H.264 High-profile source. This is ~12–13× realtime at the source's 30fps — comfortably fast, though this is Chromium on Apple Silicon and is not a substitute for the Section 6-flagged macOS Intel / low-end-Windows measurement Phase 6 still needs.
+
+### Deviations from the plan's assumptions (flagged per the task's request)
+
+1. **mp4box.js needed two non-obvious fixes to work at all — this is new information, not a footnote.** Adapting the official W3C reference `MP4Demuxer` (which is designed for a streamed `fetch().body.pipeTo()` source) to a simpler "fetch the whole file, then demux" flow (appropriate here since spike assets are small) surfaced two real bugs that silently produced **zero decoded frames with zero errors thrown** — the failure mode was total silence, not an exception, which would have been easy to misdiagnose as "WebCodecs doesn't work" rather than "the demuxer integration was wrong":
+   - Calling `mp4boxFile.flush()` after a single whole-file `appendBuffer()` (to mirror "wait for onReady" cleanly) caused `mp4box` to discard buffered `mdat` bytes before `setExtractionOptions()`/`start()` ran afterward — `onSamples` never fired even though the sample table (`nb_samples`, offsets, timing) was built correctly. **Fix:** call `setExtractionOptions()`/`start()` from inside `onReady` itself, before any `flush()` — and skip `flush()` entirely for a single-shot full-buffer append (it exists for the incremental/streamed case the reference demo is built for).
+   - Separately, `createFile()`'s **default** `keepMdatData` parameter is `false` — appropriate for a real streaming scenario, but for a single whole-file `appendBuffer()` this discards the raw bytes needed to actually read samples back out (confirmed via `window.__mp4boxFile` console inspection: `stream.buffers.length === 0` and `mdats[0].stream === undefined` after append, so `ISOFile.getSample()` had nowhere to read from). **Fix:** `createFile(true)`.
+   - Both fixes are documented inline in `main.ts` at the point they matter, since a future implementer hitting the same "zero frames, zero errors" symptom in Phase 1+ should not have to re-derive this from scratch.
+   - **Implication for Phase 1+:** budget real time for demuxer integration debugging — it is not a drop-in library call, and its failure mode (silent zero-output, not an exception) makes it easy to misattribute a demuxer bug to a WebCodecs/browser limitation.
+
+2. **No B-frame-specific concern with the demuxer itself.** mp4box.js exposes samples in container (decode) order and lets `sample.cts`/`sample.dts` differ per-sample — it does no reordering itself (correctly so; reordering is `VideoDecoder`'s job per spec). The clean pass on Check 4 is attributable to the browser's decoder, not the demuxer, which is the right division of responsibility for what Phase 1+ will build.
+
+### What did not deviate
+
+- No demuxer alternative to mp4box.js was needed — Section 1.4's default choice held up.
+- No codec/container surprises: the real Pexels asset was a standard High-profile H.264/yuv420p MP4, nothing exotic. (This says nothing about arbitrary user-uploaded files, which Section 6's existing risk entry about non-clean containers still correctly flags as untested.)
+- Decode throughput on this machine is not a concern at this scale (1 video, 312 frames) — says nothing yet about sustained multi-segment decode-ahead load, which is Phase 6's job to measure.
+
+---
+
+## WKWebView Cross-Check (2026-07-04, same day, follow-up pass)
+
+Section 1.1 of this plan corrected a load-bearing assumption: Tauri v2 only uses a Chromium webview on Windows — macOS runs on **WKWebView** (WebKit/Safari's engine), which historically trailed Chromium on WebCodecs and has had real correctness bugs in exactly the area this plan cares about (B-frame output reordering). The original Phase 0 pass above validated Chromium only, via this environment's browser-preview tooling, and explicitly flagged WKWebView as the one real open question. This section closes that gap by running the actual spike inside the real Tauri desktop app on this Mac.
+
+### Method
+
+1. Temporarily pointed `src-tauri/tauri.conf.json`'s `build.devUrl` at `http://localhost:3000/spike-webcodecs.html` (instead of the app root) so the real Tauri window loads the spike harness directly on launch — reverted immediately after (see "Cleanup" below).
+2. Launched the real desktop app via `npm run tauri:dev` (the `tauri:dev` script; `tauri dev` is not a valid script name in this repo — noted only because it cost one failed attempt).
+3. This environment's automation tools could not drive the resulting native window: `osascript`/System Events UI scripting was blocked (`osascript is not allowed assistive access`, error -1719 — no accessibility permission grantable in this sandboxed session) and `screencapture` failed outright (`could not create image from display` — no screen-recording permission either). Both are normal, unautomatable-by-design macOS TCC restrictions in this environment, not something to route around.
+4. Given that, the user directly inspected the running app: right-clicked → **Inspect Element** (confirming WKWebView's Web Inspector is reachable this way — the app has the `"devtools"` Cargo feature enabled) and read the Console tab's output back verbatim.
+
+### A real bug the cross-check caught (harness, not WKWebView)
+
+The first attempt produced **"Chunks fed: 936"** and **"Check 4 — output order monotonic: false."** 936 = 3 × 312 (the real per-video sample count) — a dead giveaway. The user had clicked the harness's "Re-run" button twice in addition to the automatic first run, and the original harness (correctly, for a *single* run) declared one module-scoped `result` object and never reset it between invocations. Three runs' worth of `chunksFed`/`framesDecoded`/`outputOrderTsMs` all accumulated into the same arrays, so the monotonicity check ran across the *concatenation* of three independent 0→312-sample sequences — each individually ascending, but the boundary between run 2 and run 3 (timestamp ~10,400ms dropping back to ~67ms) broke monotonicity for the concatenated whole. **This was never a WKWebView reordering defect — it was a test-harness state-reset bug**, caught only because the sample count didn't match expectations. `main.ts` was fixed to construct a fresh `SpikeResult` object inside every `runSpike()` call (not at module scope) and log a per-run invocation counter, so a repeat run can never again silently corrupt a prior run's measurement. This fix is retained in the harness (it's a correctness improvement, not cross-check-specific instrumentation) even though the temporary `localStorage`-based result-persistence code added mid-investigation (an attempted workaround for the lack of interactive console access, made moot once the user confirmed Inspect Element worked) was removed again before finalizing.
+
+### Clean single-run WKWebView result (post-fix, run #1, verbatim from the user's Console tab read)
+
+| # | Check | WKWebView result | Chromium result (original pass) |
+|---|---|---|---|
+| 1 | `VideoDecoder`/`EncodedVideoChunk` present | **true** | true |
+| 2 | mp4box demux: codec/dimensions/sample count | **`avc1.640020`, 1280×720, `nb_samples=312`** — identical to Chromium | `avc1.640020`, 1280×720, `nb_samples=312` |
+| — | `isConfigSupported` | **true** | true |
+| 3 | Frames painted (chunks fed = frames decoded) | **312 / 312** | 312 / 312 |
+| 4 | Output order monotonic (correct B-frame reordering) | **true** — `[67, 100, 133, 167, 200, 234, 267, 300, 334, 367, 400, 434, ...]` ms, cleanly ascending, matching Chromium's sequence exactly, against the same non-monotonic decode-order feed (`[67, 200, 133, 100, 167, 334, 267, 234, 300, 467, 400, 367, ...]` ms) | true, same sequences |
+| — | Decode wall time / throughput | **1030ms / ~303 fps** | ~820–860ms / ~365–380 fps |
+
+**WKWebView passes all four checks, matching Chromium's correctness exactly** (identical codec string, identical frame count, identical output-order sequence). Throughput is lower than Chromium (~303 fps vs. ~365–380 fps — WKWebView is roughly 20% slower on this machine for this asset) but still ~10× realtime for a 30fps source, nowhere near a concern for feasibility. This directly resolves Section 1.1/1.2's central open question: **the WebKit B-frame-reordering risk that motivated this whole cross-check did not materialize** — at least on this macOS version (26.5.2, i.e. very current WebKit) and this asset's GOP structure. It does not by itself prove every older supported macOS version behaves identically (see "Still open" below).
+
+### Cleanup performed
+
+- `src-tauri/tauri.conf.json`'s `devUrl` reverted to `http://localhost:3000` (confirmed via `git diff` — zero diff against the pre-cross-check state).
+- The temporary `localStorage`-persistence function and its two call sites removed from `main.ts`; the per-run `freshResult()`/invocation-counter fix (a genuine bug fix, not cross-check-specific) was kept.
+- The Tauri app process and its `beforeDevCommand` vite server were terminated (`kill`) once the cross-check concluded.
+- `tsc --noEmit` and the full `vitest` suite (60/60) re-run clean after all reverts.
+
+### Still open (unchanged from the original pass)
+
+- **Windows/WebView2** remains untested in any pass (no Windows machine available in this session). Section 1.2 already establishes this as low-risk (evergreen Chromium), so it stays a lower priority than the WKWebView gap was.
+- **Only one macOS version was tested** (26.5.2, current at time of writing) and **only one asset's GOP shape**. Section 1.2's cited floor (macOS 13.3/Safari 16.4 for video-only WebCodecs) and its concern about older-WebKit B-frame bugs are about *older* WebKit builds specifically — this cross-check's clean result on a very current WebKit build does not extend backward to that floor. Treat the macOS-version-matrix question as still open for Phase 8's regression pass, not resolved by this one data point.
+- Arbitrary user-uploaded container/codec shapes (non-clean MP4s, unusual profiles) remain untested on both engines, per Section 6's existing risk entry.
+
+### Recommendation
+
+**Proceed to Phase 1 implementation planning — the feasibility gate Section 1.5 required is now closed on both engines this project ships to a real browser-engine test on.** The one thing this cross-check could not do — test older macOS/WebKit versions or Windows — is appropriately deferred to Phase 8's broader regression pass rather than blocking Phase 1 from starting.

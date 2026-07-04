@@ -1,0 +1,26 @@
+<!--
+  THROWAWAY — Phase 0 WebCodecs feasibility spike (docs/webcodecs-architecture-plan.md).
+  Not linked from the real app. Not part of the production build (Vite only bundles
+  index.html unless configured otherwise). Delete this file + src/dev/webcodecsSpike/
+  + public/_spike/ once Phase 0 is reviewed and its findings are captured in the plan doc.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebCodecs Phase 0 Spike (throwaway)</title>
+    <style>
+      body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+      canvas { background: #000; border: 1px solid #444; }
+      #log { white-space: pre-wrap; background: #000; padding: 8px; max-height: 400px; overflow-y: auto; font-size: 12px; }
+      h1 { font-size: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>WebCodecs Phase 0 Spike (throwaway harness — not part of the real app)</h1>
+    <canvas id="canvas" width="640" height="360"></canvas>
+    <p><button id="rerun">Re-run</button></p>
+    <pre id="log">(starting...)</pre>
+    <script type="module" src="/src/dev/webcodecsSpike/main.ts"></script>
+  </body>
+</html>
