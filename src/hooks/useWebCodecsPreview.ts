@@ -51,11 +51,30 @@ export interface UseWebCodecsPreviewResult {
   error: string | null;
 }
 
-/** Maps a segment-local playhead position to the source video's own time,
- *  honoring trimStart/trimEnd/playbackSpeed — mirrors the identical math in
- *  PreviewStage.tsx's legacy seek effect and frameRenderer.ts's export path,
- *  so the two video paths cannot diverge in what "the right frame" means. */
-function toSourceTime(segment: VideoSegment, currentTime: number): number {
+/**
+ * Maps a segment-local playhead position to the source video's own time,
+ * honoring trimStart/trimEnd/playbackSpeed — mirrors the identical math in
+ * PreviewStage.tsx's legacy seek effect and frameRenderer.ts's export path,
+ * so the two video paths cannot diverge in what "the right frame" means.
+ *
+ * Phase 3 note (audio-sync hardening — docs/webcodecs-architecture-plan.md):
+ * this function takes `currentTime` verbatim from the caller and does NOT
+ * multiply by `globalPlaybackSpeed`. That's intentional, not a gap — the
+ * legacy path's `activeEl.playbackRate = segment.playbackSpeed *
+ * globalPlaybackSpeed` (PreviewStage.tsx) exists only because a `<video>`
+ * element runs its own internal clock and that clock's *real-time* advance
+ * rate has to be told to match how fast `currentTime` itself is advancing
+ * (which `usePlayback.ts` already governs via `audioRef.current.playbackRate
+ * = globalPlaybackSpeed`). This hook has no internal clock to keep in step:
+ * every call is a pull ("what frame corresponds to this currentTime"), and
+ * `currentTime` handed in already reflects whatever real-time pace the audio
+ * element is advancing at. So a `globalPlaybackSpeed` change mid-playback
+ * needs no reinterpretation here — only `segment.playbackSpeed` (the
+ * per-segment source-time stretch baked into how a segment maps its own
+ * span to source time) belongs in this formula, exactly as before. Verified
+ * with the pause/resume/rate-change cases in useWebCodecsPreview.test.ts.
+ */
+export function toSourceTime(segment: VideoSegment, currentTime: number): number {
   const segmentProgress = currentTime - (segment.startTime ?? 0);
   const rawTime = (segment.trimStart || 0) + segmentProgress * (segment.playbackSpeed || 1);
   const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
@@ -65,7 +84,7 @@ function toSourceTime(segment: VideoSegment, currentTime: number): number {
 /** Source-time range [start, end] a segment's decode session must cover —
  *  end accounts for playbackSpeed the same way toSourceTime does, so a
  *  sped-up segment's session isn't truncated before its last displayed frame. */
-function sourceRange(segment: VideoSegment): { start: number; end: number } {
+export function sourceRange(segment: VideoSegment): { start: number; end: number } {
   const start = segment.trimStart || 0;
   const speed = segment.playbackSpeed || 1;
   const end = segment.trimEnd ?? start + segment.duration * speed;
@@ -74,6 +93,26 @@ function sourceRange(segment: VideoSegment): { start: number; end: number } {
 
 function isPlainVideoAsset(segment: VideoSegment | undefined, asset: Asset | undefined): boolean {
   return !!(segment && !segment.isHeading && asset?.type === 'video');
+}
+
+/**
+ * The set of segment ids whose decode sessions should survive a given
+ * render (Section 3.5 boundary crossing) — exactly the current segment and
+ * the next one, when each is itself a plain video segment. Extracted as a
+ * pure function (used by the eviction effect below) so boundary-crossing
+ * behavior — including rapid, short-segment sequences — is directly
+ * unit-testable without a React rendering harness.
+ */
+export function computeKeepSet(
+  currentSegment: VideoSegment | undefined,
+  isVideoSegment: boolean,
+  nextSegment: VideoSegment | undefined,
+  nextIsVideo: boolean,
+): Set<string> {
+  const keep = new Set<string>();
+  if (currentSegment && isVideoSegment) keep.add(currentSegment.id);
+  if (nextSegment && nextIsVideo) keep.add(nextSegment.id);
+  return keep;
 }
 
 export function useWebCodecsPreview({
@@ -114,9 +153,7 @@ export function useWebCodecsPreview({
       for (const id of pool.activeSegmentIds()) pool.releaseSession(id);
       return;
     }
-    const keep = new Set<string>();
-    if (currentSegment && isVideoSegment) keep.add(currentSegment.id);
-    if (nextSegment && nextIsVideo) keep.add(nextSegment.id);
+    const keep = computeKeepSet(currentSegment, isVideoSegment, nextSegment, nextIsVideo);
     for (const id of pool.activeSegmentIds()) {
       if (!keep.has(id)) pool.releaseSession(id);
     }

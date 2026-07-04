@@ -23,6 +23,21 @@
  * This pool is deliberately segment-count-agnostic (sessions are keyed by
  * caller-supplied segmentId) — enforcing "keep only current + next"
  * eviction is the caller's job (useWebCodecsPreview.ts), via releaseSession.
+ *
+ * Phase 3 addition (docs/webcodecs-architecture-plan.md's audio-sync
+ * hardening phase): `getFrameAt` no longer blocks on the *entire* session
+ * finishing decode before it can return a frame — it now resolves as soon
+ * as enough frames have been buffered to answer the query (i.e. a frame
+ * strictly past `targetSec` has arrived, so the correct "latest at-or-before"
+ * answer is already fully determined), falling back to waiting for the
+ * session to fully settle only when that's not yet true. This matters most
+ * for very short segments (the ~1.09-1.3s range from the original cold-start
+ * bug investigation) crossed at a brisk pace: decode-ahead for the next
+ * segment starts the moment the current one becomes active, but under the
+ * old all-or-nothing wait a boundary crossing that landed before the whole
+ * next segment (up to MAX_SESSION_FRAMES) had finished decoding would freeze
+ * on the outgoing frame for the *entire remaining decode*, not just until
+ * its own target frame was available.
  */
 
 import { getOrCreateDemux } from './videoDemuxer';
@@ -38,6 +53,15 @@ interface BufferedFrame {
   timestampSec: number;
 }
 
+/** A pending `getFrameAt` call waiting for enough frames to be buffered to
+ *  answer its query — resolved early by the decoder's `output` callback the
+ *  moment a frame past `targetSec` arrives, or by `session.ready` settling
+ *  (decode finished, one way or another) as the fallback. */
+interface FrameWaiter {
+  targetSec: number;
+  settle: () => void;
+}
+
 interface DecodeSession {
   assetUrl: string;
   startSec: number;
@@ -47,6 +71,7 @@ interface DecodeSession {
   displayedFrame: VideoFrame | null; // currently checked-out frame; also present in `frames` until superseded
   ready: Promise<void>;
   closed: boolean;
+  waiters: FrameWaiter[];
 }
 
 /** Finds the chunk range [startIndex, endIndex] (inclusive) to feed a decoder
@@ -113,6 +138,7 @@ export class VideoDecoderPool {
       displayedFrame: null,
       ready: Promise.resolve(),
       closed: false,
+      waiters: [],
     };
     session.ready = this.startSession(session, assetUrl, startSec, endSec);
     this.sessions.set(segmentId, session);
@@ -134,7 +160,16 @@ export class VideoDecoderPool {
           frame.close();
           return;
         }
-        session.frames.push({ frame, timestampSec: frame.timestamp / 1e6 });
+        const timestampSec = frame.timestamp / 1e6;
+        session.frames.push({ frame, timestampSec });
+        if (session.waiters.length > 0) {
+          const stillWaiting: FrameWaiter[] = [];
+          for (const waiter of session.waiters) {
+            if (timestampSec > waiter.targetSec) waiter.settle();
+            else stillWaiting.push(waiter);
+          }
+          session.waiters = stillWaiting;
+        }
       },
       error: (e) => {
         console.error('[videoDecoderPool] decoder error:', e.message);
@@ -158,6 +193,29 @@ export class VideoDecoderPool {
   }
 
   /**
+   * Resolves as soon as `session.frames` has enough buffered to answer a
+   * `targetSec` query definitively — i.e. a frame past `targetSec` has
+   * already arrived, so the "latest at-or-before" frame is fully determined
+   * without waiting for the rest of the session's (possibly much larger)
+   * decode to finish. Falls back to `session.ready` settling (decode done,
+   * successfully or not) for the case where targetSec is at or beyond the
+   * end of what this session will ever buffer.
+   */
+  private waitForCoverage(session: DecodeSession, targetSec: number): Promise<void> {
+    if (session.frames.some((f) => f.timestampSec > targetSec)) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      let settled = false;
+      const settle = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      session.waiters.push({ targetSec, settle });
+      session.ready.then(settle, settle);
+    });
+  }
+
+  /**
    * Returns the frame to display at `targetSec` (source time, seconds) for
    * `segmentId`'s session — the latest buffered frame at or before
    * targetSec — or null if the session isn't ready or has no frames.
@@ -167,7 +225,7 @@ export class VideoDecoderPool {
   async getFrameAt(segmentId: string, targetSec: number): Promise<VideoFrame | null> {
     const session = this.sessions.get(segmentId);
     if (!session || session.closed) return null;
-    await session.ready;
+    await this.waitForCoverage(session, targetSec);
     if (session.closed || session.frames.length === 0) return null;
 
     let selected = session.frames[0]!;
@@ -224,6 +282,14 @@ export class VideoDecoderPool {
     } catch {
       // Already closed (e.g. the decoder errored) — safe to ignore.
     }
+    // Force-settle any in-flight getFrameAt waiters explicitly, rather than
+    // relying solely on `session.ready` rejecting from the decoder.close()
+    // above — a real VideoDecoder rejects a pending flush() on close(), but
+    // this doesn't assume that's the only path here (e.g. a session closed
+    // before startSession ever reached decode). Each settled waiter's
+    // getFrameAt call sees session.closed and returns null.
+    for (const waiter of session.waiters) waiter.settle();
+    session.waiters = [];
   }
 
   /** Segment ids of all sessions currently held — for a caller implementing

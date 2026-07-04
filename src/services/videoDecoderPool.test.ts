@@ -198,3 +198,169 @@ describe('VideoDecoderPool', () => {
     expect(MockVideoDecoder.instances).toHaveLength(2);
   });
 });
+
+// --- Phase 3: getFrameAt early-coverage resolution -----------------------------
+//
+// docs/webcodecs-architecture-plan.md's audio-sync hardening phase. Every test
+// above awaits `ensureSession` fully before calling `getFrameAt`, so the mock
+// decoder's `flush()` (which emits every frame synchronously) has always
+// already completed by the time a frame is requested — that path is unchanged
+// by the Phase 3 fix and continues to pass unmodified above.
+//
+// The tests below simulate the case those tests can't reach: a decode still
+// in flight (flush() not yet resolved) when getFrameAt is called — exactly
+// what a rapid, short-segment (~1.09-1.3s) boundary crossing produces if the
+// decode-ahead session for the next segment hasn't finished by the time
+// playback reaches it. `ControllableVideoDecoder` lets a test drive `output`
+// events and `flush()` resolution independently and by hand.
+
+class ControllableVideoDecoder {
+  static instances: ControllableVideoDecoder[] = [];
+  outputCb: (frame: MockVideoFrame) => void;
+  errorCb: (e: Error) => void;
+  decodeCalls: { timestamp: number }[] = [];
+  closed = false;
+  private flushResolvers: Array<() => void> = [];
+
+  constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
+    this.outputCb = init.output;
+    this.errorCb = init.error;
+    ControllableVideoDecoder.instances.push(this);
+  }
+  configure(): void {}
+  decode(chunk: { timestamp: number }): void {
+    this.decodeCalls.push(chunk);
+  }
+  flush(): Promise<void> {
+    return new Promise((resolve) => this.flushResolvers.push(resolve));
+  }
+  close(): void {
+    this.closed = true;
+  }
+  /** Test-only: emit one decoded frame at `timestampUs`, as the real decoder's
+   *  output callback would as decode progresses (before flush() settles). */
+  emit(timestampUs: number): void {
+    this.outputCb(new MockVideoFrame(timestampUs));
+  }
+  /** Test-only: settle flush() — simulates the session finishing decode. */
+  resolveFlush(): void {
+    const resolvers = this.flushResolvers;
+    this.flushResolvers = [];
+    for (const r of resolvers) r();
+  }
+}
+
+describe('VideoDecoderPool — getFrameAt resolves without waiting for the full session (Phase 3)', () => {
+  beforeEach(() => {
+    ControllableVideoDecoder.instances = [];
+    vi.stubGlobal('VideoDecoder', ControllableVideoDecoder);
+  });
+
+  it('resolves as soon as a frame past the target has been emitted, without flush() ever completing', async () => {
+    const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    const readyPromise = pool.ensureSession('seg1', 'blob:v1', 0, 0.1);
+    await Promise.resolve(); // let startSession run up to (but not past) flush()
+
+    const decoder = ControllableVideoDecoder.instances[0]!;
+    // Only the first two of four expected frames have arrived so far — the
+    // rest of this (would-be) very short segment's decode is still pending.
+    decoder.emit(0);
+    decoder.emit(33_333);
+
+    // Target 0.02s is fully answerable from what's already buffered (33ms >
+    // 20ms confirms 0ms is the correct "latest at-or-before" pick) — this
+    // must resolve without decoder.flush() ever settling. If it doesn't,
+    // this test hangs and fails on the default timeout, which is exactly
+    // the pre-fix "freeze for the whole remaining decode" behavior.
+    const frame = await pool.getFrameAt('seg1', 0.02);
+    expect(frame?.timestamp).toBe(0);
+
+    // Clean up — let the session finish so nothing is left dangling.
+    decoder.resolveFlush();
+    await readyPromise;
+  });
+
+  it('still waits for more frames (or session settlement) when the target is beyond everything buffered so far', async () => {
+    const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    const readyPromise = pool.ensureSession('seg1', 'blob:v1', 0, 0.1);
+    await Promise.resolve();
+
+    const decoder = ControllableVideoDecoder.instances[0]!;
+    decoder.emit(0);
+
+    let resolved = false;
+    const framePromise = pool.getFrameAt('seg1', 0.09).then((f) => {
+      resolved = true;
+      return f;
+    });
+
+    // Give microtasks a chance to run — must NOT have resolved yet, since no
+    // frame past 0.09s (90ms) has arrived and the session hasn't settled.
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // Now let the rest of the frames arrive and the session finish — this is
+    // what unblocks the still-pending request.
+    decoder.emit(66_667);
+    decoder.emit(100_000);
+    decoder.resolveFlush();
+
+    const frame = await framePromise;
+    expect(resolved).toBe(true);
+    expect(frame?.timestamp).toBe(66_667);
+    await readyPromise;
+  });
+
+  it('releaseSession settles any pending getFrameAt call instead of leaving it hanging (fast boundary crossing evicts a still-decoding "next" session)', async () => {
+    const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    pool.ensureSession('seg1', 'blob:v1', 0, 0.1);
+    await Promise.resolve();
+
+    // No frames have arrived at all yet — this segment never even became
+    // "current" long enough to buffer anything before playback moved past it.
+    const framePromise = pool.getFrameAt('seg1', 0.09);
+    pool.releaseSession('seg1');
+
+    const frame = await framePromise;
+    expect(frame).toBeNull();
+  });
+
+  it('a frame emitted exactly at the target does not resolve until a strictly-later frame confirms no closer match is still coming', async () => {
+    const demuxed = makeDemuxed([0, 33_333, 66_667]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    const readyPromise = pool.ensureSession('seg1', 'blob:v1', 0, 0.1);
+    await Promise.resolve();
+
+    const decoder = ControllableVideoDecoder.instances[0]!;
+    decoder.emit(33_333); // exactly the target, in seconds: 0.033333...
+
+    let resolved = false;
+    const framePromise = pool.getFrameAt('seg1', 33_333 / 1e6).then((f) => {
+      resolved = true;
+      return f;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    decoder.emit(66_667); // strictly past the target — now the answer is certain
+    const frame = await framePromise;
+    expect(resolved).toBe(true);
+    expect(frame?.timestamp).toBe(33_333);
+
+    decoder.resolveFlush();
+    await readyPromise;
+  });
+});
