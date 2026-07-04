@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, type ChaseMutex } from './useWebCodecsPreview';
+import { toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, resetChaseMutex, type ChaseMutex } from './useWebCodecsPreview';
 import { AnimationType, TransitionType, type VideoSegment } from '../types';
 
 /**
@@ -347,7 +347,7 @@ describe('chaseLatestTarget', () => {
 
 describe('startChaseIfIdle', () => {
   it('runs fetch and reports the settled result via onSettled', async () => {
-    const mutex: ChaseMutex = { chasing: false };
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
     const results: number[] = [];
     startChaseIfIdle(mutex, () => 7, async (t) => t * 2, (r) => results.push(r));
     await vi.waitFor(() => expect(results).toEqual([14]));
@@ -355,7 +355,7 @@ describe('startChaseIfIdle', () => {
   });
 
   it('a second call while one is in flight is a no-op (does not start a second fetch)', async () => {
-    const mutex: ChaseMutex = { chasing: false };
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
     const fetch = vi.fn(async (t: number) => {
       await new Promise((r) => setTimeout(r, 10));
       return t;
@@ -368,7 +368,7 @@ describe('startChaseIfIdle', () => {
   });
 
   it('releases the mutex even when onSettled reports the caller considers its own result stale (the exact deadlock scenario)', async () => {
-    const mutex: ChaseMutex = { chasing: false };
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
     // Simulates a caller's own staleness check (like the hook's
     // generationRef comparison) that intentionally does nothing with a
     // superseded result — this must NOT prevent the mutex from releasing.
@@ -399,7 +399,7 @@ describe('startChaseIfIdle', () => {
   });
 
   it('chases the latest target through the mutex exactly as chaseLatestTarget alone would', async () => {
-    const mutex: ChaseMutex = { chasing: false };
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
     let latest = 0;
     const fetch = vi.fn(async (t: number) => {
       if (t === 0) latest = 1; // simulates a scrub tick arriving mid-fetch
@@ -410,5 +410,71 @@ describe('startChaseIfIdle', () => {
 
     await vi.waitFor(() => expect(results).toEqual(['frame@1']));
     expect(fetch).toHaveBeenCalledTimes(2); // chased 0 then 1, skipping nothing extra
+  });
+});
+
+// Phase 5 (docs/webcodecs-architecture-plan.md): a real bug found during
+// manual testing — React StrictMode (dev-only) double-invokes every effect
+// once at mount, and the pool-dispose effect's cleanup fires between the two
+// passes. The second pass's frame-pull effect calls startChaseIfIdle again
+// for the same segment/target the first pass already started chasing;
+// without resetChaseMutex forcing the mutex open at that exact point, the
+// second pass's call silently no-ops (mutex still held by the first pass's
+// now-irrelevant chase) and nothing ever calls getFrameAt again for the
+// fresh session the second pass created — a permanently blank canvas. These
+// tests pin resetChaseMutex's own contract directly, independent of the
+// React/StrictMode plumbing that motivated it.
+describe('resetChaseMutex', () => {
+  it('lets a new chase start immediately even while an old one is still marked in flight', async () => {
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
+    let releaseFirst: (() => void) | undefined;
+    const firstFetch = () => new Promise<string>((resolve) => { releaseFirst = () => resolve('stale'); });
+    const firstResults: string[] = [];
+    startChaseIfIdle(mutex, () => 1, firstFetch, (r) => firstResults.push(r));
+
+    expect(mutex.chasing).toBe(true); // first chase genuinely in flight, nothing has settled it
+
+    resetChaseMutex(mutex);
+    expect(mutex.chasing).toBe(false); // forced open immediately, without waiting for the stale chase
+
+    const secondResults: string[] = [];
+    startChaseIfIdle(mutex, () => 2, async (t) => `frame@${t}`, (r) => secondResults.push(r));
+    await vi.waitFor(() => expect(secondResults).toEqual(['frame@2']));
+
+    // The stale first chase settling later must not clobber the second
+    // (legitimately in-flight-then-completed) chase's mutex state — this is
+    // exactly what the epoch bump guards against.
+    releaseFirst!();
+    await vi.waitFor(() => expect(firstResults).toEqual(['stale']));
+    expect(mutex.chasing).toBe(false); // still correctly released, not stuck true
+  });
+
+  it('a stale chase settling after a reset cannot re-lock the mutex for a third caller', async () => {
+    const mutex: ChaseMutex = { chasing: false, epoch: 0 };
+    let releaseFirst: (() => void) | undefined;
+    const firstFetch = () => new Promise<string>((resolve) => { releaseFirst = () => resolve('stale'); });
+    startChaseIfIdle(mutex, () => 1, firstFetch, () => {});
+
+    resetChaseMutex(mutex); // simulates the pool-dispose cleanup's forced reopen
+
+    // A second chase starts and is STILL in flight when the stale first one
+    // finally settles — without the epoch guard, the stale settlement would
+    // incorrectly flip mutex.chasing back to false while the second chase
+    // is still genuinely running, letting a third caller wrongly believe
+    // the mutex is free.
+    let releaseSecond: (() => void) | undefined;
+    const secondFetch = () => new Promise<string>((resolve) => { releaseSecond = () => resolve('second'); });
+    startChaseIfIdle(mutex, () => 2, secondFetch, () => {});
+    expect(mutex.chasing).toBe(true);
+
+    releaseFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    // The second chase is still genuinely in flight — the stale first
+    // chase's settlement must not have released the mutex out from under it.
+    expect(mutex.chasing).toBe(true);
+
+    releaseSecond!();
+    await vi.waitFor(() => expect(mutex.chasing).toBe(false));
   });
 });

@@ -63,10 +63,18 @@ class MockVideoDecoder {
   outputCb: (frame: MockVideoFrame) => void;
   errorCb: (e: Error) => void;
   configureCalls: unknown[] = [];
-  decodeCalls: { timestamp: number }[] = []; // pending — cleared by flush()/reset()
   totalDecodedCount = 0; // cumulative across this instance's whole lifetime, never cleared
   resetCalls = 0;
   closed = false;
+  /** True immediately after configure()/flush()/reset() — mirrors the real
+   *  VideoDecoder's "a key frame is required after configure() or flush()"
+   *  constraint (confirmed directly against a real Chromium decoder — see
+   *  docs/webcodecs-architecture-plan.md's Phase 4+6/5 tracker entry). This
+   *  used to be entirely unenforced here, which is exactly why the
+   *  production windowed-decode-ahead model's old every-batch-flushes
+   *  design could pass this whole suite while throwing on a real decoder —
+   *  the actual gap this phase closes. */
+  private needsKeyframeNext = true;
 
   constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
     this.outputCb = init.output;
@@ -75,31 +83,39 @@ class MockVideoDecoder {
   }
   configure(config: unknown): void {
     this.configureCalls.push(config);
+    this.needsKeyframeNext = true;
   }
-  decode(chunk: { timestamp: number }): void {
-    this.decodeCalls.push(chunk);
+  decode(chunk: { timestamp: number; type: string }): void {
+    if (this.needsKeyframeNext && chunk.type !== 'key') {
+      throw new Error("Failed to execute 'decode' on 'VideoDecoder': A key frame is required after configure() or flush().");
+    }
+    this.needsKeyframeNext = false;
     this.totalDecodedCount++;
-  }
-  async flush(): Promise<void> {
     // Real VideoDecoder output-order == presentation order (Phase 0 spike
     // confirmed this on both Chromium and WKWebView); the fed chunks in
-    // these tests are already presentation-ordered, so emitting output in
-    // feed order is a faithful simplification. Only emit chunks fed SINCE
-    // the last flush()/reset() — mirrors the real decoder only ever
-    // producing output once per decode() call, not replaying history (this
-    // matters now that a windowed session calls decode()+flush() in
-    // multiple batches over its lifetime, not once up front).
-    const pending = this.decodeCalls.splice(0, this.decodeCalls.length);
-    for (const chunk of pending) this.outputCb(new MockVideoFrame(chunk.timestamp));
+    // these tests are already presentation-ordered, so emitting output
+    // immediately is a faithful simplification. This emits on decode()
+    // itself, not on flush() — the production windowed model (Phase 4+6/5)
+    // no longer flushes routine continuation batches, so a mock that only
+    // ever emitted via flush() could never produce output for one; a real
+    // decoder's output callback is likewise not gated on flush() at all —
+    // flush() is a completion barrier, not what produces output.
+    this.outputCb(new MockVideoFrame(chunk.timestamp));
   }
-  /** Mirrors VideoDecoder.reset() — clears any not-yet-flushed decode
-   *  requests (the real spec discards the pending queue and rejects any
-   *  in-flight flush()); the decoder becomes "unconfigured" until the next
-   *  configure() call, which videoDecoderPool.ts always makes immediately
-   *  after resetting. */
+  async flush(): Promise<void> {
+    // Real flush() is a completion barrier (decode() above already produced
+    // every output) — it also resets the keyframe requirement, mirroring
+    // the real decoder demanding the next decode() after a settled flush()
+    // be a keyframe.
+    this.needsKeyframeNext = true;
+  }
+  /** Mirrors VideoDecoder.reset() — the real spec discards any pending
+   *  decode queue and rejects an in-flight flush(); the decoder becomes
+   *  "unconfigured" until the next configure() call, which
+   *  videoDecoderPool.ts always makes immediately after resetting. */
   reset(): void {
-    this.decodeCalls = [];
     this.resetCalls++;
+    this.needsKeyframeNext = true;
   }
   close(): void {
     this.closed = true;
@@ -274,6 +290,7 @@ class ControllableVideoDecoder {
   errorCb: (e: Error) => void;
   decodeCalls: { timestamp: number }[] = [];
   closed = false;
+  resetCalls = 0;
   private flushResolvers: Array<() => void> = [];
 
   constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
@@ -294,6 +311,7 @@ class ControllableVideoDecoder {
    *  (`.catch(() => {})`), so resolving here is an equally faithful,
    *  simpler simulation for these tests' purposes. */
   reset(): void {
+    this.resetCalls++;
     this.decodeCalls = [];
     const resolvers = this.flushResolvers;
     this.flushResolvers = [];
@@ -427,6 +445,151 @@ describe('VideoDecoderPool — getFrameAt resolves without waiting for the full 
 
     decoder.resolveFlush();
     await readyPromise;
+  });
+
+  // Originally written against the pre-Phase-4+6/5-redesign model, where
+  // EVERY feedWindow() batch called flush() and a second call's waiter was
+  // woken once that in-flight flush() settled. Rewritten for the redesign
+  // (docs/webcodecs-architecture-plan.md): a routine (non-terminal) window
+  // extension never calls flush() at all now (see feedWindow/fillWindow/
+  // startFeedBatch's own doc comments), so this test no longer manufactures
+  // a still-pending flush() — instead it proves the mechanism that actually
+  // replaces it: a target beyond the current window's fed frontier still
+  // gets the window pushed further (startFeedBatch's furthest-pending-
+  // waiter extension), driven purely by real decoder `output` events
+  // (ControllableVideoDecoder's manual emit()), never by flush() timing.
+  it('a target beyond the current window still gets the window extended, without ever calling flush() for a routine continuation', async () => {
+    const demuxed = makeLongDemuxed(180); // 6s @ 30fps — long enough that the first window doesn't cover it all
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    const readyPromise = pool.ensureSession('seg1', 'blob:v1', 0, 6);
+    await Promise.resolve(); // let startSession issue its initial (non-terminal) feed batch
+
+    const decoder = ControllableVideoDecoder.instances[0]!;
+    // Satisfies ensureSession's own initial fillWindow (target=0) directly
+    // via output — this first batch never reaches the session's true end
+    // (6s of content remains), so under the redesign it never calls
+    // flush() at all; resolveFlush() would settle nothing real for it.
+    decoder.emit(0);
+    decoder.emit(FRAME_DUR_US);
+    await readyPromise;
+    const chunksFedByFirstWindow = decoder.decodeCalls.length; // ~46 (~1.5s @ 30fps)
+
+    // A target well beyond the first window's fed frontier (~1.5s), but
+    // still within needsReset's "steady playback, not a scrub" tolerance —
+    // this must extend the window further rather than reset.
+    let resolved = false;
+    const framePromise = pool.getFrameAt('seg1', 2.0).then((f) => {
+      resolved = true;
+      return f;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false); // nothing at/past 2.0s has been emitted yet
+    // Proves the window was genuinely extended (real chunks fed beyond the
+    // first window) purely from issuing the call above — no flush(), no
+    // manual emit() needed to trigger it — the actual point of this test.
+    expect(decoder.decodeCalls.length).toBeGreaterThan(chunksFedByFirstWindow);
+
+    decoder.emit(61 * FRAME_DUR_US); // ~2.033s — strictly past the target, confirms nothing closer is still coming
+
+    // Must NOT be hanging — this is the crux of the fix: extension happens
+    // without either caller ever needing a flush() to settle.
+    await vi.waitFor(() => expect(resolved).toBe(true));
+    const frame = await framePromise;
+    // getFrameAt picks the latest frame AT OR BEFORE the target — nothing
+    // was ever emitted in (0.033s, 2.0s], so 0.033s is still the correct
+    // answer; the 2.033s frame's role is only to confirm no closer match is
+    // still coming (same "at or before" semantics the pre-existing tests
+    // above already pin).
+    expect(frame?.timestamp).toBe(FRAME_DUR_US);
+    expect(decoder.resetCalls).toBe(0); // recovered by extending the window, not by a scrub-reset
+
+    pool.dispose();
+  });
+});
+
+// --- Phase 4+6/5 flush-strategy fix: real-decoder keyframe-after-flush() -----
+//
+// A real Chromium VideoDecoder was confirmed (independently of this pool's
+// logic, via a bare configure()/decode()/flush() sequence in a live browser)
+// to throw SYNCHRONOUSLY — "A key frame is required after configure() or
+// flush()" — the moment decode() is called with a delta (non-key) chunk
+// immediately after a flush() has settled. The pre-fix windowed model called
+// flush() at the end of EVERY feedWindow() batch, then continued feeding
+// from wherever feedCursor was left on the next window extension — almost
+// never a keyframe — so every same-session window extension past the first
+// hit this on a real decoder. MockVideoDecoder above did not previously
+// enforce this constraint at all (that was the actual test-suite gap this
+// finding exposed); it now does (see its own comment there), which is what
+// makes the first test below a real regression test for the fix, not just
+// documentation of it: it would fail immediately (a synchronous throw
+// escaping getFrameAt) against the pre-fix feedWindow, and passes now
+// because feedWindow no longer flushes between routine continuation
+// batches.
+describe('VideoDecoderPool — real-decoder keyframe-after-flush() constraint (Phase 4+6/5 fix)', () => {
+  it('many same-session window extensions past the first batch never throw on a real-keyframe-enforcing decoder', async () => {
+    const demuxed = makeLongDemuxed(180); // 6s @ 30fps, keyframe every 1s — only chunk 0 backs the first window
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6);
+    const decoder = MockVideoDecoder.instances[0]!;
+    const decodedAfterFirstWindow = decoder.totalDecodedCount;
+    expect(decodedAfterFirstWindow).toBeGreaterThan(0); // first window fed fine — starts at chunk 0, a keyframe
+
+    // Every one of these forces a continuation feed past the previous
+    // window's frontier — mid-GOP, not at a keyframe — exactly where the
+    // pre-fix design called flush() and would have thrown on a real
+    // decoder. MockVideoDecoder now enforces that same constraint, so this
+    // loop completing without throwing IS the regression test.
+    for (const target of [1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5]) {
+      const frame = await pool.getFrameAt('seg1', target);
+      expect(frame).not.toBeNull();
+    }
+
+    // Confirms real, ongoing progress happened (not a frozen-on-first-frame
+    // silent failure) — every extension actually decoded further chunks.
+    expect(decoder.totalDecodedCount).toBeGreaterThan(decodedAfterFirstWindow);
+    expect(decoder.resetCalls).toBe(0); // steady forward progress never needs a scrub-reset
+
+    pool.dispose();
+  });
+
+  it('a genuinely unexpected decode() error still freezes on the last good frame instead of hanging or looping (secondary safety net)', async () => {
+    // feedWindow's try/catch is no longer the primary defense against the
+    // keyframe-after-flush case (the redesign above prevents that
+    // structurally), but it stays as a last-resort net for a real decoder
+    // throwing for an unrelated reason (driver fault, malformed chunk).
+    const demuxed = makeLongDemuxed(180);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6);
+    const decoder = MockVideoDecoder.instances[0]!;
+
+    const originalDecode = decoder.decode.bind(decoder);
+    let thrown = false;
+    decoder.decode = (chunk) => {
+      if (!thrown) {
+        thrown = true;
+        throw new Error('simulated unrelated decoder fault');
+      }
+      originalDecode(chunk);
+    };
+
+    const frameAt2s = await pool.getFrameAt('seg1', 2.0);
+    expect(frameAt2s).not.toBeNull();
+
+    // A further, later target must resolve immediately (not retry forever)
+    // — the busy-loop hazard feedWindow's catch block still guards against.
+    const start = Date.now();
+    const frameAt5s = await pool.getFrameAt('seg1', 5.0);
+    expect(Date.now() - start).toBeLessThan(100); // resolves immediately — no retry loop
+    expect(frameAt5s?.timestamp).toBe(frameAt2s?.timestamp); // frozen on the same last-good frame
+
+    pool.dispose();
   });
 });
 

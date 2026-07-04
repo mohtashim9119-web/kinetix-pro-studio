@@ -151,9 +151,14 @@ export async function chaseLatestTarget<T>(
 
 /** Mutable "is a chase currently running" flag — deliberately a plain
  *  object, not a boolean, so callers can hold a stable reference (e.g. a
- *  React ref's `.current` container) across renders. */
+ *  React ref's `.current` container) across renders.
+ *
+ *  `epoch` supports `resetChaseMutex` (Phase 5, docs/webcodecs-architecture-plan.md)
+ *  — see that function's doc for why a forced external reset needs its own
+ *  guard distinct from the chase-completion release below. */
 export interface ChaseMutex {
   chasing: boolean;
+  epoch: number;
 }
 
 /**
@@ -192,11 +197,59 @@ export function startChaseIfIdle<T>(
 ): void {
   if (mutex.chasing) return;
   mutex.chasing = true;
+  // Captured so this chase's own release can't fire after a `resetChaseMutex`
+  // call has already reopened the mutex for a newer chase — see that
+  // function's doc. In the common case (no reset happens) `mutex.epoch`
+  // never changes, so this check always passes and release stays
+  // effectively unconditional, exactly as the note above describes.
+  const epoch = mutex.epoch;
   void chaseLatestTarget(getLatestTarget, fetch)
     .then(({ result }) => onSettled(result))
     .finally(() => {
-      mutex.chasing = false; // unconditional — see the note above
+      if (mutex.epoch === epoch) mutex.chasing = false;
     });
+}
+
+/**
+ * Forces the mutex open and bumps its epoch — for a caller that knows the
+ * chase currently (or about to be) in flight is chasing state that's about
+ * to become invalid and wants a *new* chase to be able to start immediately
+ * instead of waiting for the stale one's own (possibly slow, or never-firing
+ * in the exact same way) settlement.
+ *
+ * Phase 5 fix (docs/webcodecs-architecture-plan.md): React StrictMode
+ * (dev-only) double-invokes every effect once at mount — the pool-dispose
+ * effect's cleanup (see useWebCodecsPreview) fires between the two passes,
+ * disposing and effectively recreating every decode session. The frame-pull
+ * effect's SECOND pass calls `startChaseIfIdle` again for the exact same
+ * segment/target as the first — but `chaseMutexRef` is a ref, shared across
+ * both passes, and the first pass's chase (now chasing a session that's
+ * about to be/already closed) is very likely still `chasing === true` at
+ * that moment, so the second pass's call would silently no-op (per the
+ * `if (mutex.chasing) return` guard) and never call `getFrameAt` again for
+ * the fresh, valid session the second pass's decode-ahead effect just
+ * created. Since the first pass's chase is fetching the *same* target as
+ * the second pass would (nothing moved), `chaseLatestTarget`'s own loop
+ * exits after that one fetch instead of re-chasing — so without this reset,
+ * nothing would ever call `getFrameAt` again for a segment landed on at
+ * mount while paused, producing a permanently blank canvas. Calling this
+ * from the pool-dispose cleanup, right when the old sessions are actually
+ * invalidated, lets the very next `startChaseIfIdle` call proceed
+ * immediately instead of silently dropping its request.
+ *
+ * Bumping `epoch` (not just clearing `chasing`) is what keeps this safe:
+ * without it, the stale first-pass chase's own eventual `.finally()` would
+ * unconditionally clear `chasing` again later — including while a second,
+ * legitimate chase started by this reset is still genuinely in flight —
+ * which would let a third caller believe the mutex was free and start a
+ * second concurrent chase. Bumping the epoch here means that stale
+ * `.finally()` finds `mutex.epoch !== epoch` (its own captured value) and
+ * skips clearing `chasing`, preserving the "at most one chase in flight"
+ * invariant `startChaseIfIdle` depends on.
+ */
+export function resetChaseMutex(mutex: ChaseMutex): void {
+  mutex.chasing = false;
+  mutex.epoch++;
 }
 
 /**
@@ -246,7 +299,7 @@ export function useWebCodecsPreview({
   // source time for the in-flight (or about-to-start) chase loop, and
   // whether a chase loop is currently running (startChaseIfIdle's mutex).
   const latestTargetRef = useRef(0);
-  const chaseMutexRef = useRef<ChaseMutex>({ chasing: false });
+  const chaseMutexRef = useRef<ChaseMutex>({ chasing: false, epoch: 0 });
 
   const currentAsset = currentSegment ? assets.find(a => a.id === currentSegment.assetId) : undefined;
   const isVideoSegment = isPlainVideoAsset(currentSegment, currentAsset);
@@ -355,6 +408,32 @@ export function useWebCodecsPreview({
     if (epochKeyRef.current !== segmentId) {
       epochKeyRef.current = segmentId;
       ++generationRef.current;
+      // Phase 5 fix (docs/webcodecs-architecture-plan.md): chaseLatestTarget's
+      // `fetch` closure captures THIS effect run's segmentId once, at the
+      // moment startChaseIfIdle is called — it has no way to notice a later
+      // segment change. During continuous playback the loop practically
+      // never exits on its own (getLatestTarget() — latestTargetRef — keeps
+      // advancing every ~16ms tick regardless of which segment currentTime
+      // now belongs to, so the pre-fetch/post-fetch target comparison almost
+      // never matches), so a chase started for segment N can still be
+      // "chasing" — mutex.chasing === true — well after the real current
+      // segment has moved to N+1, N+2, etc., silently starving every later
+      // segment's own startChaseIfIdle call (mutex busy) of ever issuing its
+      // own getFrameAt call. The result observed in manual testing: playback
+      // advances and overlays/captions update correctly (they don't depend
+      // on this hook), but the WebCodecs canvas itself goes and stays black
+      // across a stretch of segments until the stale chase happens to catch
+      // up (which can take a while, since it's still fetching frames against
+      // whatever segment N's session — usually evicted or long past its
+      // relevant window — happens to return for a target meant for a much
+      // later segment). Forcing the mutex open on every genuine segment
+      // change — not just on pool dispose/unmount, see resetChaseMutex's own
+      // doc for the original mount-time case this was written for — lets
+      // the new segment's chase start immediately instead of waiting for
+      // the stale one to notice; the epoch bump keeps the stale chase's own
+      // eventual (now-harmless, generation-filtered) settlement from
+      // clobbering the new chase's in-flight flag.
+      resetChaseMutex(chaseMutexRef.current);
     }
     const generation = generationRef.current;
     latestTargetRef.current = toSourceTime(currentSegment, currentTime);
@@ -378,9 +457,38 @@ export function useWebCodecsPreview({
   }, [enabled, currentSegment, isVideoSegment, currentAsset, currentTime]);
 
   // Dispose the pool (closes every session and buffered VideoFrame) on unmount.
+  //
+  // Phase 5 fix (docs/webcodecs-architecture-plan.md): under React
+  // StrictMode (dev-only), this cleanup runs once immediately after the
+  // very first mount's effects fire, then every effect re-runs a second
+  // time on the same component instance — `poolRef.current` is a ref, so
+  // it survives this and the SAME pool object gets reused (dispose() just
+  // clears its internal maps; it doesn't need to be reconstructed to work
+  // again). Two things from the first pass are still stale after this
+  // cleanup runs, and both need to be invalidated here, at the exact point
+  // the pool is actually invalidated, not left to whatever later moment
+  // each one would otherwise settle on its own:
+  //  1. `generationRef` — the first pass's in-flight `getFrameAt` call
+  //     (started before this cleanup, since decode/demux is async) captured
+  //     `generation` before this dispose happened; its own segment id
+  //     hasn't changed between the two StrictMode passes, so the frame-pull
+  //     effect's `epochKeyRef` guard never bumps `generationRef` for it on
+  //     its own. Without bumping it here, that stale call's eventual
+  //     (post-dispose, session.closed) null result could still satisfy the
+  //     generation check in onSettled and stomp the second pass's real
+  //     frame with null.
+  //  2. `chaseMutexRef` — see `resetChaseMutex`'s own doc. Without this, the
+  //     second pass's `startChaseIfIdle` call finds the first pass's chase
+  //     still marked in-flight (chasing a session that's being closed right
+  //     now) and silently no-ops, so nothing ever calls `getFrameAt` again
+  //     for the fresh session the second pass's decode-ahead effect just
+  //     created — a permanently blank canvas for whatever segment was
+  //     current at mount, until the user happened to switch segments.
   useEffect(() => {
     return () => {
       poolRef.current?.dispose();
+      ++generationRef.current;
+      resetChaseMutex(chaseMutexRef.current);
     };
   }, []);
 

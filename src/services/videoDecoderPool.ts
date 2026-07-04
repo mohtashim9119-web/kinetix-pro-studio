@@ -148,6 +148,10 @@ interface DecodeSession {
   /** True while a feed-then-flush batch is in flight — guards against
    *  issuing two overlapping feed batches for the same session. */
   feedInFlight: boolean;
+  /** Bumped by resetSessionWindow — see the comment there for why a stale
+   *  in-flight batch's own deferred `feedInFlight = false` must not be
+   *  allowed to apply once a reset has happened. */
+  feedGeneration: number;
   /** Timestamp (us) of the last chunk actually handed to decoder.decode()
    *  so far in the current window — used to decide whether a new target is
    *  reachable by simple forward continuation or needs a reset. */
@@ -253,6 +257,7 @@ export class VideoDecoderPool {
       fullEndIndex: -1,
       fullyFed: true,
       feedInFlight: false,
+      feedGeneration: 0,
       feedFrontierUs: -Infinity,
       retainedFloorUs: -Infinity,
       frames: [],
@@ -333,7 +338,24 @@ export class VideoDecoderPool {
    *  the window at the keyframe backing the new target. This is the fast
    *  path for both a backward scrub and a big forward jump within the same
    *  segment — decode resumes from the nearest keyframe rather than
-   *  fast-forwarding through everything in between. */
+   *  fast-forwarding through everything in between.
+   *
+   * Phase 5 fix (docs/webcodecs-architecture-plan.md): a prior feedWindow()
+   * batch can still be "in flight" (feedInFlight === true, its flush()
+   * promise not yet settled) at the moment a reset happens — e.g.
+   * ensureSession's own initial fillWindow call resolves early the instant a
+   * satisfying frame is buffered, while its underlying flush() keeps running
+   * in the background; a getFrameAt call landing moments later can trigger
+   * a reset (see needsReset) before that background flush() has settled.
+   * Without the two lines below, fillWindow's next call would see
+   * feedInFlight still true and passively await a waiter that nothing will
+   * ever settle (the stale batch's own `.finally()` only clears the flag —
+   * it does not resolve any waiter), hanging forever with a permanently
+   * blank canvas and no error. Forcing feedInFlight false here lets the next
+   * fillWindow call start a fresh feed for the just-reset window; bumping
+   * feedGeneration stops that stale batch's eventual `.finally()` (see
+   * fillWindow) from later clobbering a NEW batch's legitimately-true flag
+   * if it settles after the new one has already started. */
   private resetSessionWindow(session: DecodeSession, targetSec: number): void {
     for (const entry of session.frames) entry.frame.close();
     session.frames = [];
@@ -355,6 +377,8 @@ export class VideoDecoderPool {
       }
     }
     this.seedWindow(session, targetSec, session.endSec);
+    session.feedGeneration++;
+    session.feedInFlight = false;
   }
 
   /** Feeds chunks from `session.feedCursor` up to whichever is smaller:
@@ -362,69 +386,172 @@ export class VideoDecoderPool {
    *  always feeding at least one chunk of forward progress when anything
    *  remains, even if the window boundary is already behind feedCursor
    *  (e.g. a target right at the tail of what's already been requested).
-   *  Returns a promise settling once this batch has been flushed (i.e.
-   *  every decode() call issued in this batch is guaranteed to have
-   *  produced its output, one way or another). */
+   *
+   *  Flush-strategy redesign (docs/webcodecs-architecture-plan.md, Phase
+   *  4+6/5 design gap, fixed here): a real `VideoDecoder.decode()` call
+   *  throws SYNCHRONOUSLY — "A key frame is required after configure() or
+   *  flush()" — the moment it's handed a delta chunk immediately after a
+   *  settled `flush()`. The previous version of this method called
+   *  `flush()` at the end of EVERY batch, so every same-session window
+   *  extension after the first (continuing mid-GOP, by design — that's the
+   *  whole point of the windowed model) hit this on a real decoder. The
+   *  fix: `flush()` is only ever called here when this batch reaches the
+   *  true end of the session's own range (`fullyFed` becomes true) — i.e.
+   *  when no future `feedWindow()` call will ever run for this session
+   *  again (`fillWindow`'s `fullyFed && !feedInFlight` early-return
+   *  guarantees that). Every routine continuation just calls `decode()`
+   *  and returns without flushing — legal on a real decoder because
+   *  nothing flushed the decoder since the LAST decode() in this same
+   *  session. Genuine discontinuities (session teardown in `closeSession`,
+   *  backward/hard-seek resets in `resetSessionWindow`) still use
+   *  `reset()`+`configure()`, which the real API explicitly permits a
+   *  subsequent delta decode() after, once re-seeded at a keyframe (which
+   *  `seedWindow` always does). Output for chunks fed without a flush
+   *  still arrives normally via the decoder's `output` callback
+   *  (`handleDecoderOutput`) — `fillWindow`'s waiter mechanism, not this
+   *  method's return value, is what actually waits for it. */
   private feedWindow(session: DecodeSession, targetSec: number): Promise<void> {
     const handle = session.handle;
     if (!handle || session.closed) return Promise.resolve();
     const boundaryUs = (targetSec + WINDOW_AHEAD_SEC) * 1e6;
 
-    let fed = false;
-    while (session.feedCursor <= session.fullEndIndex && session.chunks[session.feedCursor]!.timestamp <= boundaryUs) {
-      const chunk = session.chunks[session.feedCursor]!;
-      handle.decoder.decode(chunk);
-      session.feedFrontierUs = chunk.timestamp;
-      session.feedCursor++;
-      fed = true;
-    }
-    if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
-
-    if (!fed && session.feedCursor <= session.fullEndIndex) {
-      // Nothing fell within the window boundary yet (it's already behind
-      // feedCursor) — feed exactly one more chunk so forward progress is
-      // always made rather than spinning.
-      const chunk = session.chunks[session.feedCursor]!;
-      handle.decoder.decode(chunk);
-      session.feedFrontierUs = chunk.timestamp;
-      session.feedCursor++;
+    // Secondary safety net only, not the primary defense (see the flush
+    // strategy above): with routine batches no longer flushing, decode() is
+    // never called on this handle right after a flush() with a
+    // non-keyframe chunk, so the keyframe-after-flush throw this used to
+    // guard against should no longer be reachable in practice. A real
+    // hardware decoder can still throw for unrelated reasons (malformed
+    // chunk, driver fault), so this stays as a last-resort containment:
+    // freeze the segment on its last good frame rather than letting a
+    // synchronous throw escape into fillWindow uncaught.
+    try {
+      let fed = false;
+      while (session.feedCursor <= session.fullEndIndex && session.chunks[session.feedCursor]!.timestamp <= boundaryUs) {
+        const chunk = session.chunks[session.feedCursor]!;
+        handle.decoder.decode(chunk);
+        session.feedFrontierUs = chunk.timestamp;
+        session.feedCursor++;
+        fed = true;
+      }
       if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
-      fed = true;
-    }
 
-    if (!fed) return Promise.resolve();
-    return handle.decoder.flush().catch(() => {});
+      if (!fed && session.feedCursor <= session.fullEndIndex) {
+        // Nothing fell within the window boundary yet (it's already behind
+        // feedCursor) — feed exactly one more chunk so forward progress is
+        // always made rather than spinning.
+        const chunk = session.chunks[session.feedCursor]!;
+        handle.decoder.decode(chunk);
+        session.feedFrontierUs = chunk.timestamp;
+        session.feedCursor++;
+        if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
+        fed = true;
+      }
+
+      if (!fed) return Promise.resolve();
+
+      if (session.fullyFed) {
+        // The ONLY place outside teardown/reset that flush() is ever
+        // called: nothing will ever feed this session again, so force any
+        // decoder-buffered (reorder-delayed) tail frames out now instead of
+        // leaving them with nothing left to trigger their emission.
+        return handle.decoder.flush().catch(() => {});
+      }
+      return Promise.resolve();
+    } catch {
+      handle.errored = true; // don't pool this handle for reuse — its decode state is now unknown
+      session.fullyFed = true; // stop fillWindow from retrying the same doomed chunk forever
+      return Promise.resolve();
+    }
   }
 
   /** Feeds and waits until `session.frames` can answer `targetSec` (a frame
    *  strictly past it has arrived, so "latest at-or-before" is fully
    *  determined) or the session is fully fed with nothing more ever coming.
    *  Resolves early on either signal — never waits for a whole batch to
-   *  settle if the answer is already knowable from what's buffered so far. */
+   *  settle if the answer is already knowable from what's buffered so far.
+   *
+   *  Flush-strategy redesign (docs/webcodecs-architecture-plan.md, Phase
+   *  4+6/5 gap): the pre-fix version of this method tied its own wait
+   *  directly to `feedWindow`'s returned promise, which used to be a real
+   *  `flush()` — a genuine async operation whose settling reliably meant
+   *  "every frame this batch will ever produce has arrived." Now that
+   *  `feedWindow` only flushes when the session is fully exhausted (see its
+   *  own doc comment), that promise settles almost instantly for a routine
+   *  batch — tying a wait to it directly would busy-loop (start a batch,
+   *  find nothing satisfies yet, immediately start another) without ever
+   *  giving the decoder's real, asynchronous `output` callback a chance to
+   *  fire. `startFeedBatch` below is what actually paces this correctly:
+   *  see its own doc comment. */
   private async fillWindow(session: DecodeSession, targetSec: number): Promise<void> {
     while (!session.closed) {
       if (session.frames.some((f) => f.timestampSec > targetSec)) return;
       if (session.fullyFed && !session.feedInFlight) return;
 
       if (!session.feedInFlight) {
-        session.feedInFlight = true;
-        const donePromise = this.feedWindow(session, targetSec).finally(() => {
-          session.feedInFlight = false;
-        });
-        await new Promise<void>((resolve) => {
-          let settled = false;
-          const settle = () => {
-            if (settled) return;
-            settled = true;
-            resolve();
-          };
-          session.waiters.push({ targetSec, settle });
-          donePromise.then(settle, settle);
-        });
-      } else {
-        await new Promise<void>((resolve) => session.waiters.push({ targetSec, settle: resolve }));
+        this.startFeedBatch(session, targetSec);
+        // `feedWindow` (called synchronously by startFeedBatch, above) has
+        // already fed whatever it's going to feed, and `handleDecoderOutput`
+        // pushes into `session.frames` unconditionally — independent of any
+        // waiter — so a decoder that emits synchronously (this file's own
+        // test mocks) or had output already arrive may have already
+        // satisfied `targetSec` or reached genuine exhaustion. Loop back to
+        // the top to recheck fresh rather than assuming a real async gap;
+        // if neither is true yet, the next iteration correctly falls
+        // through to the passive wait below (feedInFlight is still true at
+        // that point, since nothing has yielded since startFeedBatch set it).
+        continue;
       }
+
+      await new Promise<void>((resolve) => session.waiters.push({ targetSec, settle: resolve }));
     }
+  }
+
+  /** Issues one feed-and-maybe-flush batch for `targetSec` on `session`,
+   *  marking `feedInFlight` for its duration so a concurrent `fillWindow`
+   *  call for a different target on the same session waits instead of
+   *  double-feeding.
+   *
+   *  On completion: if the session is now fully fed, the `flush()` that
+   *  `feedWindow` issues in that case (see its doc comment) guarantees
+   *  every decoder-buffered frame has already been delivered via
+   *  `handleDecoderOutput` by the time we get here — so every still-pending
+   *  waiter is force-settled; nothing is left that could ever answer them.
+   *
+   *  Otherwise (a routine continuation, no flush happened): `handleDecoderOutput`
+   *  has already woken any waiter this batch's own output satisfied.
+   *  Anyone STILL parked whose target lies beyond what this batch actually
+   *  fed (`feedFrontierUs`) — not merely "output for it hasn't arrived
+   *  yet" — genuinely needs the window pushed further, so this re-invokes
+   *  itself for the single furthest such target (one more batch covers
+   *  every nearer one too). Waiters already within the fed range are
+   *  deliberately left alone here to keep waiting on real decoder output —
+   *  waking them anyway (as this method's flush-timed predecessor did,
+   *  when every batch really did flush) is exactly the busy-loop this
+   *  redesign removes: without a flush to await, "batch completed" no
+   *  longer means "we now know as much as we're going to for a while." */
+  private startFeedBatch(session: DecodeSession, targetSec: number): void {
+    session.feedInFlight = true;
+    // Captured so this specific batch's completion can't clear a LATER
+    // batch's legitimately-true feedInFlight if a reset (resetSessionWindow)
+    // happens before this one settles — see that method's comment.
+    const generation = session.feedGeneration;
+    this.feedWindow(session, targetSec).finally(() => {
+      if (session.feedGeneration !== generation) return;
+      session.feedInFlight = false;
+
+      if (session.fullyFed) {
+        for (const waiter of session.waiters) waiter.settle();
+        session.waiters = [];
+        return;
+      }
+
+      let furthestUs = -Infinity;
+      for (const waiter of session.waiters) {
+        const waiterUs = waiter.targetSec * 1e6;
+        if (waiterUs > session.feedFrontierUs && waiterUs > furthestUs) furthestUs = waiterUs;
+      }
+      if (furthestUs > -Infinity) this.startFeedBatch(session, furthestUs / 1e6);
+    });
   }
 
   /**
@@ -443,6 +570,24 @@ export class VideoDecoderPool {
     const session = this.sessions.get(segmentId);
     if (!session || session.closed) return null;
     this.touch(segmentId);
+
+    // Phase 5 fix (docs/webcodecs-architecture-plan.md): ensureSession() is
+    // always called fire-and-forget by useWebCodecsPreview.ts (its own
+    // decode-ahead effect never awaits it), and a separate effect in the
+    // same render calls getFrameAt independently — so this can run before
+    // startSession()'s seedWindow() has ever executed for a brand new
+    // session, while its DecodeSession object literal still holds its
+    // placeholder initial values (fullyFed: true, frames: []). Without
+    // awaiting `ready` here first, the fillWindow() call below would read
+    // that placeholder fullyFed=true and return immediately with zero
+    // frames — getFrameAt then returns null, and if the caller isn't
+    // actively ticking currentTime (e.g. paused right after a seek), nothing
+    // ever retries: a permanently blank canvas with no error. Awaiting
+    // `ready` (a no-op once already resolved) guarantees seedWindow's real
+    // chunk-range-derived state is in place before needsReset/fillWindow
+    // ever run.
+    await session.ready;
+    if (session.closed) return null;
 
     if (this.needsReset(session, targetSec)) {
       this.resetSessionWindow(session, targetSec);
