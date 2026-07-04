@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-02 |
-| Current HEAD | `34206ee` ("fix: restore timeline scroll after width measured, gate auto-scroll (no 0-then-scroll flicker)"). Session pivoted from bug-fixing to export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass for plain segments — 3m44s→40s on a mixed 4-video/10-image project) and UI smoothness (reload "jump then settle" fix, ref+rAF timeline drag, scroll-restore race fix). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
+| Last updated | 2026-07-04 |
+| Current HEAD | `213c3e1` ("feat: first-frame cache + cover layer for correct preview at segment boundaries"). Working tree clean, `tsc --noEmit` clean, `vitest` 60/60. A full Phase 2 preview-video experiment (5-slot rolling pool, 3-detector motion sensing, ended-reset guard, clock-kick watchdog, load-based warm) was investigated and then fully reverted — it never got committed, existing only as a staged diff on top of `213c3e1`; see `docs/bugs/preview-cold-start-clock-freeze.md` for the investigation writeup. Session pivoted from bug-fixing to export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass for plain segments — 3m44s→40s on a mixed 4-video/10-image project) and UI smoothness (reload "jump then settle" fix, ref+rAF timeline drag, scroll-restore race fix). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -21,6 +21,18 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 ---
 
 ## Completed Work
+
+<details>
+<summary>First-frame cache + cover layer for preview segment boundaries — ✅ DONE 2026-07-04 (commit 213c3e1)</summary>
+
+Phase 1 of the preview-video quality effort: a `useFirstFrameCache.ts` hook precomputes and caches each segment's first frame; `PreviewStage.tsx` draws it as a static cover layer over the live `<video>` element at segment boundaries, hiding the frozen/blank frame that a cold video element shows before its clock actually starts (see the cold-start clock freeze bug below — the cover doesn't fix that root cause, it papers over the visible symptom during the boundary window). `tsc --noEmit` clean, `vitest` 60/60.
+</details>
+
+<details>
+<summary>Locked-overlap early-cutoff fix — ✅ DONE 2026-07-03 (commit 202f31b)</summary>
+
+`fix: thread real audio duration into heading/lock re-timing (no early cutoff)` — `resolveAudioDuration` now threads the real decoded audio duration through heading/lock re-timing instead of an approximated value, closing an early-cutoff bug surfaced while investigating the preview cold-start freeze below (the original hypothesis — a boundary-rounding gap — was itself rejected as IEEE-754 noise, but chasing it down turned up this genuine, unrelated fix). Regression tests added. `tsc --noEmit` clean, `vitest` 60/60.
+</details>
 
 D4 + D5 converted into the Path B: Separate Heading Layer roadmap (`docs/path-b-heading-layer-plan.md`) — they are symptoms of heading/segment coupling that Path B removes. Not fixed individually (targeted fixes rejected as low-value). Path B is PLANNED but deferred; current focus pivoting to export/runtime performance. (2026-07-02)
 
@@ -174,8 +186,8 @@ None currently.
 D4 and D5 — see Path B roadmap (`docs/path-b-heading-layer-plan.md`); folded into that roadmap on 2026-07-02 rather than fixed individually — see Decisions Log.
 
 Newly logged 2026-07-02, not yet root-caused or triaged into a D-number in this repo:
-- **Exported-video judder** — reported FPS mismatch between source and export causing visible judder in rendered output (referenced as "finding #6"). Not yet reproduced/investigated against a specific commit here — needs a dedicated repro (source fps vs. `exportFps` setting vs. actual encoded frame timing) before a fix is scoped.
-- **Preview black-screen during playback** — a black-screen symptom during playback, distinct from the already-fixed D10 (D10 was specifically the transition-boundary flash between two segments, closed 2026-06-30 via pre-seek + `requestVideoFrameCallback` gating). This is a related but separate class of preview-video issue; not yet root-caused.
+- **Exported-video judder** — reported FPS mismatch between source and export causing visible judder in rendered output (referenced as "finding #6"). Not yet reproduced/investigated against a specific commit here — needs a dedicated repro (source fps vs. `exportFps` setting vs. actual encoded frame timing) before a fix is scoped. Not yet started (Bug 1).
+- **Preview video cold-start clock freeze — UNRESOLVED.** The "preview black-screen during playback" symptom logged 2026-07-02 (distinct from the already-fixed D10 transition-boundary flash) was investigated in depth: confirmed root cause is that a `<video>` element that has never played will not start its media clock on `.play()`, regardless of `readyState`/buffering. A full Phase 2 fix attempt (5-slot rolling pool, 3-detector motion sensing, ended-reset guard, clock-kick watchdog, load-based warm) was built, tested, and fully reverted — none of it addressed the real cause, and it never got committed. Two candidate directions (silent pre-roll vs. reveal-first/hide-after-motion) are proposed, pending a small diagnostic to decide between them. Full writeup: [docs/bugs/preview-cold-start-clock-freeze.md](docs/bugs/preview-cold-start-clock-freeze.md).
 
 ---
 
