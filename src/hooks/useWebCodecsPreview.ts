@@ -26,6 +26,30 @@
  * when false (dev toggle off, or capability unsupported), this hook must be
  * inert even though it's still mounted and called on every render, so the
  * new path never activates in the background for a real user.
+ *
+ * Phase 4+6 (combined, docs/webcodecs-architecture-plan.md): this hook no
+ * longer hard-releases every session outside {current, next} the moment a
+ * boundary crosses — it marks {current, next} as protected
+ * (pool.setProtectedIds) and lets videoDecoderPool.ts's own LRU/budget
+ * enforcement decide what else survives (Section 4's windowed model).
+ * Two things change as a result:
+ *  1. The current segment's initial decode window is seeded at the actual
+ *     playhead position (toSourceTime at the moment currentSegment changes),
+ *     not the segment's own start — avoids a wasted decode-from-start pass
+ *     immediately superseded by a reset when a cold scrub lands mid-segment.
+ *  2. The frame-pull effect below coalesces rapid currentTime ticks (a fast
+ *     drag-scrub can fire this hook many times per second, since
+ *     Timeline.tsx's mousemove handler calls onSeek — and therefore
+ *     setCurrentTime — synchronously and unthrottled, a file this plan does
+ *     not touch) into a "latest wins" chase loop: at most one
+ *     pool.getFrameAt call is ever in flight per session, and if the target
+ *     moves again before it resolves, the loop re-issues for the newest
+ *     target instead of racing/queueing one call per tick. This is what
+ *     "deprioritize decode work for positions the playhead has already
+ *     moved past" means in practice — a real VideoDecoder decode() call
+ *     can't be cancelled once issued, so this coalescing is what prevents
+ *     work from piling up for intermediate scrub positions, rather than
+ *     trying to abort browser-side decode work directly.
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -96,6 +120,86 @@ function isPlainVideoAsset(segment: VideoSegment | undefined, asset: Asset | und
 }
 
 /**
+ * Phase 4 scrub-coalescing primitive (docs/webcodecs-architecture-plan.md).
+ * Repeatedly calls `fetch(target)` for whatever `getLatestTarget()` currently
+ * returns, resolving only once a call's result corresponds to the target
+ * that was STILL the latest one requested by the time that call resolved —
+ * every intermediate target requested while a call was in flight is skipped
+ * rather than separately fetched. This is what keeps a fast drag-scrub (which
+ * can update the requested target many times per second, since
+ * Timeline.tsx's mousemove handler drives currentTime synchronously and
+ * unthrottled) from queueing one decode/getFrameAt call per tick: at most
+ * one `fetch` call is ever in flight, always chasing the newest target.
+ *
+ * Extracted as a pure, dependency-free function (no VideoDecoderPool/React
+ * import) so it's directly unit-testable without a hook-rendering harness —
+ * this repo has no jsdom/@testing-library/react (see Phase 3's identical
+ * rationale for computeKeepSet/toSourceTime above).
+ */
+export async function chaseLatestTarget<T>(
+  getLatestTarget: () => number,
+  fetch: (target: number) => Promise<T>,
+): Promise<{ target: number; result: T }> {
+  for (;;) {
+    const target = getLatestTarget();
+    const result = await fetch(target);
+    if (getLatestTarget() === target) return { target, result };
+    // The target moved again while `fetch` was in flight — loop and chase
+    // the new one instead of settling on a now-stale result.
+  }
+}
+
+/** Mutable "is a chase currently running" flag — deliberately a plain
+ *  object, not a boolean, so callers can hold a stable reference (e.g. a
+ *  React ref's `.current` container) across renders. */
+export interface ChaseMutex {
+  chasing: boolean;
+}
+
+/**
+ * Starts a chaseLatestTarget() run only if one isn't already in flight
+ * (`mutex.chasing`) — this is the "at most one decode call in flight per
+ * segment" guarantee described above chaseLatestTarget, factored out on its
+ * own specifically so the mutex's release timing is directly unit-testable.
+ *
+ * A real deadlock was found here during Phase 4+6 manual 500-segment
+ * scrub-stress testing: an earlier version of the caller (the frame-pull
+ * effect in useWebCodecsPreview) reset `mutex.chasing = false` only when a
+ * caller-supplied "is this still the current epoch" check passed — the
+ * intent was to mirror the staleness guard used elsewhere for painting
+ * (skip a stale RESULT), but applying that same guard to the MUTEX RELEASE
+ * was wrong: `mutex.chasing` is a single lock shared across every epoch this
+ * function is ever called for, and the `if (mutex.chasing) return` guard
+ * below already guarantees at most one chase is ever in flight — so
+ * whichever chase's promise is currently settling is unconditionally the
+ * only one that was running, regardless of whether its "epoch" was since
+ * superseded. Guarding the release let a superseded chase skip resetting
+ * the mutex, and since nothing else was ever going to flip it back either
+ * (a later call just sees `chasing === true` and assumes a live chase will
+ * pick up its target), the whole thing deadlocked permanently — no chase
+ * could ever start again for the rest of the hook instance's lifetime,
+ * which manifested as a WebCodecs preview canvas that went persistently
+ * black mid-playback under heavy load and never recovered, with no thrown
+ * error (getFrameAt was simply never being called again). `onSettled` is
+ * exactly where a caller should apply its OWN staleness check before acting
+ * on `result` — that guard belongs there, not on the mutex release.
+ */
+export function startChaseIfIdle<T>(
+  mutex: ChaseMutex,
+  getLatestTarget: () => number,
+  fetch: (target: number) => Promise<T>,
+  onSettled: (result: T) => void,
+): void {
+  if (mutex.chasing) return;
+  mutex.chasing = true;
+  void chaseLatestTarget(getLatestTarget, fetch)
+    .then(({ result }) => onSettled(result))
+    .finally(() => {
+      mutex.chasing = false; // unconditional — see the note above
+    });
+}
+
+/**
  * The set of segment ids whose decode sessions should survive a given
  * render (Section 3.5 boundary crossing) — exactly the current segment and
  * the next one, when each is itself a plain video segment. Extracted as a
@@ -127,9 +231,22 @@ export function useWebCodecsPreview({
 
   const [frame, setFrame] = useState<VideoFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Bumped whenever a request is superseded before it resolves — same
-  // race-guard shape as videoOpGenerationRef in PreviewStage.tsx.
+  // Bumped whenever the active segment/enabled state changes, so a chase
+  // loop left over from the previous segment recognizes it's stale and
+  // stops without setting a stale frame — same race-guard shape as
+  // videoOpGenerationRef in PreviewStage.tsx. Deliberately NOT bumped on
+  // every currentTime tick within the same segment (see epochKeyRef below)
+  // — only a real segment/enabled change counts as supersession.
   const generationRef = useRef(0);
+  // Identifies the current "epoch" (segment id) the frame-pull effect is
+  // chasing frames for — compared against on each run so generationRef
+  // only advances on a genuine segment change, not every playback/scrub tick.
+  const epochKeyRef = useRef<string | null>(null);
+  // Phase 4 scrub coalescing (see file header) — the latest requested
+  // source time for the in-flight (or about-to-start) chase loop, and
+  // whether a chase loop is currently running (startChaseIfIdle's mutex).
+  const latestTargetRef = useRef(0);
+  const chaseMutexRef = useRef<ChaseMutex>({ chasing: false });
 
   const currentAsset = currentSegment ? assets.find(a => a.id === currentSegment.assetId) : undefined;
   const isVideoSegment = isPlainVideoAsset(currentSegment, currentAsset);
@@ -142,34 +259,50 @@ export function useWebCodecsPreview({
   const nextAsset = nextSegment ? assets.find(a => a.id === nextSegment.assetId) : undefined;
   const nextIsVideo = isPlainVideoAsset(nextSegment, nextAsset);
 
-  // Boundary crossing (Section 3.5): keep decode sessions for exactly the
-  // current + next segment — stop pulling frames for the outgoing segment
-  // the moment it's no longer either of those two. No `<video>` seeked-event
-  // race and no readyState polling, because there's no <video> element in
-  // this path at all.
+  // Boundary crossing (Section 3.5) + Phase 4+6 windowed eviction (Section
+  // 4). currentSegment and nextSegment are marked protected — the pool's
+  // own LRU/budget enforcement (videoDecoderPool.ts) decides what else
+  // survives, rather than this hook hard-releasing everything else itself.
+  // This is what lets a recently-visited-but-no-longer-current segment
+  // stay warm for a little while (bounded by the pool's ceilings), making
+  // back-and-forth scrubbing across neighboring segments cheaper than a
+  // cold reseek every time, while still guaranteeing current + next are
+  // never the eviction target.
   useEffect(() => {
     const pool = poolRef.current!;
     if (!enabled) {
+      pool.setProtectedIds([]);
       for (const id of pool.activeSegmentIds()) pool.releaseSession(id);
       return;
     }
     const keep = computeKeepSet(currentSegment, isVideoSegment, nextSegment, nextIsVideo);
-    for (const id of pool.activeSegmentIds()) {
-      if (!keep.has(id)) pool.releaseSession(id);
-    }
+    pool.setProtectedIds(keep);
   }, [enabled, currentSegment, isVideoSegment, nextSegment, nextIsVideo]);
 
   // Decode-ahead (Phase 2, one segment ahead — the direct generalization of
   // the legacy dual <video>-slot ping-pong): ensure a session for the
   // current segment, and preemptively start one for the next segment so
-  // it's already warm by the time playback crosses the boundary.
+  // it's already warm by the time playback crosses the boundary. Phase 4+6:
+  // the current segment's session is seeded at the actual playhead position
+  // (not segment start) so a cold scrub landing mid-segment doesn't decode
+  // from the wrong place first — see the file header note.
   useEffect(() => {
     if (!enabled) return;
     const pool = poolRef.current!;
 
     if (currentSegment && isVideoSegment && currentAsset) {
       const { start, end } = sourceRange(currentSegment);
-      void pool.ensureSession(currentSegment.id, currentAsset.url, start, end).catch((err) => {
+      // Deliberately reads `currentTime` without listing it as a dependency
+      // — this effect must NOT re-run on every playback tick (that would
+      // defeat the decode-ahead warm-up and needlessly re-call
+      // ensureSession every ~16ms). It only needs currentTime's value once,
+      // at the exact render where currentSegment itself changed, to seed
+      // the initial window at the real landing point for a cold scrub.
+      // Subsequent ticks are handled entirely by the frame-pull effect
+      // below, which does depend on currentTime.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      const initialTarget = toSourceTime(currentSegment, currentTime);
+      void pool.ensureSession(currentSegment.id, currentAsset.url, start, end, initialTarget).catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
       });
     }
@@ -177,32 +310,71 @@ export function useWebCodecsPreview({
       const { start, end } = sourceRange(nextSegment);
       // Decode-ahead failures for the *next* segment are non-fatal here —
       // when it becomes the current segment its own ensureSession call
-      // above gets a fresh attempt and surfaces the error then.
+      // above gets a fresh attempt and surfaces the error then. No
+      // initialTargetSec override — decode-ahead for "next" always starts
+      // from its own segment start, since that's where forward playback
+      // will actually enter it.
       void pool.ensureSession(nextSegment.id, nextAsset.url, start, end).catch(() => {});
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, currentSegment, isVideoSegment, currentAsset, nextSegment, nextIsVideo, nextAsset]);
 
   // Pull the frame for the current playhead position out of the (already
   // decode-ahead-warmed) current segment's session.
+  //
+  // Phase 4 scrub coalescing: rather than firing one pool.getFrameAt call
+  // per currentTime tick (a fast drag-scrub can produce dozens per second,
+  // via Timeline.tsx's unthrottled mousemove -> onSeek -> setCurrentTime
+  // chain), this effect always records the latest requested target and
+  // only starts a "chase loop" if one isn't already running. The loop
+  // awaits pool.getFrameAt for whatever the latest target was when it
+  // checked, and if the target moved again while that call was in flight,
+  // it immediately re-issues for the NEW latest target instead of
+  // returning — so at most one decode/getFrameAt call is ever in flight
+  // per segment, and every intermediate scrub position in between gets
+  // skipped rather than separately decoded and discarded.
   useEffect(() => {
     if (!enabled || !currentSegment || !isVideoSegment || !currentAsset) {
+      // Bump the generation even on this inert path — an in-flight chase
+      // loop from a still-resolving previous segment must recognize it's
+      // stale and stop, not paint a frame for a segment we've since left.
+      // (This does NOT touch chaseMutexRef — see startChaseIfIdle's own
+      // doc for why the mutex must never be gated on this generation check.)
+      epochKeyRef.current = null;
+      ++generationRef.current;
       setFrame(null);
       return;
     }
-    const generation = ++generationRef.current;
     const pool = poolRef.current!;
-    const targetSec = toSourceTime(currentSegment, currentTime);
-    void pool
-      .getFrameAt(currentSegment.id, targetSec)
-      .then((f) => {
-        if (generationRef.current !== generation) return; // superseded
-        setFrame(f);
-        if (f) setError(null);
-      })
-      .catch((err) => {
-        if (generationRef.current !== generation) return;
-        setError(err instanceof Error ? err.message : String(err));
-      });
+    const segmentId = currentSegment.id;
+    // Only a genuine segment change is a new "epoch" — a currentTime tick
+    // within the same segment (steady playback, or every intermediate tick
+    // of a drag-scrub) must NOT bump generationRef, or it would make an
+    // already-running chase loop for this same segment think it had been
+    // superseded and stop early instead of settling on the latest target.
+    if (epochKeyRef.current !== segmentId) {
+      epochKeyRef.current = segmentId;
+      ++generationRef.current;
+    }
+    const generation = generationRef.current;
+    latestTargetRef.current = toSourceTime(currentSegment, currentTime);
+
+    startChaseIfIdle(
+      chaseMutexRef.current,
+      () => latestTargetRef.current,
+      (target) =>
+        pool.getFrameAt(segmentId, target).catch((err) => {
+          if (generationRef.current === generation) {
+            setError(err instanceof Error ? err.message : String(err));
+          }
+          return null;
+        }),
+      (result) => {
+        if (generationRef.current !== generation) return; // superseded by a segment/enabled change — paint nothing
+        setFrame(result);
+        if (result) setError(null);
+      },
+    );
   }, [enabled, currentSegment, isVideoSegment, currentAsset, currentTime]);
 
   // Dispose the pool (closes every session and buffered VideoFrame) on unmount.

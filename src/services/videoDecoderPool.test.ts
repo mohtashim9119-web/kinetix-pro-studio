@@ -46,10 +46,12 @@ describe('findChunkRange', () => {
 // --- VideoDecoderPool ---------------------------------------------------------
 
 class MockVideoFrame {
+  static instances: MockVideoFrame[] = [];
   timestamp: number;
   closed = false;
   constructor(timestamp: number) {
     this.timestamp = timestamp;
+    MockVideoFrame.instances.push(this);
   }
   close(): void {
     this.closed = true;
@@ -61,7 +63,9 @@ class MockVideoDecoder {
   outputCb: (frame: MockVideoFrame) => void;
   errorCb: (e: Error) => void;
   configureCalls: unknown[] = [];
-  decodeCalls: { timestamp: number }[] = [];
+  decodeCalls: { timestamp: number }[] = []; // pending — cleared by flush()/reset()
+  totalDecodedCount = 0; // cumulative across this instance's whole lifetime, never cleared
+  resetCalls = 0;
   closed = false;
 
   constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
@@ -74,13 +78,28 @@ class MockVideoDecoder {
   }
   decode(chunk: { timestamp: number }): void {
     this.decodeCalls.push(chunk);
+    this.totalDecodedCount++;
   }
   async flush(): Promise<void> {
     // Real VideoDecoder output-order == presentation order (Phase 0 spike
     // confirmed this on both Chromium and WKWebView); the fed chunks in
     // these tests are already presentation-ordered, so emitting output in
-    // feed order is a faithful simplification.
-    for (const chunk of this.decodeCalls) this.outputCb(new MockVideoFrame(chunk.timestamp));
+    // feed order is a faithful simplification. Only emit chunks fed SINCE
+    // the last flush()/reset() — mirrors the real decoder only ever
+    // producing output once per decode() call, not replaying history (this
+    // matters now that a windowed session calls decode()+flush() in
+    // multiple batches over its lifetime, not once up front).
+    const pending = this.decodeCalls.splice(0, this.decodeCalls.length);
+    for (const chunk of pending) this.outputCb(new MockVideoFrame(chunk.timestamp));
+  }
+  /** Mirrors VideoDecoder.reset() — clears any not-yet-flushed decode
+   *  requests (the real spec discards the pending queue and rejects any
+   *  in-flight flush()); the decoder becomes "unconfigured" until the next
+   *  configure() call, which videoDecoderPool.ts always makes immediately
+   *  after resetting. */
+  reset(): void {
+    this.decodeCalls = [];
+    this.resetCalls++;
   }
   close(): void {
     this.closed = true;
@@ -100,8 +119,27 @@ function makeDemuxed(chunkTimestampsUs: number[]) {
   };
 }
 
+/** Builds a long, evenly-spaced chunk list with a keyframe every `gopSize`
+ *  frames — used by the Phase 4+6 windowed-decode/scrub-reset tests below,
+ *  which need a segment long enough to exceed WINDOW_AHEAD_SEC (1.5s) many
+ *  times over and a real keyframe structure to seek against. */
+const FRAME_DUR_US = Math.round(1e6 / 30); // ~33_333us, 30fps
+function makeLongDemuxed(totalFrames: number, gopSize = 30) {
+  return {
+    config: { codec: 'avc1.640020', codedWidth: 1280, codedHeight: 720, description: new Uint8Array() },
+    chunks: Array.from({ length: totalFrames }, (_, i) => ({
+      type: i % gopSize === 0 ? 'key' : 'delta',
+      timestamp: i * FRAME_DUR_US,
+      duration: FRAME_DUR_US,
+      data: new Uint8Array(),
+    })),
+    durationSec: (totalFrames * FRAME_DUR_US) / 1e6,
+  };
+}
+
 beforeEach(() => {
   MockVideoDecoder.instances = [];
+  MockVideoFrame.instances = [];
   vi.stubGlobal('VideoDecoder', MockVideoDecoder);
   (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockReset();
 });
@@ -142,7 +180,7 @@ describe('VideoDecoderPool', () => {
     expect(frame2.closed).toBe(false); // still the displayed frame
   });
 
-  it('closes the displayed frame and the decoder on releaseSession', async () => {
+  it('closes the displayed frame on releaseSession and parks its decoder for reuse (Phase 4+6)', async () => {
     const demuxed = makeDemuxed([0, 33_333]);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
 
@@ -154,8 +192,18 @@ describe('VideoDecoderPool', () => {
     pool.releaseSession('seg1');
 
     expect(frame.closed).toBe(true);
-    expect(decoderInstance.closed).toBe(true);
     expect(pool.hasSession('seg1')).toBe(false);
+    // Phase 4+6 decoder reuse: a released (non-errored) decoder is reset()
+    // and parked in the per-asset idle pool for the next session that needs
+    // the same asset, not closed outright — dispose() is what guarantees a
+    // final close (see the "dispose" test below).
+    expect(decoderInstance.closed).toBe(false);
+    expect(decoderInstance.resetCalls).toBe(1);
+
+    // Proves it's genuinely reusable: a new session for the same asset URL
+    // picks up this exact instance instead of constructing another.
+    await pool.ensureSession('seg2', 'blob:v1', 0, 0.05);
+    expect(MockVideoDecoder.instances).toHaveLength(1);
   });
 
   it('dispose releases every active session', async () => {
@@ -184,7 +232,7 @@ describe('VideoDecoderPool', () => {
     expect(MockVideoDecoder.instances).toHaveLength(1);
   });
 
-  it('starting a new session for the same segmentId with a different range replaces (and closes) the old one', async () => {
+  it('starting a new session for the same segmentId with a different range replaces the old one, reusing its decoder (Phase 4+6 decoder reuse)', async () => {
     const demuxed = makeDemuxed([0, 33_333, 66_667]);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
 
@@ -194,8 +242,14 @@ describe('VideoDecoderPool', () => {
 
     await pool.ensureSession('seg1', 'blob:v1', 0, 0.066);
 
-    expect(firstDecoder.closed).toBe(true);
-    expect(MockVideoDecoder.instances).toHaveLength(2);
+    // Phase 4+6: replacing a session for the same asset no longer closes
+    // and reconstructs a fresh VideoDecoder — the old session's handle is
+    // parked (reset(), not closed) in a per-asset idle pool, and the new
+    // session for the SAME asset URL immediately reuses it (Section 4.2's
+    // decoder-instance-reuse-by-asset-id requirement).
+    expect(firstDecoder.closed).toBe(false);
+    expect(firstDecoder.resetCalls).toBeGreaterThan(0);
+    expect(MockVideoDecoder.instances).toHaveLength(1);
   });
 });
 
@@ -233,6 +287,17 @@ class ControllableVideoDecoder {
   }
   flush(): Promise<void> {
     return new Promise((resolve) => this.flushResolvers.push(resolve));
+  }
+  /** Mirrors VideoDecoder.reset() settling (not necessarily rejecting, for
+   *  simplicity) any pending flush() — the real spec rejects it, and
+   *  videoDecoderPool.ts always swallows a flush() rejection
+   *  (`.catch(() => {})`), so resolving here is an equally faithful,
+   *  simpler simulation for these tests' purposes. */
+  reset(): void {
+    this.decodeCalls = [];
+    const resolvers = this.flushResolvers;
+    this.flushResolvers = [];
+    for (const r of resolvers) r();
   }
   close(): void {
     this.closed = true;
@@ -362,5 +427,211 @@ describe('VideoDecoderPool — getFrameAt resolves without waiting for the full 
 
     decoder.resolveFlush();
     await readyPromise;
+  });
+});
+
+// --- Phase 4+6: windowed decode-ahead, scrub-reset, LRU eviction, reuse -------
+//
+// docs/webcodecs-architecture-plan.md's combined scrubbing/seeking (Phase 4)
+// + frame-cache/eviction-for-scale (Phase 6) rewrite. Uses MockVideoDecoder
+// (synchronous flush) throughout, same as the base "VideoDecoderPool"
+// describe block above — these tests care about how MANY chunks get fed and
+// when a reset happens, not about interleaving with a still-pending flush()
+// (that's the Phase 3 describe block's job, unaffected by this rewrite).
+
+describe('VideoDecoderPool — windowed decode-ahead (Phase 6, Section 4.2)', () => {
+  it('feeds only the decode-ahead window on ensureSession, not the whole segment, for a long segment', async () => {
+    const demuxed = makeLongDemuxed(180); // 6s @ 30fps, keyframe every 1s
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6);
+    const decoder = MockVideoDecoder.instances[0]!;
+
+    // WINDOW_AHEAD_SEC=1.5s -> only ~1.5s (≈45 frames) should be fed up
+    // front, nowhere near the full 180-frame/6s segment (the Phase 1-3
+    // whole-segment-up-front model this replaces would have fed all 180).
+    expect(decoder.totalDecodedCount).toBeGreaterThan(0);
+    expect(decoder.totalDecodedCount).toBeLessThan(90); // generous margin above 1.5s
+  });
+
+  it('extends the window forward as the requested target advances during steady playback, without ever resetting', async () => {
+    const demuxed = makeLongDemuxed(180);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6);
+    const decoder = MockVideoDecoder.instances[0]!;
+    const fedAfterInitialWindow = decoder.totalDecodedCount;
+
+    // Steady forward ticks, each well within the previous tick's window —
+    // the normal steady-playback case, not a scrub.
+    await pool.getFrameAt('seg1', 1.0);
+    await pool.getFrameAt('seg1', 2.0);
+    await pool.getFrameAt('seg1', 3.0);
+
+    expect(decoder.totalDecodedCount).toBeGreaterThan(fedAfterInitialWindow); // window kept extending
+    expect(decoder.resetCalls).toBe(0); // steady forward progress never needs a scrub-reset
+    expect(MockVideoDecoder.instances).toHaveLength(1); // same decoder throughout
+  });
+
+  it('resets to the nearest keyframe instead of decoding everything in between, on a large forward jump within the same segment', async () => {
+    const demuxed = makeLongDemuxed(180); // 6s, keyframe every 1s (frames 0,30,60,90,120,150)
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6); // initial window covers ~0-1.5s
+    const decoder = MockVideoDecoder.instances[0]!;
+    const fedBeforeJump = decoder.totalDecodedCount;
+
+    // Jump straight to 5.0s — far beyond the fed-plus-lookahead frontier
+    // (~1.5s fed + 1.5s lookahead = 3.0s), so this must be answered by a
+    // reset-to-keyframe, not a long forward decode.
+    const frame = await pool.getFrameAt('seg1', 5.0);
+
+    expect(decoder.resetCalls).toBe(1);
+    expect(frame?.timestamp).toBe(150 * FRAME_DUR_US); // the keyframe backing 5.0s (frame 150)
+
+    const fedForTheJump = decoder.totalDecodedCount - fedBeforeJump;
+    // Decoding "everything in between" (1.5s -> 6.5s) would be ~150 frames;
+    // a keyframe-anchored reset only needs the new window's worth (~1 GOP).
+    expect(fedForTheJump).toBeLessThan(60);
+  });
+
+  it('re-seeks correctly on a backward scrub within an already-advanced session, instead of returning a stale later frame', async () => {
+    // Pre-Phase-4 bug this fixes: getFrameAt's per-call eviction closes
+    // every buffered frame OLDER than the selection (a correct optimization
+    // for forward-only playback) — but nothing previously re-seeked when a
+    // later scrub asked for a time BEFORE everything remaining in the
+    // buffer, so the old code's frames[0] fallback would silently return
+    // whatever (later) frame happened to still be buffered.
+    const demuxed = makeLongDemuxed(180); // 6s, keyframe every 1s
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg1', 'blob:v1', 0, 6);
+
+    await pool.getFrameAt('seg1', 1.0);
+    await pool.getFrameAt('seg1', 2.0);
+    const frameAt3 = await pool.getFrameAt('seg1', 3.0);
+    expect(frameAt3).not.toBeNull();
+
+    const frameAt0_5 = await pool.getFrameAt('seg1', 0.5);
+    expect(frameAt0_5).not.toBeNull();
+    expect(frameAt0_5!.timestamp / 1e6).toBeLessThanOrEqual(0.5 + 1e-6);
+    expect(frameAt0_5!.timestamp / 1e6).toBeGreaterThan(0.4); // sane — the right neighborhood, not 3.0s's frame
+  });
+
+  it('does not share a single decoder between two segments of the same asset that are simultaneously active', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('current', 'blob:shared', 0, 0.033);
+    await pool.ensureSession('next', 'blob:shared', 0, 0.033); // same asset, 'current' still active
+
+    // Both need their own decode cursor at once — a shared decoder here
+    // would misattribute output between the two sessions.
+    expect(MockVideoDecoder.instances).toHaveLength(2);
+  });
+});
+
+describe('VideoDecoderPool — LRU eviction under a session/frame budget (Phase 6, Section 4.3)', () => {
+  it('evicts the least-recently-used session once MAX_CACHED_SESSIONS is exceeded', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    expect(pool.activeSegmentIds().sort()).toEqual(['a', 'b', 'c']);
+
+    // MAX_CACHED_SESSIONS=3 (Section 4.3's starting point) — a 4th session
+    // forces eviction of 'a', the least-recently-touched.
+    await pool.ensureSession('d', 'blob:d', 0, 0.033);
+
+    expect(pool.hasSession('a')).toBe(false);
+    expect(pool.activeSegmentIds().sort()).toEqual(['b', 'c', 'd']);
+  });
+
+  it('touching an older session (getFrameAt) protects it from being the next LRU victim', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.getFrameAt('a', 0); // touches 'a' again — now more recent than 'b'
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+
+    await pool.ensureSession('d', 'blob:d', 0, 0.033); // forces one eviction
+
+    expect(pool.hasSession('b')).toBe(false); // 'b' is now the LRU, not 'a'
+    expect(pool.hasSession('a')).toBe(true);
+  });
+
+  it('never evicts a protected segment even when it is the least-recently-used', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    pool.setProtectedIds(['a']); // e.g. 'a' is the current segment
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033); // would evict 'a' as LRU if it weren't protected
+
+    expect(pool.hasSession('a')).toBe(true);
+    expect(pool.hasSession('b')).toBe(false); // 'b' is the LRU among the non-protected
+    expect(pool.activeSegmentIds().sort()).toEqual(['a', 'c', 'd']);
+  });
+
+  it('shrinking the protected set frees budget immediately, without waiting for the next ensureSession/getFrameAt call', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    // Protect all four up front (over the cap of 3) BEFORE creating them —
+    // otherwise the 4th session would itself be the only unprotected
+    // candidate the instant it's added and would be evicted immediately.
+    pool.setProtectedIds(['a', 'b', 'c', 'd']);
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033);
+
+    // Still over budget, but nothing evictable — every session survives.
+    expect(pool.activeSegmentIds()).toHaveLength(4);
+
+    // Now un-protect two of them — setProtectedIds itself triggers an
+    // immediate budget check (no new ensureSession/getFrameAt call needed).
+    pool.setProtectedIds(['c', 'd']);
+
+    expect(pool.activeSegmentIds()).toHaveLength(3); // back down to MAX_CACHED_SESSIONS
+    expect(pool.hasSession('c')).toBe(true);
+    expect(pool.hasSession('d')).toBe(true);
+  });
+
+  it('closes every buffered VideoFrame — not just the displayed one — when a session is evicted via LRU', async () => {
+    const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('a', 'blob:a', 0, 0.1);
+    // Select the EARLIEST frame — every later decoded frame stays buffered
+    // ahead of it (the decode-ahead window), untouched by normal per-call
+    // eviction (which only ever closes frames OLDER than the selection).
+    const selected = (await pool.getFrameAt('a', 0)) as unknown as MockVideoFrame;
+    expect(selected.timestamp).toBe(0);
+    const framesForA = MockVideoFrame.instances.filter((f) => !f.closed);
+    expect(framesForA.length).toBeGreaterThan(1); // more than just the selected one survived the call
+
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033); // evicts 'a' (LRU)
+
+    expect(pool.hasSession('a')).toBe(false);
+    for (const f of framesForA) expect(f.closed).toBe(true);
   });
 });

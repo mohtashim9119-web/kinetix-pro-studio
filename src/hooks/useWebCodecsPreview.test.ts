@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { toSourceTime, sourceRange, computeKeepSet } from './useWebCodecsPreview';
+import { describe, it, expect, vi } from 'vitest';
+import { toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, type ChaseMutex } from './useWebCodecsPreview';
 import { AnimationType, TransitionType, type VideoSegment } from '../types';
 
 /**
@@ -234,5 +234,181 @@ describe('computeKeepSet — boundary crossing eviction policy', () => {
       // Nothing from two-or-more segments back should ever be kept.
       if (i >= 2) expect(keep.has(segs[i - 2]!.id)).toBe(false);
     }
+  });
+});
+
+// --- Phase 4: chaseLatestTarget scrub coalescing -------------------------------
+//
+// Timeline.tsx's mousemove-driven drag-to-seek calls onSeek -> setCurrentTime
+// synchronously and unthrottled (a file this plan does not touch), so a fast
+// drag can push many distinct currentTime values through this hook before any
+// one decode call resolves. chaseLatestTarget is the primitive that keeps
+// that from queueing one pool.getFrameAt call per tick — these tests drive it
+// directly with a controllable `fetch` so the "at most one call in flight,
+// always chasing the newest target" behavior is verified without a React
+// rendering harness (this repo has none — same rationale as the pure-function
+// tests above).
+
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+}
+
+describe('chaseLatestTarget', () => {
+  it('resolves with the single target when it never changes during the fetch', async () => {
+    const fetch = vi.fn(async (target: number) => `frame@${target}`);
+    const { target, result } = await chaseLatestTarget(() => 5, fetch);
+    expect(target).toBe(5);
+    expect(result).toBe('frame@5');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-fetches for a new target that arrived while the first fetch was still in flight, skipping straight to it', async () => {
+    let latest = 1;
+    const d1 = deferred<string>();
+    const fetch = vi.fn((target: number) => (target === 1 ? d1.promise : Promise.resolve(`frame@${target}`)));
+
+    const chasePromise = chaseLatestTarget(() => latest, fetch);
+
+    // Simulate the target moving several times while fetch(1) is still
+    // pending — chaseLatestTarget hasn't even checked yet, so none of these
+    // intermediate values should ever trigger their own fetch call.
+    latest = 2;
+    latest = 3;
+    latest = 9; // the final position the (fast) scrub lands on
+
+    d1.resolve('frame@1 (stale)'); // fetch(1) finally settles, but 1 is no longer latest
+
+    const { target, result } = await chasePromise;
+    expect(target).toBe(9);
+    expect(result).toBe('frame@9');
+    // Exactly two fetch calls total: the initial one (for 1, now stale) and
+    // the one for the final settled target (9) — 2 and 3 were never fetched.
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenNthCalledWith(1, 1);
+    expect(fetch).toHaveBeenNthCalledWith(2, 9);
+  });
+
+  it('never has more than one fetch call in flight at a time', async () => {
+    let latest = 0;
+    let inFlight = 0;
+    let maxConcurrent = 0;
+    const fetch = vi.fn(async (target: number) => {
+      inFlight++;
+      maxConcurrent = Math.max(maxConcurrent, inFlight);
+      await Promise.resolve();
+      await Promise.resolve();
+      inFlight--;
+      return target;
+    });
+
+    const chasePromise = chaseLatestTarget(() => latest, fetch);
+    latest = 1;
+    latest = 2;
+    await chasePromise;
+
+    expect(maxConcurrent).toBe(1);
+  });
+
+  it('keeps chasing through several superseding targets before finally settling', async () => {
+    let latest = 0;
+    const fetch = vi.fn(async (target: number) => {
+      // Each call bumps `latest` once more, simulating rapid scrub ticks
+      // arriving during every single decode call, up to a fixed point.
+      if (target < 3) latest = target + 1;
+      await Promise.resolve();
+      return `frame@${target}`;
+    });
+
+    const { target, result } = await chaseLatestTarget(() => latest, fetch);
+    expect(target).toBe(3);
+    expect(result).toBe('frame@3');
+    expect(fetch).toHaveBeenCalledTimes(4); // 0, 1, 2, 3
+  });
+});
+
+// --- Phase 4+6: startChaseIfIdle mutex — deadlock regression -------------------
+//
+// A real bug found during manual 500-segment scrub-stress testing: the
+// original frame-pull effect reset its "chase in flight" mutex only when a
+// caller-supplied staleness check (generation === current generation)
+// passed — mirroring the guard used to avoid PAINTING a stale result, but
+// wrongly applied to the MUTEX RELEASE too. If a segment change happened
+// while a chase was still resolving, that guard skipped the reset, and
+// since nothing else could ever flip the mutex back to false either (a
+// later call just sees it's held and assumes a live chase will pick up its
+// target), the whole hook deadlocked permanently: no chase could ever start
+// again. This is exactly the bug startChaseIfIdle's `mutex.chasing = false`
+// being unconditional (not generation-gated) fixes — these tests pin that
+// property directly, independent of any one caller's staleness-check shape.
+
+describe('startChaseIfIdle', () => {
+  it('runs fetch and reports the settled result via onSettled', async () => {
+    const mutex: ChaseMutex = { chasing: false };
+    const results: number[] = [];
+    startChaseIfIdle(mutex, () => 7, async (t) => t * 2, (r) => results.push(r));
+    await vi.waitFor(() => expect(results).toEqual([14]));
+    expect(mutex.chasing).toBe(false);
+  });
+
+  it('a second call while one is in flight is a no-op (does not start a second fetch)', async () => {
+    const mutex: ChaseMutex = { chasing: false };
+    const fetch = vi.fn(async (t: number) => {
+      await new Promise((r) => setTimeout(r, 10));
+      return t;
+    });
+    startChaseIfIdle(mutex, () => 1, fetch, () => {});
+    startChaseIfIdle(mutex, () => 1, fetch, () => {}); // should be swallowed by the mutex
+
+    await vi.waitFor(() => expect(mutex.chasing).toBe(false));
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('releases the mutex even when onSettled reports the caller considers its own result stale (the exact deadlock scenario)', async () => {
+    const mutex: ChaseMutex = { chasing: false };
+    // Simulates a caller's own staleness check (like the hook's
+    // generationRef comparison) that intentionally does nothing with a
+    // superseded result — this must NOT prevent the mutex from releasing.
+    let onSettledCallCount = 0;
+    startChaseIfIdle(
+      mutex,
+      () => 5,
+      async (t) => t,
+      () => {
+        onSettledCallCount++;
+        // Deliberately does nothing further — simulating "this result is
+        // for a segment we've since left, discard it."
+      },
+    );
+
+    await vi.waitFor(() => expect(onSettledCallCount).toBe(1));
+    // The critical assertion: the mutex must be released regardless of
+    // what onSettled did with the result.
+    expect(mutex.chasing).toBe(false);
+
+    // Proves the fix in practice: a SUBSEQUENT chase (the "next epoch")
+    // must be able to start — under the pre-fix bug, this second call
+    // would have silently no-op'd forever because mutex.chasing was stuck
+    // true, permanently freezing whatever the hook last painted.
+    const secondResults: number[] = [];
+    startChaseIfIdle(mutex, () => 9, async (t) => t, (r) => secondResults.push(r));
+    await vi.waitFor(() => expect(secondResults).toEqual([9]));
+  });
+
+  it('chases the latest target through the mutex exactly as chaseLatestTarget alone would', async () => {
+    const mutex: ChaseMutex = { chasing: false };
+    let latest = 0;
+    const fetch = vi.fn(async (t: number) => {
+      if (t === 0) latest = 1; // simulates a scrub tick arriving mid-fetch
+      return `frame@${t}`;
+    });
+    const results: string[] = [];
+    startChaseIfIdle(mutex, () => latest, fetch, (r) => results.push(r));
+
+    await vi.waitFor(() => expect(results).toEqual(['frame@1']));
+    expect(fetch).toHaveBeenCalledTimes(2); // chased 0 then 1, skipping nothing extra
   });
 });

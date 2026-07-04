@@ -3,50 +3,97 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Owns VideoDecoder instance lifecycle for the WebCodecs preview path:
- * configure, decode-ahead scheduling, output frame queueing, and — the
+ * configure, windowed decode-ahead scheduling, output frame queueing, LRU
+ * eviction across sessions, decoder-instance reuse by asset id, and — the
  * single most important correctness rule in this module — explicit
  * VideoFrame.close() discipline. A decoded VideoFrame is a GPU/CPU-backed
  * buffer (docs/webcodecs-architecture-plan.md Section 4.2); one that is
  * never closed is a hard memory leak, not just inefficiency, because the
  * GC does not reliably reclaim it promptly.
  *
- * Phase 1+2 scope (per the plan): decode-ahead for exactly ONE segment
- * ahead — the direct generalization of the legacy dual `<video>`-slot
- * ping-pong, not the full multi-second windowed cache Phase 6 builds.
- * Each session here decodes its whole segment's trimmed frame range up
- * front (bounded by MAX_SESSION_FRAMES as a safety cap) rather than a
- * rolling few-second window — acceptable at today's typical segment
- * lengths, and explicitly flagged in the architecture doc's progress
- * tracker as the piece Phase 6 replaces with real LRU windowing for
- * 500+ segment scale.
+ * Phase 4+6 (combined, docs/webcodecs-architecture-plan.md) rewrite of the
+ * Phase 1-3 model. What changed and why:
  *
- * This pool is deliberately segment-count-agnostic (sessions are keyed by
- * caller-supplied segmentId) — enforcing "keep only current + next"
- * eviction is the caller's job (useWebCodecsPreview.ts), via releaseSession.
- *
- * Phase 3 addition (docs/webcodecs-architecture-plan.md's audio-sync
- * hardening phase): `getFrameAt` no longer blocks on the *entire* session
- * finishing decode before it can return a frame — it now resolves as soon
- * as enough frames have been buffered to answer the query (i.e. a frame
- * strictly past `targetSec` has arrived, so the correct "latest at-or-before"
- * answer is already fully determined), falling back to waiting for the
- * session to fully settle only when that's not yet true. This matters most
- * for very short segments (the ~1.09-1.3s range from the original cold-start
- * bug investigation) crossed at a brisk pace: decode-ahead for the next
- * segment starts the moment the current one becomes active, but under the
- * old all-or-nothing wait a boundary crossing that landed before the whole
- * next segment (up to MAX_SESSION_FRAMES) had finished decoding would freeze
- * on the outgoing frame for the *entire remaining decode*, not just until
- * its own target frame was available.
+ *  - Windowed decode-ahead (Section 4.2), not whole-segment-up-front. A
+ *    session only ever feeds the decoder a rolling ~WINDOW_AHEAD_SEC window
+ *    around whatever target time was last requested — it does NOT decode a
+ *    segment's entire trimmed range the moment it becomes current/next.
+ *    This is what makes 500+ segment scale viable: memory is bounded by the
+ *    window, not by segment count or length.
+ *  - Scrub-seek reset. A target that falls behind what's still buffered
+ *    (backward scrub) or beyond the fed-plus-lookahead frontier (a jump
+ *    bigger than steady playback ever produces) re-seeks the decoder to the
+ *    nearest keyframe at-or-before the new target instead of decoding
+ *    everything in between — this is what keeps a cold scrub-seek fast
+ *    (target: under ~250ms to first correct frame, see the architecture
+ *    doc's progress tracker for the measured result) instead of degrading
+ *    to "decode from wherever we last were."
+ *  - LRU eviction across ALL sessions, not just "current + next" hard
+ *    release. Callers mark a small protected set (setProtectedIds) that can
+ *    never be evicted; anything else is fair game once the pool exceeds
+ *    MAX_CACHED_SESSIONS or MAX_TOTAL_BUFFERED_FRAMES, evicted
+ *    least-recently-used first. This both bounds memory at 500+ segment
+ *    scale AND improves scrub responsiveness versus Phase 1-3's model
+ *    (which released a segment's session the instant it stopped being
+ *    current/next) — a small number of recently-visited-but-not-current
+ *    sessions can survive long enough to make back-and-forth scrubbing
+ *    across a couple of neighboring segments instant instead of a cold
+ *    reseek every time. This is exactly the reordering the Section 6 risk
+ *    register flagged: designing the window/eviction policy against
+ *    scrub-stress from the start, not retrofitting it.
+ *  - Decoder instance reuse keyed by asset id. Section 4.2 calls for this
+ *    explicitly ("segments that share the same source asset ... should
+ *    share a decoder/demuxer session keyed by asset id") — Phase 1-3 only
+ *    achieved this for the demuxer (videoDemuxer.ts's per-URL cache);
+ *    VideoDecoder objects were constructed fresh per session and closed on
+ *    eviction. This rewrite adds a small per-asset-URL idle pool of
+ *    DecoderHandles: releasing a session parks its handle (reset, not
+ *    closed) for potential reuse by the next session that needs the same
+ *    asset, bounded by MAX_IDLE_DECODER_HANDLES_PER_ASSET. Because a real
+ *    VideoDecoder's output/error callbacks are fixed at construction and
+ *    cannot be rebound, reuse is implemented via a stable wrapper callback
+ *    that dispatches to whichever session currently "owns" the handle
+ *    (`DecoderHandle.activeSession`) — see acquireHandle/releaseHandle.
  */
 
 import { getOrCreateDemux } from './videoDemuxer';
 
-/** Safety cap on frames buffered per session — guards against a single very
- *  long segment exhausting memory before Phase 6's real windowed cache
- *  exists. ~20s at 30fps; generous for this app's typical per-segment
- *  lengths (voiceover-script-line-scale, usually a few seconds). */
+/** Outer safety ceiling on how many chunks a single session's tracked range
+ *  can ever span (used by findChunkRange to cap fullEndIndex) — guards a
+ *  pathological single very long/oddly-trimmed segment from making the
+ *  "full range" bookkeeping unbounded. Not the per-window feed size (see
+ *  WINDOW_AHEAD_SEC below) — this is orthogonal, larger, and rarely hit
+ *  under the windowed model. ~20s at 30fps. */
 const MAX_SESSION_FRAMES = 600;
+
+/** Section 4.2's "small time-buffer ahead" — how far past the last
+ *  requested target a session decodes proactively. Chosen at the middle of
+ *  the plan's stated 1-2s range. */
+export const WINDOW_AHEAD_SEC = 1.5;
+
+/** Per-session cap on simultaneously-buffered (decoded, unconsumed)
+ *  VideoFrames — a safety net independent of WINDOW_AHEAD_SEC in case a
+ *  decoder emits faster than getFrameAt consumes. ~3s at 30fps, generously
+ *  larger than one window. */
+const MAX_BUFFERED_FRAMES_PER_SESSION = 90;
+
+/** Section 4.3 starting point for the pool-wide session-count ceiling:
+ *  "decoded frames for at most 3 segments' worth of window at any time."
+ *  Tune from the Phase 6 500-segment measurement (see the architecture
+ *  doc's progress tracker for the actual measured numbers this was
+ *  confirmed/refined against). */
+export const MAX_CACHED_SESSIONS = 3;
+
+/** Section 4.3's frame-count ceiling — roughly MAX_CACHED_SESSIONS sessions
+ *  each holding one window's worth of buffered frames (~45 @ 30fps) plus
+ *  slack. Same tuning note as above. */
+export const MAX_TOTAL_BUFFERED_FRAMES = 150;
+
+/** Bounds the idle decoder-handle free list kept per asset URL for reuse —
+ *  small on purpose: reuse only needs to cover "the next session for this
+ *  asset shows up shortly after the last one was evicted," not act as a
+ *  general-purpose decoder cache. */
+const MAX_IDLE_DECODER_HANDLES_PER_ASSET = 2;
 
 interface BufferedFrame {
   frame: VideoFrame;
@@ -55,18 +102,63 @@ interface BufferedFrame {
 
 /** A pending `getFrameAt` call waiting for enough frames to be buffered to
  *  answer its query — resolved early by the decoder's `output` callback the
- *  moment a frame past `targetSec` arrives, or by `session.ready` settling
- *  (decode finished, one way or another) as the fallback. */
+ *  moment a frame past `targetSec` arrives, or by the current feed batch
+ *  settling as the fallback. */
 interface FrameWaiter {
   targetSec: number;
   settle: () => void;
 }
 
+/** Wraps a single VideoDecoder so it can be handed from one session to the
+ *  next (Section 4.2 decoder reuse). The output/error callbacks are bound
+ *  once, at construction, to this handle — never to a session directly —
+ *  and dispatch to whichever session currently has `activeSession` set,
+ *  which is how the same underlying VideoDecoder object can answer for a
+ *  succession of different segments over time. */
+interface DecoderHandle {
+  decoder: VideoDecoder;
+  assetUrl: string;
+  activeSession: DecodeSession | null;
+  errored: boolean;
+}
+
 interface DecodeSession {
   assetUrl: string;
+  /** Segment-level source-time ceiling this session may ever decode within
+   *  — the segment's own [trimStart, trimEnd]-derived range. Fixed for the
+   *  life of the session; never widened by window feeding or resets. */
   startSec: number;
   endSec: number;
-  decoder: VideoDecoder | null;
+
+  chunks: readonly EncodedVideoChunk[];
+  config: VideoDecoderConfig | null;
+  handle: DecoderHandle | null;
+
+  /** Next chunk index (into `chunks`) this session's current window has not
+   *  yet fed to the decoder. */
+  feedCursor: number;
+  /** Ceiling index (inclusive) for this session's current window position —
+   *  recomputed by findChunkRange on every reset (Section 4.2's scrub-reset
+   *  path), since the safety cap in findChunkRange is relative to whichever
+   *  keyframe the window currently starts from. */
+  fullEndIndex: number;
+  /** True once feedCursor has passed fullEndIndex — nothing more will ever
+   *  be fed for this session's current window position. */
+  fullyFed: boolean;
+  /** True while a feed-then-flush batch is in flight — guards against
+   *  issuing two overlapping feed batches for the same session. */
+  feedInFlight: boolean;
+  /** Timestamp (us) of the last chunk actually handed to decoder.decode()
+   *  so far in the current window — used to decide whether a new target is
+   *  reachable by simple forward continuation or needs a reset. */
+  feedFrontierUs: number;
+  /** Timestamp (us) below which this session can no longer answer a query
+   *  without a reset — either the keyframe the current window was seeded
+   *  from, or (once at least one frame has been selected) the most
+   *  recently selected frame's own timestamp, since forward eviction closes
+   *  everything older than that on every getFrameAt call. */
+  retainedFloorUs: number;
+
   frames: BufferedFrame[]; // ascending by timestampSec (decoder output order)
   displayedFrame: VideoFrame | null; // currently checked-out frame; also present in `frames` until superseded
   ready: Promise<void>;
@@ -110,13 +202,33 @@ export function findChunkRange(
 
 export class VideoDecoderPool {
   private sessions = new Map<string, DecodeSession>();
+  private idleHandles = new Map<string, DecoderHandle[]>();
+  private protectedIds = new Set<string>();
+  private lastAccess = new Map<string, number>();
+  private touchCounter = 0;
 
   /**
-   * Ensures a decode session exists for `segmentId`, decoding the chunk
-   * range of `assetUrl` covering source time [startSec, endSec]. Idempotent
-   * for an unchanged range — safe to call on every render.
+   * Ensures a decode session exists for `segmentId`, scoped to the chunk
+   * range of `assetUrl` covering source time [startSec, endSec] (the
+   * segment's own trim range — the ceiling this session may ever decode
+   * within, not the initial decode window). Idempotent for an unchanged
+   * range — safe to call on every render.
+   *
+   * `initialTargetSec` (defaults to startSec) seeds the FIRST decode window
+   * at that source time rather than at the segment's start — a caller that
+   * already knows the actual intended playhead position (e.g. a cold scrub
+   * landing mid-segment) should pass it, so the first window is centered on
+   * where playback will actually read from instead of wastefully decoding
+   * from segment start first only to reset immediately (Phase 4's
+   * cold-scrub-latency goal).
    */
-  ensureSession(segmentId: string, assetUrl: string, startSec: number, endSec: number): Promise<void> {
+  ensureSession(
+    segmentId: string,
+    assetUrl: string,
+    startSec: number,
+    endSec: number,
+    initialTargetSec: number = startSec,
+  ): Promise<void> {
     const existing = this.sessions.get(segmentId);
     if (
       existing &&
@@ -125,6 +237,7 @@ export class VideoDecoderPool {
       existing.startSec === startSec &&
       existing.endSec === endSec
     ) {
+      this.touch(segmentId);
       return existing.ready;
     }
     if (existing) this.closeSession(existing);
@@ -133,99 +246,208 @@ export class VideoDecoderPool {
       assetUrl,
       startSec,
       endSec,
-      decoder: null,
+      chunks: [],
+      config: null,
+      handle: null,
+      feedCursor: 0,
+      fullEndIndex: -1,
+      fullyFed: true,
+      feedInFlight: false,
+      feedFrontierUs: -Infinity,
+      retainedFloorUs: -Infinity,
       frames: [],
       displayedFrame: null,
       ready: Promise.resolve(),
       closed: false,
       waiters: [],
     };
-    session.ready = this.startSession(session, assetUrl, startSec, endSec);
+    session.ready = this.startSession(session, assetUrl, endSec, initialTargetSec);
     this.sessions.set(segmentId, session);
+    this.touch(segmentId);
+    this.enforceBudget();
     return session.ready;
   }
 
   private async startSession(
     session: DecodeSession,
     assetUrl: string,
-    startSec: number,
     endSec: number,
+    initialTargetSec: number,
   ): Promise<void> {
     const demuxed = await getOrCreateDemux(assetUrl);
     if (session.closed) return; // released while demuxing
 
-    const decoder = new VideoDecoder({
-      output: (frame) => {
-        if (session.closed || session.frames.length >= MAX_SESSION_FRAMES) {
-          frame.close();
-          return;
-        }
-        const timestampSec = frame.timestamp / 1e6;
-        session.frames.push({ frame, timestampSec });
-        if (session.waiters.length > 0) {
-          const stillWaiting: FrameWaiter[] = [];
-          for (const waiter of session.waiters) {
-            if (timestampSec > waiter.targetSec) waiter.settle();
-            else stillWaiting.push(waiter);
-          }
-          session.waiters = stillWaiting;
-        }
-      },
-      error: (e) => {
-        console.error('[videoDecoderPool] decoder error:', e.message);
-      },
-    });
-    session.decoder = decoder;
+    session.chunks = demuxed.chunks;
+    session.config = demuxed.config;
 
+    const handle = this.acquireHandle(assetUrl);
     if (session.closed) {
-      decoder.close();
+      this.releaseHandle(handle);
       return;
     }
+    handle.activeSession = session;
+    handle.errored = false;
+    session.handle = handle;
+    try {
+      handle.decoder.configure(demuxed.config);
+    } catch (err) {
+      session.handle = null;
+      this.releaseHandle(handle);
+      throw err;
+    }
 
-    decoder.configure(demuxed.config);
-    const { startIndex, endIndex } = findChunkRange(demuxed.chunks, startSec, endSec);
-    for (let i = startIndex; i <= endIndex; i++) {
-      decoder.decode(demuxed.chunks[i]!);
-    }
-    if (endIndex >= startIndex) {
-      await decoder.flush();
-    }
+    this.seedWindow(session, initialTargetSec, endSec);
+    await this.fillWindow(session, initialTargetSec);
   }
 
-  /**
-   * Resolves as soon as `session.frames` has enough buffered to answer a
-   * `targetSec` query definitively — i.e. a frame past `targetSec` has
-   * already arrived, so the "latest at-or-before" frame is fully determined
-   * without waiting for the rest of the session's (possibly much larger)
-   * decode to finish. Falls back to `session.ready` settling (decode done,
-   * successfully or not) for the case where targetSec is at or beyond the
-   * end of what this session will ever buffer.
-   */
-  private waitForCoverage(session: DecodeSession, targetSec: number): Promise<void> {
-    if (session.frames.some((f) => f.timestampSec > targetSec)) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      let settled = false;
-      const settle = () => {
-        if (settled) return;
-        settled = true;
-        resolve();
-      };
-      session.waiters.push({ targetSec, settle });
-      session.ready.then(settle, settle);
-    });
+  /** Positions a session's decode window at the keyframe backing `targetSec`
+   *  — used both for the very first window (startSession) and every
+   *  scrub-triggered reset (resetSessionWindow calls this too). Does not
+   *  feed any chunks itself; `fillWindow` does that. */
+  private seedWindow(session: DecodeSession, targetSec: number, endSec: number): void {
+    const { startIndex, endIndex } = findChunkRange(session.chunks, targetSec, endSec);
+    session.feedCursor = startIndex;
+    session.fullEndIndex = endIndex;
+    session.fullyFed = startIndex > endIndex;
+    session.feedFrontierUs = -Infinity;
+    const firstChunk = session.chunks[startIndex];
+    session.retainedFloorUs = firstChunk ? firstChunk.timestamp : targetSec * 1e6;
+  }
+
+  /** True when `targetSec` can no longer be answered by this session's
+   *  current window without re-seeking: either it falls before what's still
+   *  retained/reachable (backward scrub, or before the window's own
+   *  keyframe floor), or it's beyond what's been fed plus the decode-ahead
+   *  lookahead (a jump larger than steady playback ever produces). */
+  private needsReset(session: DecodeSession, targetSec: number): boolean {
+    const targetUs = targetSec * 1e6;
+    if (targetUs < session.retainedFloorUs) return true;
+    if (!session.fullyFed && targetUs > session.feedFrontierUs + WINDOW_AHEAD_SEC * 1e6) return true;
+    return false;
+  }
+
+  /** Scrub-seek reset (Section 4.2 / Phase 4): closes every buffered frame
+   *  (none of them can answer `targetSec` or we wouldn't be here), rewinds
+   *  the underlying decoder to an unconfigured state via reset() (aborting
+   *  whatever was mid-flight and settling any pending flush()), and reseeds
+   *  the window at the keyframe backing the new target. This is the fast
+   *  path for both a backward scrub and a big forward jump within the same
+   *  segment — decode resumes from the nearest keyframe rather than
+   *  fast-forwarding through everything in between. */
+  private resetSessionWindow(session: DecodeSession, targetSec: number): void {
+    for (const entry of session.frames) entry.frame.close();
+    session.frames = [];
+    if (session.displayedFrame) {
+      session.displayedFrame.close();
+      session.displayedFrame = null;
+    }
+    for (const waiter of session.waiters) waiter.settle();
+    session.waiters = [];
+
+    const handle = session.handle;
+    if (handle && session.config) {
+      try {
+        handle.decoder.reset();
+        handle.decoder.configure(session.config);
+      } catch {
+        // Surfaced via the decoder's own error callback if fatal; nothing
+        // further to do here.
+      }
+    }
+    this.seedWindow(session, targetSec, session.endSec);
+  }
+
+  /** Feeds chunks from `session.feedCursor` up to whichever is smaller:
+   *  `targetSec + WINDOW_AHEAD_SEC`, or the session's own fullEndIndex —
+   *  always feeding at least one chunk of forward progress when anything
+   *  remains, even if the window boundary is already behind feedCursor
+   *  (e.g. a target right at the tail of what's already been requested).
+   *  Returns a promise settling once this batch has been flushed (i.e.
+   *  every decode() call issued in this batch is guaranteed to have
+   *  produced its output, one way or another). */
+  private feedWindow(session: DecodeSession, targetSec: number): Promise<void> {
+    const handle = session.handle;
+    if (!handle || session.closed) return Promise.resolve();
+    const boundaryUs = (targetSec + WINDOW_AHEAD_SEC) * 1e6;
+
+    let fed = false;
+    while (session.feedCursor <= session.fullEndIndex && session.chunks[session.feedCursor]!.timestamp <= boundaryUs) {
+      const chunk = session.chunks[session.feedCursor]!;
+      handle.decoder.decode(chunk);
+      session.feedFrontierUs = chunk.timestamp;
+      session.feedCursor++;
+      fed = true;
+    }
+    if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
+
+    if (!fed && session.feedCursor <= session.fullEndIndex) {
+      // Nothing fell within the window boundary yet (it's already behind
+      // feedCursor) — feed exactly one more chunk so forward progress is
+      // always made rather than spinning.
+      const chunk = session.chunks[session.feedCursor]!;
+      handle.decoder.decode(chunk);
+      session.feedFrontierUs = chunk.timestamp;
+      session.feedCursor++;
+      if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
+      fed = true;
+    }
+
+    if (!fed) return Promise.resolve();
+    return handle.decoder.flush().catch(() => {});
+  }
+
+  /** Feeds and waits until `session.frames` can answer `targetSec` (a frame
+   *  strictly past it has arrived, so "latest at-or-before" is fully
+   *  determined) or the session is fully fed with nothing more ever coming.
+   *  Resolves early on either signal — never waits for a whole batch to
+   *  settle if the answer is already knowable from what's buffered so far. */
+  private async fillWindow(session: DecodeSession, targetSec: number): Promise<void> {
+    while (!session.closed) {
+      if (session.frames.some((f) => f.timestampSec > targetSec)) return;
+      if (session.fullyFed && !session.feedInFlight) return;
+
+      if (!session.feedInFlight) {
+        session.feedInFlight = true;
+        const donePromise = this.feedWindow(session, targetSec).finally(() => {
+          session.feedInFlight = false;
+        });
+        await new Promise<void>((resolve) => {
+          let settled = false;
+          const settle = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+          };
+          session.waiters.push({ targetSec, settle });
+          donePromise.then(settle, settle);
+        });
+      } else {
+        await new Promise<void>((resolve) => session.waiters.push({ targetSec, settle: resolve }));
+      }
+    }
   }
 
   /**
    * Returns the frame to display at `targetSec` (source time, seconds) for
    * `segmentId`'s session — the latest buffered frame at or before
-   * targetSec — or null if the session isn't ready or has no frames.
-   * Every frame this supersedes (buffered-but-now-stale, or the previously
-   * displayed frame) is closed synchronously before returning.
+   * targetSec — or null if the session isn't ready, has no frames, or a
+   * fatal decode error left it empty. Every frame this supersedes
+   * (buffered-but-now-stale, or the previously displayed frame) is closed
+   * synchronously before returning. Transparently re-seeks the session
+   * (see resetSessionWindow) if `targetSec` isn't reachable from its
+   * current window — this is what makes both backward scrub and a big
+   * forward jump within an already-warm segment resolve correctly instead
+   * of returning whatever stale frame happens to still be buffered.
    */
   async getFrameAt(segmentId: string, targetSec: number): Promise<VideoFrame | null> {
     const session = this.sessions.get(segmentId);
     if (!session || session.closed) return null;
-    await this.waitForCoverage(session, targetSec);
+    this.touch(segmentId);
+
+    if (this.needsReset(session, targetSec)) {
+      this.resetSessionWindow(session, targetSec);
+    }
+    await this.fillWindow(session, targetSec);
     if (session.closed || session.frames.length === 0) return null;
 
     let selected = session.frames[0]!;
@@ -235,7 +457,10 @@ export class VideoDecoderPool {
     }
 
     // Close every buffered frame strictly older than the selected one —
-    // under forward playback they can never be needed again.
+    // under forward playback they can never be needed again. This also
+    // moves the "reset floor" forward: a future target below this point is
+    // necessarily a backward scrub, handled by needsReset/resetSessionWindow
+    // above, not a stale read from here.
     session.frames = session.frames.filter((entry) => {
       if (entry.timestampSec < selected.timestampSec) {
         entry.frame.close();
@@ -243,11 +468,13 @@ export class VideoDecoderPool {
       }
       return true;
     });
+    session.retainedFloorUs = selected.timestampSec * 1e6;
 
     if (session.displayedFrame && session.displayedFrame !== selected.frame) {
       session.displayedFrame.close();
     }
     session.displayedFrame = selected.frame;
+    this.enforceBudget();
     return selected.frame;
   }
 
@@ -257,15 +484,18 @@ export class VideoDecoderPool {
 
   /**
    * Closes and discards the decode session for `segmentId` — every
-   * buffered VideoFrame is closed immediately, and the underlying
-   * VideoDecoder is closed. Call the moment a segment stops being the
-   * current or decode-ahead-next segment (Section 3.5 boundary crossing).
+   * buffered VideoFrame is closed immediately, and the underlying decoder
+   * handle is returned to the per-asset idle pool for reuse (or closed, if
+   * the pool for that asset is already at capacity or the decoder errored).
+   * Call the moment a segment falls out of the protected set and the pool
+   * needs to reclaim budget (see enforceBudget), or on unmount (dispose).
    */
   releaseSession(segmentId: string): void {
     const session = this.sessions.get(segmentId);
     if (!session) return;
     this.closeSession(session);
     this.sessions.delete(segmentId);
+    this.lastAccess.delete(segmentId);
   }
 
   private closeSession(session: DecodeSession): void {
@@ -277,29 +507,210 @@ export class VideoDecoderPool {
     // then), so it has already been closed above — just drop the reference,
     // do not close it again.
     session.displayedFrame = null;
-    try {
-      session.decoder?.close();
-    } catch {
-      // Already closed (e.g. the decoder errored) — safe to ignore.
+
+    if (session.handle) {
+      const handle = session.handle;
+      session.handle = null;
+      handle.activeSession = null;
+      if (session.feedInFlight) {
+        // This session still has a feedWindow()/flush() batch in flight —
+        // handing the handle to a new session right now (even after
+        // reset()) is a real hazard found during Phase 4+6 manual
+        // 500-segment scrub-stress testing: under heavy concurrent churn
+        // (many segments sharing one asset, rapidly created/evicted), a
+        // straggler output from the OLD batch could still land after a NEW
+        // session has taken over `handle.activeSession`, corrupting that
+        // new session's frame buffer with frames it never asked for (and,
+        // observed in practice, leaving a session permanently starved of
+        // any valid frame — a persistent blank canvas with no error, since
+        // getFrameAt legitimately has nothing to return). Closing outright
+        // instead of pooling is strictly safe: the in-flight flush()
+        // rejects/settles harmlessly against a decoder that's already
+        // closed, and this session is being discarded anyway.
+        try {
+          handle.decoder.close();
+        } catch {
+          // Already closed — safe to ignore.
+        }
+      } else {
+        this.releaseHandle(handle);
+      }
     }
-    // Force-settle any in-flight getFrameAt waiters explicitly, rather than
-    // relying solely on `session.ready` rejecting from the decoder.close()
-    // above — a real VideoDecoder rejects a pending flush() on close(), but
-    // this doesn't assume that's the only path here (e.g. a session closed
-    // before startSession ever reached decode). Each settled waiter's
-    // getFrameAt call sees session.closed and returns null.
+
+    // Force-settle any in-flight getFrameAt/fillWindow waiters explicitly,
+    // rather than relying solely on the decoder rejecting a pending flush()
+    // on reset/close — a session closed before startSession ever reached
+    // decode has no such promise to reject in the first place.
     for (const waiter of session.waiters) waiter.settle();
     session.waiters = [];
   }
 
-  /** Segment ids of all sessions currently held — for a caller implementing
-   *  a "keep only current + next" eviction policy externally. */
+  /** Acquires a DecoderHandle for `assetUrl` — reuses an idle handle from
+   *  this asset's free list if one exists (Section 4.2 decoder reuse),
+   *  otherwise constructs a new VideoDecoder. The output/error callbacks
+   *  are bound once, here, to the handle itself (never to a session
+   *  directly), and dispatch to whichever session currently owns the
+   *  handle via `handle.activeSession` — this indirection is what makes it
+   *  possible to hand the same underlying VideoDecoder object to a
+   *  succession of different sessions over time, since a real
+   *  VideoDecoder's callbacks cannot be rebound after construction. */
+  private acquireHandle(assetUrl: string): DecoderHandle {
+    const idle = this.idleHandles.get(assetUrl);
+    if (idle && idle.length > 0) {
+      return idle.pop()!;
+    }
+    const handle: DecoderHandle = {
+      decoder: null as unknown as VideoDecoder,
+      assetUrl,
+      activeSession: null,
+      errored: false,
+    };
+    handle.decoder = new VideoDecoder({
+      output: (frame) => this.handleDecoderOutput(handle, frame),
+      error: (e) => {
+        handle.errored = true;
+        console.error('[videoDecoderPool] decoder error:', e.message);
+        const session = handle.activeSession;
+        if (session) {
+          // Nothing more will ever arrive for this session's current
+          // request — settle any waiter rather than leaving it hanging.
+          for (const waiter of session.waiters) waiter.settle();
+          session.waiters = [];
+        }
+      },
+    });
+    return handle;
+  }
+
+  /** Returns a handle to its per-asset idle pool for reuse, unless it
+   *  errored (never reused — a fresh decoder is safer than one in unknown
+   *  state) or the pool for that asset is already at capacity, in which
+   *  case it's closed outright. A reusable handle is reset() first so a
+   *  late output/flush from the session that just released it can never be
+   *  misattributed to whichever session acquires it next. */
+  private releaseHandle(handle: DecoderHandle): void {
+    handle.activeSession = null;
+    if (handle.errored) {
+      try {
+        handle.decoder.close();
+      } catch {
+        // Already closed — safe to ignore.
+      }
+      return;
+    }
+    const idle = this.idleHandles.get(handle.assetUrl) ?? [];
+    if (idle.length >= MAX_IDLE_DECODER_HANDLES_PER_ASSET) {
+      try {
+        handle.decoder.close();
+      } catch {
+        // Already closed — safe to ignore.
+      }
+      return;
+    }
+    try {
+      handle.decoder.reset();
+    } catch {
+      // Already closed/errored — don't pool it if reset() itself failed.
+      try {
+        handle.decoder.close();
+      } catch {
+        // no-op
+      }
+      return;
+    }
+    idle.push(handle);
+    this.idleHandles.set(handle.assetUrl, idle);
+  }
+
+  private handleDecoderOutput(handle: DecoderHandle, frame: VideoFrame): void {
+    const session = handle.activeSession;
+    if (!session || session.closed || session.frames.length >= MAX_BUFFERED_FRAMES_PER_SESSION) {
+      frame.close();
+      return;
+    }
+    const timestampSec = frame.timestamp / 1e6;
+    session.frames.push({ frame, timestampSec });
+    if (session.waiters.length > 0) {
+      const stillWaiting: FrameWaiter[] = [];
+      for (const waiter of session.waiters) {
+        if (timestampSec > waiter.targetSec) waiter.settle();
+        else stillWaiting.push(waiter);
+      }
+      session.waiters = stillWaiting;
+    }
+    this.enforceBudget();
+  }
+
+  /** Segment ids of all sessions currently held — for a caller that wants
+   *  visibility into what's cached (mainly for tests/diagnostics; eviction
+   *  itself is handled internally via setProtectedIds + enforceBudget). */
   activeSegmentIds(): string[] {
     return Array.from(this.sessions.keys());
   }
 
-  /** Releases every session — call on unmount. */
+  /** Marks the given segment ids as exempt from LRU eviction — callers
+   *  (useWebCodecsPreview.ts) pass the current + next segment ids here on
+   *  every render via computeKeepSet. Everything else is fair game once the
+   *  pool exceeds its session-count or buffered-frame ceiling, evicted
+   *  least-recently-used first. Triggers an immediate budget check so
+   *  shrinking the protected set (e.g. a segment falling from "next" to
+   *  neither) can free budget right away rather than waiting for the next
+   *  ensureSession/getFrameAt call. */
+  setProtectedIds(ids: Iterable<string>): void {
+    this.protectedIds = new Set(ids);
+    this.enforceBudget();
+  }
+
+  private touch(segmentId: string): void {
+    this.lastAccess.set(segmentId, ++this.touchCounter);
+  }
+
+  private totalBufferedFrames(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) total += session.frames.length;
+    return total;
+  }
+
+  /** Non-protected session ids, oldest-accessed first. */
+  private evictionCandidates(): string[] {
+    return Array.from(this.sessions.keys())
+      .filter((id) => !this.protectedIds.has(id))
+      .sort((a, b) => (this.lastAccess.get(a) ?? 0) - (this.lastAccess.get(b) ?? 0));
+  }
+
+  /** Enforces Section 4.3's ceilings: evicts least-recently-used
+   *  non-protected sessions until both the session-count and
+   *  total-buffered-frame budgets are satisfied, or nothing evictable is
+   *  left (every remaining session is protected — cannot shrink further,
+   *  by design, since current+next must always stay warm). */
+  private enforceBudget(): void {
+    while (this.sessions.size > MAX_CACHED_SESSIONS) {
+      const victim = this.evictionCandidates()[0];
+      if (!victim) break;
+      this.releaseSession(victim);
+    }
+    while (this.totalBufferedFrames() > MAX_TOTAL_BUFFERED_FRAMES) {
+      const victim = this.evictionCandidates()[0];
+      if (!victim) break;
+      this.releaseSession(victim);
+    }
+  }
+
+  /** Releases every session and closes every idle pooled decoder handle —
+   *  call on unmount. */
   dispose(): void {
     for (const segmentId of this.activeSegmentIds()) this.releaseSession(segmentId);
+    for (const handles of this.idleHandles.values()) {
+      for (const handle of handles) {
+        try {
+          handle.decoder.close();
+        } catch {
+          // Already closed — safe to ignore.
+        }
+      }
+    }
+    this.idleHandles.clear();
+    this.protectedIds = new Set();
+    this.lastAccess.clear();
   }
 }
