@@ -418,6 +418,22 @@ export function useWebCodecsPreview({
   // whether a chase loop is currently running (startChaseIfIdle's mutex).
   const latestTargetRef = useRef(0);
   const chaseMutexRef = useRef<ChaseMutex>({ chasing: false, epoch: 0 });
+  /** Phase A2 (docs/webcodecs-architecture-plan.md 8.1 step 2): a pre-pulled
+   *  boundary frame for the *next* segment, requested during decode-ahead
+   *  (before the crossing) so the frame-pull effect's chase can adopt it
+   *  immediately at the crossing instant instead of issuing a fresh
+   *  getFrameAt call and waiting out whatever decode-ahead hasn't finished
+   *  yet. Consumed (set back to null) the first time the chase's fetch
+   *  closure uses it for a matching segmentId — deliberately single-use, so
+   *  a chase loop that re-iterates for a moved target (see
+   *  chaseLatestTarget) falls through to a normal pool.getFrameAt call
+   *  rather than reusing a now-stale promise. Never a second,
+   *  independently-mutexed getFrameAt call site: routing it through the
+   *  existing chase's own fetch closure keeps "at most one getFrameAt call
+   *  in flight per session" true without a new lock — a naive second call
+   *  site here would race the live chase against the pre-pull on the same
+   *  session the instant it becomes current (see the Phase A2 audit). */
+  const pendingBoundaryPullRef = useRef<{ segmentId: string; promise: Promise<VideoFrame | null> } | null>(null);
 
   const currentAsset = currentSegment ? assets.find(a => a.id === currentSegment.assetId) : undefined;
   const isVideoSegment = isPlainVideoAsset(currentSegment, currentAsset);
@@ -486,6 +502,16 @@ export function useWebCodecsPreview({
       // from its own segment start, since that's where forward playback
       // will actually enter it.
       void pool.ensureSession(nextSegment.id, nextAsset.url, start, end).catch(() => {});
+      // Phase A2: proactively pull (not just warm) the boundary frame — see
+      // pendingBoundaryPullRef's own doc for why this is deliberately NOT a
+      // second independently-awaited call site from the frame-pull effect's
+      // perspective; it's consumed there, inside the existing chase's fetch
+      // closure, so at most one getFrameAt call is ever in flight per
+      // session.
+      pendingBoundaryPullRef.current = {
+        segmentId: nextSegment.id,
+        promise: pool.getFrameAt(nextSegment.id, start).catch(() => null),
+      };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, currentSegment, isVideoSegment, currentAsset, nextSegment, nextIsVideo, nextAsset]);
@@ -560,13 +586,24 @@ export function useWebCodecsPreview({
     startChaseIfIdle(
       chaseMutexRef.current,
       () => latestTargetRef.current,
-      (target) =>
-        pool.getFrameAt(segmentId, target).catch((err) => {
+      (target) => {
+        // Phase A2: adopt a matching pre-pulled boundary frame instead of
+        // issuing a fresh getFrameAt call — see pendingBoundaryPullRef's
+        // doc. Single-use: if this chase re-iterates for a target that's
+        // moved on (see chaseLatestTarget), the ref is already null by then
+        // and this falls through to a normal pool.getFrameAt call below.
+        const pending = pendingBoundaryPullRef.current;
+        if (pending && pending.segmentId === segmentId) {
+          pendingBoundaryPullRef.current = null;
+          return pending.promise;
+        }
+        return pool.getFrameAt(segmentId, target).catch((err) => {
           if (generationRef.current === generation) {
             setError(err instanceof Error ? err.message : String(err));
           }
           return null;
-        }),
+        });
+      },
       (result) => {
         if (generationRef.current !== generation) return; // superseded by a segment/enabled change — paint nothing
         setFrame(result);

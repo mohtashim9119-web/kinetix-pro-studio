@@ -142,8 +142,8 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
 **Status:** IN PROGRESS. Quick wins (Section 8.0) are fully COMPLETE — 3 of 3 sub-items done, see
-✅ COMPLETED below. Phase A is now IN PROGRESS: A1 (animation-twin conversion) is ✅ COMPLETE; A2
-(boundary-frame pin) and A3 (transition-window realignment) are ⬜ NOT STARTED. Phases B and C are
+✅ COMPLETED below. Phase A is now IN PROGRESS: A1 (animation-twin conversion) and A2
+(boundary-frame pre-pull) are ✅ COMPLETE; A3 (transition-window realignment) is ⬜ NOT STARTED. Phases B and C are
 NOT STARTED. This is a distinct, second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
 video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
 follow-on removes that firewall deliberately: it adapts **export** to WebCodecs too, unifies
@@ -292,21 +292,64 @@ mitigated but did not root-fix.
     entrance-animation feature (`extraOverlays`, `TEXT_ANIMATIONS`) at a separate call site
     (`PreviewStage.tsx` ~1027); confirmed via full-codebase grep before deciding not to remove
     anything from `constants.ts`.
-  - **Remaining — Phase A is NOT fully closed by A1:** A2 (boundary-frame pin — eliminate the
-    frozen/black catch-up frame at its root in `useWebCodecsPreview.ts`) and A3 (transition-window
-    realignment — `useTransitionPreview.ts`'s window currently sits BEFORE the nominal segment
-    boundary while export's sits AFTER it, a confirmed divergence found during the Phase A audit)
-    are both still NOT STARTED.
+  - **Remaining — Phase A is NOT fully closed by A1:** A2 (boundary-frame pre-pull) has since
+    landed — see the ✅ COMPLETED entry below. A3 (transition-window realignment —
+    `useTransitionPreview.ts`'s window currently sits BEFORE the nominal segment boundary while
+    export's sits AFTER it, a confirmed divergence found during the Phase A audit) is still
+    NOT STARTED.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
     tests exercise this render-internal helper directly). Committed in `fix: convert AnimationType
     preview twins to timeInSegment-driven transforms, matching export exactly (Phase A1)`.
 
+- **Phase A2 of 3 — boundary-frame pre-pull (completed 2026-07-06).**
+  Per Section 8.1 step 2 ("Eliminate the boundary frozen frame"). Targets audit-confirmed Finding
+  3: `useWebCodecsPreview.ts`'s decode-ahead effect only called `pool.ensureSession()` for the next
+  segment — which warms the session (kicks off demux + configure + an internal `fillWindow` wait)
+  but never converts that into a paintable frame ahead of the crossing — so `frameSegmentId` (and
+  therefore the visible frame) could lag `currentSegment.id` by however long the next segment's cold
+  decode-ahead hadn't yet finished (measured up to ~436ms even against an "already-warmed" session,
+  since "warmed" only meant the session object existed and decode was in flight, not that it had
+  resolved).
+  - **Root-cause fix, not another symptom guard:** the decode-ahead effect (`useWebCodecsPreview.ts`
+    ~502-511) now issues `pool.getFrameAt(nextSegment.id, start)` immediately alongside the existing
+    `ensureSession(next...)` call, stashing the resulting promise in a new `pendingBoundaryPullRef`.
+    The frame-pull effect's chase (`startChaseIfIdle`, ~586-604) checks this ref first — if it holds
+    a promise for the segment that just became current, it's consumed (single-use) as the chase's
+    first `fetch` instead of firing a second, independent `getFrameAt` call.
+  - **Concurrency risk found and avoided during the audit:** a naive implementation adding a second,
+    independently-scheduled `pool.getFrameAt` call site (one from decode-ahead, one from the existing
+    chase) would have raced the two calls against the SAME session the instant the pre-pulled segment
+    becomes current — `getFrameAt`'s frame-selection/eviction block (`videoDecoderPool.ts` ~592-623)
+    is not itself protected by a per-session lock (only the feed *batch* is guarded by
+    `feedInFlight`), so two overlapping calls resolving out of order could close a frame the other had
+    already handed to `setFrame` — reproducing, in a new shape, the exact class of bug
+    `chaseMutexRef`/`resetChaseMutex` were built to prevent for a different scenario (StrictMode
+    double-invoke). Routing the pre-pull through the existing chase's own `fetch` closure instead of a
+    second call site avoids this: at most one `getFrameAt` call is ever in flight per session,
+    unchanged from before this fix.
+  - **Guards deliberately left unchanged:** `PreviewCanvas.tsx`'s null-frame retain,
+    `computeDisplayedSegment`, and `computeOverlayHoldState` all stay in place as fallbacks — they
+    still correctly cover residual cases the pre-pull can't reach (the very first segment of a
+    project, a cold scrub that skips decode-ahead entirely, or a very short segment / first-referenced
+    large asset whose demux+decode can't finish even with the earliest possible pull). They should
+    engage far less often post-fix, not never — no fallback mechanism was touched or simplified this
+    pass.
+  - **Remaining:** A3 (transition-window realignment) is still NOT STARTED and is expected to close
+    the other half of the user-reported symptom this task started from ("both segments' edges freeze,
+    then the video plays after it ends") — that framing is actually two distinct, now-separately-
+    tracked issues: the frozen-edge freeze this fix targets (root-caused here), and a genuine
+    timing-window mismatch (preview's transition blend sits BEFORE the nominal segment boundary,
+    export's sits AFTER it — Finding 4, unchanged, still A3's scope).
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — this is
+    async decode-timing behavior, not a new pure/unit-testable function). Committed in `fix:
+    proactively pre-pull next segment's boundary frame during decode-ahead, eliminating first-paint
+    freeze at segment cuts (Phase A2)`.
+
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
-- **Phase A — Unify the clock (preview). 🟡 1 of 3 steps done.** Step 1 (animation-twin conversion,
-  A1) is ✅ COMPLETE — see above. Step 2 (eliminate — not just hold — the boundary catch-up frozen
-  frame, A2) and step 3 (align transition timing so preview matches export exactly, A3) are both
-  ⬜ NOT STARTED. Full definition in Section 8 below.
+- **Phase A — Unify the clock (preview). 🟡 2 of 3 steps done.** Step 1 (animation-twin conversion,
+  A1) and step 2 (boundary-frame pre-pull, A2) are ✅ COMPLETE — see above. Step 3 (align transition
+  timing so preview matches export exactly, A3) is ⬜ NOT STARTED. Full definition in Section 8 below.
 - **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
   per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
   ffmpeg used once for final mux only. Full definition in Section 8 below.
@@ -316,7 +359,7 @@ mitigated but did not root-fix.
 - **Quick wins (do first, independently mergeable) — 3 of 3 done, see ✅ COMPLETED above.** Quick
   Wins are fully COMPLETE: the `[DIAG]`/live-`//FFCACHE` log strip, the black-flash guard, and the
   image-fade-replay fix (option (a), not the dip-black/white blend) have all landed (with caveats
-  noted above). **Phase A is IN PROGRESS (A1 done; A2 next).** Two threads were explicitly carved
+  noted above). **Phase A is IN PROGRESS (A1 + A2 done; A3 next).** Two threads were explicitly carved
   out of quick-win scope from the start and remain open where first flagged: the dormant
   `//FFCACHE` dead-code block and the export `console.debug` lines (both under quick win 1). Full
   step definitions in Section 8.0 below.
