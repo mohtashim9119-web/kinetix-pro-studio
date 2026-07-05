@@ -155,9 +155,12 @@ Phase A — tracked as separate follow-on items, not reopening A: (1) a pre-exis
 "snap-back" on content-catch-up-hold release, newly exposed (not caused) by A1's timeInSegment
 conversion — **✅ FIXED (2026-07-06), see the new Follow-On item below Phase A's entry**; (2) the
 known static-snapshot transition-blend limitation (frozen frame for the full transition window) —
-unchanged by A3, a bigger separate "live blend" redesign, not yet scoped; (3) general preview
-playback lag/smoothness unrelated to segment boundaries — root cause unconfirmed, needs runtime
-profiling, not a code-review-fixable issue. See each item's own entry below for detail.
+unchanged by A3 — **🔶 AUDITED, DEFERRED TO PHASE B (2026-07-06), see the new Follow-On item below
+Phase A's entry**: a completed audit concluded the real ("live blend") fix requires the
+preview/export-unification work Phase B (Section 8.2) already scopes to do properly, so this is
+deliberately not being fixed standalone; (3) general preview playback lag/smoothness unrelated to
+segment boundaries — root cause unconfirmed, needs runtime profiling, not a code-review-fixable
+issue. See each item's own entry below for detail.
 
 **Locked technical decisions (do not re-litigate during implementation):**
 - Single master clock = the audio playhead (`usePlayback.ts`, UNCHANGED) for BOTH preview and export.
@@ -393,12 +396,14 @@ profiling, not a code-review-fixable issue. See each item's own entry below for 
        `timeInSegment` is what exposed this snap visibly whenever the hold released on a segment
        using one of these animation types. Intermittent because the hold only engages under
        variable decode load.
-    2. **Frozen frame during transitions (known limitation, unchanged by A3):** both
+    2. **Frozen frame during transitions (known limitation, unchanged by A3) — 🔶 AUDITED,
+       DEFERRED TO PHASE B, see the new Follow-On item below the snap-back fix entry.** Both
        `useTransitionPreview.ts` snapshots are rendered ONCE per boundary and blended purely by
        `progress` — neither is ever re-rendered against a moving `timeInSegment`, so the transition
        itself shows no live motion for its full duration. This is the static-snapshot architecture
-       described in this file's own header comment (~1-11), not a bug. Fixing it for real ("live
-       blend") is a bigger, separate redesign effort — not scoped here.
+       described in this file's own header comment (~1-11), not a bug. A completed audit
+       (2026-07-06) concluded the real ("live blend") fix requires Phase B's shared compositor —
+       not scoped as a standalone fix here.
     3. **General preview playback lag/smoothness (out of scope, unconfirmed root cause):** reported
        as present both at segment boundaries and during ordinary mid-segment playback. A3's diff
        (and A2's) add negligible per-render/per-boundary cost only — neither touches the
@@ -459,9 +464,68 @@ profiling, not a code-review-fixable issue. See each item's own entry below for 
     `useWebCodecsPreview.test.ts`). Committed in `fix: smoothly blend animation transform on
     content-catchup hold release, eliminating snap-back (Phase A follow-up)`.
 
-**Phase A is now fully ✅ COMPLETE (A1 + A2 + A3), and its first follow-up (animation snap-back) is
-also ✅ COMPLETE.** Residual issues 2 (frozen-frame transition blend) and 3 (general playback lag) are
-still open, unscoped, separate efforts — see the A3 entry above.
+- **Phase A follow-on — frozen transition frame audited, deferred to Phase B (2026-07-06).**
+  Closes residual issue 2 from the A3 entry above with a disposition, not a fix — a dedicated
+  audit session concluded a real ("live blend") fix requires the preview/export-unification work
+  Phase B already scopes to do properly, and building it standalone now would mean solving it
+  twice: once ad hoc here, once again — properly — in Phase B.
+  - **Structural cause confirmed:** `useTransitionPreview.ts` renders the outgoing/incoming
+    segments to offscreen canvases ONCE at pre-roll (~179-310) and blends them purely as a
+    function of `progress` for the whole `transitionDuration` — neither source canvas is ever
+    re-rendered against a moving `timeInSegment`. Note the blend-DRAW effect itself already
+    reruns every render tick (it depends on `progress`, which changes every tick as `currentTime`
+    advances) — only the two SOURCE canvases it draws from are frozen, not the redraw loop. A
+    live fix means sampling both segments' own advancing time per tick — the outgoing side
+    continuing toward its true end, the incoming side starting from its own true 0 — not adding a
+    new loop.
+  - **Cost analysis rules out a naive per-tick re-render:** the transition path's video source is
+    `frameRenderer.ts`'s HTML5 `<video>`-seek cache (`getOrCreateVideo`/`seekVideo`, ~86-184), NOT
+    `videoDecoderPool.ts`. `useTransitionPreview.ts`'s own `PRE_ROLL_LEAD_S` comment (~23-27)
+    already states the real cost: "worst-case parallel seek cost (~200ms per video)... Same-asset
+    sequential fallback costs ~400ms." Calling this every rAF tick for a transition's typical
+    ~0.3-1s life is categorically infeasible — 15-60+ seeks stacked into a window barely longer
+    than a single seek. The only viable live-sampling primitive already in this codebase is
+    `VideoDecoderPool.getFrameAt` — once a session's window is warm, a cheap in-memory
+    buffered-frame lookup with no seek and no async wait — the same mechanism
+    `useWebCodecsPreview.ts` already uses, safely, every tick for ordinary playback.
+  - **Duplication-with-`VideoDecoderPool` finding:** `useTransitionPreview.ts` never touches
+    `VideoDecoderPool` at all — it exclusively goes through `frameRenderer.ts`'s own separate
+    `videoCache` `Map`. Today there are two fully independent video-sourcing mechanisms live in
+    preview simultaneously (the pool for main content, `frameRenderer.ts`'s cache for transition
+    snapshots only). A live-blend fix built on the pool would need new dual-session plumbing —
+    tracking two simultaneous protected segments/frames (outgoing + incoming) instead of the
+    single "current" frame/session pair `computeKeepSet`/`setProtectedIds` manage today — plumbing
+    that substantially pre-builds a slice of exactly what Phase B's shared compositor
+    (Section 8.2) is already scoped to build once, generally, for both preview AND export.
+  - **Export-already-correct finding:** `segmentEncoder.ts` renders every transition output frame
+    individually via `renderSegmentFrame`, each sampling its own segment's real advancing time —
+    export has no frozen-frame problem today. This is precisely a preview/export divergence, the
+    exact category Phase B (Section 8.2) exists to close by putting both paths on one compositor.
+  - **Disposition — 🔶 DEFERRED TO PHASE B, not fixed, not dropped, not forgotten.** Do NOT attempt
+    a standalone fix now: it would mean solving this twice, or worse, shipping throwaway
+    architecture Phase B's shared compositor would immediately supersede. See Section 8.2's new
+    cross-reference note for why Phase B is expected to resolve this as a natural consequence of
+    its own already-planned scope, not as separate new work.
+  - **Confidence after Phase B: HIGH, not absolute.** Phase B's stated goal — one shared
+    compositor, "preview == export true by construction" — structurally eliminates the
+    frozen-snapshot mechanism (puts preview's transition blend on the same live source export
+    already uses). But Phase B itself is unbuilt and untested; its own new risks (drift,
+    encoder-swap performance, dual-session frame-pulling edge cases) mean "resolves cleanly" is a
+    strong expectation here, not a guarantee, until Phase B ships and is verified end-to-end.
+  - **No source code changed.** This is an audit-and-disposition entry only —
+    `useTransitionPreview.ts`, `frameRenderer.ts`, `useWebCodecsPreview.ts`, `videoDecoderPool.ts`
+    are all unmodified by this entry.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 159/159 passing (unchanged — docs-only
+    change, no new tests). Committed in `docs: defer Item 4 (frozen transition frame) to Phase B —
+    audit confirms structural fix requires shared compositor`.
+
+**Phase A is now fully ✅ COMPLETE (A1 + A2 + A3), its first follow-up (animation snap-back,
+residual issue 1) is ✅ COMPLETE, and residual issue 2 (frozen-frame transition blend) is now
+🔶 AUDITED / DEFERRED TO PHASE B** (see the audit entry immediately above — deliberately deferred
+after a completed audit, not forgotten or skipped; Section 8.2 carries a cross-reference expecting
+Phase B to resolve it as a natural consequence of its own already-planned scope, not new work).
+**Residual issue 3 (general playback lag) remains open, unscoped, a separate future
+investigation** — see the A3 entry above.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
@@ -470,8 +534,11 @@ still open, unscoped, separate efforts — see the A3 entry above.
   companion) — see ✅ COMPLETED above.** No longer pending. Post-A3 manual testing surfaced 3
   residual issues NOT part of Phase A's scope — see A3's own entry above for detail. Residual issue
   1 (animation snap-back) is now **✅ FIXED** as a separate Phase A follow-up (see its own
-  ✅ COMPLETED entry above); issues 2 (frozen-frame transition blend) and 3 (general playback lag)
-  remain open, unscoped, separate efforts.
+  ✅ COMPLETED entry above); residual issue 2 (frozen-frame transition blend) is now
+  **🔶 DEFERRED TO PHASE B** after a completed audit (see its own ✅ COMPLETED entry above and
+  Section 8.2's cross-reference below) — not forgotten or skipped, deliberately deferred pending
+  Phase B's shared compositor; residual issue 3 (general playback lag) remains open, unscoped, a
+  separate future investigation.
 - **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
   per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
   ffmpeg used once for final mux only. Full definition in Section 8 below.
@@ -930,6 +997,18 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
      single time).
   4. **Wire behind a capability + explicit toggle** (mirror Phase 1's dual-gate discipline) so the legacy
      PNG/ffmpeg export remains the default until Phase C's quality pass validates output.
+- **Cross-reference — expected to resolve residual issue 2 (frozen transition frame) as a
+  byproduct, not new scope.** Per the audited disposition in the Follow-On Effort tracker (Section
+  8.1 area, "frozen transition frame audited, deferred to Phase B", 2026-07-06): today
+  `useTransitionPreview.ts` blends two ONE-TIME snapshots because its only video source
+  (`frameRenderer.ts`'s HTML5 `<video>`-seek cache) is too slow (~200-400ms/seek) to sample every
+  render tick, while `segmentEncoder.ts` already renders every export transition frame live via
+  `renderSegmentFrame`. Once step 1's shared compositor puts preview's transition blend on the
+  same live, `VideoDecoderPool`-backed frame source export already uses — instead of
+  `frameRenderer.ts`'s seek-based cache — the frozen-snapshot mechanism is structurally retired.
+  This is expected to fall out of the already-planned steps above as a natural consequence of
+  unifying preview's frame-sourcing onto one compositor, not as separate new work requiring its
+  own step or scope in this section.
 - **Touch surface (all additive):** new `webcodecsEncoder.ts`, new shared-compositor module, new export
   orchestrator, a gated branch in `useExport.ts`. `videoDecoderPool.ts`/`videoDemuxer.ts` reused as-is.
 - **MUST NOT touch (until the new path is proven and cut over):** `frameRenderer.ts`, `segmentEncoder.ts`,
