@@ -1,5 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
-import { toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, resetChaseMutex, type ChaseMutex } from './useWebCodecsPreview';
+import {
+  toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, resetChaseMutex, type ChaseMutex,
+  isContentCaughtUp, computeDisplayedSegment, computeAnimTimeInSegment, computeOverlayHoldState, type OverlayHoldState,
+} from './useWebCodecsPreview';
 import { AnimationType, TransitionType, type VideoSegment } from '../types';
 
 /**
@@ -476,5 +479,130 @@ describe('resetChaseMutex', () => {
 
     releaseSecond!();
     await vi.waitFor(() => expect(mutex.chasing).toBe(false));
+  });
+});
+
+/**
+ * Transition-flicker (Bug 1) / animation-hard-cut (Bug 2) fix.
+ *
+ * Root cause (confirmed via diagnostic timestamps against a real decode
+ * session, docs/webcodecs-architecture-plan.md's follow-up notes):
+ * `currentSegment` (and everything computed synchronously from it every
+ * render in PreviewStage.tsx — the animation transform, useTransitionPreview's
+ * own `isActive`) flips in one render the instant currentTime crosses a
+ * segment boundary, but `frame`/`frameSegmentId` only catch up once
+ * `getFrameAt` actually resolves — measured up to ~436ms later under real
+ * decode load. isContentCaughtUp/computeDisplayedSegment/
+ * computeAnimTimeInSegment/computeOverlayHoldState are the pure functions
+ * PreviewStage.tsx composes to gate the animation transform and the
+ * transition-overlay's fade-out on that real catch-up instead of assuming
+ * it's instantaneous.
+ */
+describe('isContentCaughtUp', () => {
+  it('is true for a non-video segment (image/heading) regardless of frameSegmentId — those paint synchronously', () => {
+    expect(isContentCaughtUp('seg-1', false, null)).toBe(true);
+    expect(isContentCaughtUp('seg-1', false, 'seg-0')).toBe(true);
+  });
+
+  it('is true when there is no current segment', () => {
+    expect(isContentCaughtUp(undefined, true, 'seg-0')).toBe(true);
+  });
+
+  it('is false for a video segment whose frameSegmentId has not caught up yet', () => {
+    expect(isContentCaughtUp('seg-1', true, 'seg-0')).toBe(false);
+    expect(isContentCaughtUp('seg-1', true, null)).toBe(false);
+  });
+
+  it('is true for a video segment once frameSegmentId matches', () => {
+    expect(isContentCaughtUp('seg-1', true, 'seg-1')).toBe(true);
+  });
+});
+
+describe('computeDisplayedSegment', () => {
+  const seg1 = makeSegment({ id: 'seg-1', startTime: 0, duration: 5 });
+  const seg2 = makeSegment({ id: 'seg-2', startTime: 5, duration: 5 });
+
+  it('adopts currentSegment immediately when content is caught up', () => {
+    expect(computeDisplayedSegment(seg2, true, seg1)).toBe(seg2);
+  });
+
+  it('holds the previous segment when content has not caught up yet', () => {
+    expect(computeDisplayedSegment(seg2, false, seg1)).toBe(seg1);
+  });
+
+  it('adopts currentSegment immediately when there is nothing previously displayed to hold (cold start)', () => {
+    expect(computeDisplayedSegment(seg1, false, undefined)).toBe(seg1);
+  });
+
+  it('returns undefined when there is no current segment (e.g. past the end of the timeline)', () => {
+    expect(computeDisplayedSegment(undefined, false, seg1)).toBeUndefined();
+  });
+});
+
+describe('computeAnimTimeInSegment', () => {
+  it('returns 0 when there is no segment to compute against', () => {
+    expect(computeAnimTimeInSegment(undefined, 12.3)).toBe(0);
+  });
+
+  it('matches plain elapsed-time-in-segment for a currentTime still inside the segment (unchanged from pre-fix behavior)', () => {
+    const seg = makeSegment({ startTime: 10, duration: 5 });
+    expect(computeAnimTimeInSegment(seg, 12)).toBeCloseTo(2, 9);
+  });
+
+  it('clamps to the segment duration when currentTime has moved past its end — the held-over-previous-segment case', () => {
+    // This is exactly the Bug 2 scenario: displayedSegmentRef is still holding
+    // the OUTGOING segment (startTime=0, duration=5) while currentTime has
+    // already advanced into the next segment (e.g. t=5.4, mid content-catch-up
+    // gap). Without the clamp this would return 5.4, continuing to extrapolate
+    // the animation past where the segment ever actually played; the fix
+    // freezes it at exactly 5 (its own natural end state).
+    const seg = makeSegment({ startTime: 0, duration: 5 });
+    expect(computeAnimTimeInSegment(seg, 5.4)).toBe(5);
+  });
+
+  it('clamps to 0 for a currentTime before the segment starts (defensive floor, matches original Math.max(0, ...))', () => {
+    const seg = makeSegment({ startTime: 10, duration: 5 });
+    expect(computeAnimTimeInSegment(seg, 9)).toBe(0);
+  });
+});
+
+describe('computeOverlayHoldState', () => {
+  const idle: OverlayHoldState = { wasTransitionActive: false, holding: false };
+
+  it('does not engage the hold at a plain (no-transition) boundary — nothing was active, nothing to hold', () => {
+    // contentCaughtUp false here simulates a video-to-video boundary with no
+    // transition configured: content lags, but since no transition was ever
+    // active there is nothing for the overlay to hold onto.
+    const next = computeOverlayHoldState(idle, false, false);
+    expect(next.holding).toBe(false);
+  });
+
+  it('engages the hold exactly when a real transition window closes before content has caught up', () => {
+    // Render 1: transition window still open.
+    const duringTransition = computeOverlayHoldState(idle, true, false);
+    expect(duringTransition).toEqual({ wasTransitionActive: true, holding: false });
+
+    // Render 2: the boundary crossed — isTransitionActive just went false,
+    // and content has NOT caught up yet. This is the exact Bug 1 scenario.
+    const atBoundary = computeOverlayHoldState(duringTransition, false, false);
+    expect(atBoundary.holding).toBe(true);
+  });
+
+  it('keeps holding across multiple renders while content still has not caught up', () => {
+    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
+    const next = computeOverlayHoldState(holding, false, false);
+    expect(next).toEqual({ wasTransitionActive: false, holding: true });
+  });
+
+  it('releases the hold the instant content catches up', () => {
+    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
+    const next = computeOverlayHoldState(holding, false, true);
+    expect(next.holding).toBe(false);
+  });
+
+  it('a new transition becoming active always clears any stale hold (defensive — should not normally coincide)', () => {
+    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
+    const next = computeOverlayHoldState(holding, true, false);
+    expect(next).toEqual({ wasTransitionActive: true, holding: false });
   });
 });

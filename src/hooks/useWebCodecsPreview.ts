@@ -73,6 +73,19 @@ export interface UseWebCodecsPreviewResult {
   isVideoSegment: boolean;
   /** Non-fatal demux/decode error for the current segment's session, if any. */
   error: string | null;
+  /**
+   * The segment id `frame` actually belongs to — i.e. the last segment for
+   * which a real (non-null) decoded frame has been committed to state. This
+   * lags `currentSegment.id` by however long `getFrameAt` takes to resolve
+   * after a boundary crossing (measured up to ~436ms under real decode load
+   * — see the transition-flicker/animation-hard-cut investigation in
+   * docs/webcodecs-architecture-plan.md's follow-up notes). Callers that
+   * need to know "has the visible content actually caught up to
+   * currentSegment yet" (PreviewStage.tsx's transition-overlay hold and
+   * animation-transform freeze) compare this against `currentSegment.id`
+   * directly, rather than assuming the swap is instantaneous.
+   */
+  frameSegmentId: string | null;
 }
 
 /**
@@ -272,6 +285,105 @@ export function computeKeepSet(
   return keep;
 }
 
+/**
+ * Bug 1 (transition flicker) / Bug 2 (animation hard-cut) fix — the core
+ * predicate both fixes gate on: has the WebCodecs live layer actually
+ * caught up to currentSegment yet, or is it still painting a previous
+ * segment's last frame? Non-video segments (image/heading) paint
+ * synchronously in the same render as a segment change, so they're always
+ * considered caught up.
+ *
+ * Extracted as a pure function — same testability rationale as
+ * computeKeepSet above — so PreviewStage.tsx's transition-overlay hold and
+ * animation-transform freeze (both downstream of this) are directly
+ * unit-testable without a React rendering harness.
+ */
+export function isContentCaughtUp(
+  currentSegmentId: string | undefined,
+  isVideoSegment: boolean,
+  frameSegmentId: string | null,
+): boolean {
+  return !currentSegmentId || !isVideoSegment || frameSegmentId === currentSegmentId;
+}
+
+/**
+ * Which segment's content (and therefore which segment's own animation
+ * transform) is actually on screen right now — Bug 2's fix. Held at
+ * `previousDisplayed` for as long as `contentCaughtUp` is false, so a
+ * caller computing an animation transform from the returned segment keeps
+ * using the OUTGOING segment's own values (frozen at its natural end state,
+ * via computeAnimTimeInSegment's clamp below) instead of snapping to the
+ * new segment's start while its content is still lingering on screen.
+ * Adopts `currentSegment` immediately once caught up, or immediately when
+ * there's nothing meaningful to hold yet (no previousDisplayed — e.g. the
+ * very first segment ever played, before any frame has arrived).
+ */
+export function computeDisplayedSegment(
+  currentSegment: VideoSegment | undefined,
+  contentCaughtUp: boolean,
+  previousDisplayed: VideoSegment | undefined,
+): VideoSegment | undefined {
+  if (!currentSegment || contentCaughtUp || !previousDisplayed) {
+    return currentSegment;
+  }
+  return previousDisplayed;
+}
+
+/**
+ * The playhead position to compute an animation transform from, clamped to
+ * [0, segment.duration]. The upper clamp matters specifically when `segment`
+ * is a held-over PREVIOUS segment (computeDisplayedSegment above) —
+ * currentTime has necessarily moved past its end by then, so without the
+ * clamp the animation math (e.g. Ken Burns' `1 + 0.05 * timeInSegment`)
+ * would keep extrapolating past where that segment ever actually played,
+ * instead of freezing at its own natural end-of-segment value.
+ */
+export function computeAnimTimeInSegment(
+  segment: Pick<VideoSegment, 'duration' | 'startTime'> | undefined,
+  currentTime: number,
+): number {
+  if (!segment) return 0;
+  return Math.max(0, Math.min(segment.duration, currentTime - (segment.startTime ?? 0)));
+}
+
+/** Carried across renders (e.g. via a ref in PreviewStage.tsx) — see
+ *  computeOverlayHoldState below. */
+export interface OverlayHoldState {
+  wasTransitionActive: boolean;
+  holding: boolean;
+}
+
+/**
+ * Bug 1's fix — whether the transition overlay should stay visible past the
+ * moment its own transition window closes. A real transition window closing
+ * (isTransitionActive true -> false) while content hasn't caught up yet
+ * (contentCaughtUp false) engages the hold; the hold releases the instant
+ * content catches up. Deliberately does NOT engage merely because
+ * `!contentCaughtUp` on its own — a plain (no-transition) boundary has
+ * nothing for the overlay to hold, so the hold only ever starts right at a
+ * real transition's own close (`prev.wasTransitionActive` true).
+ *
+ * Extracted as a pure state-transition function (same shape as the
+ * ChaseMutex helpers above) so the exact hold/release sequence is directly
+ * unit-testable — a caller stores the returned state (e.g. in a ref) and
+ * feeds it back in as `prev` on the next render.
+ */
+export function computeOverlayHoldState(
+  prev: OverlayHoldState,
+  isTransitionActive: boolean,
+  contentCaughtUp: boolean,
+): OverlayHoldState {
+  let holding = prev.holding;
+  if (isTransitionActive) {
+    holding = false;
+  } else if (prev.wasTransitionActive && !contentCaughtUp) {
+    holding = true;
+  } else if (contentCaughtUp) {
+    holding = false;
+  }
+  return { wasTransitionActive: isTransitionActive, holding };
+}
+
 export function useWebCodecsPreview({
   segments,
   assets,
@@ -284,6 +396,12 @@ export function useWebCodecsPreview({
 
   const [frame, setFrame] = useState<VideoFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The segment id the currently-committed `frame` actually belongs to — see
+  // the field's doc on UseWebCodecsPreviewResult. React state (not a ref):
+  // callers need a render to fire the moment this catches up to
+  // currentSegment, since that's precisely the signal that unfreezes the
+  // transition-overlay hold / animation-transform freeze in PreviewStage.tsx.
+  const [frameSegmentId, setFrameSegmentId] = useState<string | null>(null);
   // Bumped whenever the active segment/enabled state changes, so a chase
   // loop left over from the previous segment recognizes it's stale and
   // stops without setting a stale frame — same race-guard shape as
@@ -396,6 +514,7 @@ export function useWebCodecsPreview({
       epochKeyRef.current = null;
       ++generationRef.current;
       setFrame(null);
+      setFrameSegmentId(null);
       return;
     }
     const pool = poolRef.current!;
@@ -406,6 +525,10 @@ export function useWebCodecsPreview({
     // already-running chase loop for this same segment think it had been
     // superseded and stop early instead of settling on the latest target.
     if (epochKeyRef.current !== segmentId) {
+      // [DIAG] Temporary instrumentation for the transition-flicker / animation-hard-cut
+      // investigation (docs/webcodecs-architecture-plan.md follow-up bugs). Not a fix —
+      // remove once the timing sequence has been captured from a real repro.
+      console.log(`[DIAG] segment-flip -> ${segmentId} @ ${performance.now().toFixed(1)}ms (prevFrameSegWas=${epochKeyRef.current})`);
       epochKeyRef.current = segmentId;
       ++generationRef.current;
       // Phase 5 fix (docs/webcodecs-architecture-plan.md): chaseLatestTarget's
@@ -450,8 +573,18 @@ export function useWebCodecsPreview({
         }),
       (result) => {
         if (generationRef.current !== generation) return; // superseded by a segment/enabled change — paint nothing
+        // [DIAG] see the segment-flip log above — remove together.
+        console.log(`[DIAG] frame-settled seg=${segmentId} sourcePts=${result ? (result.timestamp / 1e6).toFixed(3) : 'null'}s @ ${performance.now().toFixed(1)}ms`);
         setFrame(result);
-        if (result) setError(null);
+        if (result) {
+          setError(null);
+          // Only a REAL frame counts as "content caught up" for this segment —
+          // a null result (nothing decoded yet) must leave frameSegmentId
+          // pointing at whatever segment was last genuinely displayed, so
+          // callers gating on frameSegmentId === currentSegment.id keep
+          // correctly reporting "not ready" rather than falsely matching.
+          setFrameSegmentId(segmentId);
+        }
       },
     );
   }, [enabled, currentSegment, isVideoSegment, currentAsset, currentTime]);
@@ -492,5 +625,10 @@ export function useWebCodecsPreview({
     };
   }, []);
 
-  return { frame: enabled && isVideoSegment ? frame : null, isVideoSegment: enabled && isVideoSegment, error };
+  return {
+    frame: enabled && isVideoSegment ? frame : null,
+    isVideoSegment: enabled && isVideoSegment,
+    error,
+    frameSegmentId: enabled && isVideoSegment ? frameSegmentId : null,
+  };
 }

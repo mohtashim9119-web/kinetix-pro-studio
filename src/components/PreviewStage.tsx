@@ -12,7 +12,14 @@ import { applyTransitionBlend } from '../services/frameRenderer';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
-import { useWebCodecsPreview } from '../hooks/useWebCodecsPreview';
+import {
+  useWebCodecsPreview,
+  isContentCaughtUp,
+  computeDisplayedSegment,
+  computeAnimTimeInSegment,
+  computeOverlayHoldState,
+  type OverlayHoldState,
+} from '../hooks/useWebCodecsPreview';
 import { PreviewCanvas } from './PreviewCanvas';
 
 // Live-preview side of the animation pipeline. The export side
@@ -253,6 +260,13 @@ export function PreviewStage({
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
   const currentTimeRef = useRef(currentTime);
 
+  // Transition-flicker (Bug 1) / animation-hard-cut (Bug 2) fix — see the
+  // synchronization block below (right after webCodecsPreview is set up)
+  // for the full explanation. These are read AND written synchronously at
+  // render time there, not inside effects, so refs (not state) are correct.
+  const displayedSegmentRef = useRef<VideoSegment | undefined>(undefined);
+  const overlayHoldStateRef = useRef<OverlayHoldState>({ wasTransitionActive: false, holding: false });
+
   // //FFCACHE — First-frame cache (Phase 1 correctness layer). Warms a cached
   // frame per video segment at sync/idle time; `coverState` tracks which segment
   // (if any) we are currently masking with a cached frame while its live <video>
@@ -378,6 +392,67 @@ export function PreviewStage({
     enabled: useWebCodecsPath,
   });
 
+  // [DIAG] Temporary instrumentation for the transition-flicker (Bug 1) /
+  // animation-hard-cut (Bug 2) investigation. Not a fix — remove all three
+  // effects below (and their counterparts in useWebCodecsPreview.ts) once the
+  // real timing sequence has been captured from a manual repro.
+  useEffect(() => {
+    console.log(`[DIAG] currentSegment -> ${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
+  }, [currentSegment?.id]);
+  useEffect(() => {
+    console.log(`[DIAG] transitionPreview.isActive -> ${transitionPreview.isActive} progress=${transitionPreview.progress.toFixed(3)} seg=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
+  }, [transitionPreview.isActive]);
+  useEffect(() => {
+    console.log(`[DIAG] webCodecsPreview.frame changed sourcePts=${webCodecsPreview.frame ? (webCodecsPreview.frame.timestamp / 1e6).toFixed(3) : 'null'}s for currentSegment=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
+  }, [webCodecsPreview.frame]);
+
+  // ---------------------------------------------------------------------------
+  // Bug 1 (transition flicker) + Bug 2 (animation hard-cut) fix.
+  //
+  // Root cause, confirmed via the [DIAG] timestamps above: `currentSegment`
+  // (and everything computed synchronously from it every render — the
+  // animation transform below, useTransitionPreview's own `isActive`) flips
+  // in a single render the instant currentTime crosses a segment boundary.
+  // But useWebCodecsPreview's `frame` is committed asynchronously — measured
+  // up to ~436ms after the flip under real decode load, with zero frame
+  // updates in between — so the WebCodecs canvas keeps painting the OUTGOING
+  // segment's last frame for that whole window while everything else has
+  // already moved on to the incoming segment's zero-state. `frameSegmentId`
+  // (see that hook) tells us exactly when the gap closes; both fixes below
+  // gate on it directly instead of assuming the swap is instantaneous or
+  // waiting a fixed delay.
+  //
+  // Computed synchronously at render time (not inside a useEffect) — the
+  // very render where the boundary crosses must already reflect this, or a
+  // single un-gated frame is enough to show the bug. This is the same
+  // "read a ref directly at render time, not as an effect dependency"
+  // pattern useTransitionPreview.ts already uses for isResizingRef, for the
+  // identical reason: an effect would only correct things one paint later,
+  // which is smaller than but the same class of gap this fix closes.
+  // ---------------------------------------------------------------------------
+  const contentCaughtUp = isContentCaughtUp(currentSegment?.id, webCodecsPreview.isVideoSegment, webCodecsPreview.frameSegmentId);
+
+  // Bug 2 — which segment's content (and therefore which segment's own
+  // animation transform) is actually on screen right now.
+  displayedSegmentRef.current = computeDisplayedSegment(currentSegment, contentCaughtUp, displayedSegmentRef.current);
+  const animSegment = displayedSegmentRef.current;
+  const animTimeInSegment = computeAnimTimeInSegment(animSegment, currentTime);
+
+  // Bug 1 — hold the transition overlay visible (at its last-blended
+  // content — the existing "do NOT clearRect" retention in the draw effect
+  // below already keeps that content painted) past the moment its own
+  // transition window closes, for as long as content hasn't caught up to
+  // the segment it's handing off to.
+  const overlayHoldState = computeOverlayHoldState(overlayHoldStateRef.current, transitionPreview.isActive, contentCaughtUp);
+  overlayHoldStateRef.current = overlayHoldState;
+  const showTransitionOverlay = transitionPreview.isActive || overlayHoldState.holding;
+
+  // [DIAG] logs the hold engaging/releasing — remove together with the rest.
+  useEffect(() => {
+    console.log(`[DIAG] showTransitionOverlay -> ${showTransitionOverlay} (isActive=${transitionPreview.isActive}, hold=${overlayHoldState.holding}, contentCaughtUp=${contentCaughtUp}) seg=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showTransitionOverlay]);
+
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
   // The canvas is sized to match the stage via CSS (position:absolute inset-0).
   useEffect(() => {
@@ -450,8 +525,11 @@ export function PreviewStage({
     }
   };
 
-  // Suppress Framer Motion entry/exit animations while canvas is handling the transition.
-  const suppressMotionAnim = transitionPreview.isActive;
+  // Suppress Framer Motion entry/exit animations while canvas is handling the
+  // transition — extended through the Bug 1 hold window (showTransitionOverlay),
+  // not just the raw transition window, so the wrapper doesn't attempt its own
+  // entrance animation while the overlay is still covering for content catch-up.
+  const suppressMotionAnim = showTransitionOverlay;
 
   // FIX 2 — Keep currentTimeRef current so the segment-change effect can read
   // playhead position without adding `currentTime` to its dep array (which would
@@ -759,14 +837,19 @@ export function PreviewStage({
               <motion.div
                 className="absolute inset-0 overflow-hidden"
                 {...(suppressMotionAnim ? {} : getAnimationWrapperProps(
+                  // Bug 2 fix — driven by animSegment (the segment whose content
+                  // is actually on screen, per the WebCodecs catch-up gate above),
+                  // not currentSegment directly: see the fix block's comment.
                   // effectAnimation slug wins over the legacy segment.animation
                   // (same resolution as the export path in frameRenderer.ts).
-                  ((currentSegment.effectAnimation && currentSegment.effectAnimation !== 'none')
-                    ? currentSegment.effectAnimation as AnimationType
-                    : currentSegment.animation) ?? AnimationType.NONE,
-                  currentSegment.duration,
-                  // timeInSegment: playhead position within this segment, clamped ≥ 0.
-                  Math.max(0, currentTime - (currentSegment.startTime ?? 0)),
+                  (() => {
+                    const seg = animSegment ?? currentSegment;
+                    return ((seg.effectAnimation && seg.effectAnimation !== 'none')
+                      ? seg.effectAnimation as AnimationType
+                      : seg.animation) ?? AnimationType.NONE;
+                  })(),
+                  (animSegment ?? currentSegment).duration,
+                  animTimeInSegment,
                 ))}
               >
                 {(() => {
@@ -944,7 +1027,10 @@ export function PreviewStage({
                 className="absolute inset-0 pointer-events-none"
                 style={{
                   zIndex: 40,
-                  opacity: transitionPreview.isActive ? 0 : 1,
+                  // Bug 1 fix — extended through the hold window (showTransitionOverlay),
+                  // same reasoning as the canvas overlay below: don't fade extra overlays
+                  // in until the overlay they're handing off from is actually releasing.
+                  opacity: showTransitionOverlay ? 0 : 1,
                   transition: 'opacity 100ms ease',
                 }}
               >
@@ -1046,7 +1132,15 @@ export function PreviewStage({
           className="absolute inset-0 w-full h-full pointer-events-none"
           style={{
             zIndex: 45,
-            opacity: transitionPreview.isActive ? 1 : 0,
+            // Bug 1 fix — showTransitionOverlay (not the raw transitionPreview.isActive)
+            // holds this canvas at opacity 1 past the transition window's own end, for as
+            // long as the WebCodecs live layer underneath hasn't caught up to the segment
+            // this overlay is handing off to. The draw effect above already retains the
+            // last-blended (near-fully-incoming) content on the canvas for exactly this
+            // window — see its "do NOT clearRect" comment — so holding opacity just keeps
+            // that correct content visible instead of prematurely revealing the still-stale
+            // live layer beneath it.
+            opacity: showTransitionOverlay ? 1 : 0,
             transition: 'opacity 100ms ease',
           }}
         />
