@@ -139,6 +139,40 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 
 ---
 
+## Follow-On Effort — Preview/Export Unification (Phases A–C)
+
+**Status:** NOT STARTED. This is a distinct, second effort layered on top of the now-complete
+Phases 0–8. Phases 0–8 replaced the *preview* video path with WebCodecs and left the export
+pipeline untouched by hard gate (7.1 #6). This follow-on removes that firewall deliberately:
+it adapts **export** to WebCodecs too, unifies preview and export behind ONE compositor, and
+closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix.
+
+**Locked technical decisions (do not re-litigate during implementation):**
+- Single master clock = the audio playhead (`usePlayback.ts`, UNCHANGED) for BOTH preview and export.
+- ONE shared compositor drives both paths (built in Phase B; today preview and export composite separately).
+- Decode: the existing `videoDecoderPool.ts` / `videoDemuxer.ts` (WebCodecs `VideoDecoder`), reused as-is.
+- Export encode: WebCodecs `VideoEncoder` (hardware-accelerated first, software fallback), quality-pinned.
+- ffmpeg sidecar retained for the FINAL audio+video mux ONLY (once per export, never per-frame).
+- OUT OF SCOPE for this whole effort: the sync system, timeline/editing, `App.tsx` orchestration
+  state. Do not touch them.
+
+### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
+
+- **Phase A — Unify the clock (preview).** Convert the wall-clock Framer-Motion animation twins to
+  playhead-driven transforms (like Ken Burns already is); eliminate — not just hold — the boundary
+  catch-up frozen frame; align transition timing so preview matches export exactly. Full definition
+  in Section 8 below.
+- **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
+  per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
+  ffmpeg used once for final mux only. Full definition in Section 8 below.
+- **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
+  drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
+  output. Full definition in Section 8 below.
+- **Quick wins (do first, independently mergeable):** strip per-frame `[DIAG]`/`//FFCACHE`/`console.debug`
+  logging from the hot paths; add a black-flash guard; image-dip on image-segment boundaries. Section 8.
+
+---
+
 ## 1. Feasibility Confirmation
 
 ### 1.1 Correcting a load-bearing assumption: Tauri's webview is *not* uniformly Chromium
@@ -478,3 +512,161 @@ The first attempt produced **"Chunks fed: 936"** and **"Check 4 — output order
 ### Recommendation
 
 **Proceed to Phase 1 implementation planning — the feasibility gate Section 1.5 required is now closed on both engines this project ships to a real browser-engine test on.** The one thing this cross-check could not do — test older macOS/WebKit versions or Windows — is appropriately deferred to Phase 8's broader regression pass rather than blocking Phase 1 from starting.
+
+---
+
+## 8. Follow-On: Preview/Export Unification (Phases A–C)
+
+This section defines the follow-on effort announced in the Progress Tracker above, in the same
+phase format as Section 5. Each phase is independently completable, testable, and revertible.
+Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<video>` fallback
+(Section 1.6) is not touched by any of them.
+
+### 8.0 Quick wins (land first, each independently)
+
+- **Goal:** remove hot-path noise and two cheap visual guards before the larger phases, so their
+  manual testing isn't drowned in log spam.
+- **Steps:**
+  1. Delete the `[DIAG]` instrumentation: `useWebCodecsPreview.ts:528-531` and `:576-577`;
+     `PreviewStage.tsx:395-407` (the three DIAG effects) and `:450-452`. These are explicitly
+     marked "Temporary instrumentation … remove together."
+  2. Delete or `import.meta.env.DEV`-gate the `//FFCACHE` logs at `PreviewStage.tsx:648,658,664,673`.
+  3. Downgrade/remove `console.debug` seek logs at `frameRenderer.ts:161,166` and `segmentEncoder.ts:109`
+     (export path — these fire per frame).
+  4. Black-flash guard: in `PreviewCanvas.tsx`, when the incoming frame for a new segment hasn't
+     arrived yet, retain the last painted bitmap (do not `clearRect`) rather than showing empty canvas.
+  5. Image-dip: on an image→image or image-involved boundary with no explicit transition, apply the
+     existing dip fallback rather than a hard cut (parity with how video boundaries already read).
+- **Note (avoid a permanent band-aid):** the black-flash guard (step 4) and image-dip (step 5) are
+  interim *symptom*-guards ONLY if their root cause isn't already eliminated by Phase A's boundary-frame
+  pin (8.1 step 2). If Phase A removes the root — the incoming boundary frame is decoded and available
+  before the playhead crosses — revisit whether these guards are still needed rather than leaving them
+  in place permanently.
+- **Touch surface:** `useWebCodecsPreview.ts`, `PreviewStage.tsx`, `PreviewCanvas.tsx`,
+  `frameRenderer.ts` (log lines only), `segmentEncoder.ts` (log line only).
+- **MUST NOT touch:** `usePlayback.ts`, `videoDecoderPool.ts` frame logic, any export encode/concat/mux logic.
+- **Manual test (you run):** open devtools console, play a 4-segment project through two boundaries —
+  console shows no per-frame spam; no black flash at any boundary; an image→image boundary dips rather
+  than hard-cuts.
+- **Tracker rows on completion (⬜ → ✅):**
+  `- **Quick wins — hot-path log strip + black-flash guard + image-dip.** …tsc clean, vitest N/N. Committed in …`
+
+### 8.1 Phase A — Unify the clock (preview: playhead-driven animations, no frozen boundary, aligned transition timing)
+
+- **Goal:** every preview animation, transition, and boundary crossing is a pure function of the audio
+  playhead — pauses freeze, seeks jump exactly, and what preview shows at time T is what export renders
+  at time T. Closes audit findings #3 (fully), #4 (root, not just mitigation), and preview/export
+  transition-timing parity.
+- **Concrete steps:**
+  1. **Playhead animation twins.** Rewrite the `getMotionProps(...)` branches in
+     `getAnimationWrapperProps` (`PreviewStage.tsx:70-103`: FLOAT, SHAKE, PULSE, WOBBLE, HEARTBEAT,
+     BOUNCE, SKEW, GLITCH, NEON_FLICKER, ROTATE) to return a static `transform` computed from
+     `timeInSegment`, mirroring the KEN_BURNS/ZOOM precedent at `:53-68` and the export math in
+     `canvasAnimations.ts`. Framer Motion's wall-clock `repeat: Infinity` animations are replaced with
+     per-render deterministic transforms. This is the single source of the preview↔export animation twin.
+  2. **Eliminate the boundary frozen frame.** Extend the decode-ahead so the incoming segment's *exact
+     boundary frame* (its frame at `trimStart`) is decoded and available before the playhead crosses,
+     rather than relying solely on `frameSegmentId` to *hold* the outgoing frame after the fact
+     (`PreviewStage.tsx:433-448`). Add a "pin the boundary frame of the next segment" request into
+     `useWebCodecsPreview.ts`'s decode-ahead (reuse `videoDecoderPool`'s existing `ensureSession` +
+     `initialTargetSec`); keep the `frameSegmentId` hold as a safety net, but it should rarely engage.
+  3. **Transition-timing alignment.** Audit `useTransitionPreview.ts`'s window math (`PRE_ROLL_LEAD_S`,
+     the `inTransitionWindow` start/end) against `segmentEncoder.ts`'s transition frame range so the
+     blend covers the identical `[start,end]` fraction of the segment in preview and export. Both already
+     share `applyTransitionBlend` (Section 2.4); this step aligns *when* it runs, not *how* it blends.
+- **Touch surface:** `PreviewStage.tsx:39-108` (animation wrapper), `PreviewStage.tsx:409-448`
+  (catch-up gate), `useWebCodecsPreview.ts` (boundary-frame pin), `useTransitionPreview.ts` (window math).
+- **MUST NOT touch:** `usePlayback.ts` (audio clock), `frameRenderer.ts`, `segmentEncoder.ts`,
+  `canvasAnimations.ts` (export animation math is the reference — read it, don't change it), any file
+  under `src-tauri/`. Do not convert overlays/captions off the DOM (Section 6 risk 5 stands).
+- **Manual test (you run):** in the Tauri app, a project with (a) a BOUNCE segment — pause mid-segment:
+  the bounce freezes (today it keeps animating); scrub: it tracks the playhead; (b) two video segments
+  with a cross-dissolve — play through repeatedly: no frozen/black frame at the boundary, no flash-back;
+  (c) eyeball the same BOUNCE + dissolve in an actual export and confirm preview matched frame-for-frame.
+- **Tracker rows on completion (⬜ → ✅):** `- **Phase A — Unify the clock (preview).** …` in the
+  standard format, ending with tsc/vitest counts + "Committed in …".
+
+### 8.2 Phase B — Export onto WebCodecs `VideoEncoder` behind ONE shared compositor
+
+- **Goal:** export renders through the SAME compositor that paints preview, encoded by a
+  hardware-accelerated `VideoEncoder`; ffmpeg runs once, for the final audio+video mux only. Retires the
+  per-frame HTML5-seek → PNG → `ffmpeg_write_file` path. Closes audit finding #5 (the ~6-min regression)
+  and is the structural change that makes preview == export true by construction.
+- **Concrete steps:**
+  1. **Extract the shared compositor as a BEHAVIOUR-PRESERVING pure move FIRST.** Factor the
+     frame-composite logic (draw decoded frame → filters → overlays → animation transform → transition
+     blend) into one module, as a pure move that leaves preview's output byte-for-byte unchanged —
+     verified against the Phase 5 (`buildPhase5Fixture.ts`) and Phase 7+8 (`buildCheckpoint2Fixture.ts`)
+     preview fixtures BEFORE export is pointed at it. Never refactor preview to fit export; export is
+     pointed at the already-proven compositor, not the reverse. The compositor composites from a
+     `VideoFrame`/bitmap the decode pool already produces — NOT from an HTML5 `<video>` seek.
+     `frameRenderer.ts` stays in the tree for the legacy fallback but is no longer on the new export path.
+  2. **New `src/services/webcodecsEncoder.ts`.** Wrap `VideoEncoder`: `isConfigSupported` probe →
+     hardware (`avc1`, `hardwareAcceleration: 'prefer-hardware'`) first, software fallback; feed composited
+     frames keyed on the audio-master timeline; collect `EncodedVideoChunk`s.
+  3. **New export orchestrator path** parallel to `exportPipeline.ts` (do not mutate the legacy one):
+     decode via `videoDecoderPool` → composite via the shared module (from step 1) → encode via
+     `webcodecsEncoder` → write ONE elementary/mp4 video stream → ffmpeg sidecar muxes audio in once
+     (reuse the existing `save_bytes_to_disk` / mux IPC, `exportPipeline.ts:206-280`, but called a
+     single time).
+  4. **Wire behind a capability + explicit toggle** (mirror Phase 1's dual-gate discipline) so the legacy
+     PNG/ffmpeg export remains the default until Phase C's quality pass validates output.
+- **Touch surface (all additive):** new `webcodecsEncoder.ts`, new shared-compositor module, new export
+  orchestrator, a gated branch in `useExport.ts`. `videoDecoderPool.ts`/`videoDemuxer.ts` reused as-is.
+- **MUST NOT touch (until the new path is proven and cut over):** `frameRenderer.ts`, `segmentEncoder.ts`,
+  `plainSegment.ts`, existing `exportPipeline.ts` bodies, `usePlayback.ts`. ffmpeg is mux-only — no
+  per-frame `ffmpeg_exec`/`ffmpeg_write_file` on the new path.
+- **Manual test (you run):** export a 33s clip WITH effects on the new path; confirm (a) wall time ≈ 40s,
+  not ~6 min; (b) output plays start-to-finish in QuickTime/VLC with correct A/V sync; (c) frame-compare
+  three stills against the live preview at the same timestamps — identical.
+- **Tracker rows on completion (⬜ → ✅):** standard-format entry + a note that the legacy export path
+  is retained behind the gate.
+
+### 8.3 Phase C — Quality pass (real color conversion, drift correction, quality-pinned encode)
+
+- **Goal:** full-HD, no perceptible quality loss, correct color, and zero cumulative audio/video drift
+  across a long timeline. Closes audit findings #6 (frame-count drift) and #7 (sRGB-tagged-bt709).
+- **Concrete steps:**
+  1. **Real color-space handling.** Today `segmentEncoder.ts:184-186/273-275/373-375` only *tags*
+     bt709 on sRGB canvas pixels — no conversion. On the WebCodecs encoder path, either encode in the
+     color space the compositor actually produces and tag it truthfully, or perform an explicit
+     sRGB→bt709 conversion before encode. Verify with a color-bar/gradient asset that a round-tripped
+     export matches the source, not a gamma-shifted version.
+  2. **Cross-segment drift correction.** Replace independent per-segment `round(duration*fps)`
+     (`segmentEncoder.ts:99, :362`) with timestamps derived from the single audio master clock, so
+     segment N's frames start at the exact accumulated timeline time, not `sum(rounded durations)`.
+     Encoder frame `timestamp`s come from the same playhead mapping preview uses (`toSourceTime`/timeline
+     time), eliminating cumulative drift by construction.
+  3. **Quality-pinned encoder config.** Pin `VideoEncoder` bitrate/quality for full-HD no-loss
+     (`bitrateMode: 'quantizer'` / low-CRF-equivalent, keyframe interval, 1080p, bt709), matching or
+     exceeding the current libx264 `crf 16` fidelity.
+- **Touch surface:** `webcodecsEncoder.ts` (config), the new export orchestrator (timestamp derivation),
+  shared compositor (color output). If any color fix is unavoidable on the *legacy* export path too,
+  that is a separate, explicitly-scoped change — flag it, don't fold it in.
+- **MUST NOT touch:** `usePlayback.ts`, sync engine, timeline. Do not tune the legacy libx264 flags as
+  part of this phase unless separately agreed.
+- **Manual test (you run):** (a) export a color-bar/gradient image; open source and export side-by-side —
+  no hue/gamma shift; (b) export a 5-min, many-segment project; confirm audio and video stay locked at
+  the end (clap/beat lands on frame); (c) inspect the export at 1080p — sharp, no banding/softening vs. preview.
+- **Tracker rows on completion (⬜ → ✅):** standard-format entry; note whether the legacy path's color
+  tagging was left as-is (fallback) or separately corrected.
+
+### 8.4 Risk Register additions (append rows to Section 6's table)
+
+| Phase | Risk | Why it matters | Mitigation direction |
+|---|---|---|---|
+| A | Converting wall-clock twins to playhead transforms changes the *look* of FLOAT/SHAKE/etc. (Framer easing ≠ static transform) | A "fix" that visibly alters a shipped animation is a regression to users | Match `canvasAnimations.ts`'s export math exactly — the goal is preview *matching export*, so export is the reference look; diff against an export, not against today's preview |
+| B | `VideoEncoder` hardware support/quality varies by engine (WKWebView vs WebView2); `isConfigSupported` may pass but produce poor output | Export quality is the whole point; a silent quality drop is worse than a slow-but-correct export | Probe + software fallback + keep legacy ffmpeg export behind the gate until Phase C validates; per-engine manual export check |
+| B | Extracting ONE compositor risks changing preview's proven-correct output | Phases 0–8's preview correctness is hard-won; a refactor could regress it | Extract behaviour-preserving (pure move first, verified against Phase 5/7+8 fixtures), then point export at it — never the reverse order |
+| C | `VideoEncoder` timestamp/CFR handling may not cleanly accept audio-master-derived timestamps | Drift correction depends on the encoder honoring supplied timestamps | Validate timestamp fidelity on a synthetic long project early in Phase C, before pinning quality constants |
+
+### 8.5 Merge-gate additions (append to Section 7.1)
+
+7. **Preview == export, demonstrated.** For a project exercising animations + a transition + a filter,
+   three stills sampled from the live preview match the exported frames at the same timestamps.
+8. **Export speed restored.** A 33s clip WITH effects exports in ≈ 40s (not ~6 min), via WebCodecs
+   `VideoEncoder`, ffmpeg invoked once for mux only.
+9. **Full-HD, correct color, no drift.** Color-bar round-trip shows no gamma/hue shift; a 5-min
+   many-segment export stays A/V-locked end to end; output is 1080p with no visible quality loss.
+10. **Legacy export path still intact behind its gate** until Phases B/C are cut over — same
+    superset-of-current-behavior discipline Section 1.6 applies to the preview fallback.

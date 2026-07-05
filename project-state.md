@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-04 |
-| Current HEAD | `213c3e1` ("feat: first-frame cache + cover layer for correct preview at segment boundaries"). Working tree clean, `tsc --noEmit` clean, `vitest` 60/60. A full Phase 2 preview-video experiment (5-slot rolling pool, 3-detector motion sensing, ended-reset guard, clock-kick watchdog, load-based warm) was investigated and then fully reverted — it never got committed, existing only as a staged diff on top of `213c3e1`; see `docs/bugs/preview-cold-start-clock-freeze.md` for the investigation writeup. Session pivoted from bug-fixing to export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass for plain segments — 3m44s→40s on a mixed 4-video/10-image project) and UI smoothness (reload "jump then settle" fix, ref+rAF timeline drag, scroll-restore race fix). Effects Tab Rebuild Step 8 — transitions renderer complete (10/10). Architecture Shift complete (2026-06-24). |
+| Last updated | 2026-07-05 |
+| Current HEAD | `0a3f67c` ("feat: gate animation transform + transition-overlay hold on WebCodecs frameSegmentId catch-up (Bug 2 fix)"), on branch `webcodecs-api`. Working tree clean, `tsc --noEmit` clean, `vitest` 135/135. The WebCodecs preview migration (Phases 0–8) is complete: `VideoDecoder`-based decode pool + windowed decode-ahead + LRU replaced the dual-`<video>`-slot preview path, cutover to default on all WebCodecs-capable runtimes, with the legacy `<video>` path retained as capability-gated fallback — full detail and per-phase evidence in `docs/webcodecs-architecture-plan.md`. Post-cutover transition-flash-back (Bug 1, commit `3022706`) and animation hard-cut (Bug 2, commit `0a3f67c`) fixes landed on top. A follow-on effort (preview/export unification, Phases A–C) is now planned but NOT STARTED — see Active Tasks and the architecture doc's Section 8. Earlier: export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass — 3m44s→40s on a mixed 4-video/10-image project), UI smoothness fixes, Effects Tab Rebuild Step 8 transitions (10/10), Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -170,7 +170,7 @@ The Review Mapping modal (task 7, shipped then delisted) reached feature-complet
 
 ## Active Tasks
 
-None currently.
+- **Follow-On Phases A–C — Preview/Export WebCodecs unification (PLANNED, NOT STARTED).** Recorded in `docs/webcodecs-architecture-plan.md` Section 8 (plus a Progress-Tracker `⬜ NOT STARTED / PENDING` pointer block). Phase A: unify the clock — convert wall-clock Framer-Motion animation twins to playhead-driven transforms (like Ken Burns already is), eliminate the boundary catch-up frozen frame at its root, align transition timing so preview matches export. Phase B: migrate export off the per-frame HTML5-seek→PNG→IPC path onto a WebCodecs `VideoEncoder` behind ONE shared compositor (ffmpeg used once for final mux only). Phase C: quality pass — real color-space conversion (not just bt709 tagging), cross-segment frame-timing/drift correction against the audio master clock, quality-pinned full-HD encode. The 13-bug transition/animation audit that motivated this effort was completed and folded into that plan (Section 8 cross-references each finding: #1/#2 already fixed by the post-cutover Bug 1/Bug 2 commits; #3/#5/#6/#7/#9 + quick wins carried forward as A–C scope; #4/#8 partially addressed). No code written — plan only.
 
 ## Deferred Polish Features
 
