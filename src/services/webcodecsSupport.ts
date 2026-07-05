@@ -7,9 +7,9 @@
  * a webview cannot change during a session, so there is no reason to re-run
  * the check on every call.
  *
- * Phase 1+2: combined with an explicit dev-only toggle at the call site
- * (PreviewStage.tsx) so the new path never activates for real users during
- * development. Phase 7 removes that toggle and makes this the sole gate.
+ * This is the sole gate deciding which preview path mounts in PreviewStage.tsx:
+ * the WebCodecs path when this returns true, the legacy <video>-element path
+ * as the fallback when it returns false (unsupported runtime).
  */
 
 let cachedSupport: boolean | null = null;
