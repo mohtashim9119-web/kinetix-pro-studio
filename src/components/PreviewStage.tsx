@@ -392,20 +392,6 @@ export function PreviewStage({
     enabled: useWebCodecsPath,
   });
 
-  // [DIAG] Temporary instrumentation for the transition-flicker (Bug 1) /
-  // animation-hard-cut (Bug 2) investigation. Not a fix — remove all three
-  // effects below (and their counterparts in useWebCodecsPreview.ts) once the
-  // real timing sequence has been captured from a manual repro.
-  useEffect(() => {
-    console.log(`[DIAG] currentSegment -> ${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
-  }, [currentSegment?.id]);
-  useEffect(() => {
-    console.log(`[DIAG] transitionPreview.isActive -> ${transitionPreview.isActive} progress=${transitionPreview.progress.toFixed(3)} seg=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
-  }, [transitionPreview.isActive]);
-  useEffect(() => {
-    console.log(`[DIAG] webCodecsPreview.frame changed sourcePts=${webCodecsPreview.frame ? (webCodecsPreview.frame.timestamp / 1e6).toFixed(3) : 'null'}s for currentSegment=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
-  }, [webCodecsPreview.frame]);
-
   // ---------------------------------------------------------------------------
   // Bug 1 (transition flicker) + Bug 2 (animation hard-cut) fix.
   //
@@ -446,12 +432,6 @@ export function PreviewStage({
   const overlayHoldState = computeOverlayHoldState(overlayHoldStateRef.current, transitionPreview.isActive, contentCaughtUp);
   overlayHoldStateRef.current = overlayHoldState;
   const showTransitionOverlay = transitionPreview.isActive || overlayHoldState.holding;
-
-  // [DIAG] logs the hold engaging/releasing — remove together with the rest.
-  useEffect(() => {
-    console.log(`[DIAG] showTransitionOverlay -> ${showTransitionOverlay} (isActive=${transitionPreview.isActive}, hold=${overlayHoldState.holding}, contentCaughtUp=${contentCaughtUp}) seg=${currentSegment?.id} @ ${performance.now().toFixed(1)}ms`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showTransitionOverlay]);
 
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
   // The canvas is sized to match the stage via CSS (position:absolute inset-0).

@@ -525,10 +525,6 @@ export function useWebCodecsPreview({
     // already-running chase loop for this same segment think it had been
     // superseded and stop early instead of settling on the latest target.
     if (epochKeyRef.current !== segmentId) {
-      // [DIAG] Temporary instrumentation for the transition-flicker / animation-hard-cut
-      // investigation (docs/webcodecs-architecture-plan.md follow-up bugs). Not a fix —
-      // remove once the timing sequence has been captured from a real repro.
-      console.log(`[DIAG] segment-flip -> ${segmentId} @ ${performance.now().toFixed(1)}ms (prevFrameSegWas=${epochKeyRef.current})`);
       epochKeyRef.current = segmentId;
       ++generationRef.current;
       // Phase 5 fix (docs/webcodecs-architecture-plan.md): chaseLatestTarget's
@@ -573,8 +569,6 @@ export function useWebCodecsPreview({
         }),
       (result) => {
         if (generationRef.current !== generation) return; // superseded by a segment/enabled change — paint nothing
-        // [DIAG] see the segment-flip log above — remove together.
-        console.log(`[DIAG] frame-settled seg=${segmentId} sourcePts=${result ? (result.timestamp / 1e6).toFixed(3) : 'null'}s @ ${performance.now().toFixed(1)}ms`);
         setFrame(result);
         if (result) {
           setError(null);

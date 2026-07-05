@@ -141,11 +141,13 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
-**Status:** NOT STARTED. This is a distinct, second effort layered on top of the now-complete
-Phases 0–8. Phases 0–8 replaced the *preview* video path with WebCodecs and left the export
-pipeline untouched by hard gate (7.1 #6). This follow-on removes that firewall deliberately:
-it adapts **export** to WebCodecs too, unifies preview and export behind ONE compositor, and
-closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix.
+**Status:** IN PROGRESS. Quick wins (Section 8.0) are landing incrementally — 1 of 3 sub-items
+done so far, see ✅ COMPLETED below. Phases A–C themselves are NOT STARTED. This is a distinct,
+second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
+video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
+follow-on removes that firewall deliberately: it adapts **export** to WebCodecs too, unifies
+preview and export behind ONE compositor, and closes the preview-side timing/quality gaps 0–8
+mitigated but did not root-fix.
 
 **Locked technical decisions (do not re-litigate during implementation):**
 - Single master clock = the audio playhead (`usePlayback.ts`, UNCHANGED) for BOTH preview and export.
@@ -155,6 +157,35 @@ closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix
 - ffmpeg sidecar retained for the FINAL audio+video mux ONLY (once per export, never per-frame).
 - OUT OF SCOPE for this whole effort: the sync system, timeline/editing, `App.tsx` orchestration
   state. Do not touch them.
+
+### ✅ COMPLETED
+
+- **Quick win 1 of 3 — hot-path `[DIAG]` + live `//FFCACHE` log strip (completed 2026-07-05).**
+  Per Section 8.0 steps 1–2. Removed all 6 `[DIAG]` sites: `useWebCodecsPreview.ts`'s segment-flip
+  and frame-settled logs (single log+comment lines inside larger effects, removed in place), and
+  `PreviewStage.tsx`'s four DIAG effects (`currentSegment ->`, `transitionPreview.isActive ->`,
+  `webCodecsPreview.frame changed`, `showTransitionOverlay ->`) — each of these four had a
+  `useEffect` whose *entire* body was the log call, so the whole effect was removed rather than
+  left behind as an empty shell. Also removed the 4 *live* `//FFCACHE` logs in
+  `useFirstFrameCache.ts` (warm-start, per-decode success/fail, capture-threw, warm-complete),
+  which fire on every warm pass on the default path; narrowed `catch (err)` to `catch` there since
+  `err` was only read by the removed `console.warn`.
+  - **Deliberately NOT touched (separate, later concern):** the 4 `//FFCACHE` logs inside
+    `PreviewStage.tsx`'s legacy dual-`<video>`-slot cover effect (Section 8.0 step 2's named
+    targets) are dormant dead code — that whole effect early-returns
+    (`if (useWebCodecsPathRef.current) { setCoverState(null); return; }`) before reaching them on
+    every WebCodecs-capable runtime (the default today). Stripping just their logs without
+    addressing the dead code block itself was judged out of scope for a log-only pass; the legacy
+    cover path is the real follow-up unit of work, not its logging. Step 2 is therefore only
+    half-closed: the live FFCACHE logs it didn't originally name (in `useFirstFrameCache.ts`) are
+    gone; the dormant ones it did name are still there, untouched.
+  - **Also NOT touched, explicitly out of scope for this sub-item:** Section 8.0 step 3's
+    `console.debug` lines in `frameRenderer.ts`/`segmentEncoder.ts` — export pipeline.
+  - **Remaining:** quick win 2 of 3 (black-flash guard, step 4) and 3 of 3 (image-dip, step 5) are
+    not started.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — pure
+    log removal, no tests added/removed). Committed in `chore: remove Bug1/Bug2 investigation
+    logging (8.0 quick win 1)`.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
@@ -168,8 +199,9 @@ closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix
 - **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
   drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
   output. Full definition in Section 8 below.
-- **Quick wins (do first, independently mergeable):** strip per-frame `[DIAG]`/`//FFCACHE`/`console.debug`
-  logging from the hot paths; add a black-flash guard; image-dip on image-segment boundaries. Section 8.
+- **Quick wins (do first, independently mergeable) — 1 of 3 done, see ✅ COMPLETED above:** the
+  `[DIAG]`/live-`//FFCACHE` log strip has landed (with caveats noted above); dormant `//FFCACHE`
+  dead code, export `console.debug` lines, the black-flash guard, and image-dip remain. Section 8.
 
 ---
 

@@ -107,8 +107,6 @@ export function useFirstFrameCache(
 
     const myGen = ++genRef.current;
     let cancelled = false;
-    //FFCACHE
-    console.log(`//FFCACHE warm start: ${targets.length} segment(s) queued to decode`);
 
     const decodeOne = (t: DecodeTarget): Promise<void> =>
       new Promise<void>((resolve) => {
@@ -131,8 +129,6 @@ export function useFirstFrameCache(
           if (settled) return;
           settled = true;
           cleanup();
-          //FFCACHE
-          console.log(`//FFCACHE decode ${ok ? 'success' : 'fail '}: seg ${t.id} @ ${t.time.toFixed(2)}s`);
           resolve();
         };
 
@@ -162,9 +158,7 @@ export function useFirstFrameCache(
               setVersion(v => v + 1);
             }
             finish(true);
-          } catch (err) {
-            //FFCACHE
-            console.warn(`//FFCACHE capture threw: seg ${t.id}`, err);
+          } catch {
             finish(false);
           }
         };
@@ -205,8 +199,6 @@ export function useFirstFrameCache(
     const workers = Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker());
     void Promise.all(workers).then(() => {
       if (!cancelled && genRef.current === myGen) {
-        //FFCACHE
-        console.log(`//FFCACHE warm complete: ${cacheRef.current.size} frame(s) cached`);
       }
     });
 
