@@ -900,6 +900,7 @@ export function PreviewStage({
                         // transition (suppressMotionAnim) to avoid a black-to-image stutter
                         // immediately after the canvas blend completes.
                         <motion.img
+                          key={currentSegment.id}
                           src={asset.url}
                           className="w-full h-full object-cover"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}

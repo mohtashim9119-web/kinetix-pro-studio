@@ -141,8 +141,8 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
-**Status:** IN PROGRESS. Quick wins (Section 8.0) are landing incrementally — 2 of 3 sub-items
-done so far, see ✅ COMPLETED below. Phases A–C themselves are NOT STARTED. This is a distinct,
+**Status:** IN PROGRESS. Quick wins (Section 8.0) are fully COMPLETE — 3 of 3 sub-items done, see
+✅ COMPLETED below. Phases A–C themselves are NOT STARTED; Phase A is next. This is a distinct,
 second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
 video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
 follow-on removes that firewall deliberately: it adapts **export** to WebCodecs too, unifies
@@ -181,7 +181,8 @@ mitigated but did not root-fix.
     gone; the dormant ones it did name are still there, untouched.
   - **Also NOT touched, explicitly out of scope for this sub-item:** Section 8.0 step 3's
     `console.debug` lines in `frameRenderer.ts`/`segmentEncoder.ts` — export pipeline.
-  - **Remaining:** quick win 3 of 3 (image-dip, step 5) is not started.
+  - **Remaining:** quick win 3 of 3 (image-dip, step 5) has since landed — see below; Section 8.0
+    is fully closed.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — pure
     log removal, no tests added/removed). Committed in `chore: remove Bug1/Bug2 investigation
     logging (8.0 quick win 1)`.
@@ -209,11 +210,45 @@ mitigated but did not root-fix.
     that IS fixed, and closing it needs new cross-file plumbing (a project-identity `resetToken`
     threaded through `PreviewStage` into `PreviewCanvas`) disproportionate to this commit. **Do
     not treat this as closed by quick win 2.**
-  - **Remaining:** quick win 3 of 3 (image-dip, step 5) is not started. The cross-project-switch
-    edge case above is also not started and not currently scheduled.
+  - **Remaining:** quick win 3 of 3 (image-dip, step 5) has since landed — see below; Section 8.0
+    is fully closed. The cross-project-switch edge case above is also not started and not
+    currently scheduled.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
     tests added/removed). Committed in `fix: retain last frame instead of black-flashing on
     hard-cut video boundaries (8.0 quick win 2)`.
+
+- **Quick win 3 of 3 — image fade replay on image→image hard-cut boundaries (completed 2026-07-05).**
+  Per Section 8.0 step 5, implemented as **option (a) — remount-triggered fade reuse**, NOT the
+  dip-black/dip-white blend step 5's own text originally sketched (that alternative was considered
+  and explicitly rejected in favor of reusing the already-working fade with minimal new visual
+  behavior). Root cause: `PreviewStage.tsx`'s image element (`motion.img`, ~line 902) had no `key`
+  tied to `currentSegment.id`, so an image→image boundary with `transition=NONE` was a same-node
+  prop update (instant `src` swap) rather than a remount — Framer's coded entrance fade
+  (`initial:{opacity:0} -> animate:{opacity:1}`, 0.4s) never replayed. Fixed by adding
+  `key={currentSegment.id}` to that one element, forcing a genuine remount at every segment
+  boundary. The outer segment `motion.div` was deliberately left unkeyed (keying it would remount
+  the persistent dual-`<video>` slots the Bug 1/Bug 2 fixes and D10 depend on); overlay/caption
+  layers were deliberately left unkeyed too (existing by-design "steady, no re-animate" behavior —
+  see the body-caption comment in `PreviewStage.tsx`). Image↔video boundaries were already correct
+  before this fix (mount/unmount driven by the `asset?.url && !isVideoAsset` conditional, not a
+  key) and are unaffected by it.
+  - **Audit-flagged edge cases — accepted as non-issues, not fixed further:**
+    - Two adjacent image segments sharing the exact same asset will still replay the fade (the key
+      is `currentSegment.id`, not asset identity) — by design; a segment boundary is treated as a
+      real "beat" change regardless of whether the picture repeats.
+    - A heading segment whose `assetId` resolves to an image mounts this same (now-keyed) element
+      underneath the heading's own background layer — already fully obscured pre-fix (the heading
+      container is `absolute z-30`; the image block itself isn't positioned), unaffected by this
+      change either way.
+  - **Remaining:** none for this sub-item — quick win 3 of 3 was the last of the three. **Section
+    8.0 Quick Wins is now fully closed.** Two threads carved out of quick-win scope from the start
+    remain open, tracked where first flagged (not part of this closure): the dormant `//FFCACHE`
+    dead-code block and the export `console.debug` lines (both noted under quick win 1 above), and
+    the cross-project-switch black-flash edge case (noted under quick win 2 above).
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
+    tests added/removed; this repo has no jsdom/@testing-library/react, so nothing renders
+    `PreviewStage`'s JSX in a test). Committed in `fix: replay image fade on image-to-image
+    hard-cut boundaries (8.0 quick win 3/3 — closes Quick Wins)`.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
@@ -227,10 +262,12 @@ mitigated but did not root-fix.
 - **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
   drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
   output. Full definition in Section 8 below.
-- **Quick wins (do first, independently mergeable) — 2 of 3 done, see ✅ COMPLETED above:** the
-  `[DIAG]`/live-`//FFCACHE` log strip and the black-flash guard have landed (with caveats noted
-  above); dormant `//FFCACHE` dead code, export `console.debug` lines, and image-dip remain.
-  Section 8.
+- **Quick wins (do first, independently mergeable) — 3 of 3 done, see ✅ COMPLETED above.** Quick
+  Wins are fully COMPLETE: the `[DIAG]`/live-`//FFCACHE` log strip, the black-flash guard, and the
+  image-fade-replay fix (option (a), not the dip-black/white blend) have all landed (with caveats
+  noted above). **Phase A is next.** Two threads were explicitly carved out of quick-win scope from
+  the start and remain open where first flagged: the dormant `//FFCACHE` dead-code block and the
+  export `console.debug` lines (both under quick win 1). Full step definitions in Section 8.0 below.
 
 ---
 
