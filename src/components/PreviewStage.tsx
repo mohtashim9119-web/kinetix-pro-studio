@@ -10,6 +10,7 @@ import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from 
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
+import { blendWrapperProps } from '../services/animBlend';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
@@ -19,7 +20,11 @@ import {
   computeDisplayedSegment,
   computeAnimTimeInSegment,
   computeOverlayHoldState,
+  computeSnapReleaseBlend,
+  computeBlendProgress,
+  SNAP_RELEASE_BLEND_S,
   type OverlayHoldState,
+  type SnapReleaseBlend,
 } from '../hooks/useWebCodecsPreview';
 import { PreviewCanvas } from './PreviewCanvas';
 
@@ -155,6 +160,20 @@ function getAnimationWrapperProps(
     default:
       return {};
   }
+}
+
+/**
+ * Resolves which AnimationType a segment's wrapper should render —
+ * effectAnimation slug wins over the legacy segment.animation field, same
+ * resolution as the export path in frameRenderer.ts. Factored out so both
+ * the live ("to") pose and, during a snap-back release blend (see
+ * src/services/animBlend.ts), the frozen ("from") pose resolve identically
+ * and can't drift apart.
+ */
+function resolveSegmentAnimationType(seg: VideoSegment): AnimationType {
+  return ((seg.effectAnimation && seg.effectAnimation !== 'none')
+    ? seg.effectAnimation as AnimationType
+    : seg.animation) ?? AnimationType.NONE;
 }
 
 /**
@@ -332,6 +351,15 @@ export function PreviewStage({
   const displayedSegmentRef = useRef<VideoSegment | undefined>(undefined);
   const overlayHoldStateRef = useRef<OverlayHoldState>({ wasTransitionActive: false, holding: false });
 
+  // Snap-back fix (docs/webcodecs-architecture-plan.md, Phase A3 entry's
+  // "residual issue 1") — carries the animation-transform release blend's
+  // state across renders (see computeSnapReleaseBlend in
+  // useWebCodecsPreview.ts), and the previous render's own animTimeInSegment
+  // so the blend's "from" pose can be frozen at the exact value that was
+  // actually on screen the render before release.
+  const snapReleaseRef = useRef<SnapReleaseBlend>({ releaseAt: null, fromSegment: undefined, fromTimeInSegment: 0 });
+  const lastAnimTimeInSegmentRef = useRef<number>(0);
+
   // //FFCACHE — First-frame cache (Phase 1 correctness layer). Warms a cached
   // frame per video segment at sync/idle time; `coverState` tracks which segment
   // (if any) we are currently masking with a cached frame while its live <video>
@@ -485,9 +513,28 @@ export function PreviewStage({
 
   // Bug 2 — which segment's content (and therefore which segment's own
   // animation transform) is actually on screen right now.
-  displayedSegmentRef.current = computeDisplayedSegment(currentSegment, contentCaughtUp, displayedSegmentRef.current);
+  const previousAnimSegment = displayedSegmentRef.current;
+  displayedSegmentRef.current = computeDisplayedSegment(currentSegment, contentCaughtUp, previousAnimSegment);
   const animSegment = displayedSegmentRef.current;
   const animTimeInSegment = computeAnimTimeInSegment(animSegment, currentTime);
+
+  // Snap-back fix (docs/webcodecs-architecture-plan.md, Phase A3 entry's
+  // "residual issue 1") — the hold above makes the animation transform
+  // correct WHILE content is catching up, but otherwise releases with a
+  // hard one-frame snap. Detect the exact release edge and blend the
+  // wrapper's own transform/opacity output (not a mask) from its frozen
+  // pose toward the new segment's live pose over a short, currentTime-
+  // driven window — see computeSnapReleaseBlend's own doc for why this is
+  // additive to (does not modify) the Bug 2 hold above.
+  snapReleaseRef.current = computeSnapReleaseBlend(
+    snapReleaseRef.current,
+    previousAnimSegment,
+    animSegment,
+    lastAnimTimeInSegmentRef.current,
+    currentTime,
+  );
+  const animBlendProgress = computeBlendProgress(snapReleaseRef.current, currentTime, SNAP_RELEASE_BLEND_S);
+  lastAnimTimeInSegmentRef.current = animTimeInSegment;
 
   // Bug 1 — hold the transition overlay visible (at its last-blended
   // content — the existing "do NOT clearRect" retention in the draw effect
@@ -588,6 +635,29 @@ export function PreviewStage({
   // not just the raw transition window, so the wrapper doesn't attempt its own
   // entrance animation while the overlay is still covering for content catch-up.
   const suppressMotionAnim = showTransitionOverlay;
+
+  // Snap-back fix — the intra-segment animation wrapper's actual props.
+  // During the release-blend window (animBlendProgress < 1), blends the
+  // frozen OUTGOING pose's own transform/opacity toward the CURRENT
+  // segment's live pose (src/services/animBlend.ts); otherwise this is
+  // byte-identical to calling getAnimationWrapperProps directly, exactly as
+  // before this fix. Gated on suppressMotionAnim the same way the direct
+  // call already was — while the transition overlay is covering the
+  // screen, no wrapper transform is applied at all (unchanged behavior).
+  const animationWrapperProps = (() => {
+    if (suppressMotionAnim) return {};
+    const toSeg = animSegment ?? currentSegment;
+    if (!toSeg) return {};
+    const toProps = getAnimationWrapperProps(resolveSegmentAnimationType(toSeg), toSeg.duration, animTimeInSegment);
+    const fromSeg = snapReleaseRef.current.fromSegment;
+    if (animBlendProgress >= 1 || !fromSeg) return toProps;
+    const fromProps = getAnimationWrapperProps(
+      resolveSegmentAnimationType(fromSeg),
+      fromSeg.duration,
+      snapReleaseRef.current.fromTimeInSegment,
+    );
+    return blendWrapperProps(fromProps, toProps, animBlendProgress);
+  })();
 
   // FIX 2 — Keep currentTimeRef current so the segment-change effect can read
   // playhead position without adding `currentTime` to its dep array (which would
@@ -894,24 +964,15 @@ export function PreviewStage({
             >
               {/* Visuals — media wrapper carries intra-segment camera-dynamics animation.
                   Suppressed when canvas just handled the transition: BOUNCE/SKEW/ROTATE
-                  return initial:{opacity:0} which would produce a black flash on entry. */}
+                  return initial:{opacity:0} which would produce a black flash on entry.
+                  animationWrapperProps (computed above) is driven by animSegment (the
+                  segment whose content is actually on screen, per the WebCodecs catch-up
+                  gate) — not currentSegment directly — and blends smoothly across the
+                  Bug 2 hold's release edge instead of hard-cutting (see its own comment
+                  and src/services/animBlend.ts). */}
               <motion.div
                 className="absolute inset-0 overflow-hidden"
-                {...(suppressMotionAnim ? {} : getAnimationWrapperProps(
-                  // Bug 2 fix — driven by animSegment (the segment whose content
-                  // is actually on screen, per the WebCodecs catch-up gate above),
-                  // not currentSegment directly: see the fix block's comment.
-                  // effectAnimation slug wins over the legacy segment.animation
-                  // (same resolution as the export path in frameRenderer.ts).
-                  (() => {
-                    const seg = animSegment ?? currentSegment;
-                    return ((seg.effectAnimation && seg.effectAnimation !== 'none')
-                      ? seg.effectAnimation as AnimationType
-                      : seg.animation) ?? AnimationType.NONE;
-                  })(),
-                  (animSegment ?? currentSegment).duration,
-                  animTimeInSegment,
-                ))}
+                {...animationWrapperProps}
               >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);

@@ -150,11 +150,11 @@ the export pipeline untouched by hard gate (7.1 #6). This follow-on removes that
 deliberately: it adapts **export** to WebCodecs too, unifies preview and export behind ONE
 compositor, and closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix.
 
-Post-A3 manual testing (2026-07-06) surfaced 3 residual preview issues, none of them caused by or
-fixable within Phase A — tracked as separate follow-on items, not reopening A: (1) a pre-existing
-animation "snap-back" on content-catch-up-hold release, newly exposed (not caused) by A1's
-timeInSegment conversion — see the new Follow-On item below Phase A's entry; (2) the known
-static-snapshot transition-blend limitation (frozen frame for the full transition window) —
+Post-A3 manual testing (2026-07-06) surfaced 3 residual preview issues, none of them caused by
+Phase A — tracked as separate follow-on items, not reopening A: (1) a pre-existing animation
+"snap-back" on content-catch-up-hold release, newly exposed (not caused) by A1's timeInSegment
+conversion — **✅ FIXED (2026-07-06), see the new Follow-On item below Phase A's entry**; (2) the
+known static-snapshot transition-blend limitation (frozen frame for the full transition window) —
 unchanged by A3, a bigger separate "live blend" redesign, not yet scoped; (3) general preview
 playback lag/smoothness unrelated to segment boundaries — root cause unconfirmed, needs runtime
 profiling, not a code-review-fixable issue. See each item's own entry below for detail.
@@ -382,17 +382,17 @@ profiling, not a code-review-fixable issue. See each item's own entry below for 
     gives the Bug 1/Bug 2 catch-up gate more headroom (not less) before it would ever need to
     visibly hold past the overlay's own natural window.
   - **Post-A3 manual testing surfaced 3 residual issues — none fixed by, or caused by, this task:**
-    1. **Animation snap-back (pre-existing, NOT caused by A3):** `useWebCodecsPreview.ts`'s
-       `computeDisplayedSegment` (~321-330) holds the animation-driving segment on the OUTGOING
-       segment while content catch-up is pending, clamped to its own end-state duration (~341-347).
-       When catch-up completes, the held segment snaps directly to the incoming segment with
+    1. **Animation snap-back (pre-existing, NOT caused by A3) — ✅ FIXED, see the new Follow-On
+       item immediately below this entry.** `useWebCodecsPreview.ts`'s `computeDisplayedSegment`
+       (~321-330) holds the animation-driving segment on the OUTGOING segment while content
+       catch-up is pending, clamped to its own end-state duration (~341-347). When catch-up
+       completes, the held segment used to snap directly to the incoming segment with
        `animTimeInSegment ~= 0` — a hard, one-frame transform discontinuity. Invisible before A1
        (the old Framer wall-clock keyframes didn't read `timeInSegment` at all); A1's conversion of
        10 animation types (plus the pre-existing KEN_BURNS/ZOOM family) to pure functions of
-       `timeInSegment` now exposes this snap visibly whenever the hold releases on a segment using
-       one of these animation types. Intermittent because the hold only engages under variable
-       decode load. Tracked as a new, separate follow-up item (see below) — root-cause confirmed,
-       fix design proposed, not yet implemented.
+       `timeInSegment` is what exposed this snap visibly whenever the hold released on a segment
+       using one of these animation types. Intermittent because the hold only engages under
+       variable decode load.
     2. **Frozen frame during transitions (known limitation, unchanged by A3):** both
        `useTransitionPreview.ts` snapshots are rendered ONCE per boundary and blended purely by
        `progress` — neither is ever re-rendered against a moving `timeInSegment`, so the transition
@@ -411,16 +411,67 @@ profiling, not a code-review-fixable issue. See each item's own entry below for 
     `feat: align preview transition window with export placement + hold caption through blend
     (Phase A3 — closes Phase A)`.
 
-**Phase A is now fully ✅ COMPLETE (A1 + A2 + A3).**
+- **Phase A follow-up — animation snap-back fix (completed 2026-07-06).**
+  Closes residual issue 1 from the A3 entry above. `computeDisplayedSegment` (`useWebCodecsPreview.ts`
+  ~321-330) correctly holds the animation-driving segment on the OUTGOING segment while content
+  catch-up is pending, but previously released with a hard, one-frame transform snap once catch-up
+  completed — newly visible (not caused) since A1 converted 10 animation types to pure functions of
+  `timeInSegment`.
+  - **Root-cause fix — a real interpolation of the rendered VALUE, not a mask:** new additive exports
+    in `useWebCodecsPreview.ts` (~387-466): `SnapReleaseBlend`/`computeSnapReleaseBlend` edge-detects
+    the exact render where the held segment id changes (a genuine release, not routine playback) and
+    anchors a "from" pose (the segment + its own frozen `timeInSegment` that was actually on screen the
+    render before release) plus the `currentTime` it happened at; `computeBlendProgress` derives a
+    0→1 progress from `currentTime` deltas against a new `SNAP_RELEASE_BLEND_S` constant (0.12s).
+    Neither modifies `computeDisplayedSegment`/`computeAnimTimeInSegment`/`computeOverlayHoldState` or
+    their existing tests — fully additive.
+  - **New module `src/services/animBlend.ts`:** `blendWrapperProps(from, to, t)` parses the closed set
+    of CSS fields `getAnimationWrapperProps` can produce (`translate`/`translateX`/`translateY`/
+    `scale`/`rotate`/`skewX`, `opacity`, `filter: blur()`), defaults a component missing on either side
+    to its CSS identity value, and lerps — so blending FROM one animation type TOWARD a segment using a
+    completely different type (or `AnimationType.NONE`) still produces a continuous "settle" rather
+    than a hard cut. Deliberately NOT added to `canvasAnimations.ts` — export has no equivalent
+    discontinuity to fix (`segmentEncoder.ts` renders every frame directly, no async catch-up gate),
+    so this stays a preview-only concern.
+  - **`PreviewStage.tsx` wiring (~488-536, ~639-661, ~968-969):** a new `resolveSegmentAnimationType`
+    helper (factored out of the old inline effectAnimation-vs-animation IIFE) resolves both the "from"
+    and "to" poses identically so they can't drift; `animationWrapperProps` computes `toProps` as
+    before and, only while `animBlendProgress < 1`, blends it against the frozen "from" pose's own
+    `getAnimationWrapperProps` output — otherwise byte-identical to the pre-fix direct call. Gated on
+    `suppressMotionAnim` exactly as before (no wrapper transform at all while the transition overlay
+    is covering the screen — unchanged).
+  - **Considered and rejected:** a native CSS `transition: transform 120ms` instead of computing the
+    blend in JS — far less code, but runs on the browser's own compositor clock rather than
+    `currentTime`, so a pause/seek landing exactly inside that window would keep animating regardless
+    of playback state, reintroducing (for that narrow window) the exact "ignores pause/seek" class of
+    bug A1 fixed. Rejected for that reason; the shipped fix is driven entirely by `currentTime` deltas
+    (see `computeBlendProgress`'s own doc), so pausing mid-blend freezes it and seeking recomputes it
+    fresh next render.
+  - **Interaction confirmed with A2's boundary pre-pull and `computeOverlayHoldState`:** unaffected —
+    A2 reduces how *often* this blend even engages (content is frequently already caught up by the
+    first post-boundary render, so `computeDisplayedSegment` never enters the held branch at all), but
+    doesn't change the mechanism when it does. `computeOverlayHoldState`'s own engage/release timing is
+    driven solely by `wasTransitionActive`/`contentCaughtUp`, neither of which this fix touches — the
+    two hold/release state machines (overlay-canvas vs. animation-wrapper-transform) remain
+    independent.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 159/159 passing (135 + 12 new `animBlend.ts`
+    tests + 12 new `computeSnapReleaseBlend`/`computeBlendProgress` tests in
+    `useWebCodecsPreview.test.ts`). Committed in `fix: smoothly blend animation transform on
+    content-catchup hold release, eliminating snap-back (Phase A follow-up)`.
+
+**Phase A is now fully ✅ COMPLETE (A1 + A2 + A3), and its first follow-up (animation snap-back) is
+also ✅ COMPLETE.** Residual issues 2 (frozen-frame transition blend) and 3 (general playback lag) are
+still open, unscoped, separate efforts — see the A3 entry above.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
 - **Phase A — Unify the clock (preview). ✅ COMPLETE — 3 of 3 steps done (A1 animation-twin
   conversion, A2 boundary-frame pre-pull, A3 transition-window realignment + caption-hold
   companion) — see ✅ COMPLETED above.** No longer pending. Post-A3 manual testing surfaced 3
-  residual issues NOT part of Phase A's scope and NOT fixed by it — see A3's own entry above for
-  detail; the animation snap-back item has a root-cause trace and proposed fix design (not yet
-  implemented) as a new, separate follow-up.
+  residual issues NOT part of Phase A's scope — see A3's own entry above for detail. Residual issue
+  1 (animation snap-back) is now **✅ FIXED** as a separate Phase A follow-up (see its own
+  ✅ COMPLETED entry above); issues 2 (frozen-frame transition blend) and 3 (general playback lag)
+  remain open, unscoped, separate efforts.
 - **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
   per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
   ffmpeg used once for final mux only. Full definition in Section 8 below.

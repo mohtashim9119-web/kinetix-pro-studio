@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, resetChaseMutex, type ChaseMutex,
   isContentCaughtUp, computeDisplayedSegment, computeAnimTimeInSegment, computeOverlayHoldState, type OverlayHoldState,
+  computeSnapReleaseBlend, computeBlendProgress, type SnapReleaseBlend,
 } from './useWebCodecsPreview';
 import { AnimationType, TransitionType, type VideoSegment } from '../types';
 
@@ -604,5 +605,89 @@ describe('computeOverlayHoldState', () => {
     const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
     const next = computeOverlayHoldState(holding, true, false);
     expect(next).toEqual({ wasTransitionActive: true, holding: false });
+  });
+});
+
+/**
+ * Snap-back fix (docs/webcodecs-architecture-plan.md, Phase A3 entry's
+ * "residual issue 1"). computeSnapReleaseBlend/computeBlendProgress are the
+ * pure functions PreviewStage.tsx composes with src/services/animBlend.ts's
+ * blendWrapperProps to smooth the animation-transform hard-cut that occurs
+ * when computeDisplayedSegment's hold releases — see that function's own
+ * doc comment for the full mechanism. These are additive to (do not modify)
+ * computeDisplayedSegment/computeAnimTimeInSegment — the tests above for
+ * those two functions are unaffected by this fix.
+ */
+describe('computeSnapReleaseBlend', () => {
+  const idle: SnapReleaseBlend = { releaseAt: null, fromSegment: undefined, fromTimeInSegment: 0 };
+  const seg1 = makeSegment({ id: 'seg-1', startTime: 0, duration: 5 });
+  const seg2 = makeSegment({ id: 'seg-2', startTime: 5, duration: 5 });
+
+  it('stays idle while the same segment keeps being displayed across renders', () => {
+    const next = computeSnapReleaseBlend(idle, seg1, seg1, 3, 10);
+    expect(next).toBe(idle);
+  });
+
+  it('anchors a new blend exactly when the displayed segment id changes between renders', () => {
+    const next = computeSnapReleaseBlend(idle, seg1, seg2, 5, 10.02);
+    expect(next).toEqual({ releaseAt: 10.02, fromSegment: seg1, fromTimeInSegment: 5 });
+  });
+
+  it('does not anchor a new blend when there was nothing previously displayed (cold start)', () => {
+    const next = computeSnapReleaseBlend(idle, undefined, seg1, 0, 0);
+    expect(next).toBe(idle);
+  });
+
+  it('does not anchor a new blend when there is nothing currently displayed (past end of timeline)', () => {
+    const next = computeSnapReleaseBlend(idle, seg1, undefined, 5, 10);
+    expect(next).toBe(idle);
+  });
+
+  it('carries forward an in-progress blend unchanged while the same segment stays displayed', () => {
+    const inProgress: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    const next = computeSnapReleaseBlend(inProgress, seg2, seg2, 0.05, 10.05);
+    expect(next).toBe(inProgress);
+  });
+
+  it('re-anchors correctly for a second release that happens before the first blend has fully progressed', () => {
+    const firstRelease: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    const seg3 = makeSegment({ id: 'seg-3', startTime: 10, duration: 0.05 });
+    const next = computeSnapReleaseBlend(firstRelease, seg2, seg3, 0.03, 10.03);
+    expect(next).toEqual({ releaseAt: 10.03, fromSegment: seg2, fromTimeInSegment: 0.03 });
+  });
+});
+
+describe('computeBlendProgress', () => {
+  const seg1 = makeSegment({ id: 'seg-1', startTime: 0, duration: 5 });
+
+  it('reports 1 (no blending needed) when idle (releaseAt is null)', () => {
+    const idle: SnapReleaseBlend = { releaseAt: null, fromSegment: undefined, fromTimeInSegment: 0 };
+    expect(computeBlendProgress(idle, 12.3, 0.12)).toBe(1);
+  });
+
+  it('reports 0 at the exact instant of release', () => {
+    const state: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    expect(computeBlendProgress(state, 10, 0.12)).toBe(0);
+  });
+
+  it('reports a fractional progress partway through the blend window', () => {
+    const state: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    expect(computeBlendProgress(state, 10.06, 0.12)).toBeCloseTo(0.5, 9);
+  });
+
+  it('clamps to 1 once blendDurationS has fully elapsed', () => {
+    const state: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    expect(computeBlendProgress(state, 10.5, 0.12)).toBe(1);
+  });
+
+  it('is driven by currentTime, not wall-clock — freezes at whatever value a paused currentTime holds', () => {
+    const state: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    // Calling twice with the identical (paused) currentTime must yield the identical progress.
+    expect(computeBlendProgress(state, 10.03, 0.12)).toBe(computeBlendProgress(state, 10.03, 0.12));
+  });
+
+  it('clamps to 0 defensively if currentTime is somehow before releaseAt (e.g. a seek backward)', () => {
+    const state: SnapReleaseBlend = { releaseAt: 10, fromSegment: seg1, fromTimeInSegment: 5 };
+    expect(computeBlendProgress(state, 9.9, 0.12)).toBe(0);
   });
 });

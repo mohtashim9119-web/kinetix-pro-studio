@@ -384,6 +384,86 @@ export function computeOverlayHoldState(
   return { wasTransitionActive: isTransitionActive, holding };
 }
 
+/** How long the animation-transform release blend (see `computeSnapReleaseBlend`
+ *  / `computeBlendProgress` below, and `src/services/animBlend.ts`) runs for,
+ *  in seconds of `currentTime` — not wall-clock. 0.12s sits inside the
+ *  100-150ms window discussed for this fix; short enough to be imperceptible
+ *  as its own animation, long enough to smooth the one-frame snap it replaces. */
+export const SNAP_RELEASE_BLEND_S = 0.12;
+
+/** Carried across renders (e.g. via a ref in PreviewStage.tsx) — see
+ *  computeSnapReleaseBlend below. `releaseAt: null` means idle: no hold has
+ *  ever released (or none is currently blending) — `computeBlendProgress`
+ *  reports 1 (fully the "to" pose) in that state. */
+export interface SnapReleaseBlend {
+  releaseAt: number | null;
+  fromSegment: VideoSegment | undefined;
+  fromTimeInSegment: number;
+}
+
+/**
+ * Snap-back fix (docs/webcodecs-architecture-plan.md, Phase A3 entry's
+ * "residual issue 1"). `computeDisplayedSegment` above correctly holds the
+ * animation-driving segment on the OUTGOING segment while content catch-up
+ * is pending (frozen at its own end-state via `computeAnimTimeInSegment`'s
+ * clamp) — but the instant it releases, the held segment snaps directly to
+ * the incoming one, a hard one-frame transform discontinuity newly exposed
+ * (not caused) by Phase A1's conversion of 10 animation types to pure
+ * functions of `timeInSegment`.
+ *
+ * This function detects that exact release edge — a genuine change in
+ * which segment id `computeDisplayedSegment` returns between two renders,
+ * not routine steady-state playback — and anchors the blend's "from" pose
+ * (the segment, and its own frozen `timeInSegment`, that was actually on
+ * screen the render immediately before release) plus the `currentTime` the
+ * release happened at. A caller (`PreviewStage.tsx`) uses this to blend the
+ * animation transform's rendered VALUE smoothly toward the incoming
+ * segment's own live pose over `computeBlendProgress`'s short deterministic
+ * window, via `src/services/animBlend.ts`'s `blendWrapperProps` — rather
+ * than showing the hard cut between the two poses.
+ *
+ * Deliberately additive: does not modify `computeDisplayedSegment` or its
+ * contract/tests — this derives the same release edge from that function's
+ * own inputs/outputs instead.
+ */
+export function computeSnapReleaseBlend(
+  prev: SnapReleaseBlend,
+  previousAnimSegment: VideoSegment | undefined,
+  nextAnimSegment: VideoSegment | undefined,
+  previousAnimTimeInSegment: number,
+  currentTime: number,
+): SnapReleaseBlend {
+  const justReleased =
+    previousAnimSegment !== undefined &&
+    nextAnimSegment !== undefined &&
+    previousAnimSegment.id !== nextAnimSegment.id;
+  if (justReleased) {
+    return { releaseAt: currentTime, fromSegment: previousAnimSegment, fromTimeInSegment: previousAnimTimeInSegment };
+  }
+  return prev;
+}
+
+/**
+ * Blend progress derived from `computeSnapReleaseBlend`'s state — 0 right at
+ * release, 1 once `blendDurationS` of real (audio-playhead) time has
+ * elapsed since, clamped in between. Driven entirely by `currentTime` —
+ * never `performance.now()` or a Framer-internal clock — so pausing
+ * mid-blend freezes it and seeking recomputes it fresh next render, the
+ * same determinism guarantee Phase A1 established for the animation
+ * transforms themselves; this fix must not reintroduce a wall-clock-driven
+ * animation that ignores pause/seek. `state.releaseAt === null` (nothing
+ * has ever released) always reports 1 — fully the "to" pose, nothing to
+ * blend.
+ */
+export function computeBlendProgress(
+  state: SnapReleaseBlend,
+  currentTime: number,
+  blendDurationS: number,
+): number {
+  if (state.releaseAt === null || blendDurationS <= 0) return 1;
+  return Math.max(0, Math.min(1, (currentTime - state.releaseAt) / blendDurationS));
+}
+
 export function useWebCodecsPreview({
   segments,
   assets,
