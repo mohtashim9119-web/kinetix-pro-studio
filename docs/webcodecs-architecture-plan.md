@@ -141,7 +141,7 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
-**Status:** IN PROGRESS. Quick wins (Section 8.0) are landing incrementally — 1 of 3 sub-items
+**Status:** IN PROGRESS. Quick wins (Section 8.0) are landing incrementally — 2 of 3 sub-items
 done so far, see ✅ COMPLETED below. Phases A–C themselves are NOT STARTED. This is a distinct,
 second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
 video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
@@ -181,11 +181,39 @@ mitigated but did not root-fix.
     gone; the dormant ones it did name are still there, untouched.
   - **Also NOT touched, explicitly out of scope for this sub-item:** Section 8.0 step 3's
     `console.debug` lines in `frameRenderer.ts`/`segmentEncoder.ts` — export pipeline.
-  - **Remaining:** quick win 2 of 3 (black-flash guard, step 4) and 3 of 3 (image-dip, step 5) are
-    not started.
+  - **Remaining:** quick win 3 of 3 (image-dip, step 5) is not started.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — pure
     log removal, no tests added/removed). Committed in `chore: remove Bug1/Bug2 investigation
     logging (8.0 quick win 1)`.
+
+- **Quick win 2 of 3 — black-flash guard on hard-cut video boundaries (completed 2026-07-05).**
+  Per Section 8.0 step 4. `PreviewCanvas.tsx`'s null-frame branch no longer `clearRect`s when
+  `frame` is null — it now returns without touching the canvas, retaining the last painted
+  bitmap until a real frame supersedes it (the real-frame branch already `clearRect`s
+  immediately before its own `drawImage`, so replacement is atomic). Mirrors the identical
+  "don't clear on nothing" pattern already used by `PreviewStage.tsx`'s transition-overlay
+  canvas. Root cause: `frame` (from `useWebCodecsPreview.ts`) goes null transiently on hard-cut
+  (`TransitionType.NONE`) boundaries between two video segments whenever decode-ahead hasn't
+  produced a buffered frame yet for the new segment (`videoDecoderPool.ts` `getFrameAt`: no
+  session, closed, or zero buffered frames) — previously this painted straight through to
+  bg-black for that gap.
+  - **Scope — same-project hard cuts only (Design A):** a same-file, subtractive change; no new
+    state, no cross-file plumbing. A related but distinct edge case was identified during design
+    and deliberately deferred, NOT fixed here: a project switch (`App.tsx`
+    `handleSwitchProject`) where both the outgoing and incoming current segment are video does
+    not remount `PreviewStage`/`PreviewCanvas` (no `key` prop on either), so this same
+    null-frame branch also covers that boundary. Pre-fix, that case already black-flashed the
+    same way; post-fix it instead briefly retains the abandoned project's last frame until the
+    new project's cold-started decode session produces one. Left open deliberately — it is not
+    the confirmed bug this quick win targets, it is bounded/self-healing exactly like the case
+    that IS fixed, and closing it needs new cross-file plumbing (a project-identity `resetToken`
+    threaded through `PreviewStage` into `PreviewCanvas`) disproportionate to this commit. **Do
+    not treat this as closed by quick win 2.**
+  - **Remaining:** quick win 3 of 3 (image-dip, step 5) is not started. The cross-project-switch
+    edge case above is also not started and not currently scheduled.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
+    tests added/removed). Committed in `fix: retain last frame instead of black-flashing on
+    hard-cut video boundaries (8.0 quick win 2)`.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
@@ -199,9 +227,10 @@ mitigated but did not root-fix.
 - **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
   drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
   output. Full definition in Section 8 below.
-- **Quick wins (do first, independently mergeable) — 1 of 3 done, see ✅ COMPLETED above:** the
-  `[DIAG]`/live-`//FFCACHE` log strip has landed (with caveats noted above); dormant `//FFCACHE`
-  dead code, export `console.debug` lines, the black-flash guard, and image-dip remain. Section 8.
+- **Quick wins (do first, independently mergeable) — 2 of 3 done, see ✅ COMPLETED above:** the
+  `[DIAG]`/live-`//FFCACHE` log strip and the black-flash guard have landed (with caveats noted
+  above); dormant `//FFCACHE` dead code, export `console.debug` lines, and image-dip remain.
+  Section 8.
 
 ---
 

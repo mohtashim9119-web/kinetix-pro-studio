@@ -77,7 +77,18 @@ export function PreviewCanvas({ frame, className, style }: Props) {
     }
 
     if (!frame) {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // INTENTIONAL: do NOT clearRect here. `frame` goes null transiently
+      // during decode-ahead catch-up on hard-cut (non-transition) segment
+      // boundaries — see the file header's note on frameSegmentId lag —
+      // because the new segment's decode session hasn't produced a buffered
+      // frame yet (videoDecoderPool.ts getFrameAt: no session, closed, or
+      // zero frames). Clearing would blank this canvas straight down to
+      // bg-black for that gap. Retaining the last painted frame keeps the
+      // outgoing segment's content on screen until a real frame supersedes
+      // it — the branch below always clearRects immediately before its own
+      // drawImage, so this stale content is replaced the instant that
+      // happens. Mirrors PreviewStage.tsx's transition-overlay canvas
+      // (identical rationale, identical "don't clear on nothing" pattern).
       return;
     }
 
