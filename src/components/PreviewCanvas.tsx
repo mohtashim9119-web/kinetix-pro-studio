@@ -28,9 +28,30 @@
  * bug in one specific place to "fix at the source" — the standard, safe
  * handling is to treat a closed frame as "nothing to paint this tick" and
  * move on; the next tick's frame supersedes it moments later regardless.
+ *
+ * Transition flash-back fix (S2 -> S1 -> S2 on cross-dissolve boundaries):
+ * this draw must run as a `useLayoutEffect`, not `useEffect`. PreviewStage's
+ * transition-overlay canvas (z-45, above this component) and this
+ * component's own canvas both react to the SAME commit the moment
+ * useWebCodecsPreview's `frameSegmentId` catches up to the new segment
+ * (that's precisely what flips PreviewStage's `showTransitionOverlay` to
+ * false, revealing this canvas underneath). `frame` and `frameSegmentId`
+ * are set together in that same onSettled callback, so `frame` here is
+ * already correct in that render — but a passive `useEffect` is only
+ * guaranteed to run AFTER the browser paints the commit, while the
+ * overlay's opacity style is applied synchronously as part of the same
+ * commit's render. With `useEffect`, the browser could paint the overlay
+ * already fading toward opacity 0 before this component's drawImage call
+ * has replaced the canvas bitmap — revealing the PREVIOUS segment's last
+ * painted frame for one paint (sometimes more, if the passive-effect flush
+ * is delayed) before this effect finally runs and snaps the picture
+ * forward to the real, current frame. `useLayoutEffect` runs synchronously
+ * during the commit, before paint, so the bitmap is guaranteed current by
+ * the time the overlay's opacity is actually painted — no timer, no extra
+ * gating, just closing the one-paint ordering gap.
  */
 
-import { useEffect, useRef } from 'react';
+import { useLayoutEffect, useRef } from 'react';
 
 interface Props {
   frame: VideoFrame | null;
@@ -41,7 +62,7 @@ interface Props {
 export function PreviewCanvas({ frame, className, style }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
