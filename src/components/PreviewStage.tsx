@@ -186,6 +186,21 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
 }
 
 /**
+ * Phase A3 companion fix — the segment immediately preceding `seg` in
+ * timeline order (its own end coincides with `seg`'s own start). Used to
+ * find the OUTGOING segment for caption-hold purposes: useTransitionPreview
+ * now places its blend window AFTER the nominal boundary (matching export),
+ * so `currentSegment` itself flips to the INCOMING segment at the window's
+ * start rather than its end. The caption must keep reading the outgoing
+ * segment's text for the life of the (shifted) transition window/overlay
+ * hold, or it shows the wrong segment's text for most of the blend.
+ */
+function findOutgoingSegment(segments: VideoSegment[], seg: VideoSegment | undefined): VideoSegment | undefined {
+  if (!seg) return undefined;
+  return segments.find(s => Math.abs(s.startTime + s.duration - seg.startTime) < 0.001 && s.id !== seg.id);
+}
+
+/**
  * D10 fix — resolves once a video element has actually painted a frame at
  * its current seek target, not merely "buffered enough to maybe play" (all
  * 'canplay' guarantees — it can fire before anything is decoded/presented,
@@ -482,6 +497,19 @@ export function PreviewStage({
   const overlayHoldState = computeOverlayHoldState(overlayHoldStateRef.current, transitionPreview.isActive, contentCaughtUp);
   overlayHoldStateRef.current = overlayHoldState;
   const showTransitionOverlay = transitionPreview.isActive || overlayHoldState.holding;
+
+  // Phase A3 companion fix — the body caption (below) is not occluded by the
+  // canvas overlay (it paints above it, z-46 vs z-45) and previously read
+  // `currentSegment` directly on the assumption that `currentSegment` only
+  // flips to the incoming segment exactly when the transition window ends.
+  // That assumption no longer holds now that useTransitionPreview's blend
+  // window sits AFTER the boundary (matching export) — `currentSegment`
+  // flips at the window's START instead. Hold the caption on the outgoing
+  // segment for as long as the overlay itself is showing, so the caption
+  // still reads as steady throughout the crossfade.
+  const captionSegment = showTransitionOverlay
+    ? (findOutgoingSegment(segments, currentSegment) ?? currentSegment)
+    : currentSegment;
 
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
   // The canvas is sized to match the stage via CSS (position:absolute inset-0).
@@ -819,8 +847,11 @@ export function PreviewStage({
   // far edge sits at the opposite edge, and at 50% it's centered — fully inside at every value.
   const headingPosX = currentSegment?.headingConfig?.x ?? 50;
   const headingPosY = currentSegment?.headingConfig?.y ?? 50;
-  const overlayPosX = currentSegment?.overlayConfig?.x ?? 50;
-  const overlayPosY = currentSegment?.overlayConfig?.y ?? 78;
+  // Phase A3 — driven by captionSegment (not currentSegment directly), so
+  // the caption's position stays in lockstep with whichever segment's text
+  // is currently shown (see captionSegment's own comment above).
+  const overlayPosX = captionSegment?.overlayConfig?.x ?? 50;
+  const overlayPosY = captionSegment?.overlayConfig?.y ?? 78;
   // Mirrors frameRenderer's refScale = h / 1080. Defaults to 1 (unscaled)
   // until the ResizeObserver fires after first mount.
   const captionScale = stageHeight > 0 ? stageHeight / 1080 : 1;
@@ -1183,13 +1214,14 @@ export function PreviewStage({
             z-index on a caption nested inside it would only rank among that motion.div's
             own children and could never outrank this canvas sibling. zIndex 46 clears the
             canvas's 45 while staying below Corner Stats (50). Stays visible through the
-            whole transition (no opacity fade); always reflects currentSegment's own
-            text/position, which only changes the instant currentSegment flips to the
-            incoming segment — exactly when the transition window ends — so the caption
-            reads as steady throughout the crossfade. The transition snapshot bakes no
-            caption text (skipCaption, see useTransitionPreview.ts), so there's no second
-            caption underneath to dissolve against. */}
-        {currentSegment && currentSegment.showOverlay && currentSegment.text && (
+            whole transition (no opacity fade); reads captionSegment (not currentSegment
+            directly, see its own comment above) so it stays on the OUTGOING segment's
+            text/position for as long as the transition overlay is showing, switching to
+            the incoming segment's own caption only once the overlay itself releases — so
+            the caption reads as steady throughout the crossfade. The transition snapshot
+            bakes no caption text (skipCaption, see useTransitionPreview.ts), so there's
+            no second caption underneath to dissolve against. */}
+        {captionSegment && captionSegment.showOverlay && captionSegment.text && (
           <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 46 }}>
             <motion.div
               initial={{ y: 30, opacity: 0 }}
@@ -1204,20 +1236,20 @@ export function PreviewStage({
                 maxWidth: '70%',
                 padding: `${Math.round(12 * captionScale)}px ${Math.round(20 * captionScale)}px`,
                 borderRadius: `${Math.round(24 * captionScale)}px`,
-                backgroundColor: currentSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
+                backgroundColor: captionSegment.overlayConfig?.backgroundColor || globalOverlayConfig.backgroundColor,
               }}
             >
               <p
                 className="font-light leading-relaxed tracking-wide drop-shadow-md italic"
                 style={{
-                  fontFamily: currentSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
-                  color: currentSegment.overlayConfig?.color || globalOverlayConfig.color,
-                  fontSize: `${(currentSegment.overlayConfig?.fontSize ?? 24) * captionScale}px`,
-                  fontWeight: currentSegment.overlayConfig?.fontWeight || 'normal',
-                  fontStyle: currentSegment.overlayConfig?.fontStyle || 'italic',
+                  fontFamily: captionSegment.overlayConfig?.fontFamily || globalOverlayConfig.fontFamily,
+                  color: captionSegment.overlayConfig?.color || globalOverlayConfig.color,
+                  fontSize: `${(captionSegment.overlayConfig?.fontSize ?? 24) * captionScale}px`,
+                  fontWeight: captionSegment.overlayConfig?.fontWeight || 'normal',
+                  fontStyle: captionSegment.overlayConfig?.fontStyle || 'italic',
                 }}
               >
-                {currentSegment.text}
+                {captionSegment.text}
               </p>
             </motion.div>
           </div>

@@ -142,13 +142,22 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
 **Status:** IN PROGRESS. Quick wins (Section 8.0) are fully COMPLETE — 3 of 3 sub-items done, see
-✅ COMPLETED below. Phase A is now IN PROGRESS: A1 (animation-twin conversion) and A2
-(boundary-frame pre-pull) are ✅ COMPLETE; A3 (transition-window realignment) is ⬜ NOT STARTED. Phases B and C are
-NOT STARTED. This is a distinct, second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
-video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
-follow-on removes that firewall deliberately: it adapts **export** to WebCodecs too, unifies
-preview and export behind ONE compositor, and closes the preview-side timing/quality gaps 0–8
-mitigated but did not root-fix.
+✅ COMPLETED below. **Phase A is now fully ✅ COMPLETE — 3 of 3 steps done (A1 animation-twin
+conversion, A2 boundary-frame pre-pull, A3 transition-window realignment + caption-hold
+companion).** Phases B and C are NOT STARTED. This is a distinct, second effort layered on top of
+the now-complete Phases 0–8. Phases 0–8 replaced the *preview* video path with WebCodecs and left
+the export pipeline untouched by hard gate (7.1 #6). This follow-on removes that firewall
+deliberately: it adapts **export** to WebCodecs too, unifies preview and export behind ONE
+compositor, and closes the preview-side timing/quality gaps 0–8 mitigated but did not root-fix.
+
+Post-A3 manual testing (2026-07-06) surfaced 3 residual preview issues, none of them caused by or
+fixable within Phase A — tracked as separate follow-on items, not reopening A: (1) a pre-existing
+animation "snap-back" on content-catch-up-hold release, newly exposed (not caused) by A1's
+timeInSegment conversion — see the new Follow-On item below Phase A's entry; (2) the known
+static-snapshot transition-blend limitation (frozen frame for the full transition window) —
+unchanged by A3, a bigger separate "live blend" redesign, not yet scoped; (3) general preview
+playback lag/smoothness unrelated to segment boundaries — root cause unconfirmed, needs runtime
+profiling, not a code-review-fixable issue. See each item's own entry below for detail.
 
 **Locked technical decisions (do not re-litigate during implementation):**
 - Single master clock = the audio playhead (`usePlayback.ts`, UNCHANGED) for BOTH preview and export.
@@ -292,11 +301,9 @@ mitigated but did not root-fix.
     entrance-animation feature (`extraOverlays`, `TEXT_ANIMATIONS`) at a separate call site
     (`PreviewStage.tsx` ~1027); confirmed via full-codebase grep before deciding not to remove
     anything from `constants.ts`.
-  - **Remaining — Phase A is NOT fully closed by A1:** A2 (boundary-frame pre-pull) has since
-    landed — see the ✅ COMPLETED entry below. A3 (transition-window realignment —
-    `useTransitionPreview.ts`'s window currently sits BEFORE the nominal segment boundary while
-    export's sits AFTER it, a confirmed divergence found during the Phase A audit) is still
-    NOT STARTED.
+  - **Remaining at the time A1 landed:** A2 (boundary-frame pre-pull) and A3 (transition-window
+    realignment) were still open — both have since landed, see their own ✅ COMPLETED entries
+    below. **Phase A is now fully closed (A1+A2+A3).**
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
     tests exercise this render-internal helper directly). Committed in `fix: convert AnimationType
     preview twins to timeInSegment-driven transforms, matching export exactly (Phase A1)`.
@@ -334,22 +341,86 @@ mitigated but did not root-fix.
     large asset whose demux+decode can't finish even with the earliest possible pull). They should
     engage far less often post-fix, not never — no fallback mechanism was touched or simplified this
     pass.
-  - **Remaining:** A3 (transition-window realignment) is still NOT STARTED and is expected to close
-    the other half of the user-reported symptom this task started from ("both segments' edges freeze,
-    then the video plays after it ends") — that framing is actually two distinct, now-separately-
-    tracked issues: the frozen-edge freeze this fix targets (root-caused here), and a genuine
-    timing-window mismatch (preview's transition blend sits BEFORE the nominal segment boundary,
-    export's sits AFTER it — Finding 4, unchanged, still A3's scope).
+  - **Remaining at the time A2 landed:** A3 (transition-window realignment) was still NOT STARTED,
+    expected to close the other half of the user-reported symptom this task started from ("both
+    segments' edges freeze, then the video plays after it ends") — the genuine timing-window
+    mismatch (preview's transition blend sitting BEFORE the nominal segment boundary, export's
+    sitting AFTER it — Finding 4). A3 has since landed — see its own ✅ COMPLETED entry below.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — this is
     async decode-timing behavior, not a new pure/unit-testable function). Committed in `fix:
     proactively pre-pull next segment's boundary frame during decode-ahead, eliminating first-paint
     freeze at segment cuts (Phase A2)`.
 
+- **Phase A3 of 3 — transition-window realignment + caption-hold companion fix (completed
+  2026-07-06) — closes Phase A.**
+  Per Section 8.1 step 3 ("Transition-timing alignment"). Targets audit-confirmed Finding 4:
+  `useTransitionPreview.ts`'s blend window sat BEFORE the nominal segment boundary (inside the
+  outgoing segment's own trailing span) while `segmentEncoder.ts`/export bakes the blend AFTER the
+  boundary (inside the incoming segment's own leading span) — a confirmed preview/export timing
+  divergence.
+  - **Root-cause fix:** `useTransitionPreview.ts`'s window derivation (~94-166) now evaluates two
+    candidate windows off whichever segment currently contains the playhead (`containingSeg`):
+    candidate A (`containingSeg` about to end — pre-roll lead-in only, no blend yet) and candidate B
+    (`containingSeg` just started — the real, active blend window, sitting inside its own leading
+    `duration`). Candidate B wins if both are true at once. The outgoing snapshot is now sampled at
+    the outgoing segment's own final frame (`outgoingSeg.duration - OUTGOING_SNAPSHOT_EPSILON_S`,
+    0.05s safety margin) rather than at a fixed offset mid-segment, matching export's actual
+    "blend against the outgoing segment's last frame" semantics.
+  - **Caption-hold companion fix (`PreviewStage.tsx`):** `currentSegment` now flips to the incoming
+    segment at the window's START (not its end, as before), since the blend window moved to sit
+    after the boundary. The DOM body caption previously read `currentSegment` directly on the
+    assumption it only flips when the transition window ends — no longer true. Added
+    `findOutgoingSegment` (~189-201) and a new `captionSegment` (~510-512): while
+    `showTransitionOverlay` is true, the caption (text + position, ~850-857, ~1217+) reads the
+    OUTGOING segment instead, switching to the incoming segment's own caption only once the overlay
+    itself releases — so the caption still reads as steady throughout the crossfade.
+  - **Interaction confirmed with A2 and the pre-existing Bug 1/Bug 2 catch-up gate:** unaffected —
+    A3 only changes which side of the boundary `transitionPreview.isActive` is true on; it does not
+    touch `useWebCodecsPreview.ts`, `computeDisplayedSegment`, `computeOverlayHoldState`, or
+    `frameSegmentId` at all. Post-A3, the overlay/hold window now extends `transitionDuration`
+    seconds INTO the incoming segment rather than ending exactly at the boundary, which in practice
+    gives the Bug 1/Bug 2 catch-up gate more headroom (not less) before it would ever need to
+    visibly hold past the overlay's own natural window.
+  - **Post-A3 manual testing surfaced 3 residual issues — none fixed by, or caused by, this task:**
+    1. **Animation snap-back (pre-existing, NOT caused by A3):** `useWebCodecsPreview.ts`'s
+       `computeDisplayedSegment` (~321-330) holds the animation-driving segment on the OUTGOING
+       segment while content catch-up is pending, clamped to its own end-state duration (~341-347).
+       When catch-up completes, the held segment snaps directly to the incoming segment with
+       `animTimeInSegment ~= 0` — a hard, one-frame transform discontinuity. Invisible before A1
+       (the old Framer wall-clock keyframes didn't read `timeInSegment` at all); A1's conversion of
+       10 animation types (plus the pre-existing KEN_BURNS/ZOOM family) to pure functions of
+       `timeInSegment` now exposes this snap visibly whenever the hold releases on a segment using
+       one of these animation types. Intermittent because the hold only engages under variable
+       decode load. Tracked as a new, separate follow-up item (see below) — root-cause confirmed,
+       fix design proposed, not yet implemented.
+    2. **Frozen frame during transitions (known limitation, unchanged by A3):** both
+       `useTransitionPreview.ts` snapshots are rendered ONCE per boundary and blended purely by
+       `progress` — neither is ever re-rendered against a moving `timeInSegment`, so the transition
+       itself shows no live motion for its full duration. This is the static-snapshot architecture
+       described in this file's own header comment (~1-11), not a bug. Fixing it for real ("live
+       blend") is a bigger, separate redesign effort — not scoped here.
+    3. **General preview playback lag/smoothness (out of scope, unconfirmed root cause):** reported
+       as present both at segment boundaries and during ordinary mid-segment playback. A3's diff
+       (and A2's) add negligible per-render/per-boundary cost only — neither touches the
+       steady-state frame-pull chase (`useWebCodecsPreview.ts` ~519-621) that runs continuously
+       during normal playback. Root cause requires runtime profiling (decode throughput / main-thread
+       contention / GC pressure), not a code-review diff audit — tracked as a distinct, separate
+       investigation, not a Phase A follow-up.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — this is
+    async decode-timing + DOM-render behavior, not new pure/unit-testable functions). Committed in
+    `feat: align preview transition window with export placement + hold caption through blend
+    (Phase A3 — closes Phase A)`.
+
+**Phase A is now fully ✅ COMPLETE (A1 + A2 + A3).**
+
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
-- **Phase A — Unify the clock (preview). 🟡 2 of 3 steps done.** Step 1 (animation-twin conversion,
-  A1) and step 2 (boundary-frame pre-pull, A2) are ✅ COMPLETE — see above. Step 3 (align transition
-  timing so preview matches export exactly, A3) is ⬜ NOT STARTED. Full definition in Section 8 below.
+- **Phase A — Unify the clock (preview). ✅ COMPLETE — 3 of 3 steps done (A1 animation-twin
+  conversion, A2 boundary-frame pre-pull, A3 transition-window realignment + caption-hold
+  companion) — see ✅ COMPLETED above.** No longer pending. Post-A3 manual testing surfaced 3
+  residual issues NOT part of Phase A's scope and NOT fixed by it — see A3's own entry above for
+  detail; the animation snap-back item has a root-cause trace and proposed fix design (not yet
+  implemented) as a new, separate follow-up.
 - **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
   per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
   ffmpeg used once for final mux only. Full definition in Section 8 below.
@@ -359,7 +430,7 @@ mitigated but did not root-fix.
 - **Quick wins (do first, independently mergeable) — 3 of 3 done, see ✅ COMPLETED above.** Quick
   Wins are fully COMPLETE: the `[DIAG]`/live-`//FFCACHE` log strip, the black-flash guard, and the
   image-fade-replay fix (option (a), not the dip-black/white blend) have all landed (with caveats
-  noted above). **Phase A is IN PROGRESS (A1 + A2 done; A3 next).** Two threads were explicitly carved
+  noted above). **Phase A is now fully COMPLETE (A1 + A2 + A3 all done).** Two threads were explicitly carved
   out of quick-win scope from the start and remain open where first flagged: the dormant
   `//FFCACHE` dead-code block and the export `console.debug` lines (both under quick win 1). Full
   step definitions in Section 8.0 below.
@@ -744,14 +815,13 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
 - **Tracker rows on completion (⬜ → ✅):**
   `- **Quick wins — hot-path log strip + black-flash guard + image-dip.** …tsc clean, vitest N/N. Committed in …`
 
-### 8.1 Phase A — Unify the clock (preview: playhead-driven animations, no frozen boundary, aligned transition timing)
+### 8.1 Phase A — Unify the clock (preview: playhead-driven animations, no frozen boundary, aligned transition timing) — ✅ COMPLETE
 
 - **Goal:** every preview animation, transition, and boundary crossing is a pure function of the audio
   playhead — pauses freeze, seeks jump exactly, and what preview shows at time T is what export renders
-  at time T. Closes audit findings #3 (**partially** — step 1/A1, done, fixes the free-running/
-  non-replaying animation bug; see the Follow-On Effort ✅ COMPLETED tracker above), #4 (root, not
-  just mitigation — step 2/A2, NOT STARTED), and preview/export transition-timing parity (step 3/A3,
-  NOT STARTED).
+  at time T. **All 3 steps done — see the Follow-On Effort ✅ COMPLETED tracker above for each step's
+  full writeup, including 3 residual issues surfaced by post-A3 manual testing that are explicitly
+  NOT part of this phase's scope (tracked separately).**
 - **Concrete steps:**
   1. ✅ **DONE (2026-07-06) — Playhead animation twins.** Rewrote the `getMotionProps(...)` branches in
      `getAnimationWrapperProps` (`PreviewStage.tsx:70-103`: FLOAT, SHAKE, PULSE, WOBBLE, HEARTBEAT,
@@ -759,27 +829,30 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
      `timeInSegment`, mirroring the KEN_BURNS/ZOOM precedent at `:53-68` and the export math in
      `canvasAnimations.ts`. Framer Motion's wall-clock `repeat: Infinity` animations are replaced with
      per-render deterministic transforms. This is the single source of the preview↔export animation twin.
-  2. **Eliminate the boundary frozen frame.** Extend the decode-ahead so the incoming segment's *exact
-     boundary frame* (its frame at `trimStart`) is decoded and available before the playhead crosses,
-     rather than relying solely on `frameSegmentId` to *hold* the outgoing frame after the fact
-     (`PreviewStage.tsx:433-448`). Add a "pin the boundary frame of the next segment" request into
-     `useWebCodecsPreview.ts`'s decode-ahead (reuse `videoDecoderPool`'s existing `ensureSession` +
-     `initialTargetSec`); keep the `frameSegmentId` hold as a safety net, but it should rarely engage.
-  3. **Transition-timing alignment.** Audit `useTransitionPreview.ts`'s window math (`PRE_ROLL_LEAD_S`,
-     the `inTransitionWindow` start/end) against `segmentEncoder.ts`'s transition frame range so the
-     blend covers the identical `[start,end]` fraction of the segment in preview and export. Both already
-     share `applyTransitionBlend` (Section 2.4); this step aligns *when* it runs, not *how* it blends.
+  2. ✅ **DONE (2026-07-06) — Eliminate the boundary frozen frame.** `useWebCodecsPreview.ts`'s
+     decode-ahead effect now issues `pool.getFrameAt(nextSegment.id, start)` alongside `ensureSession`,
+     stashing the result in `pendingBoundaryPullRef` for the frame-pull chase to adopt immediately at
+     the crossing instant. See the Follow-On Effort ✅ COMPLETED tracker's A2 entry for full detail.
+  3. ✅ **DONE (2026-07-06) — Transition-timing alignment.** `useTransitionPreview.ts`'s window now
+     sits AFTER the nominal segment boundary (inside the incoming segment's own leading span),
+     matching `segmentEncoder.ts`/export exactly, with a caption-hold companion fix in
+     `PreviewStage.tsx` so the DOM caption keeps reading the outgoing segment for the life of the
+     (relocated) blend window. See the Follow-On Effort ✅ COMPLETED tracker's A3 entry for full
+     detail, including the 3 residual issues its own manual test pass surfaced.
 - **Touch surface:** `PreviewStage.tsx:39-108` (animation wrapper), `PreviewStage.tsx:409-448`
   (catch-up gate), `useWebCodecsPreview.ts` (boundary-frame pin), `useTransitionPreview.ts` (window math).
 - **MUST NOT touch:** `usePlayback.ts` (audio clock), `frameRenderer.ts`, `segmentEncoder.ts`,
   `canvasAnimations.ts` (export animation math is the reference — read it, don't change it), any file
   under `src-tauri/`. Do not convert overlays/captions off the DOM (Section 6 risk 5 stands).
-- **Manual test (you run):** in the Tauri app, a project with (a) a BOUNCE segment — pause mid-segment:
-  the bounce freezes (today it keeps animating); scrub: it tracks the playhead; (b) two video segments
-  with a cross-dissolve — play through repeatedly: no frozen/black frame at the boundary, no flash-back;
-  (c) eyeball the same BOUNCE + dissolve in an actual export and confirm preview matched frame-for-frame.
+- **Manual test (run 2026-07-06):** in the Tauri app, a project with (a) a BOUNCE segment — pause
+  mid-segment: the bounce freezes correctly; scrub: it tracks the playhead; (b) two video segments
+  with a cross-dissolve — play through repeatedly: no frozen/black frame at the boundary crossing
+  itself; (c) BOUNCE + dissolve compared against an actual export. This pass is what surfaced the 3
+  residual issues noted above — none of them are boundary-freeze or animation-twin-drift regressions
+  of the kind this phase targeted.
 - **Tracker rows on completion (⬜ → ✅):** `- **Phase A — Unify the clock (preview).** …` in the
-  standard format, ending with tsc/vitest counts + "Committed in …".
+  standard format, ending with tsc/vitest counts + "Committed in …". **Done — see ✅ COMPLETED
+  tracker above.**
 
 ### 8.2 Phase B — Export onto WebCodecs `VideoEncoder` behind ONE shared compositor
 

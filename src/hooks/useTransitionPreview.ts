@@ -26,6 +26,16 @@ const SNAP_H = 540;
  *  400ms of margin inside the 800ms window. */
 const PRE_ROLL_LEAD_S = 0.8;
 
+/** Tolerance for "does this segment start where that one ends" contiguity
+ *  checks — matches the rounding tolerance segment timing already accrues
+ *  elsewhere (e.g. syncEngine.ts's anchor math). */
+const CONTIGUITY_EPSILON_S = 0.001;
+
+/** Safety margin subtracted from the outgoing segment's own duration when
+ *  sampling its final frame for the outgoing snapshot — avoids seeking at
+ *  (or, from floating-point error, past) the source's own end. */
+const OUTGOING_SNAPSHOT_EPSILON_S = 0.05;
+
 interface SnapshotPair {
   /** Unique key identifying this boundary: `${outId}:${inId}` */
   key: string;
@@ -83,53 +93,95 @@ export function useTransitionPreview({
 
   // ---------------------------------------------------------------------------
   // Derive relevant segments + transition metadata
+  //
+  // Export places its blend AFTER the nominal boundary (inside the incoming
+  // segment's own slot — see segmentEncoder.ts/exportPipeline.ts). Preview
+  // must match that placement, which means the segment containing
+  // `currentTime` is NOT reliably "the outgoing segment" the way it was when
+  // the window sat entirely before the boundary — it can be either side
+  // depending on where the playhead currently sits relative to a boundary.
+  // Two candidate windows are evaluated every render, both anchored off
+  // whichever segment currently contains the playhead:
+  //   A) containingSeg is about to END — pre-roll lead-in only, no blend yet
+  //      (the blend itself will happen inside the NEXT segment's own slot).
+  //   B) containingSeg just STARTED — the real, active blend window, sitting
+  //      inside containingSeg's own leading `duration` seconds.
+  // Candidate B always wins if both were somehow true at once (degenerate
+  // sub-`duration`-long segments) — an active blend is the "real" state.
   // ---------------------------------------------------------------------------
-  const currentSeg = segments.find(
+  const sorted = [...segments].sort((a, b) => a.startTime - b.startTime);
+  const containingSeg = sorted.find(
     s => currentTime >= s.startTime && currentTime < s.startTime + s.duration,
   );
-  // Next segment: sorted by startTime, first one that begins at or after the end of currentSeg.
-  // Using order sort is more robust than relying on array position.
-  const nextSeg = currentSeg
-    ? [...segments]
-        .sort((a, b) => a.startTime - b.startTime)
-        .find(s => s.startTime >= currentSeg.startTime + currentSeg.duration - 0.001 && s.id !== currentSeg.id)
-    : undefined;
+  const nextOf = (seg: VideoSegment) =>
+    sorted.find(s => s.startTime >= seg.startTime + seg.duration - CONTIGUITY_EPSILON_S && s.id !== seg.id);
+  const prevOf = (seg: VideoSegment) =>
+    sorted.find(s => Math.abs(s.startTime + s.duration - seg.startTime) < CONTIGUITY_EPSILON_S && s.id !== seg.id);
 
-  const { transition: effectiveTransition, duration: transitionDuration } =
-    resolveEffectiveTransition(currentSeg, globalTransition, globalTransitionDuration);
+  // Candidate A — containingSeg is the OUTGOING side, approaching its own end.
+  const nextSegA = containingSeg ? nextOf(containingSeg) : undefined;
+  const resolvedA = resolveEffectiveTransition(containingSeg, globalTransition, globalTransitionDuration);
+  const preRollOnlyActive =
+    containingSeg !== undefined &&
+    nextSegA !== undefined &&
+    resolvedA.transition !== TransitionType.NONE &&
+    resolvedA.duration > 0 &&
+    currentTime >= nextSegA.startTime - resolvedA.duration - PRE_ROLL_LEAD_S &&
+    currentTime < nextSegA.startTime;
 
-  const transitionStart = nextSeg ? nextSeg.startTime - transitionDuration : Infinity;
-  const transitionEnd = nextSeg ? nextSeg.startTime : Infinity;
+  // Candidate B — containingSeg is the INCOMING side, inside its own leading
+  // transition window. Duration/type are resolved against the OUTGOING
+  // segment's own field (prevSegB), matching resolveEffectiveTransition's
+  // contract and export's semantics — never against containingSeg itself.
+  const prevSegB = containingSeg ? prevOf(containingSeg) : undefined;
+  const resolvedB = resolveEffectiveTransition(prevSegB, globalTransition, globalTransitionDuration);
+  const activeBlendActive =
+    containingSeg !== undefined &&
+    prevSegB !== undefined &&
+    resolvedB.transition !== TransitionType.NONE &&
+    resolvedB.duration > 0 &&
+    currentTime >= containingSeg.startTime &&
+    currentTime < containingSeg.startTime + resolvedB.duration;
 
-  const inTransitionWindow =
-    !isResizingRef.current &&
-    nextSeg !== undefined &&
-    effectiveTransition !== TransitionType.NONE &&
-    transitionDuration > 0 &&
-    currentTime >= transitionStart &&
-    currentTime < transitionEnd;
+  let outgoingSeg: VideoSegment | undefined;
+  let incomingSeg: VideoSegment | undefined;
+  let transitionDuration = 0;
+  let effectiveTransition: TransitionType | string = TransitionType.NONE;
+  let isActiveWindow = false;
+  let needsPreRollWindow = false;
 
-  const progress = inTransitionWindow
-    ? Math.max(0, Math.min(1, (currentTime - transitionStart) / transitionDuration))
+  if (activeBlendActive) {
+    outgoingSeg = prevSegB;
+    incomingSeg = containingSeg;
+    transitionDuration = resolvedB.duration;
+    effectiveTransition = resolvedB.transition;
+    isActiveWindow = true;
+    needsPreRollWindow = true;
+  } else if (preRollOnlyActive) {
+    outgoingSeg = containingSeg;
+    incomingSeg = nextSegA;
+    transitionDuration = resolvedA.duration;
+    effectiveTransition = resolvedA.transition;
+    needsPreRollWindow = true;
+  }
+
+  const inTransitionWindow = !isResizingRef.current && isActiveWindow;
+
+  const progress = inTransitionWindow && incomingSeg
+    ? Math.max(0, Math.min(1, (currentTime - incomingSeg.startTime) / transitionDuration))
     : 0;
 
   // ---------------------------------------------------------------------------
   // Pre-roll: render snapshots once when approaching the transition window
   // ---------------------------------------------------------------------------
-  const needsPreRoll =
-    !isResizingRef.current &&
-    nextSeg !== undefined &&
-    effectiveTransition !== TransitionType.NONE &&
-    transitionDuration > 0 &&
-    currentTime >= transitionStart - PRE_ROLL_LEAD_S &&
-    currentTime < transitionEnd;
+  const needsPreRoll = !isResizingRef.current && needsPreRollWindow;
 
   useEffect(() => {
-    if (!needsPreRoll || !currentSeg || !nextSeg) {
+    if (!needsPreRoll || !outgoingSeg || !incomingSeg) {
       return;
     }
 
-    const key = `${currentSeg.id}:${nextSeg.id}`;
+    const key = `${outgoingSeg.id}:${incomingSeg.id}`;
     // Already have this snapshot pair or render is in flight
     if (snapshots?.key === key || pendingKeyRef.current === key) {
       return;
@@ -151,10 +203,13 @@ export function useTransitionPreview({
       return;
     }
 
-    const currentAsset = assets.find(a => a.id === currentSeg.assetId);
-    const nextAsset = assets.find(a => a.id === nextSeg.assetId);
-    // Render the outgoing frame at the moment the transition window begins
-    const outgoingTime = Math.max(0, transitionStart - currentSeg.startTime);
+    const currentAsset = assets.find(a => a.id === outgoingSeg.assetId);
+    const nextAsset = assets.find(a => a.id === incomingSeg.assetId);
+    // Render the outgoing frame at its own final instant — the blend always
+    // starts exactly at the shared segment boundary now (matching export),
+    // so "outgoing" is always sampled at its own last frame, not partway
+    // through. Clamped below its own duration to avoid an out-of-range seek.
+    const outgoingTime = Math.max(0, outgoingSeg.duration - OUTGOING_SNAPSHOT_EPSILON_S);
 
     void (async () => {
       try {
@@ -171,7 +226,7 @@ export function useTransitionPreview({
         if (sharesAsset) {
           // Same video element — seek sequentially to avoid race.
           await renderSegmentFrame({
-            segment: currentSeg,
+            segment: outgoingSeg,
             asset: currentAsset,
             timeInSegment: outgoingTime,
             ctx: outCtx,
@@ -186,7 +241,7 @@ export function useTransitionPreview({
             global: globalConfig,
           });
           await renderSegmentFrame({
-            segment: nextSeg,
+            segment: incomingSeg,
             asset: nextAsset,
             timeInSegment: 0,
             ctx: inCtx,
@@ -203,7 +258,7 @@ export function useTransitionPreview({
         } else {
           // Distinct sources (or non-video) — parallel is safe.
           const outgoingPromise = renderSegmentFrame({
-            segment: currentSeg,
+            segment: outgoingSeg,
             asset: currentAsset,
             timeInSegment: outgoingTime,
             ctx: outCtx,
@@ -219,7 +274,7 @@ export function useTransitionPreview({
           });
 
           const incomingPromise = renderSegmentFrame({
-            segment: nextSeg,
+            segment: incomingSeg,
             asset: nextAsset,
             timeInSegment: 0,
             ctx: inCtx,
@@ -246,27 +301,28 @@ export function useTransitionPreview({
         if (pendingKeyRef.current === key) pendingKeyRef.current = '';
       }
     })();
-  // currentSeg/nextSeg effectAnimation are included so changing a clip effect
-  // re-renders the snapshot — otherwise a cached snapshot keeps showing the old
-  // (or absent) filter through the transition. renderSegmentFrame bakes
-  // resolveClipEffectFilter into the snapshot, so a fresh render is all that's needed.
+  // outgoingSeg/incomingSeg effectAnimation are included so changing a clip
+  // effect re-renders the snapshot — otherwise a cached snapshot keeps
+  // showing the old (or absent) filter through the transition.
+  // renderSegmentFrame bakes resolveClipEffectFilter into the snapshot, so a
+  // fresh render is all that's needed.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [needsPreRoll, currentSeg?.id, nextSeg?.id, effectiveTransition, currentSeg?.effectAnimation, nextSeg?.effectAnimation]);
+  }, [needsPreRoll, outgoingSeg?.id, incomingSeg?.id, effectiveTransition, outgoingSeg?.effectAnimation, incomingSeg?.effectAnimation]);
 
   // Clear stale snapshots when the boundary changes (e.g. user seeks back)
   useEffect(() => {
-    if (!currentSeg || !nextSeg) {
+    if (!outgoingSeg || !incomingSeg) {
       setSnapshots(null);
       return;
     }
-    const key = `${currentSeg.id}:${nextSeg.id}`;
+    const key = `${outgoingSeg.id}:${incomingSeg.id}`;
     setSnapshots(prev => (prev?.key === key ? prev : null));
-  }, [currentSeg?.id, nextSeg?.id]);
+  }, [outgoingSeg?.id, incomingSeg?.id]);
 
   // ---------------------------------------------------------------------------
   // Compose result
   // ---------------------------------------------------------------------------
-  const snapshotsReady = snapshots !== null && snapshots.key === `${currentSeg?.id}:${nextSeg?.id}`;
+  const snapshotsReady = snapshots !== null && snapshots.key === `${outgoingSeg?.id}:${incomingSeg?.id}`;
   const isActive = inTransitionWindow && snapshotsReady;
 
   return {
