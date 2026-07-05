@@ -142,8 +142,9 @@ Nothing remains that blocks this branch. Everything below is known follow-up wor
 ## Follow-On Effort — Preview/Export Unification (Phases A–C)
 
 **Status:** IN PROGRESS. Quick wins (Section 8.0) are fully COMPLETE — 3 of 3 sub-items done, see
-✅ COMPLETED below. Phases A–C themselves are NOT STARTED; Phase A is next. This is a distinct,
-second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
+✅ COMPLETED below. Phase A is now IN PROGRESS: A1 (animation-twin conversion) is ✅ COMPLETE; A2
+(boundary-frame pin) and A3 (transition-window realignment) are ⬜ NOT STARTED. Phases B and C are
+NOT STARTED. This is a distinct, second effort layered on top of the now-complete Phases 0–8. Phases 0–8 replaced the *preview*
 video path with WebCodecs and left the export pipeline untouched by hard gate (7.1 #6). This
 follow-on removes that firewall deliberately: it adapts **export** to WebCodecs too, unifies
 preview and export behind ONE compositor, and closes the preview-side timing/quality gaps 0–8
@@ -250,12 +251,62 @@ mitigated but did not root-fix.
     `PreviewStage`'s JSX in a test). Committed in `fix: replay image fade on image-to-image
     hard-cut boundaries (8.0 quick win 3/3 — closes Quick Wins)`.
 
+- **Phase A1 of 3 — animation-twin conversion (completed 2026-07-06).**
+  Per Section 8.1 step 1 ("Playhead animation twins"). Converted all 10 remaining `AnimationType`
+  cases in `PreviewStage.tsx`'s `getAnimationWrapperProps` (FLOAT, SHAKE, PULSE, WOBBLE, HEARTBEAT,
+  BOUNCE, ROTATE, SKEW, GLITCH, NEON_FLICKER) from Framer Motion wall-clock keyframes/mount-triggered
+  tweens to `{ style }` objects computed fresh from `timeInSegment` every render — the same pattern
+  KEN_BURNS/ZOOM_IN/ZOOM_OUT already used. Reuses `canvasAnimations.ts`'s own exported helper
+  functions (`oscillate`, `interpKeyframes`, `easeInOutSine`, `easeOutQuad`, `springApprox`) via
+  direct import rather than reimplementing the math, so preview and export cannot drift apart on
+  these formulas going forward.
+  - **Root cause closed:** the wrapper `motion.div`s (~807, ~817) have no `key` tied to segment
+    identity, so React never remounts them on a segment change — `repeat: Infinity` keyframe
+    animations (7 types) free-ran on Framer's own wall clock forever, independent of
+    play/pause/seek, and one-shot entry animations (BOUNCE/ROTATE/SKEW, 3 types) only ever fired
+    once, on the very first segment ever displayed. Both are now moot: every case is a pure
+    function of `timeInSegment`, so pausing freezes it, seeking snaps it, and re-entering any
+    segment replays its entry animation correctly — no `key` prop needed (confirmed during audit:
+    adding one would have been redundant for the inner wrapper once time-driven, and risked
+    activating the outer transition wrapper's dormant `exit`/`initial` CSS crossfade — that risk is
+    explicitly A3's territory, not A1's, and was avoided by design).
+  - **Accepted, explicit behavior changes** (preview now matches export, which was already correct
+    — not the other way around):
+    - FLOAT's shape changed from a one-directional dip (0 → -20px → 0) to the full bidirectional
+      sine export already used (0 → +20px → 0 → -20px → 0).
+    - HEARTBEAT's period corrected from 1.5s to 1.2s, matching export exactly (previously would
+      visibly desync from the same segment's export render).
+    - SHAKE's frequency corrected from ~2.5Hz (a 5-point linear keyframe array over 0.4s) to the
+      10Hz continuous sine export uses.
+    - Entry types (BOUNCE/ROTATE/SKEW) no longer fade in from `opacity: 0` — canvas math has no
+      effect on alpha for these, so preview no longer invents one either; media is visible from
+      t=0, offset only by its own transform.
+    - NEON_FLICKER's glow (`shadowBlur`/`shadowColor`) remains a canvas-only export effect,
+      unchanged — this was already an accepted preview/export divergence before A1, not something
+      this task was scoped to add.
+  - **Decisions locked during audit, applied as-is:** raw px amplitude constants ported unscaled
+    (no proportional rescale for the preview stage's variable on-screen size — accepted caveat: can
+    look proportionally smaller on a large preview pane); no `key` prop added to either wrapper (see
+    root-cause note above).
+  - **Untouched:** `getMotionProps`/`constants.ts` — still consumed by the unrelated TextOverlay
+    entrance-animation feature (`extraOverlays`, `TEXT_ANIMATIONS`) at a separate call site
+    (`PreviewStage.tsx` ~1027); confirmed via full-codebase grep before deciding not to remove
+    anything from `constants.ts`.
+  - **Remaining — Phase A is NOT fully closed by A1:** A2 (boundary-frame pin — eliminate the
+    frozen/black catch-up frame at its root in `useWebCodecsPreview.ts`) and A3 (transition-window
+    realignment — `useTransitionPreview.ts`'s window currently sits BEFORE the nominal segment
+    boundary while export's sits AFTER it, a confirmed divergence found during the Phase A audit)
+    are both still NOT STARTED.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 135/135 passing (count unchanged — no
+    tests exercise this render-internal helper directly). Committed in `fix: convert AnimationType
+    preview twins to timeInSegment-driven transforms, matching export exactly (Phase A1)`.
+
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
-- **Phase A — Unify the clock (preview).** Convert the wall-clock Framer-Motion animation twins to
-  playhead-driven transforms (like Ken Burns already is); eliminate — not just hold — the boundary
-  catch-up frozen frame; align transition timing so preview matches export exactly. Full definition
-  in Section 8 below.
+- **Phase A — Unify the clock (preview). 🟡 1 of 3 steps done.** Step 1 (animation-twin conversion,
+  A1) is ✅ COMPLETE — see above. Step 2 (eliminate — not just hold — the boundary catch-up frozen
+  frame, A2) and step 3 (align transition timing so preview matches export exactly, A3) are both
+  ⬜ NOT STARTED. Full definition in Section 8 below.
 - **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
   per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
   ffmpeg used once for final mux only. Full definition in Section 8 below.
@@ -265,9 +316,10 @@ mitigated but did not root-fix.
 - **Quick wins (do first, independently mergeable) — 3 of 3 done, see ✅ COMPLETED above.** Quick
   Wins are fully COMPLETE: the `[DIAG]`/live-`//FFCACHE` log strip, the black-flash guard, and the
   image-fade-replay fix (option (a), not the dip-black/white blend) have all landed (with caveats
-  noted above). **Phase A is next.** Two threads were explicitly carved out of quick-win scope from
-  the start and remain open where first flagged: the dormant `//FFCACHE` dead-code block and the
-  export `console.debug` lines (both under quick win 1). Full step definitions in Section 8.0 below.
+  noted above). **Phase A is IN PROGRESS (A1 done; A2 next).** Two threads were explicitly carved
+  out of quick-win scope from the start and remain open where first flagged: the dormant
+  `//FFCACHE` dead-code block and the export `console.debug` lines (both under quick win 1). Full
+  step definitions in Section 8.0 below.
 
 ---
 
@@ -653,10 +705,12 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
 
 - **Goal:** every preview animation, transition, and boundary crossing is a pure function of the audio
   playhead — pauses freeze, seeks jump exactly, and what preview shows at time T is what export renders
-  at time T. Closes audit findings #3 (fully), #4 (root, not just mitigation), and preview/export
-  transition-timing parity.
+  at time T. Closes audit findings #3 (**partially** — step 1/A1, done, fixes the free-running/
+  non-replaying animation bug; see the Follow-On Effort ✅ COMPLETED tracker above), #4 (root, not
+  just mitigation — step 2/A2, NOT STARTED), and preview/export transition-timing parity (step 3/A3,
+  NOT STARTED).
 - **Concrete steps:**
-  1. **Playhead animation twins.** Rewrite the `getMotionProps(...)` branches in
+  1. ✅ **DONE (2026-07-06) — Playhead animation twins.** Rewrote the `getMotionProps(...)` branches in
      `getAnimationWrapperProps` (`PreviewStage.tsx:70-103`: FLOAT, SHAKE, PULSE, WOBBLE, HEARTBEAT,
      BOUNCE, SKEW, GLITCH, NEON_FLICKER, ROTATE) to return a static `transform` computed from
      `timeInSegment`, mirroring the KEN_BURNS/ZOOM precedent at `:53-68` and the export math in

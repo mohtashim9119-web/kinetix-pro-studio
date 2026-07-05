@@ -9,6 +9,7 @@ import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
+import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
 import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
@@ -22,18 +23,25 @@ import {
 } from '../hooks/useWebCodecsPreview';
 import { PreviewCanvas } from './PreviewCanvas';
 
-// Live-preview side of the animation pipeline. The export side
-// lives in src/services/canvasAnimations.ts (applySegmentAnimation).
-// Both must remain visually consistent — if you change motion
-// parameters here, port the change to canvasAnimations.ts and
-// vice versa. Drift between the two will cause preview-vs-export
-// mismatches that are tedious to diagnose.
+// Live-preview side of the animation pipeline. The export side lives in
+// src/services/canvasAnimations.ts (applySegmentAnimation) — every case
+// below imports and calls that module's own helper functions (oscillate,
+// interpKeyframes, easeInOutSine, easeOutQuad, springApprox) rather than
+// reimplementing the math, so the two paths cannot drift apart. If you add
+// a new AnimationType case, add it to canvasAnimations.ts first and port
+// the formula here unchanged (only the CSS transform/opacity property it's
+// assigned to differs from the canvas ctx transform equivalent).
 /**
- * Returns Framer Motion props for the intra-segment media wrapper.
- * The outer motion.div drives cross-segment transition (initial/exit).
- * This inner wrapper drives the looping/entry camera-dynamics animation.
+ * Returns wrapper props for the intra-segment media wrapper, as a plain
+ * `{ style }` object computed fresh from `timeInSegment` every render (the
+ * Framer-Motion-wall-clock approach — `repeat: Infinity` keyframes,
+ * mount-triggered entry tweens — was replaced in Phase A; see
+ * docs/webcodecs-architecture-plan.md Section 8.1). The outer motion.div
+ * drives cross-segment transition (initial/exit). This inner wrapper drives
+ * the looping/entry camera-dynamics animation: pauses freeze it, seeks jump
+ * it exactly, and it matches canvasAnimations.ts frame-for-frame.
  *
- * NB: segmentDuration is needed for time-scaled entry animations (ROTATE, SKEW, BOUNCE)
+ * NB: segmentDuration is needed for time-scaled entry animations (ZOOM_OUT)
  * and KEN_BURNS; pass it in from the consuming component.
  */
 function getAnimationWrapperProps(
@@ -67,40 +75,82 @@ function getAnimationWrapperProps(
       return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
     }
 
-    case AnimationType.FLOAT:
-      return getMotionProps('float');
+    // Phase A (webcodecs-architecture-plan.md Section 8.1) — the remaining
+    // 10 types below are all now driven by timeInSegment, mirroring the
+    // exact formulas/constants in canvasAnimations.ts (same helpers,
+    // imported directly — not reimplemented — to guarantee zero drift).
+    // Framer's own wall-clock `repeat: Infinity` / mount-triggered tweens
+    // are gone: pauses freeze, seeks jump exactly, and preview matches
+    // export frame-for-frame. This intentionally drops each type's former
+    // opacity fade-in (BOUNCE/ROTATE/SKEW/GLITCH) — canvas math has no
+    // effect on alpha for these, so preview no longer invents one either.
+    case AnimationType.FLOAT: {
+      const dy = oscillate(timeInSegment, 3, 20);
+      return { style: { transform: `translateY(${dy}px)` } };
+    }
 
-    case AnimationType.SHAKE:
-      return getMotionProps('shake');
+    case AnimationType.SHAKE: {
+      const dx = oscillate(timeInSegment, 0.1, 10);
+      return { style: { transform: `translateX(${dx}px)` } };
+    }
 
-    case AnimationType.PULSE:
-      return getMotionProps('pulse');
+    case AnimationType.PULSE: {
+      const scale = 1 + 0.05 * easeInOutSine(timeInSegment % 1);
+      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
+    }
 
-    case AnimationType.WOBBLE:
-      return getMotionProps('wobble');
+    case AnimationType.WOBBLE: {
+      const angleDeg = oscillate(timeInSegment, 1, 5);
+      return { style: { transform: `rotate(${angleDeg}deg)` } };
+    }
 
-    case AnimationType.HEARTBEAT:
-      return getMotionProps('heartbeat');
+    case AnimationType.HEARTBEAT: {
+      const scale = interpKeyframes((timeInSegment / 1.2) % 1, [1, 1.2, 1, 1.1, 1]);
+      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
+    }
 
-    case AnimationType.BOUNCE:
-      return getMotionProps('bounce');
+    case AnimationType.BOUNCE: {
+      // Entry spring: from -30px to 0 over first 0.6s, then hold — matches
+      // canvasAnimations.ts exactly (raw px, unscaled per decision A).
+      const entryDur = 0.6;
+      const progress = Math.min(timeInSegment / entryDur, 1);
+      const dy = -30 * (1 - Math.min(springApprox(progress * 5), 1));
+      return { style: { transform: `translateY(${dy}px)` } };
+    }
 
-    case AnimationType.ROTATE:
-      // Entry spin: rotate -360 → 0 (entry only, no exit)
-      return { initial: { rotate: -360, opacity: 0 }, animate: { rotate: 0, opacity: 1 }, transition: { duration: 1, ease: 'easeOut' } };
+    case AnimationType.ROTATE: {
+      // Entry spin: -360deg → 0deg over first 1s, then hold.
+      const entryDur = 1;
+      const progress = Math.min(timeInSegment / entryDur, 1);
+      const angleDeg = -360 * (1 - easeOutQuad(progress));
+      return { style: { transform: `rotate(${angleDeg}deg)` } };
+    }
 
-    case AnimationType.SKEW:
-      return getMotionProps('skew');
+    case AnimationType.SKEW: {
+      // Entry skew: 45deg → 0deg over first 0.3s, then hold.
+      const entryDur = 0.3;
+      const progress = Math.min(timeInSegment / entryDur, 1);
+      const skewXDeg = 45 * (1 - easeOutQuad(progress));
+      return { style: { transform: `skewX(${skewXDeg}deg)` } };
+    }
 
-    case AnimationType.GLITCH:
-      return getMotionProps('glitch');
+    case AnimationType.GLITCH: {
+      // Deterministic per-100ms-tick jitter — same seed/formula as export,
+      // so the same frame always produces the same jitter in both.
+      const tick = Math.floor(timeInSegment * 10);
+      const dx = ((tick * 7919) % 11) - 5;
+      const dy = ((tick * 6271) % 5) - 2;
+      const style: Record<string, unknown> = { transform: `translate(${dx}px, ${dy}px)` };
+      if (tick % 3 === 0) style.filter = 'blur(2px)';
+      return { style };
+    }
 
-    case AnimationType.NEON_FLICKER:
-      // Opacity flicker only (textShadow is CSS-only; canvas export handles glow separately)
-      return {
-        animate: { opacity: [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9] },
-        transition: { duration: 1.5, repeat: Infinity },
-      };
+    case AnimationType.NEON_FLICKER: {
+      // Alpha-only flicker (glow/shadowBlur is a canvas-only export effect —
+      // pre-existing, accepted preview/export divergence, unchanged here).
+      const alpha = interpKeyframes((timeInSegment / 1.5) % 1, [1, 0.3, 0.8, 0.2, 1, 0.4, 0.9]);
+      return { style: { opacity: alpha } };
+    }
 
     default:
       return {};
