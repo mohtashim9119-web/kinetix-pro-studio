@@ -86,7 +86,18 @@ export const MAX_CACHED_SESSIONS = 3;
 
 /** Section 4.3's frame-count ceiling — roughly MAX_CACHED_SESSIONS sessions
  *  each holding one window's worth of buffered frames (~45 @ 30fps) plus
- *  slack. Same tuning note as above. */
+ *  slack. Same tuning note as above.
+ *
+ *  Soft ceiling for protected sessions, by design: enforceBudget() only ever
+ *  evicts non-protected sessions (see evictionCandidates), so this can
+ *  already be transiently exceeded today with just {current, next}
+ *  protected (2 sessions x MAX_BUFFERED_FRAMES_PER_SESSION=90 = 180 > 150
+ *  in the worst case). transitionProtectedIds (below) adds a third
+ *  simultaneously-protected slot for the item-4 transition fix
+ *  (docs/webcodecs-architecture-plan.md) — that stretches the same
+ *  already-soft ceiling a bit further (3 x 90 = 270 worst-case), not a new
+ *  category of risk. MAX_CACHED_SESSIONS=3 already anticipates exactly this
+ *  {current, next, outgoing-during-transition} triple. */
 export const MAX_TOTAL_BUFFERED_FRAMES = 150;
 
 /** Bounds the idle decoder-handle free list kept per asset URL for reuse —
@@ -208,6 +219,16 @@ export class VideoDecoderPool {
   private sessions = new Map<string, DecodeSession>();
   private idleHandles = new Map<string, DecoderHandle[]>();
   private protectedIds = new Set<string>();
+  /** Second, independent protected set for the item-4 transition fix
+   *  (docs/webcodecs-architecture-plan.md) — keeps the OUTGOING segment's
+   *  session alive through its own transition window even after it stops
+   *  being {current, next} (see setTransitionProtectedIds). Deliberately
+   *  separate from protectedIds rather than merged into it: the two sets
+   *  are re-asserted by different callers on different triggers (current/
+   *  next segment identity vs. transition window state), and keeping them
+   *  distinct means one caller's setProtectedIds([...]) full-replace can
+   *  never accidentally clobber the other's contribution. */
+  private transitionProtectedIds = new Set<string>();
   private lastAccess = new Map<string, number>();
   private touchCounter = 0;
 
@@ -806,6 +827,22 @@ export class VideoDecoderPool {
     this.enforceBudget();
   }
 
+  /** Second, independent protected-set setter for the item-4 transition fix
+   *  (docs/webcodecs-architecture-plan.md) — a caller that needs to keep the
+   *  OUTGOING segment's session alive through its own transition window
+   *  (after it has already stopped being {current, next}, see
+   *  setProtectedIds above) asserts that segment's id here. Same full-replace
+   *  contract as setProtectedIds (not additive/merged across calls) — the
+   *  caller is expected to re-assert this every render/tick with whatever it
+   *  currently considers "outgoing" (declarative, not a TTL/expiry: see this
+   *  method's own design note in the item-4 audit for why a timer-based
+   *  expiry was rejected — it would incorrectly lapse if playback is paused
+   *  mid-transition). An empty iterable clears it entirely. */
+  setTransitionProtectedIds(ids: Iterable<string>): void {
+    this.transitionProtectedIds = new Set(ids);
+    this.enforceBudget();
+  }
+
   private touch(segmentId: string): void {
     this.lastAccess.set(segmentId, ++this.touchCounter);
   }
@@ -816,10 +853,11 @@ export class VideoDecoderPool {
     return total;
   }
 
-  /** Non-protected session ids, oldest-accessed first. */
+  /** Non-protected session ids (checked against BOTH protected sets — see
+   *  transitionProtectedIds' own doc), oldest-accessed first. */
   private evictionCandidates(): string[] {
     return Array.from(this.sessions.keys())
-      .filter((id) => !this.protectedIds.has(id))
+      .filter((id) => !this.protectedIds.has(id) && !this.transitionProtectedIds.has(id))
       .sort((a, b) => (this.lastAccess.get(a) ?? 0) - (this.lastAccess.get(b) ?? 0));
   }
 
@@ -856,6 +894,7 @@ export class VideoDecoderPool {
     }
     this.idleHandles.clear();
     this.protectedIds = new Set();
+    this.transitionProtectedIds = new Set();
     this.lastAccess.clear();
   }
 }

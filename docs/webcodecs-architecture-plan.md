@@ -584,6 +584,50 @@ investigation** — see the A3 entry above.
     WebCodecs-encoder export path as blocked (VideoEncoder non-functional on WKWebView) + remove B0
     spike artifacts`.
 
+- **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
+  supersedes the "BLOCKED transitively" disposition above. B1 of 5 ✅ DONE, B2-B5 pending
+  (2026-07-06).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
+  can no longer wait on it) determined the frozen-frame fix does NOT actually require Phase B's
+  shared compositor — it's achievable using only decode-side infrastructure
+  (`VideoDecoderPool.getFrameAt`) that already works today; only `VideoEncoder` (export-side) is
+  broken, and this item never touched export. Confirmed reasoning: `useTransitionPreview.ts` renders
+  both outgoing/incoming segments to offscreen canvases ONCE per boundary via `frameRenderer.ts`'s
+  slow HTML5-`<video>`-seek path, then blends purely as a function of `progress` — the fix is to pull
+  LIVE frames from the pool (already cheap, already called every tick by `useWebCodecsPreview.ts` for
+  ordinary playback) instead, for the WebCodecs-capable path only; the HTML5 fallback path is
+  untouched. Approved as a 5-part sub-task plan, each its own commit:
+  - **B1 — Pool API (additive only). ✅ DONE.** `videoDecoderPool.ts` gains a second, independent
+    protected-set — `transitionProtectedIds` + `setTransitionProtectedIds(ids)`, same full-replace
+    contract as the existing `protectedIds`/`setProtectedIds` — so a caller can keep the OUTGOING
+    segment's decode session alive through its own transition window after it stops being
+    `{current, next}` (`computeKeepSet`'s pair). Declarative, not TTL-based (a timer-based expiry was
+    considered and rejected: it would incorrectly lapse if playback is paused mid-transition).
+    `evictionCandidates()` now filters on both protected sets; `dispose()` resets both. Documented the
+    pre-existing soft-ceiling implication for `MAX_TOTAL_BUFFERED_FRAMES` (protected sessions were
+    already exempt from that ceiling with just 2 slots; a 3rd doesn't add a new risk category).
+    3 new unit tests mirroring the existing `setProtectedIds` coverage. Nothing calls
+    `setTransitionProtectedIds` yet (confirmed via grep) — zero visual/behavioral change.
+    `tsc --noEmit` clean, `vitest run` 162/162 passing (159 + 3 new). Committed in `feat: add
+    transition-scoped protected-session slot to VideoDecoderPool (Item 4 fix, B1)`.
+  - **B2 — Cross-hook plumbing.** ⬜ Pending. Expose the pool instance from `useWebCodecsPreview.ts`'s
+    return value; thread it (plus the already-live `frame`/`frameSegmentId`, for the incoming side)
+    into `useTransitionPreview.ts`'s params via `PreviewStage.tsx`.
+  - **B3 — Live outgoing-side render.** ⬜ Pending. Rewrite `useTransitionPreview.ts`'s pre-roll effect
+    to per-tick-refresh the outgoing canvas from live pool frames + `applySegmentAnimation` (the
+    canvas-native camera-dynamics transform, not the CSS `getAnimationWrapperProps` wrapper); incoming
+    side sources from the parent's already-live frame instead of an independent `getFrameAt` call
+    (avoids racing `useWebCodecsPreview.ts`'s documented `pendingBoundaryPullRef` chase-mutex hazard).
+    Snapshot fallback preserved behind `isWebCodecsPreviewSupported()` for non-capable runtimes.
+  - **B4 — Overlay parity.** ⬜ Pending. `renderSegmentFrame` bakes `segment.extraOverlays` into the
+    one-shot snapshot today (why the DOM extra-overlays layer fades out during transitions); switching
+    to live raw frames drops that unless extra overlays are also redrawn live or the DOM layer is
+    un-faded during the transition — a real regression surfaced by this audit, not yet resolved.
+  - **B5 — Manual verification.** ⬜ Pending. Live motion during transitions; rapid back-to-back
+    transitions (segment shorter than `transitionDuration`); pause mid-transition then resume;
+    fallback path still shows the old frozen-but-correct snapshot.
+  - **No behavior change yet.** Only B1 has landed; the app's transition rendering is unchanged until
+    B3.
+
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
 - **Phase A — Unify the clock (preview). ✅ COMPLETE — 3 of 3 steps done (A1 animation-twin

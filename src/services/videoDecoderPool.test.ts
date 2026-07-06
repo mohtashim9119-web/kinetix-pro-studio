@@ -776,6 +776,63 @@ describe('VideoDecoderPool — LRU eviction under a session/frame budget (Phase 
     expect(pool.hasSession('d')).toBe(true);
   });
 
+  it('never evicts a transition-protected segment even when it is the least-recently-used and not in protectedIds (item-4 B1)', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    pool.setTransitionProtectedIds(['a']); // e.g. 'a' is the outgoing segment mid-transition
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033); // would evict 'a' as LRU if it weren't transition-protected
+
+    expect(pool.hasSession('a')).toBe(true);
+    expect(pool.hasSession('b')).toBe(false); // 'b' is the LRU among the non-protected
+    expect(pool.activeSegmentIds().sort()).toEqual(['a', 'c', 'd']);
+  });
+
+  it('setTransitionProtectedIds fully replaces the previous set — an id dropped from a new call becomes evictable again (item-4 B1)', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    // Transition-protect all four up front (over the cap of 3) BEFORE
+    // creating them — same rationale as the protectedIds analogue above.
+    pool.setTransitionProtectedIds(['a', 'b', 'c', 'd']);
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033);
+
+    // Still over budget, but nothing evictable — every session survives.
+    expect(pool.activeSegmentIds()).toHaveLength(4);
+
+    // Re-asserting with a smaller set (full replace, not merge) drops 'a'
+    // and 'b' from transition-protection — budget enforcement fires
+    // immediately, same as setProtectedIds.
+    pool.setTransitionProtectedIds(['c', 'd']);
+
+    expect(pool.activeSegmentIds()).toHaveLength(3); // back down to MAX_CACHED_SESSIONS
+    expect(pool.hasSession('c')).toBe(true);
+    expect(pool.hasSession('d')).toBe(true);
+  });
+
+  it('an empty transitionProtectedIds set protects nothing — behaves identically to it never having been called (item-4 B1)', async () => {
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    pool.setTransitionProtectedIds([]); // explicit empty — should be a no-op for protection purposes
+    await pool.ensureSession('a', 'blob:a', 0, 0.033);
+    await pool.ensureSession('b', 'blob:b', 0, 0.033);
+    await pool.ensureSession('c', 'blob:c', 0, 0.033);
+    await pool.ensureSession('d', 'blob:d', 0, 0.033); // ordinary LRU eviction, nothing protected
+
+    expect(pool.hasSession('a')).toBe(false);
+    expect(pool.activeSegmentIds().sort()).toEqual(['b', 'c', 'd']);
+  });
+
   it('closes every buffered VideoFrame — not just the displayed one — when a session is evicted via LRU', async () => {
     const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
