@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-05 |
-| Current HEAD | `0a3f67c` ("feat: gate animation transform + transition-overlay hold on WebCodecs frameSegmentId catch-up (Bug 2 fix)"), on branch `webcodecs-api`. Working tree clean, `tsc --noEmit` clean, `vitest` 135/135. The WebCodecs preview migration (Phases 0–8) is complete: `VideoDecoder`-based decode pool + windowed decode-ahead + LRU replaced the dual-`<video>`-slot preview path, cutover to default on all WebCodecs-capable runtimes, with the legacy `<video>` path retained as capability-gated fallback — full detail and per-phase evidence in `docs/webcodecs-architecture-plan.md`. Post-cutover transition-flash-back (Bug 1, commit `3022706`) and animation hard-cut (Bug 2, commit `0a3f67c`) fixes landed on top. A follow-on effort (preview/export unification, Phases A–C) is now planned but NOT STARTED — see Active Tasks and the architecture doc's Section 8. Earlier: export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass — 3m44s→40s on a mixed 4-video/10-image project), UI smoothness fixes, Effects Tab Rebuild Step 8 transitions (10/10), Architecture Shift complete (2026-06-24). |
+| Last updated | 2026-07-07 |
+| Current HEAD | `9b15a59` ("fix: extension-agnostic exact match, RTF bare-tag support, and remove fuzzy-fallback for failed explicit tags") — the last COMMITTED state — on branch `webcodecs-api` (13 commits ahead of `origin/webcodecs-api`). Committed together with this doc update: the **D16** sync-alignment fix (`canonicalizeForAlignment` + cursor confidence guard in `src/services/whisperService.ts`, plus 11 new tests) — `tsc --noEmit` clean, `vitest` **216/216** (see the D16 entry in Completed Work). Commits since the WebCodecs Bug-2 fix (`0a3f67c`, which this cell previously referenced): live per-tick outgoing-side transition rendering (Item 4, `9f4d276`/`73d1f54`/`10410f0`) then the tag-matching fix (`9b15a59`). The WebCodecs preview migration (Phases 0–8) is complete: `VideoDecoder`-based decode pool + windowed decode-ahead + LRU replaced the dual-`<video>`-slot preview path, cutover to default on all WebCodecs-capable runtimes, with the legacy `<video>` path retained as capability-gated fallback — full detail and per-phase evidence in `docs/webcodecs-architecture-plan.md`. Post-cutover transition-flash-back (Bug 1, commit `3022706`) and animation hard-cut (Bug 2, commit `0a3f67c`) fixes landed on top. A follow-on effort (preview/export unification, Phases A–C) is now planned but NOT STARTED — see Active Tasks and the architecture doc's Section 8. Earlier: export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass — 3m44s→40s on a mixed 4-video/10-image project), UI smoothness fixes, Effects Tab Rebuild Step 8 transitions (10/10), Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -21,6 +21,22 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 ---
 
 ## Completed Work
+
+<details>
+<summary>D16 — script→Whisper alignment cascade on number/contraction/symbol mismatches — ✅ FIXED, pending manual verification, NOT yet committed — 2026-07-07</summary>
+
+**Root cause:** `alignScenestoTranscript`'s word-matching cursor (`src/services/whisperService.ts`) is forward-only and greedy. A script's spelled-out number ("thirty seven") against Whisper's digit output ("37") — and likewise contractions ("don't" vs "do not") and symbols ("%" vs "percent") — scored as a mismatch, degrading that segment's match confidence enough to let a coincidental wrong-position match win, which then permanently desynced the cursor for every following segment. Confirmed against the user's real 251-segment project: drift began exactly at a spoken "thirty-seven" and cascaded forward from there; removing the word eliminated it. Full audit in this session's history.
+
+**Fix (two parts, both in `src/services/whisperService.ts`):**
+- **Part A — `canonicalizeForAlignment`** (new exported pure function; `normalize` now delegates to it, so it applies symmetrically to BOTH script segment text and Whisper token text before matching): integers 0–9999 (cardinal reading), 4-digit years (pair reading, e.g. "2024" → "twenty twenty four"), simple decimals ("3.5" → "three point five"), thousands separators, 44 common contractions (expanded before apostrophe stripping), and common spoken symbols (% → percent, & → and, @ → at, $N → "N dollars"). A script's "thirty seven" and Whisper's "37" now collapse to the same word sequence.
+- **Part C — cursor confidence guard:** when a segment's best match covers fewer than 40% of its words (`bestScore / targetWords.length < 0.4`), the monotonic search cursor advances only minimally (by 1) instead of by the matched span, so a low-confidence/spurious match can no longer over-advance the cursor and strand every following segment. Dev-only `console.warn` flags each low-confidence segment. Contains any residual mismatch class Part A doesn't canonicalize.
+
+**Tests:** 11 new tests in `src/services/syncTiming.test.ts` (6 canonicalization-equivalence + 5 alignment/cascade, incl. the "thirty-seven" regression and the Part-C safety-net). Full suite **216/216**, `tsc --noEmit` clean.
+
+**Known residual risk:** the "years" spoken-form convention (pair reading, e.g. "2024" → "twenty twenty four") was chosen from general whisper.cpp behavior, NOT confirmed against real transcripts in this repo (none were available) — flag for confirmation on the first real-world test. Digit-vs-digit years are unaffected (both sides canonicalize identically regardless of convention).
+
+**Status:** FIXED, **committed, pending manual verification** against a real project — staged separately from the prior committed fix `9b15a59` (extension-agnostic exact match / RTF bare-tag / `unmatchedExplicitTag` gate).
+</details>
 
 <details>
 <summary>First-frame cache + cover layer for preview segment boundaries — ✅ DONE 2026-07-04 (commit 213c3e1)</summary>

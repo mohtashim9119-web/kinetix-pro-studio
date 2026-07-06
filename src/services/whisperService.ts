@@ -34,15 +34,174 @@ function parseTimestamp(ts: string): number {
 }
 
 // ---------------------------------------------------------------------------
+// D16 — symmetric canonicalization (numbers / contractions / symbols)
+// ---------------------------------------------------------------------------
+// Applied IDENTICALLY to both the script segment text and the Whisper token
+// text before word-level matching, so a spelled-out number in the script
+// ("thirty seven") and Whisper's digit output ("37") — or the reverse —
+// collapse to the SAME word sequence instead of desyncing the aligner's
+// monotonic cursor (see D16). Everything is deterministic and applied to both
+// sides, so anything NOT covered here still normalizes symmetrically (never
+// asymmetrically) and any residual mismatch is contained by the Part C cursor
+// guard in alignScenestoTranscript.
+//
+// Coverage:
+//   - integers 0–9999 (cardinal reading)
+//   - 4-digit years 1100–2999 whose last two digits are 10–99 (pair reading,
+//     e.g. 2024 -> "twenty twenty four"); 2000–2009 / round hundreds fall back
+//     to cardinal ("two thousand three") — the form Whisper's en model emits
+//   - integers > 9999 read digit-by-digit (never an unbounded cardinal string)
+//   - simple decimals ("3.5" -> "three point five", fraction read digit-wise)
+//   - thousands separators stripped (11,000 -> 11000)
+//   - the contraction map below (expanded before any apostrophe strip)
+//   - spoken symbols: % -> percent, & -> and, @ -> at, $N -> "N dollars"
+
+const ONES_WORDS = [
+  'zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight',
+  'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen',
+  'sixteen', 'seventeen', 'eighteen', 'nineteen',
+];
+const TENS_WORDS = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
+
+function under100ToWords(n: number): string[] {
+  if (n < 20) return [ONES_WORDS[n]!];
+  const t = Math.floor(n / 10);
+  const o = n % 10;
+  return o === 0 ? [TENS_WORDS[t]!] : [TENS_WORDS[t]!, ONES_WORDS[o]!];
+}
+
+function under1000ToWords(n: number): string[] {
+  if (n < 100) return under100ToWords(n);
+  const h = Math.floor(n / 100);
+  const r = n % 100;
+  const words = [ONES_WORDS[h]!, 'hundred'];
+  if (r > 0) words.push(...under100ToWords(r));
+  return words;
+}
+
+/** Cardinal reading for 0–9999 (callers guarantee the range). */
+function cardinalToWords(n: number): string[] {
+  if (n < 1000) return under1000ToWords(n);
+  const th = Math.floor(n / 1000);
+  const r = n % 1000;
+  const words = [...under1000ToWords(th), 'thousand'];
+  if (r > 0) words.push(...under1000ToWords(r));
+  return words;
+}
+
+/** Pair reading for a 4-digit year, e.g. 2024 -> "twenty twenty four". */
+function yearToWords(n: number): string[] {
+  const high = Math.floor(n / 100);
+  const low = n % 100;
+  return [...under100ToWords(high), ...under100ToWords(low)];
+}
+
+/** Expands a pure-digit token to its canonical spoken word sequence. */
+function digitTokenToWords(tok: string): string[] {
+  const n = Number.parseInt(tok, 10);
+  if (!Number.isFinite(n)) return [tok];
+  if (tok.length === 4 && n >= 1100 && n <= 2999 && n % 100 >= 10) {
+    return yearToWords(n);
+  }
+  if (n >= 0 && n <= 9999) return cardinalToWords(n);
+  return tok.split('').map(d => ONES_WORDS[Number(d)] ?? d);
+}
+
+const CONTRACTIONS: Record<string, string> = {
+  "don't": 'do not', "doesn't": 'does not', "didn't": 'did not',
+  "isn't": 'is not', "aren't": 'are not', "wasn't": 'was not',
+  "weren't": 'were not', "haven't": 'have not', "hasn't": 'has not',
+  "hadn't": 'had not', "won't": 'will not', "wouldn't": 'would not',
+  "can't": 'cannot', "couldn't": 'could not', "shouldn't": 'should not',
+  "mustn't": 'must not', "needn't": 'need not',
+  "it's": 'it is', "that's": 'that is', "there's": 'there is',
+  "here's": 'here is', "he's": 'he is', "she's": 'she is',
+  "what's": 'what is', "who's": 'who is', "let's": 'let us',
+  "i'm": 'i am', "you're": 'you are', "we're": 'we are', "they're": 'they are',
+  "i've": 'i have', "you've": 'you have', "we've": 'we have',
+  "they've": 'they have', "i'll": 'i will', "you'll": 'you will',
+  "he'll": 'he will', "she'll": 'she will', "we'll": 'we will',
+  "they'll": 'they will', "i'd": 'i would', "you'd": 'you would',
+  "he'd": 'he would', "she'd": 'she would', "we'd": 'we would',
+  "they'd": 'they would',
+};
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Longest keys first so a longer contraction can't be partially eaten; the
+// letter/digit lookarounds keep a contraction inside a larger token untouched.
+const CONTRACTION_RE = new RegExp(
+  '(?<![a-z0-9])(' +
+    Object.keys(CONTRACTIONS)
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp)
+      .join('|') +
+    ')(?![a-z0-9])',
+  'g',
+);
+
+/**
+ * Pure canonicalizer shared by the script-word and Whisper-token tokenizers
+ * (both reach it through `normalize`). Order is deliberate: fold apostrophes
+ * and expand contractions BEFORE any apostrophe is stripped; map
+ * symbols/currency/decimals BEFORE the non-alphanumeric strip removes them;
+ * expand digit runs to words AFTER tokenization so per-token range logic
+ * applies. Identical input on both sides always yields identical output.
+ */
+export function canonicalizeForAlignment(s: string): string[] {
+  let t = s.toLowerCase();
+
+  // Fold curly/modifier apostrophes to ASCII, then expand contractions.
+  t = t.replace(/[‘’ʼ]/g, "'");
+  t = t.replace(CONTRACTION_RE, m => CONTRACTIONS[m] ?? m);
+
+  // Drop thousands separators between digits (11,000 -> 11000).
+  t = t.replace(/(\d),(\d)/g, '$1$2');
+
+  // Decimals: "3.5" -> "3 point 5"; fractional digits kept single so the
+  // per-token expansion below reads them digit-by-digit ("three point five").
+  t = t.replace(/(\d+)\.(\d+)/g, (_m, a: string, b: string) => ` ${a} point ${b.split('').join(' ')} `);
+
+  // Currency: "$5" -> "5 dollars" (number-then-unit, matching spoken order);
+  // a bare "$" -> "dollars".
+  t = t.replace(/\$\s?(\d+)/g, ' $1 dollars ');
+  t = t.replace(/\$/g, ' dollars ');
+
+  // Other spoken symbols.
+  t = t.replace(/%/g, ' percent ');
+  t = t.replace(/&/g, ' and ');
+  t = t.replace(/@/g, ' at ');
+
+  // Strip anything still non-alphanumeric to spaces (hyphens, leftover
+  // apostrophes, punctuation) — same terminal step as the original normalize().
+  t = t.replace(/[^a-z0-9\s]/g, ' ');
+
+  const rawTokens = t.split(/\s+/).filter(w => w.length > 0);
+
+  const out: string[] = [];
+  for (const tok of rawTokens) {
+    if (/^\d+$/.test(tok)) {
+      out.push(...digitTokenToWords(tok));
+    } else {
+      out.push(tok);
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Public helpers (also used by useWhisper)
 // ---------------------------------------------------------------------------
 
+/**
+ * Word-level normalizer used by the aligner (and textMateriallyChanged).
+ * Delegates to canonicalizeForAlignment so numbers/contractions/symbols
+ * canonicalize identically on the script and Whisper-token sides (D16).
+ */
 export function normalize(s: string): string[] {
-  return s
-    .toLowerCase()
-    .replace(/[^a-z0-9\s]/g, ' ') // replace punctuation with space, not nothing
-    .split(/\s+/)
-    .filter(w => w.length > 0);
+  return canonicalizeForAlignment(s);
 }
 
 /**
@@ -103,6 +262,8 @@ export function alignScenestoTranscript(
       continue;
     }
 
+    const entrySearchStart = searchStart; // Part C: cursor position BEFORE this segment scores.
+
     const windowSize = Math.max(targetWords.length, 3);
     let bestScore = -1;
     let bestStart = searchStart;
@@ -153,14 +314,40 @@ export function alignScenestoTranscript(
       lastTokenIdx: t1TokenIdx,
     });
 
-    // Advance searchStart past all tokenWords sharing t1TokenIdx (the last matched token).
-    // Audio-grounded, not text-length-grounded: editing scene description text cannot
-    // shift where the next segment's scoring window begins.
-    let nextSearchStart = effectiveLastWordPos + 1;
-    while (nextSearchStart < tokenWords.length && (tokenWords[nextSearchStart]?.tokenIdx ?? Infinity) <= t1TokenIdx) {
-      nextSearchStart++;
+    // Part C (D16) — cursor confidence guard. bestScore is the count of
+    // positionally-matched words at bestStart; confidence is the fraction of
+    // this segment's words that actually lined up. A low fraction means the
+    // segment text and the audio here don't correspond (an unhandled token
+    // mismatch — an abbreviation, foreign word, or Whisper mis-hearing). In
+    // that case DON'T advance the monotonic cursor past this segment on the
+    // strength of a bad match: a spurious late match would push searchStart
+    // ahead of the NEXT segment's true words and strand every segment after it
+    // (the D16 cascade). Instead advance minimally (by 1), keeping forward
+    // progress while leaving the next segment's window free to re-anchor.
+    //
+    // Threshold 0.4 (fewer than ~40% of target words matched): a real segment
+    // with one unmatched name/number still clears it (e.g. 4/5 = 0.8, 2/3 =
+    // 0.67), while a genuinely desynced match (mostly-zero score) trips it.
+    const confidence = targetWords.length > 0 ? bestScore / targetWords.length : 1;
+    const LOW_CONFIDENCE_RATIO = 0.4;
+    if (confidence < LOW_CONFIDENCE_RATIO) {
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[align] low-confidence match for segment %d (%d/%d words) — holding cursor to avoid cascade',
+          si, Math.max(0, bestScore), targetWords.length,
+        );
+      }
+      searchStart = Math.min(entrySearchStart + 1, tokenWords.length);
+    } else {
+      // Advance searchStart past all tokenWords sharing t1TokenIdx (the last matched token).
+      // Audio-grounded, not text-length-grounded: editing scene description text cannot
+      // shift where the next segment's scoring window begins.
+      let nextSearchStart = effectiveLastWordPos + 1;
+      while (nextSearchStart < tokenWords.length && (tokenWords[nextSearchStart]?.tokenIdx ?? Infinity) <= t1TokenIdx) {
+        nextSearchStart++;
+      }
+      searchStart = nextSearchStart;
     }
-    searchStart = nextSearchStart;
   }
 
   // Step 2 — override t1 from neighbor anchors.

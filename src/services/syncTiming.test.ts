@@ -4,6 +4,7 @@ import {
   distributeSegmentTimes,
   applyHeadingTiming,
   alignScenestoTranscript,
+  canonicalizeForAlignment,
   HEADING_DEFAULT_DURATION,
 } from './whisperService';
 import type { VideoSegment, TranscriptToken, HeadingConfig } from '../types';
@@ -812,5 +813,180 @@ describe('heading round-trip simulation (insert/rename/delete + re-sync)', () =>
   // can't be referenced from here. See the test there named "a heading from
   // the 11-scene version lands exactly once in the 14-scene version,
   // duration-neutral".
+});
+
+// ---------------------------------------------------------------------------
+// D16 — script↔Whisper token-count mismatch (numbers/contractions/symbols)
+// desyncs the monotonic alignment cursor, cascading segment-timing drift.
+//
+// Part A: symmetric canonicalization (canonicalizeForAlignment), so a
+// spelled-out number in the script and Whisper's digit output collapse to the
+// same word sequence. Part C: a confidence guard that refuses to advance the
+// cursor on a bad match, containing any residual (uncanonicalized) mismatch.
+// ---------------------------------------------------------------------------
+describe('D16 — canonicalization equivalence (Part A)', () => {
+  const eq = (a: string, b: string) =>
+    expect(canonicalizeForAlignment(a)).toEqual(canonicalizeForAlignment(b));
+
+  it('spelled number ↔ digits: "thirty seven" === "37" (and hyphenated)', () => {
+    expect(canonicalizeForAlignment('37')).toEqual(['thirty', 'seven']);
+    eq('thirty seven', '37');
+    eq('thirty-seven', '37');
+    eq('thirty-seven', 'thirty seven');
+  });
+
+  it('single digit ↔ word, both directions: "5" === "five"', () => {
+    expect(canonicalizeForAlignment('5')).toEqual(['five']);
+    eq('5', 'five');
+    eq('five', '5');
+  });
+
+  it('year: "2024" === "twenty twenty four" (pair reading, documented choice)', () => {
+    expect(canonicalizeForAlignment('2024')).toEqual(['twenty', 'twenty', 'four']);
+    eq('2024', 'twenty twenty four');
+    // 2000–2009 fall back to cardinal ("two thousand three"), not pair form.
+    expect(canonicalizeForAlignment('2003')).toEqual(['two', 'thousand', 'three']);
+    eq('2003', 'two thousand three');
+  });
+
+  it('contraction ↔ expansion, both directions: "don\'t" === "do not"', () => {
+    expect(canonicalizeForAlignment("don't")).toEqual(['do', 'not']);
+    eq("don't", 'do not');
+    eq('do not', "don't");
+    // No stray "t"/"don" fragments (the pre-fix failure mode).
+    expect(canonicalizeForAlignment("don't")).not.toContain('t');
+    // Curly apostrophe folds identically.
+    eq('don’t', 'do not');
+    eq("it's", 'it is');
+    eq("can't", 'cannot');
+  });
+
+  it('symbols: "%" === "percent", "&" === "and", "$5" === "5 dollars"', () => {
+    eq('50%', 'fifty percent');
+    expect(canonicalizeForAlignment('50%')).toEqual(['fifty', 'percent']);
+    eq('r&d', 'r and d');
+    eq('$5', '5 dollars');
+    expect(canonicalizeForAlignment('$5')).toEqual(['five', 'dollars']);
+    eq('@', 'at');
+  });
+
+  it('simple decimal: "3.5" === "three point five"', () => {
+    expect(canonicalizeForAlignment('3.5')).toEqual(['three', 'point', 'five']);
+    eq('3.5', 'three point five');
+  });
+});
+
+describe('D16 — alignment robustness (Parts A + C)', () => {
+  // Assigns each segment its aligned t0. Tokens carry per-phrase timestamps
+  // ~3s apart, so a segment drifted by a full phrase (or stranded at 0) lands
+  // clearly outside its true-boundary band. NOTE: the aligner's gap-fill pass
+  // midpoints each boundary between the two spoken phrases, so the EXPECTED t0
+  // of segment N is roughly the midpoint of the silence before phrase N — not
+  // that phrase's raw first-word timestamp. Assertions use boundary bands, not
+  // exact starts, to stay robust to that midpointing while still excluding the
+  // drift outcome (a full ~3s offset or a collapse toward 0).
+  function alignT0s(segments: VideoSegment[], tokens: TranscriptToken[]): number[] {
+    return alignScenestoTranscript(segments, tokens, []).map(a => a.t0);
+  }
+
+  it('REGRESSION: script "thirty seven" aligns to Whisper "37"; next segment does NOT drift', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the answer is thirty seven' }),
+      makeSegment({ id: 's1', order: 1, text: 'then we continue onward here' }),
+      makeSegment({ id: 's2', order: 2, text: 'final closing statement now please' }),
+    ];
+    // Whisper emits the number as a digit token "37".
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('the answer is 37', 0.0, 0.5),                 // 0.0 → 2.0
+      ...wordTokens('then we continue onward here', 3.0, 0.5),     // 3.0 → 5.5
+      ...wordTokens('final closing statement now please', 6.0, 0.5), // 6.0 → 8.5
+    ];
+
+    const t0 = alignT0s(segments, tokens);
+    expect(t0[0]).toBeLessThan(0.5);                 // s0 starts at phrase 1
+    expect(t0[1]!).toBeGreaterThan(2.0);             // s1 at the 1→2 boundary,
+    expect(t0[1]!).toBeLessThan(3.5);                //   NOT offset by the count mismatch
+    expect(t0[2]!).toBeGreaterThan(5.0);             // s2 at the 2→3 boundary — no cascade
+    expect(t0[2]!).toBeLessThan(6.5);
+  });
+
+  it('reverse: script digit "37" aligns to Whisper words "thirty seven"', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'chapter 37 begins now' }),
+      makeSegment({ id: 's1', order: 1, text: 'the story moves forward' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('chapter thirty seven begins now', 0.0, 0.5),
+      ...wordTokens('the story moves forward', 3.0, 0.5),
+    ];
+    const t0 = alignT0s(segments, tokens);
+    expect(t0[0]).toBeLessThan(0.5);
+    expect(t0[1]!).toBeGreaterThan(2.0);
+    expect(t0[1]!).toBeLessThan(3.5);
+  });
+
+  it('contraction: script "don\'t" aligns to Whisper "do not" without stranding the next segment', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: "we don't stop here" }),
+      makeSegment({ id: 's1', order: 1, text: 'the journey keeps going' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('we do not stop here', 0.0, 0.5),
+      ...wordTokens('the journey keeps going', 3.0, 0.5),
+    ];
+    const t0 = alignT0s(segments, tokens);
+    expect(t0[0]).toBeLessThan(0.5);
+    expect(t0[1]!).toBeGreaterThan(2.0);
+    expect(t0[1]!).toBeLessThan(3.5);
+  });
+
+  it('symbol: script "fifty percent" aligns to Whisper "50 %"', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'sales rose fifty percent' }),
+      makeSegment({ id: 's1', order: 1, text: 'that is remarkable growth' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('sales rose 50 %', 0.0, 0.5),
+      ...wordTokens('that is remarkable growth', 3.0, 0.5),
+    ];
+    const t0 = alignT0s(segments, tokens);
+    expect(t0[0]).toBeLessThan(0.5);
+    expect(t0[1]!).toBeGreaterThan(2.0);
+    expect(t0[1]!).toBeLessThan(3.5);
+  });
+
+  // Part C safety net: an UNHANDLED mismatch type (a made-up token the
+  // canonicalizer can't fix) drops a segment to low confidence AND spuriously
+  // matches a common word far ahead. Without the guard, the greedy cursor
+  // over-advances past the following segment's true words and strands it at ~0
+  // (the D16 cascade). The guard holds the cursor so the next segment still
+  // finds its real position further along the audio.
+  it('SAFETY NET (Part C): a low-confidence segment does not cascade drift onto the next', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      // Two words match nothing; "hotel" spuriously matches the far-ahead
+      // token, which (pre-guard) would over-advance the cursor to the end and
+      // strand s2 at ~0.
+      makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot golf hotel' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie delta', 0.0, 0.5), // idx 0–3
+      ...wordTokens('lorem ipsum dolor', 2.5, 0.5),         // idx 4–6 (s1's real, unmatched audio)
+      ...wordTokens('echo foxtrot golf hotel', 4.5, 0.5),   // idx 7–10
+    ];
+
+    // Low-confidence match on s1 is expected — assert it's logged, not silent.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const t0 = alignT0s(segments, tokens);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+
+    expect(t0[0]).toBeLessThan(0.5);
+    // The critical assertion: s2 lands in the second half of the audio near its
+    // true "echo foxtrot golf hotel" phrase (~4.5–6.5s), NOT stranded at ~0 by
+    // an over-advanced cursor. Pre-guard this would collapse toward 0.
+    expect(t0[2]!).toBeGreaterThan(4.0);
+  });
 });
 
