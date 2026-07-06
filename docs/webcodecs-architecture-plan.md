@@ -585,7 +585,7 @@ investigation** — see the A3 entry above.
     spike artifacts`.
 
 - **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
-  supersedes the "BLOCKED transitively" disposition above. B1 of 5 ✅ DONE, B2-B5 pending
+  supersedes the "BLOCKED transitively" disposition above. B1-B2 of 5 ✅ DONE, B3-B5 pending
   (2026-07-06).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
   can no longer wait on it) determined the frozen-frame fix does NOT actually require Phase B's
   shared compositor — it's achievable using only decode-side infrastructure
@@ -609,9 +609,19 @@ investigation** — see the A3 entry above.
     `setTransitionProtectedIds` yet (confirmed via grep) — zero visual/behavioral change.
     `tsc --noEmit` clean, `vitest run` 162/162 passing (159 + 3 new). Committed in `feat: add
     transition-scoped protected-session slot to VideoDecoderPool (Item 4 fix, B1)`.
-  - **B2 — Cross-hook plumbing.** ⬜ Pending. Expose the pool instance from `useWebCodecsPreview.ts`'s
-    return value; thread it (plus the already-live `frame`/`frameSegmentId`, for the incoming side)
-    into `useTransitionPreview.ts`'s params via `PreviewStage.tsx`.
+  - **B2 — Cross-hook plumbing. ✅ DONE.** `useWebCodecsPreview.ts`'s return object gains `pool:
+    VideoDecoderPool` (the same instance it privately drives via `ensureSession`/`getFrameAt`/
+    `setProtectedIds` — always the same object across renders regardless of `enabled`), purely
+    additive alongside its existing fields. `PreviewStage.tsx` now calls `useWebCodecsPreview` BEFORE
+    `useTransitionPreview` (confirmed behavior-neutral reorder — neither hook depends on anything the
+    other defines) and threads `webCodecsPreview.pool`/`.frame`/`.frameSegmentId` into
+    `useTransitionPreview`'s new, optional `pool`/`incomingFrame`/`incomingFrameSegmentId` params.
+    `useTransitionPreview.ts` accepts and stores these in a ref for B3 to read, and imports
+    `isWebCodecsPreviewSupported()` (the same capability signal `PreviewStage.tsx` already gates on)
+    without branching on it yet. No existing field's shape/behavior changed; nothing reads the new
+    params yet — zero visual/behavioral change. `tsc --noEmit` clean, `vitest run` 162/162 passing
+    (unchanged — pure plumbing, no new tests needed). Committed in `feat: thread VideoDecoderPool +
+    live incoming frame into useTransitionPreview (Item 4 fix, B2)`.
   - **B3 — Live outgoing-side render.** ⬜ Pending. Rewrite `useTransitionPreview.ts`'s pre-roll effect
     to per-tick-refresh the outgoing canvas from live pool frames + `applySegmentAnimation` (the
     canvas-native camera-dynamics transform, not the CSS `getAnimationWrapperProps` wrapper); incoming

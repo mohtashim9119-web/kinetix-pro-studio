@@ -14,6 +14,8 @@ import { useRef, useEffect, useState } from 'react';
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer';
 import { resolveEffectiveTransition } from '../services/transitionResolver';
+import type { VideoDecoderPool } from '../services/videoDecoderPool';
+import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
 
 /** Snapshot resolution — 16:9 half-HD. Full resolution is unnecessary
  *  for preview-quality blending. */
@@ -70,6 +72,29 @@ interface Params {
    *  directly at render time (not an effect dep) so there's no ordering
    *  concern like the seek-effect guard had to work around. */
   isResizingRef: React.RefObject<boolean>;
+  /**
+   * B2 plumbing (item-4 audit, docs/webcodecs-architecture-plan.md) — the
+   * SAME VideoDecoderPool instance useWebCodecsPreview.ts owns (exposed via
+   * its own return object), threaded in by PreviewStage.tsx. B3 will call
+   * getFrameAt/setTransitionProtectedIds on it directly for the OUTGOING
+   * segment during a transition window — a segment useWebCodecsPreview.ts
+   * itself stops tracking the instant it falls out of {current, next}.
+   * Optional and unused in this task: accepted and stored only, no
+   * behavior change yet.
+   */
+  pool?: VideoDecoderPool;
+  /**
+   * B2 plumbing — the parent's already-live frame/frameSegmentId for
+   * whichever segment useWebCodecsPreview.ts currently considers current.
+   * B3 will source the INCOMING side of the transition blend from these
+   * instead of issuing an independent getFrameAt call for the same
+   * segment — the item-4 audit confirmed a second call site would race
+   * useWebCodecsPreview.ts's own documented pendingBoundaryPullRef
+   * chase-mutex (see that hook's file header). Optional and unused in
+   * this task: accepted and stored only, no behavior change yet.
+   */
+  incomingFrame?: VideoFrame | null;
+  incomingFrameSegmentId?: string | null;
 }
 
 export function useTransitionPreview({
@@ -80,6 +105,9 @@ export function useTransitionPreview({
   globalTransitionDuration,
   globalConfig,
   isResizingRef,
+  pool,
+  incomingFrame,
+  incomingFrameSegmentId,
 }: Params): TransitionPreviewInfo {
   const [snapshots, setSnapshots] = useState<SnapshotPair | null>(null);
   // Prevent concurrent or duplicate snapshot renders
@@ -90,6 +118,21 @@ export function useTransitionPreview({
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  // B2 plumbing (item-4 audit) — stored for B3 to read; nothing in this
+  // task uses these yet, so capturing them in a plain-object ref (updated
+  // every render, not inside an effect) causes no behavior change. See the
+  // Params fields' own docs above for what each is for.
+  const liveSourceRef = useRef({ pool, incomingFrame, incomingFrameSegmentId });
+  liveSourceRef.current = { pool, incomingFrame, incomingFrameSegmentId };
+
+  // B2 plumbing — the same capability gate PreviewStage.tsx already uses
+  // to choose the WebCodecs vs. legacy <video> preview path (see
+  // isWebCodecsPreviewSupported's own doc: memoized, sole gate). B3 will
+  // branch live-pull vs. snapshot rendering on this; not used to change
+  // behavior in this task.
+  const webCodecsCapable = isWebCodecsPreviewSupported();
+  void webCodecsCapable;
 
   // ---------------------------------------------------------------------------
   // Derive relevant segments + transition metadata

@@ -461,6 +461,21 @@ export function PreviewStage({
     globalOverlayFilter: (computedFilter && computedFilter !== 'none') ? computedFilter : undefined,
   };
 
+  // Phase 1+2 WebCodecs preview path. `enabled` gates ALL work inside the
+  // hook (including decode session creation) — when false, this call is
+  // inert. Computed BEFORE useTransitionPreview below (B2 plumbing, item-4
+  // audit) so its already-live `frame`/`frameSegmentId`/`pool` can be
+  // threaded straight into that hook's params — useTransitionPreview
+  // doesn't depend on anything defined between the two calls, so this
+  // reordering is behavior-neutral for both hooks.
+  const webCodecsPreview = useWebCodecsPreview({
+    segments,
+    assets,
+    currentSegment,
+    currentTime,
+    enabled: useWebCodecsPath,
+  });
+
   const transitionPreview = useTransitionPreview({
     segments,
     currentTime,
@@ -469,20 +484,12 @@ export function PreviewStage({
     globalTransitionDuration,
     globalConfig,
     isResizingRef,
-  });
-
-  // Phase 1+2 WebCodecs preview path. `enabled` gates ALL work inside the
-  // hook (including decode session creation) — when false, this call is
-  // inert. useTransitionPreview above is unaffected either way: it renders
-  // its own offscreen snapshots via frameRenderer.ts independently of which
-  // video path is currently painting the live segment (see the WebCodecs
-  // progress tracker's Phase 1+2 entry for the compatibility note).
-  const webCodecsPreview = useWebCodecsPreview({
-    segments,
-    assets,
-    currentSegment,
-    currentTime,
-    enabled: useWebCodecsPath,
+    // B2 plumbing (item-4 audit) — not used by useTransitionPreview yet
+    // (that's B3); threaded through now so B3 doesn't need another
+    // cross-file change here.
+    pool: webCodecsPreview.pool,
+    incomingFrame: webCodecsPreview.frame,
+    incomingFrameSegmentId: webCodecsPreview.frameSegmentId,
   });
 
   // ---------------------------------------------------------------------------

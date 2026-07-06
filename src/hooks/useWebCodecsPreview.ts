@@ -86,6 +86,20 @@ export interface UseWebCodecsPreviewResult {
    * directly, rather than assuming the swap is instantaneous.
    */
   frameSegmentId: string | null;
+  /**
+   * B2 plumbing (item-4 audit, docs/webcodecs-architecture-plan.md) — the
+   * SAME VideoDecoderPool instance this hook privately owns and drives via
+   * ensureSession/getFrameAt/setProtectedIds above. Exposed so a sibling
+   * caller (useTransitionPreview.ts, via PreviewStage.tsx) can call
+   * getFrameAt/setTransitionProtectedIds on the OUTGOING segment's session
+   * during a transition window — a segment this hook itself has already
+   * stopped tracking the instant it falls out of {current, next}. Always
+   * the same object across renders (constructed once, in a ref, on first
+   * render) regardless of `enabled` — a caller must still check `enabled`/
+   * capability itself before relying on any session existing. Purely
+   * additive: no existing field's shape or behavior changes.
+   */
+  pool: VideoDecoderPool;
 }
 
 /**
@@ -741,5 +755,6 @@ export function useWebCodecsPreview({
     isVideoSegment: enabled && isVideoSegment,
     error,
     frameSegmentId: enabled && isVideoSegment ? frameSegmentId : null,
+    pool: poolRef.current!,
   };
 }
