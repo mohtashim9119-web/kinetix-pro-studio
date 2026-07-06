@@ -194,6 +194,12 @@ export interface VideoSegment {
    *  Whisper transcription; 'estimate' = character-weight approximation. Effectively
    *  write-only: no production code branches on this value post-3c. */
   anchorSource?: 'whisper' | 'estimate';
+  /** True when this segment came from an EXPLICIT bracket tag whose filename
+   *  failed exact asset matching at parse time. Gates off autoMatchSegments'
+   *  fuzzy fallback so a tagged-but-unresolved scene stays visibly unmatched
+   *  (red missing tile) instead of being wrong-guessed from its spoken text.
+   *  Recomputed fresh every Apply Sync; recovery is via re-sync. Internal. */
+  unmatchedExplicitTag?: boolean;
   sourceDuration?: number;
   /** Effects Tab Rebuild — slug-valued per-segment effect selections (effectsOptions.ts
    *  values, e.g. 'cross-dissolve', 'ken-burns'). Additive alongside the legacy

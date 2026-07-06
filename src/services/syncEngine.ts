@@ -8,8 +8,8 @@ import { HEADING_DEFAULT_DURATION } from './whisperService';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
-  const s = search.toLowerCase().trim().replace(/\[(IMAGE|VIDEO|HEADING):?\s*|\]/gi, '').replace(/\.(jpg|jpeg|png|mp4|mov|wav|mp3|zip)$/i, '');
-  const t = target.toLowerCase().trim().replace(/\.(jpg|jpeg|png|mp4|mov|wav|mp3|zip)$/i, '');
+  const s = search.toLowerCase().trim().replace(/\[(IMAGE|VIDEO|HEADING):?\s*|\]/gi, '').replace(/\.(jpg|jpeg|png|webp|gif|bmp|svg|avif|heic|heif|mp4|mov|webm|m4v|wav|mp3|zip)$/i, '');
+  const t = target.toLowerCase().trim().replace(/\.(jpg|jpeg|png|webp|gif|bmp|svg|avif|heic|heif|mp4|mov|webm|m4v|wav|mp3|zip)$/i, '');
 
   if (t === s) return true;
   if (t.includes(s) || s.includes(t)) return true;
@@ -34,6 +34,73 @@ export const findAssetByContext = (text: string, assets: Asset[]): Asset | null 
   }
   return null;
 };
+
+/**
+ * Normalizes a string for strict tag/filename comparison: Unicode NFC form,
+ * smart quotes/dashes folded to their plain ASCII equivalents, and zero-width
+ * characters (U+200B, U+FEFF) stripped — the encoding artifacts a filename
+ * commonly picks up surviving a copy-paste from Word/Google Docs.
+ */
+export function normalizeForMatch(s: string): string {
+  return s
+    .normalize('NFC')
+    .replace(/[‘’]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, '-')
+    .replace(/[​﻿]/g, '');
+}
+
+/**
+ * Allowlisted image+video extensions stripped from filenames/tags before an
+ * exact-name comparison, so a bare tag `[002_age_24]` matches an uploaded
+ * `002_age_24.jpg`. Uses an anchored, allowlisted trailing-extension pattern
+ * (not a naive last-dot split) so dotted stems like `my.scene.02` survive
+ * intact — only a real trailing media extension is removed.
+ */
+const MEDIA_EXT_RE = /\.(jpg|jpeg|png|webp|gif|bmp|svg|avif|heic|heif|mp4|mov|webm|m4v)$/i;
+
+/** Removes a single trailing allowlisted media extension, if present. */
+export function stripMediaExtension(s: string): string {
+  return s.replace(MEDIA_EXT_RE, '');
+}
+
+/**
+ * Strips stray edge punctuation that can't be part of a filename stem — a
+ * typo'd leading colon, quotes, stray whitespace — while KEEPING characters
+ * that are filename-legal at the edges: letters, digits, underscore, hyphen,
+ * and dot. So `_intro.jpg`, `002_age_24`, and `my.scene.02` survive intact,
+ * but `":  foo"` → `"foo"`. Interior characters (e.g. a space in
+ * "my file.jpg") are untouched — only the leading/trailing runs are cleaned.
+ */
+const cleanEdgePunctuation = (v: string): string =>
+  v.replace(/^[^a-zA-Z0-9_.-]+/, '').replace(/[^a-zA-Z0-9_.-]+$/, '');
+
+/**
+ * Normalizes raw bracket-tag content into a filename stem for matching.
+ * Order matters: clean edges first (so a stray leading `:` or quote can't
+ * hide a legacy `IMAGE:`/`VIDEO:` keyword from the strip), then drop the
+ * legacy keyword prefix, then clean edges again (so any punctuation the
+ * keyword strip exposed — e.g. `[IMAGE: : foo]` — is also removed).
+ * Extension stripping is deliberately NOT done here; isExactFilenameMatch
+ * strips extensions from both sides at compare time.
+ */
+export function cleanTagName(raw: string): string {
+  let name = cleanEdgePunctuation(raw.trim());
+  name = name.replace(/^(?:IMAGE|VIDEO)\s*:\s*/i, '');
+  return cleanEdgePunctuation(name);
+}
+
+/**
+ * Strict, case-insensitive, extension-agnostic filename match for the
+ * bare-bracket tag format — no fuzzy/substring/word-overlap fallback (that's
+ * isFuzzyMatch's job). A trailing media extension is stripped from BOTH sides
+ * first, so `[002_age_24]`, `[002_age_24.jpg]`, and asset `002_age_24.png` all
+ * resolve to the same normalized stem.
+ */
+export function isExactFilenameMatch(tagName: string, assetName: string): boolean {
+  return normalizeForMatch(stripMediaExtension(tagName.trim()).toLowerCase()) ===
+    normalizeForMatch(stripMediaExtension(assetName.trim()).toLowerCase());
+}
 
 /**
  * Re-derives startTime and duration for each segment from its anchorStart,
@@ -125,6 +192,14 @@ export function getFileIdentity(file: File): string {
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {
     if (s.assetId) return s;
+
+    // A segment that carried an EXPLICIT bracket tag whose filename failed
+    // exact matching at parse time must never be fuzzy-guessed from its spoken
+    // text — that silently picks a wrong asset. Leave it visibly unmatched
+    // (red missing tile); recovery is re-running Apply Sync, which re-parses
+    // the tag and exact-matches. Segments that never had an explicit tag name
+    // (empty `[]`, so this flag was never set) are still fuzzy-matched below.
+    if (s.unmatchedExplicitTag) return s;
 
     const headingLabel = s.headingConfig?.text ?? s.heading ?? '';
     const bracketMatch = (headingLabel + s.text).match(/\[(.*?):?\s*(.*?)\]/);

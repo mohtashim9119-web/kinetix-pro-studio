@@ -14,9 +14,12 @@
 export function stripRtfIfNeeded(text: string): string {
   if (!text.trimStart().startsWith('{\\rtf')) return text;
 
-  // Step 1: protect bracket tags before any destructive operation
+  // Step 1: protect bracket tags before any destructive operation.
+  // Bare-tag format: any `[...]` bracket is a real scene/heading tag now
+  // (not just the legacy [IMAGE:]/[VIDEO:]/[AUDIO:] keyword tags), so shield
+  // every bracket — including [HEADING:...] — from the RTF char-walk.
   const placeholders: string[] = [];
-  let protected_ = text.replace(/\[(IMAGE|VIDEO|AUDIO):[^\]]*\]/gi, (match) => {
+  let protected_ = text.replace(/\[[^\]\n]*\]/g, (match) => {
     placeholders.push(match);
     return `__BRACKET_${placeholders.length - 1}__`;
   });
@@ -99,9 +102,13 @@ export function stripRtfIfNeeded(text: string): string {
   // Step 5: collapse 3+ consecutive newlines to exactly two
   result = result.replace(/\n{3,}/g, '\n\n');
 
-  // Step 5b: remove everything before the first [IMAGE:], [VIDEO:], or [AUDIO:] tag
-  // RTF font/color table remnants leak as plain text before the first real block
-  const firstTagIndex = result.search(/\[(IMAGE|VIDEO|AUDIO):/i);
+  // Step 5b: remove everything before the first bracket tag. RTF font/color
+  // table remnants leak as plain text before the first real scene block, and
+  // under the bare-tag format the first tag may be a bare `[filename]` (or a
+  // [HEADING:...]) with no IMAGE/VIDEO/AUDIO keyword — so slice at the first
+  // complete `[...]` bracket pair, whatever kind of tag it is. This is the
+  // fix for the "RTF header junk merged onto segment 1's tag line" bug.
+  const firstTagIndex = result.search(/\[[^\]\n]*\]/);
   if (firstTagIndex > 0) {
     result = result.slice(firstTagIndex);
   }
@@ -122,14 +129,21 @@ export function stripRtfIfNeeded(text: string): string {
  * Determines whether a text file is a voiceover script or a scene-details file
  * by counting bracket asset tags. Requires pre-stripped (plain text) content.
  *
- * A file with ≥ 3 [IMAGE:] / [VIDEO:] / [AUDIO:] tags is almost certainly a
- * scene-details file; everything else is treated as a voiceover script.
+ * A file with ≥ 3 asset tags is almost certainly a scene-details file;
+ * everything else is treated as a voiceover script.
+ *
+ * Under the bare-tag format an asset tag is any `[...]` bracket (bare
+ * `[filename]` or the legacy `[IMAGE:]`/`[VIDEO:]`/`[AUDIO:]` keyword form).
+ * `[HEADING:...]` tags are deliberately EXCLUDED from the count: a heading is
+ * a structural marker, not an asset reference, and counting it would let a
+ * heading-heavy file (or a script that happens to contain a stray `[HEADING:]`)
+ * misclassify as scene-details.
  */
 export function detectTextFileRole(
   strippedContent: string,
 ): 'script' | 'sceneDetails' {
   const bracketMatches = (
-    strippedContent.match(/\[(IMAGE|VIDEO|AUDIO):/gi) ?? []
-  ).length;
+    strippedContent.match(/\[[^\]\n]*\]/g) ?? []
+  ).filter(tag => !/^\[HEADING\s*:/i.test(tag)).length;
   return bracketMatches >= 3 ? 'sceneDetails' : 'script';
 }

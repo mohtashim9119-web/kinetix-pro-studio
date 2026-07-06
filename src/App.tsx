@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { isFuzzyMatch, findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, stealDurationFromNeighbors, giveDurationToNeighbors } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, stealDurationFromNeighbors, giveDurationToNeighbors, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -100,6 +100,7 @@ interface RawSegment {
   isHeading?: boolean;
   headingConfig?: HeadingConfig;
   assetId?: string;
+  unmatchedExplicitTag?: boolean;
   transition: TransitionType;
   animation: AnimationType;
   playbackSpeed: number;
@@ -235,7 +236,7 @@ function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
 }
 
 // Enhanced parser that handles heading-voiceover logic
-const parseProjectData = async (
+export const parseProjectData = async (
   script: string,
   sceneDetails: string,
   assets: Asset[],
@@ -243,7 +244,7 @@ const parseProjectData = async (
 ): Promise<VideoSegment[]> => {
   // Split on the start of each bracketed tag so blank lines between a tag and its
   // description text stay within the same block (not treated as a scene boundary).
-  const TAG_REGEX = /(?=\[(?:IMAGE|VIDEO|HEADING)\s*:)/i;
+  const TAG_REGEX = /(?=\[[^\]]*\])/;
   const rawDetails = sceneDetails.split(TAG_REGEX).filter(block => block.trim() !== '');
   const scriptLines = script.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
 
@@ -300,25 +301,34 @@ const parseProjectData = async (
       extraOverlays: [],
     };
 
-    let name = '';
     const detail = scene.tag;
 
-    const specificMatch = detail.match(/\[(?:IMAGE|VIDEO|HEADING):\s*(.*?)\s*\]/i);
-    if (specificMatch) {
-      name = specificMatch[1] ?? '';
-    } else {
-      const simpleMatch = detail.match(/\[(.*?)\]/);
-      if (simpleMatch) name = simpleMatch[1] ?? '';
-      else name = detail;
-    }
+    const bracketMatch = detail.match(/^\[(.*?)\]/);
+    // Clean stray edge punctuation (leading colon/quote/whitespace) and fold
+    // the legacy IMAGE:/VIDEO: prefix, so a typo'd tag like "[:  foo]" still
+    // resolves to "foo" instead of failing exact match and getting wrong-guessed.
+    const name = cleanTagName(bracketMatch?.[1] ?? '');
 
-    const hasExplicitTagName = specificMatch !== null &&
-      (specificMatch[1] ?? '').length > 0;
+    // Every scene tag is a bracket by construction (TAG_REGEX only splits on
+    // bracket occurrences), so this is "was a non-empty name actually written
+    // inside the brackets" — false only for a literal empty `[]` tag.
+    const hasExplicitTagName = name.length > 0;
 
     if (name) {
-      const matchingAssets = assets.filter(a => isFuzzyMatch(name, a.name));
-      const unusedAsset = matchingAssets.find(a => !usedAssetIdsTotal.has(a.id));
-      const asset = unusedAsset ?? matchingAssets[0];
+      // First match wins (upload/array order). Because the match is now
+      // extension-agnostic, two assets sharing a stem (e.g. 002_age_24.jpg
+      // AND 002_age_24.mp4) can both match the same tag — warn but don't
+      // block; the first-in-order asset is used. Mirrors the duplicate-
+      // assignment warning below (diagnostic only, no UI surfacing).
+      const matches = assets.filter(a => isExactFilenameMatch(name, a.name));
+      if (matches.length > 1) {
+        console.warn(
+          `[parseProjectData] Tag "${name}" matches ${matches.length} assets ` +
+          `(extension ignored): ${matches.map(a => a.name).join(', ')}. ` +
+          `Using "${matches[0]!.name}" (first uploaded).`
+        );
+      }
+      const asset = matches[0];
       if (asset) {
         current.assetId = asset.id;
         usedAssetIdsTotal.add(asset.id);
@@ -332,6 +342,14 @@ const parseProjectData = async (
         current.assetId = contextualAsset.id;
         usedAssetIdsTotal.add(contextualAsset.id);
       }
+    }
+
+    // An explicit tag that failed to resolve to an asset stays visibly
+    // unmatched — mark it so the downstream autoMatchSegments pass(es) never
+    // fuzzy-guess it from spoken text. Untagged (empty `[]`) scenes are NOT
+    // marked, so they remain eligible for the legitimate fuzzy fallback.
+    if (hasExplicitTagName && !current.assetId) {
+      current.unmatchedExplicitTag = true;
     }
 
     rawSegments.push(current);
