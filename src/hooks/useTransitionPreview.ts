@@ -11,11 +11,28 @@
  */
 
 import { useRef, useEffect, useState } from 'react';
-import { VideoSegment, Asset, TransitionType } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer';
 import { resolveEffectiveTransition } from '../services/transitionResolver';
+import { applySegmentAnimation } from '../services/canvasAnimations';
 import type { VideoDecoderPool } from '../services/videoDecoderPool';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
+// B3 (item-4 fix) — reusing these pure, already-tested primitives from
+// useWebCodecsPreview.ts (read-only import, that file is not modified)
+// rather than re-implementing them: toSourceTime is the exact same
+// segment-local-time -> decoder-source-time mapping the main hook already
+// uses, and startChaseIfIdle/resetChaseMutex (built on chaseLatestTarget
+// internally) are the "at most one getFrameAt call in flight per session"
+// primitive that hook's own file header documents at length (a real
+// deadlock/starvation class of bug was found and fixed there — reusing it
+// here avoids reintroducing the same class of race for the OUTGOING
+// segment's session instead of building a parallel, less-proven mechanism).
+import {
+  toSourceTime,
+  startChaseIfIdle,
+  resetChaseMutex,
+  type ChaseMutex,
+} from './useWebCodecsPreview';
 
 /** Snapshot resolution — 16:9 half-HD. Full resolution is unnecessary
  *  for preview-quality blending. */
@@ -43,6 +60,21 @@ interface SnapshotPair {
   key: string;
   outgoing: HTMLCanvasElement;
   incoming: HTMLCanvasElement;
+}
+
+/**
+ * Resolves which AnimationType a segment's camera-dynamics transform should
+ * use — effectAnimation slug wins over the legacy segment.animation field.
+ * Identical resolution to frameRenderer.ts:479-482 and PreviewStage.tsx's
+ * own resolveSegmentAnimationType — kept as a small local copy (same as
+ * those two files each already do independently) rather than a shared
+ * cross-file helper, consistent with how this exact three-line resolution
+ * is already duplicated between a service and a component in this codebase.
+ */
+function resolveAnimationType(seg: VideoSegment): AnimationType {
+  return ((seg.effectAnimation && seg.effectAnimation !== 'none')
+    ? seg.effectAnimation as AnimationType
+    : seg.animation) ?? AnimationType.NONE;
 }
 
 export interface TransitionPreviewInfo {
@@ -126,13 +158,20 @@ export function useTransitionPreview({
   const liveSourceRef = useRef({ pool, incomingFrame, incomingFrameSegmentId });
   liveSourceRef.current = { pool, incomingFrame, incomingFrameSegmentId };
 
-  // B2 plumbing — the same capability gate PreviewStage.tsx already uses
-  // to choose the WebCodecs vs. legacy <video> preview path (see
-  // isWebCodecsPreviewSupported's own doc: memoized, sole gate). B3 will
-  // branch live-pull vs. snapshot rendering on this; not used to change
-  // behavior in this task.
+  // B3 (item-4 fix) — the same capability gate PreviewStage.tsx already
+  // uses to choose the WebCodecs vs. legacy <video> preview path (see
+  // isWebCodecsPreviewSupported's own doc: memoized, sole gate). Gates the
+  // live-pull branch below; when false, this hook's behavior is IDENTICAL
+  // to before this task (the one-shot renderSegmentFrame snapshot effect
+  // is untouched and remains the only source for both canvases).
   const webCodecsCapable = isWebCodecsPreviewSupported();
-  void webCodecsCapable;
+
+  // Mirrors `snapshots` state in a ref so the live-pull effect below (which
+  // fires on its own schedule, independent of whatever triggered the last
+  // render) can always read the current canvas pair without needing
+  // `snapshots` in its own dependency array.
+  const snapshotsRef = useRef<SnapshotPair | null>(null);
+  snapshotsRef.current = snapshots;
 
   // ---------------------------------------------------------------------------
   // Derive relevant segments + transition metadata
@@ -213,6 +252,158 @@ export function useTransitionPreview({
   const progress = inTransitionWindow && incomingSeg
     ? Math.max(0, Math.min(1, (currentTime - incomingSeg.startTime) / transitionDuration))
     : 0;
+
+  // ---------------------------------------------------------------------------
+  // B3 (item-4 fix) — transition-protect the OUTGOING session.
+  //
+  // useWebCodecsPreview.ts's own {current, next} protection (setProtectedIds)
+  // stops covering outgoingSeg the instant the boundary crosses and it's no
+  // longer `current` — without this, its decode session is fair game for
+  // LRU eviction mid-blend. Declarative, not TTL-based (see B1's own doc):
+  // re-asserted every time outgoingSeg's identity changes, cleared the
+  // moment it becomes undefined. Harmless no-op when `pool` wasn't passed
+  // in (Params field is optional) or outgoingSeg is the current segment
+  // itself (pre-roll-only candidate A — already protected by the other set;
+  // this just adds a redundant, harmless entry).
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!pool) return;
+    pool.setTransitionProtectedIds(outgoingSeg ? [outgoingSeg.id] : []);
+  }, [pool, outgoingSeg?.id]);
+
+  // ---------------------------------------------------------------------------
+  // B3 (item-4 fix) — live per-tick render for the OUTGOING segment's video
+  // content, layered ON TOP of the one-shot snapshot effect below rather
+  // than replacing it: the one-shot effect still runs unconditionally, in
+  // every mode, and creates/owns the canvas pair. This effect's own
+  // `onSettled` callback looks up that canvas via `snapshotsRef` at the
+  // moment its async `getFrameAt` call resolves — on the very first tick or
+  // two of a brand-new boundary the one-shot effect's canvases may not
+  // exist yet (its own `renderSegmentFrame` calls are the slower,
+  // ~200-400ms HTML5-seek path), in which case this callback simply finds
+  // no canvas and no-ops for that tick. Because this effect re-fires every
+  // tick (`currentTime` is in its dependency array) for as long as
+  // needsPreRollWindow/isActiveWindow holds, it converges to live content
+  // within roughly one more tick after the one-shot snapshot lands — not a
+  // same-commit ordering guarantee, just fast convergence. A non-capable
+  // runtime (webCodecsCapable false), a missing `pool`, or a non-video
+  // outgoing asset (image/heading — no VideoFrame to pull; B3's scope is
+  // decode-side video content only, per the item-4 audit) all leave the
+  // one-shot snapshot as the sole, unchanged source for the outgoing canvas
+  // for the life of the transition.
+  // ---------------------------------------------------------------------------
+  const outgoingAsset = outgoingSeg ? assets.find(a => a.id === outgoingSeg.assetId) : undefined;
+  const liveOutgoingActive = webCodecsCapable && !!pool && !!outgoingSeg && outgoingAsset?.type === 'video';
+
+  // At most one getFrameAt call in flight for the outgoing session at a
+  // time (see the chase-primitive import note above); reset whenever
+  // outgoingSeg's own identity changes (a genuine new "epoch" — mirrors
+  // useWebCodecsPreview.ts's own epochKeyRef/generationRef pattern for its
+  // frame-pull effect exactly, including why: a stale chase from a
+  // previous outgoing segment must not paint over a new one, and its own
+  // busy loop must not silently starve the new segment of ever chasing).
+  const outgoingChaseMutexRef = useRef<ChaseMutex>({ chasing: false, epoch: 0 });
+  const outgoingLatestTargetRef = useRef(0);
+  const outgoingEpochKeyRef = useRef<string | null>(null);
+  const outgoingGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (!liveOutgoingActive || !outgoingSeg || !pool) {
+      // Not (or no longer) live for this render — bump the generation so a
+      // chase left over from a previous outgoing segment recognizes it's
+      // stale and stops painting, mirroring useWebCodecsPreview.ts's own
+      // inert-path handling.
+      outgoingEpochKeyRef.current = null;
+      ++outgoingGenerationRef.current;
+      return;
+    }
+
+    const segmentId = outgoingSeg.id;
+    const boundaryKey = `${outgoingSeg.id}:${incomingSeg?.id ?? ''}`;
+
+    if (outgoingEpochKeyRef.current !== segmentId) {
+      outgoingEpochKeyRef.current = segmentId;
+      ++outgoingGenerationRef.current;
+      resetChaseMutex(outgoingChaseMutexRef.current);
+    }
+    const generation = outgoingGenerationRef.current;
+    // toSourceTime deliberately doesn't clamp segment-local progress to the
+    // segment's own `duration` — during an active blend, currentTime has
+    // already advanced past outgoingSeg's nominal end (it's no longer the
+    // containing segment), so this naturally continues the outgoing
+    // video's own source time forward instead of freezing at its last
+    // frame — exactly what "continuing past its nominal duration" means.
+    outgoingLatestTargetRef.current = toSourceTime(outgoingSeg, currentTime);
+
+    startChaseIfIdle(
+      outgoingChaseMutexRef.current,
+      () => outgoingLatestTargetRef.current,
+      (target) => pool.getFrameAt(segmentId, target).catch(() => null),
+      (result) => {
+        if (outgoingGenerationRef.current !== generation) return; // superseded
+        if (!result) return; // nothing decoded yet / evicted — keep last drawn content
+        const canvas = snapshotsRef.current?.key === boundaryKey ? snapshotsRef.current.outgoing : null;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+
+        try {
+          const frame = result;
+          const frameW = frame.displayWidth;
+          const frameH = frame.displayHeight;
+          if (!frameW || !frameH) return; // closed frame reads back as 0x0 on some engines
+
+          // object-cover source rect — mirrors PreviewCanvas.tsx's identical
+          // VideoFrame-to-canvas fit math (same convention used everywhere
+          // else a raw decoded frame is painted in this app).
+          const canvasRatio = canvas.width / canvas.height;
+          const frameRatio = frameW / frameH;
+          let sx = 0, sy = 0, sw = frameW, sh = frameH;
+          if (frameRatio > canvasRatio) {
+            sw = frameH * canvasRatio;
+            sx = (frameW - sw) / 2;
+          } else {
+            sh = frameW / canvasRatio;
+            sy = (frameH - sh) / 2;
+          }
+
+          // Segment-local elapsed time (uncapped — same "continues past
+          // nominal duration" reasoning as the source-time computation
+          // above) drives the camera-dynamics transform, matching
+          // frameRenderer.ts's own applySegmentAnimation call site exactly
+          // (canvas transform, not the CSS getAnimationWrapperProps wrapper
+          // PreviewStage.tsx uses for DOM-wrapped media — this is a raw
+          // <canvas>, so the canvas-native function is the correct one).
+          const timeInSegment = currentTime - (outgoingSeg.startTime ?? 0);
+          const animation = resolveAnimationType(outgoingSeg);
+
+          ctx.save();
+          const animResult = applySegmentAnimation(ctx, {
+            animation,
+            timeInSegment,
+            segmentDuration: outgoingSeg.duration,
+            canvasWidth: canvas.width,
+            canvasHeight: canvas.height,
+          });
+          if (animResult.postDrawAlpha !== undefined) {
+            ctx.globalAlpha = animResult.postDrawAlpha;
+          }
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          ctx.drawImage(frame, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+          ctx.restore();
+          ctx.globalAlpha = 1;
+          ctx.shadowBlur = 0;
+          ctx.shadowColor = 'rgba(0,0,0,0)';
+        } catch {
+          // Frame closed between resolving and this draw (pool eviction/
+          // scrub-reset race) — same documented hazard as PreviewCanvas.tsx's
+          // own drawImage call. Skip this tick; the canvas keeps whatever it
+          // last held, superseded moments later by the next live frame.
+        }
+      },
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveOutgoingActive, outgoingSeg?.id, incomingSeg?.id, currentTime, pool]);
 
   // ---------------------------------------------------------------------------
   // Pre-roll: render snapshots once when approaching the transition window

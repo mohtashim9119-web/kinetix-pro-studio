@@ -600,6 +600,51 @@ export function PreviewStage({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // B3 (item-4 fix) — when the WebCodecs-capable live path is genuinely
+    // caught up to currentSegment (contentCaughtUp, computed above from the
+    // same frame/frameSegmentId this transition's own incoming side is
+    // sourced from — see useWebCodecsPreview.ts), blit its live frame onto
+    // transitionPreview.incoming's persistent canvas right before
+    // compositing below. During an active blend window incomingSeg is
+    // always currentSegment (useTransitionPreview's own candidate-B
+    // window), so webCodecsPreview.frame is guaranteed to belong to the
+    // right segment whenever contentCaughtUp is true — this is what makes
+    // the INCOMING side of the blend live instead of a frozen one-shot
+    // snapshot. Falls through to whatever transitionPreview.incoming
+    // already holds (the one-shot snapshot, non-video incoming segment, or
+    // a not-yet-caught-up live frame) on every other path — strictly an
+    // upgrade over today's frozen behavior, never worse.
+    if (useWebCodecsPath && webCodecsPreview.isVideoSegment && contentCaughtUp && webCodecsPreview.frame) {
+      try {
+        const incCanvas = transitionPreview.incoming;
+        const incCtx = incCanvas.getContext('2d');
+        const frame = webCodecsPreview.frame;
+        const frameW = frame.displayWidth;
+        const frameH = frame.displayHeight;
+        if (incCtx && frameW && frameH) {
+          // object-cover source rect — mirrors PreviewCanvas.tsx's identical
+          // VideoFrame-to-canvas fit math.
+          const canvasRatio = incCanvas.width / incCanvas.height;
+          const frameRatio = frameW / frameH;
+          let sx = 0, sy = 0, sw = frameW, sh = frameH;
+          if (frameRatio > canvasRatio) {
+            sw = frameH * canvasRatio;
+            sx = (frameW - sw) / 2;
+          } else {
+            sh = frameW / canvasRatio;
+            sy = (frameH - sh) / 2;
+          }
+          incCtx.clearRect(0, 0, incCanvas.width, incCanvas.height);
+          incCtx.drawImage(frame, sx, sy, sw, sh, 0, 0, incCanvas.width, incCanvas.height);
+        }
+      } catch {
+        // Frame closed between being handed to this component and this draw
+        // running (pool eviction/scrub-reset race) — same documented hazard
+        // as PreviewCanvas.tsx's own drawImage call. Skip this tick's
+        // update; transitionPreview.incoming keeps whatever it last held.
+      }
+    }
+
     // Draw outgoing snapshot as the base layer
     ctx.clearRect(0, 0, w, h);
     ctx.drawImage(transitionPreview.outgoing, 0, 0, w, h);
@@ -616,6 +661,10 @@ export function PreviewStage({
     transitionPreview.outgoing,
     transitionPreview.incoming,
     transitionPreview.effectiveTransition,
+    useWebCodecsPath,
+    webCodecsPreview.isVideoSegment,
+    webCodecsPreview.frame,
+    contentCaughtUp,
   ]);
 
   useEffect(() => {

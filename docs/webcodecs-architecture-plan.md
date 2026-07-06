@@ -585,8 +585,8 @@ investigation** — see the A3 entry above.
     spike artifacts`.
 
 - **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
-  supersedes the "BLOCKED transitively" disposition above. B1-B2 of 5 ✅ DONE, B3-B5 pending
-  (2026-07-06).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
+  supersedes the "BLOCKED transitively" disposition above. B1-B3 of 5 ✅ DONE (B3 manually
+  verified — frozen frame during transitions confirmed fixed), B4-B5 pending (2026-07-06).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
   can no longer wait on it) determined the frozen-frame fix does NOT actually require Phase B's
   shared compositor — it's achievable using only decode-side infrastructure
   (`VideoDecoderPool.getFrameAt`) that already works today; only `VideoEncoder` (export-side) is
@@ -622,16 +622,32 @@ investigation** — see the A3 entry above.
     params yet — zero visual/behavioral change. `tsc --noEmit` clean, `vitest run` 162/162 passing
     (unchanged — pure plumbing, no new tests needed). Committed in `feat: thread VideoDecoderPool +
     live incoming frame into useTransitionPreview (Item 4 fix, B2)`.
-  - **B3 — Live outgoing-side render.** ⬜ Pending. Rewrite `useTransitionPreview.ts`'s pre-roll effect
-    to per-tick-refresh the outgoing canvas from live pool frames + `applySegmentAnimation` (the
-    canvas-native camera-dynamics transform, not the CSS `getAnimationWrapperProps` wrapper); incoming
-    side sources from the parent's already-live frame instead of an independent `getFrameAt` call
-    (avoids racing `useWebCodecsPreview.ts`'s documented `pendingBoundaryPullRef` chase-mutex hazard).
-    Snapshot fallback preserved behind `isWebCodecsPreviewSupported()` for non-capable runtimes.
+  - **B3 — Live outgoing-side render. ✅ DONE — manually verified (2026-07-06): frozen frame during
+    transitions confirmed fixed.** `useTransitionPreview.ts` gains a declarative
+    `pool.setTransitionProtectedIds([outgoingSeg.id])` effect (B1's API, finally wired up) plus a
+    per-tick live-render effect for the OUTGOING segment: reuses `toSourceTime`/`startChaseIfIdle`/
+    `resetChaseMutex` imported read-only from `useWebCodecsPreview.ts` (avoids reintroducing the
+    exact "at most one `getFrameAt` in flight per session" race that file's own header already
+    documents fixing) to pull a live `VideoFrame` and draw it via
+    `ctx.save(); applySegmentAnimation(...); ctx.drawImage(frame,...); ctx.restore()` — the same
+    canvas-native camera-dynamics call site `frameRenderer.ts`'s export path uses, not the CSS
+    `getAnimationWrapperProps` wrapper. Layered on top of the existing one-shot snapshot effect
+    (unchanged, still creates/owns the canvas pair) rather than replacing it, so non-video outgoing
+    segments (image/heading) and non-capable runtimes keep today's exact frozen behavior by
+    construction. Incoming side: `PreviewStage.tsx`'s draw effect now blits the parent's already-live
+    `webCodecsPreview.frame` onto `transitionPreview.incoming`'s persistent canvas (gated on
+    `contentCaughtUp`, already computed for Bug 1/2) instead of an independent `getFrameAt` call —
+    confirmed `applyTransitionBlend`'s `adjacentCanvas` param is strictly `HTMLCanvasElement` (not
+    widened; `frameRenderer.ts` untouched), so the live frame is blitted onto the existing reusable
+    canvas rather than passed in directly. `tsc --noEmit` clean, `vitest run` 162/162 passing
+    (no dedicated hook test file exists — same DOM/canvas/effect-heavy limitation as this hook's
+    prior state; verification here is manual). Committed in `fix: live per-tick outgoing-side
+    transition rendering, eliminating frozen frame during transitions (Item 4 fix, B3) - verified`.
   - **B4 — Overlay parity.** ⬜ Pending. `renderSegmentFrame` bakes `segment.extraOverlays` into the
-    one-shot snapshot today (why the DOM extra-overlays layer fades out during transitions); switching
-    to live raw frames drops that unless extra overlays are also redrawn live or the DOM layer is
-    un-faded during the transition — a real regression surfaced by this audit, not yet resolved.
+    one-shot snapshot today (why the DOM extra-overlays layer fades out during transitions); B3's
+    live path bypasses that bake for the outgoing/incoming canvases it touches, so extra overlays now
+    visibly disappear during a live transition — a KNOWN, EXPECTED regression from B3 (surfaced by
+    the original item-4 audit, not a new/surprise bug), to be closed by B4.
   - **B5 — Manual verification.** ⬜ Pending. Live motion during transitions; rapid back-to-back
     transitions (segment shorter than `transitionDuration`); pause mid-transition then resume;
     fallback path still shows the old frozen-but-correct snapshot.
