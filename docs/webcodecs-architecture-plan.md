@@ -527,6 +527,63 @@ Phase B to resolve it as a natural consequence of its own already-planned scope,
 **Residual issue 3 (general playback lag) remains open, unscoped, a separate future
 investigation** — see the A3 entry above.
 
+- **Phase B0 — Encoder feasibility spike. ✅ COMPLETE — result: ❌ BLOCKED / INFEASIBLE on this
+  runtime.** Per Section 8.2's own gate ("if hardware/software encode both fail or produce garbage
+  on the real Tauri WKWebView runtime, STOP and report Phase B as infeasible on this engine as
+  currently scoped — do not proceed to B1 regardless of how close it seems"), a throwaway spike
+  (`src/dev/webcodecsEncoderSpike/main.ts` + `spike-webcodecs-encoder.html`, both deleted after
+  this entry was written — mirrored the Phase 0 spike convention, `devUrl` temporarily repointed at
+  the harness the same way the WKWebView Cross-Check did) tested real `VideoEncoder.encode()` —
+  not just `isConfigSupported` — across all 4 combinations of hardware/software acceleration ×
+  avc/annexb bitstream format, on this project's real Tauri WKWebView (macOS 26.5.2). Prior research
+  (MDN/caniuse claiming Safari 16.4+ support, plus a real, still-open WebKit bug —
+  bugs.webkit.org #258060, filed 2023, "quality of video encode by VideoEncoder ... on mac safari is
+  poor" — and #281945, `annexb` format not honored for HEVC) established this needed an empirical
+  check, not a documentation-only answer.
+  - **Result: all 4/4 configs hung identically.** `isConfigSupported` reported `true` for every
+    config. Real encode: `encodeQueueSize` dropped from 15→11 immediately after all 15 synthetic
+    frames were submitted, then plateaued at 11 forever; `chunksEmitted` stayed at 0 throughout;
+    `encoder.flush()` never resolved within a 15s timeout for ANY config; no `error` callback ever
+    fired (`encoder.state` stayed `'configured'`, never transitioning to `'closed'` on its own — a
+    silent hang, not a surfaced failure). Hardware and software failed the same way, ruling out
+    "prefer the other backend" as a mitigation; default and `annexb` bitstream format failed the
+    same way, making the ffmpeg-mux-without-a-JS-muxer question moot (zero output to test it
+    against either way).
+  - **Not attributed to a spike-harness bug.** The harness's `VideoFrame(canvas, {timestamp})`
+    construction, closing each frame immediately after `encode()`, and the config shape all match
+    the standard WebCodecs sample pattern; the identical 15→11 plateau across four independently
+    different backend/format combinations is inconsistent with an isolated per-config engine bug
+    and points at something systemic in this WKWebView build's `VideoEncoder` binding — but this
+    was not independently re-verified against a second, unrelated known-good reference
+    implementation, so residual uncertainty about the harness is disclosed, not eliminated.
+  - **Confirms and exceeds `docs/phase-7-task-1-export-profiling.md:79`'s earlier rejection.** That
+    doc rejected the WebCodecs-encoder path for export on the grounds that "WebKit support ...
+    [is] recent and inconsistent," based on documentation/risk assessment alone, without a live
+    test. This spike is the live test that earlier analysis called for — and finds the situation
+    materially worse than "inconsistent quality": non-functional (a hang), on both hardware and
+    software paths, on a real, current (macOS 26.5.2) WKWebView.
+  - **Disposition: attempted-and-rejected, not abandoned-without-investigation, and not
+    permanently closed.** Phase B (Section 8.2) as originally scoped is BLOCKED on this runtime,
+    effective now. No further debugging or a WebKit bug report was pursued this round — explicitly
+    deprioritized, not because the finding is uncertain, but because it's conclusive enough to
+    redirect effort elsewhere. The current ffmpeg PNG/IPC export pipeline remains the shipped,
+    working path (slower with effects active, per the existing CLAUDE.md performance figures, but
+    functionally correct). The already-recorded next candidate for export speed-up is the
+    OffscreenCanvas/Worker approach from `docs/phase-7-task-1-export-profiling.md`'s own
+    recommendation (I/O-bound `toBlob`/IPC-write bottleneck, ~40–55% projected speedup) — noted
+    here only as the existing next candidate, not scoped or started by this entry. Item 4 (frozen
+    transition frame), previously deferred to Phase B, is now **BLOCKED transitively** along with
+    Phase B itself — it remains open, unscoped, pending either a future retry of Phase B on a
+    newer/different WKWebView build, or a standalone fix considered on its own merits instead of
+    waiting on a compositor unification that can no longer proceed as designed.
+  - **No pipeline source changed.** `frameRenderer.ts`, `segmentEncoder.ts`, `exportPipeline.ts`,
+    `plainSegment.ts`, `useTransitionPreview.ts`, `videoDecoderPool.ts`, `useWebCodecsPreview.ts` are
+    all unmodified — this was audit/spike/cleanup only, exactly as scoped.
+  - **Verification:** `tsc --noEmit` clean, `vitest run` 159/159 passing (docs + spike-file cleanup
+    only, no production code touched, no new tests). Committed in `docs: mark Phase B
+    WebCodecs-encoder export path as blocked (VideoEncoder non-functional on WKWebView) + remove B0
+    spike artifacts`.
+
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
 - **Phase A — Unify the clock (preview). ✅ COMPLETE — 3 of 3 steps done (A1 animation-twin
@@ -539,9 +596,16 @@ investigation** — see the A3 entry above.
   Section 8.2's cross-reference below) — not forgotten or skipped, deliberately deferred pending
   Phase B's shared compositor; residual issue 3 (general playback lag) remains open, unscoped, a
   separate future investigation.
-- **Phase B — Migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor.** Retire the
-  per-frame HTML5-seek → PNG → IPC path; the same compositor that paints preview renders export frames;
-  ffmpeg used once for final mux only. Full definition in Section 8 below.
+- **Phase B — ❌ BLOCKED / INFEASIBLE on this runtime (B0 spike complete, see ✅ COMPLETED above).**
+  Originally scoped to migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor,
+  retiring the per-frame HTML5-seek → PNG → IPC path. The B0 feasibility spike found real
+  `VideoEncoder.encode()` non-functional on this project's real Tauri WKWebView (macOS 26.5.2): all
+  4 tested configs (hardware/software × avc/annexb) hung identically — `flush()` never resolved,
+  zero chunks ever emitted, no error surfaced. Confirms and exceeds the risk
+  `docs/phase-7-task-1-export-profiling.md:79` already flagged. Not pursued further this round by
+  deliberate choice, not because the result is ambiguous. The legacy ffmpeg PNG/IPC export path
+  remains shipped and correct; Phase C (quality pass) is moot while Phase B is blocked. See the B0
+  ✅ COMPLETED entry above for full evidence and disposition.
 - **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
   drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
   output. Full definition in Section 8 below.
@@ -973,6 +1037,15 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
   tracker above.**
 
 ### 8.2 Phase B — Export onto WebCodecs `VideoEncoder` behind ONE shared compositor
+
+**❌ BLOCKED / INFEASIBLE on this runtime, confirmed via the B0 feasibility spike (see the ✅
+COMPLETED / ⬜ NOT STARTED tracker entries above for full evidence).** Real `VideoEncoder.encode()`
+hangs on this project's real Tauri WKWebView (macOS 26.5.2) across all 4 hardware/software ×
+avc/annexb configs — `isConfigSupported` reports `true`, but `flush()` never resolves and zero
+output chunks are ever emitted. This confirms and exceeds the risk already on record at
+`docs/phase-7-task-1-export-profiling.md:79`. The steps below are retained as the ORIGINAL plan for
+historical/reference purposes and in case this is revisited on a future WKWebView build — they were
+not built, and are not being pursued further right now.
 
 - **Goal:** export renders through the SAME compositor that paints preview, encoded by a
   hardware-accelerated `VideoEncoder`; ffmpeg runs once, for the final audio+video mux only. Retires the
