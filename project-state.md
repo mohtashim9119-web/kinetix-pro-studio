@@ -9,7 +9,7 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-07 |
+| Last updated | 2026-07-08 |
 | Current HEAD | `aa12206` ("fix: prevent low-confidence alignment matches from overshooting into next segment's word range (Whisper D16 follow-up)") — the last COMMITTED state — on branch `webcodecs-api` (18 commits ahead of `origin/webcodecs-api`, none pushed yet — see Active Tasks). Since the prior HEAD note (`5f764a7`): a real-project follow-up bug was found in D16 (`cdc1eb1`) itself — a low-confidence match's `bestStart` could land far ahead of the search cursor (a spurious coincidental match against non-spoken caption text), anchoring that segment's `t1` past the next segment's true start and collapsing both to near-zero/negative duration. Fixed via an overshoot guard in `src/services/whisperService.ts` (re-anchors an overshooting low-confidence match to the cursor) plus a backstop monotonic-anchor clamp in `src/services/syncEngine.ts`'s `applyAnchorBasedTiming`, commit `aa12206`. Verified against the user's real transcript: overshoot fires on exactly the 5 genuinely-broken segments, zero false positives on the 8 previously-safe low-confidence segments, zero `[anchor] out-of-order` warnings post-fix (previously 2) — see the D16 Completed Work entry and the 2026-07-07 Decisions Log entry below. `tsc --noEmit` clean, `vitest` **220/220**. On top of that, a docs-only cleanup had landed (`5f764a7`) — no functional change. Commits since the WebCodecs Bug-2 fix (`0a3f67c`, which this cell previously referenced): live per-tick outgoing-side transition rendering (Item 4 B1-B3, `9f4d276`/`73d1f54`/`10410f0`, all shipped and stable) — **B4 (overlay parity) was then implemented, manually tested, found NOT to fix the reported animation jump/disappear symptoms, and surfaced an unrelated React "Maximum update depth exceeded" loop in `usePlayback.ts`; B4/B5 are now PARKED/SUPERSEDED (not "pending") and all uncommitted B4 work was discarded back to clean B3 state — see the WebGL/WebGPU rebuild Decisions Log entry and Active Tasks below, and `docs/webcodecs-architecture-plan.md`'s Item 4 entry for full detail.** The WebCodecs preview migration (Phases 0–8) is complete: `VideoDecoder`-based decode pool + windowed decode-ahead + LRU replaced the dual-`<video>`-slot preview path, cutover to default on all WebCodecs-capable runtimes, with the legacy `<video>` path retained as capability-gated fallback — full detail and per-phase evidence in `docs/webcodecs-architecture-plan.md`. Post-cutover transition-flash-back (Bug 1, commit `3022706`) and animation hard-cut (Bug 2, commit `0a3f67c`) fixes landed on top. Earlier: export quality/perf (CRF 16, vignette removal, Tier 1 fast-path bypass — 3m44s→40s on a mixed 4-video/10-image project), UI smoothness fixes, Effects Tab Rebuild Step 8 transitions (10/10), Architecture Shift complete (2026-06-24). |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
@@ -196,8 +196,7 @@ The Review Mapping modal (task 7, shipped then delisted) reached feature-complet
 
 - **WebGL/WebGPU effects-rendering engine rebuild (NOT STARTED).** Decided 2026-07-07 (see Decisions Log) after the CSS/Canvas2D effects engine's Item 4 B4 patch failed to fix its target symptom and surfaced an unrelated infinite-render-loop bug — see this entry's Decisions Log writeup and `docs/webcodecs-architecture-plan.md`'s Item 4 entry for the full incident. Deliberately small scope for the first cut: **3 transitions** (dip-to-black, dip-to-white, cross-dissolve) + **2 animations** (zoom in, zoom out). Rationale: the current mixed DOM/CSS + Canvas2D rendering approach is the root cause of the whole Item-4 debugging saga and also of the slow per-frame export path; a unified WebGL/WebGPU renderer (the CapCut/Premiere-class approach) also pairs natively with WebCodecs — `VideoFrame` uploads directly to a GPU texture with no conversion — and the decode side of that pairing (the WebCodecs preview migration, Phases 0–8) is already done. Estimated effort: days, not weeks, since scope is being deliberately cut rather than expanded. Not yet started — scoping/prompt drafting was paused this session to prioritize higher-priority bugs first (scene-tag matching `9b15a59`, D16 Whisper alignment `cdc1eb1`).
 - **Push local commits to `origin/webcodecs-api` (NOT STARTED).** Branch is currently 15 commits ahead of `origin/webcodecs-api` with nothing pushed. No blocker recorded — just hasn't happened yet.
-- **Manually verify D16's "years spoken-form" assumption against a real project (NOT STARTED).** D16 (`cdc1eb1`) hard-codes a pair-reading convention for spoken years (e.g. "2024" → "twenty twenty four") based on general whisper.cpp behavior, but this was never confirmed against a real transcript in this repo — flagged as a residual risk in the D16 commit itself. Needs a real project with a spoken year in the script to close out.
-- **Follow-On Phases A–C — Preview/Export WebCodecs unification (PLANNED, NOT STARTED).** Recorded in `docs/webcodecs-architecture-plan.md` Section 8 (plus a Progress-Tracker `⬜ NOT STARTED / PENDING` pointer block). Phase A: unify the clock — convert wall-clock Framer-Motion animation twins to playhead-driven transforms (like Ken Burns already is), eliminate the boundary catch-up frozen frame at its root, align transition timing so preview matches export. Phase B (❌ BLOCKED/INFEASIBLE — `VideoEncoder.encode()` hangs on this runtime's Tauri WKWebView across all 4 hardware/software × avc/annexb configs tested; `isConfigSupported` reports `true` but `flush()` never resolves and zero output chunks are ever emitted, confirmed via the B0 feasibility spike; see `webcodecs-architecture-plan.md` Section 8.2 — retained here for reference only, not actively planned): migrate export off the per-frame HTML5-seek→PNG→IPC path onto a WebCodecs `VideoEncoder` behind ONE shared compositor (ffmpeg used once for final mux only). Phase C: quality pass — real color-space conversion (not just bt709 tagging), cross-segment frame-timing/drift correction against the audio master clock, quality-pinned full-HD encode. The 13-bug transition/animation audit that motivated this effort was completed and folded into that plan (Section 8 cross-references each finding: #1/#2 already fixed by the post-cutover Bug 1/Bug 2 commits; #3/#5/#6/#7/#9 + quick wins carried forward as A–C scope; #4/#8 partially addressed). No code written — plan only.
+- **Manually verify D16's pair-reading "years spoken-form" assumption against a real project (PARTIALLY VERIFIED 2026-07-07 — cardinal form confirmed, pair-reading form still open).** D16 (`cdc1eb1`) hard-codes a pair-reading convention for years whose last two digits are 10–99 (4-digit token, range 1100–2999, guard `n % 100 >= 10`; e.g. "2024" → "twenty twenty four") based on general whisper.cpp behavior. A real-project test confirmed the *other* branch instead: digit form "2003" (scene/heading text) and the spoken line "the year is two thousand and three" synced correctly — but 2003 falls outside the pair-reading guard (`2003 % 100 = 3 < 10`), so `canonicalizeForAlignment` took the general cardinal branch (`cardinalToWords` → "two thousand three"), never the pair-reading branch. The pair-reading convention itself (years like 2024, 1987, etc. with last-two-digits ≥10) remains unconfirmed — needs a real project with a script that spells out a year in that specific form (e.g. "twenty twenty four") to close out.
 
 ## Deferred Polish Features
 
@@ -205,8 +204,8 @@ The Review Mapping modal (task 7, shipped then delisted) reached feature-complet
 - Auto-captions (reuse Whisper transcript tokens as a timed text layer)
 - Procedural overlays: 4 remaining — Letterbox, Vignette, CRT/Scanlines, Viewfinder (pure canvas draw ops, no legacy-twin interactions) *(renderer not yet wired)*
 - Asset-backed overlays: 6 blocked — Film Grain, Light Leaks, Film Damage, Atmospheric Particles, Weather, Fire/Embers (waiting on user-supplied black-bg screen-blend footage; render via ctx.globalCompositeOperation='screen')
-- Color-grade parametric: brightness/contrast/saturation sliders per segment (currently ships as fixed cinematic preset; parametric needs new VideoSegment fields + UI panel)
 - Export speedup: OffscreenCanvas/Worker (profiling done — I/O-bound, convertToBlob off main thread projected 40–55% faster)
+- Multi-user support — team accounts vs. staying single-user is still an open call; revisit if/when multi-user demand materializes
 
 ## Deferred Known Bugs
 
@@ -215,101 +214,6 @@ D4 and D5 — see Path B roadmap (`docs/path-b-heading-layer-plan.md`); folded i
 Newly logged 2026-07-02, not yet root-caused or triaged into a D-number in this repo:
 - **Exported-video judder** — reported FPS mismatch between source and export causing visible judder in rendered output (referenced as "finding #6"). Not yet reproduced/investigated against a specific commit here — needs a dedicated repro (source fps vs. `exportFps` setting vs. actual encoded frame timing) before a fix is scoped. Not yet started (Bug 1).
 - **Preview video cold-start clock freeze — still open, now lower-priority (fallback-path only).** The "preview black-screen during playback" symptom logged 2026-07-02 (distinct from the already-fixed D10 transition-boundary flash) was investigated in depth: confirmed root cause is that a `<video>` element that has never played will not start its media clock on `.play()`, regardless of `readyState`/buffering. A full Phase 2 fix attempt (5-slot rolling pool, 3-detector motion sensing, ended-reset guard, clock-kick watchdog, load-based warm) was built, tested, and fully reverted — none of it addressed the real cause, and it never got committed. Two candidate directions (silent pre-roll vs. reveal-first/hide-after-motion) are proposed, pending a small diagnostic to decide between them. **Note (2026-07-07):** the WebCodecs preview migration (Phases 0–8, complete 2026-07-05, see `docs/webcodecs-architecture-plan.md`) replaced the dual-`<video>`-slot preview with a `VideoDecoder`-based decode pool as the default on all WebCodecs-capable runtimes; the `<video>`-based path this bug describes is now only the capability-gated fallback for non-capable runtimes. Downgraded from "UNRESOLVED" urgency accordingly — not closed, since the fallback path is still real and unfixed, but no longer affects the default preview experience. Full writeup: [docs/bugs/preview-cold-start-clock-freeze.md](docs/bugs/preview-cold-start-clock-freeze.md).
-
----
-
-## Effects Tab Rebuild — Plan (Active Task 1)
-
-The Effects tab already exists and works (global-only) in DropZonePanel.tsx.
-This is a guided rebuild to a new fixed UI (from mockup.tsx, design-locked) made
-fully functional in steps. UI layout/structure stays exactly as designed; only
-the accent is re-tokened to the app branding orange (#e07c3a), reconciling the
-existing #F27D26 / #ee8b3f variants.
-
-KEY DECISIONS (locked):
-- "Apply to selected" = TRUE MULTI-SELECT of segments (selectedSegmentId becomes
-  a Set).
-- Per-segment effect fields MUST survive both reload AND Apply Sync — requires
-  patching parseProjectData to preserve them (fixes clean-slate wipe of
-  per-segment fields).
-- Dropdowns/randomize-pools/presets all read ONE shared option source; no entry
-  is ever wired to a renderer case that does nothing (no phantom enums).
-- Accent canonical = #e07c3a.
-- Presets = COMBINED LOOK: capture one option from each of the 3 dropdowns
-  (transition + animation + overlay) + custom name; up to 20; selecting restores
-  the 3 dropdown values, then exposes Apply to selected / Apply to all. Does NOT
-  capture overlay style/color (likely a new combined-preset store rather than
-  bending the legacy single-category presetService).
-
-OVERLAY BACKGROUND HANDLING (important):
-- Stock overlays ship with a black/white/green background; it is NOT removed
-  automatically.
-- Asset-backed overlays MUST be sourced as BLACK-BACKGROUND screen-blend footage.
-- REQUIRED FUNCTION: the renderer must remove the black background by compositing
-  the overlay with a "screen" blend mode — ctx.globalCompositeOperation='screen'
-  in export (frameRenderer) and mix-blend-mode:screen in preview (PreviewStage).
-  Pure black becomes transparent; bright areas show through. Each asset overlay
-  carries a blend-mode setting (default 'screen'; 'multiply' available for
-  white-background assets).
-- Green-screen / chroma-key removal is EXPLICITLY OUT OF SCOPE (per-pixel keying;
-  dropped earlier). Do not source green-screen overlays.
-
-EFFECT LISTS (final, feasibility-resolved):
-Transitions (10, all buildable): Hard Cut, Cross Dissolve, Dip to Black,
-  Dip to White, Wipe, Slide/Push, Glitch/RGB Split, Whip Pan, Zoom, Light Leak
-  (Light Leak via procedural radial-gradient flash if no asset).
-Clip Effects (10, all buildable): Color Correction/Grading, Zoom In, Zoom Out,
-  Ken Burns, Speed Ramping (maps to playbackSpeed — interacts with sync auto-fit;
-  handle carefully), Gaussian Blur, Pixelate/Mosaic, Duotone/Color Wash,
-  Sepia/Vintage, Invert.
-Overlays (10): PROCEDURAL-now (4): Letterbox, Vignette, CRT/Scanlines, Viewfinder.
-  ASSET-BACKED-later (6, shown DISABLED until media uploaded; black-bg screen-blend
-  only): Film Grain, Light Leaks, Film Damage, Atmospheric Particles,
-  Weather (Rain/Fog/Snow), Fire/Embers.
-Dropped as non-feasible in this engine: Match Cut, Morph Cut, Crop, Masking &
-  Tracking, Warp Stabilizer, Chroma Key.
-
-STEPS:
-1. ✅ DONE (`3bbd926`) — Land UI — mount EffectsPanel (from mockup.tsx) in place
-   of the inline Effects section in DropZonePanel.tsx; retoken accent to #e07c3a;
-   all buttons no-op stubs; placeholder labels OK. tsc + vitest clean.
-2. ✅ DONE (`3c0d3af`) — Real option arrays — replace placeholders with the final
-   lists above as {label,value} from one shared source (`effectsOptions.ts`);
-   asset-backed overlays marked disabled. No renderer work.
-3. ✅ DONE (`330c79e`) — Multi-select model — convert selectedSegmentId (single)
-   to a Set; wire multi-select in the segment list/timeline; feed count into
-   panel "N selected".
-4. ✅ DONE (`f2dd193`) — Per-segment persistence — patch parseProjectData to
-   preserve effect fields (transition/animation/overlay/duration); verify
-   round-trip through projectStore AND survival across Apply Sync.
-5. ✅ DONE (`dd903b2`) — Apply to selected/all — replace stubs with real handlers
-   writing to the selected Set or all segments via setProject(...map...).
-6. ✅ DONE (`d0d8ca2`) — Randomize across segments — wire per-block randomize from
-   checked pool across all segments; same persistence path.
-7. ✅ DONE (`4b13cb0`) — Combined-look presets — new dedicated localStorage store
-   (`src/services/lookPresetService.ts`, key `kinetix:lookPresets:v1`, cap 20):
-   save = 3 dropdown values + name; select = restore dropdowns; apply reuses
-   step-5 handlers. Legacy `presetService.ts` left untouched/unrelated — combined
-   look got its own store rather than bending the single-category service.
-   Bonus (same arc, commit `d750ce3`): read-only effect pills in the bottom
-   drawer header surface the applied transition/animation/overlay per segment.
-8. ✅ DONE — Renderer implementation. Transitions: 10/10 complete (hard-cut,
-   cross-dissolve, zoom, dip-black, dip-white, slide-push, whip-pan, wipe,
-   glitch-rgb, light-leak — commits 675e322…76ccf16). Clip effects: 7/7
-   complete (`e748345`, `8d98365`, `34910de`) — pixelate and speed-ramp were
-   removed (pixelate unsupported in WebKit preview, speed-ramp excluded by
-   design). Procedural overlays (4) and asset-backed overlays (6) moved to
-   Deferred Polish Features.
-
-SEQUENCING: Steps 1-2 fast/safe (UI+data) — done. Steps 3-4 structural backbone —
-done. Steps 5-7 wire on top — done. Step 8 (renderer implementation) — done.
-Effects Tab Rebuild plan is now complete.
-
----
-
-## Rejected from Scope
-
-- **Multi-window simultaneous projects** — 5–10 parallel webviews + renders would thrash the machine. Use tabs in one window or a render queue instead. Revisit only if single-window UX proves insufficient.
 
 ---
 
@@ -387,13 +291,6 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 ---
 
 ## Open Questions
-
-- [ ] Multi-user support — team accounts in v1, or stay single-user through Phase 5?
-- [x] Asset storage for persistence — **Resolved (Phase 2):** IndexedDB is sufficient for single-user browser-local persistence. R2/S3 will be revisited when multi-user/cloud-sync arrives (likely Phase 5 or later).
-- [x] Dangling segment references on asset delete — **Resolved (Phase 4, Step 3):** cleaned up at delete time via `c7515e5`.
-- [x] Bundle splitting — **Resolved (Phase 4, Step 5):** jszip, StockSearchModal, SyncReviewModal are now lazy-loaded. Main bundle: 542 kB → 433 kB.
-- [x] Stock API key handling — kept client-side for internal use; backend proxy deferred (tracked in Long-running Deferred Items as "Backend proxy for API keys — required for public launch").
-- [x] **Phase 3 end-to-end export verified — 2026-05-17.** Multi-segment + voiceover + FADE transition + main Export button + VLC playback confirmed H.264/AAC. Verified before `phase-3-export` merged to `main`.
 
 ---
 

@@ -589,6 +589,39 @@ Status: COMPLETE — merged to main
 - Audio track scrolls full width with segments
 - Effects tab contains all transition/animation/filter/overlay/export controls
 
+### Effects Tab Rebuild — Plan (Archived, complete 2026-06-29)
+Status: COMPLETE — all 8 steps shipped; plan retired from project-state.md 2026-07-08 (moved here for historical record)
+
+Guided rebuild of the Effects tab (from mockup.tsx, design-locked UI) from a global-only stub to a fully functional per-segment effects system.
+
+#### Key decisions (locked)
+- "Apply to selected" = true multi-select of segments (`selectedSegmentId` became a Set).
+- Per-segment effect fields survive both reload AND Apply Sync — `parseProjectData` patched to preserve them (fixes clean-slate wipe of per-segment fields).
+- Dropdowns/randomize-pools/presets all read ONE shared option source (`effectsOptions.ts`) — no entry ever wired to a renderer case that does nothing (no phantom enums).
+- Accent color canonicalized to `#e07c3a`, reconciling the `#F27D26`/`#ee8b3f` variants that existed before.
+- Presets = combined look: one option from each of the 3 dropdowns (transition + animation + overlay) + custom name, up to 20; own dedicated store (`src/services/lookPresetService.ts`) rather than bending the legacy single-category `presetService.ts`.
+
+#### Overlay background handling
+Stock overlays ship with a black/white/green background, not removed automatically. Asset-backed overlays must be sourced as black-background screen-blend footage; the renderer removes the black via `ctx.globalCompositeOperation='screen'` in export (frameRenderer) and `mix-blend-mode:screen` in preview (PreviewStage) — pure black becomes transparent, bright areas show through. Each asset overlay carries a blend-mode setting (default `screen`; `multiply` available for white-background assets). Green-screen/chroma-key removal was explicitly out of scope (per-pixel keying, dropped earlier).
+
+#### Effect lists (final, feasibility-resolved)
+- **Transitions (10, all buildable):** Hard Cut, Cross Dissolve, Dip to Black, Dip to White, Wipe, Slide/Push, Glitch/RGB Split, Whip Pan, Zoom, Light Leak (procedural radial-gradient flash if no asset).
+- **Clip Effects (10 planned, 7 shipped):** Color Correction/Grading, Zoom In, Zoom Out, Ken Burns, Gaussian Blur, Duotone/Color Wash, Sepia/Vintage, Invert shipped; Speed Ramping and Pixelate/Mosaic dropped (pixelate unsupported in WebKit preview, speed-ramp excluded by design).
+- **Overlays (10):** 4 procedural (Letterbox, Vignette, CRT/Scanlines, Viewfinder) + 6 asset-backed (Film Grain, Light Leaks, Film Damage, Atmospheric Particles, Weather, Fire/Embers) — both groups moved to Deferred Polish Features (procedural renderer not yet wired; asset-backed blocked on user-supplied footage).
+- **Dropped as non-feasible in this engine:** Match Cut, Morph Cut, Crop, Masking & Tracking, Warp Stabilizer, Chroma Key.
+
+#### Step completion
+1. UI mount (`3bbd926`) — EffectsPanel from mockup.tsx replaces the inline stub in DropZonePanel.tsx; accent retoken; no-op stubs.
+2. Real option arrays (`3c0d3af`) — shared `effectsOptions.ts` source; asset-backed overlays marked disabled.
+3. Multi-select model (`330c79e`) — `selectedSegmentId` (single) → Set; wired into segment list/timeline.
+4. Per-segment persistence (`f2dd193`) — `parseProjectData` preserves effect fields across reload AND Apply Sync.
+5. Apply to selected/all (`dd903b2`) — real handlers writing to the selected Set or all segments.
+6. Randomize across segments (`d0d8ca2`) — per-block randomize from checked pool.
+7. Combined-look presets (`4b13cb0`) — `lookPresetService.ts` (localStorage `kinetix:lookPresets:v1`, cap 20); bonus read-only drawer effect-pills (`d750ce3`).
+8. Renderer implementation — transitions 10/10 (commits `675e322`…`76ccf16`), clip effects 7/7 (`e748345`, `8d98365`, `34910de`).
+
+Plan fully complete as of Step 8. See `project-state.md` Completed Work ("Effects Step 8 — transitions complete", "Effects Tab Rebuild — Steps 5–7 + drawer pills") for the still-current shipped-commit record — that entry is distinct from this plan writeup and was left in place.
+
 ---
 
 ## Historical Quick Stats (superseded)
