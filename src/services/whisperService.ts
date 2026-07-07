@@ -245,6 +245,10 @@ export function alignScenestoTranscript(
   const results: AlignResult[] = [];
   let searchStart = 0;
 
+  // D16 cursor-guard tuning (see the confidence + overshoot checks in the loop).
+  const LOW_CONFIDENCE_RATIO = 0.4; // fewer than ~40% of target words matched -> low confidence
+  const OVERSHOOT_TOLERANCE = 3;    // words a low-confidence match may sit ahead of the entry cursor
+
   for (let si = 0; si < segments.length; si++) {
     const seg = segments[si];
     if (!seg) continue;
@@ -289,6 +293,35 @@ export function alignScenestoTranscript(
       }
     }
 
+    // Confidence = fraction of this segment's words that positionally matched at
+    // bestStart. Computed here (before t0/t1 are derived) so the overshoot guard
+    // below can correct bestStart itself, not just the forward cursor.
+    const confidence = targetWords.length > 0 ? bestScore / targetWords.length : 1;
+
+    // D16 overshoot guard (primary fix). A low-confidence match whose bestStart
+    // lands far AHEAD of the entry cursor is almost always coincidental: the
+    // segment's text (e.g. a burned-in on-screen label) never occurs in the
+    // transcript, so the matcher latched onto a stray later repetition of a
+    // common word. Anchoring t0/t1 to that overshot position pushes this
+    // segment's span past where the NEXT segment's real, higher-confidence match
+    // begins, collapsing both to near-zero/negative duration (the 48/152/173/183
+    // repro). Snap bestStart back to the cursor so this segment behaves like an
+    // in-tolerance low-confidence match — a near-zero-width placeholder at the
+    // cursor — while the confidence guard below still holds the forward cursor so
+    // the next segment re-anchors freely. In-tolerance low-confidence matches
+    // (bestStart at or within OVERSHOOT_TOLERANCE of the cursor) are untouched:
+    // byte-identical to before.
+    if (confidence < LOW_CONFIDENCE_RATIO && bestStart - entrySearchStart > OVERSHOOT_TOLERANCE) {
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[align] overshoot for segment %d — bestStart %d is %d words past cursor %d; anchoring at cursor',
+          si, bestStart, bestStart - entrySearchStart, entrySearchStart,
+        );
+      }
+      bestStart = entrySearchStart;
+      bestEnd = Math.min(entrySearchStart + windowSize - 1, tokenWords.length - 1);
+    }
+
     const t0TokenIdx = tokenWords[bestStart]?.tokenIdx ?? 0;
 
     // Re-scan bestStart to find the highest j where a word actually matched.
@@ -328,8 +361,8 @@ export function alignScenestoTranscript(
     // Threshold 0.4 (fewer than ~40% of target words matched): a real segment
     // with one unmatched name/number still clears it (e.g. 4/5 = 0.8, 2/3 =
     // 0.67), while a genuinely desynced match (mostly-zero score) trips it.
-    const confidence = targetWords.length > 0 ? bestScore / targetWords.length : 1;
-    const LOW_CONFIDENCE_RATIO = 0.4;
+    // (confidence and LOW_CONFIDENCE_RATIO are computed above, before the
+    // overshoot guard that may already have snapped bestStart to the cursor.)
     if (confidence < LOW_CONFIDENCE_RATIO) {
       if (import.meta.env.DEV) {
         console.warn(

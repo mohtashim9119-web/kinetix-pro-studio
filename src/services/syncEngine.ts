@@ -151,6 +151,27 @@ export function applyAnchorBasedTiming(
         i, prev.anchorStart, cur.anchorStart, cur.id);
     }
   }
+
+  // Backstop monotonic clamp (D16 defense-in-depth). If an anchor still
+  // overshoots its successor — an overshoot the primary alignment guard in
+  // whisperService did not catch — deriving durations below would push this
+  // segment's end past the next segment's start, collapsing both to the 0.1
+  // floor (the inversion class the warning above only reports). Walk backward,
+  // pulling any inflated non-locked anchor down to its successor so anchors are
+  // monotonically non-decreasing before durations are derived; the walk order
+  // lets a run of overshoots collapse cleanly. Locked segments are authoritative
+  // (never move/shrink) and are skipped. No-op when anchors are already
+  // monotonic, so normal projects are byte-identical.
+  for (let i = out.length - 2; i >= 0; i--) {
+    const cur = out[i]!;
+    if (cur.locked) continue;
+    const curAnchor = cur.anchorStart ?? cur.startTime ?? 0;
+    const nextAnchor = out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? 0;
+    if (curAnchor > nextAnchor) {
+      cur.anchorStart = nextAnchor;
+    }
+  }
+
   for (let i = 0; i < out.length; i++) {
     const seg = out[i];
     if (!seg) continue;

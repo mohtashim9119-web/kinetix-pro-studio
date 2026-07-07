@@ -983,10 +983,152 @@ describe('D16 — alignment robustness (Parts A + C)', () => {
     warnSpy.mockRestore();
 
     expect(t0[0]).toBeLessThan(0.5);
-    // The critical assertion: s2 lands in the second half of the audio near its
-    // true "echo foxtrot golf hotel" phrase (~4.5–6.5s), NOT stranded at ~0 by
-    // an over-advanced cursor. Pre-guard this would collapse toward 0.
-    expect(t0[2]!).toBeGreaterThan(4.0);
+    // The critical assertion: s2 lands in the second half of the audio, near its
+    // true "echo foxtrot golf hotel" phrase, NOT stranded at ~0 by an
+    // over-advanced cursor. Pre-guard this would collapse toward 0.
+    // Since the D16 overshoot guard (see next describe block), s1 no longer
+    // overshoots to ~5s but sits in its real ~2.25–3.75s window, so gap-fill now
+    // places the s1→s2 boundary at the midpoint of the real silent gap (~3.75s)
+    // instead of the pre-fix ~4.5s. Still firmly in the second half — no cascade.
+    expect(t0[2]!).toBeGreaterThan(3.0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// D16 — overshoot guard (primary fix) + backstop monotonic clamp.
+//
+// A low-confidence segment whose best (coincidental) match lands FAR AHEAD of
+// the entry cursor used to anchor its t0/t1 to that overshot position, pushing
+// its span past the next segment's real match and collapsing both to ~0 (the
+// real-project 48 / 152–153 / 173 / 183 repro). The primary fix snaps such an
+// overshoot back to the cursor; the backstop clamp in applyAnchorBasedTiming
+// guarantees anchors stay monotonic even for an overshoot the primary guard
+// misses. In-tolerance low-confidence matches (bestStart at/near the cursor)
+// are deliberately untouched.
+// ---------------------------------------------------------------------------
+describe('D16 — overshoot guard + backstop clamp', () => {
+  function alignSpans(
+    segments: VideoSegment[],
+    tokens: TranscriptToken[],
+  ): Array<{ t0: number; t1: number; dur: number }> {
+    return alignScenestoTranscript(segments, tokens, []).map(a => ({
+      t0: a.t0, t1: a.t1, dur: Number((a.t1 - a.t0).toFixed(3)),
+    }));
+  }
+
+  // (a) Regression guard for the 8 already-safe cases: a low-confidence segment
+  // whose partial match sits AT the cursor (delta 0, within tolerance) must NOT
+  // be snapped — only the low-confidence hold applies, exactly as before.
+  it('(a) low-confidence match AT the cursor is left untouched (no overshoot snap)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      // "echo" matches right at the cursor (idx 4); the other two match nothing.
+      makeSegment({ id: 's1', order: 1, text: 'echo qwerty asdf' }),
+      makeSegment({ id: 's2', order: 2, text: 'foxtrot golf hotel india' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie delta', 0.0, 0.5), // idx 0–3
+      ...wordTokens('echo lorem ipsum', 2.5, 0.5),          // idx 4–6
+      ...wordTokens('foxtrot golf hotel india', 4.5, 0.5),  // idx 7–10
+    ];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spans = alignSpans(segments, tokens);
+
+    // The low-confidence hold still logs, but the overshoot branch must NOT:
+    // proves this in-tolerance case takes the unchanged (byte-identical) path.
+    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('low-confidence'))).toBe(true);
+    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('overshoot'))).toBe(false);
+    warnSpy.mockRestore();
+
+    // s1 keeps a sane, non-collapsed span near its real audio; nothing strands.
+    expect(spans[1]!.dur).toBeGreaterThan(0.5);
+    expect(spans[0]!.t0).toBeLessThanOrEqual(spans[1]!.t0);
+    expect(spans[1]!.t0).toBeLessThanOrEqual(spans[2]!.t0);
+    expect(spans[2]!.t0).toBeGreaterThan(3.0);
+  });
+
+  // (b) The core fix: a low-confidence segment whose ONLY match is far ahead
+  // (spurious "hotel" at idx 10) now anchors at the cursor instead of
+  // overshooting — so it no longer collapses, and the next segment is unharmed.
+  it('(b) far-ahead low-confidence match anchors at the cursor, not the overshoot', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot golf hotel' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie delta', 0.0, 0.5), // idx 0–3
+      ...wordTokens('lorem ipsum dolor', 2.5, 0.5),         // idx 4–6 (s1's real, unmatched audio)
+      ...wordTokens('echo foxtrot golf hotel', 4.5, 0.5),   // idx 7–10 (spurious "hotel" far ahead)
+    ];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spans = alignSpans(segments, tokens);
+    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('overshoot'))).toBe(true);
+    warnSpy.mockRestore();
+
+    // Pre-fix: s1 overshot to ~5.0s, inverting with s2 (~4.5s) and collapsing to
+    // the 0.1 floor. Post-fix: s1 sits in its real ~2.5–4s window, uncollapsed.
+    expect(spans[1]!.dur).toBeGreaterThan(0.5);
+    expect(spans[1]!.t0).toBeLessThan(spans[2]!.t0); // no inversion
+    expect(spans[2]!.t0).toBeGreaterThan(3.0);       // s2 still near its true phrase
+    expect(spans.every(s => s.dur > 0)).toBe(true);
+  });
+
+  // (c) Consecutive-pair (152/153-style): two adjacent low-confidence segments
+  // that would each overshoot must resolve to sane, non-negative, non-
+  // overlapping durations rather than mutually corrupting each other.
+  it('(c) two consecutive overshoot segments resolve without collapse or inversion', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),  // spurious "hotel" ahead
+      makeSegment({ id: 's2', order: 2, text: 'zzz yyy golf' }),        // spurious "golf" ahead
+      makeSegment({ id: 's3', order: 3, text: 'echo foxtrot golf hotel' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie delta', 0.0, 0.5),  // idx 0–3
+      ...wordTokens('lorem ipsum dolor sit amet', 2.5, 0.5), // idx 4–8 (s1+s2 real, unmatched)
+      ...wordTokens('echo foxtrot golf hotel', 5.5, 0.5),    // idx 9–12
+    ];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const spans = alignSpans(segments, tokens);
+    warnSpy.mockRestore();
+
+    // No collapse, no inversion, monotonic starts across the whole run.
+    expect(spans.every(s => s.dur > 0.3)).toBe(true);
+    for (let i = 0; i < spans.length - 1; i++) {
+      expect(spans[i]!.t0).toBeLessThanOrEqual(spans[i + 1]!.t0);
+    }
+    expect(spans.every(s => s.t1 >= s.t0)).toBe(true);
+  });
+
+  // (d) Backstop clamp exercised directly: feed applyAnchorBasedTiming an anchor
+  // that overshoots its successor (t1 would exceed next.t0) and confirm the
+  // clamp pulls it back so startTimes stay monotonic and the correct later
+  // segment keeps its true anchor.
+  it('(d) backstop clamp: an inverted anchor is clamped, later segment protected', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'd0', order: 0, text: 'a', anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 'd1', order: 1, text: 'b', anchorStart: 5, anchorSource: 'whisper' }), // overshoot
+      makeSegment({ id: 'd2', order: 2, text: 'c', anchorStart: 3, anchorSource: 'whisper' }), // true, earlier
+      makeSegment({ id: 'd3', order: 3, text: 'd', anchorStart: 6, anchorSource: 'whisper' }),
+    ];
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const result = applyAnchorBasedTiming(segments, 10);
+    warnSpy.mockRestore();
+
+    const starts = result.map(s => s.startTime);
+    // Monotonic non-decreasing (pre-fix this was [0, 5, 3, 6] — not sorted).
+    expect(starts).toEqual([...starts].sort((a, b) => a - b));
+    // No negative/zero durations anywhere.
+    expect(result.every(s => s.duration >= 0.1)).toBe(true);
+    // d2 (the correct, earlier segment) keeps its true anchor — not pushed forward.
+    expect(result[2]!.startTime).toBe(3);
+    // d1 (the overshoot) is the one that collapses, not its neighbors.
+    expect(result[1]!.duration).toBeLessThan(0.5);
   });
 });
 
