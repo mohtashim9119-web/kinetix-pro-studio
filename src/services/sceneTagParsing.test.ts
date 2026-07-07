@@ -19,7 +19,10 @@ function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string
 /**
  * Tag format change: [IMAGE: file.jpg] / [VIDEO: file.mp4] -> bare [file.jpg].
  * [HEADING: text] is unchanged. Matching moved from fuzzy to strict exact
- * (Unicode-normalized) filename comparison. See docs/audit-tag-format-change.md.
+ * (Unicode-normalized) filename comparison — the IMAGE/VIDEO keyword itself
+ * was never read for anything but scene-boundary/heading detection, so
+ * dropping it in favor of a bare tag discards no information any consumer
+ * relied on.
  */
 
 function makeAsset(overrides: Partial<Asset> & { id: string; name: string }): Asset {
@@ -84,8 +87,10 @@ describe('parseProjectData — bare bracket tag format', () => {
     // Asset type is 'image' here purely to avoid the getMediaDuration/video
     // duration-probe path (needs a DOM `document`, unavailable in this
     // jsdom-less test environment) — the IMAGE/VIDEO tag keyword itself has
-    // no effect on parsing or matching (see docs/audit-tag-format-change.md
-    // Section 4); only the compatibility-strip regex is under test here.
+    // no effect on parsing or matching (the captured keyword is discarded
+    // after scene-boundary/heading detection; media type always comes from
+    // the resolved asset's own `type` field); only the compatibility-strip
+    // regex is under test here.
     const assets = [makeAsset({ id: 'a1', name: 'clip.mp4' })];
     const segments = await parseProjectData(
       'Line one.',
