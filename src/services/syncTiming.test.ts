@@ -874,6 +874,29 @@ describe('D16 — canonicalization equivalence (Part A)', () => {
     expect(canonicalizeForAlignment('3.5')).toEqual(['three', 'point', 'five']);
     eq('3.5', 'three point five');
   });
+
+  // 2026-07-08 — mixed alnum token (whisper.cpp -ml 1 can glue a short function
+  // word onto a following number with no space, e.g. "to97%"). The percent-symbol
+  // already splits off ("to97%" -> tokens ["to97", "percent"]), but "to97" failed
+  // the whole-token /^\d+$/ digit check, so the number never expanded and the
+  // spelled-out script side ("to ninety seven percent") could not match. The
+  // embedded-digit-run split fixes exactly this, symmetrically on both sides.
+  it('mixed alnum token: glued "to97%" === spelled "to ninety seven percent"', () => {
+    expect(canonicalizeForAlignment('to97%')).toEqual(['to', 'ninety', 'seven', 'percent']);
+    eq('to97%', 'to ninety seven percent');
+    // Works for any glued function word whisper.cpp might emit, not just "to".
+    expect(canonicalizeForAlignment('at97')).toEqual(['at', 'ninety', 'seven']);
+    eq('was2024', 'was twenty twenty four');
+    // Multiple embedded runs, left-to-right order preserved.
+    expect(canonicalizeForAlignment('a1b2')).toEqual(['a', 'one', 'b', 'two']);
+    // NEGATIVE / no-regression: tokens that already worked are byte-identical.
+    // Pure digit tokens, pure alpha tokens, and symbol-attached digit tokens
+    // (the "97%" case that already passed) must be untouched by the new branch.
+    expect(canonicalizeForAlignment('97')).toEqual(['ninety', 'seven']);
+    expect(canonicalizeForAlignment('97%')).toEqual(['ninety', 'seven', 'percent']);
+    expect(canonicalizeForAlignment('hello')).toEqual(['hello']);
+    expect(canonicalizeForAlignment('ninety seven percent')).toEqual(['ninety', 'seven', 'percent']);
+  });
 });
 
 describe('D16 — alignment robustness (Parts A + C)', () => {
@@ -953,6 +976,45 @@ describe('D16 — alignment robustness (Parts A + C)', () => {
     expect(t0[0]).toBeLessThan(0.5);
     expect(t0[1]!).toBeGreaterThan(2.0);
     expect(t0[1]!).toBeLessThan(3.5);
+  });
+
+  // 2026-07-08 — end-to-end coverage for the "ninety seven percent" field
+  // failure. whisper.cpp -ml 1 glued the preceding "to" onto the number
+  // ("to97%"), which pre-fix failed the whole-token digit check, leaving "to97"
+  // an opaque, unmatchable literal (the embedded-digit-run split now expands it
+  // to ["to","ninety","seven","percent"] — the CANONICALIZATION unit test above,
+  // "mixed alnum token…", is the strict guard and fails without the fix). This
+  // test exercises the whole aligner on the glued token and asserts every
+  // segment lands in its own phrase with no collapse. NOTE: with no silences
+  // supplied, the aligner self-corrects this synthetic case even pre-fix (the
+  // real-world collapse needed the full silences + anchor pipeline over ~200
+  // segments); it is integration coverage, not the primary regression guard.
+  it('glued Whisper token "to97%" aligns to script "to ninety seven percent" through the full aligner; no collapse', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'satisfaction ratings climbed to ninety seven percent' }),
+      makeSegment({ id: 's1', order: 1, text: 'that is remarkable growth' }),
+      makeSegment({ id: 's2', order: 2, text: 'thanks for watching today' }),
+    ];
+    // Whisper glues "to" onto the number and drops the space before "%".
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('satisfaction ratings climbed to97%', 0.0, 0.5), // 0.0 → 2.5
+      ...wordTokens('that is remarkable growth', 3.0, 0.5),          // 3.0 → 5.0
+      ...wordTokens('thanks for watching today', 6.0, 0.5),          // 6.0 → 8.0
+    ];
+
+    const results = alignScenestoTranscript(segments, tokens, []);
+    const t0 = results.map(r => r.t0);
+    // s0 anchored at phrase 1, s1 at the 1→2 boundary, s2 at the 2→3 boundary —
+    // no drift, no cascade.
+    expect(t0[0]).toBeLessThan(0.5);
+    expect(t0[1]!).toBeGreaterThan(2.0);
+    expect(t0[1]!).toBeLessThan(3.5);
+    expect(t0[2]!).toBeGreaterThan(5.0);
+    expect(t0[2]!).toBeLessThan(6.5);
+    // No segment collapses to a near-zero span (the reported clamp symptom).
+    for (const r of results) {
+      expect(r.t1 - r.t0).toBeGreaterThan(0.5);
+    }
   });
 
   // Part C safety net: an UNHANDLED mismatch type (a made-up token the

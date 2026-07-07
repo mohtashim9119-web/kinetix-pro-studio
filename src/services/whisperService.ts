@@ -184,6 +184,25 @@ export function canonicalizeForAlignment(s: string): string[] {
   for (const tok of rawTokens) {
     if (/^\d+$/.test(tok)) {
       out.push(...digitTokenToWords(tok));
+    } else if (/\d/.test(tok)) {
+      // Mixed alnum token — a letter run glued to a digit run with no space
+      // (e.g. "to97", produced when whisper.cpp's -ml 1 word-boundary heuristic
+      // fuses a short function word onto a following number). The whole-token
+      // /^\d+$/ test above misses these, so the number would never expand and
+      // the script's spelled-out form ("to ninety seven") could not match.
+      // Split into contiguous digit / non-digit runs (all non-alnum is already
+      // stripped above, so a non-digit run is pure letters), expand each digit
+      // run through the same cardinal path, and emit the letter runs as their
+      // own words — preserving original left-to-right order. Applied identically
+      // to both sides, so this stays symmetric.
+      const parts = tok.match(/\d+|\D+/g) ?? [tok];
+      for (const part of parts) {
+        if (/^\d+$/.test(part)) {
+          out.push(...digitTokenToWords(part));
+        } else {
+          out.push(part);
+        }
+      }
     } else {
       out.push(tok);
     }
