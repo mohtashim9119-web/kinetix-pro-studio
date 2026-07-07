@@ -586,7 +586,8 @@ investigation** — see the A3 entry above.
 
 - **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
   supersedes the "BLOCKED transitively" disposition above. B1-B3 of 5 ✅ DONE (B3 manually
-  verified — frozen frame during transitions confirmed fixed), B4-B5 pending (2026-07-06).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
+  verified — frozen frame during transitions confirmed fixed); B4-B5 ⚠️ PARKED/SUPERSEDED, not
+  pending (2026-07-07 — see the B4 entry below for what happened and why).** A fresh audit (prompted by B0's finding that Phase B itself is blocked, so Item 4
   can no longer wait on it) determined the frozen-frame fix does NOT actually require Phase B's
   shared compositor — it's achievable using only decode-side infrastructure
   (`VideoDecoderPool.getFrameAt`) that already works today; only `VideoEncoder` (export-side) is
@@ -643,16 +644,27 @@ investigation** — see the A3 entry above.
     (no dedicated hook test file exists — same DOM/canvas/effect-heavy limitation as this hook's
     prior state; verification here is manual). Committed in `fix: live per-tick outgoing-side
     transition rendering, eliminating frozen frame during transitions (Item 4 fix, B3) - verified`.
-  - **B4 — Overlay parity.** ⬜ Pending. `renderSegmentFrame` bakes `segment.extraOverlays` into the
-    one-shot snapshot today (why the DOM extra-overlays layer fades out during transitions); B3's
-    live path bypasses that bake for the outgoing/incoming canvases it touches, so extra overlays now
-    visibly disappear during a live transition — a KNOWN, EXPECTED regression from B3 (surfaced by
-    the original item-4 audit, not a new/surprise bug), to be closed by B4.
-  - **B5 — Manual verification.** ⬜ Pending. Live motion during transitions; rapid back-to-back
-    transitions (segment shorter than `transitionDuration`); pause mid-transition then resume;
-    fallback path still shows the old frozen-but-correct snapshot.
-  - **No behavior change yet.** Only B1 has landed; the app's transition rendering is unchanged until
-    B3.
+  - **B4 — Overlay parity. ⚠️ PARKED/SUPERSEDED — implemented, manually tested, did NOT fix the
+    reported symptoms; discarded (2026-07-06/07).** Attempted fix for `renderSegmentFrame` baking
+    `segment.extraOverlays` into the one-shot snapshot (the cause of the DOM extra-overlays layer
+    fading out during a live transition — a KNOWN regression from B3, not a new/surprise bug). The
+    fix was implemented and manually tested against a real project, but did **not** resolve the
+    actually-reported symptoms (animation jump/disappear during transitions), and testing surfaced a
+    new, unrelated bug: a React "Maximum update depth exceeded" infinite-render loop in
+    `usePlayback.ts`. Following this, the decision was made to abandon further patching of the
+    CSS/Canvas2D effects-rendering approach **entirely** — not just B4/B5's narrow scope — in favor
+    of a WebGL/WebGPU rendering-engine rebuild (see `project-state.md`'s Decisions Log, 2026-07-07,
+    and the new WebGL/WebGPU rebuild entry under Active Tasks). All uncommitted B4 work was
+    discarded via targeted `git restore` on `PreviewStage.tsx` and `useTransitionPreview.ts`,
+    confirmed back to clean B3 state (commit `10410f0`; 162/162 tests passing at the time, now
+    216/216 with D16 on top).
+  - **B5 — Manual verification. ⚠️ PARKED/SUPERSEDED — moot.** No longer applicable now that B4 is
+    not shipping; superseded by the WebGL/WebGPU rebuild decision above.
+  - **Current state (2026-07-07):** B1-B3 remain shipped, stable, and unaffected — Item 4's original
+    frozen-frame symptom stays fixed. B4/B5 and any further CSS/Canvas2D patching of the effects
+    engine are parked, not scheduled to resume; the engine itself is being replaced, not further
+    debugged. See the WebGL/WebGPU rebuild task (`project-state.md` Active Tasks) for the
+    forward path.
 
 ### ⬜ NOT STARTED / PENDING — Follow-On Phases A–C
 
