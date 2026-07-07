@@ -103,10 +103,59 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Transcodes any ffmpeg-readable audio file into a 16 kHz mono WAV via the
+/// bundled ffmpeg sidecar.
+///
+/// This runs BEFORE whisper-cli sees the file. whisper.cpp's miniaudio backend
+/// only decodes wav/mp3/ogg/flac, and fails silently on everything else (e.g.
+/// M4A/AAC): exit code 0, zero tokens, no error. Normalizing through ffmpeg —
+/// which is already the export muxer and reads virtually any container/codec —
+/// makes that limitation irrelevant. `-ar 16000 -ac 1` matches whisper's own
+/// internal target so no quality is lost versus feeding it a raw file.
+async fn transcode_to_wav(
+    app: &tauri::AppHandle,
+    input: &std::path::Path,
+    output: &std::path::Path,
+) -> Result<(), String> {
+    let out = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
+        .args([
+            "-hide_banner",
+            "-y",
+            "-i", input.to_str().unwrap_or(""),
+            "-ar", "16000",
+            "-ac", "1",
+            output.to_str().unwrap_or(""),
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let tail = if stderr.len() > 2000 {
+            format!("...{}", &stderr[stderr.len() - 2000..])
+        } else {
+            stderr.to_string()
+        };
+        return Err(format!(
+            "ffmpeg transcode failed (code {}): {}",
+            out.status.code().unwrap_or(-1),
+            tail
+        ));
+    }
+    Ok(())
+}
+
 /// Transcribes audio via the bundled whisper-cli sidecar, streaming progress
 /// and result tokens through the supplied Tauri IPC channel.
 ///
-/// * `audio_b64`    — base64-encoded WAV bytes
+/// The raw upload is first normalized to 16 kHz mono WAV via `transcode_to_wav`
+/// (see above) so whisper-cli's format limitations never apply.
+///
+/// * `audio_b64`    — base64-encoded audio bytes (any container ffmpeg can read)
 /// * `duration_secs` — total audio duration (drives 0–100 progress)
 /// * `on_event`     — frontend channel receiving WhisperEvent variants
 #[tauri::command]
@@ -175,6 +224,17 @@ pub async fn whisper_transcribe(
     let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
     fs::write(&audio_path, &audio_bytes).map_err(|e| format!("write audio: {e}"))?;
 
+    // Universal pre-transcode: normalize the upload (any ffmpeg-readable
+    // container/codec) into 16 kHz mono WAV before whisper-cli runs. On failure,
+    // clean up and surface a real error rather than letting whisper silently
+    // degrade — see transcode_to_wav's doc comment.
+    let wav_path = tmp_dir.join("input_16k.wav");
+    if let Err(e) = transcode_to_wav(&app, &audio_path, &wav_path).await {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        let _ = on_event.send(WhisperEvent::Error { message: e });
+        return Ok(());
+    }
+
     let model = model_path(&app)?;
 
     let (mut rx, child) = app
@@ -183,7 +243,7 @@ pub async fn whisper_transcribe(
         .map_err(|e| format!("sidecar lookup: {e}"))?
         .args([
             "-m",    model.to_str().unwrap_or(""),
-            "-f",    audio_path.to_str().unwrap_or(""),
+            "-f",    wav_path.to_str().unwrap_or(""),
             "-ml",   "1",
             "-np",
             "-l",    "en",

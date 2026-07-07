@@ -269,4 +269,8 @@ export type TranscriptionStatus =
   | { phase: 'idle' }
   | { phase: 'transcribing'; percent: number; jobId: string }
   | { phase: 'done'; jobId: string }
+  // Non-blocking: transcription "succeeded" (exit 0) but produced no usable
+  // text, so sync proceeds on estimate timing. Surfaced so a silent decode
+  // failure isn't invisible. See useWhisper's empty-token branch.
+  | { phase: 'warning'; message: string; jobId: string }
   | { phase: 'error'; message: string; jobId: string };

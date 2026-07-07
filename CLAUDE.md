@@ -59,6 +59,13 @@ src/
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
                      #   isTauri() guard — checks for window.__TAURI_INTERNALS__.
+                     #   probeAudioDuration(blob) — native ffmpeg duration probe (invoke
+                     #   'probe_audio_duration'); throws on failure. App.tsx's resolveVoiceoverDuration
+                     #   wraps it (File or fetched blob) — replaced the old <audio>+60s-fallback probe.
+    audioFormats.ts  # AUDIO_EXTENSIONS + isAudioFile(file) — voiceover-slot classifier (broad
+                     #   extension list + audio/* MIME fallback). DropZonePanel.addFiles uses it;
+                     #   files dropped ON the Voiceover slot that don't classify raise a slot error
+                     #   instead of silently misrouting to the image-asset bucket.
     ffmpegBackend.ts # createTauriBackend() — creates TauriFfmpeg session, returns { ffmpeg, dispose }.
                      #   dispose() calls ffmpegDestroy to delete $TMPDIR/kinetix-export-<uuid>/ after export.
     frameRenderer.ts   # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
@@ -154,15 +161,23 @@ src-tauri/
     default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (12 total: 9 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
+                     #   (13 total: 10 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
-    ffmpeg.rs        # 9 Tauri commands: create_session, write_file (b64), read_file, delete_file,
+    ffmpeg.rs        # 10 Tauri commands: create_session, write_file (b64), read_file, delete_file,
                      #   exec (sidecar), destroy_session, pick_save_path, save_bytes_to_disk (rfd),
-                     #   reveal_in_finder. Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/);
-                     #   path traversal validation.
+                     #   probe_audio_duration, reveal_in_finder. Session-scoped temp dirs
+                     #   ($TMPDIR/kinetix-export-<uuid>/); path traversal validation.
+                     #   probe_audio_duration: runs `ffmpeg -i <file>` (no ffprobe binary bundled),
+                     #   parses `Duration:` from stderr — replaces the WebView <audio> duration probe
+                     #   (codec-dependent, silent 60s fallback); throws on failure, no fake duration.
     whisper.rs       # 2 Tauri commands: whisper_transcribe (streams progress via Channel),
                      #   whisper_cancel. WhisperState holds the running child process for cancellation.
                      #   Sidecar: binaries/whisper; model files: models/*.
+                     #   whisper_transcribe now PRE-TRANSCODES the upload to 16kHz mono WAV via the
+                     #   ffmpeg sidecar (transcode_to_wav) before whisper-cli runs — whisper.cpp's
+                     #   miniaudio backend only decodes wav/mp3/ogg/flac and fails silently (exit 0,
+                     #   zero tokens) on M4A/AAC; ffmpeg reads virtually anything, so any container
+                     #   the user uploads works. Transcode failure surfaces a real Error event.
   binaries/
     README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binaries.
     ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 (76 MB, Intel macOS).

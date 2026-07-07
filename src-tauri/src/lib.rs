@@ -58,6 +58,7 @@ pub fn run() {
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::pick_save_path,
             ffmpeg::save_bytes_to_disk,
+            ffmpeg::probe_audio_duration,
             ffmpeg::reveal_in_finder,
             whisper::whisper_transcribe,
             whisper::whisper_cancel,

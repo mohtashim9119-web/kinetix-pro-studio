@@ -90,7 +90,7 @@ import { useExport, type ExportResolution, type ExportFps, type ExportError } fr
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
-import { isTauri } from './services/tauriFfmpeg';
+import { isTauri, probeAudioDuration } from './services/tauriFfmpeg';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -118,15 +118,20 @@ const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number>
   });
 };
 
-/** Returns audio duration with a 5 s timeout that falls back to 60 s. */
-const getAudioDuration = (url: string): Promise<number> =>
-  new Promise((resolve) => {
-    const audio = document.createElement('audio');
-    const timer = setTimeout(() => { audio.src = ''; resolve(60); }, 5000);
-    audio.onloadedmetadata = () => { clearTimeout(timer); resolve(audio.duration); };
-    audio.onerror = () => { clearTimeout(timer); resolve(60); };
-    audio.src = url;
-  });
+/**
+ * Resolves a voiceover asset's duration (seconds) via the native ffmpeg probe.
+ *
+ * Replaces the old hidden-`<audio>` probe, which was WebView-codec-dependent
+ * (OGG silently failed on macOS WKWebView) and fell back to a hardcoded 60 s —
+ * mis-proportioning every segment. Prefers the raw `File`; falls back to
+ * fetching the blob URL (a committed asset reconstructed on reload may have lost
+ * its File reference). THROWS on failure — callers surface the error and abort
+ * rather than syncing against a fake duration.
+ */
+const resolveVoiceoverDuration = async (asset: Asset): Promise<number> => {
+  const blob: Blob = asset.file ?? (await (await fetch(asset.url)).blob());
+  return probeAudioDuration(blob);
+};
 
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
@@ -1419,9 +1424,19 @@ export default function App() {
     }));
 
     void (async () => {
-      const duration = await getAudioDuration(asset.url);
-      // Entry-ordering recheck: getAudioDuration's resolution order isn't tied
-      // to staging order, so by the time this resolves a later stage event may
+      let duration: number;
+      try {
+        duration = await resolveVoiceoverDuration(asset);
+      } catch (err) {
+        // Ownership recheck first — don't surface an error for a file the user
+        // already moved past while the probe was running.
+        if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+        console.error('[voiceover] duration probe failed:', err);
+        showToast("Couldn't read that audio file — try a different file or format.");
+        return;
+      }
+      // Entry-ordering recheck: the probe's resolution order isn't tied to
+      // staging order, so by the time this resolves a later stage event may
       // have already superseded this file. Don't start a transcription for a
       // file the user has since moved past.
       if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
@@ -1443,7 +1458,7 @@ export default function App() {
         },
       );
     })();
-  }, [cancelTranscription, startTranscription]);
+  }, [cancelTranscription, startTranscription, showToast]);
 
   // Cancels an in-flight staging-time transcription and discards the
   // ephemeral asset — used when the user removes or replaces a staged
@@ -1533,7 +1548,16 @@ export default function App() {
     const voiceoverAsset = allAssets.find(a => a.id === newVoiceoverId);
     let audioDuration = audioRef.current?.duration || 0;
     if (voiceoverAsset && (!audioRef.current || audioRef.current.src !== voiceoverAsset.url)) {
-      audioDuration = await getAudioDuration(voiceoverAsset.url);
+      try {
+        audioDuration = await resolveVoiceoverDuration(voiceoverAsset);
+      } catch (err) {
+        // No fake-duration fallback (the old code silently used 60 s). Abort the
+        // sync and tell the user rather than proportioning every segment wrong.
+        console.error('[sync] voiceover duration probe failed:', err);
+        showToast("Couldn't read the voiceover's duration — sync aborted. Try re-adding the audio file.");
+        setIsProcessing(false);
+        return;
+      }
     }
 
     // 5. Parse project data with the fresh, complete data
@@ -1831,7 +1855,9 @@ export default function App() {
     // asset-agnostic — one useWhisper instance backs both handleVoiceoverStaged
     // and finalizeSync — so without the target-id match this goes true for a
     // stale done/error left over from a different, already-superseded file.
-    ((transcriptionStatus.phase === 'done' || transcriptionStatus.phase === 'error')
+    ((transcriptionStatus.phase === 'done'
+      || transcriptionStatus.phase === 'warning'
+      || transcriptionStatus.phase === 'error')
       && transcriptionTargetIdRef.current === effectiveVoiceoverId)
     || (effectiveVoiceoverId !== undefined
         && project.lastTranscribedAssetId === effectiveVoiceoverId

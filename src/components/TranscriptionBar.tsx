@@ -53,6 +53,24 @@ export function TranscriptionBar({
     );
   }
 
+  if (status.phase === 'warning') {
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex items-center justify-between gap-3 px-4 py-1.5 bg-amber-950/90 border-b border-amber-800/50 text-xs text-amber-300"
+      >
+        <span className="truncate select-text">⚠ {status.message}</span>
+        <button
+          onClick={onDismiss}
+          className="shrink-0 px-2 py-0.5 rounded border border-amber-700 hover:bg-amber-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-400 transition-colors"
+        >
+          Dismiss
+        </button>
+      </div>
+    );
+  }
+
   if (status.phase === 'error') {
     return (
       <div

@@ -31,6 +31,28 @@ export function isTauri(): boolean {
 }
 
 /**
+ * Probes an audio file's duration (seconds) via the bundled ffmpeg binary,
+ * routed through Tauri IPC (`probe_audio_duration`).
+ *
+ * Replaces the old hidden-`<audio>`-element probe in App.tsx, which depended on
+ * the WebView's native codec set (OGG silently failed on macOS WKWebView) and
+ * fell back to a hardcoded 60 s — mis-proportioning every segment. ffmpeg reads
+ * virtually any container/codec, so this is codec-independent.
+ *
+ * Throws on any read failure. Callers MUST surface the error, never synthesize
+ * a duration.
+ */
+export async function probeAudioDuration(blob: Blob): Promise<number> {
+  const buffer = await blob.arrayBuffer();
+  const audioB64 = bytesToBase64(new Uint8Array(buffer));
+  const secs = await invoke<number>('probe_audio_duration', { audioB64 });
+  if (!Number.isFinite(secs) || secs <= 0) {
+    throw new Error(`probe_audio_duration returned an invalid duration: ${secs}`);
+  }
+  return secs;
+}
+
+/**
  * Implements FfmpegLike by routing file I/O and ffmpeg invocation through
  * Tauri IPC to the native Rust backend.
  *

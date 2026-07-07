@@ -146,16 +146,27 @@ export function useWhisper(): UseWhisperApi {
           // Whisper returned no tokens — keep the existing character-weight
           // estimate timings instead of overwriting with zero-collapsed
           // alignment results (alignScenestoTranscript maps every segment to
-          // {t0:0,t1:0} when tokens is empty). Mark the job done — not left
-          // stuck at 'transcribing' — so Apply Sync's gating re-enables and its
-          // own no-cached-tokens branch applies the character-based fallback.
+          // {t0:0,t1:0} when tokens is empty).
+          //
+          // A zero-token result is a decode/recognition failure masquerading as
+          // success: whisper-cli exits 0 with no transcript (confirmed for
+          // M4A/AAC-family inputs pre-Part-1; still possible for silent or
+          // unintelligible audio). Surface it as a NON-blocking warning — sync
+          // still proceeds via the estimate-timing fallback (the correct
+          // degraded behavior), but the user is told rather than left guessing.
+          // 'warning' is a terminal phase, so Apply Sync's gating re-enables the
+          // same way 'done' did.
           console.warn('[whisper] empty token array received — keeping estimate timings');
-          setTranscriptionStatus({ phase: 'done', jobId });
+          setTranscriptionStatus({
+            phase: 'warning',
+            message: 'No speech was transcribed — segment timing falls back to an estimate. Check the audio has clear speech.',
+            jobId,
+          });
           setTimeout(() => {
             if (generationRef.current === generation) {
               setTranscriptionStatus({ phase: 'idle' });
             }
-          }, 3000);
+          }, 8000);
           return;
         }
 

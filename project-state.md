@@ -23,6 +23,22 @@ All foundational/export/desktop/sync work is shipped and stable, including the c
 ## Completed Work
 
 <details>
+<summary>Universal audio-format support for voiceover upload + transcription — ✅ DONE (4 parts) — 2026-07-08</summary>
+
+**Root cause (two prior audits this session):** four independent gates each defined "allowed audio" differently and none converted the file to what the next stage needed. (1) file-picker `accept` advertised 10 formats but enforced nothing; (2) the extension router in `DropZonePanel.addFiles` hardcoded `['mp3','wav','m4a','ogg']`, silently dumping flac/aac/wma/opus/aiff into the image-asset bucket with no error; (3) the duration probe used a hidden `<audio>` element — WebView-codec-dependent (OGG fails on macOS WKWebView) with a silent 60 s fallback; (4) whisper-cli got raw, unconverted bytes — its miniaudio backend decodes only wav/mp3/ogg/flac and fails M4A/AAC **silently** (exit 0, zero tokens, degrades to estimate timing with no indication). Binary capability confirmed by direct execution of the bundled `whisper-x86_64-apple-darwin` (miniaudio build; `supported audio formats: flac, mp3, ogg, wav`; auto-resamples any rate/layout to 16 kHz mono; M4A → `failed to read audio data` but exit 0).
+
+**Fix:**
+- **Part 1 — universal ffmpeg pre-transcode (core).** `whisper.rs` now transcodes the upload to 16 kHz mono WAV via the ffmpeg sidecar (`transcode_to_wav`, `ffmpeg -hide_banner -y -i <in> -ar 16000 -ac 1 <out>`) before whisper-cli runs, pointing `-f` at the WAV. ffmpeg reads virtually any container/codec, so whisper's format limitation is now irrelevant. Transcode failure cleans the temp dir and emits a real `Error` event.
+- **Part 2 — widened extension router.** New `src/services/audioFormats.ts` (`AUDIO_EXTENSIONS` + `isAudioFile`, extension list + `audio/*` MIME fallback). `addFiles` uses it; a file dropped/browsed **onto the Voiceover slot** that doesn't classify as audio now raises a `setSlotError` instead of silently misrouting. New `forceSlot: 'voiceover'` path.
+- **Part 3 — ffprobe-style duration via IPC.** New `probe_audio_duration` command (`ffmpeg -i <file>`, parses `Duration:` from stderr — no separate ffprobe binary is bundled) + `probeAudioDuration(blob)` in `tauriFfmpeg.ts`. App's `resolveVoiceoverDuration` replaces the `<audio>`/60 s-fallback `getAudioDuration`; on failure it shows a toast and aborts the sync (no fake duration).
+- **Part 4 — visible zero-token warning.** New `TranscriptionStatus` `'warning'` phase; `useWhisper`'s empty-token branch surfaces an amber non-blocking `TranscriptionBar` warning (sync still proceeds on estimate timing). `transcriptionReady` treats `'warning'` as terminal so Apply Sync re-enables.
+- **UI copy:** Voiceover subtitle now "MP3, WAV, M4A, OGG, FLAC, AAC, WMA, Opus, AIFF".
+
+**Verification:** `tsc --noEmit` clean; `cargo check` clean (14 s); vitest **220 → 227** (new `audioFormats.test.ts`, 7 cases incl. the FLAC-routes-to-voiceover regression). No existing test asserted the old 60 s-fallback or 4-format behavior, so none needed updating. Runtime end-to-end (real M4A/FLAC transcription in the Tauri app) not yet exercised — pending manual smoke test.
+
+</details>
+
+<details>
 <summary>D16 — script→Whisper alignment cascade on number/contraction/symbol mismatches, + overshoot follow-up — ✅ FIXED, verified against real project data, committed (`cdc1eb1`, `aa12206`) — 2026-07-07</summary>
 
 **Root cause:** `alignScenestoTranscript`'s word-matching cursor (`src/services/whisperService.ts`) is forward-only and greedy. A script's spelled-out number ("thirty seven") against Whisper's digit output ("37") — and likewise contractions ("don't" vs "do not") and symbols ("%" vs "percent") — scored as a mismatch, degrading that segment's match confidence enough to let a coincidental wrong-position match win, which then permanently desynced the cursor for every following segment. Confirmed against the user's real 251-segment project: drift began exactly at a spoken "thirty-seven" and cascaded forward from there; removing the word eliminated it. Full audit in this session's history.

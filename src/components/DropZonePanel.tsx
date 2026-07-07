@@ -31,6 +31,7 @@ import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent } from './EffectsPanel';
 import { loadLookPresets, saveLookPreset, deleteLookPreset, type LookPreset } from '../services/lookPresetService';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
+import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 
 // ---------------------------------------------------------------------------
@@ -597,7 +598,7 @@ export function DropZonePanel({
    */
   const addFiles = async (
     files: File[],
-    forceSlot?: 'script' | 'scene',
+    forceSlot?: 'script' | 'scene' | 'voiceover',
   ): Promise<void> => {
     type TextEntry = {
       file: File;
@@ -614,10 +615,25 @@ export function DropZonePanel({
       const key = crypto.randomUUID();
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 
-      // FIX 4A: a forced slot (direct drop / Browse on Script or Scene Details)
-      // always wins — regardless of extension or content. This must be checked
-      // BEFORE extension sniffing, or non-.txt/.rtf files would be misrouted to
-      // the asset bucket and the forced slot would never fill.
+      // A file dropped/browsed directly ONTO the Voiceover slot targets that
+      // slot on purpose. Accept it if it classifies as audio (broad extension
+      // list + audio/* MIME fallback); if it doesn't, surface an error rather
+      // than silently misrouting it to the asset bucket (the old bug: a .flac
+      // etc. on the Voiceover slot vanished into the image list with no notice).
+      if (forceSlot === 'voiceover') {
+        if (isAudioFile(file)) {
+          voiceoverEntries.push({ file, key });
+        } else {
+          setSlotError('Wrong file — drop an audio file (MP3, WAV, M4A, OGG, FLAC…) into the Voiceover slot.');
+          setTimeout(() => setSlotError(null), 4000);
+        }
+        continue;
+      }
+
+      // FIX 4A: a forced text slot (direct drop / Browse on Script or Scene
+      // Details) always wins — regardless of extension or content. This must be
+      // checked BEFORE extension sniffing, or non-.txt/.rtf files would be
+      // misrouted to the asset bucket and the forced slot would never fill.
       if (forceSlot) {
         if (forceSlot === 'script') {
           const raw = await file.text();
@@ -642,7 +658,7 @@ export function DropZonePanel({
         const stripped = stripRtfIfNeeded(raw);
         const role = detectTextFileRole(stripped);
         textEntries.push({ file, key, role });
-      } else if (['mp3', 'wav', 'm4a', 'ogg'].includes(ext)) {
+      } else if (isAudioFile(file)) {
         voiceoverEntries.push({ file, key });
       } else if (ext === 'zip') {
         zipEntries.push({ file, key });
@@ -1011,13 +1027,13 @@ export function DropZonePanel({
             <SlotRow
               icon={<Music size={18} />}
               label="Voiceover"
-              subtitle="MP3, WAV, M4A or OGG"
+              subtitle="MP3, WAV, M4A, OGG, FLAC, AAC, WMA, Opus, AIFF"
               accept="audio/*,.mp3,.wav,.ogg,.flac,.m4a,.aac,.wma,.opus,.aiff,.aif"
               stagedFile={staged.voiceoverFile}
               persistedLabel={voiceoverPersisted}
               canDeletePersisted
-              onFile={(f) => void addFiles([f])}
-              onDropFiles={(files) => void addFiles(files)}
+              onFile={(f) => void addFiles([f], 'voiceover')}
+              onDropFiles={(files) => void addFiles(files, 'voiceover')}
               onDelete={handleVoiceoverClear}
               color="#fbbf24"
               expanded={expanded === 'voiceover'}

@@ -188,6 +188,78 @@ pub async fn save_bytes_to_disk(path: String, data_b64: String) -> Result<(), St
     fs::write(&path, &data).map_err(|e| format!("save_bytes_to_disk: {e}"))
 }
 
+/// Extracts duration in seconds from ffmpeg's stderr `Duration: HH:MM:SS.ss`
+/// line. Returns None if the line is absent or unparseable (e.g. `Duration: N/A`
+/// for a stream with no known length) — callers surface a real error rather than
+/// synthesizing a fake duration.
+fn parse_ffmpeg_duration(stderr: &str) -> Option<f64> {
+    let idx = stderr.find("Duration:")?;
+    let after = &stderr[idx + "Duration:".len()..];
+    // "Duration: 00:01:23.45, start: ..." → take the "00:01:23.45" token.
+    let ts = after.trim_start().split(',').next()?.trim();
+    let parts: Vec<&str> = ts.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let h: f64 = parts[0].trim().parse().ok()?;
+    let m: f64 = parts[1].trim().parse().ok()?;
+    let s: f64 = parts[2].trim().parse().ok()?;
+    Some(h * 3600.0 + m * 60.0 + s)
+}
+
+/// Runs `ffmpeg -i <input>` (no output file) purely to read the container header;
+/// ffmpeg exits non-zero in this mode but prints `Duration:` to stderr, which we
+/// parse. The bundled build ships ffmpeg only (no separate ffprobe binary), so
+/// this is the portable way to probe duration through the same sidecar.
+async fn ffmpeg_probe_duration_secs(
+    app: &tauri::AppHandle,
+    input: &std::path::Path,
+) -> Result<f64, String> {
+    let output = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
+        .args(["-hide_banner", "-i", input.to_str().unwrap_or("")])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    parse_ffmpeg_duration(&stderr)
+        .ok_or_else(|| "could not determine audio duration from ffmpeg output".to_string())
+}
+
+/// Probes an audio file's duration (seconds) via the bundled ffmpeg binary.
+///
+/// Replaces the old WebView `<audio>`-element probe on the frontend, which was
+/// codec-dependent (OGG silently failed on macOS WKWebView) and fell back to a
+/// hardcoded 60 s. This path is codec-independent (ffmpeg reads virtually
+/// anything) and returns a hard error on failure — no fake duration.
+///
+/// `audio_b64` is the base64-encoded upload (same scheme as `ffmpeg_write_file`).
+#[tauri::command]
+pub async fn probe_audio_duration(
+    app: tauri::AppHandle,
+    audio_b64: String,
+) -> Result<f64, String> {
+    let bytes = STANDARD
+        .decode(&audio_b64)
+        .map_err(|e| format!("probe_audio_duration: base64 decode failed: {e}"))?;
+
+    let tmp_id = Uuid::new_v4().to_string();
+    let tmp_dir = std::env::temp_dir().join(format!("kinetix-probe-{}", tmp_id));
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("probe: create temp dir: {e}"))?;
+    let input = tmp_dir.join("probe_input");
+    if let Err(e) = fs::write(&input, &bytes) {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(format!("probe: write input: {e}"));
+    }
+
+    let result = ffmpeg_probe_duration_secs(&app, &input).await;
+    let _ = fs::remove_dir_all(&tmp_dir);
+    result
+}
+
 /// Opens the file manager (Finder on macOS, Explorer on Windows) with the
 /// specified file selected. Used for the "Show in Finder" button after a
 /// successful export. Fire-and-forget: the OS handler runs asynchronously.
