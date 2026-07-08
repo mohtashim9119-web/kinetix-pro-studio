@@ -445,6 +445,7 @@ function makeDefaultProject(): Project {
   script: 'Welcome to Kinetix Studio. This tool automatically syncs your voiceover with your visuals. Text segments stretch to fit your audio duration perfectly.',
   sceneDetails: '[IMAGE: intro.jpg]\n[IMAGE: tech.jpg]',
   segments: [],
+  headings: [],
   assets: [],
   globalTransition: TransitionType.NONE,
   globalTransitionDuration: 0.5,

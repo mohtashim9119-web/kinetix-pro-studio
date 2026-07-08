@@ -77,7 +77,10 @@ export function loadProject(id: string): { project: Project; savedAt: number } |
     if (!raw) return null;
     const stored = JSON.parse(raw) as StoredProject;
     if (!stored.project) return null;
-    return { project: stored.project as unknown as Project, savedAt: stored.savedAt };
+    // Path B heading layer (Decision 5): no migration — just default to [] when
+    // absent, for projects saved before the `headings` field existed.
+    const project = { headings: [], ...stored.project } as unknown as Project;
+    return { project, savedAt: stored.savedAt };
   } catch {
     return null;
   }

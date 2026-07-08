@@ -211,6 +211,29 @@ export interface VideoSegment {
   effectOverlay?: string;
 }
 
+/**
+ * Path B — separate heading layer (docs/path-b-heading-layer-plan.md, Decision 1).
+ * A top-level overlay, fully independent of VideoSegment/HeadingConfig — deliberately
+ * NOT shared with TextOverlay/headingConfig so heading-only features never touch
+ * segment code. `time` is a fixed absolute timestamp that never moves on re-sync
+ * (Decision 2); `needsReview` is set (never delete) when a re-sync clamps `time`
+ * past the new voiceoverDuration.
+ */
+export interface HeadingOverlay {
+  id: string;
+  time: number;
+  duration: number;
+  text: string;
+  fontFamily: string;
+  fontSize: number;
+  fontWeight: number | string;
+  color: string;
+  backgroundColor: string;
+  x: number;
+  y: number;
+  needsReview?: boolean;
+}
+
 export interface TranscriptToken {
   startSec: number;
   endSec: number;
@@ -230,6 +253,11 @@ export interface Project {
   scriptUpdatedAt?: number;
   sceneDetailsUpdatedAt?: number;
   segments: VideoSegment[];
+  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — dual-existence
+   *  alongside the legacy in-array `isHeading` segments until Phase 5 cuts over.
+   *  Optional at the type level so existing Project literals (dev fixtures, older
+   *  persisted projects) remain valid; treat as `[]` when absent (Decision 5). */
+  headings?: HeadingOverlay[];
   assets: Asset[];
   voiceoverId?: string;
   lastExportPath?: string;
