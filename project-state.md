@@ -250,7 +250,7 @@ The Review Mapping modal (task 7, shipped then delisted) reached feature-complet
 
 - Version snapshots (2 open design decisions before building: asset-restoration Design A vs B, and full-rewind-on-restore)
 - Auto-captions (reuse Whisper transcript tokens as a timed text layer)
-- Export speedup: OffscreenCanvas/Worker (profiling done — I/O-bound, convertToBlob off main thread projected 40–55% faster)
+- Export speedup — OffscreenCanvas/Worker (profiled: I/O-bound, toBlob+IPC write = 76% of per-frame time, drawing itself is 0.1%; projected 40–55% faster). Confirmed independent of the WebGL/WebGPU effects rebuild — that only touches the negligible drawing step, not the actual bottleneck; the export pipeline (Canvas2D→PNG→ffmpeg) is also entirely separate from the preview renderer. Not implemented.
 - Multi-user support — team accounts vs. staying single-user is still an open call; revisit if/when multi-user demand materializes
 
 ## Deferred Known Bugs
@@ -364,8 +364,6 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 
 Low/no-risk — intentionally not scheduled. Revisit only if a user reports impact.
 
-D7-D9 (transition/effects rendering bugs) removed 2026-07-09 — obsolete, effects engine being rebuilt on WebGL/WebGPU.
 - **D11 — Preview letterboxing in normal view:** the preview stage shows letterbox bars in the non-fullscreen layout; under-documented placeholder behavior, not a regression. `PreviewStage.tsx`
 - **D13 — Export cancel doesn't kill the in-flight ffmpeg subprocess:** the generation counter and session teardown fire immediately, but the running `ffmpeg_exec` sidecar continues to completion against the torn-down temp dir; the resulting error is swallowed. `useExport.ts`, `ffmpeg.rs`
 - **D15 — Timeline scroll-restore assumes default zoom:** the one-shot reload scroll restore (`34206ee`) applies a raw persisted `scrollLeft` pixel value that's only valid at `sliderT = 0.5` (the value it's reset to on every `project.id` change); `sliderT` itself is never persisted. If a user zooms before reloading, the saved pixel offset maps to a different timeline position after reload and gets silently clamped by `maxScroll` — no crash, just minor scroll drift. Full fix would require persisting `sliderT` alongside `timelineScrollLeft`. `Timeline.tsx`, `App.tsx`
-- **D17 — exportFps auto-match rounds to exact 24/30/60, not true NTSC rates:** `nearestExportFps` buckets a probed native fps (e.g. 23.976/29.97/59.94) to the nearest of `{24, 30, 60}` rather than matching exactly, so the export's per-frame seek timestamps still drift ~0.1%/frame out of phase with the source's real frame timestamps over a long segment — a much rarer, lower-amplitude recurrence of the same duplicate/skip judder the auto-match was meant to eliminate. `App.tsx` (`nearestExportFps`)
