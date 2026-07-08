@@ -79,14 +79,13 @@ const formatFileDate = (ms: number) =>
   });
 
 /**
- * Human-readable segment title for the Segments tab row. Heading segments use their
- * own text; content segments fall back through the asset filename (cleaned of leading
- * index codes / trailing timestamps / extension) to a positional "Scene N" label.
- * VideoSegment has no filename/sceneLine field of its own — the filename lives on the
- * looked-up Asset.
+ * Human-readable segment title for the Segments tab row. Falls back through
+ * the asset filename (cleaned of leading index codes / trailing timestamps /
+ * extension) to a positional "Scene N" label. VideoSegment has no
+ * filename/sceneLine field of its own — the filename lives on the looked-up
+ * Asset.
  */
 const humanTitle = (seg: VideoSegment, asset: Asset | undefined): string => {
-  if (seg.isHeading) return seg.headingConfig?.text || seg.heading || `Heading ${seg.order + 1}`;
   if (asset?.name) {
     const cleaned = asset.name
       .replace(/\.[a-zA-Z0-9]+$/, '')      // extension
@@ -96,7 +95,7 @@ const humanTitle = (seg: VideoSegment, asset: Asset | undefined): string => {
       .trim();
     if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
   }
-  return seg.heading || `Scene ${seg.order + 1}`;
+  return `Scene ${seg.order + 1}`;
 };
 
 /**
@@ -1459,7 +1458,6 @@ export function DropZonePanel({
                     onClick={() => onSegmentClick(seg.id)}
                     className={`group relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
                                 cursor-pointer transition-colors
-                                ${seg.isHeading ? 'select-none' : ''}
                                 ${isActive
                                   ? 'border-[var(--kx-accent-line)]'
                                   : isSelected
@@ -1467,33 +1465,6 @@ export function DropZonePanel({
                                     : 'border-[var(--kx-line)] hover:border-[var(--kx-line-2)]'
                                 }
                                 ${!isActive && !isSelected ? 'bg-[var(--kx-surface)] hover:bg-[var(--kx-hover)]' : ''}`}
-                    {...(seg.isHeading && onMoveHeading ? {
-                      onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
-                        if ((e.target as HTMLElement).closest('button')) return;
-                        e.preventDefault();
-                        e.currentTarget.setPointerCapture(e.pointerId);
-                        setDraggingHeadingId(seg.id);
-                        dropTargetIdxRef.current = i;
-                        setDropTargetIdx(i);
-                      },
-                      onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
-                        if (draggingHeadingId !== seg.id) return;
-                        const idx = computeDropGapIndex(rowRefs.current, e.clientY);
-                        if (idx !== dropTargetIdxRef.current) {
-                          dropTargetIdxRef.current = idx;
-                          setDropTargetIdx(idx);
-                        }
-                      },
-                      onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
-                        e.currentTarget.releasePointerCapture(e.pointerId);
-                        if (draggingHeadingId === seg.id && onMoveHeading) {
-                          onMoveHeading(seg.id, dropTargetIdxRef.current ?? i);
-                        }
-                        setDraggingHeadingId(null);
-                        setDropTargetIdx(null);
-                      },
-                      style: { cursor: draggingHeadingId === seg.id ? 'grabbing' : 'grab' },
-                    } : {})}
                   >
                     {isActive && (
                       <span className="absolute left-0 top-[8px] bottom-[8px] w-[3px]
@@ -1513,23 +1484,16 @@ export function DropZonePanel({
                     </div>
 
                     {/* Thumbnail */}
-                    {seg.isHeading ? (
-                      <div className="w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] flex-shrink-0
-                                      bg-[var(--kx-accent)] flex items-center justify-center">
-                        <span className="text-white font-bold text-[18px] tracking-tight">H1</span>
-                      </div>
-                    ) : (
-                      <div className="flex-none w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] overflow-hidden flex-shrink-0
-                                      bg-[var(--kx-surface-2)] flex items-center justify-center
-                                      shadow-[inset_0_0_0_1px_rgba(255,255,255,.07)]">
-                        {asset?.url && asset.type === 'image'
-                          ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                          : asset?.type === 'video'
-                          ? <Video size={18} className="text-blue-400" />
-                          : <div className="w-full h-full rounded-[9px] bg-[var(--kx-surface-2)]" />
-                        }
-                      </div>
-                    )}
+                    <div className="flex-none w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] overflow-hidden flex-shrink-0
+                                    bg-[var(--kx-surface-2)] flex items-center justify-center
+                                    shadow-[inset_0_0_0_1px_rgba(255,255,255,.07)]">
+                      {asset?.url && asset.type === 'image'
+                        ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                        : asset?.type === 'video'
+                        ? <Video size={18} className="text-blue-400" />
+                        : <div className="w-full h-full rounded-[9px] bg-[var(--kx-surface-2)]" />
+                      }
+                    </div>
 
                     {/* Meta */}
                     <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-2.5 pr-2">
@@ -1542,7 +1506,7 @@ export function DropZonePanel({
                           {seg.duration.toFixed(1)}s
                         </span>
                       </div>
-                      {!seg.isHeading && asset?.name && (
+                      {asset?.name && (
                         <span className="font-mono text-[10px] text-[var(--kx-faint)] truncate
                                          opacity-0 group-hover/gap:opacity-100 transition-opacity">
                           {asset.name}
@@ -1553,19 +1517,6 @@ export function DropZonePanel({
                     {/* Right controls */}
                     <div className="flex-none flex flex-col items-center justify-center gap-2 px-3 py-2.5">
                       <div className="relative flex items-center justify-center">
-                        {seg.isHeading && onDeleteHeading && (
-                          <button
-                            onClick={(e) => { e.stopPropagation(); onDeleteHeading(seg.id); }}
-                            className="absolute right-full mr-1 opacity-0 group-hover:opacity-100 transition-opacity
-                                       p-1.5 rounded-[6px] text-[var(--kx-faint)]
-                                       hover:text-[var(--kx-danger)]
-                                       hover:bg-[rgba(255,107,107,0.1)]"
-                            aria-label="Delete heading"
-                            title="Delete heading"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        )}
                         <button
                           onClick={(e) => { e.stopPropagation(); onToggleLock(seg.id); }}
                           className={`w-8 h-8 rounded-[8px] flex items-center justify-center border transition-all

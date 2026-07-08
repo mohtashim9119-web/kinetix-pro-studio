@@ -146,8 +146,7 @@ export function ReviewMappingModal({
 // HeadingReviewRow — Path B (docs/path-b-heading-layer-plan.md, Phase 5) card
 // for a top-level HeadingOverlay. Same 35% thumbnail + 65% controls layout as
 // ReviewMappingRow, but reads straight off HeadingOverlay fields — no asset
-// preview (HeadingOverlay carries no background-asset field, unlike the
-// legacy HeadingConfig.assetId).
+// preview (HeadingOverlay carries no background-asset field).
 // ---------------------------------------------------------------------------
 
 interface HeadingReviewRowProps {
@@ -235,11 +234,10 @@ function HeadingReviewRow({ heading: h, globalOverlayConfig, onUpdateHeading }: 
 
 // ---------------------------------------------------------------------------
 // ReviewMappingRow — one segment's mapping review card. All controls are
-// always visible (no formatting toggle). Both card types share a 35%
-// thumbnail + 65% controls column with four rows: text + visibility,
-// asset/stock (50/50), formatting (font/weight/italic/size + animation,
-// or font/weight/size + autofit for heading — heading has no italic yet),
-// and colors/no-bg + X/Y position.
+// always visible (no formatting toggle). Shares a 35% thumbnail + 65%
+// controls column with four rows: text + visibility, asset/stock (50/50),
+// formatting (font/weight/italic/size + animation), and colors/no-bg + X/Y
+// position.
 // ---------------------------------------------------------------------------
 
 interface ReviewMappingRowProps {
@@ -265,28 +263,9 @@ function ReviewMappingRow({
   const scale = thumbHeight / REFERENCE_PREVIEW_HEIGHT;
 
   const asset = assets.find(a => a.id === seg.assetId);
-  const isMissing = !asset && !!(seg.text || seg.heading || seg.isHeading);
-  const label = seg.headingConfig?.text || seg.heading || asset?.name || `Scene ${idx + 1}`;
+  const isMissing = !asset && !!seg.text;
+  const label = asset?.name || `Scene ${idx + 1}`;
   const meta = `${seg.duration.toFixed(1)}s · ${formatTime(seg.startTime)} — ${formatTime(seg.startTime + seg.duration)}`;
-
-  const hc = seg.headingConfig;
-
-  // Live thumbnail overlay math — mirrors PreviewStage's heading font-size formula
-  // (a pure fraction of container height, so it's already proportional) and scales
-  // explicit font sizes by `scale` so they look right at thumbnail size (see
-  // REFERENCE_PREVIEW_HEIGHT above). X/Y need no scaling: percentage + translate(-x%,-y%)
-  // already resolves against this thumbnail's own box, same as PreviewStage's container.
-  const headingText = hc?.text ?? seg.heading ?? '';
-  const headingPosX = hc?.x ?? 50;
-  const headingPosY = hc?.y ?? 50;
-  const headingAutoFitSize = (() => {
-    const baseSize = thumbHeight * 0.14;
-    const shrinkFactor = Math.max(0.3, 1 - headingText.length / 80);
-    return Math.max(thumbHeight * 0.04, Math.min(thumbHeight * 0.14, baseSize * shrinkFactor));
-  })();
-  const headingFontSizePx = thumbHeight === 0
-    ? 0
-    : (hc?.fontSize ? hc.fontSize * scale : headingAutoFitSize);
 
   // Scene overlay-text thumbnail math (falls back to global config / defaults).
   const oc = seg.overlayConfig;
@@ -299,45 +278,23 @@ function ReviewMappingRow({
   const bubbleRadius = 24 * scale;
 
   return (
-    <div
-      className={`rounded-xl overflow-hidden bg-[#111111] border ${
-        seg.isHeading ? 'border-[rgba(224,124,58,0.3)]' : 'border-[#2A2A2A]'
-      }`}
-    >
+    <div className="rounded-xl overflow-hidden bg-[#111111] border border-[#2A2A2A]">
       {/* Card header */}
       <div className="h-[34px] px-[14px] border-b border-[#1f1f1f] flex items-center justify-between gap-2">
-        {seg.isHeading ? (
-          <div className="flex items-center gap-[7px] min-w-0 overflow-hidden">
-            <span className="flex-shrink-0 bg-[#e07c3a] text-white text-[9px] font-bold px-[6px] py-[3px] rounded-[4px]">
-              H
-            </span>
-            <span className="text-[12px] text-[#dcdcdc] truncate">{label}</span>
-          </div>
-        ) : (
-          <span className="text-[12px] text-[#dcdcdc] truncate min-w-0">{label}</span>
-        )}
+        <span className="text-[12px] text-[#dcdcdc] truncate min-w-0">{label}</span>
         <span className="text-[11px] text-[#6a6a6a] whitespace-nowrap flex-shrink-0">{meta}</span>
       </div>
 
       {/* Body */}
       <div className="flex flex-row items-stretch">
-        {/* Thumbnail — left 35%. Background asset/color + a live overlay/heading text
+        {/* Thumbnail — left 35%. Background asset/color + a live overlay text
             layer scaled proportionally to this box (see useThumbnailHeight above). */}
         <div className="w-[35%] flex-shrink-0 border-r border-[#1f1f1f] flex items-center">
           <div
             ref={thumbRef}
-            className={`relative w-full aspect-video overflow-hidden flex items-center justify-center ${
-              seg.isHeading ? '' : 'bg-[#0D0D0D]'
-            }`}
-            style={seg.isHeading ? { backgroundColor: hc?.backgroundColor ?? '#000000' } : undefined}
+            className="relative w-full aspect-video overflow-hidden flex items-center justify-center bg-[#0D0D0D]"
           >
-            {seg.isHeading ? (
-              asset?.url && asset.type === 'image' ? (
-                <img src={asset.url} className="w-full h-full object-cover" alt="" />
-              ) : asset?.type === 'video' ? (
-                <Video size={22} className="text-blue-400" />
-              ) : null
-            ) : asset?.url && asset.type === 'image' ? (
+            {asset?.url && asset.type === 'image' ? (
               <img src={asset.url} className="w-full h-full object-cover" alt="" />
             ) : asset?.type === 'video' ? (
               <Video size={22} className="text-blue-400" />
@@ -347,32 +304,7 @@ function ReviewMappingRow({
               <ImageIcon size={22} className="text-[#555555]" />
             )}
 
-            {seg.isHeading && headingText && (
-              <div
-                className="absolute text-center pointer-events-none"
-                style={{
-                  left: `${headingPosX}%`,
-                  top: `${headingPosY}%`,
-                  transform: `translate(-${headingPosX}%, -${headingPosY}%)`,
-                  width: 'max-content',
-                  maxWidth: '90%',
-                  zIndex: 1,
-                  fontSize: `${headingFontSizePx}px`,
-                  fontFamily: hc?.fontFamily || globalOverlayConfig.fontFamily,
-                  fontWeight: hc?.fontWeight ?? 'bold',
-                  color: hc?.color ?? '#ffffff',
-                  lineHeight: 1.2,
-                  overflow: 'hidden',
-                  display: '-webkit-box',
-                  WebkitLineClamp: 6,
-                  WebkitBoxOrient: 'vertical',
-                }}
-              >
-                {headingText}
-              </div>
-            )}
-
-            {!seg.isHeading && seg.text && seg.showOverlay && (
+            {seg.text && seg.showOverlay && (
               <div
                 className="absolute text-center pointer-events-none"
                 style={{

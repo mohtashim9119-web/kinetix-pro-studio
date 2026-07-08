@@ -42,7 +42,6 @@ import { motion, AnimatePresence, type Transition } from 'motion/react';
 import {
   Project,
   VideoSegment,
-  HeadingConfig,
   HeadingOverlay,
   Asset,
   TransitionType,
@@ -50,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -74,7 +73,6 @@ import {
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
-import { applyHeadingTiming } from './services/whisperService';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import type { ApplyEvent } from './components/EffectsPanel';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
@@ -98,9 +96,6 @@ import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
   text: string;
-  heading?: string;           // legacy alias only; prefer isHeading + headingConfig
-  isHeading?: boolean;
-  headingConfig?: HeadingConfig;
   assetId?: string;
   unmatchedExplicitTag?: boolean;
   transition: TransitionType;
@@ -222,25 +217,6 @@ const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const MIN_PLAYBACK_SPEED = 0.5;
 const MAX_PLAYBACK_SPEED = 2.0;
 const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
-
-// ---------------------------------------------------------------------------
-// Migration: legacy `heading` string → isHeading + headingConfig
-// ---------------------------------------------------------------------------
-
-/** Upgrades any segment carrying the legacy `heading` string field to the new
- *  `isHeading + headingConfig` shape.  Safe to call multiple times (idempotent). */
-function migrateSegmentHeadings(segments: VideoSegment[]): VideoSegment[] {
-  return segments.map(seg => {
-    if (seg.isHeading || !seg.heading) return seg; // already migrated or not a heading
-    return {
-      ...seg,
-      isHeading: true as const,
-      headingConfig: seg.headingConfig ?? {
-        text: seg.heading,
-      },
-    };
-  });
-}
 
 // Enhanced parser that handles heading-voiceover logic
 export const parseProjectData = async (
@@ -427,7 +403,7 @@ export const parseProjectData = async (
     if (count > 1) {
       const duplicatedSegments = finalSegments
         .filter(s => s.assetId === assetId)
-        .map(s => s.headingConfig?.text || s.heading || s.id)
+        .map(s => s.text || s.id)
         .join(', ');
       console.warn(
         `[parseProjectData] Asset "${assetId}" is assigned to ${count} segments: ` +
@@ -1007,9 +983,6 @@ export default function App() {
   const handleApplyEffect = useCallback((e: ApplyEvent): void => {
     setProject(p => {
       const segments = p.segments.map(s => {
-        // Skip headings — they have no video/image asset to effect
-        if (s.isHeading) return s;
-
         switch (e.type) {
           case 'transition':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
@@ -1396,9 +1369,9 @@ export default function App() {
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
     const allAssets: Asset[] = [...projectRef.current.assets];
     let newVoiceoverId = projectRef.current.voiceoverId;
-    // Snapshot of pre-sync segments — headings are carried forward from this
-    // array (Step 5.1.3). Captured now, before any await, so it can't observe
-    // state this same sync has already committed.
+    // Snapshot of pre-sync segments, used by preserveEffectFields below to carry
+    // forward per-segment effect selections by assetId. Captured now, before any
+    // await, so it can't observe state this same sync has already committed.
     const previousSegments = projectRef.current.segments;
 
     if (staged.voiceoverFile) {
@@ -1468,24 +1441,12 @@ export default function App() {
     // 5. Parse project data with the fresh, complete data
     const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
 
-    // Clean-slate: no carry-forward from previous segments, EXCEPT headings —
-    // the array (not the [HEADING:] tag) is now their source of truth across
-    // re-sync (Step 5.1.3); see the split below.
-
     // Never wipe existing segments if parse produced nothing
     if (newSegmentsRaw.length === 0 && projectRef.current.segments.length > 0) {
       console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
       setIsProcessing(false);
       return;
     }
-
-    // Strip tag-derived headings before any timing pass runs; the PREVIOUS
-    // array's headings are reinserted once, after both branches converge
-    // below — never before (running reinsertHeadings earlier corrupts
-    // duration via a stale-anchor squeeze the next applyAnchorBasedTiming
-    // pass would apply).
-    const contentOnly = newSegmentsRaw.filter(s => !s.isHeading);
-    const headingAnchors = computeHeadingAnchors(previousSegments);
 
     // 7. Option C — resolve final timing BEFORE the commit, never after.
     //    If Whisper tokens are already cached for this exact voiceover (the
@@ -1498,10 +1459,10 @@ export default function App() {
               && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
-    let finalTimedContent: VideoSegment[];
+    let finalTimedSegments: VideoSegment[];
     if (cachedTokensReady) {
-      const anchorTimed = applyAnchorBasedTiming(contentOnly, audioDuration);
-      finalTimedContent = await alignFromCache(
+      const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
+      finalTimedSegments = await alignFromCache(
         voiceoverAsset!,
         anchorTimed,
         projectRef.current.transcriptTokens!,
@@ -1517,15 +1478,9 @@ export default function App() {
           { voiceoverAssetId: voiceoverAsset.id },
         );
       }
-      const anchorTimedFallback = applyAnchorBasedTiming(contentOnly, audioDuration);
-      finalTimedContent = applyHeadingTiming(anchorTimedFallback);
+      finalTimedSegments = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
     }
 
-    // Reinsert array-sourced headings onto the FINAL, fully-timed content
-    // array — the last timing-related step. Nothing downstream reads
-    // anchorStart again, so reinsertHeadings' duration math can't be
-    // clobbered or double-applied.
-    const finalTimedSegments = reinsertHeadings(finalTimedContent, headingAnchors);
     const committedSegments = preserveEffectFields(
       autoMatchSegments(allAssets, finalTimedSegments),
       previousSegments,
@@ -1966,14 +1921,12 @@ export default function App() {
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
 
-    const rehydratedSegments = migrateSegmentHeadings(
-      saved.project.segments.map(seg => {
-        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-          return { ...seg, assetId: undefined };
-        }
-        return seg;
-      }),
-    );
+    const rehydratedSegments = saved.project.segments.map(seg => {
+      if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+        return { ...seg, assetId: undefined };
+      }
+      return seg;
+    });
 
     let rehydratedVoiceoverId = saved.project.voiceoverId;
     if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
@@ -2453,7 +2406,6 @@ export default function App() {
                 onSetTrimmingSegment={setTrimmingSegmentId}
                 onSetAdjustingTrim={setIsAdjustingTrim}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
-                onDeleteHeading={handleDeleteHeading}
                 onHeadingResizeCommit={(id, next) => {
                   setProject(prev => ({
                     ...prev,
@@ -2816,7 +2768,7 @@ export default function App() {
                       )}
                       
                       <div className="absolute inset-x-0 bottom-0 p-12 bg-gradient-to-t from-black/80 to-transparent">
-                          <h2 className="text-3xl font-black uppercase tracking-tighter text-white mb-2">{editingSegment.headingConfig?.text || editingSegment.heading || "Untitled Scene"}</h2>
+                          <h2 className="text-3xl font-black uppercase tracking-tighter text-white mb-2">Untitled Scene</h2>
                           <p className="text-lg text-gray-300 italic leading-relaxed line-clamp-2">"{editingSegment.text}"</p>
                       </div>
                    </div>
@@ -2927,20 +2879,8 @@ export default function App() {
                       </div>
 
                       <div className="space-y-4">
-                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Heading & Script</label>
-                         <input 
-                            value={editingSegment.headingConfig?.text || editingSegment.heading || ''}
-                            onChange={(e) => setEditingSegment({
-                              ...editingSegment,
-                              heading: e.target.value,
-                              headingConfig: editingSegment.headingConfig
-                                ? { ...editingSegment.headingConfig, text: e.target.value }
-                                : undefined,
-                            })}
-                            placeholder="Heading Text"
-                            className="w-full bg-white/5 border border-white/5 p-4 rounded-2xl outline-none focus:border-[#F27D26]/50 text-sm font-bold uppercase tracking-widest"
-                         />
-                         <textarea 
+                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Script</label>
+                         <textarea
                             value={editingSegment.text} 
                             onChange={(e) => setEditingSegment({...editingSegment, text: e.target.value})}
                             className="w-full bg-white/5 border border-white/5 p-4 rounded-2xl h-32 outline-none focus:border-[#F27D26]/50 text-sm leading-relaxed"

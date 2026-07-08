@@ -6,7 +6,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
-  Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
+  Play, Pause, RotateCcw, AlertCircle, Heading1,
 } from 'lucide-react';
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
@@ -40,7 +40,6 @@ interface Props {
   onSetTrimmingSegment: (id: string | null) => void;
   onSetAdjustingTrim: (v: boolean) => void;
   onSelectSegment?: (id: string) => void;
-  onDeleteHeading?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
 }
@@ -71,7 +70,6 @@ export function Timeline({
   onSetTrimmingSegment,
   onSetAdjustingTrim,
   onSelectSegment,
-  onDeleteHeading,
   onHeadingResizeCommit,
   initialScrollLeft,
 }: Props) {
@@ -435,7 +433,7 @@ export function Timeline({
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
-                const isMissing = !asset && !!(s.text || s.heading || s.isHeading);
+                const isMissing = !asset && !!s.text;
 
                 return (
                   <div
@@ -495,11 +493,7 @@ export function Timeline({
                     />
 
                     <div className="flex-1 relative bg-black/50">
-                      {s.isHeading ? (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <Heading1 size={16} className="text-[#F27D26]/50" />
-                        </div>
-                      ) : asset?.url ? (
+                      {asset?.url ? (
                         asset.type === 'video' ? (
                           <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
                         ) : (
@@ -526,26 +520,15 @@ export function Timeline({
                               </span>
                             )}
                           </div>
-                          {s.isHeading && onDeleteHeading ? (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onDeleteHeading(s.id); }}
-                              className="px-1.5 py-1 text-red-400 hover:text-red-300 pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
-                              aria-label="Delete heading"
-                              title="Delete heading"
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          ) : (
-                            <button
-                              onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
-                              className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
-                            >
-                              Change
-                            </button>
-                          )}
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
+                            className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            Change
+                          </button>
                         </div>
                         <div className="space-y-0.5">
-                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">{s.headingConfig?.text ?? s.heading ?? 'Scene'}</p>
+                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">Scene</p>
                           <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
                         </div>
                       </div>

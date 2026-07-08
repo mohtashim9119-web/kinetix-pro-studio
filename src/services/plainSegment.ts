@@ -70,9 +70,6 @@ function isPlainMediaSegment(
   project: Project,
   mediaType: 'video' | 'image',
 ): boolean {
-  // Not a heading (headings are title cards, not full-frame media).
-  if (segment.isHeading || segment.heading) return false;
-
   // Path B heading layer (Decision 4, mandatory): if any new-layer heading
   // intersects this segment's time range, the fast path must be bypassed —
   // an export silently dropping a heading is a real bug, not an edge case.

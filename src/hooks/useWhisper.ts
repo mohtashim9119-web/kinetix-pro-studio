@@ -3,7 +3,6 @@ import {
   transcribeWithProgress,
   alignScenestoTranscript,
   distributeSegmentTimes,
-  applyHeadingTiming,
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
@@ -45,9 +44,7 @@ async function alignSegmentsFromCachedTranscript(
   // Subsumes the old segment-0-only clamp (PASS 1 handles index 0 the same
   // way); for an already-fully-anchored input (click 2) every pass here is a
   // no-op, since PASS 1-4 just re-derive the same values they're given.
-  const reAnchored = applyAnchorBasedTiming(updated, durationSecs);
-  const final = applyHeadingTiming(reAnchored);
-  return final;
+  return applyAnchorBasedTiming(updated, durationSecs);
 }
 
 export interface UseWhisperApi {
@@ -174,8 +171,7 @@ export function useWhisper(): UseWhisperApi {
         if (generationRef.current !== generation) return;
 
         const alignments = alignScenestoTranscript(segments, tokens, silences);
-        const updated = distributeSegmentTimes(segments, alignments, durationSecs);
-        const finalSegments = applyHeadingTiming(updated);
+        const finalSegments = distributeSegmentTimes(segments, alignments, durationSecs);
 
         // Store transcript tokens before the segment gate — the transcript is valid
         // for this audio even if alignment is rejected due to a scene structure change.

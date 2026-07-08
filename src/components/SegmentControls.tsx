@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Film, Maximize2, Ban } from 'lucide-react';
-import { VideoSegment, Asset, HeadingConfig, HeadingOverlay } from '../types';
+import { Film, Ban } from 'lucide-react';
+import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
 
 // ---------------------------------------------------------------------------
@@ -40,10 +40,7 @@ interface SegmentControlsProps {
   index?: number;
   /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level
    *  HeadingOverlay target, mutually exclusive with `segment`. Renders a
-   *  dedicated editor reading/writing HeadingOverlay fields directly,
-   *  entirely separate from the legacy `segment.isHeading` branch below
-   *  (kept untouched — still reachable for old in-array heading data until
-   *  Phase 7 deletes it). */
+   *  dedicated editor reading/writing HeadingOverlay fields directly. */
   heading?: HeadingOverlay;
   /** Raw asset list — non-audio filtering happens internally here. */
   assets: Asset[];
@@ -57,14 +54,12 @@ interface SegmentControlsProps {
 
 /**
  * SegmentControls — the controls column shared by the Review Mapping card and
- * the bottom drawer. Renders the heading-overlay, legacy heading-segment, and
- * scene-card layouts; the thumbnail (and all its proportional-scaling math)
- * lives only in the Review Mapping row and is intentionally NOT part of this
- * component.
+ * the bottom drawer. Renders the heading-overlay and scene-card layouts; the
+ * thumbnail (and all its proportional-scaling math) lives only in the Review
+ * Mapping row and is intentionally NOT part of this component.
  *
  * Rows per card:
  *   HeadingOverlay (Path B) — text · font/weight/size · colors + X/Y
- *   legacy heading segment  — text · bg-asset/stock · font/weight/size/autofit · colors + X/Y
  *   scene                   — text + visibility · asset/stock · font/weight/italic/size/animation · colors/no-bg + X/Y
  */
 export function SegmentControls({
@@ -81,8 +76,7 @@ export function SegmentControls({
   // One filter home — both parents pass raw assets.
   const visibleAssets = assets.filter(a => a.type !== 'audio');
 
-  // Path B Phase 5 — HeadingOverlay target. Entirely separate render path;
-  // does not touch the legacy segment.isHeading branch below.
+  // Path B Phase 5 — HeadingOverlay target. Entirely separate render path.
   if (heading) {
     const h = heading;
     const update = (updates: Partial<HeadingOverlay>) => onUpdateHeading?.(updates);
@@ -187,21 +181,6 @@ export function SegmentControls({
   const seg = segment;
   const idx = index;
 
-  const hc = seg.headingConfig;
-  const isAutoFit = !hc?.fontSize;
-
-  // An `assetId` write must also land on the segment's top-level assetId —
-  // that's the only field PreviewStage/export actually read for a heading's
-  // background asset.
-  const updateHC = (updates: Partial<HeadingConfig>) => {
-    const next: Partial<VideoSegment> = {
-      headingConfig: { ...(hc ?? { text: '' }), ...updates },
-      ...('text' in updates ? { heading: String(updates.text ?? '') } : {}),
-    };
-    if ('assetId' in updates) next.assetId = updates.assetId;
-    onUpdateSegment(idx, next);
-  };
-
   // Scene overlay-text formatting state (falls back to global config / defaults).
   const oc = seg.overlayConfig;
   const isItalic = oc?.fontStyle === 'italic';
@@ -212,134 +191,6 @@ export function SegmentControls({
       <style>{SLIDER_STYLE}</style>
 
       <div className="flex-1 min-w-0 px-[13px] py-[11px] flex flex-col gap-[7px] justify-center">
-        {seg.isHeading ? (
-          <>
-            {/* Row 1 — heading text */}
-            <input
-              type="text"
-              value={hc?.text ?? ''}
-              onChange={(e) => updateHC({ text: e.target.value })}
-              placeholder="Heading text"
-              aria-label="Heading text"
-              className={`${FIELD} text-white w-full`}
-            />
-
-            {/* Row 2 — background asset (50%) + stock search (50%) */}
-            <div className="flex items-center gap-[7px]">
-              <select
-                value={hc?.assetId ?? ''}
-                onChange={(e) => updateHC({ assetId: e.target.value || undefined })}
-                aria-label="Heading background asset"
-                className={`${SELECT} flex-1 min-w-0`}
-              >
-                <option value="">None (solid color)</option>
-                {visibleAssets.map(a => (
-                  <option key={a.id} value={a.id}>{a.name}</option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => onOpenStockSearch(seg.id)}
-                title="Search stock footage"
-                aria-label="Search stock footage"
-                className={`${BTN_BASE} ${ICON_IDLE} gap-[5px] text-[12px] flex-1 min-w-0`}
-              >
-                <Film size={14} /> <span className="truncate">Stock</span>
-              </button>
-            </div>
-
-            {/* Row 3 — font + weight + size + autofit */}
-            <div className="flex items-center gap-[7px]">
-              <select
-                value={hc?.fontFamily ?? 'Inter'}
-                onChange={(e) => updateHC({ fontFamily: e.target.value })}
-                aria-label="Heading font family"
-                className={`${SELECT} flex-[4] min-w-0`}
-              >
-                {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
-              </select>
-              <select
-                value={String(hc?.fontWeight ?? 'bold')}
-                onChange={(e) => updateHC({ fontWeight: e.target.value })}
-                aria-label="Heading font weight"
-                className={`${SELECT} flex-[3] min-w-0`}
-              >
-                <option value="normal">Normal</option>
-                <option value="bold">Bold</option>
-                <option value="900">Black</option>
-              </select>
-              <input
-                type="number"
-                min={8}
-                max={400}
-                disabled={isAutoFit}
-                value={hc?.fontSize ?? 100}
-                onChange={(e) => updateHC({ fontSize: Number(e.target.value) || undefined })}
-                aria-label="Heading font size"
-                className={`${NUMBER} flex-[3] min-w-0`}
-              />
-              <button
-                type="button"
-                onClick={() => updateHC({ fontSize: hc?.fontSize ? undefined : 100 })}
-                title="Auto fit"
-                aria-pressed={isAutoFit}
-                aria-label="Toggle auto-fit font size"
-                className={`${BTN_BASE} flex-[3] min-w-0 ${isAutoFit ? TOGGLE_ON : TOGGLE_OFF}`}
-              >
-                <Maximize2 size={14} />
-              </button>
-            </div>
-
-            {/* Row 4 — colors (inline) + X/Y position */}
-            <div className="flex items-center gap-[7px]">
-              <input
-                type="color"
-                value={hc?.color ?? '#ffffff'}
-                onChange={(e) => updateHC({ color: e.target.value })}
-                title="Text color"
-                aria-label="Heading text color"
-                className={SWATCH}
-              />
-              <input
-                type="color"
-                value={hc?.backgroundColor ?? '#000000'}
-                onChange={(e) => updateHC({ backgroundColor: e.target.value })}
-                title="BG color"
-                aria-label="Heading background color"
-                className={SWATCH}
-              />
-
-              <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">X</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={hc?.x ?? 50}
-                onChange={(e) => updateHC({ x: Number(e.target.value) })}
-                aria-label="Heading horizontal position"
-                className="rm-slider flex-1 min-w-0"
-              />
-              <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
-                {hc?.x ?? 50}%
-              </span>
-
-              <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">Y</span>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={hc?.y ?? 50}
-                onChange={(e) => updateHC({ y: Number(e.target.value) })}
-                aria-label="Heading vertical position"
-                className="rm-slider flex-1 min-w-0"
-              />
-              <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
-                {hc?.y ?? 50}%
-              </span>
-            </div>
-          </>
-        ) : (
-          <>
             {/* Row 1 — overlay text + visibility toggle switch */}
             <div className="flex items-center gap-[7px]">
               <input
@@ -501,8 +352,6 @@ export function SegmentControls({
                 {oc?.y ?? 78}%
               </span>
             </div>
-          </>
-        )}
       </div>
     </>
   );

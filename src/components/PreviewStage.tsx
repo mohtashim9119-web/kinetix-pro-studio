@@ -336,7 +336,6 @@ export function PreviewStage({
   // Neither element is ever unmounted; we swap which is visible on segment change.
   const videoARef = useRef<HTMLVideoElement>(null);
   const videoBRef = useRef<HTMLVideoElement>(null);
-  const headingVideoRef = useRef<HTMLVideoElement>(null);
   const [activeSlot, setActiveSlot] = useState<'a' | 'b'>('a');
   const activeSlotRef = useRef<'a' | 'b'>('a');
   // D10 fix — tracks which segment id each video slot has been pre-seeked
@@ -375,11 +374,6 @@ export function PreviewStage({
   // after the cover is armed still appears without re-arming.
   const { getFirstFrame } = useFirstFrameCache(segments, assets, isPlaying);
   const [coverState, setCoverState] = useState<{ segmentId: string } | null>(null);
-
-  // Heading container measurement — ResizeObserver drives px font sizing so
-  // the heading scales with the preview container, not the viewport (vh units).
-  const [headingContainerHeight, setHeadingContainerHeight] = useState(0);
-  const headingContainerRef = useRef<HTMLDivElement>(null);
 
   // Stage height measurement — ResizeObserver so caption font/bubble scale
   // proportionally to the live stage size, mirroring frameRenderer's refScale math.
@@ -809,7 +803,6 @@ export function PreviewStage({
     }
 
     const segId = currentSegment.id;
-    const isHeadingSeg = !!(currentSegment.isHeading || currentSegment.heading);
 
     // //FFCACHE — the live slot is genuinely showing THIS segment only when it
     // was preloaded+painted for this exact id (warmedSegmentIdRef) AND is still
@@ -841,13 +834,7 @@ export function PreviewStage({
       });
     };
 
-    if (isHeadingSeg) {
-      // Heading segments render their own background layer — no cover; just
-      // clear any cover armed for this id and reveal per the existing engine.
-      console.log(`//FFCACHE segment ${segId}: heading (no cover)`);
-      setCoverState(prev => (prev && prev.segmentId === segId) ? null : prev);
-      reveal();
-    } else if (liveReady) {
+    if (liveReady) {
       // //FFCACHE — live slot already holds the correct painted frame: show it
       // immediately, no cover needed. Clear any stale cover from a prior segment.
       console.log(`//FFCACHE segment ${segId}: live-immediate (slot painted, readyState>=2, playing=${isPlaying})`);
@@ -914,17 +901,6 @@ export function PreviewStage({
     }
   }, [isPlaying]);
 
-  // Sync heading background video to isPlaying (not covered by the dual-slot effect above).
-  useEffect(() => {
-    const v = headingVideoRef.current;
-    if (!v) return;
-    if (isPlaying) {
-      v.play().catch(() => {});
-    } else {
-      v.pause();
-    }
-  }, [isPlaying]);
-
   // Sync playbackRate whenever playbackSpeed or global speed changes
   // without re-seeking (seek only happens on segment transition above).
   useEffect(() => {
@@ -932,20 +908,6 @@ export function PreviewStage({
     if (!activeEl) return;
     activeEl.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
   }, [currentSegment?.playbackSpeed, globalPlaybackSpeed]);
-
-  // Re-observe whenever a heading segment mounts; el is null for non-heading segments
-  // so the effect is a safe no-op when the heading div is not in the DOM.
-  useEffect(() => {
-    const el = headingContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(entries => {
-      for (const entry of entries) {
-        setHeadingContainerHeight(entry.contentRect.height);
-      }
-    });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [currentSegment?.isHeading, currentSegment?.heading]);
 
   // Observe the stage element once (it is always mounted for the lifetime of
   // PreviewStage). Fires on divider-drag resize AND on fullscreen enter/exit
@@ -970,22 +932,6 @@ export function PreviewStage({
     [headings, currentTime],
   );
 
-  const isHeadingSegment = !!(currentSegment?.isHeading || currentSegment?.heading);
-  const headingText = currentSegment?.headingConfig?.text ?? currentSegment?.heading ?? '';
-  const headingLength = headingText.length;
-  const baseSize = headingContainerHeight * 0.14;
-  const shrinkFactor = Math.max(0.3, 1 - headingLength / 80);
-  const headingFontSize = currentSegment?.headingConfig?.fontSize
-    ?? Math.max(
-      headingContainerHeight * 0.04,
-      Math.min(headingContainerHeight * 0.14, baseSize * shrinkFactor),
-    );
-
-  // Position-aware anchor: translate(-x%, -y%) scales the inset with the box's own
-  // rendered size, so at 0% the box's near edge sits at the preview edge, at 100% the
-  // far edge sits at the opposite edge, and at 50% it's centered — fully inside at every value.
-  const headingPosX = currentSegment?.headingConfig?.x ?? 50;
-  const headingPosY = currentSegment?.headingConfig?.y ?? 50;
   // Phase A3 — driven by captionSegment (not currentSegment directly), so
   // the caption's position stays in lockstep with whichever segment's text
   // is currently shown (see captionSegment's own comment above).
@@ -1045,9 +991,7 @@ export function PreviewStage({
               >
                 {(() => {
                   const asset = assets.find(a => a.id === currentSegment.assetId);
-                  // Heading backgrounds are rendered in their own block below; exclude them
-                  // from the dual-slot system so the imperative src assignment doesn't fire.
-                  const isVideoAsset = !isHeadingSegment && !!(asset?.url && asset.type === 'video');
+                  const isVideoAsset = !!(asset?.url && asset.type === 'video');
                   return (
                     <>
                       {/* FIX 1 + FIX 4 — Dual persistent video slots. Both elements stay
@@ -1120,67 +1064,8 @@ export function PreviewStage({
                           transition={{ duration: 0.4 }}
                         />
                       )}
-                      {/* Heading segment — background (asset or solid color) + text overlay.
-                          Rendered unconditionally when isHeadingSegment; asset and text are
-                          independent so a background image/video does not hide the text. */}
-                      {isHeadingSegment && (
-                        <div
-                          ref={headingContainerRef}
-                          className="absolute inset-0 z-30"
-                        >
-                          {/* Background layer */}
-                          {asset?.url ? (
-                            asset.type === 'video' ? (
-                              <video
-                                key={asset.url}
-                                ref={headingVideoRef}
-                                src={asset.url}
-                                muted
-                                loop
-                                playsInline
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                            ) : (
-                              <img
-                                src={asset.url}
-                                className="absolute inset-0 w-full h-full object-cover"
-                                alt=""
-                              />
-                            )
-                          ) : (
-                            <div
-                              className="absolute inset-0"
-                              style={{ backgroundColor: currentSegment.headingConfig?.backgroundColor ?? '#000000' }}
-                            />
-                          )}
-                          {/* Text overlay — always rendered on top of whatever background */}
-                          <h1
-                            className="absolute font-bold"
-                            style={{
-                              left: `${headingPosX}%`,
-                              top: `${headingPosY}%`,
-                              transform: `translate(-${headingPosX}%, -${headingPosY}%)`,
-                              width: 'max-content',
-                              maxWidth: '90%',
-                              textAlign: 'center',
-                              zIndex: 1,
-                              fontSize: headingContainerHeight === 0 ? '5vh' : `${headingFontSize}px`,
-                              fontFamily: currentSegment.headingConfig?.fontFamily ?? globalOverlayConfig.fontFamily ?? 'system-ui, sans-serif',
-                              fontWeight: currentSegment.headingConfig?.fontWeight ?? 'bold',
-                              color: currentSegment.headingConfig?.color ?? '#ffffff',
-                              lineHeight: 1.2,
-                              overflow: 'hidden',
-                              display: '-webkit-box',
-                              WebkitLineClamp: 6,
-                              WebkitBoxOrient: 'vertical' as const,
-                            }}
-                          >
-                            {headingText}
-                          </h1>
-                        </div>
-                      )}
-                      {/* Missing asset placeholder — not shown for heading segments */}
-                      {!asset?.url && !isHeadingSegment && (
+                      {/* Missing asset placeholder */}
+                      {!asset?.url && (
                         <div className="w-full h-full bg-gradient-to-br from-[#111] to-[#050505]
                                         flex items-center justify-center p-6 text-center">
                           <div className="flex flex-col items-center gap-3 opacity-60">

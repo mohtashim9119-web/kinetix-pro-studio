@@ -138,27 +138,9 @@ export interface TextOverlay {
   hiddenOnSegments?: string[];
 }
 
-/** Per-heading styling and behaviour config — only present when isHeading === true. */
-export interface HeadingConfig {
-  text: string;
-  color?: string;              // default '#ffffff'
-  backgroundColor?: string;    // default '#000000'
-  fontFamily?: string;         // default inherits from global overlayConfig
-  fontSize?: number;           // undefined = auto-fit
-  fontWeight?: string | number; // default 'bold'
-  x?: number;                  // percent 0-100, default 50 (center)
-  y?: number;                  // percent 0-100, default 50 (center)
-  assetId?: string;            // optional background image/video (overrides black fill)
-}
-
 export interface VideoSegment {
   id: string;
   text: string;
-  heading?: string;      // legacy alias — use headingConfig.text going forward
-  /** True for title-card segments created via "+ Add Heading". Takes precedence over
-   *  the legacy `heading !== undefined && text === ''` pattern. */
-  isHeading?: boolean;
-  headingConfig?: HeadingConfig;
   assetId?: string;
   startTime: number;
   duration: number;
@@ -213,8 +195,8 @@ export interface VideoSegment {
 
 /**
  * Path B — separate heading layer (docs/path-b-heading-layer-plan.md, Decision 1).
- * A top-level overlay, fully independent of VideoSegment/HeadingConfig — deliberately
- * NOT shared with TextOverlay/headingConfig so heading-only features never touch
+ * A top-level overlay, fully independent of VideoSegment — deliberately
+ * NOT shared with TextOverlay so heading-only features never touch
  * segment code. `time` is a fixed absolute timestamp that never moves on re-sync
  * (Decision 2); `needsReview` is set (never delete) when a re-sync clamps `time`
  * past the new voiceoverDuration.
@@ -253,8 +235,8 @@ export interface Project {
   scriptUpdatedAt?: number;
   sceneDetailsUpdatedAt?: number;
   segments: VideoSegment[];
-  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — dual-existence
-   *  alongside the legacy in-array `isHeading` segments until Phase 5 cuts over.
+  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — the sole
+   *  source of truth for headings; VideoSegment carries no heading fields.
    *  Optional at the type level so existing Project literals (dev fixtures, older
    *  persisted projects) remain valid; treat as `[]` when absent (Decision 5). */
   headings?: HeadingOverlay[];

@@ -143,7 +143,7 @@ export function sourceRange(segment: VideoSegment): { start: number; end: number
 }
 
 function isPlainVideoAsset(segment: VideoSegment | undefined, asset: Asset | undefined): boolean {
-  return !!(segment && !segment.isHeading && asset?.type === 'video');
+  return !!(segment && asset?.type === 'video');
 }
 
 /**

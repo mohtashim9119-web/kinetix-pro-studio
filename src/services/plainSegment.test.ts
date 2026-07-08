@@ -58,16 +58,6 @@ describe('isPlainVideoSegment', () => {
 
   // ── Each failing condition flips it to false ───────────────────────────────
 
-  it('false for a heading segment', () => {
-    const seg = makeSegment({ id: 's', isHeading: true, headingConfig: { text: 'Title' } });
-    expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(false);
-  });
-
-  it('false for a legacy heading (heading field set)', () => {
-    const seg = makeSegment({ id: 's', heading: 'Title' });
-    expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(false);
-  });
-
   it('false when the asset is an image, not a video', () => {
     const seg = makeSegment({ id: 's', assetId: 'i1' });
     expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(false);
@@ -190,11 +180,6 @@ describe('isPlainImageSegment', () => {
   });
 
   // ── Each failing condition flips it to false ───────────────────────────────
-
-  it('false for a heading segment', () => {
-    const seg = makeImageSegment({ id: 's', isHeading: true, headingConfig: { text: 'Title' } });
-    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
-  });
 
   it('false when the asset is a video, not an image', () => {
     const seg = makeSegment({ id: 's', assetId: 'v1' });

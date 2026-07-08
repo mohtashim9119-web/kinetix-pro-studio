@@ -80,7 +80,6 @@ export function useFirstFrameCache(
     const targets: DecodeTarget[] = [];
     const validIds = new Set<string>();
     for (const seg of segments) {
-      if (seg.isHeading || seg.heading) continue; // heading backgrounds handled separately
       const asset = assets.find(a => a.id === seg.assetId);
       if (!asset || asset.type !== 'video' || !asset.url) continue;
       validIds.add(seg.id);

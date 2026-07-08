@@ -1,7 +1,7 @@
 # Path B — Separate Heading Layer (Plan)
 
-> Status: **IN PROGRESS — Phase 0 complete (2026-07-08), Phase 1 next.**
-> Supersedes bugs D4 + D5 — both are symptoms of the same coupling this refactor removes.
+> Status: **COMPLETE (2026-07-09) — all phases 0–7 done. Manually verified in the Tauri app.**
+> Supersedes bugs D4 + D5 — both are symptoms of the same coupling this refactor removes. **Both closed by this refactor.**
 > All six design decisions below are **LOCKED** (user-approved 2026-07-08). Do not reopen without a documented decision.
 
 ## Goal
@@ -102,7 +102,7 @@ Each phase is individually `tsc --noEmit` + vitest gated; no phase ships without
 
 This document. No code. The six decisions above are final.
 
-### Phase 1 — `[HEADING:]` scene-tag purge (standalone, shippable) ← NEXT
+### Phase 1 — `[HEADING:]` scene-tag purge (standalone, shippable) ✅ DONE 2026-07-08 (commit `7e91114`)
 
 Implements Decision 6 in full. Does NOT touch the in-array heading system — "+ Add Heading" keeps working exactly as today.
 
@@ -112,7 +112,7 @@ Implements Decision 6 in full. Does NOT touch the in-array heading system — "+
 - **Tests:**
   - `src/services/sceneTagParsing.test.ts` — REWRITE the `[HEADING:]` fixtures: assert `[HEADING: foo.jpg]` matches `foo.jpg` and yields a normal segment (parity with `[IMAGE: foo.jpg]`); assert no scene-skip/boundary behavior. DELETE the old boundary-behavior assertions.
 
-### Phase 2 — HeadingOverlay data model + persistence + shared lookup
+### Phase 2 — HeadingOverlay data model + persistence + shared lookup ✅ DONE 2026-07-08 (commit `6521e90`)
 
 No behavior change; old system untouched. Dual existence begins.
 
@@ -124,7 +124,7 @@ No behavior change; old system untouched. Dual existence begins.
 - **Tests:**
   - **NEW** `src/services/headingLayer.test.ts` — lookup boundary semantics (start-inclusive/end-exclusive, overlapping headings), clamp+flag behavior (in-range untouched, out-of-range clamped + flagged, never removed), factory defaults.
 
-### Phase 3 — Composite-on-top rendering (preview + export) + Tier 1 fast-path guard
+### Phase 3 — Composite-on-top rendering (preview + export) + Tier 1 fast-path guard ✅ DONE 2026-07-08 (commit `c97a923`)
 
 Implements Decision 4. New-layer headings only exist via dev/test data until Phase 5 — verified here with injected data.
 
@@ -137,14 +137,14 @@ Implements Decision 4. New-layer headings only exist via dev/test data until Pha
   - `src/services/plainSegment.test.ts` — new cases: heading fully inside a segment / straddling a segment edge / exactly touching a boundary (no overlap) / far away — only true non-intersection stays on the fast path.
 - **Manual gate:** export a project where a heading straddles two otherwise-plain segments — the heading must appear in the output (fast path correctly bypassed).
 
-### Phase 4 — Timeline display + edge-drag duration resize
+### Phase 4 — Timeline display + edge-drag duration resize ✅ DONE 2026-07-08 (commit `7f44dbb`)
 
 - **Files touched:**
   - `src/components/Timeline.tsx` — render headings as an overlay band positioned at absolute time over the track (no segment slot); edge-drag handles resize `duration` (left edge also shifts `time`), independent of segment boundaries; reuse the `f4da926` ref+rAF live-drag pattern (no `setProject` per mousemove, commit once on mouseup).
   - `src/App.tsx` — heading resize/retime commit handler (immutable update of `project.headings`).
 - **Tests:** none automated for the drag gesture (manual-verify, per repo convention); any min-duration/clamp rules introduced here land as `headingLayer.test.ts` unit tests.
 
-### Phase 5 — Creation + left panel + editing cutover to the new layer
+### Phase 5 — Creation + left panel + editing cutover to the new layer ✅ DONE 2026-07-08 (commit `1074fde`)
 
 From this phase on, **no code path creates in-array heading segments** — the old system becomes unreachable but stays present and tested.
 
@@ -155,7 +155,7 @@ From this phase on, **no code path creates in-array heading segments** — the o
   - `src/components/ReviewMappingModal.tsx` — heading cards read from the new layer (or the modal goes content-only; decide in-phase).
 - **Tests:** `syncTiming.test.ts` UNTOUCHED (protected code untouched — must stay green). The row-interleave ordering logic is extracted into `headingLayer.ts` as a pure helper and unit-tested in `headingLayer.test.ts`.
 
-### Phase 6 — Re-sync integration + full verification gate
+### Phase 6 — Re-sync integration + full verification gate ✅ DONE 2026-07-08/09 (commits `00bdb6a`, `e1f71fe` follow-up) — manual gate PASSED
 
 - **Files touched:**
   - `src/App.tsx` — Apply Sync calls `clampHeadingsToDuration` once the new voiceoverDuration is known; new-layer headings are otherwise untouched by re-sync (Decision 2). The legacy `computeHeadingAnchors`/`reinsertHeadings` calls become natural no-ops (no in-array headings exist in new projects); actual deletion waits for Phase 7.
@@ -164,9 +164,9 @@ From this phase on, **no code path creates in-array heading segments** — the o
 - **Tests:** clamp cases already covered in Phase 2; add an integration-style re-sync test if practical.
 - **Manual gate (the "fully verified" bar for Phase 7):** end-to-end pass in the Tauri app — create, edit, drag-resize, re-sync (incl. shorter audio → clamp+flag), and export with headings over plain and composited segments.
 
-### Phase 7 — Legacy deletion + sync-pipeline simplification (final)
+### Phase 7 — Legacy deletion + sync-pipeline simplification (final) ✅ COMPLETE 2026-07-09
 
-**Precondition:** Phase 6 manual gate passed. Tag the repo `path-b-pre-deletion` immediately before starting (bisect/restore anchor).
+**Precondition:** Phase 6 manual gate passed. Tag the repo `path-b-pre-deletion` immediately before starting (bisect/restore anchor). — Tag created, present at `path-b-pre-deletion`.
 
 - **Files touched:**
   - `src/types.ts` — remove `isHeading`/`headingConfig` (and any other legacy heading fields) from VideoSegment.
@@ -177,7 +177,17 @@ From this phase on, **no code path creates in-array heading segments** — the o
 - **Tests:**
   - `src/services/syncTiming.test.ts` — DELETE heading-carry-forward/steal-give/applyHeadingTiming tests; REWRITE the Σ-duration invariant tests as content-only (invariant (b) now applies to content only — update `project-state.md` Key Invariants wording in the same commit).
   - `src/services/lockedOverlap.test.ts`, `src/services/plainSegment.test.ts` — drop in-array-heading fixtures.
-- **Exit:** `tsc` clean, full vitest green, manual export regression on macOS (+ Windows when available).
+- **Exit:** `tsc` clean, full vitest green, manual export regression on macOS (+ Windows when available). — **All met.** `tsc --noEmit` clean, `vitest` 263/263. Manually verified end-to-end in the Tauri app: create/edit/drag-resize heading, re-sync clamp+`needsReview` badge, export with headings over both plain and composited (overlapping) segments.
+
+## Closing summary — Path B COMPLETE (2026-07-09)
+
+All eight phases (0–7) are done. The legacy in-array heading system — `VideoSegment.isHeading`/`headingConfig`, and the neighbor-duration-steal helpers (`computeHeadingAnchors`, `reinsertHeadings`, `stealDurationFromNeighbors`, `giveDurationToNeighbors`, `applyHeadingTiming`) that were the structural root cause of D4 and D5 — has been fully removed from the codebase. `Project.headings: HeadingOverlay[]` is now the sole source of truth for headings: a fully independent top-level array, addressed by fixed absolute timestamp, composited on top of content via the single shared `getActiveHeadingAt(headings, t)` lookup used by both preview (`PreviewStage.tsx`) and export (`frameRenderer.ts`/`exportPipeline.ts`), with `plainSegment.ts`'s Tier 1 fast-path predicates correctly falling back to the canvas path whenever a heading intersects a segment's time range.
+
+Key invariant (b) — Σ segment duration = voiceoverDuration — now applies to **content segments only**; headings are excluded entirely, since they own no timeline seconds under the composite-on-top model. See `project-state.md`'s Key Invariants (b) and (c) for the current wording.
+
+D4 (lock/heading ops reverting manual drag edits) and D5 (locked-segment duration growing but never shrinking) are closed as a structural consequence of this refactor, not via targeted patches — the neighbor-perturbation math that caused both no longer exists.
+
+Final state: `tsc --noEmit` clean, `vitest` 263/263, manually verified in the Tauri app (create, edit, drag-resize, re-sync clamp+flag, export over plain and composited segments).
 
 ## Risks (residual, post-decisions)
 

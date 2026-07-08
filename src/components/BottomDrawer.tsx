@@ -49,7 +49,7 @@ export function BottomDrawer({
   const idx = segmentIndex;
   const h = heading ?? null;
 
-  const effectPills = s && !s.isHeading ? [
+  const effectPills = s ? [
     s.effectTransition && s.effectTransition !== TRANSITION_NONE
       ? { icon: ArrowLeftRight, label: labelOf(TRANSITIONS, s.effectTransition) }
       : null,
@@ -87,7 +87,7 @@ export function BottomDrawer({
             <div className="flex items-center gap-3 justify-self-start">
               <div className="w-8 h-1 rounded-full bg-[#282828]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                {h ? (h.text || 'Heading') : (s?.headingConfig?.text || s?.heading || `Scene ${idx + 1}`)}
+                {h ? (h.text || 'Heading') : `Scene ${idx + 1}`}
               </span>
               <span className="px-2 py-0.5 bg-[#1A1A1A] rounded text-[9px] font-mono text-gray-500">
                 {(h ? h.duration : s?.duration ?? 0).toFixed(1)}s
