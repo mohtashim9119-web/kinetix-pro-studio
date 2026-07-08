@@ -237,14 +237,10 @@ The Review Mapping modal (task 7, shipped then delisted) reached feature-complet
 
 - Version snapshots (2 open design decisions before building: asset-restoration Design A vs B, and full-rewind-on-restore)
 - Auto-captions (reuse Whisper transcript tokens as a timed text layer)
-- Procedural overlays: 4 remaining — Letterbox, Vignette, CRT/Scanlines, Viewfinder (pure canvas draw ops, no legacy-twin interactions) *(renderer not yet wired)*
-- Asset-backed overlays: 6 blocked — Film Grain, Light Leaks, Film Damage, Atmospheric Particles, Weather, Fire/Embers (waiting on user-supplied black-bg screen-blend footage; render via ctx.globalCompositeOperation='screen')
 - Export speedup: OffscreenCanvas/Worker (profiling done — I/O-bound, convertToBlob off main thread projected 40–55% faster)
 - Multi-user support — team accounts vs. staying single-user is still an open call; revisit if/when multi-user demand materializes
 
 ## Deferred Known Bugs
-
-D4 and D5 — **RESOLVED 2026-07-09.** Both were symptoms of heading/segment coupling; folded into the Path B roadmap (`docs/path-b-heading-layer-plan.md`) on 2026-07-02 rather than fixed individually, and closed structurally when Path B completed (Phase 7) — see the Path B Completed Work entry above.
 
 Newly logged 2026-07-02, not yet root-caused or triaged into a D-number in this repo:
 - **Exported-video judder** — reported FPS mismatch between source and export causing visible judder in rendered output (referenced as "finding #6"). Not yet reproduced/investigated against a specific commit here — needs a dedicated repro (source fps vs. `exportFps` setting vs. actual encoded frame timing) before a fix is scoped. Not yet started (Bug 1).
@@ -355,10 +351,7 @@ Non-negotiables. Future work — especially the Architecture Shift active task �
 
 Low/no-risk — intentionally not scheduled. Revisit only if a user reports impact.
 
-- **D7 — Transition timing is 100/0, not true 50/50:** the entire blend window sits on one side of the cut (Path B design, preserves Σ-duration invariant) rather than the industry-standard centered split; true 50/50 requires clip handles or breaking invariant (b). `segmentEncoder.ts`, `exportPipeline.ts`
-- **D8 — glitch-rgb faint color cast tail:** at alpha→1 the red/blue tint passes don't fully cancel, leaving a cosmetic fringe at the end of the transition; harmless at typical transition speeds. `frameRenderer.ts`
-- **D9 — Caption-switch is instant during dissolve:** DOM-text captions can't be pixel-blended — the incoming caption appears immediately rather than fading in; inherent to the DOM-text rendering approach. `PreviewStage.tsx`
+D7-D9 (transition/effects rendering bugs) removed 2026-07-09 — obsolete, effects engine being rebuilt on WebGL/WebGPU.
 - **D11 — Preview letterboxing in normal view:** the preview stage shows letterbox bars in the non-fullscreen layout; under-documented placeholder behavior, not a regression. `PreviewStage.tsx`
 - **D13 — Export cancel doesn't kill the in-flight ffmpeg subprocess:** the generation counter and session teardown fire immediately, but the running `ffmpeg_exec` sidecar continues to completion against the torn-down temp dir; the resulting error is swallowed. `useExport.ts`, `ffmpeg.rs`
-- **D14 — Timeline ruler overflows track by a few px:** `Math.ceil(totalDuration) + 1` ticks each `pixelsPerSecond` wide exceed the segment content width; cosmetic, auto-scroll clamps correctly. `Timeline.tsx`
 - **D15 — Timeline scroll-restore assumes default zoom:** the one-shot reload scroll restore (`34206ee`) applies a raw persisted `scrollLeft` pixel value that's only valid at `sliderT = 0.5` (the value it's reset to on every `project.id` change); `sliderT` itself is never persisted. If a user zooms before reloading, the saved pixel offset maps to a different timeline position after reload and gets silently clamped by `maxScroll` — no crash, just minor scroll drift. Full fix would require persisting `sliderT` alongside `timelineScrollLeft`. `Timeline.tsx`, `App.tsx`
