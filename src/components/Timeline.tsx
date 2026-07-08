@@ -347,8 +347,56 @@ export function Timeline({
           ))}
         </div>
 
-        {/* Tracks */}
-        <div className="flex-shrink-0 flex gap-2 relative mt-0">
+        {/* Path B corrective fix (docs/path-b-heading-layer-plan.md, Phase 3/4/5
+            correction) — three stacked lanes, top to bottom: headings, segments,
+            voiceover waveform (below, its own pre-existing block). Same
+            horizontal time-to-pixel mapping/scroll/zoom for all three; the
+            heading lane previously overlapped the segment thumbnails (absolutely
+            positioned inside the same row) — it now gets its own vertical space
+            above the segment track instead. */}
+        <div className="flex-shrink-0 flex flex-col gap-1">
+          {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
+              lane; never overlaps the segment track below. pointer-events-none
+              on each band so clicks pass through; only the edge handles (and,
+              going forward, any lane-level interactions) are interactive. */}
+          {isSynced && headings.length > 0 && (
+            <div className="relative h-12 flex-shrink-0">
+              {headings.map((h) => (
+                <div
+                  key={h.id}
+                  data-heading-id={h.id}
+                  className="absolute top-0 bottom-0 z-30 bg-[#F27D26]/10 border-2 border-[#F27D26]/70 rounded-lg pointer-events-none flex items-center justify-center overflow-hidden"
+                  style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
+                >
+                  <div className="flex items-center gap-1 px-1 max-w-full">
+                    <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
+                    <span className="text-[7px] font-black uppercase tracking-wide text-[#F27D26] truncate">
+                      {h.text || 'Heading'}
+                    </span>
+                  </div>
+                  {h.needsReview && (
+                    <div
+                      className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-[4px] bg-[rgba(255,193,7,0.15)]"
+                      title="Re-sync clamped this heading's time — review its position"
+                    >
+                      <AlertCircle size={9} className="text-[#ffc107]" />
+                    </div>
+                  )}
+                  <div
+                    className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+                    onMouseDown={(e) => handleHeadingResizeStart(e, h, 'start')}
+                  />
+                  <div
+                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+                    onMouseDown={(e) => handleHeadingResizeStart(e, h, 'end')}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Segment track (unchanged internals — playhead + segment thumbnails) */}
+          <div className="flex-shrink-0 flex gap-2 relative">
           {/* Playhead */}
           <motion.div
             className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
@@ -360,35 +408,6 @@ export function Timeline({
             <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-[#F27D26] rotate-45" />
             <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
           </motion.div>
-
-          {/* Heading overlay band — Path B new-layer headings (docs/path-b-heading-layer-plan.md,
-              Phase 4). Absolute-time positioned over the track, NOT a segment slot — does not
-              participate in segment flex layout/sizing. pointer-events-none on the band itself so
-              clicks pass through to the segment row underneath; only the edge handles are
-              interactive. */}
-          {isSynced && headings.map((h) => (
-            <div
-              key={h.id}
-              data-heading-id={h.id}
-              className="absolute top-0 h-20 z-30 bg-[#F27D26]/10 border-y-2 border-[#F27D26]/70 pointer-events-none flex items-center justify-center overflow-hidden"
-              style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
-            >
-              <div className="flex items-center gap-1 px-1 max-w-full">
-                <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
-                <span className="text-[7px] font-black uppercase tracking-wide text-[#F27D26] truncate">
-                  {h.text || 'Heading'}
-                </span>
-              </div>
-              <div
-                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
-                onMouseDown={(e) => handleHeadingResizeStart(e, h, 'start')}
-              />
-              <div
-                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
-                onMouseDown={(e) => handleHeadingResizeStart(e, h, 'end')}
-              />
-            </div>
-          ))}
 
           {/* Visual Track */}
           {!isSynced ? (
@@ -522,6 +541,7 @@ export function Timeline({
               })}
             </div>
           )}
+          </div>
         </div>
 
         {/* Captions track — hook-in for Task 9d (captionCues not yet wired) */}

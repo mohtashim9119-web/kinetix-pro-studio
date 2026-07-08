@@ -32,6 +32,18 @@ export function clampHeadingsToDuration(
   });
 }
 
+/**
+ * Path B corrective fix (docs/path-b-heading-layer-plan.md, Phase 3/4/5
+ * correction) — centers a newly-placed heading ON the segment boundary
+ * instead of starting exactly at it (a 50/50 split of `duration` straddling
+ * the cut, instead of a 0/100 split that ran entirely into the next
+ * segment). `Math.max(0, ...)` clamps the case of a boundary at (or near)
+ * t=0, where the heading can't extend before the start of the timeline.
+ */
+export function centerHeadingOnBoundary(boundaryTime: number, duration: number): number {
+  return Math.max(0, boundaryTime - duration / 2);
+}
+
 export const MIN_HEADING_DURATION = 0.3; // seconds — mirrors App.tsx's MIN_SEGMENT_DURATION
 
 /**
@@ -137,7 +149,7 @@ export function segmentGapIndexForRow(rows: InterleavedRow[], rowIndex: number):
   return count;
 }
 
-const DEFAULT_HEADING_DURATION = 1.0;
+export const DEFAULT_HEADING_DURATION = 1.0;
 
 /** Factory for a new HeadingOverlay — defaults match Phase 0's pinned visual
  *  parity target: opaque background, 1.0s duration, centered position. */

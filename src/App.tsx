@@ -51,7 +51,7 @@ import {
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
-import { createHeading, boundaryTimeForGap } from './services/headingLayer';
+import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -1080,7 +1080,10 @@ export default function App() {
   const handleInsertHeading = useCallback((afterIndex: number): void => {
     setProject(prev => {
       const gapIndex = afterIndex + 1; // -1 → 0 (prepend); i → i+1 (after segment i)
-      const time = boundaryTimeForGap(prev.segments, gapIndex);
+      const boundaryTime = boundaryTimeForGap(prev.segments, gapIndex);
+      // Corrective fix: center the heading on the boundary (50/50 split into
+      // both neighbors) instead of starting exactly at it (0/100 split).
+      const time = centerHeadingOnBoundary(boundaryTime, DEFAULT_HEADING_DURATION);
       const headings = prev.headings ?? [];
       const defaultText = `Heading ${headings.length + 1}`;
       const heading = createHeading(time, { text: defaultText });
@@ -1529,6 +1532,8 @@ export default function App() {
     );
 
     // 8. Single atomic state update — segments are already final.
+    //    New-layer headings (Path B Decision 2) never move on re-sync; only
+    //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
     setProject(prev => ({
       ...prev,
       script: scriptText,
@@ -1540,6 +1545,7 @@ export default function App() {
       assets: allAssets,
       voiceoverId: newVoiceoverId,
       segments: committedSegments,
+      headings: clampHeadingsToDuration(prev.headings ?? [], audioDuration),
     }));
 
     setIsSynced(true);

@@ -314,13 +314,20 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
 
 /**
  * Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4):
- * composites a HeadingOverlay's text — with its own opaque-by-default
- * background pill — on top of whatever has already been drawn to `ctx`.
- * Deliberately a pill positioned at (x%, y%), not a full-frame background
- * fill — the new layer sits ON TOP of segment content, it does not replace
- * it (that distinction is the entire point of Decision 4).
+ * composites a HeadingOverlay on top of whatever has already been drawn to
+ * `ctx` — a full-frame `heading.backgroundColor` fill (when non-transparent)
+ * with the text positioned at (x%, y%) inside it, matching the visual weight
+ * of the old in-array heading system. The compositing order (drawn last, on
+ * top of content) is what implements Decision 4 — not the shape of the fill.
  */
 function drawHeadingLayerOverlay(ctx: CanvasRenderingContext2D, heading: HeadingOverlay, w: number, h: number): void {
+  if (heading.backgroundColor && heading.backgroundColor !== 'transparent') {
+    ctx.save();
+    ctx.fillStyle = heading.backgroundColor;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
   const x = (heading.x / 100) * w;
   const y = (heading.y / 100) * h;
 
@@ -333,21 +340,6 @@ function drawHeadingLayerOverlay(ctx: CanvasRenderingContext2D, heading: Heading
   const lines = wrapText(ctx, heading.text, maxWidth);
   const lineHeight = heading.fontSize * 1.2;
   const totalHeight = lines.length * lineHeight;
-  const textWidth = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
-  const padX = 24, padY = 16;
-
-  if (heading.backgroundColor && heading.backgroundColor !== 'transparent') {
-    ctx.fillStyle = heading.backgroundColor;
-    drawRoundedRect(
-      ctx,
-      x - textWidth / 2 - padX,
-      y - totalHeight / 2 - padY,
-      textWidth + padX * 2,
-      totalHeight + padY * 2,
-      16,
-    );
-    ctx.fill();
-  }
 
   ctx.fillStyle = heading.color;
   lines.forEach((line, i) => {

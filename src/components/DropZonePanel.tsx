@@ -33,7 +33,7 @@ import { loadLookPresets, saveLookPreset, deleteLookPreset, type LookPreset } fr
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
-import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow } from '../services/headingLayer';
+import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -1370,7 +1370,12 @@ export function DropZonePanel({
                           if (draggingHeadingId === h.id && onMoveHeading) {
                             const dropIdx = dropTargetIdxRef.current ?? i;
                             const gapIndex = segmentGapIndexForRow(rows, dropIdx);
-                            onMoveHeading(h.id, boundaryTimeForGap(segments, gapIndex));
+                            const boundaryTime = boundaryTimeForGap(segments, gapIndex);
+                            // Corrective fix: same 50/50 centering as creation
+                            // (handleInsertHeading) — drag-to-reorder must land
+                            // the heading centered on the drop boundary, not
+                            // starting exactly at it.
+                            onMoveHeading(h.id, centerHeadingOnBoundary(boundaryTime, h.duration));
                           }
                           setDraggingHeadingId(null);
                           setDropTargetIdx(null);

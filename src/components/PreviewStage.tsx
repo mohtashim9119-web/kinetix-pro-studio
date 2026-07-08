@@ -1387,10 +1387,18 @@ export function PreviewStage({
 
         {/* Path B heading layer — new-layer heading overlay, composited on top
             of whatever segment(s) fall within its time range (Decision 4).
-            Mirrors frameRenderer.ts's drawHeadingLayerOverlay: an opaque-by-
-            default pill positioned at (x%, y%), not a full-frame takeover. */}
+            Mirrors frameRenderer.ts's drawHeadingLayerOverlay: a full-frame
+            backgroundColor fill (when non-transparent) with the text
+            positioned at (x%, y%) inside it — visual parity with the old
+            in-array heading system, not a text-sized pill. */}
         {activeLayerHeading && activeLayerHeading.text && (
           <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 47 }}>
+            {activeLayerHeading.backgroundColor && activeLayerHeading.backgroundColor !== 'transparent' && (
+              <div
+                className="absolute inset-0"
+                style={{ backgroundColor: activeLayerHeading.backgroundColor }}
+              />
+            )}
             <div
               className="absolute text-center"
               style={{
@@ -1399,9 +1407,6 @@ export function PreviewStage({
                 transform: 'translate(-50%, -50%)',
                 width: 'max-content',
                 maxWidth: '90%',
-                padding: '16px 24px',
-                borderRadius: '16px',
-                backgroundColor: activeLayerHeading.backgroundColor,
                 color: activeLayerHeading.color,
                 fontFamily: activeLayerHeading.fontFamily,
                 fontSize: `${activeLayerHeading.fontSize}px`,

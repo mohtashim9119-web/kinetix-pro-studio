@@ -8,6 +8,7 @@ import {
   interleaveHeadingRows,
   boundaryTimeForGap,
   segmentGapIndexForRow,
+  centerHeadingOnBoundary,
   type InterleavedRow,
 } from './headingLayer';
 import type { HeadingOverlay, VideoSegment } from '../types';
@@ -300,6 +301,24 @@ describe('segmentGapIndexForRow', () => {
 
   it('returns 0 for an empty row list', () => {
     expect(segmentGapIndexForRow([], 0)).toBe(0);
+  });
+});
+
+describe('centerHeadingOnBoundary', () => {
+  it('centers a 1.0s heading on a mid-timeline boundary (0.5s into each neighbor)', () => {
+    expect(centerHeadingOnBoundary(10, 1.0)).toBe(9.5);
+  });
+
+  it('is exact-center math for an arbitrary duration', () => {
+    expect(centerHeadingOnBoundary(20, 4)).toBe(18);
+  });
+
+  it('clamps to 0 when the boundary is at the very start of the timeline', () => {
+    expect(centerHeadingOnBoundary(0, 1.0)).toBe(0);
+  });
+
+  it('clamps to 0 when centering would push before t=0', () => {
+    expect(centerHeadingOnBoundary(0.2, 1.0)).toBe(0);
   });
 });
 
