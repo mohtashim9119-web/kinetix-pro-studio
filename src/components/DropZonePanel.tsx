@@ -390,6 +390,10 @@ interface Props {
   globalOverlayConfig: { color: string; backgroundColor: string; fontFamily: string };
   exportResolution: string;
   exportFps: number;
+  /** True when staged video assets' native frame rates disagree — auto-match
+   *  is skipped in that case, so surface it as an open edge case rather than
+   *  silently leaving exportFps at whatever it was. */
+  mixedNativeFpsWarning: boolean;
   currentTransition: string;
   currentAnimation: string;
   currentOverlayFilter: string;
@@ -471,6 +475,7 @@ export function DropZonePanel({
   globalOverlayConfig,
   exportResolution,
   exportFps,
+  mixedNativeFpsWarning,
   currentTransition,
   currentAnimation,
   currentOverlayFilter,
@@ -1625,6 +1630,12 @@ export function DropZonePanel({
                 </select>
               </div>
             </div>
+            {mixedNativeFpsWarning && (
+              <p className="text-[8px] leading-snug text-amber-500/90">
+                Staged videos have different native frame rates — pick the Frame Rate
+                that best matches your footage; it won&apos;t be auto-set for you.
+              </p>
+            )}
           </div>
 
           {/* Section: Display */}

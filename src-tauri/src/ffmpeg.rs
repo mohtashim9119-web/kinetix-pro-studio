@@ -260,6 +260,78 @@ pub async fn probe_audio_duration(
     result
 }
 
+/// Extracts the video frame rate from ffmpeg's stderr. ffmpeg prints the
+/// video stream's frame rate inline in its stream-info line, e.g.:
+///   `Stream #0:0(und): Video: h264 ..., 1920x1080, 29.97 fps, 30 tbr, ...`
+/// This parses the numeric token immediately preceding the first standalone
+/// " fps" occurrence. Returns None if absent/unparseable (e.g. an audio-only
+/// file, or a container ffmpeg can't identify a video stream in).
+fn parse_ffmpeg_fps(stderr: &str) -> Option<f64> {
+    let idx = stderr.find(" fps")?;
+    let before = stderr[..idx].trim_end();
+    let start = before
+        .rfind(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .map(|p| p + 1)
+        .unwrap_or(0);
+    let token = &before[start..];
+    let fps: f64 = token.parse().ok()?;
+    if fps > 0.0 {
+        Some(fps)
+    } else {
+        None
+    }
+}
+
+/// Runs `ffmpeg -i <input>` (no output file) purely to read the container header;
+/// ffmpeg exits non-zero in this mode but prints the video stream's frame rate
+/// to stderr, which we parse. Mirrors `ffmpeg_probe_duration_secs`.
+async fn ffmpeg_probe_fps(
+    app: &tauri::AppHandle,
+    input: &std::path::Path,
+) -> Result<f64, String> {
+    let output = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
+        .args(["-hide_banner", "-i", input.to_str().unwrap_or("")])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    parse_ffmpeg_fps(&stderr)
+        .ok_or_else(|| "could not determine video frame rate from ffmpeg output".to_string())
+}
+
+/// Probes a video file's native frame rate via the bundled ffmpeg binary.
+///
+/// Used at asset stage/import time to auto-suggest a matching `exportFps`
+/// (see the judder audit: export previously resampled every video to a fixed
+/// fps with no knowledge of the source's native rate, at times causing frame
+/// duplication/drop judder). This probe only informs that UI suggestion — it
+/// never feeds into per-segment retiming.
+///
+/// `video_b64` is the base64-encoded upload (same scheme as `ffmpeg_write_file`).
+#[tauri::command]
+pub async fn probe_video_fps(app: tauri::AppHandle, video_b64: String) -> Result<f64, String> {
+    let bytes = STANDARD
+        .decode(&video_b64)
+        .map_err(|e| format!("probe_video_fps: base64 decode failed: {e}"))?;
+
+    let tmp_id = Uuid::new_v4().to_string();
+    let tmp_dir = std::env::temp_dir().join(format!("kinetix-probe-{}", tmp_id));
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("probe: create temp dir: {e}"))?;
+    let input = tmp_dir.join("probe_input");
+    if let Err(e) = fs::write(&input, &bytes) {
+        let _ = fs::remove_dir_all(&tmp_dir);
+        return Err(format!("probe: write input: {e}"));
+    }
+
+    let result = ffmpeg_probe_fps(&app, &input).await;
+    let _ = fs::remove_dir_all(&tmp_dir);
+    result
+}
+
 /// Opens the file manager (Finder on macOS, Explorer on Windows) with the
 /// specified file selected. Used for the "Show in Finder" button after a
 /// successful export. Fire-and-forget: the OS handler runs asynchronously.

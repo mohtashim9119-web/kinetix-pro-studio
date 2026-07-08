@@ -90,7 +90,7 @@ import { useExport, type ExportResolution, type ExportFps, type ExportError } fr
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
-import { isTauri, probeAudioDuration } from './services/tauriFfmpeg';
+import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { invoke } from '@tauri-apps/api/core';
 
@@ -130,6 +130,34 @@ const resolveVoiceoverDuration = async (asset: Asset): Promise<number> => {
   return probeAudioDuration(blob);
 };
 
+/**
+ * Probes a video file's native frame rate at stage/import time, for the
+ * exportFps auto-match described in the judder audit. Unlike
+ * resolveVoiceoverDuration, a failure here is non-fatal — fps auto-match is a
+ * convenience, not something the sync flow depends on to be correct — so this
+ * swallows errors and returns undefined rather than aborting the caller.
+ */
+const resolveVideoNativeFps = async (blob: Blob): Promise<number | undefined> => {
+  try {
+    return await probeVideoFps(blob);
+  } catch (err) {
+    console.warn('[resolveVideoNativeFps] fps probe failed, leaving nativeFps unset:', err);
+    return undefined;
+  }
+};
+
+const EXPORT_FPS_OPTIONS: ExportFps[] = [24, 30, 60];
+
+/**
+ * Rounds an arbitrary native fps (e.g. 23.976, 29.97, 59.94) to the closest
+ * supported export fps bucket. Used only to drive the exportFps auto-match
+ * suggestion below — never for per-segment retiming.
+ */
+const nearestExportFps = (fps: number): ExportFps =>
+  EXPORT_FPS_OPTIONS.reduce((closest, candidate) =>
+    Math.abs(candidate - fps) < Math.abs(closest - fps) ? candidate : closest
+  );
+
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
@@ -152,7 +180,8 @@ async function persistFileToAsset(
     URL.revokeObjectURL(url);
     return null;
   }
-  return { id, name: file.name, url, type, file, addedAt: Date.now() };
+  const nativeFps = type === 'video' ? await resolveVideoNativeFps(file) : undefined;
+  return { id, name: file.name, url, type, file, addedAt: Date.now(), nativeFps };
 }
 
 /**
@@ -202,7 +231,8 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
         console.error('[extractZipToAssets] Skipping file:', name, err);
         return;
       }
-      newAssets.push({ id, name, url: URL.createObjectURL(blob), type, file: new File([blob], filename) });
+      const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
+      newAssets.push({ id, name, url: URL.createObjectURL(blob), type, file: new File([blob], filename), nativeFps });
     });
     await Promise.all(filePromises);
   } catch (err) {
@@ -1226,6 +1256,12 @@ export default function App() {
   const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
   /** frames per second */
   const [exportFps, setExportFps] = useState<ExportFps>(30);
+  // True once the user has manually picked a value in the Frame Rate dropdown —
+  // after that the source-fps auto-match effect below must never override it.
+  const exportFpsUserSetRef = useRef(false);
+  // True when staged video assets' native fps disagree — auto-match is skipped
+  // (no per-segment retiming) and the UI surfaces this as an open edge case.
+  const [mixedNativeFpsWarning, setMixedNativeFpsWarning] = useState(false);
   const previewRef = useRef<HTMLDivElement>(null);
 
   const onExportSavePath = useCallback((path: string) => {
@@ -1233,6 +1269,30 @@ export default function App() {
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
+
+  // Exported-video judder audit — auto-suggest exportFps from staged video
+  // assets' probed native frame rate when they all agree, instead of always
+  // defaulting to 30fps regardless of source content. Mixed native fps across
+  // assets is flagged for the user rather than guessed at; per-segment
+  // retiming is out of scope (segmentEncoder.ts/plainSegment.ts untouched).
+  useEffect(() => {
+    const nativeFpsValues = project.assets
+      .filter(a => a.type === 'video' && a.nativeFps !== undefined)
+      .map(a => nearestExportFps(a.nativeFps!));
+
+    if (nativeFpsValues.length === 0) {
+      setMixedNativeFpsWarning(false);
+      return;
+    }
+
+    const matched = nativeFpsValues[0]!;
+    const allMatch = nativeFpsValues.every(v => v === matched);
+    setMixedNativeFpsWarning(!allMatch);
+
+    if (allMatch && !exportFpsUserSetRef.current) {
+      setExportFps(prev => (prev === matched ? prev : matched));
+    }
+  }, [project.assets]);
 
   const { transcriptionStatus, startTranscription, cancelTranscription, dismissError, alignFromCache } = useWhisper();
 
@@ -2055,6 +2115,7 @@ export default function App() {
             globalOverlayConfig={project.globalOverlayConfig}
             exportResolution={exportResolution}
             exportFps={exportFps}
+            mixedNativeFpsWarning={mixedNativeFpsWarning}
             currentTransition={project.globalTransition}
             currentAnimation={project.globalAnimation ?? ''}
             currentOverlayFilter={project.globalOverlayFilter ?? ''}
@@ -2069,7 +2130,7 @@ export default function App() {
             onOverlayConfigChange={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
             onSetAllOverlay={handleSetAllOverlay}
             onExportResolutionChange={(v) => setExportResolution(v as ExportResolution)}
-            onExportFpsChange={(v) => setExportFps(v as ExportFps)}
+            onExportFpsChange={(v) => { exportFpsUserSetRef.current = true; setExportFps(v as ExportFps); }}
             onApplyTransitionPreset={(v) => setProject(p => ({ ...p, globalTransition: v as TransitionType }))}
             onApplyAnimationPreset={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
@@ -2685,11 +2746,13 @@ export default function App() {
                 console.error('Failed to persist stock asset to IndexedDB, skipping:', stock.name, err);
                 return;
               }
+              const nativeFps = stock.type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
               const newAsset: Asset = {
                 id,
                 name: stock.name,
                 url: URL.createObjectURL(blob),
                 type: stock.type,
+                nativeFps,
               };
               setProject(p => {
                 const newAssets = [...p.assets, newAsset];

@@ -118,6 +118,12 @@ export interface Asset {
   /** Epoch ms captured at upload time (`file.lastModified`) — survives the
    *  localStorage/IndexedDB round-trip that drops `file` itself. */
   addedAt?: number;
+  /** Video-only: native frame rate probed from the source file via ffmpeg
+   *  (probe_video_fps IPC command) at stage/import time. Undefined when the
+   *  asset isn't a video, or when the probe failed (non-fatal — see
+   *  resolveVideoNativeFps in App.tsx). Used only to auto-suggest exportFps;
+   *  never fed into per-segment retiming. */
+  nativeFps?: number;
 }
 
 export interface TextOverlay {

@@ -53,6 +53,25 @@ export async function probeAudioDuration(blob: Blob): Promise<number> {
 }
 
 /**
+ * Probes a video file's native frame rate via the bundled ffmpeg binary,
+ * routed through Tauri IPC (`probe_video_fps`). Used to auto-suggest a
+ * matching export fps (see the exported-video judder audit) — callers should
+ * treat failure as non-fatal (unlike `probeAudioDuration`, this is a UI
+ * suggestion, not something Apply Sync depends on to proceed correctly).
+ *
+ * Throws on any read failure.
+ */
+export async function probeVideoFps(blob: Blob): Promise<number> {
+  const buffer = await blob.arrayBuffer();
+  const videoB64 = bytesToBase64(new Uint8Array(buffer));
+  const fps = await invoke<number>('probe_video_fps', { videoB64 });
+  if (!Number.isFinite(fps) || fps <= 0) {
+    throw new Error(`probe_video_fps returned an invalid frame rate: ${fps}`);
+  }
+  return fps;
+}
+
+/**
  * Implements FfmpegLike by routing file I/O and ffmpeg invocation through
  * Tauri IPC to the native Rust backend.
  *
