@@ -317,6 +317,20 @@ export function Timeline({
           }
         }}
         className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+        onMouseDownCapture={(e) => {
+          // Suppress the browser's default click-to-focus behavior for this
+          // element specifically — role="slider" + tabIndex make it keyboard-
+          // focusable (arrow-key seek, onKeyDown above) and its focus-visible
+          // ring is legitimate for that path, but WebKit/Tauri's focus-visible
+          // heuristic was also firing it on ordinary mouse clicks/drags inside
+          // the timeline (scrubbing, resize-handles, heading drags), showing an
+          // orange ring around the whole timeline during normal mouse use.
+          // preventDefault on the capture-phase mousedown stops the native
+          // focus-shift before any descendant's bubble-phase stopPropagation()
+          // can leave it unaffected; real keyboard Tab-focus is untouched since
+          // Tab never dispatches a mousedown.
+          e.preventDefault();
+        }}
         onMouseDown={(e) => {
           if (resizingId) return;
           const rect = e.currentTarget.getBoundingClientRect();
@@ -337,30 +351,43 @@ export function Timeline({
           window.addEventListener('mouseup', handleMouseUp);
         }}
       >
-        {/* Time Ruler */}
-        <div className="absolute top-4 left-6 right-6 h-4 border-b border-[#1A1A1A] flex items-end">
-          {Array.from({ length: Math.ceil(totalDuration) + 1 }).map((_, i) => (
-            <div key={i} className="flex-shrink-0" style={{ width: `${pixelsPerSecond}px` }}>
-              <div className="h-2 w-px bg-gray-800" />
-              <span className="text-[7px] text-gray-700 absolute -bottom-1 transform -translate-x-1/2 font-mono">{(i * 1).toFixed(1)}s</span>
-            </div>
-          ))}
-        </div>
-
         {/* Path B corrective fix (docs/path-b-heading-layer-plan.md, Phase 3/4/5
             correction) — three stacked lanes, top to bottom: headings, segments,
-            voiceover waveform (below, its own pre-existing block). Same
-            horizontal time-to-pixel mapping/scroll/zoom for all three; the
-            heading lane previously overlapped the segment thumbnails (absolutely
-            positioned inside the same row) — it now gets its own vertical space
-            above the segment track instead. */}
-        <div className="flex-shrink-0 flex flex-col gap-1">
+            voiceover waveform, each with the same bounded-lane border/background
+            (bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg). Originally a
+            ring-inset box-shadow (matching the waveform track's pre-existing
+            style), but that was optically masked on the waveform lane — its
+            cells sit flush edge-to-edge with near-full-height bars, unlike the
+            heading/segment lanes which have visible background showing through
+            gaps — so it's a real border now, which always paints at the box
+            edge regardless of child content density. Same horizontal time-to-pixel
+            mapping/scroll/zoom for all three. The playhead lives at THIS
+            wrapper's level (not inside any one lane) so it spans the full
+            vertical height of whichever lanes are currently rendered — 2 lanes
+            (segments+waveform) with no headings yet, 3 once a heading exists —
+            as one continuous line (CapCut-style), instead of being confined to
+            the segment track's own height. */}
+        <div className="flex-shrink-0 flex flex-col gap-1 relative">
+          {/* Playhead — absolutely positioned against the lanes wrapper above,
+              so top-0/bottom-0 spans every rendered lane. Horizontal position
+              and smooth-follow animation are unchanged. */}
+          <motion.div
+            className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
+            style={{
+              left: `${currentTime * pixelsPerSecond}px`,
+              transition: isPlaying ? 'none' : 'left 0.1s linear',
+            }}
+          >
+            <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-[#F27D26] rotate-45" />
+            <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
+          </motion.div>
+
           {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
               lane; never overlaps the segment track below. pointer-events-none
               on each band so clicks pass through; only the edge handles (and,
               going forward, any lane-level interactions) are interactive. */}
           {isSynced && headings.length > 0 && (
-            <div className="relative h-12 flex-shrink-0">
+            <div className="relative h-20 flex-shrink-0 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
               {headings.map((h) => (
                 <div
                   key={h.id}
@@ -395,20 +422,11 @@ export function Timeline({
             </div>
           )}
 
-          {/* Segment track (unchanged internals — playhead + segment thumbnails) */}
-          <div className="flex-shrink-0 flex gap-2 relative">
-          {/* Playhead */}
-          <motion.div
-            className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
-            style={{
-              left: `${currentTime * pixelsPerSecond}px`,
-              transition: isPlaying ? 'none' : 'left 0.1s linear',
-            }}
-          >
-            <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-[#F27D26] rotate-45" />
-            <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
-          </motion.div>
-
+          {/* Segment track (unchanged internals — segment thumbnails; playhead
+              now lives at the lanes-wrapper level above, spanning all lanes).
+              Bounded-lane border/background matches the heading lane and
+              waveform track for visual consistency across all three. */}
+          <div className="flex-shrink-0 flex gap-2 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
           {/* Visual Track */}
           {!isSynced ? (
             <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
@@ -542,56 +560,59 @@ export function Timeline({
             </div>
           )}
           </div>
+
+          {/* Audio Track — moved inside the lanes wrapper (Path B corrective
+              fix) so the playhead (top-0/bottom-0 on the wrapper above)
+              naturally spans it too; lane-to-lane spacing now comes uniformly
+              from the wrapper's gap-1 instead of this div's own former mt-1. */}
+          {voiceoverName && (
+            <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
+              <div className="flex h-full w-max">
+                {segments.map((s) => (
+                  <div
+                    key={`vo-${s.id}`}
+                    data-seg-id={s.id}
+                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
+                    className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
+                  >
+                    <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
+                    <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
+                    <div className="flex-1 flex items-center px-1">
+                      {(() => {
+                        const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
+                        const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
+                        const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
+                        const bars = waveformBars.slice(startBar, endBar);
+                        if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
+                        return (
+                          <div className="flex items-center h-full w-full gap-px px-0.5">
+                            {bars.map((amp, bi) => (
+                              <div
+                                key={bi}
+                                className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
+                                style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
+                              />
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                    {currentSegmentId === s.id && (
+                      <div className="absolute inset-0 bg-[#F27D26]/5" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Captions track — hook-in for Task 9d (captionCues not yet wired) */}
         {false && (
           <div className="h-8 border-t border-[#1A1A1A] flex items-center px-2">
             {/* caption cues rendered here — Task 9d */}
-          </div>
-        )}
-
-        {/* Audio Track */}
-        {voiceoverName && (
-          <div className="mt-1 h-20 w-max bg-[#0A0A0A] ring-1 ring-inset ring-[#1A1A1A] rounded-lg relative overflow-visible flex items-center">
-            <div className="flex h-full w-max">
-              {segments.map((s) => (
-                <div
-                  key={`vo-${s.id}`}
-                  data-seg-id={s.id}
-                  style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                  className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
-                >
-                  <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
-                  <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                    onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
-                  <div className="flex-1 flex items-center px-1">
-                    {(() => {
-                      const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
-                      const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
-                      const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
-                      const bars = waveformBars.slice(startBar, endBar);
-                      if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
-                      return (
-                        <div className="flex items-center h-full w-full gap-px px-0.5">
-                          {bars.map((amp, bi) => (
-                            <div
-                              key={bi}
-                              className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
-                              style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
-                            />
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                  {currentSegmentId === s.id && (
-                    <div className="absolute inset-0 bg-[#F27D26]/5" />
-                  )}
-                </div>
-              ))}
-            </div>
           </div>
         )}
       </div>
