@@ -18,11 +18,15 @@ function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string
 
 /**
  * Tag format change: [IMAGE: file.jpg] / [VIDEO: file.mp4] -> bare [file.jpg].
- * [HEADING: text] is unchanged. Matching moved from fuzzy to strict exact
- * (Unicode-normalized) filename comparison — the IMAGE/VIDEO keyword itself
- * was never read for anything but scene-boundary/heading detection, so
- * dropping it in favor of a bare tag discards no information any consumer
- * relied on.
+ * Matching moved from fuzzy to strict exact (Unicode-normalized) filename
+ * comparison — the IMAGE/VIDEO keyword itself was never read for anything but
+ * legacy-format detection, so dropping it in favor of a bare tag discards no
+ * information any consumer relied on.
+ *
+ * Path B Decision 6 (2026-07-08): [HEADING: ...] is no longer a distinct tag
+ * kind or scene boundary. The HEADING: keyword is stripped exactly like
+ * IMAGE:/VIDEO:, and the remainder is matched as an ordinary asset tag —
+ * [HEADING: foo.jpg] behaves identically to [IMAGE: foo.jpg].
  */
 
 function makeAsset(overrides: Partial<Asset> & { id: string; name: string }): Asset {
@@ -126,18 +130,34 @@ describe('parseProjectData — bare bracket tag format', () => {
     expect(segments[0]?.text).toContain('Absolutely');
   });
 
-  it('still skips [HEADING: ...] tags without producing a segment for them', async () => {
+  it('matches a [HEADING: file.jpg] tag to the asset with that exact name, like [IMAGE:]', async () => {
     const assets = [makeAsset({ id: 'a1', name: 'hero.jpg' })];
     const segments = await parseProjectData(
-      'Line one.\nLine two.',
-      '[HEADING: Intro]\n[hero.jpg]\nLine one.\n[HEADING: Outro]\nLine two.',
+      'Line one.',
+      '[HEADING: hero.jpg]\nLine one.',
       assets,
       10,
     );
-    // Heading scenes produce no segment at all (their description text is
-    // dropped along with them) — only the [hero.jpg] scene should survive.
     expect(segments).toHaveLength(1);
     expect(segments[0]?.assetId).toBe('a1');
+  });
+
+  it('produces a normal segment per [HEADING: ...] scene — no scene-boundary skip', async () => {
+    const assets = [
+      makeAsset({ id: 'a1', name: 'intro.jpg' }),
+      makeAsset({ id: 'a2', name: 'hero.jpg' }),
+      makeAsset({ id: 'a3', name: 'outro.jpg' }),
+    ];
+    const segments = await parseProjectData(
+      'Line one.\nLine two.\nLine three.',
+      '[HEADING: intro.jpg]\nLine one.\n[hero.jpg]\nLine two.\n[HEADING: outro.jpg]\nLine three.',
+      assets,
+      10,
+    );
+    // All three scenes survive as segments — HEADING tags are no longer
+    // scene boundaries and no longer produce a skipped/dropped scene.
+    expect(segments).toHaveLength(3);
+    expect(segments.map(s => s.assetId)).toEqual(['a1', 'a2', 'a3']);
   });
 
   it('leaves assetId undefined (and keeps the segment) when the filename has no match', async () => {
@@ -288,10 +308,10 @@ describe('detectTextFileRole — bare-tag aware', () => {
     expect(detectTextFileRole('Just a voiceover paragraph with no tags at all.')).toBe('script');
   });
 
-  it('excludes [HEADING:] tags from the count (headings alone do not make a scene doc)', () => {
-    const doc = '[HEADING: Intro]\nLine.\n[HEADING: Middle]\nLine.\n[HEADING: Outro]\nLine.';
-    // 3 headings but 0 asset tags → still a script, not sceneDetails
-    expect(detectTextFileRole(doc)).toBe('script');
+  it('counts [HEADING:] tags the same as any other bracket tag', () => {
+    const doc = '[HEADING: a.jpg]\nLine.\n[HEADING: b.jpg]\nLine.\n[HEADING: c.jpg]\nLine.';
+    // 3 HEADING: tags now count as ordinary asset tags → sceneDetails.
+    expect(detectTextFileRole(doc)).toBe('sceneDetails');
   });
 
   it('still recognizes legacy [IMAGE:]/[VIDEO:] keyword tags', () => {
@@ -399,6 +419,11 @@ describe('cleanTagName — stray edge punctuation', () => {
   it('folds the legacy IMAGE:/VIDEO: keyword prefix', () => {
     expect(cleanTagName('IMAGE: hero.jpg')).toBe('hero.jpg');
     expect(cleanTagName('VIDEO : clip.mp4')).toBe('clip.mp4');
+  });
+
+  it('folds the HEADING: keyword prefix identically (Path B Decision 6)', () => {
+    expect(cleanTagName('HEADING: hero.jpg')).toBe('hero.jpg');
+    expect(cleanTagName('HEADING : clip.mp4')).toBe('clip.mp4');
   });
 
   it('handles a stray colon BEFORE a legacy keyword (edge-clean, strip, edge-clean)', () => {

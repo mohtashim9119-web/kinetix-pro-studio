@@ -15,9 +15,9 @@ export function stripRtfIfNeeded(text: string): string {
   if (!text.trimStart().startsWith('{\\rtf')) return text;
 
   // Step 1: protect bracket tags before any destructive operation.
-  // Bare-tag format: any `[...]` bracket is a real scene/heading tag now
-  // (not just the legacy [IMAGE:]/[VIDEO:]/[AUDIO:] keyword tags), so shield
-  // every bracket — including [HEADING:...] — from the RTF char-walk.
+  // Bare-tag format: any `[...]` bracket is a real scene tag now (not just
+  // the legacy [IMAGE:]/[VIDEO:]/[AUDIO:] keyword tags), so shield every
+  // bracket from the RTF char-walk.
   const placeholders: string[] = [];
   let protected_ = text.replace(/\[[^\]\n]*\]/g, (match) => {
     placeholders.push(match);
@@ -104,10 +104,10 @@ export function stripRtfIfNeeded(text: string): string {
 
   // Step 5b: remove everything before the first bracket tag. RTF font/color
   // table remnants leak as plain text before the first real scene block, and
-  // under the bare-tag format the first tag may be a bare `[filename]` (or a
-  // [HEADING:...]) with no IMAGE/VIDEO/AUDIO keyword — so slice at the first
-  // complete `[...]` bracket pair, whatever kind of tag it is. This is the
-  // fix for the "RTF header junk merged onto segment 1's tag line" bug.
+  // under the bare-tag format the first tag may be a bare `[filename]` with
+  // no IMAGE/VIDEO/AUDIO keyword — so slice at the first complete `[...]`
+  // bracket pair, whatever kind of tag it is. This is the fix for the "RTF
+  // header junk merged onto segment 1's tag line" bug.
   const firstTagIndex = result.search(/\[[^\]\n]*\]/);
   if (firstTagIndex > 0) {
     result = result.slice(firstTagIndex);
@@ -134,16 +134,13 @@ export function stripRtfIfNeeded(text: string): string {
  *
  * Under the bare-tag format an asset tag is any `[...]` bracket (bare
  * `[filename]` or the legacy `[IMAGE:]`/`[VIDEO:]`/`[AUDIO:]` keyword form).
- * `[HEADING:...]` tags are deliberately EXCLUDED from the count: a heading is
- * a structural marker, not an asset reference, and counting it would let a
- * heading-heavy file (or a script that happens to contain a stray `[HEADING:]`)
- * misclassify as scene-details.
+ * `[HEADING:...]` tags count the same as any other bracket tag — headings are
+ * no longer a distinct structural marker (Path B Decision 6); the keyword is
+ * ignored and the remainder is treated as an ordinary asset tag.
  */
 export function detectTextFileRole(
   strippedContent: string,
 ): 'script' | 'sceneDetails' {
-  const bracketMatches = (
-    strippedContent.match(/\[[^\]\n]*\]/g) ?? []
-  ).filter(tag => !/^\[HEADING\s*:/i.test(tag)).length;
+  const bracketMatches = (strippedContent.match(/\[[^\]\n]*\]/g) ?? []).length;
   return bracketMatches >= 3 ? 'sceneDetails' : 'script';
 }

@@ -78,15 +78,19 @@ const cleanEdgePunctuation = (v: string): string =>
 /**
  * Normalizes raw bracket-tag content into a filename stem for matching.
  * Order matters: clean edges first (so a stray leading `:` or quote can't
- * hide a legacy `IMAGE:`/`VIDEO:` keyword from the strip), then drop the
- * legacy keyword prefix, then clean edges again (so any punctuation the
- * keyword strip exposed — e.g. `[IMAGE: : foo]` — is also removed).
+ * hide a legacy `IMAGE:`/`VIDEO:`/`HEADING:` keyword from the strip), then
+ * drop the legacy keyword prefix, then clean edges again (so any punctuation
+ * the keyword strip exposed — e.g. `[IMAGE: : foo]` — is also removed).
+ * `HEADING:` is stripped exactly like `IMAGE:`/`VIDEO:` — the keyword itself
+ * is never read for anything; a `[HEADING: foo.jpg]` tag matches an asset
+ * named `foo.jpg` the same as `[IMAGE: foo.jpg]` would (Path B Decision 6 —
+ * headings are no longer a distinct tag kind).
  * Extension stripping is deliberately NOT done here; isExactFilenameMatch
  * strips extensions from both sides at compare time.
  */
 export function cleanTagName(raw: string): string {
   let name = cleanEdgePunctuation(raw.trim());
-  name = name.replace(/^(?:IMAGE|VIDEO)\s*:\s*/i, '');
+  name = name.replace(/^(?:IMAGE|VIDEO|HEADING)\s*:\s*/i, '');
   return cleanEdgePunctuation(name);
 }
 
