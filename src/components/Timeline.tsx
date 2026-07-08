@@ -8,14 +8,16 @@ import { motion } from 'motion/react';
 import {
   Play, Pause, RotateCcw, AlertCircle, Trash2, Heading1,
 } from 'lucide-react';
-import { VideoSegment, Asset } from '../types';
+import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
+import { resizeHeading } from '../services/headingLayer';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
 interface Props {
   segments: VideoSegment[];
   assets: Asset[];
+  headings: HeadingOverlay[];
   currentSegmentId: string | undefined;
   currentTime: number;
   isPlaying: boolean;
@@ -39,12 +41,14 @@ interface Props {
   onSetAdjustingTrim: (v: boolean) => void;
   onSelectSegment?: (id: string) => void;
   onDeleteHeading?: (id: string) => void;
+  onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
 }
 
 export function Timeline({
   segments,
   assets,
+  headings,
   currentSegmentId,
   currentTime,
   isPlaying,
@@ -68,6 +72,7 @@ export function Timeline({
   onSetAdjustingTrim,
   onSelectSegment,
   onDeleteHeading,
+  onHeadingResizeCommit,
   initialScrollLeft,
 }: Props) {
   const totalDuration = useMemo(
@@ -244,6 +249,51 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sliderT]);
 
+  // Path B Phase 4 (docs/path-b-heading-layer-plan.md) — heading band edge-drag.
+  // Reuses the f4da926 ref+rAF live-drag pattern: no setProject/onHeadingResizeCommit
+  // per mousemove, live visual feedback via direct DOM style writes on the band
+  // element (found via data-heading-id), the real commit fires exactly once on
+  // mouseup. Fully independent of segment resize/layout — a heading band is an
+  // absolutely-positioned overlay, not a flex track item.
+  const handleHeadingResizeStart = (
+    e: React.MouseEvent,
+    heading: HeadingOverlay,
+    edge: 'start' | 'end',
+  ): void => {
+    e.stopPropagation();
+    const el = document.querySelector<HTMLElement>(`[data-heading-id="${heading.id}"]`);
+    if (!el) return;
+    const startClientX = e.clientX;
+    const pps = pixelsPerSecond;
+    let pendingClientX: number | null = null;
+    let hasMoved = false;
+    let rafId: number | null = null;
+
+    const applyFrame = (): void => {
+      rafId = null;
+      if (pendingClientX === null) return;
+      const deltaSeconds = (pendingClientX - startClientX) / pps;
+      const next = resizeHeading(heading, edge, deltaSeconds);
+      el.style.left = `${next.time * pps}px`;
+      el.style.width = `${next.duration * pps}px`;
+    };
+    const handleMove = (moveEvent: MouseEvent): void => {
+      pendingClientX = moveEvent.clientX;
+      hasMoved = true;
+      if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+    };
+    const handleUp = (): void => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      window.removeEventListener('mousemove', handleMove);
+      window.removeEventListener('mouseup', handleUp);
+      if (!hasMoved || pendingClientX === null) return;
+      const deltaSeconds = (pendingClientX - startClientX) / pps;
+      onHeadingResizeCommit?.(heading.id, resizeHeading(heading, edge, deltaSeconds));
+    };
+    window.addEventListener('mousemove', handleMove);
+    window.addEventListener('mouseup', handleUp);
+  };
+
   return (
     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
       {/* Timeline Tracks Area */}
@@ -310,6 +360,35 @@ export function Timeline({
             <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-[#F27D26] rotate-45" />
             <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
           </motion.div>
+
+          {/* Heading overlay band — Path B new-layer headings (docs/path-b-heading-layer-plan.md,
+              Phase 4). Absolute-time positioned over the track, NOT a segment slot — does not
+              participate in segment flex layout/sizing. pointer-events-none on the band itself so
+              clicks pass through to the segment row underneath; only the edge handles are
+              interactive. */}
+          {isSynced && headings.map((h) => (
+            <div
+              key={h.id}
+              data-heading-id={h.id}
+              className="absolute top-0 h-20 z-30 bg-[#F27D26]/10 border-y-2 border-[#F27D26]/70 pointer-events-none flex items-center justify-center overflow-hidden"
+              style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
+            >
+              <div className="flex items-center gap-1 px-1 max-w-full">
+                <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
+                <span className="text-[7px] font-black uppercase tracking-wide text-[#F27D26] truncate">
+                  {h.text || 'Heading'}
+                </span>
+              </div>
+              <div
+                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+                onMouseDown={(e) => handleHeadingResizeStart(e, h, 'start')}
+              />
+              <div
+                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+                onMouseDown={(e) => handleHeadingResizeStart(e, h, 'end')}
+              />
+            </div>
+          ))}
 
           {/* Visual Track */}
           {!isSynced ? (

@@ -32,6 +32,33 @@ export function clampHeadingsToDuration(
   });
 }
 
+export const MIN_HEADING_DURATION = 0.3; // seconds — mirrors App.tsx's MIN_SEGMENT_DURATION
+
+/**
+ * Path B Phase 4 (docs/path-b-heading-layer-plan.md) — pure resize math for the
+ * timeline's edge-drag handles. `edge: 'end'` (right handle) only changes
+ * `duration`; `edge: 'start'` (left handle) shifts `time` and inversely adjusts
+ * `duration` so the opposite edge (`time + duration`) stays fixed, mirroring how
+ * segment start-edge resize works. Clamps to MIN_HEADING_DURATION and time >= 0.
+ */
+export function resizeHeading(
+  original: Pick<HeadingOverlay, 'time' | 'duration'>,
+  edge: 'start' | 'end',
+  deltaSeconds: number
+): { time: number; duration: number } {
+  if (edge === 'end') {
+    return {
+      time: original.time,
+      duration: Math.max(MIN_HEADING_DURATION, original.duration + deltaSeconds),
+    };
+  }
+  const maxDelta = original.duration - MIN_HEADING_DURATION;
+  const clampedDelta = Math.min(deltaSeconds, maxDelta);
+  const time = Math.max(0, original.time + clampedDelta);
+  const actualDelta = time - original.time;
+  return { time, duration: original.duration - actualDelta };
+}
+
 const DEFAULT_HEADING_DURATION = 1.0;
 
 /** Factory for a new HeadingOverlay — defaults match Phase 0's pinned visual

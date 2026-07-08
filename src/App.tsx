@@ -2363,6 +2363,7 @@ export default function App() {
                 initialScrollLeft={initialTimelineScrollLeft}
                 segments={project.segments}
                 assets={project.assets}
+                headings={project.headings ?? []}
                 currentSegmentId={currentSegment?.id}
                 currentTime={currentTime}
                 isPlaying={isPlaying}
@@ -2539,6 +2540,12 @@ export default function App() {
                 onSetAdjustingTrim={setIsAdjustingTrim}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
                 onDeleteHeading={handleDeleteHeading}
+                onHeadingResizeCommit={(id, next) => {
+                  setProject(prev => ({
+                    ...prev,
+                    headings: (prev.headings ?? []).map(h => h.id === id ? { ...h, ...next } : h),
+                  }));
+                }}
               />
             </ErrorBoundary>
           </div>

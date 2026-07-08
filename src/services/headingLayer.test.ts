@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getActiveHeadingAt, clampHeadingsToDuration, createHeading } from './headingLayer';
+import { getActiveHeadingAt, clampHeadingsToDuration, createHeading, resizeHeading, MIN_HEADING_DURATION } from './headingLayer';
 import type { HeadingOverlay } from '../types';
 
 function makeHeading(partial: Partial<HeadingOverlay> & { id: string }): HeadingOverlay {
@@ -97,6 +97,50 @@ describe('clampHeadingsToDuration', () => {
     clampHeadingsToDuration(original, 10);
     expect(original[0]?.time).toBe(15);
     expect(original[0]?.needsReview).toBeUndefined();
+  });
+});
+
+describe('resizeHeading', () => {
+  it('end edge: grows duration, leaves time untouched', () => {
+    const result = resizeHeading({ time: 5, duration: 1 }, 'end', 2);
+    expect(result).toEqual({ time: 5, duration: 3 });
+  });
+
+  it('end edge: shrinking below MIN_HEADING_DURATION clamps to the minimum', () => {
+    const result = resizeHeading({ time: 5, duration: 1 }, 'end', -10);
+    expect(result).toEqual({ time: 5, duration: MIN_HEADING_DURATION });
+  });
+
+  it('start edge: shrinking (positive delta) shifts time forward and keeps the opposite edge fixed', () => {
+    const original = { time: 5, duration: 2 };
+    const result = resizeHeading(original, 'start', 1);
+    expect(result).toEqual({ time: 6, duration: 1 });
+    // opposite edge (time + duration) is conserved
+    expect(result.time + result.duration).toBe(original.time + original.duration);
+  });
+
+  it('start edge: growing (negative delta) shifts time backward and keeps the opposite edge fixed', () => {
+    const original = { time: 5, duration: 2 };
+    const result = resizeHeading(original, 'start', -3);
+    expect(result).toEqual({ time: 2, duration: 5 });
+    expect(result.time + result.duration).toBe(original.time + original.duration);
+  });
+
+  it('start edge: shrinking past MIN_HEADING_DURATION clamps duration to the minimum', () => {
+    const result = resizeHeading({ time: 1, duration: 1 }, 'start', 5);
+    expect(result.duration).toBeCloseTo(MIN_HEADING_DURATION);
+    expect(result.time).toBeCloseTo(1 + (1 - MIN_HEADING_DURATION));
+  });
+
+  it('start edge: dragging past t=0 clamps time to 0 and grows duration to absorb the rest', () => {
+    const result = resizeHeading({ time: 0.2, duration: 0.5 }, 'start', -5);
+    expect(result.time).toBe(0);
+    expect(result.duration).toBeCloseTo(0.7);
+  });
+
+  it('start edge: zero delta is a no-op', () => {
+    const original = { time: 5, duration: 2 };
+    expect(resizeHeading(original, 'start', 0)).toEqual(original);
   });
 });
 
