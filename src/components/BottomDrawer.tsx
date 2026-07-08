@@ -6,18 +6,24 @@
 import { useRef } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { X, Lock, Unlock, ArrowLeftRight, Sparkles, Layers } from 'lucide-react';
-import { VideoSegment, Asset } from '../types';
+import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { SegmentControls } from './SegmentControls';
 import { labelOf, TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE } from '../effectsOptions';
 
 interface Props {
   segment: VideoSegment | null;
   segmentIndex: number;
+  /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level heading
+   *  overlay target, mutually exclusive with `segment`. When set, the drawer
+   *  renders the HeadingOverlay editor instead of the segment editor. */
+  heading?: HeadingOverlay | null;
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
   onClose: () => void;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
+  /** Required when `heading` is set. */
+  onUpdateHeading?: (id: string, updates: Partial<HeadingOverlay>) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onToggleLock: (segmentId: string) => void;
   onSeek?: (time: number) => void;
@@ -26,11 +32,13 @@ interface Props {
 export function BottomDrawer({
   segment,
   segmentIndex,
+  heading,
   assets,
   globalOverlayConfig,
   onClose,
   onUpdateSegment,
   onUpdateSegmentOverlay,
+  onUpdateHeading,
   onOpenStockSearch,
   onToggleLock,
   onSeek,
@@ -39,6 +47,7 @@ export function BottomDrawer({
 
   const s = segment;
   const idx = segmentIndex;
+  const h = heading ?? null;
 
   const effectPills = s && !s.isHeading ? [
     s.effectTransition && s.effectTransition !== TRANSITION_NONE
@@ -62,7 +71,7 @@ export function BottomDrawer({
 
   return (
     <AnimatePresence>
-      {s && (
+      {(s || h) && (
         <motion.div
           initial={{ y: '100%', x: '-50%' }}
           animate={{ y: 0, x: '-50%' }}
@@ -78,10 +87,10 @@ export function BottomDrawer({
             <div className="flex items-center gap-3 justify-self-start">
               <div className="w-8 h-1 rounded-full bg-[#282828]" />
               <span className="text-[10px] font-black uppercase tracking-widest text-gray-400">
-                {s.headingConfig?.text || s.heading || `Scene ${idx + 1}`}
+                {h ? (h.text || 'Heading') : (s?.headingConfig?.text || s?.heading || `Scene ${idx + 1}`)}
               </span>
               <span className="px-2 py-0.5 bg-[#1A1A1A] rounded text-[9px] font-mono text-gray-500">
-                {s.duration.toFixed(1)}s
+                {(h ? h.duration : s?.duration ?? 0).toFixed(1)}s
               </span>
             </div>
             <div className="flex items-center gap-2 justify-self-center">
@@ -100,13 +109,16 @@ export function BottomDrawer({
               ))}
             </div>
             <div className="flex items-center gap-2 justify-self-end">
-              <button
-                onClick={() => onToggleLock(s.id)}
-                className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors"
-                style={{ color: s.locked ? '#F27D26' : '#4B5563' }}
-              >
-                {s.locked ? <><Lock size={10} /> Locked</> : <><Unlock size={10} /> Lock</>}
-              </button>
+              {/* HeadingOverlay has no lock field (Path B Decision 1) — lock toggle is segment-only. */}
+              {s && (
+                <button
+                  onClick={() => onToggleLock(s.id)}
+                  className="flex items-center gap-1 text-[9px] uppercase tracking-widest transition-colors"
+                  style={{ color: s.locked ? '#F27D26' : '#4B5563' }}
+                >
+                  {s.locked ? <><Lock size={10} /> Locked</> : <><Unlock size={10} /> Lock</>}
+                </button>
+              )}
               <button
                 onClick={onClose}
                 className="p-1 rounded-lg hover:bg-[#1A1A1A] transition-colors"
@@ -121,12 +133,14 @@ export function BottomDrawer({
 
             {/* Shared controls — same set as the Review Mapping card (no thumbnail) */}
             <SegmentControls
-              segment={s}
+              segment={s ?? undefined}
               index={idx}
+              heading={h ?? undefined}
               assets={assets}
               globalOverlayConfig={globalOverlayConfig}
               onUpdateSegment={onUpdateSegment}
               onUpdateSegmentOverlay={onUpdateSegmentOverlay}
+              onUpdateHeading={h ? (updates) => onUpdateHeading?.(h.id, updates) : undefined}
               onOpenStockSearch={onOpenStockSearch}
             />
 

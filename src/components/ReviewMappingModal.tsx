@@ -5,9 +5,10 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { X, Video, AlertCircle, Image as ImageIcon } from 'lucide-react';
-import { VideoSegment, Asset } from '../types';
+import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { SegmentControls } from './SegmentControls';
+import { interleaveHeadingRows } from '../services/headingLayer';
 
 // Shared field/button/icon styling used by SegmentControls now lives in
 // SegmentControls.tsx (single source of truth). This modal only keeps the
@@ -15,11 +16,15 @@ import { SegmentControls } from './SegmentControls';
 
 interface ReviewMappingModalProps {
   segments: VideoSegment[];
+  /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level heading
+   *  overlays, interleaved among segment cards by `interleaveHeadingRows`. */
+  headings: HeadingOverlay[];
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
   onClose: () => void;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
+  onUpdateHeading: (id: string, updates: Partial<HeadingOverlay>) => void;
   onOpenStockSearch: (segmentId: string) => void;
 }
 
@@ -56,11 +61,13 @@ const formatTime = (seconds: number) => {
 
 export function ReviewMappingModal({
   segments,
+  headings,
   assets,
   globalOverlayConfig,
   onClose,
   onUpdateSegment,
   onUpdateSegmentOverlay,
+  onUpdateHeading,
   onOpenStockSearch,
 }: ReviewMappingModalProps) {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -72,6 +79,11 @@ export function ReviewMappingModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  // Path B (Decision 3) — same row-ordering rule as the left panel's segments
+  // tab: a heading card sits immediately before the first segment card whose
+  // startTime is at or after the heading's time.
+  const rows = interleaveHeadingRows(segments, headings);
 
   return (
     <div
@@ -105,11 +117,18 @@ export function ReviewMappingModal({
               No segments yet — apply sync to generate.
             </p>
           )}
-          {segments.map((seg, i) => (
+          {rows.map((row) => row.type === 'heading' ? (
+            <HeadingReviewRow
+              key={row.heading.id}
+              heading={row.heading}
+              globalOverlayConfig={globalOverlayConfig}
+              onUpdateHeading={onUpdateHeading}
+            />
+          ) : (
             <ReviewMappingRow
-              key={seg.id}
-              segment={seg}
-              index={i}
+              key={row.segment.id}
+              segment={row.segment}
+              index={row.index}
               assets={assets}
               globalOverlayConfig={globalOverlayConfig}
               onUpdateSegment={onUpdateSegment}
@@ -118,6 +137,97 @@ export function ReviewMappingModal({
             />
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HeadingReviewRow — Path B (docs/path-b-heading-layer-plan.md, Phase 5) card
+// for a top-level HeadingOverlay. Same 35% thumbnail + 65% controls layout as
+// ReviewMappingRow, but reads straight off HeadingOverlay fields — no asset
+// preview (HeadingOverlay carries no background-asset field, unlike the
+// legacy HeadingConfig.assetId).
+// ---------------------------------------------------------------------------
+
+interface HeadingReviewRowProps {
+  heading: HeadingOverlay;
+  globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
+  onUpdateHeading: (id: string, updates: Partial<HeadingOverlay>) => void;
+}
+
+function HeadingReviewRow({ heading: h, globalOverlayConfig, onUpdateHeading }: HeadingReviewRowProps) {
+  const { ref: thumbRef, height: thumbHeight } = useThumbnailHeight();
+  const scale = thumbHeight / REFERENCE_PREVIEW_HEIGHT;
+  const meta = `${h.duration.toFixed(1)}s · ${formatTime(h.time)} — ${formatTime(h.time + h.duration)}`;
+  const headingFontSizePx = h.fontSize * scale;
+
+  return (
+    <div className="rounded-xl overflow-hidden bg-[#111111] border border-[rgba(224,124,58,0.3)]">
+      {/* Card header */}
+      <div className="h-[34px] px-[14px] border-b border-[#1f1f1f] flex items-center justify-between gap-2">
+        <div className="flex items-center gap-[7px] min-w-0 overflow-hidden">
+          <span className="flex-shrink-0 bg-[#e07c3a] text-white text-[9px] font-bold px-[6px] py-[3px] rounded-[4px]">
+            H
+          </span>
+          <span className="text-[12px] text-[#dcdcdc] truncate">{h.text || 'Heading'}</span>
+          {h.needsReview && (
+            <span className="flex-shrink-0 bg-[rgba(255,193,7,0.15)] text-[#ffc107] text-[9px] font-bold px-[6px] py-[3px] rounded-[4px]">
+              Review
+            </span>
+          )}
+        </div>
+        <span className="text-[11px] text-[#6a6a6a] whitespace-nowrap flex-shrink-0">{meta}</span>
+      </div>
+
+      {/* Body */}
+      <div className="flex flex-row items-stretch">
+        {/* Thumbnail — solid backgroundColor + live heading text, scaled proportionally
+            to this box (see useThumbnailHeight above). No asset preview: HeadingOverlay
+            carries no background-asset field. */}
+        <div className="w-[35%] flex-shrink-0 border-r border-[#1f1f1f] flex items-center">
+          <div
+            ref={thumbRef}
+            className="relative w-full aspect-video overflow-hidden flex items-center justify-center"
+            style={{ backgroundColor: h.backgroundColor }}
+          >
+            {h.text && (
+              <div
+                className="absolute text-center pointer-events-none"
+                style={{
+                  left: `${h.x}%`,
+                  top: `${h.y}%`,
+                  transform: `translate(-${h.x}%, -${h.y}%)`,
+                  width: 'max-content',
+                  maxWidth: '90%',
+                  zIndex: 1,
+                  fontSize: `${headingFontSizePx}px`,
+                  fontFamily: h.fontFamily || globalOverlayConfig.fontFamily,
+                  fontWeight: h.fontWeight,
+                  color: h.color,
+                  lineHeight: 1.2,
+                  overflow: 'hidden',
+                  display: '-webkit-box',
+                  WebkitLineClamp: 6,
+                  WebkitBoxOrient: 'vertical',
+                }}
+              >
+                {h.text}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Controls — right 65%. Shared with the bottom drawer. */}
+        <SegmentControls
+          heading={h}
+          assets={[]}
+          globalOverlayConfig={globalOverlayConfig}
+          onUpdateSegment={() => {}}
+          onUpdateSegmentOverlay={() => {}}
+          onUpdateHeading={(updates) => onUpdateHeading(h.id, updates)}
+          onOpenStockSearch={() => {}}
+        />
       </div>
     </div>
   );

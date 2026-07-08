@@ -25,7 +25,7 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType, HeadingOverlay } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
 import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent } from './EffectsPanel';
@@ -33,6 +33,7 @@ import { loadLookPresets, saveLookPreset, deleteLookPreset, type LookPreset } fr
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow } from '../services/headingLayer';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -319,6 +320,9 @@ function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onC
 
 interface Props {
   segments: VideoSegment[];
+  /** Path B (docs/path-b-heading-layer-plan.md) — top-level heading overlays,
+   *  interleaved into the segments-tab list by `interleaveHeadingRows`. */
+  headings: HeadingOverlay[];
   assets: Asset[];
   voiceoverId: string | undefined;
   // Current project state — drives "already synced" slot display + editors.
@@ -357,13 +361,17 @@ interface Props {
   onUnlockAll: () => void;
   allLocked: boolean;
   onOpenReviewMapping: () => void;
-  /** Insert a new heading segment at the given index (0 = before all segments). */
+  /** Creates a new HeadingOverlay at the boundary after segment `afterIndex`
+   *  (-1 = before all segments) — see headingLayer.ts's boundaryTimeForGap. */
   onInsertHeading: (afterIndex: number) => void;
-  /** Delete a heading segment by id — only shown on isHeading tiles. */
+  /** Delete a HeadingOverlay by id. */
   onDeleteHeading?: (id: string) => void;
-  /** Move a heading segment to a new gap index (0..segments.length) among the
-   *  current segments array — only shown (drag handle) on isHeading tiles. */
-  onMoveHeading?: (id: string, targetIndex: number) => void;
+  /** Retime a HeadingOverlay directly to an absolute timestamp (drag-to-reorder
+   *  in the left panel snaps to a segment boundary — see boundaryTimeForGap). */
+  onMoveHeading?: (id: string, newTime: number) => void;
+  /** Selects a heading row — opens the drawer's heading editor + seeks preview. */
+  onHeadingClick?: (id: string) => void;
+  selectedHeadingId?: string;
   // Misc
   selectedSegmentId: string | undefined;
   // Currently playing/active segment id (derived from playback time in App.tsx).
@@ -417,6 +425,7 @@ interface Props {
 
 export function DropZonePanel({
   segments,
+  headings,
   assets,
   voiceoverId,
   script,
@@ -447,6 +456,8 @@ export function DropZonePanel({
   onInsertHeading,
   onDeleteHeading,
   onMoveHeading,
+  onHeadingClick,
+  selectedHeadingId,
   selectedSegmentId,
   currentSegmentId,
   selectedSegmentIds,
@@ -546,6 +557,13 @@ export function DropZonePanel({
   // Row elements indexed by position, measured on pointer move to resolve dropTargetIdx.
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
 
+  // Interleaves top-level heading overlays into the segment list for display
+  // (Path B, docs/path-b-heading-layer-plan.md Phase 5, Decision 3) — row
+  // position is derived from heading.time relative to segment boundaries,
+  // not stored as an array position. `rowRefs` below is indexed 1:1 with
+  // this merged list, not with the raw `segments` array.
+  const rows = interleaveHeadingRows(segments, headings);
+
   // Auto-scroll the active segment into view whenever it changes — during
   // playback, on a timeline click, or while scrubbing. Fires only on
   // currentSegmentId change (manual scrolling of this list never changes it),
@@ -553,7 +571,7 @@ export function DropZonePanel({
   // never fights the user's own scrolling.
   useEffect(() => {
     if (!currentSegmentId) return;
-    const idx = segments.findIndex(s => s.id === currentSegmentId);
+    const idx = rows.findIndex(r => r.type === 'segment' && r.segment.id === currentSegmentId);
     if (idx < 0) return;
     const row = rowRefs.current[idx];
     const container = document.getElementById('segment-list-scroll');
@@ -565,7 +583,7 @@ export function DropZonePanel({
     if (rowTop < viewTop || rowBottom > viewBottom) {
       container.scrollTo({ top: rowTop - container.clientHeight / 2, behavior: 'smooth' });
     }
-  }, [currentSegmentId, segments]);
+  }, [currentSegmentId, rows]);
 
   // ── Scene Details edit-mode state ─────────────────────────────────────────
   const [isEditingScene, setIsEditingScene] = useState(false);
@@ -1308,7 +1326,115 @@ export function DropZonePanel({
               <Plus size={15} /> Add heading
             </button>
 
-            {segments.map((seg, i) => {
+            {rows.map((row, i) => {
+              if (row.type === 'heading') {
+                const h = row.heading;
+                const isHeadingSelected = h.id === selectedHeadingId;
+                return (
+                  <div
+                    key={h.id}
+                    ref={(el) => { rowRefs.current[i] = el; }}
+                    className="relative group/gap"
+                  >
+                    {draggingHeadingId && dropTargetIdx === i && (
+                      <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--kx-accent)] rounded-full z-20 pointer-events-none" />
+                    )}
+                    <div
+                      onClick={() => onHeadingClick?.(h.id)}
+                      className={`group relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
+                                  cursor-pointer transition-colors select-none
+                                  ${isHeadingSelected
+                                    ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)]'
+                                    : 'border-[var(--kx-line)] hover:border-[var(--kx-line-2)]'
+                                  }
+                                  ${!isHeadingSelected ? 'bg-[var(--kx-surface)] hover:bg-[var(--kx-hover)]' : ''}`}
+                      {...(onMoveHeading ? {
+                        onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+                          if ((e.target as HTMLElement).closest('button')) return;
+                          e.preventDefault();
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          setDraggingHeadingId(h.id);
+                          dropTargetIdxRef.current = i;
+                          setDropTargetIdx(i);
+                        },
+                        onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+                          if (draggingHeadingId !== h.id) return;
+                          const idx = computeDropGapIndex(rowRefs.current, e.clientY);
+                          if (idx !== dropTargetIdxRef.current) {
+                            dropTargetIdxRef.current = idx;
+                            setDropTargetIdx(idx);
+                          }
+                        },
+                        onPointerUp: (e: React.PointerEvent<HTMLDivElement>) => {
+                          e.currentTarget.releasePointerCapture(e.pointerId);
+                          if (draggingHeadingId === h.id && onMoveHeading) {
+                            const dropIdx = dropTargetIdxRef.current ?? i;
+                            const gapIndex = segmentGapIndexForRow(rows, dropIdx);
+                            onMoveHeading(h.id, boundaryTimeForGap(segments, gapIndex));
+                          }
+                          setDraggingHeadingId(null);
+                          setDropTargetIdx(null);
+                        },
+                        style: { cursor: draggingHeadingId === h.id ? 'grabbing' : 'grab' },
+                      } : {})}
+                    >
+                      {isHeadingSelected && (
+                        <span className="absolute left-0 top-[8px] bottom-[8px] w-[3px] bg-[var(--kx-accent)] rounded-r-[3px]" />
+                      )}
+                      {/* Left spine — drag handle only (no index/duration-bar/start-time — a
+                          heading occupies no timeline seconds, unlike a segment). */}
+                      <div className="flex-none flex items-center justify-center w-[40px] py-2.5 border-r border-[var(--kx-line)]">
+                        <span className="font-mono text-[9px] text-[var(--kx-faint)]">{formatTime(h.time)}</span>
+                      </div>
+
+                      {/* Thumbnail */}
+                      <div className="w-[60px] h-[60px] m-2.5 mr-3 rounded-[9px] flex-shrink-0
+                                      bg-[var(--kx-accent)] flex items-center justify-center">
+                        <span className="text-white font-bold text-[18px] tracking-tight">H1</span>
+                      </div>
+
+                      {/* Meta */}
+                      <div className="flex-1 min-w-0 flex flex-col justify-center gap-1 py-2.5 pr-2">
+                        <p className="text-[14px] font-semibold text-[var(--kx-text)] truncate">{h.text || 'Heading'}</p>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[11px] text-[var(--kx-muted)]">
+                            {formatTime(h.time)}<span className="text-[var(--kx-faint)] mx-0.5">→</span>{formatTime(h.time + h.duration)}
+                          </span>
+                          <span className="font-mono text-[10px] px-1.5 py-0.5 rounded-[5px] bg-[var(--kx-accent-soft)] text-[var(--kx-accent-2)]">
+                            {h.duration.toFixed(1)}s
+                          </span>
+                          {h.needsReview && (
+                            <span className="font-mono text-[9px] px-1.5 py-0.5 rounded-[5px] bg-[rgba(255,193,7,0.15)] text-[#ffc107]">
+                              Review
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Right controls — delete only (no lock/batch-select: HeadingOverlay
+                          has neither field, unlike a segment). */}
+                      {onDeleteHeading && (
+                        <div className="flex-none flex items-center justify-center px-3 py-2.5">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); onDeleteHeading(h.id); }}
+                            className="opacity-0 group-hover:opacity-100 transition-opacity
+                                       p-1.5 rounded-[6px] text-[var(--kx-faint)]
+                                       hover:text-[var(--kx-danger)]
+                                       hover:bg-[rgba(255,107,107,0.1)]"
+                            aria-label="Delete heading"
+                            title="Delete heading"
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+
+              const seg = row.segment;
+              const segIdx = row.index;
               if (segmentSearch && !seg.text?.toLowerCase().includes(segmentSearch.toLowerCase())) return null;
               const asset = assets.find(a => a.id === seg.assetId);
               const isSelected = seg.id === selectedSegmentId;
@@ -1373,7 +1499,7 @@ export function DropZonePanel({
                     )}
                     {/* Left spine — drag handle (headings) or index + duration bar + start time */}
                     <div className="flex-none flex flex-col items-center justify-center gap-1.5 w-[40px] py-2.5 border-r border-[var(--kx-line)]">
-                      <span className={`font-mono text-[10px] ${isActive ? 'text-[var(--kx-accent-2)]' : isSelected ? 'text-[var(--kx-accent-2)]' : 'text-[var(--kx-faint)]'}`}>{String(i + 1).padStart(2, '0')}</span>
+                      <span className={`font-mono text-[10px] ${isActive ? 'text-[var(--kx-accent-2)]' : isSelected ? 'text-[var(--kx-accent-2)]' : 'text-[var(--kx-faint)]'}`}>{String(segIdx + 1).padStart(2, '0')}</span>
                       <span
                         className={`w-1 rounded-[2px] ${isActive || isSelected || isChecked ? 'bg-[var(--kx-accent)]' : 'bg-[rgba(255,255,255,.13)]'}`}
                         style={{ height: Math.max(10, Math.min(32, (seg.duration / maxSegmentDuration) * 32)) }}
@@ -1464,30 +1590,30 @@ export function DropZonePanel({
                     </div>
                   </div>
 
-                  {/* Hover-reveal "+ heading" gap button — appears between segments */}
+                  {/* Hover-reveal "+ heading" gap button — appears after each segment */}
                   <div
                     className="relative h-3 flex items-center justify-center"
-                    onMouseEnter={() => setHoveredGapIdx(i)}
+                    onMouseEnter={() => setHoveredGapIdx(segIdx)}
                     onMouseLeave={() => setHoveredGapIdx(null)}
                   >
                     <button
-                      onClick={(e) => { e.stopPropagation(); onInsertHeading(i); }}
+                      onClick={(e) => { e.stopPropagation(); onInsertHeading(segIdx); }}
                       className={`absolute flex items-center gap-1 px-2 py-0.5 rounded-[6px]
                                   text-[10px] font-medium
                                   bg-[var(--kx-surface)] border border-[var(--kx-line-2)] text-[var(--kx-muted)]
                                   hover:text-[var(--kx-accent-2)] hover:border-[var(--kx-accent-line)] hover:bg-[var(--kx-accent-soft)]
                                   transition-all z-10
-                                  ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
-                      aria-label={`Insert heading after segment ${i + 1}`}
+                                  ${hoveredGapIdx === segIdx ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}
+                      aria-label={`Insert heading after segment ${segIdx + 1}`}
                     >
                       <Plus size={11} /> heading
                     </button>
-                    <div className={`w-full h-px bg-[var(--kx-line-2)] transition-opacity ${hoveredGapIdx === i ? 'opacity-100' : 'opacity-0'}`} />
+                    <div className={`w-full h-px bg-[var(--kx-line-2)] transition-opacity ${hoveredGapIdx === segIdx ? 'opacity-100' : 'opacity-0'}`} />
                   </div>
                 </div>
               );
             })}
-            {draggingHeadingId && dropTargetIdx === segments.length && (
+            {draggingHeadingId && dropTargetIdx === rows.length && (
               <div className="h-0.5 bg-[var(--kx-accent)] rounded-full" />
             )}
             {segments.length === 0 && (

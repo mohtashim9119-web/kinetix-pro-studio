@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { getActiveHeadingAt, clampHeadingsToDuration, createHeading, resizeHeading, MIN_HEADING_DURATION } from './headingLayer';
-import type { HeadingOverlay } from '../types';
+import {
+  getActiveHeadingAt,
+  clampHeadingsToDuration,
+  createHeading,
+  resizeHeading,
+  MIN_HEADING_DURATION,
+  interleaveHeadingRows,
+  boundaryTimeForGap,
+  segmentGapIndexForRow,
+  type InterleavedRow,
+} from './headingLayer';
+import type { HeadingOverlay, VideoSegment } from '../types';
+import { TransitionType, AnimationType } from '../types';
 
 function makeHeading(partial: Partial<HeadingOverlay> & { id: string }): HeadingOverlay {
   return {
@@ -141,6 +152,154 @@ describe('resizeHeading', () => {
   it('start edge: zero delta is a no-op', () => {
     const original = { time: 5, duration: 2 };
     expect(resizeHeading(original, 'start', 0)).toEqual(original);
+  });
+});
+
+function makeSegment(partial: Partial<VideoSegment> & { id: string; startTime: number; duration: number }): VideoSegment {
+  return {
+    text: '',
+    order: 0,
+    transition: TransitionType.NONE,
+    animation: AnimationType.NONE,
+    ...partial,
+  };
+}
+
+describe('interleaveHeadingRows', () => {
+  it('returns segment-only rows in order when there are no headings', () => {
+    const segs = [
+      makeSegment({ id: 's1', startTime: 0, duration: 5 }),
+      makeSegment({ id: 's2', startTime: 5, duration: 5 }),
+    ];
+    const rows = interleaveHeadingRows(segs, []);
+    expect(rows).toEqual([
+      { type: 'segment', segment: segs[0], index: 0 },
+      { type: 'segment', segment: segs[1], index: 1 },
+    ]);
+  });
+
+  it('places a heading immediately before the segment whose startTime equals the heading time (creation-time placement)', () => {
+    const segs = [
+      makeSegment({ id: 's1', startTime: 0, duration: 5 }),
+      makeSegment({ id: 's2', startTime: 5, duration: 5 }),
+    ];
+    const h = { id: 'h1', time: 5 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [h]);
+    expect(rows.map(r => r.type === 'heading' ? `h:${r.heading.id}` : `s:${r.segment.id}`))
+      .toEqual(['s:s1', 'h:h1', 's:s2']);
+  });
+
+  it('places a heading before the very first segment when its time is at or before that segment\'s startTime', () => {
+    const segs = [makeSegment({ id: 's1', startTime: 0, duration: 5 })];
+    const h = { id: 'h1', time: 0 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [h]);
+    expect(rows[0]).toEqual({ type: 'heading', heading: h });
+  });
+
+  it('places a heading after the last segment when its time is past the end of all segments', () => {
+    const segs = [makeSegment({ id: 's1', startTime: 0, duration: 5 })];
+    const h = { id: 'h1', time: 10 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [h]);
+    expect(rows[rows.length - 1]).toEqual({ type: 'heading', heading: h });
+  });
+
+  it('sorts multiple headings by time regardless of input order', () => {
+    const segs = [
+      makeSegment({ id: 's1', startTime: 0, duration: 5 }),
+      makeSegment({ id: 's2', startTime: 5, duration: 5 }),
+    ];
+    const hA = { id: 'hA', time: 5 } as HeadingOverlay;
+    const hB = { id: 'hB', time: 0 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [hA, hB]);
+    expect(rows.map(r => r.type === 'heading' ? r.heading.id : r.segment.id))
+      .toEqual(['hB', 's1', 'hA', 's2']);
+  });
+
+  it('preserves relative order of headings that land at the exact same point', () => {
+    const segs = [makeSegment({ id: 's1', startTime: 0, duration: 5 })];
+    const hA = { id: 'hA', time: 0 } as HeadingOverlay;
+    const hB = { id: 'hB', time: 0 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [hA, hB]);
+    expect(rows.map(r => r.type === 'heading' ? r.heading.id : r.segment.id))
+      .toEqual(['hA', 'hB', 's1']);
+  });
+
+  it('preserves the real segment-array index on segment rows even with headings interleaved', () => {
+    const segs = [
+      makeSegment({ id: 's1', startTime: 0, duration: 5 }),
+      makeSegment({ id: 's2', startTime: 5, duration: 5 }),
+    ];
+    const h = { id: 'h1', time: 5 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [h]);
+    const segRows = rows.filter((r): r is Extract<InterleavedRow, { type: 'segment' }> => r.type === 'segment');
+    expect(segRows.map(r => r.index)).toEqual([0, 1]);
+  });
+
+  it('returns an empty list for no segments and no headings', () => {
+    expect(interleaveHeadingRows([], [])).toEqual([]);
+  });
+
+  it('places all headings at the end when there are no segments', () => {
+    const h = { id: 'h1', time: 3 } as HeadingOverlay;
+    const rows = interleaveHeadingRows([], [h]);
+    expect(rows).toEqual([{ type: 'heading', heading: h }]);
+  });
+});
+
+describe('boundaryTimeForGap', () => {
+  const segs = [
+    { startTime: 0, duration: 5 },
+    { startTime: 5, duration: 3 },
+    { startTime: 8, duration: 4 },
+  ];
+
+  it('returns 0 for gap 0 before the first segment', () => {
+    expect(boundaryTimeForGap(segs, 0)).toBe(0);
+  });
+
+  it('returns the following segment\'s startTime for a mid-list gap', () => {
+    expect(boundaryTimeForGap(segs, 1)).toBe(5);
+    expect(boundaryTimeForGap(segs, 2)).toBe(8);
+  });
+
+  it('returns the end of the last segment for the trailing gap', () => {
+    expect(boundaryTimeForGap(segs, 3)).toBe(12);
+  });
+
+  it('clamps out-of-range gap indices', () => {
+    expect(boundaryTimeForGap(segs, -5)).toBe(0);
+    expect(boundaryTimeForGap(segs, 999)).toBe(12);
+  });
+
+  it('returns 0 for an empty segment list', () => {
+    expect(boundaryTimeForGap([], 0)).toBe(0);
+  });
+});
+
+describe('segmentGapIndexForRow', () => {
+  it('counts only segment rows before the given row index', () => {
+    const segs = [
+      makeSegment({ id: 's1', startTime: 0, duration: 5 }),
+      makeSegment({ id: 's2', startTime: 5, duration: 5 }),
+    ];
+    const h = { id: 'h1', time: 5 } as HeadingOverlay;
+    const rows = interleaveHeadingRows(segs, [h]); // [s1, h1, s2]
+    expect(segmentGapIndexForRow(rows, 0)).toBe(0); // before s1
+    expect(segmentGapIndexForRow(rows, 1)).toBe(1); // between s1 and h1 — 1 segment seen
+    expect(segmentGapIndexForRow(rows, 2)).toBe(1); // between h1 and s2 — still 1
+    expect(segmentGapIndexForRow(rows, 3)).toBe(2); // after s2
+  });
+
+  it('clamps out-of-range row indices', () => {
+    const rows: InterleavedRow[] = [
+      { type: 'segment', segment: makeSegment({ id: 's1', startTime: 0, duration: 5 }), index: 0 },
+    ];
+    expect(segmentGapIndexForRow(rows, -1)).toBe(0);
+    expect(segmentGapIndexForRow(rows, 999)).toBe(1);
+  });
+
+  it('returns 0 for an empty row list', () => {
+    expect(segmentGapIndexForRow([], 0)).toBe(0);
   });
 });
 

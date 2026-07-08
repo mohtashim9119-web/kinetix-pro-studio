@@ -4,7 +4,7 @@
  */
 
 import { Film, Maximize2, Ban } from 'lucide-react';
-import { VideoSegment, Asset, HeadingConfig } from '../types';
+import { VideoSegment, Asset, HeadingConfig, HeadingOverlay } from '../types';
 import { FONT_FAMILIES, TEXT_ANIMATIONS } from '../constants';
 
 // ---------------------------------------------------------------------------
@@ -22,38 +22,170 @@ const TOGGLE_ON = 'bg-[#e07c3a] border-[#e07c3a] text-white';
 const TOGGLE_OFF = 'bg-transparent border-[#3a3a3a] text-[#aaa] hover:text-white hover:border-white/40';
 const SWATCH = 'rm-swatch w-[32px] h-[32px] flex-shrink-0 rounded-[7px] border border-[#3a3a3a] bg-[#2a2a2a] cursor-pointer';
 
+const SLIDER_STYLE = `
+  .rm-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: #e07c3a; }
+  .rm-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid #e07c3a; margin-top: -4.5px; }
+  .rm-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #e07c3a; }
+  .rm-slider::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid #e07c3a; }
+  .rm-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #e07c3a; }
+  .rm-swatch { padding: 2px; }
+  .rm-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+  .rm-swatch::-webkit-color-swatch { border: none; border-radius: 5px; }
+  .rm-swatch::-moz-color-swatch { border: none; border-radius: 5px; }
+`;
+
 interface SegmentControlsProps {
-  segment: VideoSegment;
-  index: number;
+  /** Scene/content segment target — mutually exclusive with `heading`. */
+  segment?: VideoSegment;
+  index?: number;
+  /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level
+   *  HeadingOverlay target, mutually exclusive with `segment`. Renders a
+   *  dedicated editor reading/writing HeadingOverlay fields directly,
+   *  entirely separate from the legacy `segment.isHeading` branch below
+   *  (kept untouched — still reachable for old in-array heading data until
+   *  Phase 7 deletes it). */
+  heading?: HeadingOverlay;
   /** Raw asset list — non-audio filtering happens internally here. */
   assets: Asset[];
   globalOverlayConfig: NonNullable<VideoSegment['overlayConfig']>;
   onUpdateSegment: (idx: number, updates: Partial<VideoSegment>) => void;
   onUpdateSegmentOverlay: (idx: number, updates: Partial<NonNullable<VideoSegment['overlayConfig']>>) => void;
+  /** Required when `heading` is passed. */
+  onUpdateHeading?: (updates: Partial<HeadingOverlay>) => void;
   onOpenStockSearch: (segmentId: string) => void;
 }
 
 /**
  * SegmentControls — the controls column shared by the Review Mapping card and
- * the bottom drawer. Renders BOTH the heading-card and scene-card layouts;
- * the thumbnail (and all its proportional-scaling math) lives only in the
- * Review Mapping row and is intentionally NOT part of this component.
+ * the bottom drawer. Renders the heading-overlay, legacy heading-segment, and
+ * scene-card layouts; the thumbnail (and all its proportional-scaling math)
+ * lives only in the Review Mapping row and is intentionally NOT part of this
+ * component.
  *
- * Four rows per card:
- *   scene   — text + visibility · asset/stock · font/weight/italic/size/animation · colors/no-bg + X/Y
- *   heading — text · bg-asset/stock · font/weight/size/autofit · colors + X/Y
+ * Rows per card:
+ *   HeadingOverlay (Path B) — text · font/weight/size · colors + X/Y
+ *   legacy heading segment  — text · bg-asset/stock · font/weight/size/autofit · colors + X/Y
+ *   scene                   — text + visibility · asset/stock · font/weight/italic/size/animation · colors/no-bg + X/Y
  */
 export function SegmentControls({
-  segment: seg,
-  index: idx,
+  segment,
+  index,
+  heading,
   assets,
   globalOverlayConfig,
   onUpdateSegment,
   onUpdateSegmentOverlay,
+  onUpdateHeading,
   onOpenStockSearch,
 }: SegmentControlsProps) {
   // One filter home — both parents pass raw assets.
   const visibleAssets = assets.filter(a => a.type !== 'audio');
+
+  // Path B Phase 5 — HeadingOverlay target. Entirely separate render path;
+  // does not touch the legacy segment.isHeading branch below.
+  if (heading) {
+    const h = heading;
+    const update = (updates: Partial<HeadingOverlay>) => onUpdateHeading?.(updates);
+    return (
+      <>
+        <style>{SLIDER_STYLE}</style>
+        <div className="flex-1 min-w-0 px-[13px] py-[11px] flex flex-col gap-[7px] justify-center">
+          {/* Row 1 — heading text */}
+          <input
+            type="text"
+            value={h.text}
+            onChange={(e) => update({ text: e.target.value })}
+            placeholder="Heading text"
+            aria-label="Heading text"
+            className={`${FIELD} text-white w-full`}
+          />
+
+          {/* Row 2 — font + weight + size */}
+          <div className="flex items-center gap-[7px]">
+            <select
+              value={h.fontFamily}
+              onChange={(e) => update({ fontFamily: e.target.value })}
+              aria-label="Heading font family"
+              className={`${SELECT} flex-[4] min-w-0`}
+            >
+              {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <select
+              value={String(h.fontWeight)}
+              onChange={(e) => update({ fontWeight: e.target.value })}
+              aria-label="Heading font weight"
+              className={`${SELECT} flex-[3] min-w-0`}
+            >
+              <option value="normal">Normal</option>
+              <option value="bold">Bold</option>
+              <option value="900">Black</option>
+            </select>
+            <input
+              type="number"
+              min={8}
+              max={400}
+              value={h.fontSize}
+              onChange={(e) => update({ fontSize: Number(e.target.value) || h.fontSize })}
+              aria-label="Heading font size"
+              className={`${NUMBER} flex-[3] min-w-0`}
+            />
+          </div>
+
+          {/* Row 3 — colors + X/Y position */}
+          <div className="flex items-center gap-[7px]">
+            <input
+              type="color"
+              value={h.color}
+              onChange={(e) => update({ color: e.target.value })}
+              title="Text color"
+              aria-label="Heading text color"
+              className={SWATCH}
+            />
+            <input
+              type="color"
+              value={h.backgroundColor}
+              onChange={(e) => update({ backgroundColor: e.target.value })}
+              title="BG color"
+              aria-label="Heading background color"
+              className={SWATCH}
+            />
+
+            <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">X</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={h.x}
+              onChange={(e) => update({ x: Number(e.target.value) })}
+              aria-label="Heading horizontal position"
+              className="rm-slider flex-1 min-w-0"
+            />
+            <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
+              {h.x}%
+            </span>
+
+            <span className="text-[#888888] text-[11px] font-medium flex-shrink-0">Y</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={h.y}
+              onChange={(e) => update({ y: Number(e.target.value) })}
+              aria-label="Heading vertical position"
+              className="rm-slider flex-1 min-w-0"
+            />
+            <span className="text-[#e07c3a] text-[10px] font-medium min-w-[28px] text-right flex-shrink-0">
+              {h.y}%
+            </span>
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  if (!segment || index === undefined) return null;
+  const seg = segment;
+  const idx = index;
 
   const hc = seg.headingConfig;
   const isAutoFit = !hc?.fontSize;
@@ -77,17 +209,7 @@ export function SegmentControls({
 
   return (
     <>
-      <style>{`
-        .rm-slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; outline: none; cursor: pointer; background: #e07c3a; }
-        .rm-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 13px; height: 13px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid #e07c3a; margin-top: -4.5px; }
-        .rm-slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: #e07c3a; }
-        .rm-slider::-moz-range-thumb { width: 13px; height: 13px; border-radius: 50%; background: #fff; cursor: pointer; border: 2px solid #e07c3a; }
-        .rm-slider::-moz-range-track { height: 4px; border-radius: 2px; background: #e07c3a; }
-        .rm-swatch { padding: 2px; }
-        .rm-swatch::-webkit-color-swatch-wrapper { padding: 0; }
-        .rm-swatch::-webkit-color-swatch { border: none; border-radius: 5px; }
-        .rm-swatch::-moz-color-swatch { border: none; border-radius: 5px; }
-      `}</style>
+      <style>{SLIDER_STYLE}</style>
 
       <div className="flex-1 min-w-0 px-[13px] py-[11px] flex flex-col gap-[7px] justify-center">
         {seg.isHeading ? (

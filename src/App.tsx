@@ -43,13 +43,15 @@ import {
   Project,
   VideoSegment,
   HeadingConfig,
+  HeadingOverlay,
   Asset,
   TransitionType,
   AnimationType,
   TextOverlay,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, stealDurationFromNeighbors, giveDurationToNeighbors, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, computeHeadingAnchors, reinsertHeadings, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
+import { createHeading, boundaryTimeForGap } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
   putAsset,
@@ -72,7 +74,7 @@ import {
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
-import { HEADING_DEFAULT_DURATION, applyHeadingTiming } from './services/whisperService';
+import { applyHeadingTiming } from './services/whisperService';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import type { ApplyEvent } from './components/EffectsPanel';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
@@ -637,6 +639,9 @@ export default function App() {
     try { return (readUiState().selectedSegmentId as string | null) ?? null; }
     catch { return null; }
   });
+  // Path B Phase 5 — mutually exclusive with selectedSegmentId: selecting a
+  // heading row opens the BottomDrawer's heading editor instead of a segment's.
+  const [selectedHeadingId, setSelectedHeadingId] = useState<string | null>(null);
   // Batch (multi-)selection for the Effects tab — separate from selectedSegmentId
   // (which drives drawer + seek). Driven only by row checkboxes / select-all.
   const [selectedSegmentIds, setSelectedSegmentIds] = useState<Set<string>>(new Set());
@@ -961,12 +966,25 @@ export default function App() {
   // to the segment, mirroring the timeline onSeek pattern (setCurrentTime + audio resync).
   const handleSegmentClick = useCallback((id: string): void => {
     setSelectedSegmentId(id);
+    setSelectedHeadingId(null);
     const seg = project.segments.find(s => s.id === id);
     if (seg) {
       setCurrentTime(seg.startTime);
       if (audioRef.current) audioRef.current.currentTime = seg.startTime;
     }
   }, [project.segments]);
+
+  // Path B Phase 5 — left-panel heading row click: open the drawer's heading
+  // editor AND jump the preview to the heading's time, mirroring handleSegmentClick.
+  const handleHeadingClick = useCallback((id: string): void => {
+    setSelectedHeadingId(id);
+    setSelectedSegmentId(null);
+    const heading = (projectRef.current.headings ?? []).find(h => h.id === id);
+    if (heading) {
+      setCurrentTime(heading.time);
+      if (audioRef.current) audioRef.current.currentTime = heading.time;
+    }
+  }, []);
 
   // Batch selection (Effects tab) — checkbox toggle / select-all / clear.
   // Independent of selectedSegmentId; never affects the drawer or seek.
@@ -1051,166 +1069,52 @@ export default function App() {
     }));
   }, []);
 
+  /**
+   * Path B Phase 5 (docs/path-b-heading-layer-plan.md, Decision 3) — creates a
+   * top-level HeadingOverlay at the boundary timestamp between the two
+   * segments the "+ Add Heading" affordance was hovering (time = the
+   * following segment's startTime, or the end of the last segment if
+   * inserting after it). No segment is inserted and no neighbor duration is
+   * stolen — overlays own no timeline seconds, so `segments` is untouched.
+   */
   const handleInsertHeading = useCallback((afterIndex: number): void => {
     setProject(prev => {
-      const segs = prev.segments;
-      const insertAt = afterIndex + 1; // -1 → 0 (prepend); i → i+1 (after segment i)
-      const HEADING_DUR = HEADING_DEFAULT_DURATION; // 1.0 s
-
-      // Steal time from both neighbors. Locked segments are still absorbed — insertion
-      // is a deliberate user action. We warn but do not skip.
-      const prevSeg = segs[insertAt - 1];
-      const nextSeg = segs[insertAt];
-      if (prevSeg?.locked || nextSeg?.locked) {
-        console.warn('[handleInsertHeading] absorbing from locked segment(s)');
-      }
-
-      const existingHeadingCount = segs.filter(s => s.isHeading).length;
-      const defaultText = `Heading ${existingHeadingCount + 1}`;
-
-      const placeholderHeading: VideoSegment = {
-        id: crypto.randomUUID(),
-        order: insertAt,
-        text: '',
-        heading: defaultText,
-        isHeading: true,
-        headingConfig: { text: defaultText, x: 50, y: 50 },
-        duration: HEADING_DUR,
-        startTime: 0,
-        transition: TransitionType.NONE,
-        animation: AnimationType.NONE,
-      };
-
-      const draft = [
-        ...segs.slice(0, insertAt),
-        placeholderHeading,
-        ...segs.slice(insertAt),
-      ];
-
-      const stolen = stealDurationFromNeighbors(draft, insertAt, HEADING_DUR);
-
-      const newPrev = stolen[insertAt - 1];
-      const headingStart = newPrev
-        ? Number((newPrev.startTime + newPrev.duration).toFixed(3))
-        : 0;
-
-      const heading = stolen[insertAt];
-      if (!heading) return prev;
-      const updatedHeading: VideoSegment = {
-        ...heading,
-        startTime: headingStart,
-        anchorStart: headingStart,
-        anchorSource: 'whisper',
-      };
-      stolen[insertAt] = updatedHeading;
-
-      const newNext = stolen[insertAt + 1];
-      if (newNext) {
-        stolen[insertAt + 1] = {
-          ...newNext,
-          anchorStart: Number((headingStart + updatedHeading.duration).toFixed(3)),
-        };
-      }
-
-      // Recompute startTime/duration from anchors — single source of truth,
-      // not a separate cumulative-duration pass.
-      const withOrder = stolen.map((s, i) => ({ ...s, order: i }));
-      const audioDuration = resolveAudioDuration(audioRef.current, withOrder);
-      const reordered = applyAnchorBasedTiming(withOrder, audioDuration);
-
-      return { ...prev, segments: reordered };
+      const gapIndex = afterIndex + 1; // -1 → 0 (prepend); i → i+1 (after segment i)
+      const time = boundaryTimeForGap(prev.segments, gapIndex);
+      const headings = prev.headings ?? [];
+      const defaultText = `Heading ${headings.length + 1}`;
+      const heading = createHeading(time, { text: defaultText });
+      return { ...prev, headings: [...headings, heading] };
     });
   }, []);
 
-  const handleDeleteHeading = useCallback((segmentId: string): void => {
-    setProject(prev => {
-      const idx = prev.segments.findIndex(s => s.id === segmentId);
-      if (idx === -1) return prev;
-      const heading = prev.segments[idx];
-      if (!heading?.isHeading) return prev;
-
-      const headingDur = heading.duration;
-
-      const newSegs = giveDurationToNeighbors(prev.segments, idx, headingDur);
-
-      // Restore next.anchorStart to its true pre-insertion position: prev's restored
-      // anchorStart + prev's restored duration — i.e. where next would sit if the
-      // heading had never existed. (The old formula subtracted headingDur from next's
-      // current anchor, which reproduces the HEADING's own anchor, not next's true one.)
-      const updatedPrev = newSegs[idx - 1];
-      const updatedNext = newSegs[idx + 1];
-      if (updatedNext && updatedPrev) {
-        if (updatedPrev.anchorStart !== undefined) {
-          newSegs[idx + 1] = {
-            ...updatedNext,
-            anchorStart: Number((updatedPrev.anchorStart + updatedPrev.duration).toFixed(3)),
-          };
-        }
-      } else if (updatedNext && !updatedPrev) {
-        // Heading was at position 0 — next becomes the new first segment, anchored at 0.
-        newSegs[idx + 1] = { ...updatedNext, anchorStart: 0 };
-      }
-
-      // Remove heading from array.
-      newSegs.splice(idx, 1);
-
-      // Recompute startTime/duration from anchors — single source of truth,
-      // not a separate cumulative-duration pass.
-      const audioDuration = resolveAudioDuration(audioRef.current, newSegs);
-      const timedSegs = applyAnchorBasedTiming(newSegs, audioDuration);
-
-      return { ...prev, segments: timedSegs };
-    });
+  /** Path B Phase 5 — removes a HeadingOverlay by id. No duration give-back:
+   *  overlays never stole timeline seconds from neighbors in the first place. */
+  const handleDeleteHeading = useCallback((headingId: string): void => {
+    setProject(prev => ({
+      ...prev,
+      headings: (prev.headings ?? []).filter(h => h.id !== headingId),
+    }));
   }, []);
 
-  /**
-   * Moves a heading already in the segments array to a new gap index
-   * (0..segments.length, same semantics as onInsertHeading's afterIndex+1).
-   * Equivalent to give-back-then-steal: returns the heading's duration to its
-   * old neighbors, removes it, then re-inserts it at the new position and
-   * steals that same amount back from its new neighbors — net zero change to
-   * total duration. Unlike Apply Sync, this is a manual edit: startTimes are
-   * recomputed directly from durations (recomputeStartTimes), not from
-   * anchors — anchors are intentionally left stale here, same as a
-   * timeline resize-drag.
-   */
-  const handleMoveHeading = useCallback((segmentId: string, targetIndex: number): void => {
-    setProject(prev => {
-      const segs = prev.segments;
-      const oldIdx = segs.findIndex(s => s.id === segmentId);
-      if (oldIdx === -1) return prev;
-      const heading = segs[oldIdx];
-      if (!heading?.isHeading) return prev;
+  /** Path B Phase 5 — retimes a HeadingOverlay directly (`time` update), not
+   *  an array reorder: headings have no position in `segments` to move. */
+  const handleMoveHeading = useCallback((headingId: string, newTime: number): void => {
+    setProject(prev => ({
+      ...prev,
+      headings: (prev.headings ?? []).map(h =>
+        h.id === headingId ? { ...h, time: Math.max(0, newTime) } : h
+      ),
+    }));
+  }, []);
 
-      const clampedTarget = Math.max(0, Math.min(targetIndex, segs.length));
-      // Dropping into the gap immediately before or after its own current position is a no-op.
-      if (clampedTarget === oldIdx || clampedTarget === oldIdx + 1) return prev;
-
-      const amount = heading.duration;
-
-      // Return the heading's duration to its OLD neighbors.
-      const withoutHeading = giveDurationToNeighbors(segs, oldIdx, amount);
-      withoutHeading.splice(oldIdx, 1);
-
-      // Adjust the target gap index for the removal shift, then clamp defensively.
-      const rawInsertAt = clampedTarget > oldIdx ? clampedTarget - 1 : clampedTarget;
-      const insertAt = Math.max(0, Math.min(rawInsertAt, withoutHeading.length));
-
-      // Re-insert at the new position, still holding its own (just-vacated) duration.
-      const draft = [
-        ...withoutHeading.slice(0, insertAt),
-        heading,
-        ...withoutHeading.slice(insertAt),
-      ];
-
-      // Steal that same amount back from its NEW neighbors.
-      const stolen = stealDurationFromNeighbors(draft, insertAt, amount);
-
-      const withOrder = stolen.map((s, i) => ({ ...s, order: i }));
-      const recomputed = recomputeStartTimes(withOrder);
-
-      return { ...prev, segments: recomputed };
-    });
+  /** Path B Phase 5 — writes styling/text updates onto a HeadingOverlay by id
+   *  (BottomDrawer / ReviewMappingModal heading editors). */
+  const handleUpdateHeading = useCallback((headingId: string, updates: Partial<HeadingOverlay>): void => {
+    setProject(prev => ({
+      ...prev,
+      headings: (prev.headings ?? []).map(h => h.id === headingId ? { ...h, ...updates } : h),
+    }));
   }, []);
 
   const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
@@ -1805,6 +1709,7 @@ export default function App() {
 
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
+  const selectedHeading = (project.headings ?? []).find(h => h.id === selectedHeadingId) ?? null;
 
   // Sync volatile values into refs on every render so async handlers and stable
   // callbacks can read the live state without stale closures.
@@ -2171,9 +2076,12 @@ export default function App() {
             onUnlockAll={handleUnlockAll}
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
             onOpenReviewMapping={() => setShowReviewMapping(true)}
+            headings={project.headings ?? []}
             onInsertHeading={handleInsertHeading}
             onDeleteHeading={handleDeleteHeading}
             onMoveHeading={handleMoveHeading}
+            onHeadingClick={handleHeadingClick}
+            selectedHeadingId={selectedHeadingId ?? undefined}
             selectedSegmentId={selectedSegmentId ?? undefined}
             currentSegmentId={currentSegment?.id}
             selectedSegmentIds={selectedSegmentIds}
@@ -2551,21 +2459,23 @@ export default function App() {
           </div>
 
           {/* Backdrop — click outside drawer to dismiss */}
-          {selectedSegment && (
+          {(selectedSegment || selectedHeading) && (
             <div
               className="absolute inset-0 z-40"
-              onClick={() => setSelectedSegmentId(null)}
+              onClick={() => { setSelectedSegmentId(null); setSelectedHeadingId(null); }}
             />
           )}
 
           <BottomDrawer
             segment={selectedSegment}
             segmentIndex={selectedSegmentIndex}
+            heading={selectedHeading}
             assets={project.assets}
             globalOverlayConfig={project.globalOverlayConfig}
-            onClose={() => setSelectedSegmentId(null)}
+            onClose={() => { setSelectedSegmentId(null); setSelectedHeadingId(null); }}
             onUpdateSegment={updateSegment}
             onUpdateSegmentOverlay={updateSegmentOverlay}
+            onUpdateHeading={handleUpdateHeading}
             onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
             onToggleLock={handleToggleLock}
             onSeek={(time) => {
@@ -2846,11 +2756,13 @@ export default function App() {
       {showReviewMapping && (
         <ReviewMappingModal
           segments={project.segments}
+          headings={project.headings ?? []}
           assets={project.assets}
           globalOverlayConfig={project.globalOverlayConfig}
           onClose={() => setShowReviewMapping(false)}
           onUpdateSegment={updateSegment}
           onUpdateSegmentOverlay={updateSegmentOverlay}
+          onUpdateHeading={handleUpdateHeading}
           onOpenStockSearch={(segId) => { setStockTarget(segId); setShowStockSearch(true); }}
         />
       )}
