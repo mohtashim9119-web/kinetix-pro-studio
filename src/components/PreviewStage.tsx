@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
+import { getActiveHeadingAt } from '../services/headingLayer';
 import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
 import { blendWrapperProps } from '../services/animBlend';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
@@ -295,6 +296,9 @@ interface Props {
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
   /** Global text layers rendered above all segment content. */
   textLayers?: TextOverlay[];
+  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — composited on
+   *  top of the frame via getActiveHeadingAt(headings, currentTime). */
+  headings?: HeadingOverlay[];
 }
 
 export function PreviewStage({
@@ -311,6 +315,7 @@ export function PreviewStage({
   isResizingRef,
   onUpdateExtraOverlayPosition,
   textLayers,
+  headings,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -957,6 +962,14 @@ export function PreviewStage({
     return () => ro.disconnect();
   }, []);
 
+  // Path B heading layer — active new-layer heading at the current playhead,
+  // independent of currentSegment (Decision 4: composites over whichever
+  // segment(s) fall within its time range).
+  const activeLayerHeading = useMemo(
+    () => getActiveHeadingAt(headings ?? [], currentTime),
+    [headings, currentTime],
+  );
+
   const isHeadingSegment = !!(currentSegment?.isHeading || currentSegment?.heading);
   const headingText = currentSegment?.headingConfig?.text ?? currentSegment?.heading ?? '';
   const headingLength = headingText.length;
@@ -1369,6 +1382,36 @@ export function PreviewStage({
                 {captionSegment.text}
               </p>
             </motion.div>
+          </div>
+        )}
+
+        {/* Path B heading layer — new-layer heading overlay, composited on top
+            of whatever segment(s) fall within its time range (Decision 4).
+            Mirrors frameRenderer.ts's drawHeadingLayerOverlay: an opaque-by-
+            default pill positioned at (x%, y%), not a full-frame takeover. */}
+        {activeLayerHeading && activeLayerHeading.text && (
+          <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 47 }}>
+            <div
+              className="absolute text-center"
+              style={{
+                left: `${activeLayerHeading.x}%`,
+                top: `${activeLayerHeading.y}%`,
+                transform: 'translate(-50%, -50%)',
+                width: 'max-content',
+                maxWidth: '90%',
+                padding: '16px 24px',
+                borderRadius: '16px',
+                backgroundColor: activeLayerHeading.backgroundColor,
+                color: activeLayerHeading.color,
+                fontFamily: activeLayerHeading.fontFamily,
+                fontSize: `${activeLayerHeading.fontSize}px`,
+                fontWeight: activeLayerHeading.fontWeight,
+                lineHeight: 1.2,
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {activeLayerHeading.text}
+            </div>
           </div>
         )}
 

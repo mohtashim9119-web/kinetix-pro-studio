@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
+import { createHeading } from './headingLayer';
 import { TransitionType, AnimationType } from '../types';
 import type { VideoSegment, Project, Asset, TextOverlay } from '../types';
 
@@ -288,5 +289,50 @@ describe('isPlainImageSegment', () => {
     const next = makeImageSegment({ id: 'next', order: 1 });
     const project = makeProject({ globalTransition: TransitionType.FADE, globalTransitionDuration: 0.5 });
     expect(isPlainImageSegment(seg, undefined, next, project)).toBe(false);
+  });
+});
+
+describe('Path B heading-layer guard (Decision 4, mandatory)', () => {
+  // seg occupies [10, 15) throughout this block.
+  it('false when a heading is fully inside the segment', () => {
+    const seg = makeSegment({ id: 's', startTime: 10, duration: 5 });
+    const heading = createHeading(11, { duration: 1, text: 'Title' });
+    const project = makeProject({ headings: [heading] });
+    expect(isPlainVideoSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('false when a heading straddles the segment edge', () => {
+    const seg = makeSegment({ id: 's', startTime: 10, duration: 5 });
+    // Starts before the segment (9) and ends inside it (10.5) — overlaps the head.
+    const heading = createHeading(9, { duration: 1.5, text: 'Title' });
+    const project = makeProject({ headings: [heading] });
+    expect(isPlainVideoSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('stays plain when a heading exactly touches the boundary with zero overlap', () => {
+    const seg = makeSegment({ id: 's', startTime: 10, duration: 5 });
+    // Ends exactly when the segment starts (half-open: no overlap).
+    const headingBefore = createHeading(9, { duration: 1, text: 'Title' });
+    const projectBefore = makeProject({ headings: [headingBefore] });
+    expect(isPlainVideoSegment(seg, undefined, undefined, projectBefore)).toBe(true);
+
+    // Starts exactly when the segment ends (half-open: no overlap).
+    const headingAfter = createHeading(15, { duration: 1, text: 'Title' });
+    const projectAfter = makeProject({ headings: [headingAfter] });
+    expect(isPlainVideoSegment(seg, undefined, undefined, projectAfter)).toBe(true);
+  });
+
+  it('stays plain when a heading is far away in time', () => {
+    const seg = makeSegment({ id: 's', startTime: 10, duration: 5 });
+    const heading = createHeading(100, { duration: 1, text: 'Title' });
+    const project = makeProject({ headings: [heading] });
+    expect(isPlainVideoSegment(seg, undefined, undefined, project)).toBe(true);
+  });
+
+  it('applies the same guard to isPlainImageSegment', () => {
+    const seg = makeImageSegment({ id: 's', startTime: 10, duration: 5 });
+    const heading = createHeading(11, { duration: 1, text: 'Title' });
+    const project = makeProject({ headings: [heading] });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(false);
   });
 });

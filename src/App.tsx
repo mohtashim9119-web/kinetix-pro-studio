@@ -2263,6 +2263,7 @@ export default function App() {
                   isResizingRef={isResizingRef}
                   onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                   textLayers={project.textLayers ?? []}
+                  headings={project.headings ?? []}
                 />
               </ErrorBoundary>
               </div>

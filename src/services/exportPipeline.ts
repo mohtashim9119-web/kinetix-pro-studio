@@ -83,6 +83,7 @@ export async function exportProject(
     overlayConfig: project.globalOverlayConfig,
     globalOverlayFilter: project.globalOverlayFilter,
     globalTextLayers: project.textLayers ?? [],
+    headings: project.headings ?? [],
   };
 
   const assetMap = new Map<string, Asset>(project.assets.map(a => [a.id, a]));

@@ -135,6 +135,7 @@ export async function encodeSegment(
           width: w,
           height: h,
           global: globalConfig,
+          absoluteTime: options.nextSegment.startTime + nextTimeInSegment,
         });
 
         blendParams = {
@@ -158,6 +159,7 @@ export async function encodeSegment(
       height: h,
       global: globalConfig,
       transition: blendParams,
+      absoluteTime: segment.startTime + timeInSegment,
     });
 
     const pngBytes = await canvasToPng(canvas);
@@ -350,6 +352,7 @@ export async function encodeStaticImageSegment(
     width: w,
     height: h,
     global: globalConfig,
+    absoluteTime: segment.startTime,
   });
 
   const pngBytes = await canvasToPng(canvas);

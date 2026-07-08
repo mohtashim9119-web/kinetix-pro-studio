@@ -1,12 +1,16 @@
-import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType } from '../types';
+import { VideoSegment, Asset, TextOverlay, TransitionType, AnimationType, HeadingOverlay } from '../types';
 import { getFilterStyle } from '../constants';
 import { applySegmentAnimation } from './canvasAnimations';
 import { TRANSITION_NONE } from '../effectsOptions';
+import { getActiveHeadingAt } from './headingLayer';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
   globalOverlayFilter?: string;
   globalTextLayers?: TextOverlay[];
+  /** Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4) —
+   *  composited on top of the frame, looked up by absolute time. */
+  headings?: HeadingOverlay[];
 }
 
 /**
@@ -62,6 +66,13 @@ export interface FrameRenderParams {
    * has no DOM caption, so it still bakes the body caption exactly as before.
    */
   skipCaption?: boolean;
+  /**
+   * Absolute voiceover-timeline seconds for this frame (segment.startTime +
+   * timeInSegment, NOT segment-relative). Required for the Path B heading-layer
+   * lookup (getActiveHeadingAt) since HeadingOverlay.time is an absolute
+   * timestamp (Decision 2) — omit only when `global.headings` is also empty.
+   */
+  absoluteTime?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +312,65 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
   ctx.restore();
 }
 
+/**
+ * Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4):
+ * composites a HeadingOverlay's text — with its own opaque-by-default
+ * background pill — on top of whatever has already been drawn to `ctx`.
+ * Deliberately a pill positioned at (x%, y%), not a full-frame background
+ * fill — the new layer sits ON TOP of segment content, it does not replace
+ * it (that distinction is the entire point of Decision 4).
+ */
+function drawHeadingLayerOverlay(ctx: CanvasRenderingContext2D, heading: HeadingOverlay, w: number, h: number): void {
+  const x = (heading.x / 100) * w;
+  const y = (heading.y / 100) * h;
+
+  ctx.save();
+  ctx.font = `${heading.fontWeight} ${heading.fontSize}px "${heading.fontFamily}"`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const maxWidth = w * 0.9;
+  const lines = wrapText(ctx, heading.text, maxWidth);
+  const lineHeight = heading.fontSize * 1.2;
+  const totalHeight = lines.length * lineHeight;
+  const textWidth = lines.reduce((max, line) => Math.max(max, ctx.measureText(line).width), 0);
+  const padX = 24, padY = 16;
+
+  if (heading.backgroundColor && heading.backgroundColor !== 'transparent') {
+    ctx.fillStyle = heading.backgroundColor;
+    drawRoundedRect(
+      ctx,
+      x - textWidth / 2 - padX,
+      y - totalHeight / 2 - padY,
+      textWidth + padX * 2,
+      totalHeight + padY * 2,
+      16,
+    );
+    ctx.fill();
+  }
+
+  ctx.fillStyle = heading.color;
+  lines.forEach((line, i) => {
+    ctx.fillText(line, x, y - totalHeight / 2 + lineHeight / 2 + i * lineHeight);
+  });
+  ctx.restore();
+}
+
+/** Looks up and composites the active new-layer heading (if any) for `absoluteTime`. */
+async function compositeActiveHeading(
+  ctx: CanvasRenderingContext2D,
+  headings: HeadingOverlay[] | undefined,
+  absoluteTime: number | undefined,
+  w: number,
+  h: number,
+): Promise<void> {
+  if (!headings || headings.length === 0 || absoluteTime === undefined) return;
+  const active = getActiveHeadingAt(headings, absoluteTime);
+  if (!active || !active.text) return;
+  await ensureFont(active.fontFamily, active.fontSize);
+  drawHeadingLayerOverlay(ctx, active, w, h);
+}
+
 // ---------------------------------------------------------------------------
 // Clip-effect helpers (effectAnimation slug → canvas ops)
 // ---------------------------------------------------------------------------
@@ -350,7 +420,7 @@ function applyDuotone(ctx: CanvasRenderingContext2D, w: number, h: number): void
  * Resolves when the frame is fully drawn (video seeking is async).
  */
 export async function renderSegmentFrame(params: FrameRenderParams): Promise<void> {
-  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight, skipCaption } = params;
+  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight, skipCaption, absoluteTime } = params;
 
   // Background
   ctx.clearRect(0, 0, w, h);
@@ -395,6 +465,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       if (params.transition && params.transition.alpha > 0) {
         applyTransitionBlend(ctx, params.transition, w, h);
       }
+      await compositeActiveHeading(ctx, g.headings, absoluteTime, w, h);
       return;
     }
 
@@ -458,6 +529,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
     if (params.transition && params.transition.alpha > 0) {
       applyTransitionBlend(ctx, params.transition, w, h);
     }
+    await compositeActiveHeading(ctx, g.headings, absoluteTime, w, h);
     return;
   }
 
@@ -604,6 +676,12 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
   if (params.transition && params.transition.alpha > 0) {
     applyTransitionBlend(ctx, params.transition, w, h);
   }
+
+  // -------------------------------------------------------------------------
+  // Path B heading layer (Decision 4) — composited on top of everything above,
+  // including the transition blend.
+  // -------------------------------------------------------------------------
+  await compositeActiveHeading(ctx, g.headings, absoluteTime, w, h);
 }
 
 // ---------------------------------------------------------------------------
