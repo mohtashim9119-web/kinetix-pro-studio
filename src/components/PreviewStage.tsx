@@ -10,6 +10,7 @@ import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, Headin
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { getActiveHeadingAt } from '../services/headingLayer';
+import { waitForVideoFrame } from '../services/waitForVideoFrame';
 import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
 import { blendWrapperProps } from '../services/animBlend';
 import { useTransitionPreview } from '../hooks/useTransitionPreview';
@@ -218,57 +219,6 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
 function findOutgoingSegment(segments: VideoSegment[], seg: VideoSegment | undefined): VideoSegment | undefined {
   if (!seg) return undefined;
   return segments.find(s => Math.abs(s.startTime + s.duration - seg.startTime) < 0.001 && s.id !== seg.id);
-}
-
-/**
- * D10 fix — resolves once a video element has actually painted a frame at
- * its current seek target, not merely "buffered enough to maybe play" (all
- * 'canplay' guarantees — it can fire before anything is decoded/presented,
- * which is why an earlier canplay-based mitigation for the preview
- * transition black-flash never engaged reliably).
- *
- * Fallback chain: requestVideoFrameCallback (fires only after a frame is
- * submitted for compositing) -> 'seeked' + one rAF tick as a best-effort
- * proxy on engines without rVFC -> a fixed timeout so callers never hang.
- * Never rejects.
- */
-function waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    let rvfcHandle: number | undefined;
-    let onSeeked: (() => void) | undefined;
-
-    const rvfcVideo = video as HTMLVideoElement & {
-      requestVideoFrameCallback?: (callback: () => void) => number;
-      cancelVideoFrameCallback?: (handle: number) => void;
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      if (rvfcHandle !== undefined) {
-        rvfcVideo.cancelVideoFrameCallback?.(rvfcHandle);
-      }
-      if (onSeeked) {
-        video.removeEventListener('seeked', onSeeked);
-      }
-    };
-
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve();
-    };
-
-    if (typeof rvfcVideo.requestVideoFrameCallback === 'function') {
-      rvfcHandle = rvfcVideo.requestVideoFrameCallback(() => finish());
-    } else {
-      onSeeked = () => requestAnimationFrame(() => finish());
-      video.addEventListener('seeked', onSeeked);
-    }
-
-    const timeoutId = setTimeout(finish, 400);
-  });
 }
 
 interface GlobalOverlayConfig {

@@ -3,6 +3,7 @@ import { getFilterStyle } from '../constants';
 import { applySegmentAnimation } from './canvasAnimations';
 import { TRANSITION_NONE } from '../effectsOptions';
 import { getActiveHeadingAt } from './headingLayer';
+import { waitForVideoFrame } from './waitForVideoFrame';
 
 export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
@@ -192,6 +193,18 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
   // Step 4: seek to actual target.
   el.currentTime = target;
   await awaitSeeked(el, target);
+
+  // Step 5 (residual export judder fix) — `seeked` confirms the seek
+  // completed at the DOM level, not that the target frame has actually been
+  // decoded and submitted for compositing; drawImage right after `seeked`
+  // can silently capture the still-resident previous frame. waitForVideoFrame
+  // (rVFC-based, same guarantee already proven for the preview path) closes
+  // that race before the caller draws. Layered on top of, not instead of,
+  // awaitSeeked above: awaitSeeked's error/5s-timeout path is what lets a
+  // genuinely broken seek surface as a real 'encode' error via exportPipeline
+  // instead of silently producing wrong frames — waitForVideoFrame itself
+  // never rejects, so it must not be the sole guard for a stuck seek.
+  await waitForVideoFrame(el);
 }
 
 // ---------------------------------------------------------------------------
