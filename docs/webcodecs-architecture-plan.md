@@ -667,6 +667,8 @@ investigation** — see the A3 entry above.
     `exportPipeline.ts`, `plainSegment.ts`, `useWebCodecsPreview.ts`, `videoDecoderPool.ts` all
     unmodified; `tauri.conf.json`'s temporary `devUrl`/CSP/`beforeDevCommand` edits for the isolated runs
     were reverted (zero git diff). Audit/spike only.
+  - Tracked as an Active Task in `project-state.md` ("Export rewrite: WebCodecs pipeline"), sequenced
+    after the WebGL/WebGPU effects-engine rebuild.
 
 - **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
   supersedes the "BLOCKED transitively" disposition above. B1-B3 of 5 ✅ DONE (B3 manually
