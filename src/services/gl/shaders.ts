@@ -27,6 +27,35 @@ void main() {
   gl_Position = vec4(a_pos, 0.0, 1.0);
 }`;
 
+/** Straight (non-flipped) variant of the fullscreen-triangle vertex shader —
+ *  identical to VERTEX_SHADER_SOURCE except the v_uv.y line. Used only by
+ *  programs that sample a render-target texture (glCompositor.ts's
+ *  drawZoom/drawGrade), never a raw VideoFrame/ImageBitmap upload.
+ *
+ *  Why two variants: VERTEX_SHADER_SOURCE's Y-flip compensates for
+ *  gl.texImage2D's upload convention (a CPU/VideoFrame source's row 0 — its
+ *  visual top — lands at texel row 0, needing exactly one flip to display
+ *  upright). An FBO-rendered texture has no such mismatch — its row order
+ *  already matches window-row order, since the fragment that wrote each
+ *  texel came from ordinary window-space rasterization. Reusing the flipped
+ *  shader on an FBO-sourced pass flips it AGAIN. Confirmed empirically
+ *  (Phase 2 Step 1 real-GPU smoke test, docs/webgl-architecture-plan.md):
+ *  every 2-draw chain (zoom-only or grade-only) rendered upside-down, while
+ *  1-draw (skip path) and 3-draw (transition+zoom+grade together) chains
+ *  came out correct by flip-parity coincidence. drawStage1 — the only pass
+ *  that ever samples texA/texB directly — keeps the flipped shader;
+ *  drawZoom/drawGrade — which in this compositor's actual call graph only
+ *  ever sample a render target (see renderFrame's chain shape) — use this
+ *  variant instead, so the total flip count is always exactly one
+ *  regardless of chain length. */
+export const VERTEX_SHADER_SOURCE_STRAIGHT = `#version 300 es
+layout(location = 0) in vec2 a_pos;
+out vec2 v_uv;
+void main() {
+  v_uv = vec2(a_pos.x * 0.5 + 0.5, a_pos.y * 0.5 + 0.5);
+  gl_Position = vec4(a_pos, 0.0, 1.0);
+}`;
+
 /** Single-texture straight blit — used when no transition is active this
  *  tick (renders slot 'a' alone) and as the first stage of the pass chain
  *  in that case. */

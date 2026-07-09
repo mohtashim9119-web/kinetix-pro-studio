@@ -20,11 +20,20 @@
  * exactly the GL calls implied by its name and returns, per Section 4's
  * design constraint (an export loop must be able to drive this identically
  * to a playhead-driven preview loop).
+ *
+ * Phase 2 Step 1 correction: the pass chain originally linked every program
+ * against the same (flipped) vertex shader, which double-flipped any chain
+ * that routed through exactly one intermediate render target (zoom-only or
+ * grade-only — a 2-draw chain), confirmed upside-down by a real-GPU smoke
+ * test before this was caught. drawZoom/drawGrade now link against
+ * shaders.ts's VERTEX_SHADER_SOURCE_STRAIGHT instead — see that export's
+ * doc comment for the full mechanism.
  */
 
 import type { CompositeParams, GradeParams, TransitionSlug } from './compositeParams';
 import {
   VERTEX_SHADER_SOURCE,
+  VERTEX_SHADER_SOURCE_STRAIGHT,
   BLIT_FRAGMENT_SHADER_SOURCE,
   CROSS_DISSOLVE_FRAGMENT_SHADER_SOURCE,
   DIP_FRAGMENT_SHADER_SOURCE,
@@ -103,8 +112,8 @@ function compileShader(gl: WebGL2RenderingContext, type: number, source: string)
   return shader;
 }
 
-function linkProgram(gl: WebGL2RenderingContext, fragSrc: string): WebGLProgram {
-  const vs = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
+function linkProgram(gl: WebGL2RenderingContext, fragSrc: string, vertSrc: string = VERTEX_SHADER_SOURCE): WebGLProgram {
+  const vs = compileShader(gl, gl.VERTEX_SHADER, vertSrc);
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
   const program = gl.createProgram();
   if (!program) throw new Error('GlCompositor: gl.createProgram() returned null');
@@ -186,8 +195,8 @@ export class GlCompositor {
       crossDissolve: this.makeTransitionProgram(linkProgram(gl, CROSS_DISSOLVE_FRAGMENT_SHADER_SOURCE)),
       dip: this.makeDipProgram(linkProgram(gl, DIP_FRAGMENT_SHADER_SOURCE)),
       lightLeak: this.makeTransitionProgram(linkProgram(gl, LIGHT_LEAK_FRAGMENT_SHADER_SOURCE)),
-      zoom: this.makeZoomProgram(linkProgram(gl, ZOOM_FRAGMENT_SHADER_SOURCE)),
-      grade: this.makeGradeProgram(linkProgram(gl, GRADE_FRAGMENT_SHADER_SOURCE)),
+      zoom: this.makeZoomProgram(linkProgram(gl, ZOOM_FRAGMENT_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT)),
+      grade: this.makeGradeProgram(linkProgram(gl, GRADE_FRAGMENT_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT)),
     };
 
     this.vao = gl.createVertexArray() ?? (() => { throw new Error('GlCompositor: gl.createVertexArray() returned null'); })();

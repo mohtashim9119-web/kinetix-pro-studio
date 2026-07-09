@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GlCompositor } from './glCompositor';
 import { NEUTRAL_GRADE, type CompositeParams } from './compositeParams';
+import { VERTEX_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT } from './shaders';
 
 /**
  * Mock-based tests (option (a) from the pre-implementation plan) — this
@@ -61,16 +62,25 @@ class MockWebGL2 {
 
   /** Ordered log of GL calls that matter for lifecycle/sequencing assertions. */
   calls: string[] = [];
+  /** Each linked program's vertex-shader source, in program-creation order
+   *  (setup()'s `this.programs = {...}` literal: blit, crossDissolve, dip,
+   *  lightLeak, zoom, grade) — populated by attachShader below. Lets tests
+   *  assert WHICH vertex shader variant a program was linked with, not just
+   *  that shader-compile/link happened. */
+  vertexShaderSourcesByProgram: string[] = [];
 
-  createShader(): unknown { this.calls.push('createShader'); return nextId('shader'); }
-  shaderSource(): void {}
+  createShader(type: number): unknown { this.calls.push('createShader'); return { ...nextId('shader'), type, source: '' }; }
+  shaderSource(shader: unknown, source: string): void { (shader as { source: string }).source = source; }
   compileShader(): void { this.calls.push('compileShader'); }
   getShaderParameter(): boolean { return true; }
   getShaderInfoLog(): string | null { return null; }
   deleteShader(): void { this.calls.push('deleteShader'); }
 
   createProgram(): unknown { this.calls.push('createProgram'); return nextId('program'); }
-  attachShader(): void {}
+  attachShader(_program: unknown, shader: unknown): void {
+    const s = shader as { type: number; source: string };
+    if (s.type === this.VERTEX_SHADER) this.vertexShaderSourcesByProgram.push(s.source);
+  }
   linkProgram(): void { this.calls.push('linkProgram'); }
   getProgramParameter(): boolean { return true; }
   getProgramInfoLog(): string | null { return null; }
@@ -301,6 +311,34 @@ describe('GlCompositor — context-loss recreate', () => {
     compositor.renderFrame(zoomParams);
 
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
+  });
+});
+
+describe('GlCompositor — vertex-shader flip correction (Phase 2 Step 1 regression)', () => {
+  it('drawStage1 programs (blit/cross-dissolve/dip/light-leak) use the flipped vertex shader; zoom/grade use the straight one', () => {
+    const gl = makeGl();
+    new GlCompositor(gl as unknown as WebGL2RenderingContext);
+
+    // setup() links programs in exactly this order: blit, crossDissolve,
+    // dip, lightLeak, zoom, grade — attachShader records each program's
+    // vertex-shader source in that same order.
+    const [blitVS, crossDissolveVS, dipVS, lightLeakVS, zoomVS, gradeVS] = gl.vertexShaderSourcesByProgram;
+
+    // These sample texA/texB directly (raw VideoFrame/ImageBitmap uploads) — need the flip.
+    expect(blitVS).toBe(VERTEX_SHADER_SOURCE);
+    expect(crossDissolveVS).toBe(VERTEX_SHADER_SOURCE);
+    expect(dipVS).toBe(VERTEX_SHADER_SOURCE);
+    expect(lightLeakVS).toBe(VERTEX_SHADER_SOURCE);
+
+    // zoom/grade only ever sample a render-target texture in this
+    // compositor's call graph (renderFrame always routes them through
+    // rt0/rt1) — must NOT re-apply the flip, or the chain double-flips.
+    // This is exactly the bug the Phase 2 Step 1 real-GPU smoke test found:
+    // every 2-draw zoom-only/grade-only chain rendered upside-down.
+    expect(zoomVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
+    expect(gradeVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
+    expect(zoomVS).not.toBe(VERTEX_SHADER_SOURCE);
+    expect(gradeVS).not.toBe(VERTEX_SHADER_SOURCE);
   });
 });
 
