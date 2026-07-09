@@ -114,12 +114,28 @@ class MockWebGL2 {
   checkFramebufferStatus(): number { return this.FRAMEBUFFER_COMPLETE; }
   deleteFramebuffer(): void { this.calls.push('deleteFramebuffer'); }
 
+  /** Every uniformNi/Nf call, keyed by the uniform's name (getUniformLocation
+   *  below hands back `{ name }` objects specifically so tests can identify
+   *  which uniform a call targeted without tracking program identity) — lets
+   *  tests assert the actual VALUE wired to e.g. u_dipColor/u_progress/
+   *  u_scale/u_brightness, not just that some uniform call happened. */
+  uniformCalls: { name: string; args: number[] }[] = [];
   useProgram(): void { this.calls.push('useProgram'); }
-  uniform1i(): void {}
-  uniform1f(): void {}
-  uniform3f(): void {}
+  uniform1i(location: unknown, x: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x] }); }
+  uniform1f(location: unknown, x: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x] }); }
+  uniform3f(location: unknown, x: number, y: number, z: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x, y, z] }); }
   drawArrays(): void { this.calls.push('drawArrays'); }
   viewport(): void {}
+
+  /** Most-recent call to a given uniform name — sufficient for these tests
+   *  since each renderFrame call only ever drives one stage-1 program. */
+  lastUniform(name: string): number[] | undefined {
+    for (let i = this.uniformCalls.length - 1; i >= 0; i--) {
+      const call = this.uniformCalls[i];
+      if (call && call.name === name) return call.args;
+    }
+    return undefined;
+  }
 }
 
 function makeGl(): MockWebGL2 {
@@ -172,6 +188,78 @@ describe('GlCompositor — uploadFrame', () => {
     compositor.uploadFrame('b', fakeSource);
 
     expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(2);
+  });
+
+  /**
+   * uploadFrame (glCompositor.ts:269) has NO branching on source type — it
+   * casts VideoFrame|ImageBitmap|HTMLImageElement to TexImageSource and
+   * calls texImage2D once; the browser's own overloaded texImage2D handles
+   * the three source kinds identically. So there is no "routing" branch to
+   * exercise here — these tests instead lock in call-shape parity (each
+   * source kind reaches texImage2D via the same call, for either slot),
+   * which is the property image-segment/video-segment mixing actually
+   * depends on. Phase 2 Step 1's real-GPU 12-combo check already proved
+   * this holds pixel-correct on real hardware for video/video, image/image,
+   * and video/image pairs (docs/webgl-architecture-plan.md Progress
+   * Tracker) — these are the mock-based call-sequencing counterpart that
+   * check didn't leave behind.
+   */
+  const fakeVideoFrame = { codedWidth: 1280, codedHeight: 720 } as unknown as VideoFrame;
+  const fakeImageBitmap = { width: 800, height: 600 } as unknown as ImageBitmap;
+  const fakeImageElement = { naturalWidth: 800, naturalHeight: 600 } as unknown as HTMLImageElement;
+
+  it.each([
+    ['VideoFrame', fakeVideoFrame],
+    ['ImageBitmap', fakeImageBitmap],
+    ['HTMLImageElement', fakeImageElement],
+  ] as const)('slot "a" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    expect(() => compositor.uploadFrame('a', source)).not.toThrow();
+    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
+  });
+
+  it.each([
+    ['VideoFrame', fakeVideoFrame],
+    ['ImageBitmap', fakeImageBitmap],
+    ['HTMLImageElement', fakeImageElement],
+  ] as const)('slot "b" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    expect(() => compositor.uploadFrame('b', source)).not.toThrow();
+    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
+  });
+
+  it('mixed-source transition — slot "a" a VideoFrame (outgoing video), slot "b" an ImageBitmap (incoming image) — renderFrame drives the same single-pass draw as a same-type pair, unaffected by the upstream source-kind mismatch', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeVideoFrame);
+    compositor.uploadFrame('b', fakeImageBitmap);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(1);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
+  });
+
+  it('image<->image transition — both slots ImageBitmap/HTMLImageElement — same pass-chain shape as the video<->video case', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeImageBitmap);
+    compositor.uploadFrame('b', fakeImageElement);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1.2, grade: NEUTRAL_GRADE });
+
+    // dip-black + zoom active: 2 draws (stage1 -> rt, zoom rt -> canvas),
+    // identical shape to the existing "zoom active" video-sourced test.
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
   });
 });
 
@@ -277,6 +365,108 @@ describe('GlCompositor — renderFrame pass chain', () => {
     expect(gl.calls.filter((c) => c === 'deleteFramebuffer')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'deleteTexture')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
+  });
+});
+
+describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
+  /**
+   * Program-selection/uniform-value tests, not pixel tests — the mock never
+   * executes GLSL, so it can't independently re-prove "dip-black renders
+   * black." That pixel-math question is already closed (Phase 0 spike,
+   * standalone, both engines + Phase 2 Step 1's chained 12-combo real-GPU
+   * check). What a mock CAN and should catch is a wiring regression: the
+   * wrong program selected for a slug, or the right program fed the wrong
+   * uniform value — exactly the class of bug Step 1 found (two things
+   * sharing a mechanism, differentiated only by a parameter/branch).
+   */
+
+  it('dip-black selects the dip program with u_dipColor = [0,0,0]', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
+    expect(gl.lastUniform('u_progress')).toEqual([0.5]);
+  });
+
+  it('dip-white selects the SAME dip program (shared per glCompositor.ts) with u_dipColor = [1,1,1] — not confused with dip-black', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_dipColor')).toEqual([1, 1, 1]);
+  });
+
+  it('regression guard: dip-black and dip-white driven back-to-back on the SAME compositor instance never bleed into each other\'s u_dipColor — the two are differentiated only by dipColorFor\'s ternary, exactly the "shared mechanism, parameter-only difference" shape the vertex-shader flip bug taught us to distrust', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+
+    gl.calls = [];
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.2 }, animScale: 1, grade: NEUTRAL_GRADE });
+    expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
+
+    gl.calls = [];
+    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.8 }, animScale: 1, grade: NEUTRAL_GRADE });
+    expect(gl.lastUniform('u_dipColor')).toEqual([1, 1, 1]);
+
+    // And back again — proves it's not a one-shot/first-call coincidence.
+    gl.calls = [];
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.6 }, animScale: 1, grade: NEUTRAL_GRADE });
+    expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
+  });
+
+  it('cross-dissolve selects the cross-dissolve program and wires u_progress', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.75 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_progress')).toEqual([0.75]);
+    // cross-dissolve/light-leak share no dip-color uniform.
+    expect(gl.lastUniform('u_dipColor')).toBeUndefined();
+  });
+
+  it('light-leak selects the light-leak program (not cross-dissolve or dip) and wires u_progress', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.4 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_progress')).toEqual([0.4]);
+    expect(gl.lastUniform('u_dipColor')).toBeUndefined();
+  });
+
+  it('u_scale is wired directly from CompositeParams.animScale (no re-derivation at render time)', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: null, animScale: 1.37, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_scale')).toEqual([1.37]);
+  });
+
+  it('grade uniforms are wired directly from GradeParams fields', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({
+      transition: null,
+      animScale: 1,
+      grade: { brightness: 0.3, contrast: -0.2, saturation: 0.1, temperature: 0.4 },
+    });
+
+    expect(gl.lastUniform('u_brightness')).toEqual([0.3]);
+    expect(gl.lastUniform('u_contrast')).toEqual([-0.2]);
+    expect(gl.lastUniform('u_saturation')).toEqual([0.1]);
+    expect(gl.lastUniform('u_temperature')).toEqual([0.4]);
   });
 });
 

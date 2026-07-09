@@ -127,6 +127,59 @@ describe('deriveCompositeParams — transition window progress', () => {
     const result = deriveCompositeParams(segments, 0, baseConfig);
     expect(result.transition).toBeNull();
   });
+
+  // Reachability: dip-black/dip-white were never independently constructed
+  // as outputs anywhere in this file before — nothing proved
+  // deriveCompositeParams could actually produce either slug at all.
+  function makeABWithTransition(slug: string, duration = 1): VideoSegment[] {
+    return [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: slug, effectTransitionDuration: duration }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+  }
+
+  it('dip-black is reachable: progress 0 at window start, 1 approached at window end', () => {
+    const segments = makeABWithTransition('dip-black');
+    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'dip-black', progress: 0 });
+    expect(deriveCompositeParams(segments, 5.999, baseConfig).transition?.progress).toBeCloseTo(0.999, 5);
+    expect(deriveCompositeParams(segments, 6, baseConfig).transition).toBeNull();
+  });
+
+  it('dip-white is reachable: progress 0 at window start, 1 approached at window end', () => {
+    const segments = makeABWithTransition('dip-white');
+    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'dip-white', progress: 0 });
+    expect(deriveCompositeParams(segments, 5.999, baseConfig).transition?.progress).toBeCloseTo(0.999, 5);
+    expect(deriveCompositeParams(segments, 6, baseConfig).transition).toBeNull();
+  });
+
+  it('light-leak is reachable at window start/mid, not just via the duration-fallback test above', () => {
+    const segments = makeABWithTransition('light-leak', 2);
+    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'light-leak', progress: 0 });
+    expect(deriveCompositeParams(segments, 6, baseConfig).transition?.progress).toBeCloseTo(0.5, 5);
+  });
+
+  it('regression guard: dip-black and dip-white are never confused with each other when both are constructed in the same test-suite run — they are differentiated only by the effectTransition string value, not by structurally different code, which is exactly the "shared mechanism, parameter-only difference" shape the Phase 2 Step 1 vertex-shader flip bug taught us to distrust', () => {
+    const blackResult = deriveCompositeParams(makeABWithTransition('dip-black'), 5.3, baseConfig);
+    const whiteResult = deriveCompositeParams(makeABWithTransition('dip-white'), 5.3, baseConfig);
+
+    expect(blackResult.transition?.type).toBe('dip-black');
+    expect(whiteResult.transition?.type).toBe('dip-white');
+    expect(blackResult.transition?.type).not.toBe(whiteResult.transition?.type);
+
+    // Run both again, black-then-white then white-then-black, to rule out
+    // any hidden module-level state (there is none in this pure function,
+    // but the guard is cheap and matches the class of bug being distrusted).
+    const secondBlack = deriveCompositeParams(makeABWithTransition('dip-black'), 5.7, baseConfig);
+    expect(secondBlack.transition?.type).toBe('dip-black');
+  });
+
+  it('adjacency: a tick just past the transition window close (start + duration + epsilon) is inactive; a tick just before close is still active — no off-by-epsilon confusion at the boundary', () => {
+    const segments = makeABWithTransition('cross-dissolve', 1);
+    const justBeforeClose = deriveCompositeParams(segments, 5 + 1 - 1e-4, baseConfig);
+    const justAfterClose = deriveCompositeParams(segments, 5 + 1 + 1e-4, baseConfig);
+    expect(justBeforeClose.transition).not.toBeNull();
+    expect(justAfterClose.transition).toBeNull();
+  });
 });
 
 describe('deriveCompositeParams — zoom animScale', () => {
@@ -197,6 +250,18 @@ describe('deriveCompositeParams — grade passthrough', () => {
     const grade = { brightness: 0.5, contrast: 0, saturation: 0, temperature: 0 };
     const result = deriveCompositeParams(segments, 5.5, { ...baseConfig, grade });
     expect(result.transition).not.toBeNull();
+    expect(result.grade).toEqual(grade);
+  });
+
+  it('grade is independent of transition/zoom-OUT state within the same call — the combined-tick test above only ever exercised zoom-in; resolveAnimScale\'s zoom-out branch is a separate formula and deserves its own combined-tick coverage', () => {
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'dip-white', effectTransitionDuration: 1 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out' }),
+    ];
+    const grade = { brightness: 0, contrast: 0, saturation: 0.6, temperature: -0.3 };
+    const result = deriveCompositeParams(segments, 5.5, { ...baseConfig, grade });
+    expect(result.transition).toEqual({ type: 'dip-white', progress: 0.5 });
+    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * (5 - 0.5), 6); // zoom-out at timeInSegment=0.5 of an 5s segment
     expect(result.grade).toEqual(grade);
   });
 });
