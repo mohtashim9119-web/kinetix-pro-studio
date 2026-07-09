@@ -584,6 +584,90 @@ investigation** — see the A3 entry above.
     WebCodecs-encoder export path as blocked (VideoEncoder non-functional on WKWebView) + remove B0
     spike artifacts`.
 
+- **B0 CONTRADICTED by a second independent encoder test — 2026-07-09. ⚠️ RECORDED AS AN OPEN
+  CONTRADICTION; this does NOT overwrite, resolve, or reverse the B0 finding above.** A fresh,
+  independently-written throwaway harness (`spike-webcodecs-audit.html` + `src/dev/webcodecsAuditSpike/`,
+  kept, not deleted) tested real `VideoEncoder.encode()`/`flush()` on the same machine (macOS 26.5.2,
+  Build 25F84, Intel), in the same real Tauri WKWebView, using the same attribution methodology as the
+  WKWebView Cross-Check (temporary `devUrl` repoint; results exfiltrated to a local HTTP listener since
+  WKWebView has no automatable devtools). It matched the app's real export target: `avc1.640028`
+  (H.264 High @ L4.0), 1920×1080, 30fps, 8 Mbps.
+  - **Result: all 4/4 configs (hardware/software × avc/annexb) SUCCEEDED** — `isConfigSupported: true`,
+    construct+configure OK, 15 frames → **15 chunks emitted**, `flush()` resolved in ~250–355ms, no
+    hang, no `error` callback, no `isConfigSupported`-says-yes-but-fails discrepancy. Output verified as
+    real bitstream: exactly 1 keyframe (~10 KB IDR) + 14 delta per config, ~166 KB total; annexb output
+    exactly 40 bytes larger than avc (start-codes vs length-prefixes — format honored). This is the exact
+    opposite of B0's "all 4/4 hung, `flush()` never resolved, 0 chunks."
+  - **Attribution rigor (same bar as B0):** bare `AppleWebKit/605.1.15` UA with no `Chrome`/`Safari`
+    token (confirms WKWebView, not Chromium — Chromium would falsely pass); killed the Tauri app and
+    confirmed **zero** results posted for 8s (rules out the Launch preview panel or any other renderer);
+    reproduced across 3 isolated runs.
+  - **This is NOT a "B0 was wrong" claim.** A 3-day-apart "hung 4/4" → "worked 4/4" reversal on the same
+    machine, with the original B0 harness unavailable, is an *unresolved contradiction*, not a resolved
+    one. B0's finding stands as recorded; this entry records that a second independent test disagrees.
+    **VideoEncoder is NOT to be called "viable" on the strength of this alone.** See the reconciliation
+    entry immediately below.
+
+- **B0 reconciliation attempt + end-to-end mux/round-trip proof — 2026-07-09.** Two parts.
+  - **⚠️ STATUS: WORKS WHEN TESTED, RISK UNRESOLVED — NOT PRODUCTION-VIABLE.** VideoEncoder succeeded
+    in every run below (Part 1's 8/8 config sweep + Part 2's full encode/decode/mux/visual proof). It
+    also carries an unexplained, unquantified hang risk: B0 recorded a real hang on this same machine
+    3 days earlier (`encodeQueueSize` plateau, `flush()` never resolving) that was never reproduced or
+    explained — a transient WebKit/VideoToolbox runtime state vs. a stale harness-only bug in B0's
+    (unrecoverable) original code, undetermined and neither confirmed nor ruled out. **Do NOT read
+    "narrowed, not resolved" below as "safe to ship" or "production-viable."** Treat this as
+    blocked-pending until the hang risk is EITHER empirically bounded (many repeated runs across
+    sessions/days establishing a hang rate) OR a future hang reproduces with an actual harness to diff
+    against.
+  - **Part 1 — reconcile with B0's harness.** B0's original harness is **unrecoverable from git**:
+    commit `1cd8d03` ("… + remove B0 spike artifacts") is **docs-only** (touches only
+    `docs/webcodecs-architecture-plan.md`); the spike files were created, run, and deleted in the working
+    tree without ever being committed, and an exhaustive `git rev-list --all --objects` scan finds no
+    blob under `webcodecsEncoderSpike`/`spike-webcodecs-encoder`. So the original could not be run
+    as-was; it was reconstructed from the writeup (15 synthetic canvas frames, `VideoFrame(canvas,
+    {timestamp})`, close-after-encode, hw/sw × avc/annexb, `isConfigSupported` first, timed flush) and a
+    matrix was swept over the config fields B0 did **not** record (codec string, resolution, latencyMode),
+    polling `encodeQueueSize` during flush to detect B0's specific "15→11 then plateau, 0 chunks"
+    signature. Harness kept: `spike-webcodecs-b0repro.html` + `src/dev/webcodecsB0Repro/`.
+    - **Result: 8/8 reconstructed variants SUCCEEDED; NONE reproduced the hang.** Tested `avc1.42001f`
+      (Baseline L3.1) and `avc1.42E01E` (Baseline L3.0) — the canonical-WebCodecs-sample strings B0's
+      "config shape matches the standard sample pattern" most likely used — fed **1080p** frames on both
+      hardware and software paths (the leading "level-overflow harness bug" hypothesis), plus Main-profile
+      `avc1.4d0028`, the 640×480 sample size, `latencyMode: realtime`, and annexb. Every one emitted 15
+      chunks and resolved flush; queue trajectory `[15]` then drained (no partial plateau on any config).
+    - **Interpretation (evidence-based, no guess either direction):** the contradiction is **narrowed,
+      not resolved.** It is definitively **NOT** a codec-profile / level / resolution / hardware-vs-software
+      / bitstream-format / latency-mode config sensitivity — every such variant works on today's runtime.
+      That leaves two live hypotheses I **cannot** distinguish with the original harness gone: (a) B0's
+      harness had a defect in a dimension the writeup did not capture (frame lifecycle, event-loop/timing,
+      or the queue-measurement itself), which no config-shaped reconstruction reproduces; or (b) a
+      transient or since-changed WKWebView/VideoToolbox runtime state between the two test dates (OS
+      version string is unchanged at 26.5.2, so if it is (b) it is a sub-version/supplemental or transient
+      change, not an OS upgrade — weaker, but not excludable). **No harness-bug diff could be produced**
+      because no reconstruction hangs; that is itself the finding.
+  - **Part 2 — end-to-end mux + round-trip (go/no-go).** Harness kept: `spike-webcodecs-muxproof.html` +
+    `src/dev/webcodecsMuxProof/`. In the real Tauri WKWebView: encoded **60** canvas frames (1080p/30,
+    `avc1.640028`, annexb) → **60 chunks, 2 keyframes**; **round-tripped those exact chunks back through
+    `VideoDecoder` → 60/60 frames decoded, monotonic** (`decoderConfig` from encoder `metadata`, no
+    description, as expected for annexb); concatenated the annexb elementary stream (569,378 bytes) and
+    muxed it with the **bundled ffmpeg sidecar** (`-f h264 -r 30 -c copy -movflags +faststart`, i.e. the
+    "ffmpeg mux-only" shape Phase B envisions — no re-encode). Muxed MP4 verified: **2.00s duration,
+    1920×1080, H.264 High/avc1/yuv420p, 30fps, decodes to exactly 60 frames, no corruption**; opens in
+    QuickTime; extracted frames 0/30/59 are **visually correct** (hue rotates 0°→180°→354° by frame
+    index, "FRAME N" text and a sweeping green marker track frame index left→center→right). This is the
+    real playable-file proof, not "a file exists."
+  - **Disposition: still BLOCKED-pending, NOT viable.** Per the task's own gate, VideoEncoder is **not**
+    declared viable while Part 1's contradiction remains unresolved (it does), even though Part 2 passes
+    cleanly. Also still untested by hardware constraint: **macOS arm64** (this machine is Intel x86_64)
+    and **Windows/WebView2** (no hardware/VM available) — deliberately not guessed. Next steps to actually
+    clear this: run the same audit + b0repro + muxproof harnesses on macOS arm64 and real Windows; and, if
+    a definitive reconciliation is wanted, attempt to obtain B0's original harness/config from whoever ran
+    it (chat history, local un-committed backups) rather than a reconstruction.
+  - **No production/pipeline source changed.** `frameRenderer.ts`, `segmentEncoder.ts`,
+    `exportPipeline.ts`, `plainSegment.ts`, `useWebCodecsPreview.ts`, `videoDecoderPool.ts` all
+    unmodified; `tauri.conf.json`'s temporary `devUrl`/CSP/`beforeDevCommand` edits for the isolated runs
+    were reverted (zero git diff). Audit/spike only.
+
 - **Item 4 (frozen transition frame) — re-audited and re-scoped as a standalone, decode-side fix;
   supersedes the "BLOCKED transitively" disposition above. B1-B3 of 5 ✅ DONE (B3 manually
   verified — frozen frame during transitions confirmed fixed); B4-B5 ⚠️ PARKED/SUPERSEDED, not
