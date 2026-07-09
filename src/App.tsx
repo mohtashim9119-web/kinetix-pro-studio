@@ -49,7 +49,7 @@ import {
   TextOverlay,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, cleanTagName } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -342,6 +342,27 @@ export const parseProjectData = async (
       if (asset) {
         current.assetId = asset.id;
         usedAssetIdsTotal.add(asset.id);
+      }
+    }
+
+    // Fallback tier (explicit tags only): if exact match found nothing, try a
+    // contiguous-word-sequence match — the tag's tokens appearing as an
+    // adjacent in-order block inside an asset filename (e.g. [year_2003] →
+    // year_2003_2342368767.jpg). Require a UNIQUE match: 2+ candidates is
+    // ambiguous and must NOT be silently resolved — it falls through to the
+    // unmatchedExplicitTag flag below (same "never guess wrong" rule as the
+    // exact tier, commit 9b15a59), warning like the exact-collision case above.
+    if (name && !current.assetId) {
+      const wordMatches = assets.filter(a => contiguousWordMatch(name, a.name));
+      if (wordMatches.length === 1) {
+        const asset = wordMatches[0]!;
+        current.assetId = asset.id;
+        usedAssetIdsTotal.add(asset.id);
+      } else if (wordMatches.length > 1) {
+        console.warn(
+          `[parseProjectData] Tag "${name}" ambiguously word-matches ${wordMatches.length} assets: ` +
+          `${wordMatches.map(a => a.name).join(', ')}. Leaving unmatched — tighten the tag to disambiguate.`
+        );
       }
     }
 

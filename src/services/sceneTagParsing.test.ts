@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { parseProjectData } from '../App';
-import { normalizeForMatch, isExactFilenameMatch, stripMediaExtension, cleanTagName, autoMatchSegments } from './syncEngine';
+import { normalizeForMatch, isExactFilenameMatch, contiguousWordMatch, stripMediaExtension, cleanTagName, autoMatchSegments } from './syncEngine';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
 import { TransitionType, AnimationType } from '../types';
 import type { Asset, VideoSegment } from '../types';
@@ -495,5 +495,95 @@ describe('Part B — explicit-tag failures are NOT fuzzy-guessed', () => {
     );
     expect(parsed[0]?.unmatchedExplicitTag).toBeUndefined();
     expect(parsed[0]?.assetId).toBe('a1'); // context fallback legitimately fires
+  });
+});
+
+describe('contiguousWordMatch — explicit-tag fallback tier (unit)', () => {
+  it('matches a tag whose tokens are a contiguous prefix block of a longer filename (THE key case)', () => {
+    expect(contiguousWordMatch('year_2003', 'year_2003_2342368767')).toBe(true);
+    expect(contiguousWordMatch('year_2003', 'year_2003_2342368767.jpg')).toBe(true); // extension-agnostic
+  });
+
+  it('matches a contiguous block in the middle and at the end of a filename', () => {
+    expect(contiguousWordMatch('age_24', '002_age_24')).toBe(true);       // suffix block
+    expect(contiguousWordMatch('age_24', '002_age_24_final')).toBe(true); // interior block
+  });
+
+  it('does NOT match tokens in the wrong order (order + adjacency required)', () => {
+    expect(contiguousWordMatch('year_2003', '2003_year')).toBe(false);
+    expect(contiguousWordMatch('year_2003', '2003_year_2342368767')).toBe(false);
+  });
+
+  it('does NOT match a non-adjacent (gap-allowing) subsequence', () => {
+    expect(contiguousWordMatch('year_2003', 'year_of_2003')).toBe(false); // 'of' breaks adjacency
+  });
+
+  it('returns false for an empty / punctuation-only / extension-only tag', () => {
+    expect(contiguousWordMatch('', 'year_2003.jpg')).toBe(false);
+    expect(contiguousWordMatch('   ', 'year_2003.jpg')).toBe(false);
+    expect(contiguousWordMatch('.jpg', 'year_2003.jpg')).toBe(false); // strips to empty stem
+  });
+
+  it('matches a single-token tag on whole-token equality, not substring', () => {
+    expect(contiguousWordMatch('beach', 'beach_sunset')).toBe(true);
+    expect(contiguousWordMatch('beach', 'my_beach_day')).toBe(true);
+    expect(contiguousWordMatch('beach', 'beaches_wide')).toBe(false); // 'beaches' !== 'beach'
+  });
+
+  it('does NOT match when the tag is longer than the asset token run', () => {
+    expect(contiguousWordMatch('year_2003_extra_more', 'year_2003')).toBe(false);
+  });
+
+  it('is caller-visible as 2+ matches when two assets share the contiguous block (ambiguity)', () => {
+    const assets = [
+      makeAsset({ id: 'a1', name: 'beach_sunset.jpg' }),
+      makeAsset({ id: 'a2', name: 'my_beach_day.jpg' }),
+    ];
+    const wordMatches = assets.filter(a => contiguousWordMatch('beach', a.name));
+    expect(wordMatches).toHaveLength(2); // caller must treat this as ambiguous → unmatched
+  });
+});
+
+describe('contiguous-word fallback — parseProjectData ladder integration', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('resolves an explicit tag via a UNIQUE contiguous word match when exact match fails', async () => {
+    const assets = [makeAsset({ id: 'a1', name: 'year_2003_2342368767.jpg' })];
+    const parsed = await parseProjectData(
+      'Line one.',
+      '[year_2003]\nLine one.',
+      assets,
+      10,
+    );
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0]?.assetId).toBe('a1');
+    expect(parsed[0]?.unmatchedExplicitTag).toBeUndefined();
+  });
+
+  it('leaves an ambiguous (2+ candidate) tag UNMATCHED and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const assets = [
+      makeAsset({ id: 'a1', name: 'beach_sunset.jpg' }),
+      makeAsset({ id: 'a2', name: 'my_beach_day.jpg' }),
+    ];
+    const parsed = await parseProjectData('Line one.', '[beach]\nLine one.', assets, 10);
+    expect(parsed[0]?.assetId).toBeUndefined();
+    expect(parsed[0]?.unmatchedExplicitTag).toBe(true);
+    const ambigWarn = warn.mock.calls.find(c => String(c[0]).includes('ambiguously word-matches'));
+    expect(ambigWarn, 'ambiguity warn should fire').toBeTruthy();
+    expect(String(ambigWarn?.[0])).toContain('beach_sunset.jpg');
+    expect(String(ambigWarn?.[0])).toContain('my_beach_day.jpg');
+  });
+
+  it('exact match still wins over a contiguous candidate (exact tier runs first)', async () => {
+    // a1 is an EXACT stem match for [year_2003]; a2 is only a contiguous match.
+    // The exact tier runs first and assigns a1, so the contiguous tier never runs.
+    const assets = [
+      makeAsset({ id: 'a1', name: 'year_2003.jpg' }),
+      makeAsset({ id: 'a2', name: 'year_2003_2342368767.jpg' }),
+    ];
+    const parsed = await parseProjectData('Line one.', '[year_2003]\nLine one.', assets, 10);
+    expect(parsed[0]?.assetId).toBe('a1');
+    expect(parsed[0]?.unmatchedExplicitTag).toBeUndefined();
   });
 });

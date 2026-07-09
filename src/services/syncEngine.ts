@@ -105,6 +105,49 @@ export function isExactFilenameMatch(tagName: string, assetName: string): boolea
     normalizeForMatch(stripMediaExtension(assetName.trim()).toLowerCase());
 }
 
+/** Splits a name into lowercase alphanumeric word tokens using the same stem
+ *  normalization as isExactFilenameMatch (extension strip + Unicode fold +
+ *  lowercase), so `002_age_24.jpg` → ['002','age','24']. */
+function toWordTokens(s: string): string[] {
+  return normalizeForMatch(stripMediaExtension(s.trim()).toLowerCase())
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Explicit-tag fallback tier (runs only after isExactFilenameMatch fails):
+ * true when the tag's word-token sequence appears as a CONTIGUOUS, in-order,
+ * adjacent block anywhere inside the asset's word-token sequence — tag-within-
+ * asset direction only, not the reverse. So a short tag `[year_2003]` resolves
+ * to asset `year_2003_2342368767.jpg`, but `[2003_year]` does NOT match
+ * `year_2003` (order + adjacency required — this is a token-level substring,
+ * not a gap-allowing subsequence). An empty tag returns false.
+ *
+ * Deliberately looser than isExactFilenameMatch and stricter than isFuzzyMatch.
+ * Because a single short tag can be a contiguous block of several filenames,
+ * this is inherently ambiguity-prone: callers MUST require a UNIQUE match
+ * before assigning and leave a 2+ match visibly unmatched rather than silently
+ * picking one (same "never guess wrong" rule as the exact tier, commit 9b15a59).
+ */
+export function contiguousWordMatch(tagName: string, assetName: string): boolean {
+  const tag = toWordTokens(tagName);
+  if (tag.length === 0) return false;
+  const asset = toWordTokens(assetName);
+  if (tag.length > asset.length) return false;
+
+  for (let i = 0; i + tag.length <= asset.length; i++) {
+    let allMatch = true;
+    for (let j = 0; j < tag.length; j++) {
+      if (asset[i + j] !== tag[j]) {
+        allMatch = false;
+        break;
+      }
+    }
+    if (allMatch) return true;
+  }
+  return false;
+}
+
 /**
  * Re-derives startTime and duration for each segment from its anchorStart,
  * preserving surviving scene positions across re-sync after scene add/remove.
