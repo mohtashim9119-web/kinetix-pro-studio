@@ -1,0 +1,22 @@
+<!--
+  THROWAWAY — B0 reconciliation harness (Part 1). Runs in the real Tauri WKWebView
+  via temporary devUrl repoint. Delete with src/dev/webcodecsB0Repro/ when done.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebCodecs B0 Reconciliation (throwaway)</title>
+    <style>
+      body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+      #log { white-space: pre-wrap; background: #000; padding: 8px; max-height: 85vh; overflow-y: auto; font-size: 12px; }
+      h1 { font-size: 15px; }
+    </style>
+  </head>
+  <body>
+    <h1>WebCodecs B0 Reconciliation — encoder config-matrix (throwaway)</h1>
+    <p><button id="rerun">Re-run</button></p>
+    <pre id="log">(starting...)</pre>
+    <script type="module" src="/src/dev/webcodecsB0Repro/main.ts"></script>
+  </body>
+</html>
