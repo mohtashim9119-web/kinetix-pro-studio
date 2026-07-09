@@ -73,6 +73,45 @@ pub fn ffmpeg_write_file(session_id: String, path: String, data_b64: String) -> 
     fs::write(&full, &data).map_err(|e| format!("write_file({}): {}", path, e))
 }
 
+/// Raw-binary variant of `ffmpeg_write_file`.
+///
+/// Writes the invoke request's raw body bytes to <session_dir>/<path>. Unlike
+/// `ffmpeg_write_file`, the payload is NOT base64-encoded: the frontend passes a
+/// `Uint8Array`/`ArrayBuffer` as the invoke body (Tauri v2 raw request body), and
+/// `session_id` + `path` travel as request headers. This eliminates the per-frame
+/// base64 encode (JS) + inflated-string IPC transfer + base64 decode (Rust) that
+/// dominated the per-frame PNG-write cost on the canvas export path (audit
+/// confirmed disk I/O itself is sub-ms).
+///
+/// `ffmpeg_write_file` is left untouched for backward compatibility and other
+/// callers; only the segment encoder's per-frame image path uses this command.
+/// Validation and the `fs::write` logic are identical to `ffmpeg_write_file` —
+/// only the transport differs.
+#[tauri::command]
+pub fn ffmpeg_write_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    let headers = request.headers();
+    let session_id = headers
+        .get("session-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "write_file_raw: missing or invalid 'session-id' header".to_string())?;
+    let path = headers
+        .get("path")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "write_file_raw: missing or invalid 'path' header".to_string())?;
+
+    validate_path(path)?;
+    let full = session_dir(session_id)?.join(path);
+
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => {
+            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {}", path, e))
+        }
+        tauri::ipc::InvokeBody::Json(_) => {
+            Err("write_file_raw: expected a raw byte body, got JSON".to_string())
+        }
+    }
+}
+
 /// Reads <session_dir>/<path> and returns its bytes.
 #[tauri::command]
 pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, String> {

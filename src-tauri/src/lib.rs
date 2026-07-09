@@ -52,6 +52,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ffmpeg::ffmpeg_create_session,
             ffmpeg::ffmpeg_write_file,
+            ffmpeg::ffmpeg_write_file_raw,
             ffmpeg::ffmpeg_read_file,
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,

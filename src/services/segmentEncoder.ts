@@ -8,6 +8,14 @@ import { resolveEffectiveTransition } from './transitionResolver';
  */
 export interface FfmpegLike {
   writeFile(path: string, data: Uint8Array): Promise<boolean | void>;
+  /**
+   * Optional raw-binary write — same on-disk result as writeFile but sends the
+   * bytes without a base64 round-trip (Tauri v2 raw invoke body). When present,
+   * the per-frame export write uses it to shed the base64 encode/decode + string
+   * IPC cost; when absent (any implementer that doesn't provide it), callers fall
+   * back to writeFile with identical behavior.
+   */
+  writeFileRaw?(path: string, data: Uint8Array): Promise<boolean | void>;
   exec(args: string[]): Promise<number>;
   readFile(path: string): Promise<Uint8Array | string>;
   deleteFile(path: string): Promise<boolean | void>;
@@ -99,17 +107,11 @@ export async function encodeSegment(
   const totalFrames = Math.max(1, Math.round(encodeDuration * fps));
   const writtenFiles: string[] = [];
 
-  // URL of the incoming segment's video loaded into the ISOLATED blend cache by
-  // the transition-blend render below (useBlendVideoCache). Released in the
-  // finally once this segment's whole transition window is encoded. undefined
-  // when this segment has no transition or no next asset.
-  const blendVideoUrl = hasTransition ? options.nextAsset?.url : undefined;
-
-  try {
-  // -------------------------------------------------------------------------
-  // Render and write frames
-  // -------------------------------------------------------------------------
-  for (let i = 0; i < totalFrames; i++) {
+  // Renders frame `i` onto the main-thread canvas (`ctx`). Pure side effect —
+  // leaves the finished frame in the canvas backing store for the caller to
+  // read out. Factored out so the worker-pipelined path and the sequential
+  // fallback path share one copy of the blend + draw logic.
+  const renderFrameToCanvas = async (i: number): Promise<void> => {
     const timeInSegment = encodeStart + i / fps;
 
     if (import.meta.env.DEV) {
@@ -173,48 +175,145 @@ export async function encodeSegment(
       transition: blendParams,
       absoluteTime: segment.startTime + timeInSegment,
     });
+  };
 
-    const pngBytes = await canvasToPng(canvas);
-    const filename = `frame_${String(i + 1).padStart(5, '0')}.png`;
-    await ffmpeg.writeFile(filename, pngBytes);
-    writtenFiles.push(filename);
-
-    options.onProgress?.(i + 1, totalFrames);
-  }
+  const frameName = (i: number): string => `frame_${String(i + 1).padStart(5, '0')}.png`;
 
   // -------------------------------------------------------------------------
-  // Encode
+  // Render and write frames
+  //
+  // Fast path (worker pipeline): the main thread renders frame N+1 while a
+  // worker pool PNG-encodes frame N off-thread; the main thread then does the
+  // (unchanged) bytesToBase64 + ffmpeg.writeFile IPC. PNG bytes, frame ordering
+  // (each frame → its own frame_%05d.png), and the IPC call shape are identical
+  // to the sequential path — this is a scheduling change only. See
+  // docs/phase-7-task-1-export-profiling.md.
+  //
+  // Fallback path: the original fully-sequential render → toBlob → writeFile
+  // loop, used when OffscreenCanvas/convertToBlob/Worker are unavailable.
   // -------------------------------------------------------------------------
-  const outputFile = `seg_${segment.id}.mp4`;
-  writtenFiles.push(outputFile);
+  const pool = createFrameEncoderPool();
 
-  await ffmpeg.exec([
-    '-framerate', String(fps),
-    '-i', 'frame_%05d.png',
-    '-c:v', 'libx264',
-    '-preset', 'fast',
-    '-crf', '16',
-    '-pix_fmt', 'yuv420p',
-    '-colorspace', 'bt709',
-    '-color_primaries', 'bt709',
-    '-color_trc', 'bt709',
-    '-movflags', '+faststart',
-    '-y',
-    outputFile,
-  ]);
+  // URL of the incoming segment's video loaded into the ISOLATED blend cache by
+  // the transition-blend render (renderFrameToCanvas above, useBlendVideoCache).
+  // Released in the finally once this segment's whole transition window is
+  // encoded. undefined when this segment has no transition or no next asset.
+  const blendVideoUrl = hasTransition ? options.nextAsset?.url : undefined;
 
-  // -------------------------------------------------------------------------
-  // Read result and clean up FS
-  // -------------------------------------------------------------------------
-  const fileData = await ffmpeg.readFile(outputFile);
-  const mp4Bytes =
-    fileData instanceof Uint8Array
-      ? fileData
-      : new TextEncoder().encode(fileData as string);
+  try {
+    if (pool) {
+      try {
+        // Bounded number of frames encoded-but-not-yet-written, to cap memory
+        // (each in-flight frame holds one W×H RGBA buffer). One slot per worker
+        // plus one lets a worker stay fed while the main thread renders ahead.
+        const maxInflight = pool.size + 1;
+        const inflight: Promise<void>[] = [];
+        let completed = 0;
+        let firstError: unknown = null;
 
-  await cleanupFiles(ffmpeg, writtenFiles);
+        for (let i = 0; i < totalFrames; i++) {
+          if (firstError !== null) break;
 
-  return mp4Bytes;
+          // [timing] instrumentation only — no scheduling change. Strip later
+          // alongside the [export]/[encode] console logs.
+          const renderStart = performance.now();
+          await renderFrameToCanvas(i);
+          // Exact, non-premultiplied sRGB pixels — same bytes canvas.toBlob would
+          // have PNG-encoded. Buffer is transferred (zero-copy) into the worker.
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const renderMs = performance.now() - renderStart;
+          const frameNo = i + 1;
+          const filename = frameName(i);
+          writtenFiles.push(filename);
+
+          const job = (async () => {
+            try {
+              // workerRoundtrip includes any time this frame waits for a busy
+              // worker, so it reflects wall time from dispatch to PNG-in-hand and
+              // overlaps the next frame's render happening on the main thread.
+              const workerStart = performance.now();
+              const pngBytes = await pool.encode(imageData);
+              const workerMs = performance.now() - workerStart;
+              const writeStart = performance.now();
+              // Prefer the raw-binary write (no base64 round-trip) when the ffmpeg
+              // backend provides it; fall back to the base64 writeFile otherwise.
+              // Same on-disk PNG, same frame_%05d filename — transport-only change.
+              if (ffmpeg.writeFileRaw) {
+                await ffmpeg.writeFileRaw(filename, pngBytes);
+              } else {
+                await ffmpeg.writeFile(filename, pngBytes);
+              }
+              const writeMs = performance.now() - writeStart;
+              console.log(
+                `[timing] frame ${frameNo}/${totalFrames} render=${renderMs.toFixed(1)}ms` +
+                ` workerRoundtrip=${workerMs.toFixed(1)}ms writeFile=${writeMs.toFixed(1)}ms`,
+              );
+              completed++;
+              options.onProgress?.(completed, totalFrames);
+            } catch (err) {
+              if (firstError === null) firstError = err;
+            }
+          })();
+          inflight.push(job);
+
+          // Backpressure: keep at most `maxInflight` frames outstanding.
+          if (inflight.length >= maxInflight) {
+            await inflight.shift();
+          }
+        }
+
+        await Promise.all(inflight);
+        if (firstError !== null) {
+          throw firstError instanceof Error ? firstError : new Error(String(firstError));
+        }
+      } finally {
+        pool.dispose();
+      }
+    } else {
+      // Sequential fallback — byte-identical output, no pipelining.
+      for (let i = 0; i < totalFrames; i++) {
+        await renderFrameToCanvas(i);
+        const pngBytes = await canvasToPng(canvas);
+        const filename = frameName(i);
+        await ffmpeg.writeFile(filename, pngBytes);
+        writtenFiles.push(filename);
+        options.onProgress?.(i + 1, totalFrames);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Encode
+    // -------------------------------------------------------------------------
+    const outputFile = `seg_${segment.id}.mp4`;
+    writtenFiles.push(outputFile);
+
+    await ffmpeg.exec([
+      '-framerate', String(fps),
+      '-i', 'frame_%05d.png',
+      '-c:v', 'libx264',
+      '-preset', 'fast',
+      '-crf', '16',
+      '-pix_fmt', 'yuv420p',
+      '-colorspace', 'bt709',
+      '-color_primaries', 'bt709',
+      '-color_trc', 'bt709',
+      '-movflags', '+faststart',
+      '-y',
+      outputFile,
+    ]);
+
+    // -------------------------------------------------------------------------
+    // Read result and clean up FS
+    // -------------------------------------------------------------------------
+    const fileData = await ffmpeg.readFile(outputFile);
+    const mp4Bytes =
+      fileData instanceof Uint8Array
+        ? fileData
+        : new TextEncoder().encode(fileData as string);
+
+    await cleanupFiles(ffmpeg, writtenFiles);
+
+    return mp4Bytes;
   } finally {
     // Cleanup decision — RELEASE (not promote): the incoming segment becomes
     // CURRENT on the next encodeSegment call and loads into the PRIMARY cache,
@@ -414,6 +513,117 @@ export async function encodeStaticImageSegment(
   await cleanupFiles(ffmpeg, [frameFile, outputFile]);
 
   return mp4Bytes;
+}
+
+// ---------------------------------------------------------------------------
+// Off-main-thread PNG encoding (Phase 7 export speedup)
+// ---------------------------------------------------------------------------
+
+interface WorkerResponse {
+  id: number;
+  pngBuffer?: ArrayBuffer;
+  error?: string;
+}
+
+/**
+ * A small pool of workers that PNG-encode RGBA frames off the main thread.
+ * Each `encode()` transfers the ImageData buffer (zero-copy) to the next
+ * worker round-robin; a single worker processes its queue sequentially, so N
+ * workers give N-way parallelism across CPU cores. Frames complete out of
+ * order, which is safe: each frame is written to its own indexed file, so
+ * ordering is carried by the filename, not by completion order.
+ */
+class FrameEncoderPool {
+  readonly size: number;
+  #workers: Worker[];
+  #pending = new Map<number, { resolve: (b: Uint8Array) => void; reject: (e: Error) => void }>();
+  #nextId = 0;
+  #rr = 0;
+  #disposed = false;
+
+  constructor(size: number) {
+    this.size = size;
+    this.#workers = [];
+    for (let i = 0; i < size; i++) {
+      const worker = new Worker(new URL('./frameEncodeWorker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.#onMessage(e.data);
+      worker.onerror = (e) => this.#onWorkerError(e);
+      this.#workers.push(worker);
+    }
+  }
+
+  encode(imageData: ImageData): Promise<Uint8Array> {
+    if (this.#disposed) return Promise.reject(new Error('FrameEncoderPool: already disposed'));
+    const id = this.#nextId++;
+    const worker = this.#workers[this.#rr]!;
+    this.#rr = (this.#rr + 1) % this.#workers.length;
+    return new Promise<Uint8Array>((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      const buffer = imageData.data.buffer;
+      worker.postMessage(
+        { id, buffer, width: imageData.width, height: imageData.height },
+        [buffer],
+      );
+    });
+  }
+
+  #onMessage(data: WorkerResponse): void {
+    const entry = this.#pending.get(data.id);
+    if (!entry) return;
+    this.#pending.delete(data.id);
+    if (data.error !== undefined || !data.pngBuffer) {
+      entry.reject(new Error(data.error ?? 'frameEncodeWorker: empty response'));
+    } else {
+      entry.resolve(new Uint8Array(data.pngBuffer));
+    }
+  }
+
+  #onWorkerError(e: ErrorEvent): void {
+    // A worker-level crash can't be tied to a specific request id, so fail every
+    // outstanding job — the export surfaces it as an encode error and aborts.
+    const err = new Error(`frameEncodeWorker crashed: ${e.message || 'unknown error'}`);
+    for (const { reject } of this.#pending.values()) reject(err);
+    this.#pending.clear();
+  }
+
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    for (const w of this.#workers) w.terminate();
+    this.#workers = [];
+    this.#pending.clear();
+  }
+}
+
+/**
+ * Builds a worker pool for off-thread PNG encoding, or returns null when the
+ * runtime can't support it (OffscreenCanvas / convertToBlob / Worker missing,
+ * or worker construction throws). Null routes encodeSegment to the unchanged
+ * sequential main-thread fallback. Pool size is capped at 4 and leaves a core
+ * for the main-thread render/seek work.
+ */
+function createFrameEncoderPool(): FrameEncoderPool | null {
+  if (
+    typeof Worker === 'undefined' ||
+    typeof OffscreenCanvas === 'undefined' ||
+    typeof OffscreenCanvas.prototype.convertToBlob !== 'function'
+  ) {
+    console.log('[export] Using sequential fallback (worker/OffscreenCanvas unsupported)');
+    return null;
+  }
+  const cores = typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+    ? navigator.hardwareConcurrency
+    : 4;
+  const size = Math.max(1, Math.min(4, cores - 1));
+  try {
+    const pool = new FrameEncoderPool(size);
+    console.log(`[export] Using pipelined worker encode (pool size ${size})`);
+    return pool;
+  } catch (err) {
+    console.log('[export] Using sequential fallback (worker/OffscreenCanvas unsupported)');
+    if (import.meta.env.DEV) console.warn('[segmentEncoder] worker pool construction failed:', err);
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------

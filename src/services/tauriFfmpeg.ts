@@ -118,6 +118,29 @@ export class TauriFfmpeg implements FfmpegLike {
     }
   }
 
+  /**
+   * Raw-binary variant of writeFile — sends `data` as the Tauri v2 raw invoke
+   * body (Uint8Array, no base64) instead of a base64 string field. session_id
+   * and path travel as request headers, read by the `ffmpeg_write_file_raw`
+   * Rust command. This removes the per-frame base64 encode + inflated-string
+   * IPC transfer + Rust-side base64 decode that dominated per-frame PNG-write
+   * cost on the canvas export path (segmentEncoder.ts pipelined job). Same
+   * on-disk result as writeFile — only the transport differs.
+   */
+  async writeFileRaw(path: string, data: Uint8Array): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('ffmpeg_write_file_raw', data, {
+        headers: {
+          'session-id': this.#sessionId,
+          path,
+        },
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
   async exec(args: string[]): Promise<number> {
     this.#assertAlive();
     try {
