@@ -58,6 +58,10 @@ src/
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
+                     #   writeFileRaw() (2026-07-09) — sends frame bytes as a raw Tauri v2 invoke body
+                     #   (no base64) to ffmpeg_write_file_raw; session id + path travel as headers.
+                     #   Optional on FfmpegLike — segmentEncoder.ts prefers it when present, else uses
+                     #   the base64 writeFile() path above.
                      #   isTauri() guard — checks for window.__TAURI_INTERNALS__.
                      #   probeAudioDuration(blob) — native ffmpeg duration probe (invoke
                      #   'probe_audio_duration'); throws on failure. App.tsx's resolveVoiceoverDuration
@@ -71,12 +75,31 @@ src/
     frameRenderer.ts   # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
                      #   Calls applySegmentAnimation (canvasAnimations.ts) for AnimationType canvas transforms.
                      #   Respects segment.trimEnd for video seek clamping.
+                     #   Two <video>-element caches (2026-07-09): the primary videoCache, and an
+                     #   isolated blendVideoCache used only when renderSegmentFrame is called with
+                     #   useBlendVideoCache: true (the transition-blend "incoming" render in
+                     #   segmentEncoder.ts) — prevents a same-source-URL transition from thrashing one
+                     #   shared <video> between the outgoing and incoming seek targets every frame.
+                     #   releaseBlendVideo(url) detaches and drops a blend-cache entry; called by
+                     #   segmentEncoder.ts once a segment's transition window finishes encoding.
     canvasAnimations.ts # Canvas 2D animation transforms keyed by AnimationType (Fidelity Polish Item 1).
                      #   applySegmentAnimation() — ctx.save/restore wrapper, easing helpers, dev-only assert guard.
     segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array.
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
                      #   Also hosts encodePlainVideoSegment/encodeStaticImageSegment — the Tier 1
                      #   fast-path encoders used when plainSegment.ts predicates return true.
+                     #   Frame render/write loop is pipelined (2026-07-09): a FrameEncoderPool of
+                     #   OffscreenCanvas workers (frameEncodeWorker.ts) PNG-encodes frame N while the
+                     #   main thread renders frame N+1; prefers ffmpeg.writeFileRaw (raw-binary IPC,
+                     #   no base64) when the FfmpegLike implementer provides it, else falls back to
+                     #   writeFile. Falls back to the original fully-sequential main-thread loop when
+                     #   Worker/OffscreenCanvas is unavailable. Also wires blend-cache isolation: passes
+                     #   useBlendVideoCache: true on the transition-blend render and calls
+                     #   frameRenderer.ts's releaseBlendVideo() in a finally once a segment's transition
+                     #   window finishes encoding (see frameRenderer.ts entry below).
+    frameEncodeWorker.ts # Dedicated-worker PNG encoder used by segmentEncoder.ts's FrameEncoderPool —
+                     #   OffscreenCanvas.convertToBlob('image/png'), reused canvas across frames.
+                     #   Pixel-exact vs. the old main-thread canvas.toBlob path (same encoder, same bytes).
     plainSegment.ts  # isPlainVideoSegment/isPlainImageSegment (Tier 1 fast-path predicates, both
                      #   backed by a shared internal isPlainMediaSegment core) — true when a segment
                      #   has no per-frame compositing (no caption/overlay/filter/animation/speed
@@ -161,12 +184,15 @@ src-tauri/
     default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (13 total: 10 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
+                     #   (14 total: 11 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
-    ffmpeg.rs        # 10 Tauri commands: create_session, write_file (b64), read_file, delete_file,
-                     #   exec (sidecar), destroy_session, pick_save_path, save_bytes_to_disk (rfd),
-                     #   probe_audio_duration, reveal_in_finder. Session-scoped temp dirs
-                     #   ($TMPDIR/kinetix-export-<uuid>/); path traversal validation.
+    ffmpeg.rs        # 11 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
+                     #   no base64 — added 2026-07-09, session id + path travel as request headers),
+                     #   read_file, delete_file, exec (sidecar), destroy_session, pick_save_path,
+                     #   save_bytes_to_disk (rfd), probe_audio_duration, reveal_in_finder.
+                     #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal
+                     #   validation (write_file_raw validates the header-supplied path the same way
+                     #   write_file does).
                      #   probe_audio_duration: runs `ffmpeg -i <file>` (no ffprobe binary bundled),
                      #   parses `Duration:` from stderr — replaces the WebView <audio> duration probe
                      #   (codec-dependent, silent 60s fallback); throws on failure, no fake duration.
@@ -240,8 +266,12 @@ App.tsx handleExport()  [via useExport hook]
                     │       │           └─ SLIDE/SLIDE_UP: offset drawImage
                     │       │           └─ ZOOM: scale + globalAlpha
                     │       │           └─ BLUR: ctx.filter blur + globalAlpha
-                    │       ├─ writes frame_00001.png … frame_NNNNN.png via IPC (base64-encoded)
-                    │       │     IPC: ffmpeg_write_file  →  $TMPDIR/kinetix-export-<uuid>/frame_NNNNN.png
+                    │       ├─ PNG-encodes off-thread (FrameEncoderPool, frameEncodeWorker.ts) while the
+                    │       │     main thread renders the next frame (2026-07-09 pipelining)
+                    │       ├─ writes frame_00001.png … frame_NNNNN.png via IPC — raw-binary
+                    │       │     (ffmpeg_write_file_raw, no base64) when the ffmpeg backend supports it,
+                    │       │     else base64-encoded (ffmpeg_write_file)
+                    │       │     →  $TMPDIR/kinetix-export-<uuid>/frame_NNNNN.png
                     │       └─ IPC: ffmpeg_exec  →  sidecar ffmpeg  →  libx264 fast crf16 yuv420p bt709 → seg_N.mp4
                     │
                     │   (Tier 1 fast path — plainSegment.ts predicates true — skips all of the
@@ -258,7 +288,7 @@ App.tsx handleExport()  [via useExport hook]
 ```
 
 **Key types:**
-- `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`. `TauriFfmpeg` satisfies this contract.
+- `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`, plus an optional `writeFileRaw` (2026-07-09). `TauriFfmpeg` satisfies this contract, including `writeFileRaw`.
 - `ExportResult = { ok: true; blob: Blob } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed.
 - `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`.
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
@@ -506,4 +536,5 @@ All dead dependencies removed. No remaining items.
 | Timeline drag perf — ref+rAF, commit on mouseup only | ✅ Done — 2026-07-02 | `f4da926` — segment-resize and divider drags write live width via `data-seg-id` DOM refs (rAF-coalesced) instead of `setProject` per mousemove; timeline rect/pps cached once at drag start; real commit unchanged (mouseup, `applyDurationChange`) |
 | Timeline scroll-restore race fix | ✅ Done — 2026-07-02 | `34206ee` — one-shot reload scroll restore deferred until `containerWidth`'s `ResizeObserver` first fires (was racing the 800px zoom fallback and getting clamped to 0); both auto-scroll effects gated on `didRestoreRef` so neither overrides the restore |
 | WebCodecs preview migration (Phases 0–8) | ✅ Done — 2026-07-05 (branch `webcodecs-api`) | `VideoDecoder` decode pool + windowed decode-ahead/LRU replaced the dual-`<video>`-slot preview path; cutover to default on capable runtimes, legacy `<video>` path kept as capability-gated fallback. Full plan/evidence in `docs/webcodecs-architecture-plan.md` |
-| Preview/export WebCodecs unification (Phases A–C) | ⬜ Planned — NOT STARTED | Follow-on effort planned in `docs/webcodecs-architecture-plan.md` Section 8: A) playhead-driven preview animations + boundary/transition timing; B) export onto WebCodecs `VideoEncoder` behind ONE shared compositor (ffmpeg mux-only); C) real color conversion + drift correction + quality-pinned encode |
+| Preview/export WebCodecs unification (Phases A–C) | 🟡 Phase A ✅ Done, Phase B ❌ Blocked, Phase C not started | Follow-on effort in `docs/webcodecs-architecture-plan.md` Section 8. A) playhead-driven preview animations + boundary/transition timing — complete 2026-07-06. B) export onto WebCodecs `VideoEncoder` behind ONE shared compositor (ffmpeg mux-only) — blocked: `VideoEncoder.encode()` carries an unexplained, unquantified hang risk on this project's real WKWebView (works when tested, but not reproducibly enough to call production-viable — see the B0 entries and their 2026-07-09 follow-ups). C) real color conversion + drift correction + quality-pinned encode — not started, depends on B |
+| Transition-blend video-element isolation + export pipelining speedup | ✅ Done — 2026-07-09 | `d033cb1` — isolated `blendVideoCache` in `frameRenderer.ts` fixes same-URL transition video-element thrashing. `cd7ea2b` — worker-pool PNG encode (`frameEncodeWorker.ts`) + raw-binary IPC frame write (`ffmpeg_write_file_raw`), replacing per-frame base64. Both independent of the still-blocked Phase B `VideoEncoder` effort above — speedups of the existing ffmpeg/PNG export path, not a step toward replacing it. `tsc --noEmit` clean, `vitest` 277/277 |

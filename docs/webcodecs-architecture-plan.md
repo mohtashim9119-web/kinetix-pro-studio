@@ -663,6 +663,25 @@ investigation** — see the A3 entry above.
     clear this: run the same audit + b0repro + muxproof harnesses on macOS arm64 and real Windows; and, if
     a definitive reconciliation is wanted, attempt to obtain B0's original harness/config from whoever ran
     it (chat history, local un-committed backups) rather than a reconstruction.
+  - **2026-07-09 follow-up — spike harnesses formally committed.** The three harnesses referenced
+    above (`spike-webcodecs-audit.html`/`src/dev/webcodecsAuditSpike/`,
+    `spike-webcodecs-b0repro.html`/`src/dev/webcodecsB0Repro/`,
+    `spike-webcodecs-muxproof.html`/`src/dev/webcodecsMuxProof/`) had actually been sitting untracked
+    in the working tree since this investigation, despite being described as "kept, not deleted" —
+    they are now committed at `f52ab12` (`docs: retain WebCodecs VideoEncoder investigation spikes`),
+    following the existing `src/dev/webcodecsSpike/` precedent for retained investigation artifacts.
+    That same commit fixed a wrong DOM-lib type name in two of them (`HardwarePreference`, which was
+    never a real TypeScript type, → the actual `HardwareAcceleration`) so full-repo `tsc --noEmit` is
+    clean with these files in the tree.
+  - **Cross-reference — the legacy-pipeline speedup this section already anticipated has now
+    shipped, separately from Phase B.** The "already-recorded next candidate" noted earlier in this
+    B0 area (`docs/phase-7-task-1-export-profiling.md`'s OffscreenCanvas/Worker approach for the
+    I/O-bound `toBlob`/IPC-write bottleneck) was implemented and committed 2026-07-09
+    (`cd7ea2b` — worker-pool PNG encode via new `src/services/frameEncodeWorker.ts`, plus a
+    raw-binary Tauri IPC frame write replacing the base64 round-trip; see `project-state.md`'s
+    Completed Work). This is entirely independent of Phase B's blocked `VideoEncoder` effort — it
+    speeds up the same legacy ffmpeg/PNG export path Phase B would have replaced, not a step toward
+    Phase B itself. No pipeline-selection/gating logic changed; the legacy path is simply faster now.
   - **No production/pipeline source changed.** `frameRenderer.ts`, `segmentEncoder.ts`,
     `exportPipeline.ts`, `plainSegment.ts`, `useWebCodecsPreview.ts`, `videoDecoderPool.ts` all
     unmodified; `tauri.conf.json`'s temporary `devUrl`/CSP/`beforeDevCommand` edits for the isolated runs
