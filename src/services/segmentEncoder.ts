@@ -1,5 +1,5 @@
 import { VideoSegment, Asset, TransitionType } from '../types';
-import { renderSegmentFrame, FrameGlobalConfig } from './frameRenderer';
+import { renderSegmentFrame, releaseBlendVideo, FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
 
 /**
@@ -99,6 +99,13 @@ export async function encodeSegment(
   const totalFrames = Math.max(1, Math.round(encodeDuration * fps));
   const writtenFiles: string[] = [];
 
+  // URL of the incoming segment's video loaded into the ISOLATED blend cache by
+  // the transition-blend render below (useBlendVideoCache). Released in the
+  // finally once this segment's whole transition window is encoded. undefined
+  // when this segment has no transition or no next asset.
+  const blendVideoUrl = hasTransition ? options.nextAsset?.url : undefined;
+
+  try {
   // -------------------------------------------------------------------------
   // Render and write frames
   // -------------------------------------------------------------------------
@@ -136,6 +143,11 @@ export async function encodeSegment(
           height: h,
           global: globalConfig,
           absoluteTime: options.nextSegment.startTime + nextTimeInSegment,
+          // Isolate the incoming segment's video element from the primary cache
+          // so a same-URL transition doesn't thrash one shared <video> between
+          // the outgoing and incoming seek targets every frame. Released in the
+          // finally at the end of encodeSegment.
+          useBlendVideoCache: true,
         });
 
         blendParams = {
@@ -203,6 +215,18 @@ export async function encodeSegment(
   await cleanupFiles(ffmpeg, writtenFiles);
 
   return mp4Bytes;
+  } finally {
+    // Cleanup decision — RELEASE (not promote): the incoming segment becomes
+    // CURRENT on the next encodeSegment call and loads into the PRIMARY cache,
+    // so keeping the blend element would mean two loaded <video> elements for
+    // the same source URL (memory doubling). Promotion was rejected because the
+    // blend element was only ever seeked to the transition window (t≈0..
+    // transitionDuration), which the incoming segment's primary render skips via
+    // startTimeOffset — so a promoted element carries no useful warm-seek state.
+    // In a finally so it runs on the error path too (at most one blend element
+    // is ever live, keyed by URL). No-op when blendVideoUrl is undefined.
+    if (blendVideoUrl) releaseBlendVideo(blendVideoUrl);
+  }
 }
 
 export interface EncodePlainVideoOptions {

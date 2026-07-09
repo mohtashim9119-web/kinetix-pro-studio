@@ -74,6 +74,14 @@ export interface FrameRenderParams {
    * timestamp (Decision 2) — omit only when `global.headings` is also empty.
    */
   absoluteTime?: number;
+  /**
+   * Routes the video-element lookup to the isolated blend cache instead of the
+   * shared primary cache. Set ONLY by the transition-blend "incoming" render
+   * (segmentEncoder.ts) so that when the outgoing and incoming segments share
+   * the same source URL they don't seek one shared <video> element back and
+   * forth every frame during the transition window. No effect for image assets.
+   */
+  useBlendVideoCache?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,6 +90,15 @@ export interface FrameRenderParams {
 
 const imageCache = new Map<string, HTMLImageElement>();
 const videoCache = new Map<string, HTMLVideoElement>();
+// Isolated cache for the transition-blend "incoming" render. When the outgoing
+// and incoming segments share the same source URL, the primary `videoCache`
+// would hand both renders the SAME <video> element, so each frame in the
+// transition window seeks that one element back and forth between two
+// timestamps (outgoing time ↔ incoming time) — the confirmed cause of the
+// transition-frame render spike. Routing the incoming render to this separate
+// cache gives it its own element so the two never collide. Keyed by URL, same
+// as videoCache. Only the transition-blend path sets useBlendVideoCache.
+const blendVideoCache = new Map<string, HTMLVideoElement>();
 
 function loadImage(url: string): Promise<HTMLImageElement> {
   const hit = imageCache.get(url);
@@ -95,8 +112,9 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-function getOrCreateVideo(url: string): HTMLVideoElement {
-  let el = videoCache.get(url);
+function getOrCreateVideo(url: string, useBlendCache = false): HTMLVideoElement {
+  const cache = useBlendCache ? blendVideoCache : videoCache;
+  let el = cache.get(url);
   if (!el) {
     el = document.createElement('video');
     el.src = url;
@@ -104,9 +122,25 @@ function getOrCreateVideo(url: string): HTMLVideoElement {
     el.playsInline = true;
     el.crossOrigin = 'anonymous';
     el.preload = 'auto';
-    videoCache.set(url, el);
+    cache.set(url, el);
   }
   return el;
+}
+
+/**
+ * Releases the isolated blend-cache <video> element for `url` (if any),
+ * detaching its source so the browser can free the decoded buffers. Called by
+ * segmentEncoder once a segment's transition window has finished encoding —
+ * the incoming segment is about to become CURRENT and will load into the
+ * PRIMARY cache, so keeping the blend element around would mean two loaded
+ * <video> elements for the same source (memory doubling). No-op if `url`
+ * has no blend-cache entry.
+ */
+export function releaseBlendVideo(url: string): void {
+  const el = blendVideoCache.get(url);
+  if (!el) return;
+  el.src = '';
+  blendVideoCache.delete(url);
 }
 
 /** Wait for readyState >= HAVE_METADATA (1) and a non-NaN duration. */
@@ -425,7 +459,7 @@ function applyDuotone(ctx: CanvasRenderingContext2D, w: number, h: number): void
  * Resolves when the frame is fully drawn (video seeking is async).
  */
 export async function renderSegmentFrame(params: FrameRenderParams): Promise<void> {
-  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight, skipCaption, absoluteTime } = params;
+  const { segment, asset, timeInSegment, ctx, width: w, height: h, global: g, textRefHeight, skipCaption, absoluteTime, useBlendVideoCache } = params;
 
   // Background
   ctx.clearRect(0, 0, w, h);
@@ -468,7 +502,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       const img = await loadImage(asset.url);
       drawImageCover(ctx, img, w, h);
     } else if (asset.type === 'video') {
-      const videoEl = getOrCreateVideo(asset.url);
+      const videoEl = getOrCreateVideo(asset.url, useBlendVideoCache);
       const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
       // undefined trimEnd = "play to end of media"; seekVideo clamps to el.duration internally
       const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
@@ -870,5 +904,7 @@ export function applyTransitionBlend(
 export function clearFrameRendererCache(): void {
   videoCache.forEach((el) => { el.src = ''; });
   videoCache.clear();
+  blendVideoCache.forEach((el) => { el.src = ''; });
+  blendVideoCache.clear();
   imageCache.clear();
 }
