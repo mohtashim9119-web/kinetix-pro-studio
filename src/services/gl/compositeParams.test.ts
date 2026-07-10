@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { deriveCompositeParams, NEUTRAL_GRADE, type ProjectEffectConfig } from './compositeParams';
+import {
+  deriveCompositeParams,
+  deriveSlotPlan,
+  NEUTRAL_GRADE,
+  type ProjectEffectConfig,
+  type TransitionParams,
+} from './compositeParams';
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
 
 /**
@@ -263,5 +269,102 @@ describe('deriveCompositeParams — grade passthrough', () => {
     expect(result.transition).toEqual({ type: 'dip-white', progress: 0.5 });
     expect(result.animScale).toBeCloseTo(1.0 + 0.05 * (5 - 0.5), 6); // zoom-out at timeInSegment=0.5 of an 5s segment
     expect(result.grade).toEqual(grade);
+  });
+});
+
+describe('deriveSlotPlan — texture slot A/B assignment (Phase 3)', () => {
+  // The compositor reads u_texA at progress 0 (OUTGOING) and u_texB at
+  // progress 1 (INCOMING); deriveSlotPlan encodes exactly that so slot 'a'
+  // is the outgoing/previous segment during a transition and 'b' the
+  // incoming/containing one — the pairing useGlPreview.ts then feeds the
+  // outgoing pool-pull into 'a' and the live current frame into 'b'.
+  const noTransition: TransitionParams | null = null;
+  const activeCrossDissolve: TransitionParams = { type: 'cross-dissolve', progress: 0.4 };
+
+  function makeAB(): VideoSegment[] {
+    return [
+      makeSegment({ id: 'a', startTime: 0, duration: 5 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+  }
+
+  it('no transition, mid-segment: slot a = the containing (current) segment, slot b = null', () => {
+    const segments = makeAB();
+    const plan = deriveSlotPlan(segments, 2, noTransition);
+    expect(plan.a?.id).toBe('a');
+    expect(plan.b).toBeNull();
+  });
+
+  it('no transition, inside the second segment: slot a follows the playhead to that segment', () => {
+    const segments = makeAB();
+    const plan = deriveSlotPlan(segments, 7, noTransition);
+    expect(plan.a?.id).toBe('b');
+    expect(plan.b).toBeNull();
+  });
+
+  it('currentTime outside every segment: both slots null (nothing to draw)', () => {
+    const segments = makeAB();
+    const plan = deriveSlotPlan(segments, 99, noTransition);
+    expect(plan.a).toBeNull();
+    expect(plan.b).toBeNull();
+  });
+
+  it('active transition: slot a = OUTGOING (previous) segment, slot b = INCOMING (containing/current) segment', () => {
+    const segments = makeAB();
+    // Playhead just inside seg-b's leading window (containing = incoming = 'b').
+    const plan = deriveSlotPlan(segments, 5.4, activeCrossDissolve);
+    expect(plan.a?.id).toBe('a'); // outgoing
+    expect(plan.b?.id).toBe('b'); // incoming
+  });
+
+  it('slot assignment is source-type agnostic — the same ids come back regardless of whether the assets are video or image (kind is resolved later by the driver): video<->image and image<->image assign identically to video<->video', () => {
+    // deriveSlotPlan never inspects assets — same segments, same plan. This
+    // is what lets useGlPreview.ts source slot 'a'/'b' from a VideoFrame OR
+    // an image texture without deriveSlotPlan needing to know which.
+    const segments = makeAB();
+    const plan = deriveSlotPlan(segments, 5.4, activeCrossDissolve);
+    expect(plan.a?.id).toBe('a');
+    expect(plan.b?.id).toBe('b');
+  });
+
+  it('each of the 4 GL-scoped transition slugs produces the same outgoing/incoming pairing (the shader differs, the slot roles do not)', () => {
+    const segments = makeAB();
+    for (const type of ['cross-dissolve', 'dip-black', 'dip-white', 'light-leak'] as const) {
+      const plan = deriveSlotPlan(segments, 5.4, { type, progress: 0.5 });
+      expect(plan.a?.id).toBe('a');
+      expect(plan.b?.id).toBe('b');
+    }
+  });
+
+  it('a suppressed transition (null — e.g. the isResizingRef/D12 drag guard forces transition=null upstream) collapses cleanly to the no-transition assignment: slot a = the containing segment, slot b = null, even while the playhead sits where a transition window would otherwise be', () => {
+    const segments = makeAB();
+    // Same playhead as the active-transition test, but transition forced null.
+    const plan = deriveSlotPlan(segments, 5.4, null);
+    expect(plan.a?.id).toBe('b'); // containing segment at t=5.4 is seg-b
+    expect(plan.b).toBeNull();
+  });
+
+  it('consistency with deriveCompositeParams: feeding it the SAME (segments, currentTime) and passing its resolved transition into deriveSlotPlan yields outgoing/incoming that agree with that transition being active', () => {
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'dip-black', effectTransitionDuration: 1 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+    const params = deriveCompositeParams(segments, 5.3, baseConfig);
+    expect(params.transition?.type).toBe('dip-black');
+    const plan = deriveSlotPlan(segments, 5.3, params.transition);
+    expect(plan.a?.id).toBe('a');
+    expect(plan.b?.id).toBe('b');
+  });
+
+  it('epsilon boundary: exactly at the incoming segment start (window open) both slots populate; just past the window close a null transition collapses to current-only', () => {
+    const segments = makeAB();
+    const atOpen = deriveSlotPlan(segments, 5, { type: 'cross-dissolve', progress: 0 });
+    expect(atOpen.a?.id).toBe('a');
+    expect(atOpen.b?.id).toBe('b');
+    // After the window closes deriveCompositeParams returns transition=null;
+    // deriveSlotPlan then draws the current segment alone.
+    const afterClose = deriveSlotPlan(segments, 6.0001, null);
+    expect(afterClose.a?.id).toBe('b');
+    expect(afterClose.b).toBeNull();
   });
 });

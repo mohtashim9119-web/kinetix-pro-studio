@@ -127,6 +127,18 @@ interface Params {
    */
   incomingFrame?: VideoFrame | null;
   incomingFrameSegmentId?: string | null;
+  /**
+   * Phase 3 (docs/webgl-architecture-plan.md) — true when the dual-gated
+   * WebGL2 preview path (useGlPreview.ts) is active. Purely additive
+   * suppression, in the same style as `isResizingRef`: when true this hook
+   * goes inert — it reports `isActive:false`, renders no snapshots, and does
+   * NOT touch the pool's `transitionProtectedIds` (useGlPreview owns that set
+   * while it's active). This prevents (a) the legacy transition-overlay canvas
+   * compositing on top of the GL canvas, and (b) the two hooks fighting over
+   * the single `transitionProtectedIds` set. Defaults undefined/false — the
+   * shipped path — in which case behavior is byte-identical to before Phase 3.
+   */
+  glPathActive?: boolean;
 }
 
 export function useTransitionPreview({
@@ -140,6 +152,7 @@ export function useTransitionPreview({
   pool,
   incomingFrame,
   incomingFrameSegmentId,
+  glPathActive,
 }: Params): TransitionPreviewInfo {
   const [snapshots, setSnapshots] = useState<SnapshotPair | null>(null);
   // Prevent concurrent or duplicate snapshot renders
@@ -247,7 +260,9 @@ export function useTransitionPreview({
     needsPreRollWindow = true;
   }
 
-  const inTransitionWindow = !isResizingRef.current && isActiveWindow;
+  // glPathActive suppresses the whole active window (same lever as
+  // isResizingRef) so the legacy overlay never shows while GL owns the frame.
+  const inTransitionWindow = !isResizingRef.current && !glPathActive && isActiveWindow;
 
   const progress = inTransitionWindow && incomingSeg
     ? Math.max(0, Math.min(1, (currentTime - incomingSeg.startTime) / transitionDuration))
@@ -267,9 +282,12 @@ export function useTransitionPreview({
   // this just adds a redundant, harmless entry).
   // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!pool) return;
+    // glPathActive: useGlPreview.ts owns transitionProtectedIds while the GL
+    // path is active — don't touch it here (glPathActive is a dep so this
+    // re-runs and resumes managing the set the moment GL is toggled off).
+    if (!pool || glPathActive) return;
     pool.setTransitionProtectedIds(outgoingSeg ? [outgoingSeg.id] : []);
-  }, [pool, outgoingSeg?.id]);
+  }, [pool, outgoingSeg?.id, glPathActive]);
 
   // ---------------------------------------------------------------------------
   // B3 (item-4 fix) — live per-tick render for the OUTGOING segment's video
@@ -293,7 +311,7 @@ export function useTransitionPreview({
   // for the life of the transition.
   // ---------------------------------------------------------------------------
   const outgoingAsset = outgoingSeg ? assets.find(a => a.id === outgoingSeg.assetId) : undefined;
-  const liveOutgoingActive = webCodecsCapable && !!pool && !!outgoingSeg && outgoingAsset?.type === 'video';
+  const liveOutgoingActive = webCodecsCapable && !glPathActive && !!pool && !!outgoingSeg && outgoingAsset?.type === 'video';
 
   // At most one getFrameAt call in flight for the outgoing session at a
   // time (see the chase-primitive import note above); reset whenever
@@ -408,7 +426,7 @@ export function useTransitionPreview({
   // ---------------------------------------------------------------------------
   // Pre-roll: render snapshots once when approaching the transition window
   // ---------------------------------------------------------------------------
-  const needsPreRoll = !isResizingRef.current && needsPreRollWindow;
+  const needsPreRoll = !isResizingRef.current && !glPathActive && needsPreRollWindow;
 
   useEffect(() => {
     if (!needsPreRoll || !outgoingSeg || !incomingSeg) {

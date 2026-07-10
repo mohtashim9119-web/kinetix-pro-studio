@@ -9,12 +9,15 @@
  * (src/hooks/useWebCodecsPreview.ts) play for the decode side, and is
  * tested the same mock-free way (see compositeParams.test.ts).
  *
- * Deliberately does NOT decide which content belongs in texture slot 'a'
- * vs 'b' — that is a Phase 3 integration concern (which frame source feeds
- * which slot), kept separate from "what should this tick's render look
- * like" so this function stays reusable, unmodified, from either a
- * playhead-driven preview loop or a future sequential export loop (Section
- * 4's design constraint).
+ * `deriveCompositeParams` deliberately does NOT decide which content
+ * belongs in texture slot 'a' vs 'b' — it answers only "what should this
+ * tick's render look like" (transition type/progress, zoom scale, grade).
+ * The slot-assignment decision (which SEGMENT's decoded content feeds slot
+ * 'a' vs 'b') is `deriveSlotPlan` below — added in Phase 3 (plan Section 6)
+ * as the separate pure function that decision was always reserved for. Both
+ * stay React/DOM/pool-free so either a playhead-driven preview loop
+ * (useGlPreview.ts) or a future sequential export loop can reuse them
+ * unmodified (Section 4's design constraint).
  */
 
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
@@ -196,4 +199,62 @@ export function deriveCompositeParams(
     animScale,
     grade: config.grade ?? NEUTRAL_GRADE,
   };
+}
+
+/**
+ * Which SEGMENT's content feeds each of the compositor's two texture slots
+ * this tick (plan Section 3.2/6, Phase 3 — the slot-assignment decision
+ * `deriveCompositeParams` deliberately left out, see the file header).
+ *
+ * The compositor's shaders read `u_texA` at progress 0 and `u_texB` at
+ * progress 1; `TransitionParams.progress` is 0 = pure OUTGOING, 1 = pure
+ * INCOMING. So during an active transition slot 'a' MUST be the outgoing
+ * (previous) segment and slot 'b' the incoming (containing) one — do not be
+ * misled by glCompositor.ts's prose "'a' = current segment", which only
+ * describes the no-transition case (a single frame blitted from 'a').
+ *
+ *  - No transition: slot 'a' = the containing (current) segment, 'b' = null.
+ *  - Active transition: slot 'a' = outgoing (previous) segment,
+ *    slot 'b' = incoming (containing/current) segment.
+ *  - currentTime outside every segment: both null (nothing to draw).
+ *
+ * Returns the SEGMENTS (not source times or textures): the source-time
+ * mapping (`toSourceTime`) and the video-frame-vs-image texture sourcing are
+ * the driver's concern (useGlPreview.ts), kept out of here so this stays a
+ * pure segments+time+transition → assignment function, unit-testable with no
+ * pool/asset/React dependency (same mock-free discipline as
+ * deriveCompositeParams above).
+ *
+ * `transition` is passed in (rather than re-derived) so the caller drives it
+ * from the SAME `deriveCompositeParams(...).transition` it already computed
+ * for the render params — the two can't disagree on whether a transition is
+ * active, and an isResizing-suppressed `null` (plan Section 6 / D12) collapses
+ * cleanly to the no-transition assignment.
+ */
+export interface SlotPlan {
+  /** Outgoing (previous) segment during a transition; the current/containing
+   *  segment when no transition is active; null when currentTime is outside
+   *  every segment. */
+  a: VideoSegment | null;
+  /** Incoming (containing/current) segment during an active transition; null
+   *  otherwise. */
+  b: VideoSegment | null;
+}
+
+export function deriveSlotPlan(
+  segments: readonly VideoSegment[],
+  currentTime: number,
+  transition: TransitionParams | null,
+): SlotPlan {
+  const containing = findContainingSegment(segments, currentTime);
+  if (!containing) return { a: null, b: null };
+  if (!transition) return { a: containing, b: null };
+
+  const prev = findPrevSegment(segments, containing);
+  // A non-null `transition` from deriveCompositeParams already implies a
+  // predecessor was found (resolveTransition returns null without one), so
+  // this fallback is defensive only — never reached when `transition` came
+  // from the same (segments, currentTime) as this call.
+  if (!prev) return { a: containing, b: null };
+  return { a: prev, b: containing };
 }

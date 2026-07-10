@@ -261,6 +261,56 @@ describe('GlCompositor — uploadFrame', () => {
     expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
   });
+
+  /**
+   * Phase 3 widened UploadSource (HTMLCanvasElement | OffscreenCanvas) —
+   * the object-cover pre-fit target useGlPreview.ts uploads (plan Section 7
+   * risk register, object-cover row). Same call-shape-parity discipline as
+   * the VideoFrame/ImageBitmap/HTMLImageElement tests above: uploadFrame has
+   * no source-type branching, so these lock in that the two newly-accepted
+   * kinds reach texImage2D via the exact same single call, for either slot —
+   * giving this Phase-1 file equivalent coverage over its expanded surface
+   * before Phase 3's preview driver depends on it.
+   */
+  const fakeCanvasElement = { width: 1920, height: 1080, getContext: () => null } as unknown as HTMLCanvasElement;
+  const fakeOffscreenCanvas = { width: 1920, height: 1080, getContext: () => null } as unknown as OffscreenCanvas;
+
+  it.each([
+    ['HTMLCanvasElement', fakeCanvasElement],
+    ['OffscreenCanvas', fakeOffscreenCanvas],
+  ] as const)('slot "a" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    expect(() => compositor.uploadFrame('a', source)).not.toThrow();
+    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
+  });
+
+  it.each([
+    ['HTMLCanvasElement', fakeCanvasElement],
+    ['OffscreenCanvas', fakeOffscreenCanvas],
+  ] as const)('slot "b" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    expect(() => compositor.uploadFrame('b', source)).not.toThrow();
+    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
+  });
+
+  it('canvas<->canvas transition — both slots pre-fit HTMLCanvasElement (the object-cover fit path) — same single-pass draw shape as the video<->video and image<->image cases', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeCanvasElement);
+    compositor.uploadFrame('b', fakeOffscreenCanvas);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(1);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
+  });
 });
 
 describe('GlCompositor — renderFrame pass chain', () => {

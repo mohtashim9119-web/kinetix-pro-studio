@@ -49,8 +49,20 @@ export type TextureSlot = 'a' | 'b';
  * image source hands the compositor. `VideoFrame` is the primary/expected
  * case per Section 4's input contract (never an HTML5 `<video>` seek);
  * `ImageBitmap`/`HTMLImageElement` cover image segments.
+ *
+ * Phase 3 widening (plan Section 7 risk register, object-cover row):
+ * `HTMLCanvasElement | OffscreenCanvas` were added so the preview driver
+ * (useGlPreview.ts) can upload a CPU-side 2D canvas onto which it has already
+ * object-cover-fit the raw source — matching the legacy `<video className=
+ * "object-cover">`/PreviewCanvas crop without adding per-texture UV-crop
+ * uniforms to the pixel-verified shaders (that cleaner, export-zero-copy
+ * alternative is named as future work in the plan's risk register, not done
+ * here). Runtime is unchanged: all five kinds already satisfy the DOM's
+ * `TexImageSource` overload of `texImage2D` — this only widens the type so
+ * TS accepts the fit-canvas at the call site. The compositor still does no
+ * source-type branching (see uploadFrame).
  */
-export type UploadSource = VideoFrame | ImageBitmap | HTMLImageElement;
+export type UploadSource = VideoFrame | ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas;
 
 interface RenderTarget {
   texture: WebGLTexture;

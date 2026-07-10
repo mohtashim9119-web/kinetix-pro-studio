@@ -29,6 +29,8 @@ import {
   type SnapReleaseBlend,
 } from '../hooks/useWebCodecsPreview';
 import { PreviewCanvas } from './PreviewCanvas';
+import { isWebGL2Supported } from '../services/gl/glContext';
+import { useGlPreview } from '../hooks/useGlPreview';
 
 // Live-preview side of the animation pipeline. The export side lives in
 // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
@@ -279,6 +281,32 @@ export function PreviewStage({
   const useWebCodecsPathRef = useRef(useWebCodecsPath);
   useEffect(() => { useWebCodecsPathRef.current = useWebCodecsPath; }, [useWebCodecsPath]);
 
+  // WebGL2 effects preview path (docs/webgl-architecture-plan.md Phase 3) —
+  // dual-gated exactly like the WebCodecs migration's own Phase 1: capability
+  // AND a dev-only persisted toggle, both required. WebCodecs support is a
+  // structural prerequisite (GL sources its frames from the decode pool), and
+  // import.meta.env.DEV gates the toggle so production can never activate it —
+  // the legacy CSS/Canvas2D effects path stays 100% intact for shipped users.
+  const [glDevToggle, setGlDevToggle] = useState<boolean>(() => {
+    if (!import.meta.env.DEV) return false;
+    try { return localStorage.getItem('kinetix:dev:glPreview') === '1'; } catch { return false; }
+  });
+  const glCapable = import.meta.env.DEV && useWebCodecsPath && isWebGL2Supported();
+  const glPathActive = glCapable && glDevToggle;
+  // Mid-session toggling takes effect without a segment change because GL's own
+  // effects live in useGlPreview (keyed on the `enabled` prop, so they re-run
+  // when glPathActive flips), and the legacy segment-change/play effects are
+  // already gated by useWebCodecsPathRef (glPathActive requires useWebCodecsPath,
+  // so those effects stay inert whenever GL is active) — no separate ref needed.
+  const glCanvasRef = useRef<HTMLCanvasElement>(null);
+  const toggleGlPreview = useCallback(() => {
+    setGlDevToggle(prev => {
+      const next = !prev;
+      try { localStorage.setItem('kinetix:dev:glPreview', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
+
   // Canvas overlay for transition blending
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -439,6 +467,34 @@ export function PreviewStage({
     pool: webCodecsPreview.pool,
     incomingFrame: webCodecsPreview.frame,
     incomingFrameSegmentId: webCodecsPreview.frameSegmentId,
+    // Phase 3 — when the GL path owns the frame, this hook goes inert so the
+    // legacy overlay canvas doesn't composite over the GL canvas and the two
+    // don't fight over the pool's transitionProtectedIds set.
+    glPathActive,
+  });
+
+  // WebGL2 preview driver (docs/webgl-architecture-plan.md Phase 3). `enabled`
+  // gates ALL work — inert when the dual gate is false. Sources the current/
+  // incoming frame from the SAME pool useWebCodecsPreview owns (via its
+  // exposed frame/pool), and the outgoing frame via that pool's B3 protected-
+  // session + chase-mutex primitives. Grade is Phase 4 — omitted here, so the
+  // config's grade defaults to neutral (types.ts untouched this phase).
+  const glConfig = useMemo(
+    () => ({ globalTransition, globalTransitionDuration }),
+    [globalTransition, globalTransitionDuration],
+  );
+  const glPreview = useGlPreview({
+    canvasRef: glCanvasRef,
+    segments,
+    assets,
+    currentSegment,
+    currentTime,
+    pool: webCodecsPreview.pool,
+    currentFrame: webCodecsPreview.frame,
+    currentFrameSegmentId: webCodecsPreview.frameSegmentId,
+    config: glConfig,
+    isResizingRef,
+    enabled: glPathActive,
   });
 
   // ---------------------------------------------------------------------------
@@ -649,15 +705,29 @@ export function PreviewStage({
   // before this fix. Gated on suppressMotionAnim the same way the direct
   // call already was — while the transition overlay is covering the
   // screen, no wrapper transform is applied at all (unchanged behavior).
+  // When the GL path is active it applies scoped zoom-in/zoom-out itself (a UV
+  // transform in the compositor); suppress the CSS wrapper's copy so zoom isn't
+  // double-applied to the GL canvas. The other 11 animation types stay on the
+  // CSS wrapper (out of GL scope) and simply transform the GL canvas element.
+  // Off by default (glPathActive false) → resolveSegmentAnimationType verbatim,
+  // i.e. byte-identical to before Phase 3.
+  const resolveWrapperAnimationType = (seg: VideoSegment): AnimationType => {
+    const t = resolveSegmentAnimationType(seg);
+    if (glPathActive && (t === AnimationType.ZOOM_IN || t === AnimationType.ZOOM_OUT)) {
+      return AnimationType.NONE;
+    }
+    return t;
+  };
+
   const animationWrapperProps = (() => {
     if (suppressMotionAnim) return {};
     const toSeg = animSegment ?? currentSegment;
     if (!toSeg) return {};
-    const toProps = getAnimationWrapperProps(resolveSegmentAnimationType(toSeg), toSeg.duration, animTimeInSegment);
+    const toProps = getAnimationWrapperProps(resolveWrapperAnimationType(toSeg), toSeg.duration, animTimeInSegment);
     const fromSeg = snapReleaseRef.current.fromSegment;
     if (animBlendProgress >= 1 || !fromSeg) return toProps;
     const fromProps = getAnimationWrapperProps(
-      resolveSegmentAnimationType(fromSeg),
+      resolveWrapperAnimationType(fromSeg),
       fromSeg.duration,
       snapReleaseRef.current.fromTimeInSegment,
     );
@@ -918,6 +988,26 @@ export function PreviewStage({
           </div>
         )}
 
+        {/* Dev-only WebGL2-effects-preview toggle (docs/webgl-architecture-plan.md
+            Phase 3). import.meta.env.DEV-gated so it can never appear (or activate)
+            in production. Clicking flips the persisted dev toggle; the button
+            colour reflects whether the GL path is actually active. */}
+        {glCapable && (
+          <button
+            onClick={toggleGlPreview}
+            className={`absolute top-16 left-6 z-[1001] px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors ${
+              glPathActive ? 'bg-[#22d3ee] text-black' : 'bg-black/60 text-white border border-white/10'
+            }`}
+          >
+            {glPathActive ? 'WebGL2 Preview: ON' : 'WebGL2 Preview: off'}
+          </button>
+        )}
+        {glPathActive && glPreview.error && (
+          <div className="absolute top-[6.5rem] left-6 z-[1001] px-3 py-1.5 rounded-lg bg-red-600 text-white text-[10px] font-mono max-w-[280px]">
+            GL: {glPreview.error}
+          </div>
+        )}
+
         <AnimatePresence mode="popLayout" initial={false}>
           {currentSegment ? (
             <motion.div
@@ -991,16 +1081,40 @@ export function PreviewStage({
                       {/* WebCodecs preview path (capability-gated) — paints above the
                           (inert, in this branch) legacy video slots and cover.
                           getClipEffectStyle is passed through so CSS clip-effect filters
-                          keep applying, matching the legacy path's parity intent. */}
-                      {isVideoAsset && useWebCodecsPath && webCodecsPreview.isVideoSegment && (
+                          keep applying, matching the legacy path's parity intent.
+                          Suppressed when the GL path owns the frame (glPathActive) — the
+                          GL canvas below is then the sole visible media layer. */}
+                      {isVideoAsset && useWebCodecsPath && webCodecsPreview.isVideoSegment && !glPathActive && (
                         <PreviewCanvas
                           frame={webCodecsPreview.frame}
                           className="absolute inset-0 w-full h-full"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}
                         />
                       )}
-                      {/* Image segments */}
-                      {asset?.url && !isVideoAsset && (
+                      {/* WebGL2 effects preview path (docs/webgl-architecture-plan.md
+                          Phase 3, dual-gated). One persistent canvas mounted for the
+                          whole life of glPathActive (kept mounted across segments so the
+                          GL context/compositor survive) — it renders the scoped
+                          transitions + zoom for BOTH video and image segments, replacing
+                          PreviewCanvas (video) and the <img> (image) above/below. Hidden
+                          (display:none → clientWidth 0 → the driver's render effect no-ops
+                          and retains) on a missing-asset segment so the placeholder below
+                          shows through without tearing down the GL context. Inside the
+                          animation wrapper so the non-scoped CSS animations still transform
+                          it; getClipEffectStyle preserves the CSS clip-effect filters. */}
+                      {glPathActive && (
+                        <canvas
+                          ref={glCanvasRef}
+                          className="absolute inset-0 w-full h-full"
+                          style={{
+                            ...getClipEffectStyle(currentSegment.effectAnimation),
+                            display: asset?.url ? undefined : 'none',
+                          }}
+                        />
+                      )}
+                      {/* Image segments — suppressed when the GL path owns the frame
+                          (glPathActive); the GL canvas above renders image content too. */}
+                      {asset?.url && !isVideoAsset && !glPathActive && (
                         // Fade-in on segment enter; suppressed when canvas just handled the
                         // transition (suppressMotionAnim) to avoid a black-to-image stutter
                         // immediately after the canvas blend completes.
