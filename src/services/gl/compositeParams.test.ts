@@ -50,9 +50,13 @@ describe('deriveCompositeParams — ordinary mid-segment time', () => {
 });
 
 describe('deriveCompositeParams — transition window progress', () => {
-  // seg-a [0,5) -> seg-b [5,10), seg-b's leading transition resolved from
-  // seg-a's own effectTransition field (the OUTGOING segment), duration 1s,
-  // exactly mirroring useTransitionPreview.ts's "candidate B" contract.
+  // seg-a [0,5) -> seg-b [5,10), the a->b transition resolved from seg-a's
+  // own effectTransition field (the OUTGOING segment). The window is
+  // CENTERED on the boundary (b.startTime = 5): [5 - duration/2, 5 +
+  // duration/2) — supersedes the old anchored-at-B-start [5, 5+duration)
+  // placement (D7 in project-state.md's Ignored Low Risk Bugs). See the
+  // dedicated "50/50 centering" describe block below for symmetry-focused
+  // coverage; these tests exercise the window/progress mechanics generally.
   function makeAB(duration = 1): VideoSegment[] {
     return [
       makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: duration }),
@@ -60,24 +64,24 @@ describe('deriveCompositeParams — transition window progress', () => {
     ];
   }
 
-  it('progress is 0 at the window start (exactly the incoming segment\'s startTime)', () => {
-    const result = deriveCompositeParams(makeAB(), 5, baseConfig);
+  it('progress is 0 at the window start (boundary - duration/2, still bounds-inside the OUTGOING segment)', () => {
+    const result = deriveCompositeParams(makeAB(1), 4.5, baseConfig);
     expect(result.transition).toEqual({ type: 'cross-dissolve', progress: 0 });
   });
 
-  it('progress is 0.5 at the window midpoint', () => {
-    const result = deriveCompositeParams(makeAB(1), 5.5, baseConfig);
+  it('progress is exactly 0.5 at the nominal A/B boundary itself', () => {
+    const result = deriveCompositeParams(makeAB(1), 5, baseConfig);
     expect(result.transition?.progress).toBeCloseTo(0.5, 5);
   });
 
-  it('progress approaches 1 just before the window closes', () => {
-    const result = deriveCompositeParams(makeAB(1), 5.999, baseConfig);
+  it('progress approaches 1 just before the window closes (boundary + duration/2)', () => {
+    const result = deriveCompositeParams(makeAB(1), 5.4999, baseConfig);
     expect(result.transition?.type).toBe('cross-dissolve');
-    expect(result.transition?.progress).toBeCloseTo(0.999, 5);
+    expect(result.transition?.progress).toBeCloseTo(0.9999, 4);
   });
 
-  it('edge case: exactly at the window\'s closing boundary, the transition is no longer active (matches useTransitionPreview.ts\'s half-open [start, start+duration) window)', () => {
-    const result = deriveCompositeParams(makeAB(1), 6, baseConfig);
+  it('edge case: exactly at the window\'s closing boundary (boundary + duration/2), the transition is no longer active (matches useTransitionPreview.ts\'s half-open window)', () => {
+    const result = deriveCompositeParams(makeAB(1), 5.5, baseConfig);
     expect(result.transition).toBeNull();
   });
 
@@ -105,7 +109,8 @@ describe('deriveCompositeParams — transition window progress', () => {
       makeSegment({ id: 'b', startTime: 5, duration: 5 }),
     ];
     const config: ProjectEffectConfig = { globalTransitionDuration: 2 };
-    const result = deriveCompositeParams(segments, 5.5, config); // 0.25 through a 2s window
+    // Window is [5-1, 5+1) = [4, 6); 4.5 is 0.25 through.
+    const result = deriveCompositeParams(segments, 4.5, config);
     expect(result.transition).toEqual({ type: 'light-leak', progress: 0.25 });
   });
 
@@ -146,27 +151,30 @@ describe('deriveCompositeParams — transition window progress', () => {
 
   it('dip-black is reachable: progress 0 at window start, 1 approached at window end', () => {
     const segments = makeABWithTransition('dip-black');
-    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'dip-black', progress: 0 });
-    expect(deriveCompositeParams(segments, 5.999, baseConfig).transition?.progress).toBeCloseTo(0.999, 5);
-    expect(deriveCompositeParams(segments, 6, baseConfig).transition).toBeNull();
+    // duration=1 (makeABWithTransition default), boundary=5 → window [4.5, 5.5).
+    expect(deriveCompositeParams(segments, 4.5, baseConfig).transition).toEqual({ type: 'dip-black', progress: 0 });
+    expect(deriveCompositeParams(segments, 5.4999, baseConfig).transition?.progress).toBeCloseTo(0.9999, 4);
+    expect(deriveCompositeParams(segments, 5.5, baseConfig).transition).toBeNull();
   });
 
   it('dip-white is reachable: progress 0 at window start, 1 approached at window end', () => {
     const segments = makeABWithTransition('dip-white');
-    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'dip-white', progress: 0 });
-    expect(deriveCompositeParams(segments, 5.999, baseConfig).transition?.progress).toBeCloseTo(0.999, 5);
-    expect(deriveCompositeParams(segments, 6, baseConfig).transition).toBeNull();
+    expect(deriveCompositeParams(segments, 4.5, baseConfig).transition).toEqual({ type: 'dip-white', progress: 0 });
+    expect(deriveCompositeParams(segments, 5.4999, baseConfig).transition?.progress).toBeCloseTo(0.9999, 4);
+    expect(deriveCompositeParams(segments, 5.5, baseConfig).transition).toBeNull();
   });
 
   it('light-leak is reachable at window start/mid, not just via the duration-fallback test above', () => {
     const segments = makeABWithTransition('light-leak', 2);
-    expect(deriveCompositeParams(segments, 5, baseConfig).transition).toEqual({ type: 'light-leak', progress: 0 });
-    expect(deriveCompositeParams(segments, 6, baseConfig).transition?.progress).toBeCloseTo(0.5, 5);
+    // duration=2, boundary=5 → window [4, 6).
+    expect(deriveCompositeParams(segments, 4, baseConfig).transition).toEqual({ type: 'light-leak', progress: 0 });
+    expect(deriveCompositeParams(segments, 5, baseConfig).transition?.progress).toBeCloseTo(0.5, 5);
   });
 
   it('regression guard: dip-black and dip-white are never confused with each other when both are constructed in the same test-suite run — they are differentiated only by the effectTransition string value, not by structurally different code, which is exactly the "shared mechanism, parameter-only difference" shape the Phase 2 Step 1 vertex-shader flip bug taught us to distrust', () => {
-    const blackResult = deriveCompositeParams(makeABWithTransition('dip-black'), 5.3, baseConfig);
-    const whiteResult = deriveCompositeParams(makeABWithTransition('dip-white'), 5.3, baseConfig);
+    // duration=1, boundary=5 → window [4.5, 5.5); 4.8 and 5.2 are both inside.
+    const blackResult = deriveCompositeParams(makeABWithTransition('dip-black'), 5.2, baseConfig);
+    const whiteResult = deriveCompositeParams(makeABWithTransition('dip-white'), 5.2, baseConfig);
 
     expect(blackResult.transition?.type).toBe('dip-black');
     expect(whiteResult.transition?.type).toBe('dip-white');
@@ -175,16 +183,62 @@ describe('deriveCompositeParams — transition window progress', () => {
     // Run both again, black-then-white then white-then-black, to rule out
     // any hidden module-level state (there is none in this pure function,
     // but the guard is cheap and matches the class of bug being distrusted).
-    const secondBlack = deriveCompositeParams(makeABWithTransition('dip-black'), 5.7, baseConfig);
+    const secondBlack = deriveCompositeParams(makeABWithTransition('dip-black'), 4.8, baseConfig);
     expect(secondBlack.transition?.type).toBe('dip-black');
   });
 
-  it('adjacency: a tick just past the transition window close (start + duration + epsilon) is inactive; a tick just before close is still active — no off-by-epsilon confusion at the boundary', () => {
+  it('adjacency: a tick just past the transition window close (boundary + duration/2 + epsilon) is inactive; a tick just before close is still active — no off-by-epsilon confusion at the boundary', () => {
     const segments = makeABWithTransition('cross-dissolve', 1);
-    const justBeforeClose = deriveCompositeParams(segments, 5 + 1 - 1e-4, baseConfig);
-    const justAfterClose = deriveCompositeParams(segments, 5 + 1 + 1e-4, baseConfig);
+    const justBeforeClose = deriveCompositeParams(segments, 5.5 - 1e-4, baseConfig);
+    const justAfterClose = deriveCompositeParams(segments, 5.5 + 1e-4, baseConfig);
     expect(justBeforeClose.transition).not.toBeNull();
     expect(justAfterClose.transition).toBeNull();
+  });
+});
+
+describe('deriveCompositeParams — 50/50 centering (transition-centering fix)', () => {
+  // Supersedes the old anchored-at-B-start placement, where the entire
+  // transition duration played AFTER the boundary (100/0 split — D7 in
+  // project-state.md's Ignored Low Risk Bugs). These tests exist
+  // specifically to pin the centered spec: half before, half after, 0.5
+  // exactly at the boundary — see docs/webgl-architecture-plan.md's
+  // transition-centering entry.
+  function makeAB(duration: number): VideoSegment[] {
+    return [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: duration }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+  }
+
+  it('progress is exactly 0.5 at the nominal A/B boundary, regardless of transition duration', () => {
+    for (const duration of [0.5, 1, 2, 3]) {
+      const result = deriveCompositeParams(makeAB(duration), 5, baseConfig);
+      expect(result.transition?.progress).toBeCloseTo(0.5, 6);
+    }
+  });
+
+  it('the window opens duration/2 seconds BEFORE the boundary and closes duration/2 seconds after — symmetric around the boundary', () => {
+    const duration = 2;
+    const segments = makeAB(duration);
+    // Open edge: boundary - duration/2 = 4.
+    expect(deriveCompositeParams(segments, 4, baseConfig).transition).not.toBeNull();
+    expect(deriveCompositeParams(segments, 4 - 1e-6, baseConfig).transition).toBeNull();
+    // Close edge: boundary + duration/2 = 6 (exclusive).
+    expect(deriveCompositeParams(segments, 6 - 1e-6, baseConfig).transition).not.toBeNull();
+    expect(deriveCompositeParams(segments, 6, baseConfig).transition).toBeNull();
+  });
+
+  it('half the window sits before the boundary (bounds-inside the OUTGOING segment) and half after (bounds-inside the INCOMING segment) — both halves resolve the SAME active transition', () => {
+    const duration = 2;
+    const segments = makeAB(duration);
+    // 4.5 is bounds-inside 'a' [0,5) AND inside the transition window [4,6).
+    const preBoundary = deriveCompositeParams(segments, 4.5, baseConfig);
+    expect(preBoundary.transition?.type).toBe('cross-dissolve');
+    expect(preBoundary.transition?.progress).toBeCloseTo(0.25, 6);
+    // 5.5 is bounds-inside 'b' [5,10) AND inside the transition window [4,6).
+    const postBoundary = deriveCompositeParams(segments, 5.5, baseConfig);
+    expect(postBoundary.transition?.type).toBe('cross-dissolve');
+    expect(postBoundary.transition?.progress).toBeCloseTo(0.75, 6);
   });
 });
 
@@ -254,7 +308,8 @@ describe('deriveCompositeParams — grade passthrough', () => {
       makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out' }),
     ];
     const grade = { brightness: 0.5, contrast: 0, saturation: 0, temperature: 0 };
-    const result = deriveCompositeParams(segments, 5.5, { ...baseConfig, grade });
+    // Window is [4.5, 5.5); 4.9 is inside it (pre-boundary half).
+    const result = deriveCompositeParams(segments, 4.9, { ...baseConfig, grade });
     expect(result.transition).not.toBeNull();
     expect(result.grade).toEqual(grade);
   });
@@ -265,9 +320,11 @@ describe('deriveCompositeParams — grade passthrough', () => {
       makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out' }),
     ];
     const grade = { brightness: 0, contrast: 0, saturation: 0.6, temperature: -0.3 };
-    const result = deriveCompositeParams(segments, 5.5, { ...baseConfig, grade });
+    // currentTime=5 is exactly the boundary (progress 0.5) AND bounds-inside
+    // 'b' (timeInSegment=0 for the zoom-out animScale calc below).
+    const result = deriveCompositeParams(segments, 5, { ...baseConfig, grade });
     expect(result.transition).toEqual({ type: 'dip-white', progress: 0.5 });
-    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * (5 - 0.5), 6); // zoom-out at timeInSegment=0.5 of an 5s segment
+    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * 5, 6); // zoom-out at timeInSegment=0 of a 5s segment (its start-scale)
     expect(result.grade).toEqual(grade);
   });
 });
@@ -278,9 +335,19 @@ describe('deriveSlotPlan — texture slot A/B assignment (Phase 3)', () => {
   // is the outgoing/previous segment during a transition and 'b' the
   // incoming/containing one — the pairing useGlPreview.ts then feeds the
   // outgoing pool-pull into 'a' and the live current frame into 'b'.
+  //
+  // Since the centered window (see the "50/50 centering" describe block
+  // above), deriveSlotPlan can no longer infer outgoing/incoming from
+  // bounds-containment alone — it re-derives the active boundary via the
+  // same resolveActiveBoundary deriveCompositeParams uses, which needs
+  // `config` to resolve each candidate's transition. `transition` itself is
+  // now purely an activation gate (null = suppressed/no-op), not a source
+  // of pairing information — see this function's own doc comment.
   const noTransition: TransitionParams | null = null;
   const activeCrossDissolve: TransitionParams = { type: 'cross-dissolve', progress: 0.4 };
 
+  // No resolvable transition config — used for the no-transition and
+  // outside-bounds cases, which don't need an active boundary.
   function makeAB(): VideoSegment[] {
     return [
       makeSegment({ id: 'a', startTime: 0, duration: 5 }),
@@ -288,82 +355,112 @@ describe('deriveSlotPlan — texture slot A/B assignment (Phase 3)', () => {
     ];
   }
 
+  // A real, resolvable transition on the a->b boundary (duration 1 →
+  // window [4.5, 5.5)) — needed for every "active transition" case, since
+  // deriveSlotPlan must genuinely resolve the pairing via config now.
+  function makeABWithTransition(slug: 'cross-dissolve' | 'dip-black' | 'dip-white' | 'light-leak' = 'cross-dissolve'): VideoSegment[] {
+    return [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: slug, effectTransitionDuration: 1 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+  }
+
   it('no transition, mid-segment: slot a = the containing (current) segment, slot b = null', () => {
     const segments = makeAB();
-    const plan = deriveSlotPlan(segments, 2, noTransition);
+    const plan = deriveSlotPlan(segments, 2, noTransition, baseConfig);
     expect(plan.a?.id).toBe('a');
     expect(plan.b).toBeNull();
   });
 
   it('no transition, inside the second segment: slot a follows the playhead to that segment', () => {
     const segments = makeAB();
-    const plan = deriveSlotPlan(segments, 7, noTransition);
+    const plan = deriveSlotPlan(segments, 7, noTransition, baseConfig);
     expect(plan.a?.id).toBe('b');
     expect(plan.b).toBeNull();
   });
 
   it('currentTime outside every segment: both slots null (nothing to draw)', () => {
     const segments = makeAB();
-    const plan = deriveSlotPlan(segments, 99, noTransition);
+    const plan = deriveSlotPlan(segments, 99, noTransition, baseConfig);
     expect(plan.a).toBeNull();
     expect(plan.b).toBeNull();
   });
 
-  it('active transition: slot a = OUTGOING (previous) segment, slot b = INCOMING (containing/current) segment', () => {
-    const segments = makeAB();
-    // Playhead just inside seg-b's leading window (containing = incoming = 'b').
-    const plan = deriveSlotPlan(segments, 5.4, activeCrossDissolve);
+  it('active transition, pre-boundary half: slot a = OUTGOING, slot b = INCOMING — even though currentTime is still bounds-inside the outgoing segment', () => {
+    const segments = makeABWithTransition();
+    // Window is [4.5, 5.5); 4.7 is bounds-inside 'a' [0,5) but inside the window.
+    const plan = deriveSlotPlan(segments, 4.7, activeCrossDissolve, baseConfig);
     expect(plan.a?.id).toBe('a'); // outgoing
     expect(plan.b?.id).toBe('b'); // incoming
+  });
+
+  it('active transition, post-boundary half: same outgoing/incoming pairing — now bounds-inside the incoming segment', () => {
+    const segments = makeABWithTransition();
+    const plan = deriveSlotPlan(segments, 5.3, activeCrossDissolve, baseConfig);
+    expect(plan.a?.id).toBe('a');
+    expect(plan.b?.id).toBe('b');
   });
 
   it('slot assignment is source-type agnostic — the same ids come back regardless of whether the assets are video or image (kind is resolved later by the driver): video<->image and image<->image assign identically to video<->video', () => {
     // deriveSlotPlan never inspects assets — same segments, same plan. This
     // is what lets useGlPreview.ts source slot 'a'/'b' from a VideoFrame OR
     // an image texture without deriveSlotPlan needing to know which.
-    const segments = makeAB();
-    const plan = deriveSlotPlan(segments, 5.4, activeCrossDissolve);
+    const segments = makeABWithTransition();
+    const plan = deriveSlotPlan(segments, 4.7, activeCrossDissolve, baseConfig);
     expect(plan.a?.id).toBe('a');
     expect(plan.b?.id).toBe('b');
   });
 
   it('each of the 4 GL-scoped transition slugs produces the same outgoing/incoming pairing (the shader differs, the slot roles do not)', () => {
-    const segments = makeAB();
     for (const type of ['cross-dissolve', 'dip-black', 'dip-white', 'light-leak'] as const) {
-      const plan = deriveSlotPlan(segments, 5.4, { type, progress: 0.5 });
+      const segments = makeABWithTransition(type);
+      const plan = deriveSlotPlan(segments, 4.7, { type, progress: 0.5 }, baseConfig);
       expect(plan.a?.id).toBe('a');
       expect(plan.b?.id).toBe('b');
     }
   });
 
   it('a suppressed transition (null — e.g. the isResizingRef/D12 drag guard forces transition=null upstream) collapses cleanly to the no-transition assignment: slot a = the containing segment, slot b = null, even while the playhead sits where a transition window would otherwise be', () => {
-    const segments = makeAB();
-    // Same playhead as the active-transition test, but transition forced null.
-    const plan = deriveSlotPlan(segments, 5.4, null);
-    expect(plan.a?.id).toBe('b'); // containing segment at t=5.4 is seg-b
+    const segments = makeABWithTransition();
+    // Same playhead as the post-boundary active-transition test (containing = 'b'), but transition forced null.
+    const plan = deriveSlotPlan(segments, 5.3, null, baseConfig);
+    expect(plan.a?.id).toBe('b'); // containing segment at t=5.3 is seg-b
     expect(plan.b).toBeNull();
   });
 
-  it('consistency with deriveCompositeParams: feeding it the SAME (segments, currentTime) and passing its resolved transition into deriveSlotPlan yields outgoing/incoming that agree with that transition being active', () => {
+  it('consistency with deriveCompositeParams: feeding it the SAME (segments, currentTime, config) and passing its resolved transition into deriveSlotPlan yields outgoing/incoming that agree with that transition being active', () => {
     const segments = [
       makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'dip-black', effectTransitionDuration: 1 }),
       makeSegment({ id: 'b', startTime: 5, duration: 5 }),
     ];
     const params = deriveCompositeParams(segments, 5.3, baseConfig);
     expect(params.transition?.type).toBe('dip-black');
-    const plan = deriveSlotPlan(segments, 5.3, params.transition);
+    const plan = deriveSlotPlan(segments, 5.3, params.transition, baseConfig);
     expect(plan.a?.id).toBe('a');
     expect(plan.b?.id).toBe('b');
   });
 
-  it('epsilon boundary: exactly at the incoming segment start (window open) both slots populate; just past the window close a null transition collapses to current-only', () => {
-    const segments = makeAB();
-    const atOpen = deriveSlotPlan(segments, 5, { type: 'cross-dissolve', progress: 0 });
+  it('consistency with deriveCompositeParams holds on the pre-boundary half too — the case that could not exist before centering (the window used to sit entirely inside the incoming segment)', () => {
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'dip-black', effectTransitionDuration: 1 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+    const params = deriveCompositeParams(segments, 4.7, baseConfig);
+    expect(params.transition?.type).toBe('dip-black');
+    const plan = deriveSlotPlan(segments, 4.7, params.transition, baseConfig);
+    expect(plan.a?.id).toBe('a');
+    expect(plan.b?.id).toBe('b');
+  });
+
+  it('epsilon boundary: exactly at the window open (boundary - duration/2) both slots populate; just past the window close a null transition collapses to current-only', () => {
+    const segments = makeABWithTransition();
+    const atOpen = deriveSlotPlan(segments, 4.5, { type: 'cross-dissolve', progress: 0 }, baseConfig);
     expect(atOpen.a?.id).toBe('a');
     expect(atOpen.b?.id).toBe('b');
-    // After the window closes deriveCompositeParams returns transition=null;
-    // deriveSlotPlan then draws the current segment alone.
-    const afterClose = deriveSlotPlan(segments, 6.0001, null);
+    // After the window closes (5.5) deriveCompositeParams returns
+    // transition=null; deriveSlotPlan then draws the current (bounds-
+    // containing) segment alone.
+    const afterClose = deriveSlotPlan(segments, 6.0001, null, baseConfig);
     expect(afterClose.a?.id).toBe('b');
     expect(afterClose.b).toBeNull();
   });

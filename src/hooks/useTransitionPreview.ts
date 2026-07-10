@@ -13,7 +13,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { VideoSegment, Asset, TransitionType, AnimationType } from '../types';
 import { renderSegmentFrame, FrameGlobalConfig } from '../services/frameRenderer';
-import { resolveEffectiveTransition } from '../services/transitionResolver';
+import { resolveEffectiveTransition, resolveTransitionProgress } from '../services/transitionResolver';
 import { applySegmentAnimation } from '../services/canvasAnimations';
 import type { VideoDecoderPool } from '../services/videoDecoderPool';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
@@ -88,6 +88,35 @@ export interface TransitionPreviewInfo {
   incoming: HTMLCanvasElement | null;
   /** The resolved transition type to apply (slug string or legacy enum). */
   effectiveTransition: TransitionType | string;
+  /**
+   * The id of the OUTGOING segment for whichever boundary is currently
+   * active (isActive true), else null. Added for the centered window (see
+   * this file's own window-derivation comment below): under the old
+   * anchored-at-B-start placement, PreviewStage.tsx's caption-hold logic
+   * could safely assume `currentSegment` (bounds-based, computed elsewhere)
+   * was ALWAYS the incoming side for the whole active window, so it derived
+   * "outgoing" itself via a contiguous-predecessor lookup. Centering breaks
+   * that assumption — for the pre-boundary half, currentSegment IS the
+   * outgoing segment, not the incoming one — so callers that need "which
+   * segment is outgoing right now" must read it from here instead of
+   * re-deriving it from currentSegment, which this hook already resolved
+   * correctly for whichever candidate (A or B) is actually active.
+   */
+  outgoingSegmentId: string | null;
+  /**
+   * The id of the INCOMING segment for whichever boundary is currently
+   * active, else null. Companion to outgoingSegmentId, for the same reason:
+   * PreviewStage.tsx's WebCodecs live-pull upgrade for the incoming canvas
+   * (B3, item-4 fix) needs to know whether `currentSegment` (bounds-based)
+   * is ACTUALLY this transition's incoming side before treating its live
+   * decoded frame as this transition's incoming content — under the
+   * centered window, currentSegment is the OUTGOING side for the whole
+   * pre-boundary half, so blindly trusting "currentSegment == incoming"
+   * (safe under the old anchored-at-B-start window, where it always was)
+   * would blit the outgoing segment's own live frame onto what's meant to
+   * be the incoming snapshot.
+   */
+  incomingSegmentId: string | null;
 }
 
 interface Params {
@@ -189,18 +218,24 @@ export function useTransitionPreview({
   // ---------------------------------------------------------------------------
   // Derive relevant segments + transition metadata
   //
-  // Export places its blend AFTER the nominal boundary (inside the incoming
-  // segment's own slot — see segmentEncoder.ts/exportPipeline.ts). Preview
-  // must match that placement, which means the segment containing
-  // `currentTime` is NOT reliably "the outgoing segment" the way it was when
-  // the window sat entirely before the boundary — it can be either side
-  // depending on where the playhead currently sits relative to a boundary.
-  // Two candidate windows are evaluated every render, both anchored off
-  // whichever segment currently contains the playhead:
-  //   A) containingSeg is about to END — pre-roll lead-in only, no blend yet
-  //      (the blend itself will happen inside the NEXT segment's own slot).
-  //   B) containingSeg just STARTED — the real, active blend window, sitting
-  //      inside containingSeg's own leading `duration` seconds.
+  // The transition window is CENTERED on the boundary between two adjacent
+  // segments (docs/webgl-architecture-plan.md's transition-centering entry —
+  // supersedes the old anchored-entirely-AFTER-the-boundary placement, D7 in
+  // project-state.md's Ignored Low Risk Bugs, where the whole blend played
+  // inside the incoming segment's own slot). Half the duration now sits
+  // BEFORE the boundary (while, by plain bounds, currentTime is still inside
+  // the OUTGOING segment's own span) and half AFTER (inside the INCOMING
+  // segment's own span). So the segment containing `currentTime` is NOT
+  // reliably "the incoming segment" the way it always was under the old
+  // anchoring — it can be either side depending on where the playhead
+  // currently sits relative to a boundary. Two candidate boundaries are
+  // evaluated every render, both anchored off whichever segment currently
+  // contains the playhead:
+  //   A) containingSeg is the OUTGOING side of the boundary AHEAD (into
+  //      nextSegA) — active (blending, not just pre-roll) for containingSeg's
+  //      own last duration/2 seconds; pure pre-roll lead-in before that.
+  //   B) containingSeg is the INCOMING side of the boundary BEHIND (from
+  //      prevSegB) — active for containingSeg's own first duration/2 seconds.
   // Candidate B always wins if both were somehow true at once (degenerate
   // sub-`duration`-long segments) — an active blend is the "real" state.
   // ---------------------------------------------------------------------------
@@ -213,30 +248,34 @@ export function useTransitionPreview({
   const prevOf = (seg: VideoSegment) =>
     sorted.find(s => Math.abs(s.startTime + s.duration - seg.startTime) < CONTIGUITY_EPSILON_S && s.id !== seg.id);
 
-  // Candidate A — containingSeg is the OUTGOING side, approaching its own end.
+  // Candidate A — containingSeg is the OUTGOING side of the boundary ahead.
   const nextSegA = containingSeg ? nextOf(containingSeg) : undefined;
   const resolvedA = resolveEffectiveTransition(containingSeg, globalTransition, globalTransitionDuration);
+  const hasTransitionA =
+    nextSegA !== undefined && resolvedA.transition !== TransitionType.NONE && resolvedA.duration > 0;
+  // null outside the centered window; 0..1 inside it (0.5 exactly at nextSegA.startTime).
+  const progressA = hasTransitionA
+    ? resolveTransitionProgress(nextSegA!.startTime, resolvedA.duration, currentTime)
+    : null;
+  const windowAStart = hasTransitionA ? nextSegA!.startTime - resolvedA.duration / 2 : 0;
   const preRollOnlyActive =
-    containingSeg !== undefined &&
-    nextSegA !== undefined &&
-    resolvedA.transition !== TransitionType.NONE &&
-    resolvedA.duration > 0 &&
-    currentTime >= nextSegA.startTime - resolvedA.duration - PRE_ROLL_LEAD_S &&
-    currentTime < nextSegA.startTime;
+    hasTransitionA &&
+    progressA === null &&
+    currentTime >= windowAStart - PRE_ROLL_LEAD_S &&
+    currentTime < windowAStart;
 
-  // Candidate B — containingSeg is the INCOMING side, inside its own leading
-  // transition window. Duration/type are resolved against the OUTGOING
-  // segment's own field (prevSegB), matching resolveEffectiveTransition's
-  // contract and export's semantics — never against containingSeg itself.
+  // Candidate B — containingSeg is the INCOMING side of the boundary behind.
+  // Duration/type are resolved against the OUTGOING segment's own field
+  // (prevSegB), matching resolveEffectiveTransition's contract and export's
+  // semantics — never against containingSeg itself.
   const prevSegB = containingSeg ? prevOf(containingSeg) : undefined;
   const resolvedB = resolveEffectiveTransition(prevSegB, globalTransition, globalTransitionDuration);
-  const activeBlendActive =
-    containingSeg !== undefined &&
-    prevSegB !== undefined &&
-    resolvedB.transition !== TransitionType.NONE &&
-    resolvedB.duration > 0 &&
-    currentTime >= containingSeg.startTime &&
-    currentTime < containingSeg.startTime + resolvedB.duration;
+  const hasTransitionB =
+    prevSegB !== undefined && resolvedB.transition !== TransitionType.NONE && resolvedB.duration > 0;
+  const progressB =
+    hasTransitionB && containingSeg
+      ? resolveTransitionProgress(containingSeg.startTime, resolvedB.duration, currentTime)
+      : null;
 
   let outgoingSeg: VideoSegment | undefined;
   let incomingSeg: VideoSegment | undefined;
@@ -244,14 +283,24 @@ export function useTransitionPreview({
   let effectiveTransition: TransitionType | string = TransitionType.NONE;
   let isActiveWindow = false;
   let needsPreRollWindow = false;
+  let activeProgress = 0;
 
-  if (activeBlendActive) {
+  if (progressB !== null) {
     outgoingSeg = prevSegB;
     incomingSeg = containingSeg;
     transitionDuration = resolvedB.duration;
     effectiveTransition = resolvedB.transition;
     isActiveWindow = true;
     needsPreRollWindow = true;
+    activeProgress = progressB;
+  } else if (progressA !== null) {
+    outgoingSeg = containingSeg;
+    incomingSeg = nextSegA;
+    transitionDuration = resolvedA.duration;
+    effectiveTransition = resolvedA.transition;
+    isActiveWindow = true;
+    needsPreRollWindow = true;
+    activeProgress = progressA;
   } else if (preRollOnlyActive) {
     outgoingSeg = containingSeg;
     incomingSeg = nextSegA;
@@ -264,9 +313,7 @@ export function useTransitionPreview({
   // isResizingRef) so the legacy overlay never shows while GL owns the frame.
   const inTransitionWindow = !isResizingRef.current && !glPathActive && isActiveWindow;
 
-  const progress = inTransitionWindow && incomingSeg
-    ? Math.max(0, Math.min(1, (currentTime - incomingSeg.startTime) / transitionDuration))
-    : 0;
+  const progress = inTransitionWindow ? activeProgress : 0;
 
   // ---------------------------------------------------------------------------
   // B3 (item-4 fix) — transition-protect the OUTGOING session.
@@ -346,11 +393,14 @@ export function useTransitionPreview({
     }
     const generation = outgoingGenerationRef.current;
     // toSourceTime deliberately doesn't clamp segment-local progress to the
-    // segment's own `duration` — during an active blend, currentTime has
-    // already advanced past outgoingSeg's nominal end (it's no longer the
-    // containing segment), so this naturally continues the outgoing
-    // video's own source time forward instead of freezing at its last
-    // frame — exactly what "continuing past its nominal duration" means.
+    // segment's own `duration` — for the SECOND half of a centered blend
+    // window, currentTime has advanced past outgoingSeg's nominal end (it's
+    // no longer the bounds-containing segment), so this naturally continues
+    // the outgoing video's own source time forward instead of freezing at
+    // its last frame. For the FIRST half, currentTime is still within
+    // outgoingSeg's own nominal span, so this is just its ordinary
+    // (non-extrapolated) source time — same call, both cases fall out of the
+    // same unclamped formula.
     outgoingLatestTargetRef.current = toSourceTime(outgoingSeg, currentTime);
 
     startChaseIfIdle(
@@ -457,10 +507,15 @@ export function useTransitionPreview({
 
     const currentAsset = assets.find(a => a.id === outgoingSeg.assetId);
     const nextAsset = assets.find(a => a.id === incomingSeg.assetId);
-    // Render the outgoing frame at its own final instant — the blend always
-    // starts exactly at the shared segment boundary now (matching export),
-    // so "outgoing" is always sampled at its own last frame, not partway
-    // through. Clamped below its own duration to avoid an out-of-range seek.
+    // Static outgoing/incoming snapshots: outgoing sampled at its own final
+    // instant, incoming at its own first frame (timeInSegment: 0 below) —
+    // held fixed and cross-blended via `progress` for the WHOLE centered
+    // window, both halves. This is an approximation (a real per-tick render
+    // would show the incoming clip visibly held at its own t=0 through the
+    // pre-boundary half, then advancing after), consistent with this hook's
+    // documented pre-roll SNAPSHOT design (see file header) — it was already
+    // an approximation before centering, this doesn't newly introduce one.
+    // Clamped below its own duration to avoid an out-of-range seek.
     const outgoingTime = Math.max(0, outgoingSeg.duration - OUTGOING_SNAPSHOT_EPSILON_S);
 
     void (async () => {
@@ -583,5 +638,7 @@ export function useTransitionPreview({
     outgoing: snapshotsReady ? snapshots!.outgoing : null,
     incoming: snapshotsReady ? snapshots!.incoming : null,
     effectiveTransition,
+    outgoingSegmentId: isActive ? (outgoingSeg?.id ?? null) : null,
+    incomingSegmentId: isActive ? (incomingSeg?.id ?? null) : null,
   };
 }

@@ -22,7 +22,7 @@
 
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
 import { ANIMATION_NONE } from '../../effectsOptions';
-import { resolveEffectiveTransition } from '../transitionResolver';
+import { resolveEffectiveTransition, resolveTransitionProgress } from '../transitionResolver';
 
 /** The 4 transitions this engine implements (plan Section 5.1). Any other
  *  resolved transition (legacy enum, or an unscoped slug like
@@ -124,16 +124,14 @@ function resolveEffectiveAnimation(segment: VideoSegment): ZoomAnimationSlug | n
 }
 
 /**
- * Finds the segment `currentTime` currently falls inside, and — mirroring
- * useTransitionPreview.ts's "candidate B" (active-blend) window exactly,
- * minus that hook's pre-roll/pool-prefetch bookkeeping, which is a preview-
- * buffering concern and not part of what this tick should render — resolves
- * whether that segment is inside its own leading transition window against
- * its immediate predecessor. Duration/type are resolved against the
- * OUTGOING (previous) segment's own field via resolveEffectiveTransition,
- * never against the containing segment itself, exactly matching
- * useTransitionPreview.ts's contract and export's semantics so the three
- * call sites can't drift on which segment's field is authoritative.
+ * Finds the segment `currentTime` currently falls inside via plain
+ * [start, start+duration) bounds — used for animScale (zoom always follows
+ * whichever segment's own clock currentTime is literally inside, independent
+ * of transition state) and as the no-transition fallback for slot planning.
+ * NOT used to decide transition activity any more — see resolveActiveBoundary
+ * below for why a bounds-only "containing" segment can no longer stand in for
+ * "the incoming side of an active transition" once the window is centered on
+ * the boundary instead of anchored to it.
  */
 const CONTIGUITY_EPSILON_S = 0.001;
 
@@ -141,34 +139,64 @@ function findContainingSegment(segments: readonly VideoSegment[], currentTime: n
   return segments.find((s) => currentTime >= s.startTime && currentTime < s.startTime + s.duration);
 }
 
-function findPrevSegment(
+function findNextSegment(
   segments: readonly VideoSegment[],
   segment: VideoSegment,
 ): VideoSegment | undefined {
   return segments.find(
-    (s) => Math.abs(s.startTime + s.duration - segment.startTime) < CONTIGUITY_EPSILON_S && s.id !== segment.id,
+    (s) => Math.abs(segment.startTime + segment.duration - s.startTime) < CONTIGUITY_EPSILON_S && s.id !== segment.id,
   );
 }
 
-function resolveTransition(
+interface ActiveBoundary {
+  outgoing: VideoSegment;
+  incoming: VideoSegment;
+  type: TransitionSlug;
+  progress: number;
+}
+
+/**
+ * Finds the single adjacent segment pair (if any) whose CENTERED transition
+ * window currently contains `currentTime` — the shared boundary-resolution
+ * source for BOTH deriveCompositeParams and deriveSlotPlan below, so the two
+ * can never disagree about which two segments are involved in "this tick's"
+ * transition (they call this with the same (segments, currentTime, config)
+ * and get the same answer back, by construction, not by convention).
+ *
+ * Superseded design note: before centering, the window sat entirely inside
+ * the INCOMING segment's own [start, start+duration) span, so "the segment
+ * currentTime bounds-contains" and "the incoming side of the active
+ * transition" were always the same segment — findContainingSegment + a
+ * predecessor lookup was sufficient. Centering breaks that equivalence: for
+ * the first half of the window, currentTime is still bounds-inside the
+ * OUTGOING segment. This function iterates adjacent pairs directly instead
+ * of relying on bounds-containment to identify which side of the boundary
+ * currentTime happens to sit on.
+ *
+ * Duration/type are always resolved against the OUTGOING segment's own field
+ * via resolveEffectiveTransition, exactly matching useTransitionPreview.ts's
+ * and export's (segmentEncoder.ts/exportPipeline.ts) contract, so all three
+ * call sites can't drift on which segment's field is authoritative.
+ */
+function resolveActiveBoundary(
   segments: readonly VideoSegment[],
   currentTime: number,
-  containingSeg: VideoSegment | undefined,
   config: ProjectEffectConfig,
-): TransitionParams | null {
-  if (!containingSeg) return null;
-  const prevSeg = findPrevSegment(segments, containingSeg);
-  if (!prevSeg) return null;
+): ActiveBoundary | null {
+  for (const outgoing of segments) {
+    const incoming = findNextSegment(segments, outgoing);
+    if (!incoming) continue;
 
-  const resolved = resolveEffectiveTransition(prevSeg, config.globalTransition, config.globalTransitionDuration);
-  if (resolved.transition === TransitionType.NONE || resolved.duration <= 0) return null;
-  if (!GL_TRANSITION_SLUGS.has(resolved.transition)) return null;
+    const resolved = resolveEffectiveTransition(outgoing, config.globalTransition, config.globalTransitionDuration);
+    if (resolved.transition === TransitionType.NONE || resolved.duration <= 0) continue;
+    if (!GL_TRANSITION_SLUGS.has(resolved.transition)) continue;
 
-  const inWindow = currentTime >= containingSeg.startTime && currentTime < containingSeg.startTime + resolved.duration;
-  if (!inWindow) return null;
+    const progress = resolveTransitionProgress(incoming.startTime, resolved.duration, currentTime);
+    if (progress === null) continue;
 
-  const progress = Math.max(0, Math.min(1, (currentTime - containingSeg.startTime) / resolved.duration));
-  return { type: resolved.transition as TransitionSlug, progress };
+    return { outgoing, incoming, type: resolved.transition as TransitionSlug, progress };
+  }
+  return null;
 }
 
 /**
@@ -184,7 +212,7 @@ export function deriveCompositeParams(
   config: ProjectEffectConfig,
 ): CompositeParams {
   const containingSeg = findContainingSegment(segments, currentTime);
-  const transition = resolveTransition(segments, currentTime, containingSeg, config);
+  const boundary = resolveActiveBoundary(segments, currentTime, config);
 
   const animScale = containingSeg
     ? resolveAnimScale(
@@ -195,7 +223,7 @@ export function deriveCompositeParams(
     : 1;
 
   return {
-    transition,
+    transition: boundary ? { type: boundary.type, progress: boundary.progress } : null,
     animScale,
     grade: config.grade ?? NEUTRAL_GRADE,
   };
@@ -225,11 +253,19 @@ export function deriveCompositeParams(
  * pool/asset/React dependency (same mock-free discipline as
  * deriveCompositeParams above).
  *
- * `transition` is passed in (rather than re-derived) so the caller drives it
- * from the SAME `deriveCompositeParams(...).transition` it already computed
- * for the render params — the two can't disagree on whether a transition is
- * active, and an isResizing-suppressed `null` (plan Section 6 / D12) collapses
- * cleanly to the no-transition assignment.
+ * `transition` is passed in (rather than trusted implicitly) purely as an
+ * ACTIVATION GATE — a non-null value says "yes, render a blend"; null says
+ * "no, single-slot" — so the caller's own suppression decisions (an
+ * isResizing-suppressed `null`, plan Section 6 / D12) collapse cleanly to
+ * the no-transition assignment regardless of what the boundary math would
+ * otherwise find. It does NOT carry which two segments are involved — under
+ * the centered window (see resolveActiveBoundary above) that pairing can no
+ * longer be recovered from `currentTime` + bounds-containment alone, so
+ * `config` is required here too: this function re-derives the pairing via
+ * the exact same resolveActiveBoundary deriveCompositeParams already called,
+ * guaranteeing the two agree on which segments are outgoing/incoming (not
+ * merely on whether a transition is active) whenever both are called with
+ * the same (segments, currentTime, config).
  */
 export interface SlotPlan {
   /** Outgoing (previous) segment during a transition; the current/containing
@@ -245,16 +281,16 @@ export function deriveSlotPlan(
   segments: readonly VideoSegment[],
   currentTime: number,
   transition: TransitionParams | null,
+  config: ProjectEffectConfig,
 ): SlotPlan {
   const containing = findContainingSegment(segments, currentTime);
-  if (!containing) return { a: null, b: null };
-  if (!transition) return { a: containing, b: null };
+  if (!transition) return containing ? { a: containing, b: null } : { a: null, b: null };
 
-  const prev = findPrevSegment(segments, containing);
-  // A non-null `transition` from deriveCompositeParams already implies a
-  // predecessor was found (resolveTransition returns null without one), so
-  // this fallback is defensive only — never reached when `transition` came
-  // from the same (segments, currentTime) as this call.
-  if (!prev) return { a: containing, b: null };
-  return { a: prev, b: containing };
+  const boundary = resolveActiveBoundary(segments, currentTime, config);
+  // A non-null `transition` from deriveCompositeParams at this SAME
+  // (segments, currentTime, config) always finds a boundary here too — this
+  // fallback is defensive only, mirroring the old findPrevSegment fallback's
+  // own "never reached" caveat.
+  if (!boundary) return containing ? { a: containing, b: null } : { a: null, b: null };
+  return { a: boundary.outgoing, b: boundary.incoming };
 }

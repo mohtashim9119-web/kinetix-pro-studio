@@ -177,7 +177,7 @@ export function useGlPreview({
   // geometry must never produce a transition window here.
   const resizing = isResizingRef.current === true;
   const params = resizing ? { ...rawParams, transition: null } : rawParams;
-  const plan = deriveSlotPlan(segments, currentTime, params.transition);
+  const plan = deriveSlotPlan(segments, currentTime, params.transition, config);
 
   // During an active transition slot 'a' is the OUTGOING (previous) segment
   // (deriveSlotPlan). The outgoing side is "live" (needs a pool pull) only
@@ -314,6 +314,25 @@ export function useGlPreview({
     // frameSegmentId matches); the outgoing segment uses this hook's chased
     // frame. No collision: currentFrameSegmentId is always the incoming
     // segment during a transition, never the outgoing one.
+    //
+    // KNOWN GAP (post transition-centering, docs/webgl-architecture-plan.md):
+    // deriveSlotPlan's incoming segment can now be plan.b BEFORE
+    // useWebCodecsPreview considers it `current` — the centered window opens
+    // duration/2 seconds ahead of the boundary, while currentTime is still
+    // bounds-inside the outgoing segment, so currentFrameSegmentId still
+    // equals the OUTGOING segment's id for that first half. This resolver has
+    // no live-pull path for that case (only the outgoing side gets a chase —
+    // see the outgoing-frame chase effect above), so `bSrc` resolves null and
+    // the render effect's `!bSrc` branch below falls back to blitting slot 'a'
+    // alone (no blend) until the boundary crosses. Not a regression from this
+    // task — compositeParams.ts's pure derivation is correct and tested; this
+    // driver-level sourcing gap predates it (Phase 3 shipped un-centered, so
+    // the incoming side was always `current` for its whole active window) and
+    // is being left as a follow-up: this GL path is dev-toggle-gated, not yet
+    // cut over to default, and Phase 3's own manual verification checklist
+    // hasn't run yet (project-state.md Active Tasks). Fixing it symmetrically
+    // (a second chase-pull for the incoming segment, mirroring the outgoing
+    // one) is real but separately-scoped work.
     const resolveVideoFrame = (seg: VideoSegment): VideoFrame | null => {
       if (currentFrame && currentFrameSegmentId === seg.id) return currentFrame;
       if (outgoing && outgoing.segmentId === seg.id) return outgoing.frame;

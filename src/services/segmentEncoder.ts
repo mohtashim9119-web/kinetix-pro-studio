@@ -1,6 +1,6 @@
 import { VideoSegment, Asset, TransitionType } from '../types';
 import { renderSegmentFrame, releaseBlendVideo, FrameGlobalConfig } from './frameRenderer';
-import { resolveEffectiveTransition } from './transitionResolver';
+import { resolveEffectiveTransition, resolveTransitionProgress } from './transitionResolver';
 
 /**
  * Minimal ffmpeg FS/exec interface.  Both a direct `FFmpeg` instance and the
@@ -34,11 +34,53 @@ export interface EncodeSegmentOptions {
   globalTransition?: TransitionType;
   onProgress?: (framesWritten: number, totalFrames: number) => void;
   /** Seconds to skip at the start of this segment. Paid back by the previous
-   *  segment's trailing transition overlap. Default 0. */
+   *  segment's trailing transition overlap — half the transition duration
+   *  under the centered window (see resolveBlendFrameParams). Default 0. */
   startTimeOffset?: number;
-  /** Seconds to encode past `segment.duration`. Equal to the outgoing transition
-   *  duration when this segment transitions into a next one. Default 0. */
+  /** Seconds to encode past `segment.duration`. Half the outgoing transition
+   *  duration when this segment transitions into a next one — the centered
+   *  window's blend zone straddles the boundary, so only half of it extends
+   *  past this segment's own nominal end (see resolveBlendFrameParams).
+   *  Default 0. */
   trailingExtension?: number;
+}
+
+/**
+ * Pure blend-window math for the outgoing segment's per-frame render loop —
+ * the centered-window spec (docs/webgl-architecture-plan.md's transition-
+ * centering entry; supersedes the old 100%-after-the-boundary placement, D7
+ * in project-state.md's Ignored Low Risk Bugs) applied in SEGMENT-LOCAL time.
+ *
+ * The blend zone is `transitionDuration` seconds wide, centered on this
+ * segment's own nominal end (`segmentDuration`): it opens at
+ * `segmentDuration - transitionDuration/2` (still inside this segment's own
+ * un-extended span) and closes at `segmentDuration + transitionDuration/2`
+ * (the `trailingExtension` past nominal end — see EncodeSegmentOptions).
+ * Returns null outside that zone.
+ *
+ * `alpha` is the outgoing→incoming blend factor via resolveTransitionProgress
+ * (0 at zone open, 1 approached at zone close, exactly 0.5 at
+ * `timeInSegment === segmentDuration` — the actual A/B boundary).
+ *
+ * `nextTimeInSegment` is how far into the INCOMING segment's own footage to
+ * render for this frame: held at 0 (its own true start) for the entire
+ * pre-boundary half, then advances forward from 0 for the post-boundary
+ * half — so the incoming clip is never asked to seek before its own official
+ * start (no source "handle" past trimStart is required). This matches
+ * useTransitionPreview.ts's static incoming snapshot, which also holds the
+ * incoming clip's frame-at-0 fixed through the whole window — export and
+ * preview agree on what the incoming side shows, not just on the timing.
+ */
+export function resolveBlendFrameParams(
+  timeInSegment: number,
+  segmentDuration: number,
+  transitionDuration: number,
+): { alpha: number; nextTimeInSegment: number } | null {
+  const progress = resolveTransitionProgress(segmentDuration, transitionDuration, timeInSegment);
+  if (progress === null) return null;
+  const half = transitionDuration / 2;
+  const nextTimeInSegment = Math.max(0, progress * transitionDuration - half);
+  return { alpha: progress, nextTimeInSegment };
 }
 
 /**
@@ -47,8 +89,9 @@ export interface EncodeSegmentOptions {
  * Pipeline:
  *   1. Renders every frame to an offscreen canvas via renderSegmentFrame.
  *      If nextSegment is provided and the segment has a non-NONE transition,
- *      frames in the last `transitionDuration` seconds are blended with the
- *      incoming segment's first frame.
+ *      frames in the centered `transitionDuration`-wide zone around this
+ *      segment's own nominal end are blended with the incoming segment's
+ *      frame (see resolveBlendFrameParams).
  *   2. Writes each frame as frame_%05d.png into ffmpeg's virtual FS.
  *   3. Runs libx264 with fast preset, crf 23, yuv420p, faststart.
  *   4. Reads the resulting MP4 bytes and deletes all temp FS files.
@@ -122,29 +165,42 @@ export async function encodeSegment(
       );
     }
 
-    // Compute transition blend alpha for frames in the trailing extension window.
-    // Path B: the outgoing segment extends trailingExtension seconds past segment.duration
-    // into the fade window; the incoming segment is rendered with advancing timeInSegment
-    // so it plays live during the blend. The next segment's encoder call skips its first
-    // transitionDuration seconds via startTimeOffset, so no duplicate emission occurs.
-    // In/out overlap contributions cancel pairwise: Σ encoded = Σ duration = voiceoverDuration.
-    // Audio sync is preserved because total encoded duration is unchanged.
+    // Compute transition blend alpha for frames in the centered blend zone
+    // (docs/webgl-architecture-plan.md's transition-centering entry —
+    // supersedes the old 100%-after-the-boundary placement, D7 in
+    // project-state.md's Ignored Low Risk Bugs). The zone is centered on
+    // segment.duration (this segment's own nominal end): half sits BEFORE it
+    // (still within this segment's own un-extended span) and half AFTER it
+    // (the trailingExtension). The incoming segment renders held at its own
+    // t=0 through the pre-boundary half, then advances live for the post-
+    // boundary half — see resolveBlendFrameParams. The next segment's
+    // encoder call skips forward by transitionDuration/2 via startTimeOffset
+    // (exportPipeline.ts), matching where this zone's post-boundary half
+    // ends, so no duplicate emission occurs. In/out overlap contributions
+    // cancel pairwise: Σ encoded = Σ duration = voiceoverDuration. Audio
+    // sync is preserved because total encoded duration is unchanged.
     let blendParams: import('./frameRenderer').TransitionBlendParams | undefined;
     if (hasTransition && blendCanvas && blendCtx && options.nextSegment) {
-      if (timeInSegment >= segment.duration && timeInSegment < segment.duration + transitionDuration) {
-        const timeIntoTransition = timeInSegment - segment.duration;
-        const alpha = Math.max(0, Math.min(1, timeIntoTransition / transitionDuration));
-        const nextTimeInSegment = timeIntoTransition;
-
+      const blend = resolveBlendFrameParams(timeInSegment, segment.duration, transitionDuration);
+      if (blend) {
         await renderSegmentFrame({
           segment: options.nextSegment,
           asset: options.nextAsset,
-          timeInSegment: nextTimeInSegment,
+          timeInSegment: blend.nextTimeInSegment,
           ctx: blendCtx,
           width: w,
           height: h,
           global: globalConfig,
-          absoluteTime: options.nextSegment.startTime + nextTimeInSegment,
+          // The absolute project time THIS output frame represents — same
+          // value the primary (outgoing) render below uses. NOT derived from
+          // nextSegment.startTime + nextTimeInSegment: under the centered
+          // window nextTimeInSegment is held at 0 through the pre-boundary
+          // half, so that formula (correct only by coincidence in the old
+          // anchored-at-B-start scheme, where the two were always equal)
+          // would understate how far into the blend zone this frame actually
+          // is — wrong for heading-layer lookup (compositeActiveHeading
+          // keys strictly off absoluteTime).
+          absoluteTime: segment.startTime + timeInSegment,
           // Isolate the incoming segment's video element from the primary cache
           // so a same-URL transition doesn't thrash one shared <video> between
           // the outgoing and incoming seek targets every frame. Released in the
@@ -154,7 +210,7 @@ export async function encodeSegment(
 
         blendParams = {
           adjacentCanvas: blendCanvas,
-          alpha,
+          alpha: blend.alpha,
           type: effectiveTransition,
         };
       }

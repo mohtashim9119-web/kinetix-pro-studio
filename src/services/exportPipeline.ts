@@ -114,12 +114,21 @@ export async function exportProject(
     const nextSegment = segments[i + 1];
     const nextAsset = nextSegment?.assetId ? assetMap.get(nextSegment.assetId) : undefined;
     const prevSegment = segments[i - 1];
+    // Centered transition window (docs/webgl-architecture-plan.md's
+    // transition-centering entry — supersedes the old 100%-after-the-
+    // boundary placement, D7 in project-state.md's Ignored Low Risk Bugs):
+    // the blend zone straddles the boundary 50/50, so only HALF of the
+    // resolved transition duration extends into this segment's neighbor on
+    // either edge. effectiveTransitionOut still returns the FULL duration
+    // (the value alpha ramps across, and what segmentEncoder.ts's
+    // resolveBlendFrameParams needs to reconstruct the centered zone) —
+    // only the encode-range skip/extension is halved here.
     const startTimeOffset = prevSegment
-      ? effectiveTransitionOut(prevSegment, segment, project.globalTransition, project.globalTransitionDuration)
+      ? effectiveTransitionOut(prevSegment, segment, project.globalTransition, project.globalTransitionDuration) / 2
       : 0;
     const trailingExtension = effectiveTransitionOut(
       segment, nextSegment, project.globalTransition, project.globalTransitionDuration,
-    );
+    ) / 2;
 
     const segFile = `seg_out_${i}.mp4`;
     segmentFiles.push(segFile);

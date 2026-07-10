@@ -42,3 +42,43 @@ export function resolveEffectiveTransition(
       : 0;
   return { transition, duration };
 }
+
+/**
+ * Centered transition-window progress — the single shared arithmetic behind
+ * the boundary-centered timing spec (docs/webgl-architecture-plan.md's
+ * transition-centering entry; supersedes the old 100/0-split-at-the-boundary
+ * behavior, D7 in project-state.md's Ignored Low Risk Bugs).
+ *
+ * A transition of `duration` seconds is centered ON `boundaryTime` — half
+ * before it, half after: window = [boundaryTime - duration/2, boundaryTime +
+ * duration/2). Progress runs 0 (window open, pure outgoing) to 1 (window
+ * close approached, pure incoming), linear, landing at EXACTLY 0.5 when
+ * `currentTime === boundaryTime`. Half-open on the high end, matching every
+ * other segment-boundary convention in this codebase (findContainingSegment
+ * et al.). Returns null when `currentTime` is outside the window, or when
+ * `duration` is non-positive (division-by-zero guard, and a 0-length
+ * transition never activates).
+ *
+ * Coordinate-system agnostic: `boundaryTime`/`currentTime` can be absolute
+ * project time (compositeParams.ts, useTransitionPreview.ts) or a segment-
+ * local time (segmentEncoder.ts, where `boundaryTime` is the outgoing
+ * segment's own `duration`) — the arithmetic doesn't care which, as long as
+ * both arguments share the same coordinate system.
+ *
+ * Shared by compositeParams.ts, useTransitionPreview.ts, and
+ * segmentEncoder.ts so the window/progress math can't drift between preview
+ * and export the way the pre-centering anchored-at-B-start logic once did
+ * (it was hand-duplicated in all three places).
+ */
+export function resolveTransitionProgress(
+  boundaryTime: number,
+  duration: number,
+  currentTime: number,
+): number | null {
+  if (duration <= 0) return null;
+  const half = duration / 2;
+  const start = boundaryTime - half;
+  const end = boundaryTime + half;
+  if (currentTime < start || currentTime >= end) return null;
+  return Math.max(0, Math.min(1, (currentTime - start) / duration));
+}

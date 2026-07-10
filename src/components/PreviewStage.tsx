@@ -210,13 +210,16 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
 
 /**
  * Phase A3 companion fix — the segment immediately preceding `seg` in
- * timeline order (its own end coincides with `seg`'s own start). Used to
- * find the OUTGOING segment for caption-hold purposes: useTransitionPreview
- * now places its blend window AFTER the nominal boundary (matching export),
- * so `currentSegment` itself flips to the INCOMING segment at the window's
- * start rather than its end. The caption must keep reading the outgoing
- * segment's text for the life of the (shifted) transition window/overlay
- * hold, or it shows the wrong segment's text for most of the blend.
+ * timeline order (its own end coincides with `seg`'s own start). Used as the
+ * caption-hold FALLBACK for the post-window "hold" period (see
+ * captionSegment's own comment below): once useTransitionPreview's active
+ * window has closed but the overlay is still being held visible pending
+ * decode catch-up, the hook's own outgoingSegmentId has already reset to
+ * null (its per-render candidates no longer match), so this contiguous-
+ * predecessor lookup off the now-fully-flipped `currentSegment` is the only
+ * way to still find the outgoing segment for that trailing window. Not used
+ * for the ACTIVE-window case any more — see captionSegment's comment for why
+ * a currentSegment-relative lookup alone is no longer sufficient there.
  */
 function findOutgoingSegment(segments: VideoSegment[], seg: VideoSegment | undefined): VideoSegment | undefined {
   if (!seg) return undefined;
@@ -557,17 +560,29 @@ export function PreviewStage({
   overlayHoldStateRef.current = overlayHoldState;
   const showTransitionOverlay = transitionPreview.isActive || overlayHoldState.holding;
 
-  // Phase A3 companion fix — the body caption (below) is not occluded by the
-  // canvas overlay (it paints above it, z-46 vs z-45) and previously read
-  // `currentSegment` directly on the assumption that `currentSegment` only
-  // flips to the incoming segment exactly when the transition window ends.
-  // That assumption no longer holds now that useTransitionPreview's blend
-  // window sits AFTER the boundary (matching export) — `currentSegment`
-  // flips at the window's START instead. Hold the caption on the outgoing
-  // segment for as long as the overlay itself is showing, so the caption
-  // still reads as steady throughout the crossfade.
+  // Phase A3 companion fix, updated for the CENTERED transition window
+  // (docs/webgl-architecture-plan.md's transition-centering entry —
+  // supersedes the old anchored-at-B-start placement, D7 in
+  // project-state.md's Ignored Low Risk Bugs). The body caption (below) is
+  // not occluded by the canvas overlay (it paints above it, z-46 vs z-45)
+  // and must keep reading the OUTGOING segment's text for as long as the
+  // overlay itself is showing, so the caption reads as steady throughout the
+  // crossfade. Under the old anchored-at-B-start window, `currentSegment`
+  // (bounds-based) was ALWAYS the incoming side for the window's entire
+  // active life, so "outgoing" could be derived as currentSegment's
+  // contiguous predecessor unconditionally. Centering breaks that: for the
+  // PRE-boundary half of the window, currentSegment IS the outgoing segment
+  // itself (bounds-containment hasn't crossed the boundary yet), so that
+  // same predecessor lookup would incorrectly walk one segment too far back.
+  // transitionPreview.outgoingSegmentId is authoritative for both active
+  // halves (it's the exact segment useTransitionPreview.ts itself resolved
+  // as outgoing); findOutgoingSegment is kept only as the fallback for the
+  // trailing "hold" period, where the hook's own per-render candidates have
+  // already reset (see that function's own updated doc comment).
   const captionSegment = showTransitionOverlay
-    ? (findOutgoingSegment(segments, currentSegment) ?? currentSegment)
+    ? (segments.find(s => s.id === transitionPreview.outgoingSegmentId)
+        ?? findOutgoingSegment(segments, currentSegment)
+        ?? currentSegment)
     : currentSegment;
 
   // Draw the transition blend onto the overlay canvas whenever preview state changes.
@@ -610,16 +625,31 @@ export function PreviewStage({
     // same frame/frameSegmentId this transition's own incoming side is
     // sourced from — see useWebCodecsPreview.ts), blit its live frame onto
     // transitionPreview.incoming's persistent canvas right before
-    // compositing below. During an active blend window incomingSeg is
-    // always currentSegment (useTransitionPreview's own candidate-B
-    // window), so webCodecsPreview.frame is guaranteed to belong to the
-    // right segment whenever contentCaughtUp is true — this is what makes
-    // the INCOMING side of the blend live instead of a frozen one-shot
-    // snapshot. Falls through to whatever transitionPreview.incoming
-    // already holds (the one-shot snapshot, non-video incoming segment, or
-    // a not-yet-caught-up live frame) on every other path — strictly an
-    // upgrade over today's frozen behavior, never worse.
-    if (useWebCodecsPath && webCodecsPreview.isVideoSegment && contentCaughtUp && webCodecsPreview.frame) {
+    // compositing below — this is what makes the INCOMING side of the blend
+    // live instead of a frozen one-shot snapshot. Falls through to whatever
+    // transitionPreview.incoming already holds (the one-shot snapshot, non-
+    // video incoming segment, or a not-yet-caught-up live frame) on every
+    // other path — strictly an upgrade over the frozen fallback, never worse.
+    //
+    // The extra `currentSegment?.id === transitionPreview.incomingSegmentId`
+    // guard (added for the centered window, docs/webgl-architecture-plan.md's
+    // transition-centering entry) is required now: under the OLD anchored-
+    // at-B-start window, incomingSeg was ALWAYS currentSegment for the
+    // window's entire active life, so contentCaughtUp (which checks decode
+    // caught up to currentSegment) was sufficient on its own. Centering
+    // breaks that — for the pre-boundary half, currentSegment IS the
+    // OUTGOING segment (bounds-containment hasn't crossed the boundary yet),
+    // so without this guard contentCaughtUp would read as "caught up"
+    // (decode has always been caught up to the segment that's been playing
+    // normally) and this block would blit the OUTGOING segment's own live
+    // frame onto what's meant to be the incoming canvas.
+    if (
+      useWebCodecsPath &&
+      webCodecsPreview.isVideoSegment &&
+      contentCaughtUp &&
+      webCodecsPreview.frame &&
+      currentSegment?.id === transitionPreview.incomingSegmentId
+    ) {
       try {
         const incCanvas = transitionPreview.incoming;
         const incCtx = incCanvas.getContext('2d');
