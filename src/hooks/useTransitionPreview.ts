@@ -521,7 +521,22 @@ export function useTransitionPreview({
     startChaseIfIdle(
       outgoingChaseMutexRef.current,
       () => outgoingLatestTargetRef.current,
-      (target) => pool.getFrameAt(segmentId, target).catch(() => null),
+      (target) => {
+        // TEMP RACE-DIAG (remove before commit) — see the video-video
+        // flicker investigation. Timestamps this call so it can be
+        // correlated against useWebCodecsPreview.ts's main chase and
+        // videoDecoderPool.ts's internal reset/close events for the same
+        // segment id.
+        const __raceDiagT0 = performance.now();
+        console.log(`[RACE-DIAG-OUTGOING] CALL seg=${segmentId} target=${target.toFixed(3)} t=${__raceDiagT0.toFixed(1)}`);
+        return pool.getFrameAt(segmentId, target).then((r) => {
+          console.log(`[RACE-DIAG-OUTGOING] SETTLE seg=${segmentId} target=${target.toFixed(3)} dur=${(performance.now() - __raceDiagT0).toFixed(1)}ms result=${r ? 'frame' : 'null'}`);
+          return r;
+        }).catch(() => {
+          console.log(`[RACE-DIAG-OUTGOING] ERROR seg=${segmentId} target=${target.toFixed(3)} dur=${(performance.now() - __raceDiagT0).toFixed(1)}ms`);
+          return null;
+        });
+      },
       (result) => {
         if (outgoingGenerationRef.current !== generation) return; // superseded
         if (!result) return; // nothing decoded yet / evicted — keep last drawn content

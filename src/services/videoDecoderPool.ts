@@ -589,59 +589,99 @@ export class VideoDecoderPool {
    */
   async getFrameAt(segmentId: string, targetSec: number): Promise<VideoFrame | null> {
     const session = this.sessions.get(segmentId);
-    if (!session || session.closed) return null;
+    if (!session || session.closed) {
+      // TEMP RACE-DIAG (remove before commit) — settles before ENTER is
+      // ever logged for this request (no session yet, or already closed).
+      console.log(`[RACE-DIAG-POOL] SETTLE-NULL seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} reason=no-session-or-closed`);
+      return null;
+    }
     this.touch(segmentId);
+    // TEMP RACE-DIAG (remove before commit) — see the video-video flicker
+    // investigation. Marks entry into this session's critical section so
+    // overlapping calls for the same segmentId (from useWebCodecsPreview.ts
+    // and useTransitionPreview.ts) are visible in the console log.
+    console.log(`[RACE-DIAG-POOL] ENTER seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)}`);
+    // TEMP RACE-DIAG (remove before commit) — passive stall detector, purely
+    // observational: doesn't affect this call's actual resolution timing or
+    // value. Fires once if this same request hasn't hit any exit path below
+    // within 3s of ENTER — the "stuck ENTER, no SELECT/SETTLE" pattern.
+    const __raceDiagStallTimer = setTimeout(() => {
+      console.log(`[RACE-DIAG-POOL] STALL seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} msSinceEnter=3000+`);
+    }, 3000);
 
-    // Phase 5 fix (docs/webcodecs-architecture-plan.md): ensureSession() is
-    // always called fire-and-forget by useWebCodecsPreview.ts (its own
-    // decode-ahead effect never awaits it), and a separate effect in the
-    // same render calls getFrameAt independently — so this can run before
-    // startSession()'s seedWindow() has ever executed for a brand new
-    // session, while its DecodeSession object literal still holds its
-    // placeholder initial values (fullyFed: true, frames: []). Without
-    // awaiting `ready` here first, the fillWindow() call below would read
-    // that placeholder fullyFed=true and return immediately with zero
-    // frames — getFrameAt then returns null, and if the caller isn't
-    // actively ticking currentTime (e.g. paused right after a seek), nothing
-    // ever retries: a permanently blank canvas with no error. Awaiting
-    // `ready` (a no-op once already resolved) guarantees seedWindow's real
-    // chunk-range-derived state is in place before needsReset/fillWindow
-    // ever run.
-    await session.ready;
-    if (session.closed) return null;
-
-    if (this.needsReset(session, targetSec)) {
-      this.resetSessionWindow(session, targetSec);
-    }
-    await this.fillWindow(session, targetSec);
-    if (session.closed || session.frames.length === 0) return null;
-
-    let selected = session.frames[0]!;
-    for (const entry of session.frames) {
-      if (entry.timestampSec <= targetSec) selected = entry;
-      else break;
-    }
-
-    // Close every buffered frame strictly older than the selected one —
-    // under forward playback they can never be needed again. This also
-    // moves the "reset floor" forward: a future target below this point is
-    // necessarily a backward scrub, handled by needsReset/resetSessionWindow
-    // above, not a stale read from here.
-    session.frames = session.frames.filter((entry) => {
-      if (entry.timestampSec < selected.timestampSec) {
-        entry.frame.close();
-        return false;
+    try {
+      // Phase 5 fix (docs/webcodecs-architecture-plan.md): ensureSession() is
+      // always called fire-and-forget by useWebCodecsPreview.ts (its own
+      // decode-ahead effect never awaits it), and a separate effect in the
+      // same render calls getFrameAt independently — so this can run before
+      // startSession()'s seedWindow() has ever executed for a brand new
+      // session, while its DecodeSession object literal still holds its
+      // placeholder initial values (fullyFed: true, frames: []). Without
+      // awaiting `ready` here first, the fillWindow() call below would read
+      // that placeholder fullyFed=true and return immediately with zero
+      // frames — getFrameAt then returns null, and if the caller isn't
+      // actively ticking currentTime (e.g. paused right after a seek), nothing
+      // ever retries: a permanently blank canvas with no error. Awaiting
+      // `ready` (a no-op once already resolved) guarantees seedWindow's real
+      // chunk-range-derived state is in place before needsReset/fillWindow
+      // ever run.
+      await session.ready;
+      if (session.closed) {
+        console.log(`[RACE-DIAG-POOL] SETTLE-NULL seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} reason=closed-after-ready`);
+        return null;
       }
-      return true;
-    });
-    session.retainedFloorUs = selected.timestampSec * 1e6;
 
-    if (session.displayedFrame && session.displayedFrame !== selected.frame) {
-      session.displayedFrame.close();
+      if (this.needsReset(session, targetSec)) {
+        // TEMP RACE-DIAG (remove before commit)
+        console.log(`[RACE-DIAG-POOL] RESET seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} framesBuffered=${session.frames.length}`);
+        this.resetSessionWindow(session, targetSec);
+      }
+      await this.fillWindow(session, targetSec);
+      if (session.closed || session.frames.length === 0) {
+        console.log(`[RACE-DIAG-POOL] SETTLE-NULL seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} reason=${session.closed ? 'closed-after-fill' : 'no-frames-after-fill'}`);
+        return null;
+      }
+
+      let selected = session.frames[0]!;
+      for (const entry of session.frames) {
+        if (entry.timestampSec <= targetSec) selected = entry;
+        else break;
+      }
+
+      // Close every buffered frame strictly older than the selected one —
+      // under forward playback they can never be needed again. This also
+      // moves the "reset floor" forward: a future target below this point is
+      // necessarily a backward scrub, handled by needsReset/resetSessionWindow
+      // above, not a stale read from here.
+      session.frames = session.frames.filter((entry) => {
+        if (entry.timestampSec < selected.timestampSec) {
+          // TEMP RACE-DIAG (remove before commit)
+          console.log(`[RACE-DIAG-POOL] CLOSE-STALE seg=${segmentId} closedTs=${entry.timestampSec.toFixed(3)} selectedTs=${selected.timestampSec.toFixed(3)} t=${performance.now().toFixed(1)}`);
+          entry.frame.close();
+          return false;
+        }
+        return true;
+      });
+      session.retainedFloorUs = selected.timestampSec * 1e6;
+
+      if (session.displayedFrame && session.displayedFrame !== selected.frame) {
+        // TEMP RACE-DIAG (remove before commit)
+        console.log(`[RACE-DIAG-POOL] CLOSE-DISPLAYED seg=${segmentId} t=${performance.now().toFixed(1)}`);
+        session.displayedFrame.close();
+      }
+      session.displayedFrame = selected.frame;
+      console.log(`[RACE-DIAG-POOL] SELECT seg=${segmentId} target=${targetSec.toFixed(3)} selectedTs=${selected.timestampSec.toFixed(3)} t=${performance.now().toFixed(1)}`);
+      this.enforceBudget();
+      return selected.frame;
+    } catch (err) {
+      // TEMP RACE-DIAG (remove before commit) — a rejection here (decoder
+      // error, etc.) currently propagates uncaught to the caller with no
+      // tag from this side; this logs it before rethrowing unchanged.
+      console.log(`[RACE-DIAG-POOL] REJECT seg=${segmentId} target=${targetSec.toFixed(3)} t=${performance.now().toFixed(1)} err=${err instanceof Error ? err.message : String(err)}`);
+      throw err;
+    } finally {
+      clearTimeout(__raceDiagStallTimer);
     }
-    session.displayedFrame = selected.frame;
-    this.enforceBudget();
-    return selected.frame;
   }
 
   hasSession(segmentId: string): boolean {

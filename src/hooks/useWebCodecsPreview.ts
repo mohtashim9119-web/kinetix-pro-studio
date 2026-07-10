@@ -528,6 +528,20 @@ export function useWebCodecsPreview({
    *  site here would race the live chase against the pre-pull on the same
    *  session the instant it becomes current (see the Phase A2 audit). */
   const pendingBoundaryPullRef = useRef<{ segmentId: string; promise: Promise<VideoFrame | null> } | null>(null);
+  // Tracks which (non-video) segment id the inert branch below has already
+  // committed 'inert' state for — that branch reruns on every currentTime
+  // tick (this effect's deps include currentTime, required by the video
+  // chase path below), so without this gate it would re-log and re-call
+  // setFrame/setFrameSegmentId once per tick for the entire duration of any
+  // non-video segment. null means "not currently tracking an inert segment".
+  const lastInertSegmentIdRef = useRef<string | null>(null);
+  // Flicker fix (video-to-video transitions): the segment id whose frame is
+  // actually committed to `frame` right now — distinct from `frameSegmentId`
+  // state because this needs to be read synchronously inside the onSettled
+  // closure below without waiting for a re-render. Used to gate the
+  // FLICKER-DIAG log to the exact point a swap is (or isn't yet) happening,
+  // not every chase settlement for the same already-painted segment.
+  const paintedSegmentIdRef = useRef<string | null>(null);
 
   const currentAsset = currentSegment ? assets.find(a => a.id === currentSegment.assetId) : undefined;
   const isVideoSegment = isPlainVideoAsset(currentSegment, currentAsset);
@@ -625,18 +639,34 @@ export function useWebCodecsPreview({
   // per segment, and every intermediate scrub position in between gets
   // skipped rather than separately decoded and discarded.
   useEffect(() => {
+    // TEMP RACE-DIAG (remove before commit) — the only effect in this file
+    // keyed on currentTime; entry snapshot of every dep value.
+    console.log(`[RACE-DIAG-EFFECT] frame-pull entry enabled=${enabled} currentSegment=${currentSegment?.id ?? 'none'} isVideoSegment=${isVideoSegment} currentAsset=${currentAsset?.id ?? 'none'} currentTime=${currentTime}`);
     if (!enabled || !currentSegment || !isVideoSegment || !currentAsset) {
-      // Bump the generation even on this inert path — an in-flight chase
-      // loop from a still-resolving previous segment must recognize it's
-      // stale and stop, not paint a frame for a segment we've since left.
-      // (This does NOT touch chaseMutexRef — see startChaseIfIdle's own
-      // doc for why the mutex must never be gated on this generation check.)
-      epochKeyRef.current = null;
-      ++generationRef.current;
-      setFrame(null);
-      setFrameSegmentId(null);
+      // Gate on segment id, not currentTime — this branch would otherwise
+      // rerun (and re-log/re-setState) on every tick for the full duration
+      // of a non-video segment, since the effect's own deps include
+      // currentTime for the video chase path below.
+      const inertKey = currentSegment?.id ?? null;
+      if (lastInertSegmentIdRef.current !== inertKey) {
+        lastInertSegmentIdRef.current = inertKey;
+        // Bump the generation even on this inert path — an in-flight chase
+        // loop from a still-resolving previous segment must recognize it's
+        // stale and stop, not paint a frame for a segment we've since left.
+        // (This does NOT touch chaseMutexRef — see startChaseIfIdle's own
+        // doc for why the mutex must never be gated on this generation check.)
+        epochKeyRef.current = null;
+        ++generationRef.current;
+        // TEMP RACE-DIAG (remove before commit)
+        console.log(`[RACE-DIAG-EFFECT] frame-pull setState(inert) currentTime=${currentTime}`);
+        setFrame(prev => (prev === null ? prev : null));
+        setFrameSegmentId(prev => (prev === null ? prev : null));
+      }
       return;
     }
+    // Re-arm the inert gate so the next non-video segment (even one with a
+    // brand-new id following a video segment) logs/commits exactly once.
+    lastInertSegmentIdRef.current = null;
     const pool = poolRef.current!;
     const segmentId = currentSegment.id;
     // Only a genuine segment change is a new "epoch" — a currentTime tick
@@ -691,8 +721,21 @@ export function useWebCodecsPreview({
           pendingBoundaryPullRef.current = null;
           return pending.promise;
         }
-        return pool.getFrameAt(segmentId, target).catch((err) => {
+        // TEMP RACE-DIAG (remove before commit) — see the video-video
+        // flicker investigation. Timestamps this call so it can be
+        // correlated against useTransitionPreview.ts's outgoing chase and
+        // videoDecoderPool.ts's internal reset/close events for the same
+        // segment id.
+        const __raceDiagT0 = performance.now();
+        console.log(`[RACE-DIAG-MAIN] CALL seg=${segmentId} target=${target.toFixed(3)} t=${__raceDiagT0.toFixed(1)}`);
+        return pool.getFrameAt(segmentId, target).then((r) => {
+          console.log(`[RACE-DIAG-MAIN] SETTLE seg=${segmentId} target=${target.toFixed(3)} dur=${(performance.now() - __raceDiagT0).toFixed(1)}ms result=${r ? 'frame' : 'null'}`);
+          return r;
+        }).catch((err) => {
+          console.log(`[RACE-DIAG-MAIN] ERROR seg=${segmentId} target=${target.toFixed(3)} dur=${(performance.now() - __raceDiagT0).toFixed(1)}ms`);
           if (generationRef.current === generation) {
+            // TEMP RACE-DIAG (remove before commit)
+            console.log(`[RACE-DIAG-EFFECT] frame-pull setState(error) seg=${segmentId} target=${target.toFixed(3)} currentTimeAtEffectRun=${currentTime}`);
             setError(err instanceof Error ? err.message : String(err));
           }
           return null;
@@ -700,8 +743,25 @@ export function useWebCodecsPreview({
       },
       (result) => {
         if (generationRef.current !== generation) return; // superseded by a segment/enabled change — paint nothing
-        setFrame(result);
+        // TEMP RACE-DIAG (remove before commit)
+        console.log(`[RACE-DIAG-EFFECT] frame-pull setState(result) seg=${segmentId} result=${result ? 'frame' : 'null'} currentTimeAtEffectRun=${currentTime}`);
+        const hasNewFrameReady = result !== null;
+        if (paintedSegmentIdRef.current !== segmentId) {
+          // TEMP FLICKER-DIAG (remove once verified) — the point a
+          // video-to-video swap either happens or is deferred because the
+          // new segment's decoder hasn't produced a frame yet.
+          console.log(`[FLICKER-DIAG] prevSegmentId=${paintedSegmentIdRef.current ?? 'none'} newSegmentId=${segmentId} hasNewFrameReady=${hasNewFrameReady} t=${currentTime.toFixed(3)}`);
+        }
         if (result) {
+          // Flicker fix: only swap the painted frame once the new segment's
+          // decoder has actually produced one. A null result here means
+          // decode-ahead hasn't caught up yet for the new segment's session —
+          // do NOT clear `frame` to null in that case; keep the outgoing
+          // segment's last rendered frame on canvas so a video-to-video cut
+          // never shows a blank/black frame while the new session warms up.
+          // (The video-to-inert case is unaffected — that's handled entirely
+          // by the inert branch above, which explicitly nulls the frame.)
+          setFrame(result);
           setError(null);
           // Only a REAL frame counts as "content caught up" for this segment —
           // a null result (nothing decoded yet) must leave frameSegmentId
@@ -709,6 +769,7 @@ export function useWebCodecsPreview({
           // callers gating on frameSegmentId === currentSegment.id keep
           // correctly reporting "not ready" rather than falsely matching.
           setFrameSegmentId(segmentId);
+          paintedSegmentIdRef.current = segmentId;
         }
       },
     );

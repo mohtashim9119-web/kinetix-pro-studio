@@ -67,6 +67,19 @@ export function usePlayback({
       const audio = audioRef.current;
       if (!audio) return;
 
+      // TEMP RACE-DIAG (remove before commit) — end-of-timeline "Maximum
+      // update depth exceeded" investigation; correlates against
+      // RACE-DIAG-MAIN (useWebCodecsPreview.ts) / RACE-DIAG-OUTGOING
+      // (useTransitionPreview.ts) / RACE-DIAG-POOL (videoDecoderPool.ts).
+      // segDur moved up from below (unchanged value) so it's available for
+      // this entry log; "time"/"duration" map to audio.currentTime/segDur —
+      // this closure has no separately-computed "newTime"/"prevTime", it
+      // always calls setCurrentTime with the same audio.currentTime read
+      // here.
+      const segDur = segmentsRef.current.reduce((a, s) => a + s.duration, 0);
+      console.log(`[RACE-DIAG-TICK] enter t=${performance.now().toFixed(1)} time=${audio.currentTime} duration=${segDur}`);
+
+      console.log(`[RACE-DIAG-TICK] setState newTime=${audio.currentTime} prevTime=${audio.currentTime} atEnd=${segDur > 0 && audio.currentTime >= segDur}`);
       setCurrentTime(audio.currentTime);
 
       // Defensive resume: if audio stalled mid-playback for any reason, restart it.
@@ -75,8 +88,8 @@ export function usePlayback({
         audio.play().catch(() => {});
       }
 
-      const segDur = segmentsRef.current.reduce((a, s) => a + s.duration, 0);
       if (segDur > 0 && audio.currentTime >= segDur) {
+        console.log(`[RACE-DIAG-TICK] guard triggered newTime=${audio.currentTime} duration=${segDur}`);
         setIsPlaying(false);
         audio.currentTime = 0;
         setCurrentTime(0);
@@ -85,6 +98,7 @@ export function usePlayback({
 
       // End-of-audio detection via native HTMLMediaElement.ended flag.
       if (audio.ended) {
+        console.log(`[RACE-DIAG-TICK] guard triggered newTime=${audio.currentTime} duration=${segDur} reason=ended`);
         setIsPlaying(false);
         audio.currentTime = 0;
         setCurrentTime(0);
