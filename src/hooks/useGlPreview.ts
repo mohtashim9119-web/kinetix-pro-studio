@@ -9,10 +9,14 @@
  * two together per playhead tick:
  *
  *   1. derive params + slot plan purely from (segments, currentTime, config),
- *   2. source each slot's content — the CURRENT/incoming frame from the
- *      already-running WebCodecs decode pool (via useWebCodecsPreview's exposed
- *      `frame`), the OUTGOING frame from that SAME pool via the Item-4 B1-B3
- *      protected-session + chase-mutex primitives (never a parallel pool),
+ *   2. source each slot's content — whichever side bounds-based
+ *      `currentSegment` currently is gets its frame from the already-running
+ *      WebCodecs decode pool via useWebCodecsPreview's exposed `frame`; the
+ *      OTHER side (outgoing pre-boundary is already `current`, so this only
+ *      ever means the outgoing side post-boundary or the incoming side
+ *      pre-boundary) gets its own symmetric chase-pull from that SAME pool
+ *      via the Item-4 B1-B3 protected-session + chase-mutex primitives
+ *      (never a parallel pool) — see resolveChasedVideoFrame's own doc,
  *   3. upload each source DIRECTLY to its GPU texture slot (no intermediate
  *      2D canvas — see computeObjectCoverUvRect's doc comment for why: an
  *      earlier CPU-canvas-pre-fit version of this step measured 36-58ms/frame
@@ -72,8 +76,13 @@ interface UseGlPreviewParams {
   pool: VideoDecoderPool;
   /** The live decoded frame for the CURRENT segment (useWebCodecsPreview's
    *  own `frame`), and the segment id it actually belongs to (`frameSegmentId`
-   *  — lags currentSegment across a boundary, see that hook). Feeds slot 'b'
-   *  (incoming) during a transition and slot 'a' with no transition. */
+   *  — lags currentSegment across a boundary, see that hook). Since
+   *  `currentSegment` is bounds-based (unaware of the centered transition
+   *  window), this feeds whichever slot that segment happens to be during a
+   *  transition — the outgoing slot pre-boundary, the incoming slot
+   *  post-boundary — via resolveChasedVideoFrame's first branch; the other
+   *  slot for each half is covered by this hook's own outgoing/incoming
+   *  chase state instead. With no transition active it's simply slot 'a'. */
   currentFrame: VideoFrame | null;
   currentFrameSegmentId: string | null;
   config: ProjectEffectConfig;
@@ -142,6 +151,54 @@ interface SlotSource {
   h: number;
 }
 
+/** A chase-pulled live VideoFrame, tagged with the segment id it belongs to
+ *  — the shape both the outgoing and incoming chase state slots share. */
+export interface ChasedFrame {
+  frame: VideoFrame;
+  segmentId: string;
+}
+
+/**
+ * Resolves the live VideoFrame to upload for `segmentId`'s slot this tick —
+ * pure, so the outgoing/incoming symmetric resolution is directly
+ * unit-testable without a hook-rendering harness (same precedent as
+ * computeObjectCoverUvRect above and useWebCodecsPreview.ts's own pure
+ * helpers; this repo has no jsdom/@testing-library/react).
+ *
+ * Three sources, checked in order:
+ *  1. `currentFrame`/`currentFrameSegmentId` — useWebCodecsPreview's own
+ *     live frame for whichever segment bounds-based `currentSegment`
+ *     currently is. Covers the OUTGOING slot pre-boundary (currentSegment
+ *     IS the outgoing segment for that half) and the INCOMING slot
+ *     post-boundary (currentSegment has flipped to the incoming segment by
+ *     then).
+ *  2. `outgoing` — this hook's own chase-pulled frame for the OUTGOING
+ *     segment, needed once currentSegment stops covering it (post-boundary,
+ *     since useWebCodecsPreview drops protection for a segment the instant
+ *     it's no longer {current, next}).
+ *  3. `incoming` — the symmetric chase-pulled frame for the INCOMING
+ *     segment, needed pre-boundary (currentSegment hasn't reached it yet,
+ *     so branch 1 can't cover it, and branch 2 only ever tracks the
+ *     outgoing side). This closes the gap this hook used to have: before
+ *     this fix, nothing ever chased a live frame for the incoming segment
+ *     pre-boundary, so the render effect fell back to blitting the outgoing
+ *     slot alone (no blend) for the whole pre-boundary half whenever the
+ *     incoming segment was video (see docs/webgl-architecture-plan.md's
+ *     "video-video transition blend gap" closeout entry).
+ */
+export function resolveChasedVideoFrame(
+  segmentId: string,
+  currentFrame: VideoFrame | null,
+  currentFrameSegmentId: string | null,
+  outgoing: ChasedFrame | null,
+  incoming: ChasedFrame | null,
+): VideoFrame | null {
+  if (currentFrame && currentFrameSegmentId === segmentId) return currentFrame;
+  if (outgoing && outgoing.segmentId === segmentId) return outgoing.frame;
+  if (incoming && incoming.segmentId === segmentId) return incoming.frame;
+  return null;
+}
+
 export function useGlPreview({
   canvasRef,
   segments,
@@ -169,7 +226,12 @@ export function useGlPreview({
   // transition window (see the chase effect below). Carried in state so a
   // chase settle triggers a redraw; tagged with its segment id so a stale
   // outgoing frame can't be drawn for the wrong segment.
-  const [outgoing, setOutgoing] = useState<{ frame: VideoFrame; segmentId: string } | null>(null);
+  const [outgoing, setOutgoing] = useState<ChasedFrame | null>(null);
+  // The INCOMING segment's live frame — symmetric counterpart to `outgoing`,
+  // needed pre-boundary (see the incoming chase effect below and
+  // resolveChasedVideoFrame's own doc for why the outgoing chase alone
+  // can't cover this side).
+  const [incoming, setIncoming] = useState<ChasedFrame | null>(null);
 
   // --- Render-scope pure derivation (cheap; recomputed each render) ---------
   const rawParams = deriveCompositeParams(segments, currentTime, config);
@@ -180,13 +242,18 @@ export function useGlPreview({
   const plan = deriveSlotPlan(segments, currentTime, params.transition, config);
 
   // During an active transition slot 'a' is the OUTGOING (previous) segment
-  // (deriveSlotPlan). The outgoing side is "live" (needs a pool pull) only
-  // when it's a video asset — image outgoing content comes from the image
-  // cache in the render effect, no decode session involved.
+  // and slot 'b' is the INCOMING (next) segment (deriveSlotPlan). Each side
+  // is "live" (needs its own pool chase) only when it's a video asset —
+  // image content comes from the image cache in the render effect, no
+  // decode session involved.
   const transitionActive = plan.b !== null;
   const outgoingSeg = transitionActive ? plan.a : null;
   const outgoingAsset = outgoingSeg ? assets.find((a) => a.id === outgoingSeg.assetId) : undefined;
   const outgoingVideoSeg = outgoingSeg && outgoingAsset?.type === 'video' ? outgoingSeg : null;
+
+  const incomingSeg = transitionActive ? plan.b : null;
+  const incomingAsset = incomingSeg ? assets.find((a) => a.id === incomingSeg.assetId) : undefined;
+  const incomingVideoSeg = incomingSeg && incomingAsset?.type === 'video' ? incomingSeg : null;
 
   // --- GL context + compositor lifecycle -----------------------------------
   // useLayoutEffect (not useEffect) so the context/compositor exist before the
@@ -232,18 +299,25 @@ export function useGlPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled]);
 
-  // --- Outgoing session protection (Item-4 B3 mechanism, reused) ------------
-  // Keep the outgoing segment's decode session alive through the transition
-  // window: useWebCodecsPreview's own {current,next} protection (setProtectedIds)
-  // stops covering it the instant the boundary crosses. Separate pool set
-  // (transitionProtectedIds) so it never clobbers, or is clobbered by, that
-  // {current,next} set — exactly as useTransitionPreview.ts uses it. GL owns
-  // this set only while enabled; useTransitionPreview is inert (glPathActive)
-  // in that state, so the two never fight over it.
+  // --- Transition session protection (Item-4 B3 mechanism, reused + made
+  // symmetric) ----------------------------------------------------------------
+  // Keep BOTH sides' decode sessions alive through the transition window:
+  // useWebCodecsPreview's own {current,next} protection (setProtectedIds)
+  // only ever covers whichever segment bounds-based currentSegment considers
+  // {current, next} — that drops the outgoing segment the instant the
+  // boundary crosses, and (symmetrically) never specially protects the
+  // incoming segment beyond its ordinary "next" coverage. Separate pool set
+  // (transitionProtectedIds) so this never clobbers, or is clobbered by,
+  // that {current,next} set — exactly as useTransitionPreview.ts uses it.
+  // GL owns this set only while enabled; useTransitionPreview is inert
+  // (glPathActive) in that state, so the two never fight over it.
   useEffect(() => {
     if (!enabled) return;
-    pool.setTransitionProtectedIds(outgoingVideoSeg ? [outgoingVideoSeg.id] : []);
-  }, [enabled, pool, outgoingVideoSeg?.id]);
+    const ids: string[] = [];
+    if (outgoingVideoSeg) ids.push(outgoingVideoSeg.id);
+    if (incomingVideoSeg) ids.push(incomingVideoSeg.id);
+    pool.setTransitionProtectedIds(ids);
+  }, [enabled, pool, outgoingVideoSeg?.id, incomingVideoSeg?.id]);
 
   // --- Outgoing frame chase (Item-4 B3 chase-mutex, reused) -----------------
   // At most one getFrameAt in flight for the outgoing session; reset on a
@@ -286,6 +360,56 @@ export function useGlPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, outgoingVideoSeg?.id, currentTime, pool]);
 
+  // --- Incoming frame chase (symmetric fix for the pre-boundary blend gap) --
+  // Mirrors the outgoing chase above exactly, targeting plan.b instead of
+  // plan.a. `toSourceTime` naturally does the right thing for both halves of
+  // the window without any special-casing here: while currentTime is still
+  // before the incoming segment's own nominal startTime (the pre-boundary
+  // half), toSourceTime's `Math.max(0, ...)` clamp makes this converge on
+  // and hold the incoming segment's own first frame — the same "incoming
+  // sampled at its own t=0, held fixed" approximation
+  // useTransitionPreview.ts's legacy path already uses deliberately, just
+  // arrived at for free via the same formula the outgoing chase already
+  // uses. Once currentTime crosses into the incoming segment's own span
+  // (post-boundary half) this naturally tracks its real advancing playback
+  // position too, though by then `currentFrame` (useWebCodecsPreview, now
+  // treating this segment as `current`) already resolves it via
+  // resolveChasedVideoFrame's first branch — this chase becomes redundant
+  // for that half, harmless, the same relationship the outgoing chase has
+  // with the pre-boundary half.
+  const incomingChaseMutexRef = useRef<ChaseMutex>({ chasing: false, epoch: 0 });
+  const incomingLatestTargetRef = useRef(0);
+  const incomingEpochKeyRef = useRef<string | null>(null);
+  const incomingGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (!enabled || !incomingVideoSeg) {
+      incomingEpochKeyRef.current = null;
+      ++incomingGenerationRef.current;
+      return;
+    }
+    const segmentId = incomingVideoSeg.id;
+    if (incomingEpochKeyRef.current !== segmentId) {
+      incomingEpochKeyRef.current = segmentId;
+      ++incomingGenerationRef.current;
+      resetChaseMutex(incomingChaseMutexRef.current);
+    }
+    const generation = incomingGenerationRef.current;
+    incomingLatestTargetRef.current = toSourceTime(incomingVideoSeg, currentTime);
+
+    startChaseIfIdle(
+      incomingChaseMutexRef.current,
+      () => incomingLatestTargetRef.current,
+      (target) => pool.getFrameAt(segmentId, target).catch(() => null),
+      (result) => {
+        if (incomingGenerationRef.current !== generation) return; // superseded
+        if (!result) return; // nothing decoded yet / evicted — keep last drawn
+        setIncoming({ frame: result, segmentId });
+      },
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, incomingVideoSeg?.id, currentTime, pool]);
+
   // --- The per-tick render -------------------------------------------------
   // useLayoutEffect (the Bug-1 paint-ordering lesson): the GL bitmap must be
   // current before the browser paints this commit. When a required slot has
@@ -309,40 +433,19 @@ export function useGlPreview({
     const dstW = canvas.width;
     const dstH = canvas.height;
 
-    // Resolve the live VideoFrame for a segment: the current/incoming segment
-    // uses useWebCodecsPreview's own `currentFrame` (only when caught up —
-    // frameSegmentId matches); the outgoing segment uses this hook's chased
-    // frame. No collision: currentFrameSegmentId is always the incoming
-    // segment during a transition, never the outgoing one.
-    //
-    // KNOWN GAP (post transition-centering, docs/webgl-architecture-plan.md):
-    // deriveSlotPlan's incoming segment can now be plan.b BEFORE
-    // useWebCodecsPreview considers it `current` — the centered window opens
-    // duration/2 seconds ahead of the boundary, while currentTime is still
-    // bounds-inside the outgoing segment, so currentFrameSegmentId still
-    // equals the OUTGOING segment's id for that first half. This resolver has
-    // no live-pull path for that case (only the outgoing side gets a chase —
-    // see the outgoing-frame chase effect above), so `bSrc` resolves null and
-    // the render effect's `!bSrc` branch below falls back to blitting slot 'a'
-    // alone (no blend) until the boundary crosses. Not a regression from this
-    // task — compositeParams.ts's pure derivation is correct and tested; this
-    // driver-level sourcing gap predates it (Phase 3 shipped un-centered, so
-    // the incoming side was always `current` for its whole active window) and
-    // is being left as a follow-up: this GL path is dev-toggle-gated, not yet
-    // cut over to default, and Phase 3's own manual verification checklist
-    // hasn't run yet (project-state.md Active Tasks). Fixing it symmetrically
-    // (a second chase-pull for the incoming segment, mirroring the outgoing
-    // one) is real but separately-scoped work.
-    const resolveVideoFrame = (seg: VideoSegment): VideoFrame | null => {
-      if (currentFrame && currentFrameSegmentId === seg.id) return currentFrame;
-      if (outgoing && outgoing.segmentId === seg.id) return outgoing.frame;
-      return null;
-    };
-
+    // Resolve the live VideoFrame for a segment via the shared pure resolver
+    // (resolveChasedVideoFrame, above) — currentFrame covers whichever side
+    // bounds-based currentSegment currently is (outgoing pre-boundary,
+    // incoming post-boundary), and the outgoing/incoming chase state each
+    // cover their own side for the half currentFrame can't reach. Previously
+    // only the outgoing side had a chase (documented here as a KNOWN GAP,
+    // see docs/webgl-architecture-plan.md's "video-video transition blend
+    // gap" closeout entry for the fix) — the incoming chase effect above
+    // closes that symmetrically.
     const resolveSlotSource = (seg: VideoSegment): SlotSource | null => {
       const asset = assets.find((a) => a.id === seg.assetId);
       if (asset?.type === 'video') {
-        const frame = resolveVideoFrame(seg);
+        const frame = resolveChasedVideoFrame(seg.id, currentFrame, currentFrameSegmentId, outgoing, incoming);
         if (!frame) return null;
         const w = frame.displayWidth;
         const h = frame.displayHeight;
@@ -417,6 +520,7 @@ export function useGlPreview({
     currentFrame,
     currentFrameSegmentId,
     outgoing,
+    incoming,
     imageEpoch,
     segments,
     assets,

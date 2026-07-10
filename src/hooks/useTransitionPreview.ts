@@ -63,6 +63,112 @@ interface SnapshotPair {
 }
 
 /**
+ * A fully-composited blend state captured as one atomic unit — canvases,
+ * progress, and transition type together — so it can be held and redrawn
+ * as a single frozen "last good frame" rather than as independently-stale
+ * pieces (see resolveRetainedBlend below for why progress/canvases must
+ * never be mixed from different moments).
+ */
+export interface RetainedBlend<TCanvas> {
+  outgoing: TCanvas;
+  incoming: TCanvas;
+  progress: number;
+  effectiveTransition: TransitionType | string;
+}
+
+/** Inputs resolveRetainedBlend needs each render — the live (not-yet-retained)
+ *  candidate state for whichever boundary is currently being evaluated. */
+export interface BlendRetentionInput<TCanvas> {
+  /** True when currentTime is genuinely inside an active transition window
+   *  (both halves, centered) — not merely the pre-roll lead-in. */
+  inTransitionWindow: boolean;
+  /** True when THIS boundary's own snapshot pair has finished rendering. */
+  snapshotsReady: boolean;
+  outgoing: TCanvas | null;
+  incoming: TCanvas | null;
+  progress: number;
+  effectiveTransition: TransitionType | string;
+}
+
+export interface BlendRetentionResult<TCanvas> {
+  isActive: boolean;
+  outgoing: TCanvas | null;
+  incoming: TCanvas | null;
+  progress: number;
+  effectiveTransition: TransitionType | string;
+  /** The value the caller's ref should hold going into the next render. */
+  nextRetained: RetainedBlend<TCanvas> | null;
+}
+
+/**
+ * Video-video pre-boundary retention fix (see this file's own header note
+ * on the useTransitionPreview export, and docs/webgl-architecture-plan.md's
+ * "video-video transition blend gap" closeout entry).
+ *
+ * A video-video boundary's pre-roll snapshot pair can need up to two
+ * concurrent <video> seeks (frameRenderer.ts's seekVideo/awaitSeeked,
+ * ~200-400ms each) racing against useWebCodecsPreview's own two concurrent
+ * decode sessions (current + next) for CPU/decoder time — on constrained
+ * hardware this can miss PRE_ROLL_LEAD_S's lead-in, so `snapshotsReady` is
+ * still false at the exact moment `inTransitionWindow` goes true. Falling
+ * straight through to "nothing to show" in that case drops the overlay's
+ * CSS opacity to 0 (PreviewStage.tsx) and reveals the raw underlying
+ * outgoing layer with no blend for however long the snapshot takes to
+ * land — a hard cut indistinguishable from the old pre-centering D7 bug.
+ * Extending the lead time doesn't fix this: it's a race whose worst case
+ * scales with device load, not a fixed constant.
+ *
+ * This is the architectural fix instead: retain the last FULLY composited
+ * blend state (canvases + progress + transition type, captured together,
+ * never mixed across moments — mixing stale canvases with live progress
+ * would blend mismatched content) and keep returning it, unchanged, for as
+ * long as we're genuinely inside a transition window but this boundary's
+ * fresh pair isn't ready yet. `isActive` stays true throughout, so the
+ * overlay's opacity never drops to 0 and never re-triggers its own CSS
+ * transition — the composited content simply swaps to the live pair the
+ * moment it lands, via one ordinary per-tick update, not a pop back in from
+ * a hidden state. Only the very first transition of a session (nothing
+ * ever retained yet) has no fallback to fall back to and behaves as before
+ * (bare outgoing content, no blend, until its own snapshot lands).
+ *
+ * Pure and generic over the canvas type so it's directly unit-testable
+ * without a DOM/canvas-capable test environment (this repo has no jsdom —
+ * same precedent as every other pure helper in this file/useWebCodecsPreview.ts).
+ * `prevRetained`/the return's `nextRetained` are the caller's ref value
+ * going in and coming out — mirrors computeOverlayHoldState's/
+ * computeSnapReleaseBlend's prev-state-in/next-state-out shape.
+ */
+export function resolveRetainedBlend<TCanvas>(
+  prevRetained: RetainedBlend<TCanvas> | null,
+  input: BlendRetentionInput<TCanvas>,
+): BlendRetentionResult<TCanvas> {
+  const freshlyActive = input.inTransitionWindow && input.snapshotsReady && input.outgoing !== null && input.incoming !== null;
+  if (freshlyActive) {
+    const nextRetained: RetainedBlend<TCanvas> = {
+      outgoing: input.outgoing as TCanvas,
+      incoming: input.incoming as TCanvas,
+      progress: input.progress,
+      effectiveTransition: input.effectiveTransition,
+    };
+    return { isActive: true, ...nextRetained, nextRetained };
+  }
+
+  const usingRetainedFallback = input.inTransitionWindow && prevRetained !== null;
+  if (usingRetainedFallback) {
+    return { isActive: true, ...prevRetained!, nextRetained: prevRetained };
+  }
+
+  return {
+    isActive: false,
+    outgoing: null,
+    incoming: null,
+    progress: input.progress,
+    effectiveTransition: input.effectiveTransition,
+    nextRetained: prevRetained,
+  };
+}
+
+/**
  * Resolves which AnimationType a segment's camera-dynamics transform should
  * use — effectAnimation slug wins over the legacy segment.animation field.
  * Identical resolution to frameRenderer.ts:479-482 and PreviewStage.tsx's
@@ -78,7 +184,10 @@ function resolveAnimationType(seg: VideoSegment): AnimationType {
 }
 
 export interface TransitionPreviewInfo {
-  /** True when the playhead is inside the transition window AND snapshots are ready. */
+  /** True when the playhead is inside the transition window AND there is
+   *  composited content to show — either this boundary's own fresh
+   *  snapshots, or (resolveRetainedBlend) the last good composited frame
+   *  retained from a moment earlier, while a fresh pair is still loading. */
   isActive: boolean;
   /** Blend factor 0..1 (0 = fully outgoing, 1 = fully incoming). */
   progress: number;
@@ -184,6 +293,12 @@ export function useTransitionPreview({
   glPathActive,
 }: Params): TransitionPreviewInfo {
   const [snapshots, setSnapshots] = useState<SnapshotPair | null>(null);
+  // Video-video pre-boundary retention fix — see resolveRetainedBlend's own
+  // doc above. Plain ref (not state): updated every render as a byproduct of
+  // computing this hook's return value, not something that itself needs to
+  // trigger a re-render (the state that actually changes visible output —
+  // snapshots/currentTime/etc. — already does).
+  const retainedBlendRef = useRef<RetainedBlend<HTMLCanvasElement> | null>(null);
   // Prevent concurrent or duplicate snapshot renders
   const pendingKeyRef = useRef<string>('');
   // Guard against setState after unmount (async renderSegmentFrame can outlive the component)
@@ -627,17 +742,27 @@ export function useTransitionPreview({
   }, [outgoingSeg?.id, incomingSeg?.id]);
 
   // ---------------------------------------------------------------------------
-  // Compose result
+  // Compose result — see resolveRetainedBlend's own doc (top of file) for why
+  // this doesn't just gate on `inTransitionWindow && snapshotsReady` anymore.
   // ---------------------------------------------------------------------------
   const snapshotsReady = snapshots !== null && snapshots.key === `${outgoingSeg?.id}:${incomingSeg?.id}`;
-  const isActive = inTransitionWindow && snapshotsReady;
+  const blend = resolveRetainedBlend(retainedBlendRef.current, {
+    inTransitionWindow,
+    snapshotsReady,
+    outgoing: snapshotsReady ? snapshots!.outgoing : null,
+    incoming: snapshotsReady ? snapshots!.incoming : null,
+    progress,
+    effectiveTransition,
+  });
+  retainedBlendRef.current = blend.nextRetained;
+  const isActive = blend.isActive;
 
   return {
     isActive,
-    progress,
-    outgoing: snapshotsReady ? snapshots!.outgoing : null,
-    incoming: snapshotsReady ? snapshots!.incoming : null,
-    effectiveTransition,
+    progress: blend.progress,
+    outgoing: blend.outgoing,
+    incoming: blend.incoming,
+    effectiveTransition: blend.effectiveTransition,
     outgoingSegmentId: isActive ? (outgoingSeg?.id ?? null) : null,
     incomingSegmentId: isActive ? (incomingSeg?.id ?? null) : null,
   };
