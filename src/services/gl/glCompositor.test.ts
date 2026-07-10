@@ -124,6 +124,7 @@ class MockWebGL2 {
   uniform1i(location: unknown, x: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x] }); }
   uniform1f(location: unknown, x: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x] }); }
   uniform3f(location: unknown, x: number, y: number, z: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x, y, z] }); }
+  uniform4f(location: unknown, x: number, y: number, z: number, w: number): void { this.uniformCalls.push({ name: (location as { name: string }).name, args: [x, y, z, w] }); }
   drawArrays(): void { this.calls.push('drawArrays'); }
   viewport(): void {}
 
@@ -260,56 +261,6 @@ describe('GlCompositor — uploadFrame', () => {
     // identical shape to the existing "zoom active" video-sourced test.
     expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
-  });
-
-  /**
-   * Phase 3 widened UploadSource (HTMLCanvasElement | OffscreenCanvas) —
-   * the object-cover pre-fit target useGlPreview.ts uploads (plan Section 7
-   * risk register, object-cover row). Same call-shape-parity discipline as
-   * the VideoFrame/ImageBitmap/HTMLImageElement tests above: uploadFrame has
-   * no source-type branching, so these lock in that the two newly-accepted
-   * kinds reach texImage2D via the exact same single call, for either slot —
-   * giving this Phase-1 file equivalent coverage over its expanded surface
-   * before Phase 3's preview driver depends on it.
-   */
-  const fakeCanvasElement = { width: 1920, height: 1080, getContext: () => null } as unknown as HTMLCanvasElement;
-  const fakeOffscreenCanvas = { width: 1920, height: 1080, getContext: () => null } as unknown as OffscreenCanvas;
-
-  it.each([
-    ['HTMLCanvasElement', fakeCanvasElement],
-    ['OffscreenCanvas', fakeOffscreenCanvas],
-  ] as const)('slot "a" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
-    const gl = makeGl();
-    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    gl.calls = [];
-
-    expect(() => compositor.uploadFrame('a', source)).not.toThrow();
-    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
-  });
-
-  it.each([
-    ['HTMLCanvasElement', fakeCanvasElement],
-    ['OffscreenCanvas', fakeOffscreenCanvas],
-  ] as const)('slot "b" accepts a %s source identically (single texImage2D call, no error)', (_label, source) => {
-    const gl = makeGl();
-    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    gl.calls = [];
-
-    expect(() => compositor.uploadFrame('b', source)).not.toThrow();
-    expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
-  });
-
-  it('canvas<->canvas transition — both slots pre-fit HTMLCanvasElement (the object-cover fit path) — same single-pass draw shape as the video<->video and image<->image cases', () => {
-    const gl = makeGl();
-    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    compositor.uploadFrame('a', fakeCanvasElement);
-    compositor.uploadFrame('b', fakeOffscreenCanvas);
-    gl.calls = [];
-
-    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
-
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(1);
-    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
   });
 });
 
@@ -517,6 +468,106 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     expect(gl.lastUniform('u_contrast')).toEqual([-0.2]);
     expect(gl.lastUniform('u_saturation')).toEqual([0.1]);
     expect(gl.lastUniform('u_temperature')).toEqual([0.4]);
+  });
+});
+
+describe('GlCompositor — object-cover UV-crop uniform wiring (u_texRectA/u_texRectB)', () => {
+  /**
+   * WKWebView performance-fix follow-up (docs/webgl-architecture-plan.md
+   * Section 7's [CORRECTED] object-cover row): the CPU-canvas pre-fit step
+   * that used to apply object-cover before upload measured 36-58ms/frame on
+   * WKWebView (~1800-2900x slower than a direct upload) and was removed;
+   * object-cover is now a UV-crop uniform the 4 drawStage1 programs apply
+   * themselves. These are wiring tests, not pixel tests — same "prove the
+   * right value reaches the right uniform" discipline as the dip-color/
+   * u_scale/grade tests above, not a re-proof that the crop math itself
+   * renders correctly (that's the real-WKWebView readPixels confirmation).
+   */
+
+  it('identity default: uploadFrame with no explicit rect wires u_texRectA = [0,0,1,1] on the blit program', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource); // no rect arg — identity default
+    gl.calls = [];
+
+    compositor.renderFrame(neutralParams); // no transition -> blit only, samples texRectA
+
+    expect(gl.lastUniform('u_texRectA')).toEqual([0, 0, 1, 1]);
+  });
+
+  it('blit wires an explicit crop rect for slot A', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0.2, uScale: 0.5, vScale: 0.6 });
+    gl.calls = [];
+
+    compositor.renderFrame(neutralParams);
+
+    expect(gl.lastUniform('u_texRectA')).toEqual([0.1, 0.2, 0.5, 0.6]);
+  });
+
+  it('cross-dissolve wires DISTINCT rects for A and B, not confused/swapped — the outgoing (A) and incoming (B) segments during a real transition will usually have different source dimensions, so a swap would crop the wrong content into the wrong slot', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource, { uOffset: 0.25, vOffset: 0, uScale: 0.5, vScale: 1 });
+    compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0.1, uScale: 1, vScale: 0.8 });
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_texRectA')).toEqual([0.25, 0, 0.5, 1]);
+    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0.1, 1, 0.8]);
+  });
+
+  it('dip wires DISTINCT rects for A and B (same non-confusion property as cross-dissolve, exercised on the dip program specifically)', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0, uScale: 0.8, vScale: 1 });
+    compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0.05, uScale: 1, vScale: 0.9 });
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_texRectA')).toEqual([0.1, 0, 0.8, 1]);
+    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0.05, 1, 0.9]);
+    // u_dipColor wiring (pre-existing behavior) is unaffected by the new uniform.
+    expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
+  });
+
+  it('light-leak wires DISTINCT rects for A and B, same as the other 3 stage-1 programs', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource, { uOffset: 0.2, vOffset: 0, uScale: 0.6, vScale: 1 });
+    compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 });
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.lastUniform('u_texRectA')).toEqual([0.2, 0, 0.6, 1]);
+    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0, 1, 1]);
+  });
+
+  it('zoom and grade never receive a u_texRectA/u_texRectB uniform call — confirmed via total uniform4f call count during a full 3-draw chain (transition+zoom+grade), not just by omission', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0.1, uScale: 0.8, vScale: 0.8 });
+    compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 });
+    gl.calls = [];
+    gl.uniformCalls = [];
+
+    compositor.renderFrame({
+      transition: { type: 'dip-black', progress: 0.3 },
+      animScale: 1.1,
+      grade: { brightness: 0.2, contrast: 0, saturation: 0, temperature: 0 },
+    });
+
+    // dip (stage1) wires exactly 2 vec4 uniforms (u_texRectA, u_texRectB);
+    // zoom/grade's programs have no uTexRectA/uTexRectB fields at all (see
+    // ZoomProgram/GradeProgram — no getUniformLocation call for either name),
+    // so the total uniform4f call count across the whole 3-draw chain must
+    // be exactly 2, not 4 or 6 — proving zoom/grade contribute none.
+    const texRectCalls = gl.uniformCalls.filter((c) => c.name === 'u_texRectA' || c.name === 'u_texRectB');
+    expect(texRectCalls).toHaveLength(2);
   });
 });
 

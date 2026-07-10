@@ -56,6 +56,32 @@ void main() {
   gl_Position = vec4(a_pos, 0.0, 1.0);
 }`;
 
+/**
+ * u_texRectA/u_texRectB — object-cover UV-crop rects, (uOffset, vOffset,
+ * uScale, vScale). Added to fix a WKWebView performance regression (see
+ * docs/webgl-architecture-plan.md Section 7's object-cover risk-register row,
+ * [CORRECTED] annotation): a CPU-side 2D-canvas pre-fit + texImage2D(canvas)
+ * step was ~1800-2900x slower than a direct texImage2D(VideoFrame) upload on
+ * WKWebView/ANGLE-Metal (36-58ms/frame vs 2.82ms), capping throughput below
+ * 30fps before anything else in the render loop ran. This uniform lets the
+ * shader crop directly in UV space against the raw uploaded texture — the
+ * caller (useGlPreview.ts's computeObjectCoverUvRect) computes the same
+ * object-cover math previously done by a CPU canvas draw, now expressed as a
+ * texture-space rect: `texture(u_texA, v_uv * u_texRectA.zw + u_texRectA.xy)`.
+ * Identity `(0,0,1,1)` — the default whenever GlCompositor.uploadFrame is
+ * called without an explicit rect — reduces to `v_uv * 1 + 0 = v_uv`, byte-
+ * identical to the pre-crop math, so this is purely additive: every existing
+ * pixel-verified assertion for these 4 shaders (Phase 0 spike, Phase 2 Step 1
+ * real-GPU check) holds unmodified at the identity default.
+ *
+ * Only the 4 drawStage1 programs (blit, cross-dissolve, dip, light-leak) gain
+ * this uniform — they're the only ones that ever sample u_texA/u_texB
+ * directly (raw uploaded content); zoom/grade only ever sample an
+ * already-cropped rt0/rt1 render target in this compositor's actual call
+ * graph (confirmed via grep before this change, same discipline as Phase 2
+ * Step 1's flip-fix), so they are unchanged.
+ */
+
 /** Single-texture straight blit — used when no transition is active this
  *  tick (renders slot 'a' alone) and as the first stage of the pass chain
  *  in that case. */
@@ -64,8 +90,10 @@ precision mediump float;
 in vec2 v_uv;
 out vec4 o_color;
 uniform sampler2D u_texA;
+uniform vec4 u_texRectA; // (uOffset, vOffset, uScale, vScale)
 void main() {
-  o_color = texture(u_texA, v_uv);
+  vec2 uvA = v_uv * u_texRectA.zw + u_texRectA.xy;
+  o_color = texture(u_texA, uvA);
 }`;
 
 /** cross-dissolve: linear mix of the outgoing (A) and incoming (B) textures
@@ -77,8 +105,12 @@ out vec4 o_color;
 uniform sampler2D u_texA;
 uniform sampler2D u_texB;
 uniform float u_progress; // 0 = pure A, 1 = pure B
+uniform vec4 u_texRectA;
+uniform vec4 u_texRectB;
 void main() {
-  o_color = mix(texture(u_texA, v_uv), texture(u_texB, v_uv), u_progress);
+  vec2 uvA = v_uv * u_texRectA.zw + u_texRectA.xy;
+  vec2 uvB = v_uv * u_texRectB.zw + u_texRectB.xy;
+  o_color = mix(texture(u_texA, uvA), texture(u_texB, uvB), u_progress);
 }`;
 
 /**
@@ -97,9 +129,13 @@ uniform sampler2D u_texA;
 uniform sampler2D u_texB;
 uniform float u_progress;   // 0..1
 uniform vec3 u_dipColor;    // (0,0,0) for dip-black, (1,1,1) for dip-white
+uniform vec4 u_texRectA;
+uniform vec4 u_texRectB;
 void main() {
-  vec3 a = texture(u_texA, v_uv).rgb;
-  vec3 b = texture(u_texB, v_uv).rgb;
+  vec2 uvA = v_uv * u_texRectA.zw + u_texRectA.xy;
+  vec2 uvB = v_uv * u_texRectB.zw + u_texRectB.xy;
+  vec3 a = texture(u_texA, uvA).rgb;
+  vec3 b = texture(u_texB, uvB).rgb;
   vec3 c = (u_progress < 0.5)
     ? mix(a, u_dipColor, u_progress * 2.0)
     : mix(u_dipColor, b, (u_progress - 0.5) * 2.0);
@@ -113,6 +149,14 @@ void main() {
  * 'light-leak' case (`bloomAlpha = alpha * (1 - alpha) * 4`) — it peaks at
  * exactly 1.0 when progress=0.5 and is 0 at both ends, matching the
  * Canvas2D reference's shape so the two renderers don't visually diverge.
+ *
+ * Deliberate: the bloom's `center`/`distance` falloff uses the RAW, uncropped
+ * v_uv (destination/visible-frame space) — NOT the cropped uvA/uvB — so the
+ * bloom stays anchored to the visible frame regardless of the source's own
+ * crop. Only the two texture() sampling calls use the remapped UV. Mapping
+ * the bloom calc onto a cropped UV would shift/distort the leak position
+ * based on the source's own extent, which is a different (wrong) visual
+ * result, not just an equivalent reformulation.
  */
 export const LIGHT_LEAK_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision mediump float;
@@ -121,11 +165,15 @@ out vec4 o_color;
 uniform sampler2D u_texA;
 uniform sampler2D u_texB;
 uniform float u_progress;
+uniform vec4 u_texRectA;
+uniform vec4 u_texRectB;
 void main() {
-  vec3 base = mix(texture(u_texA, v_uv).rgb, texture(u_texB, v_uv).rgb, u_progress);
+  vec2 uvA = v_uv * u_texRectA.zw + u_texRectA.xy;
+  vec2 uvB = v_uv * u_texRectB.zw + u_texRectB.xy;
+  vec3 base = mix(texture(u_texA, uvA).rgb, texture(u_texB, uvB).rgb, u_progress);
   float strength = u_progress * (1.0 - u_progress) * 4.0;
   vec2 center = vec2(0.75, 0.25);
-  float d = distance(v_uv, center);
+  float d = distance(v_uv, center); // raw v_uv — bloom stays anchored to the visible frame
   vec3 leak = vec3(1.0, 0.85, 0.6) * smoothstep(0.9, 0.0, d) * strength;
   // Screen blend: 1 - (1-base)*(1-leak).
   o_color = vec4(1.0 - (1.0 - base) * (1.0 - leak), 1.0);

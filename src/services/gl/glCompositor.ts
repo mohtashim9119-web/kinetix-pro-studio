@@ -50,19 +50,37 @@ export type TextureSlot = 'a' | 'b';
  * case per Section 4's input contract (never an HTML5 `<video>` seek);
  * `ImageBitmap`/`HTMLImageElement` cover image segments.
  *
- * Phase 3 widening (plan Section 7 risk register, object-cover row):
- * `HTMLCanvasElement | OffscreenCanvas` were added so the preview driver
- * (useGlPreview.ts) can upload a CPU-side 2D canvas onto which it has already
- * object-cover-fit the raw source — matching the legacy `<video className=
- * "object-cover">`/PreviewCanvas crop without adding per-texture UV-crop
- * uniforms to the pixel-verified shaders (that cleaner, export-zero-copy
- * alternative is named as future work in the plan's risk register, not done
- * here). Runtime is unchanged: all five kinds already satisfy the DOM's
- * `TexImageSource` overload of `texImage2D` — this only widens the type so
- * TS accepts the fit-canvas at the call site. The compositor still does no
- * source-type branching (see uploadFrame).
+ * (Was briefly widened to include `HTMLCanvasElement | OffscreenCanvas` in
+ * Phase 3 for a CPU-side object-cover pre-fit step — reverted in the same
+ * phase after that step was found to cause a severe WKWebView performance
+ * regression; see the [CORRECTED] annotation on plan Section 7's object-cover
+ * risk-register row. Object-cover is now done via UV-crop uniforms
+ * (u_texRectA/u_texRectB, shaders.ts) directly against this raw upload — no
+ * canvas hop, so the widened union is no longer needed.)
  */
-export type UploadSource = VideoFrame | ImageBitmap | HTMLImageElement | HTMLCanvasElement | OffscreenCanvas;
+export type UploadSource = VideoFrame | ImageBitmap | HTMLImageElement;
+
+/**
+ * Object-cover UV-crop rect for one texture slot — see shaders.ts's
+ * u_texRectA/u_texRectB doc comment for the full mechanism and why this
+ * exists. `(uOffset, vOffset)` is the crop's top-left in the source's own
+ * [0,1] UV space; `(uScale, vScale)` is the cropped region's size in that
+ * same space. Computed by useGlPreview.ts's computeObjectCoverUvRect from
+ * (srcW, srcH, dstW, dstH) — this module has no opinion on resolution, it
+ * only stores and wires whatever rect it's given.
+ */
+export interface TexRect {
+  uOffset: number;
+  vOffset: number;
+  uScale: number;
+  vScale: number;
+}
+
+/** No crop — samples the full [0,1] source UV, i.e. `v_uv * 1 + 0 = v_uv`,
+ *  byte-identical to this compositor's pre-UV-crop-uniform behavior. Default
+ *  for both slots at construction and whenever uploadFrame is called without
+ *  an explicit rect (every existing Phase 1/2 test call site). */
+export const IDENTITY_TEX_RECT: TexRect = { uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 };
 
 interface RenderTarget {
   texture: WebGLTexture;
@@ -74,6 +92,7 @@ interface RenderTarget {
 interface BlitProgram {
   program: WebGLProgram;
   uTexA: WebGLUniformLocation | null;
+  uTexRectA: WebGLUniformLocation | null;
 }
 
 interface TransitionProgram {
@@ -81,6 +100,8 @@ interface TransitionProgram {
   uTexA: WebGLUniformLocation | null;
   uTexB: WebGLUniformLocation | null;
   uProgress: WebGLUniformLocation | null;
+  uTexRectA: WebGLUniformLocation | null;
+  uTexRectB: WebGLUniformLocation | null;
 }
 
 interface DipProgram extends TransitionProgram {
@@ -183,6 +204,13 @@ export class GlCompositor {
   private vbo!: WebGLBuffer;
   private texA!: WebGLTexture;
   private texB!: WebGLTexture;
+  /** The object-cover UV-crop rect most recently uploaded for each slot (see
+   *  TexRect's doc) — set by uploadFrame, read by drawStage1 when wiring
+   *  u_texRectA/u_texRectB. Reset to identity in setup() so a slot that's
+   *  never had uploadFrame called with an explicit rect (every existing
+   *  Phase 1/2 test) renders with the pre-crop-uniform behavior. */
+  private texRectA: TexRect = IDENTITY_TEX_RECT;
+  private texRectB: TexRect = IDENTITY_TEX_RECT;
   /** Ping-pong intermediate render targets for the pass chain — allocated
    *  lazily (on first renderFrame call that needs one) and re-allocated
    *  whenever the canvas's drawing-buffer size changes. */
@@ -231,7 +259,12 @@ export class GlCompositor {
   }
 
   private makeBlitProgram(program: WebGLProgram): BlitProgram {
-    return { program, uTexA: this.gl.getUniformLocation(program, 'u_texA') };
+    const gl = this.gl;
+    return {
+      program,
+      uTexA: gl.getUniformLocation(program, 'u_texA'),
+      uTexRectA: gl.getUniformLocation(program, 'u_texRectA'),
+    };
   }
 
   private makeTransitionProgram(program: WebGLProgram): TransitionProgram {
@@ -241,6 +274,8 @@ export class GlCompositor {
       uTexA: gl.getUniformLocation(program, 'u_texA'),
       uTexB: gl.getUniformLocation(program, 'u_texB'),
       uProgress: gl.getUniformLocation(program, 'u_progress'),
+      uTexRectA: gl.getUniformLocation(program, 'u_texRectA'),
+      uTexRectB: gl.getUniformLocation(program, 'u_texRectB'),
     };
   }
 
@@ -277,12 +312,24 @@ export class GlCompositor {
    * mirrors the spike's own upload call shape exactly (VideoFrame's
    * assignability to TexImageSource varies by lib.dom.d.ts version; the
    * runtime call is identical either way).
+   *
+   * `texRect` is the object-cover UV-crop rect for this slot's content
+   * (identity/no-crop when omitted — every pre-Phase-3-fix call site, and
+   * still the correct default for source content that already matches the
+   * destination aspect). Stored, not applied here — drawStage1 wires it as
+   * u_texRectA/u_texRectB on whichever of the 4 stage-1 programs it selects.
+   * Uploading raw source content directly (never via an intermediate 2D
+   * canvas) is the whole point of this uniform's existence: see shaders.ts's
+   * u_texRectA/u_texRectB doc comment for the WKWebView regression this
+   * fixes.
    */
-  uploadFrame(slot: TextureSlot, source: UploadSource): void {
+  uploadFrame(slot: TextureSlot, source: UploadSource, texRect: TexRect = IDENTITY_TEX_RECT): void {
     const gl = this.gl;
     const texture = slot === 'a' ? this.texA : this.texB;
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as unknown as TexImageSource);
+    if (slot === 'a') this.texRectA = texRect;
+    else this.texRectB = texRect;
   }
 
   private ensureRenderTargets(width: number, height: number): void {
@@ -314,6 +361,7 @@ export class GlCompositor {
       const p = this.programs.blit;
       gl.useProgram(p.program);
       gl.uniform1i(p.uTexA, 0);
+      gl.uniform4f(p.uTexRectA, this.texRectA.uOffset, this.texRectA.vOffset, this.texRectA.uScale, this.texRectA.vScale);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       return;
     }
@@ -329,6 +377,8 @@ export class GlCompositor {
       gl.uniform1i(p.uTexA, 0);
       gl.uniform1i(p.uTexB, 1);
       gl.uniform1f(p.uProgress, transition.progress);
+      gl.uniform4f(p.uTexRectA, this.texRectA.uOffset, this.texRectA.vOffset, this.texRectA.uScale, this.texRectA.vScale);
+      gl.uniform4f(p.uTexRectB, this.texRectB.uOffset, this.texRectB.vOffset, this.texRectB.uScale, this.texRectB.vScale);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       return;
     }
@@ -341,6 +391,8 @@ export class GlCompositor {
     gl.uniform1f(p.uProgress, transition.progress);
     const [r, g, b] = dipColorFor(transition.type);
     gl.uniform3f(p.uDipColor, r, g, b);
+    gl.uniform4f(p.uTexRectA, this.texRectA.uOffset, this.texRectA.vOffset, this.texRectA.uScale, this.texRectA.vScale);
+    gl.uniform4f(p.uTexRectB, this.texRectB.uOffset, this.texRectB.vOffset, this.texRectB.uScale, this.texRectB.vScale);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

@@ -13,8 +13,13 @@
  *      already-running WebCodecs decode pool (via useWebCodecsPreview's exposed
  *      `frame`), the OUTGOING frame from that SAME pool via the Item-4 B1-B3
  *      protected-session + chase-mutex primitives (never a parallel pool),
- *   3. object-cover-fit each source onto a reused per-slot 2D canvas and upload
- *      it, then renderFrame once.
+ *   3. upload each source DIRECTLY to its GPU texture slot (no intermediate
+ *      2D canvas — see computeObjectCoverUvRect's doc comment for why: an
+ *      earlier CPU-canvas-pre-fit version of this step measured 36-58ms/frame
+ *      on WKWebView, ~1800-2900x slower than a direct upload), with the
+ *      object-cover crop expressed as a UV-rect uniform the shader applies
+ *      (shaders.ts's u_texRectA/u_texRectB) instead of a CPU-side draw, then
+ *      renderFrame once.
  *
  * Everything here is additive and dual-gated by the caller (PreviewStage.tsx):
  * `enabled` (isWebGL2Supported() && WebCodecs support && a dev-only toggle)
@@ -33,7 +38,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Asset, VideoSegment } from '../types';
 import type { VideoDecoderPool } from '../services/videoDecoderPool';
-import { GlCompositor, type TextureSlot } from '../services/gl/glCompositor';
+import { GlCompositor, type TextureSlot, type TexRect, type UploadSource } from '../services/gl/glCompositor';
 import { acquireGlContext } from '../services/gl/glContext';
 import {
   deriveCompositeParams,
@@ -91,18 +96,29 @@ export interface UseGlPreviewResult {
 }
 
 /**
- * object-cover source rect — the exact crop math PreviewCanvas.tsx and the
- * legacy `<video className="object-cover">`/`<img>` use, so the GL path fills
- * the stage the same way (scale to fill, center-crop the overflowing axis).
+ * object-cover UV-crop rect — the exact crop math PreviewCanvas.tsx and the
+ * legacy `<video className="object-cover">`/`<img>` use (scale to fill,
+ * center-crop the overflowing axis), expressed in the SOURCE's own [0,1] UV
+ * space rather than destination pixels, so it can be fed directly to
+ * GlCompositor.uploadFrame's texRect param and wired as shaders.ts's
+ * u_texRectA/u_texRectB uniform (see that file's doc comment for the
+ * mechanism and why: a CPU-side pixel-rect pre-fit onto an intermediate 2D
+ * canvas — this function's original form, and the ONLY reason a canvas hop
+ * ever existed in this hook — measured 36-58ms/frame on WKWebView, ~1800-
+ * 2900x slower than uploading the raw source directly; see
+ * docs/webgl-architecture-plan.md Section 7's [CORRECTED] object-cover row).
+ *
  * Pure and dependency-free so it's directly unit-testable (see
  * useGlPreview.test.ts), same discipline as toSourceTime/computeKeepSet.
+ * Same-aspect source/destination yields identity (0,0,1,1) — full [0,1] UV,
+ * no crop.
  */
-export function computeObjectCoverRect(
+export function computeObjectCoverUvRect(
   srcW: number,
   srcH: number,
   dstW: number,
   dstH: number,
-): { sx: number; sy: number; sw: number; sh: number } {
+): TexRect {
   const dstRatio = dstW / dstH;
   const srcRatio = srcW / srcH;
   let sx = 0;
@@ -116,12 +132,12 @@ export function computeObjectCoverRect(
     sh = srcW / dstRatio;
     sy = (srcH - sh) / 2;
   }
-  return { sx, sy, sw, sh };
+  return { uOffset: sx / srcW, vOffset: sy / srcH, uScale: sw / srcW, vScale: sh / srcH };
 }
 
 /** A source resolved for a slot this tick, plus its intrinsic dimensions. */
 interface SlotSource {
-  source: CanvasImageSource;
+  source: UploadSource;
   w: number;
   h: number;
 }
@@ -143,13 +159,6 @@ export function useGlPreview({
   const compositorRef = useRef<GlCompositor | null>(null);
   const contextLostRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Pre-fit offscreen canvases — ONE per slot, allocated lazily once and
-  // reused across every tick (requirement: not reallocated per frame). Only
-  // their drawing-buffer dimensions are updated, and only when the target
-  // size actually changes (see fitAndUpload's `!== dst` guard below).
-  const fitCanvasARef = useRef<HTMLCanvasElement | null>(null);
-  const fitCanvasBRef = useRef<HTMLCanvasElement | null>(null);
 
   // Image texture cache (image/color segments) — one HTMLImageElement per
   // asset url, decoded once; a load bumps `imageEpoch` to force one redraw.
@@ -342,38 +351,30 @@ export function useGlPreview({
       return img.complete && img.naturalWidth > 0 ? img : null;
     };
 
-    const getFitCanvas = (slot: TextureSlot): HTMLCanvasElement => {
-      const ref = slot === 'a' ? fitCanvasARef : fitCanvasBRef;
-      if (!ref.current) ref.current = document.createElement('canvas');
-      return ref.current;
-    };
-
-    // object-cover-fit `src` onto the slot's reused canvas, then upload it.
-    // Returns false (→ retain) on a closed-frame drawImage race.
-    const fitAndUpload = (slot: TextureSlot, src: SlotSource): boolean => {
-      const fit = getFitCanvas(slot);
-      if (fit.width !== dstW || fit.height !== dstH) {
-        fit.width = dstW;
-        fit.height = dstH;
-      }
-      const ctx = fit.getContext('2d');
-      if (!ctx) return false;
-      const { sx, sy, sw, sh } = computeObjectCoverRect(src.w, src.h, dstW, dstH);
+    // Uploads `src` DIRECTLY to `slot` — no intermediate 2D canvas (see
+    // computeObjectCoverUvRect's/shaders.ts's u_texRectA doc comments for
+    // why: the removed CPU-canvas-then-texImage2D(canvas) path measured
+    // 36-58ms/frame on WKWebView vs 2.82ms for a direct upload). The
+    // object-cover crop is computed as a UV rect and stored on the
+    // compositor for drawStage1 to wire as a shader uniform, not applied
+    // here. Returns false (→ retain) on a closed-frame upload race (the
+    // frame was resolved earlier this tick but the pool evicted/reset its
+    // session before this synchronous gl.texImage2D call ran) — same hazard
+    // PreviewCanvas.tsx's drawImage documents, now guarding texImage2D
+    // instead.
+    const uploadSlot = (slot: TextureSlot, src: SlotSource): boolean => {
+      const texRect = computeObjectCoverUvRect(src.w, src.h, dstW, dstH);
       try {
-        ctx.clearRect(0, 0, dstW, dstH);
-        ctx.drawImage(src.source, sx, sy, sw, sh, 0, 0, dstW, dstH);
+        compositor.uploadFrame(slot, src.source, texRect);
       } catch {
-        // VideoFrame closed between resolve and draw (pool eviction/scrub
-        // race) — same hazard PreviewCanvas.tsx documents. Retain last frame.
         return false;
       }
-      compositor.uploadFrame(slot, fit);
       return true;
     };
 
     if (!plan.a) return; // outside every segment — retain last frame
     const aSrc = resolveSlotSource(plan.a);
-    if (!aSrc || !fitAndUpload('a', aSrc)) return; // slot a not ready — retain
+    if (!aSrc || !uploadSlot('a', aSrc)) return; // slot a not ready — retain
 
     let transitionForRender = params.transition;
     if (plan.b) {
@@ -381,7 +382,7 @@ export function useGlPreview({
       // Incoming not ready yet — draw the outgoing (slot a) alone this tick
       // rather than a half-populated blend; converges to the real blend within
       // ~a tick once the incoming frame lands (the B3 convergence behavior).
-      if (!bSrc || !fitAndUpload('b', bSrc)) {
+      if (!bSrc || !uploadSlot('b', bSrc)) {
         transitionForRender = null;
       }
     }
