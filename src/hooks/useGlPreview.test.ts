@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeObjectCoverUvRect } from './useGlPreview';
+import { computeObjectCoverUvRect, resolveChasedVideoFrame, type ChasedFrame } from './useGlPreview';
 
 /**
  * Pure-function tests, mock-free — the useGlPreview hook itself can't be
@@ -93,5 +93,60 @@ describe('computeObjectCoverUvRect', () => {
       expect(r.uOffset).toBeGreaterThanOrEqual(0);
       expect(r.vOffset).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+/**
+ * resolveChasedVideoFrame — the fix for the video-video pre-boundary blend
+ * gap (docs/webgl-architecture-plan.md's "video-video transition blend gap"
+ * closeout entry). Before this fix, the render effect's local resolver only
+ * ever checked `currentFrame`/`currentFrameSegmentId` and the outgoing chase
+ * state — there was no third branch for an `incoming` chase, so a video
+ * incoming segment could never resolve a frame during the pre-boundary half
+ * (bounds-based currentSegment hadn't reached it yet). These tests exercise
+ * the shared resolver directly with plain sentinel objects standing in for
+ * VideoFrame (the function only ever compares them by reference/segmentId,
+ * never touches the real VideoFrame API surface — consistent with this
+ * repo's no-jsdom/no-WebCodecs-runtime testing precedent).
+ */
+describe('resolveChasedVideoFrame', () => {
+  const frameCurrent = {} as unknown as VideoFrame;
+  const frameOutgoing = {} as unknown as VideoFrame;
+  const frameIncoming = {} as unknown as VideoFrame;
+
+  it('resolves via currentFrame when currentFrameSegmentId matches the requested segment', () => {
+    expect(resolveChasedVideoFrame('seg-a', frameCurrent, 'seg-a', null, null)).toBe(frameCurrent);
+  });
+
+  it('post-boundary: falls through to the outgoing chase state once currentFrame has moved on to the incoming segment', () => {
+    const outgoing: ChasedFrame = { frame: frameOutgoing, segmentId: 'seg-a' };
+    expect(resolveChasedVideoFrame('seg-a', frameCurrent, 'seg-b', outgoing, null)).toBe(frameOutgoing);
+  });
+
+  it('THE FIX — pre-boundary: falls through to the incoming chase state when currentFrame still belongs to the outgoing segment', () => {
+    const incoming: ChasedFrame = { frame: frameIncoming, segmentId: 'seg-b' };
+    expect(resolveChasedVideoFrame('seg-b', frameCurrent, 'seg-a', null, incoming)).toBe(frameIncoming);
+  });
+
+  it('video-video pre-boundary: both slots resolve on the same tick — outgoing via currentFrame, incoming via the new chase — so the render effect never has to fall back to a single-slot blit', () => {
+    const incoming: ChasedFrame = { frame: frameIncoming, segmentId: 'seg-b' };
+    expect(resolveChasedVideoFrame('seg-a', frameCurrent, 'seg-a', null, incoming)).toBe(frameCurrent);
+    expect(resolveChasedVideoFrame('seg-b', frameCurrent, 'seg-a', null, incoming)).toBe(frameIncoming);
+  });
+
+  it('currentFrame takes precedence over a same-segment outgoing/incoming chase entry (freshest source wins)', () => {
+    const outgoing: ChasedFrame = { frame: frameOutgoing, segmentId: 'seg-a' };
+    const incoming: ChasedFrame = { frame: frameIncoming, segmentId: 'seg-a' };
+    expect(resolveChasedVideoFrame('seg-a', frameCurrent, 'seg-a', outgoing, incoming)).toBe(frameCurrent);
+  });
+
+  it('a chase entry tagged for a different segment id is never mistaken for the requested one', () => {
+    const outgoing: ChasedFrame = { frame: frameOutgoing, segmentId: 'seg-x' };
+    const incoming: ChasedFrame = { frame: frameIncoming, segmentId: 'seg-y' };
+    expect(resolveChasedVideoFrame('seg-a', null, null, outgoing, incoming)).toBeNull();
+  });
+
+  it('returns null when nothing covers the requested segment (no decoded frame anywhere yet)', () => {
+    expect(resolveChasedVideoFrame('seg-c', frameCurrent, 'seg-a', null, null)).toBeNull();
   });
 });
