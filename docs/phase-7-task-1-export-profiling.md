@@ -1,5 +1,7 @@
 # Phase 7 Task 1 — Export Rendering Profiling Results
 
+> **STATUS: DONE — recommendation implemented and shipped in commit `cd7ea2b`** (OffscreenCanvas + Web Worker pipelined PNG encode, plus raw-binary Tauri IPC frame write). This file is retained at its current path as the profiling record that motivated that work; it is still cited for its measurements by `docs/history.md`'s archived WebGL2 Root-Cause Audit (§1.4) and by this repo's WebCodecs follow-on discussion. Do not move it.
+
 ## Test Project
 
 4 video segments (~3s each, 12s total), 1080p / 30fps, FADE transitions between segments 1→2 and 3→4, voiceover attached, heading text on at least one segment. Profiled on macOS Intel via Tauri dev build.
