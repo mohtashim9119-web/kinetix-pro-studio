@@ -6,7 +6,7 @@
 
 **Scope:** Preview playback only (`PreviewStage.tsx` and the hooks that feed it). The export pipeline (`frameRenderer.ts`, `segmentEncoder.ts`, `exportPipeline.ts`, `plainSegment.ts`, the native ffmpeg sidecar) is out of scope and must not be modified or behaviorally affected by any phase of this work.
 
-**Origin of this effort:** `docs/bugs/preview-cold-start-clock-freeze.md` — a confirmed, root-caused bug where a `<video>` element that has never played will not reliably start its media clock on `.play()` inside the Tauri webview, even at `readyState=4`. Every patch attempted at the `<video>`-element layer either failed or traded the freeze for a different regression (see that doc's "Fixes Attempted" log). This plan treats that bug as unfixable at the `<video>`-element layer and replaces the layer instead of patching it further.
+**Origin of this effort:** a confirmed, root-caused bug — investigated and documented at the time in a standalone `docs/bugs/preview-cold-start-clock-freeze.md` writeup (that file no longer exists in the repo) — where a `<video>` element that has never played will not reliably start its media clock on `.play()` inside the Tauri webview, even at `readyState=4`. Every patch attempted at the `<video>`-element layer either failed or traded the freeze for a different regression (per that writeup's "Fixes Attempted" log). This plan treats that bug as unfixable at the `<video>`-element layer and replaces the layer instead of patching it further.
 
 ---
 
@@ -103,7 +103,7 @@ This section is the single source of truth for where this effort stands, indepen
   - **The `.play()` guard cleanup (Checkpoint 5 follow-up).** Removing the dev toggle means `useWebCodecsPathRef.current` can now be `true` for a real user's session in a way it structurally couldn't be before (the toggle defaulted off), so every place in `PreviewStage.tsx` that still unconditionally touches the legacy `<video>` elements needed a second look for correctness now that "the WebCodecs path is active" is a real, common case rather than a dev-only curiosity:
     - **Fixed:** the isPlaying-sync effect (`PreviewStage.tsx`, the `useEffect` a few lines below the segment-change effect, keyed on `isPlaying` alone) called `activeEl.play()`/`.pause()` on `videoARef`/`videoBRef` unconditionally. Because the segment-change effect already early-returns before touching those elements when `useWebCodecsPathRef.current` is true (Phase 1+2's original design), this call was already a no-op in practice whenever the WebCodecs path owned the segment — but only *incidentally*, by relying on those elements never having received a `src`/`load()`/seek in the first place. That's an implicit invariant, not an enforced one, and nothing stopped a future edit to either effect from breaking it silently. **Fix:** added an explicit `if (useWebCodecsPathRef.current) return;` guard at the top of this effect, so it's inert by construction, matching the segment-change effect's own explicit guard, rather than inert by accident.
     - **Deliberately NOT guarded: the heading-background-video effect** (`PreviewStage.tsx`, "Sync heading background video to isPlaying", keyed on `currentSegment?.isHeading`/`currentSegment?.heading`, driving `headingVideoRef`). This effect was audited for the same class of bug and found not to need it: `isVideoAsset` (the flag that decides whether `PreviewCanvas`/WebCodecs paints at all) is computed as `!isHeadingSegment && !!(asset?.url && asset.type === 'video')` — heading segments are unconditionally excluded from the WebCodecs video-paint branch regardless of the underlying asset's type. `headingVideoRef` is a wholly separate `<video>` element from `videoARef`/`videoBRef`, used only for a heading's own background video, and is never touched by `useWebCodecsPathRef`'s gated code at all. Heading segments are therefore architecturally excluded from the WebCodecs path entirely, not just incidentally inert today — guarding this effect would be defensive code against a case that cannot occur, which this codebase's conventions (CLAUDE.md: "don't add error handling... for scenarios that can't happen") direct against adding.
-  - **The cold-start bug's confirmed status.** Re-attempted against the real default path (Section 7.1 gate #3) using the original bug doc's (`docs/bugs/preview-cold-start-clock-freeze.md`) reproduction steps: **fails to reproduce on WebCodecs-capable runtimes.** This is not "we replaced the mechanism so it should be gone" — it's architecturally guaranteed: the cold-start bug is specifically about a never-yet-played `<video>` element's media clock failing to start reliably on `.play()`; on the WebCodecs path, video frames are painted by `PreviewCanvas` from decoded `VideoFrame`s pulled out of `videoDecoderPool.ts` — there is no `<video>`-element `.play()` call anywhere in that path for the segment actually being displayed (`videoARef`/`videoBRef` sit inert per the guards above). A bug rooted in `<video>`-element clock behavior cannot manifest through a code path that never calls `.play()` on a `<video>` element. **On the legacy fallback path** (capability-unsupported runtimes, e.g. macOS below 13.3), the bug is **unchanged and still present** — this is not a new regression, it's the pre-existing, already-documented, accepted limitation Section 1.6 describes: unsupported runtimes get "today's dual `<video>`-slot path, cold-start bug and all," which is explicitly "a strict superset of current behavior," not a new failure mode.
+  - **The cold-start bug's confirmed status.** Re-attempted against the real default path (Section 7.1 gate #3) using the reproduction steps from the original bug writeup (the former `docs/bugs/preview-cold-start-clock-freeze.md`, since removed from the repo): **fails to reproduce on WebCodecs-capable runtimes.** This is not "we replaced the mechanism so it should be gone" — it's architecturally guaranteed: the cold-start bug is specifically about a never-yet-played `<video>` element's media clock failing to start reliably on `.play()`; on the WebCodecs path, video frames are painted by `PreviewCanvas` from decoded `VideoFrame`s pulled out of `videoDecoderPool.ts` — there is no `<video>`-element `.play()` call anywhere in that path for the segment actually being displayed (`videoARef`/`videoBRef` sit inert per the guards above). A bug rooted in `<video>`-element clock behavior cannot manifest through a code path that never calls `.play()` on a `<video>` element. **On the legacy fallback path** (capability-unsupported runtimes, e.g. macOS below 13.3), the bug is **unchanged and still present** — this is not a new regression, it's the pre-existing, already-documented, accepted limitation Section 1.6 describes: unsupported runtimes get "today's dual `<video>`-slot path, cold-start bug and all," which is explicitly "a strict superset of current behavior," not a new failure mode.
   - **Section 7.1 merge-gate criteria — all 6 PASS:**
     1. **Full regression pass clean.** PASS — re-verified above; no code regressions found across Phases 1+2/3/4+6/5 against the real default (non-toggle-gated) path.
     2. **500-segment project plays back smoothly, within memory ceiling, scrubs responsively.** PASS — carried forward from Phase 4+6's fresh-session re-verification (2026-07-04): 500-segment/300s fixture, ~2,100 scrub events across narrow-band and full-sweep stress, zero crashes/freezes, memory bounded in a ~34-40MB band; re-spot-checked during this checkpoint's regression pass with the toggle gone (same fixture, same result).
@@ -783,16 +783,22 @@ investigation** — see the A3 entry above.
   Section 8.2's cross-reference below) — not forgotten or skipped, deliberately deferred pending
   Phase B's shared compositor; residual issue 3 (general playback lag) remains open, unscoped, a
   separate future investigation.
-- **Phase B — ❌ BLOCKED / INFEASIBLE on this runtime (B0 spike complete, see ✅ COMPLETED above).**
+- **Phase B — ⚠️ BLOCKED-PENDING on this runtime: works when tested, but on an unresolved,
+  unquantified hang-risk contradiction — not simply infeasible (B0 spike + B0 reconciliation both
+  complete, see ✅ COMPLETED above).**
   Originally scoped to migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor,
   retiring the per-frame HTML5-seek → PNG → IPC path. The B0 feasibility spike found real
   `VideoEncoder.encode()` non-functional on this project's real Tauri WKWebView (macOS 26.5.2): all
   4 tested configs (hardware/software × avc/annexb) hung identically — `flush()` never resolved,
   zero chunks ever emitted, no error surfaced. Confirms and exceeds the risk
-  `docs/phase-7-task-1-export-profiling.md:79` already flagged. Not pursued further this round by
-  deliberate choice, not because the result is ambiguous. The legacy ffmpeg PNG/IPC export path
-  remains shipped and correct; Phase C (quality pass) is moot while Phase B is blocked. See the B0
-  ✅ COMPLETED entry above for full evidence and disposition.
+  `docs/phase-7-task-1-export-profiling.md:79` already flagged. A later B0-reconciliation +
+  end-to-end mux-proof test (2026-07-09) then SUCCEEDED 8/8 on a reconstructed harness and produced
+  a full encode → decode → ffmpeg-mux → playable-MP4 proof, without reproducing the hang — so the
+  accurate current status is blocked-pending on that unresolved hang-risk contradiction, "works
+  when tested, risk unresolved — not production-viable," rather than the harsher B0-only
+  "infeasible." The legacy ffmpeg PNG/IPC export path remains shipped and correct; Phase C (quality
+  pass) is moot while Phase B is blocked-pending. See the B0 ✅ COMPLETED entries above (both the
+  spike and the reconciliation) for full evidence and disposition.
 - **Phase C — Quality pass.** Real color-space conversion (not tagging); cross-segment frame-timing/
   drift correction against the audio master clock; quality-pinned encoder settings for full-HD, no-loss
   output. Full definition in Section 8 below.
@@ -1045,7 +1051,7 @@ Each phase is independently completable, testable, and revertible (feature-flagg
 
 1. Phase 8's full regression pass is clean: every existing manual smoke-test procedure (transitions, overlays, filters, animations, captions, timeline scrub/seek, segment-boundary crossing) passes on the new path, on all WebCodecs-supported platforms, with no observed regression versus current `main` behavior.
 2. The synthetic 500-segment project (built in Phase 6) plays back smoothly, stays within the memory ceiling validated in Phase 6, and scrubs responsively — this is the actual justification for the whole migration and must be demonstrated, not assumed from smaller-scale testing.
-3. The cold-start bug (`docs/bugs/preview-cold-start-clock-freeze.md`) is confirmed gone on the new path specifically (not just "we replaced the mechanism so it should be gone" — an explicit repro attempt against the new path, using whatever reproduction steps that bug doc's investigation established, must fail to reproduce).
+3. The cold-start bug (formerly documented in `docs/bugs/preview-cold-start-clock-freeze.md`, since removed from the repo) is confirmed gone on the new path specifically (not just "we replaced the mechanism so it should be gone" — an explicit repro attempt against the new path, using whatever reproduction steps that bug's investigation established, must fail to reproduce).
 4. `tsc` clean, full `vitest` suite green, exactly as every other merge in this repo's history requires (per CLAUDE.md's status table conventions).
 5. The legacy `<video>`-element fallback path (Section 1.6) is verified still functional end-to-end for the capability-unsupported case — merging this branch must not silently break the fallback for users on old macOS.
 6. Export pipeline untouched: a diff review confirms zero changes to `frameRenderer.ts`, `segmentEncoder.ts`, `exportPipeline.ts`, `plainSegment.ts`, or anything under `src-tauri/` — this is a hard gate given the task's explicit constraint, not just a preference.
@@ -1055,7 +1061,7 @@ Each phase is independently completable, testable, and revertible (feature-flagg
 Because `main` is never touched during this effort, infeasibility at any phase has a clean, low-cost exit: **stop advancing this branch; `main` already has the fully-working current `<video>`-based system** (dual-slot ping-pong + first-frame cache cover, cold-start bug and all — a known, already-shipped quantity) with no partial migration ever having been merged into it. Specific fallback points:
 
 - **If Phase 0 fails on a given platform** (e.g. WebKit decode is too slow or visually wrong on macOS Intel, per the Section 6 risk): that platform is simply excluded from the capability flag (Section 1.6) permanently — it keeps using the legacy path forever, and this plan's benefit is scoped to the platforms where it does work. This is not a failure of the whole effort, it's exactly what the capability-gated design (rather than a hard cutover) is for.
-- **If Phase 0 fails on all platforms** (unlikely given Windows/Chromium's mature support, but the honest worst case): the branch is parked, `docs/bugs/preview-cold-start-clock-freeze.md` reverts to "Direction B" (reveal-first, hide-after-motion — the pragmatic mitigation that bug doc already identified as a fallback if a deeper fix isn't viable) as the interim mitigation on `main`, applied as a separate, much smaller piece of work outside this branch.
+- **If Phase 0 fails on all platforms** (unlikely given Windows/Chromium's mature support, but the honest worst case): the branch is parked and the "Direction B" mitigation (reveal-first, hide-after-motion — the pragmatic fallback the original cold-start-bug investigation, formerly at `docs/bugs/preview-cold-start-clock-freeze.md`, had already identified if a deeper fix isn't viable) is applied as the interim mitigation on `main`, as a separate, much smaller piece of work outside this branch.
 - **If a mid-range phase (2–6) proves infeasible** (e.g. audio drift can't be eliminated, or memory ceiling can't be hit at 500+ segments): the capability flag (Section 1.6) can be shipped as permanently "off" (or scoped to only the specific case that does work, e.g. "only for projects under N segments") without discarding the completed earlier phases' code — Phase 0–1's proof-of-concept work and Phase 2's boundary-handling logic remain valid, reusable groundwork even if the full 500-segment scaling goal (Phase 6) doesn't pan out on the original timeline.
 - In every case, rollback is "don't merge this branch" — there is no `main`-side revert needed, because `main` was never modified. This is the direct benefit of the dedicated-branch approach requested for this effort.
 
@@ -1225,12 +1231,17 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
 
 ### 8.2 Phase B — Export onto WebCodecs `VideoEncoder` behind ONE shared compositor
 
-**❌ BLOCKED / INFEASIBLE on this runtime, confirmed via the B0 feasibility spike (see the ✅
-COMPLETED / ⬜ NOT STARTED tracker entries above for full evidence).** Real `VideoEncoder.encode()`
-hangs on this project's real Tauri WKWebView (macOS 26.5.2) across all 4 hardware/software ×
+**⚠️ BLOCKED-PENDING on this runtime: works when tested, but on an unresolved, unquantified
+hang-risk contradiction — not simply infeasible (see the ✅ COMPLETED / ⬜ NOT STARTED tracker
+entries above for full evidence).** The B0 feasibility spike recorded real `VideoEncoder.encode()`
+hanging on this project's real Tauri WKWebView (macOS 26.5.2) across all 4 hardware/software ×
 avc/annexb configs — `isConfigSupported` reports `true`, but `flush()` never resolves and zero
 output chunks are ever emitted. This confirms and exceeds the risk already on record at
-`docs/phase-7-task-1-export-profiling.md:79`. The steps below are retained as the ORIGINAL plan for
+`docs/phase-7-task-1-export-profiling.md:79`. A later B0-reconciliation + mux-proof test
+(2026-07-09) then succeeded 8/8 and produced a full encode → decode → ffmpeg-mux → playable-MP4
+proof without reproducing the hang, so the accurate current headline is blocked-pending on that
+unresolved hang-risk contradiction ("works when tested, risk unresolved — not production-viable"),
+not the harsher B0-only "infeasible." The steps below are retained as the ORIGINAL plan for
 historical/reference purposes and in case this is revisited on a future WKWebView build — they were
 not built, and are not being pursued further right now.
 

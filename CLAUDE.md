@@ -8,7 +8,7 @@
 
 Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite frontend). Workflow:
 1. User provides a script (text), scene details (bracketed asset names like `[IMAGE: hero.jpg]`), and a voiceover audio file
-2. Apply Sync (the single sync entry point) maps script → scenes → uploaded assets in one pass, proportioning segment durations to word count
+2. Apply Sync (the single sync entry point) maps script → scenes → uploaded assets in one pass, proportioning segment durations to character count
 3. User edits segments on a visual timeline (transitions, overlays, filters, animations)
 4. Exports via native ffmpeg (Tauri sidecar) — full H.264/AAC MP4 with overlays, filters, and transitions rendered from canvas
 
@@ -46,14 +46,19 @@ src/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
-    syncEngine.ts    # isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming(),
-                     #   computeHeadingAnchors()/reinsertHeadings() — carry headings forward
-                     #   across re-sync from the segments array (Step 5).
+    syncEngine.ts    # Content-only matching + timing helpers (no heading logic — headings
+                     #   moved to a separate overlay layer in Path B Phase 7, 2026-07-09):
+                     #   isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming(),
+                     #   plus the tag/filename matchers (cleanTagName, isExactFilenameMatch,
+                     #   contiguousWordMatch) and autoMatchSegments().
                      #   parseProjectData() still in App.tsx. PASS 2 (character-weight anchor
                      #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
                      #   back to a segment's own startTime for any missing anchor (3d-1).
-    whisperService.ts # alignScenestoTranscript() sliding-window text matcher; applyHeadingTiming() —
-                     #   gives heading segments (isHeading) fixed 1.0s, 50/50 neighbor absorption, lock-aware.
+    whisperService.ts # alignScenestoTranscript() sliding-window text matcher; distributeSegmentTimes()
+                     #   applies aligned windows (lock-aware); transcribeWithProgress() runs the
+                     #   whisper-cli sidecar; canonicalizeForAlignment/normalize/textMateriallyChanged
+                     #   symmetric token canonicalization (D16). No heading-timing logic — the old
+                     #   applyHeadingTiming() was deleted in Path B Phase 7 (2026-07-09).
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
@@ -134,13 +139,15 @@ src/
                              #   otherwise a drag's transient segment-boundary geometry could sweep currentTime into
                              #   a bogus transition window and swap in the wrong segment's snapshot (D12, be45b07).
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
-                             #   distributeSegmentTimes, applyHeadingTiming. Generation counter + AbortController
+                             #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
   components/
     BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
-                     #   bar (fixed-width orange window slides over source). Heading input
-                     #   shown only for [HEADING:] segments. Click-outside backdrop closes drawer.
+                     #   bar (fixed-width orange window slides over source). Also edits a
+                     #   Path B HeadingOverlay when passed a `heading` prop (mutually exclusive
+                     #   with `segment`) — headings are a separate top-level overlay layer, no
+                     #   longer in-array segments. Click-outside backdrop closes drawer.
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
@@ -231,7 +238,7 @@ project: Project {
 }
 ```
 
-`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by word count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Still defined in `src/App.tsx` — only the fuzzy-matching and anchor-timing helpers (`isFuzzyMatch`, `findAssetByContext`, `applyAnchorBasedTiming`, the heading-anchor helpers) have been extracted to `src/services/syncEngine.ts`.
+`parseProjectData()` is the core sync engine — parses sceneDetails, fuzzy-matches asset names, distributes voiceover duration proportionally by character count. `[HEADING:]` tags are recognized only as scene boundaries — recognize-and-skip, no segment materialized (Step 5, 5.4); headings live solely in the segments array. Still defined in `src/App.tsx` — only the fuzzy-matching and anchor-timing helpers (`isFuzzyMatch`, `findAssetByContext`, `applyAnchorBasedTiming`, the heading-anchor helpers) have been extracted to `src/services/syncEngine.ts`.
 
 Playback uses a ~16ms requestAnimationFrame loop when a voiceover is loaded; `currentSegment` is derived from `currentTime` via `useMemo`.
 
