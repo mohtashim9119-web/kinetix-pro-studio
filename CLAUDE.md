@@ -1,6 +1,6 @@
 # CLAUDE.md — Kinetix Pro Studio
 
-> Persistent context for Claude Code sessions. Update "Current Refactor Status" as work progresses.
+> Persistent context for Claude Code sessions. Architecture, conventions, and invariants only — for current status, active tasks, and history, see `project-state.md` and `docs/history.md`.
 
 ---
 
@@ -445,7 +445,7 @@ App.tsx                    — top-level state + orchestration only
 
 ---
 
-> Bug & task tracking lives in project-state.md (single source of truth). This file is architecture, conventions, invariants, and refactor history only.
+> Bug & task tracking lives in project-state.md (single source of truth). This file is architecture, conventions, and invariants only — for completed-work history, see `docs/history.md`.
 
 ---
 
@@ -463,85 +463,3 @@ All dead dependencies removed. No remaining items.
 | `VITE_PIXABAY_API_KEY` | `src/services/stockService.ts` | Optional — stock search silently disabled if missing |
 | `VITE_COVERR_API_KEY` | `src/services/stockService.ts` | Optional — Coverr video search silently skipped if missing |
 | ~~`GEMINI_API_KEY`~~ | Removed in Phase 1 — `define` block stripped from `vite.config.ts` | — |
-
----
-
-## Current Refactor Status
-
-> Update this section as work progresses. Date each entry.
-
-| Area | Status | Notes |
-|---|---|---|
-| Initial audit | ✅ Done — 2026-05-16 | See audit report in conversation history |
-| CLAUDE.md created | ✅ Done — 2026-05-16 | This file |
-| `strict: true` in tsconfig | ✅ Done — 2026-05-16 | noUncheckedIndexedAccess, noImplicitOverride, noFallthroughCasesInSwitch also enabled |
-| Remove dead dependencies | ✅ Done — 2026-05-16 | Removed @google/genai, express, dotenv, tsx, @types/express |
-| Fix `index.html` title | ✅ Done — 2026-05-16 | Now "Kinetix Pro Studio" |
-| Strip AI Studio artifacts from vite.config | ✅ Done — 2026-05-16 | Removed GEMINI_API_KEY define, DISABLE_HMR, loadEnv |
-| Extract `syncEngine.ts` | ✅ Done — 2026-05-16 | isFuzzyMatch, findAssetByContext |
-| Extract `constants.ts` | ✅ Done — 2026-05-16 | FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps |
-| Extract `usePlayback.ts` hook | ✅ Done | RAF loop (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar |
-| Extract `useExport.ts` hook | ✅ Done — 2026-05-17 | ab8d4d9 — lazy worker, snapshot semantics, ExportError re-export |
-| Break App.tsx → components | ✅ Done — 2026-05-16 | 7 components extracted; App.tsx 3,167 → ~1,450 LOC |
-| Fix direct mutation pattern | ✅ Done — 2026-05-16 | All setProject calls use immutable .map() |
-| Fix `togglePlay` stale closure | ✅ Done — 2026-05-16 | Uses functional updater setIsPlaying(p => !p) |
-| Fix export file extension | ✅ Done — 2026-05-16 / 2026-05-17 | Was .webm mislabeled; now real .mp4 from ffmpeg (sidecar in 6.4+) |
-| Replace Math.random IDs | ✅ Done — 2026-05-16 | All IDs use crypto.randomUUID() |
-| Fix layout regressions (post-extraction) | ✅ Done — 2026-05-16 | min-h-0 on PreviewStage; fullscreen CSS specificity fix |
-| Add project persistence | ✅ Done — 2026-05-16 | localStorage + IndexedDB; single-project; "New Project" reset |
-| Replace canvas/MediaRecorder export pipeline | ✅ Done — 2026-05-17 | Full pipeline: frameRenderer → segmentEncoder → exportPipeline. Originally via Comlink worker + ffmpeg.wasm; superseded by native ffmpeg sidecar in Phase 6.4. |
-| COOP/COEP headers for SharedArrayBuffer | ✅ Done — 2026-05-17 | vite.config.ts (dev) + public/_headers (Cloudflare Pages prod) — removed in Phase 6.4 (wasm no longer needed). |
-| Phase 3 E2E smoke test (human) | ✅ Done — 2026-05-17 | Multi-segment + voiceover + FADE transition verified in VLC |
-| Add error boundaries | ✅ Done — 2026-05-17 | a42ed66 — ErrorBoundary + PanelFallback, structured ExportResult |
-| Clean up dangling asset refs at delete time | ✅ Done — 2026-05-17 | c7515e5 |
-| Code-split lazy modals + jszip | ✅ Done — 2026-05-17 | f9704ee, 3e1fd2c — main: 542 kB → 433 kB |
-| Prune phantom enum/filter/animation entries | ✅ Done — 2026-05-17 | cdb2296 — FILTERS 57→27, TRANSITION_OPTIONS 10, ANIMATION_OPTIONS 11 |
-| Safari export validation | ✅ Done — 2026-05-17 | 97821cd — PASS; crossOriginIsolated=true, full export works |
-| Global transition fallback in encoder | ✅ Done — 2026-05-17 | ea18635 — effectiveTransition uses project.globalTransition as fallback |
-| Main bundle size | ✅ 433 kB / 132 kB gzip | Down from 542 kB / 161 kB at end of Phase 3 (pre-Phase 6.4) |
-| Fix autoMatchAssets delete regression | ✅ Done — 2026-05-19 | Pure autoMatchSegments fn in syncEngine; called imperatively in upload handlers only |
-| Real mid-export cancellation | ✅ Done — 2026-05-19 | worker.terminate() + generation counter in useExport |
-| JSZip type cleanup | ✅ Done — 2026-05-19 | Destructure { default: JSZip }; @types/jszip removed (jszip ships own types) |
-| Stock API 429 handling | ✅ Done — 2026-05-19 | fetchWithRetry exp backoff; StockSearchResult discriminated union; distinct UI states |
-| Accessibility pass 1 | ✅ Done — 2026-05-19 | ARIA labels, focus rings, aria-live, timeline slider, useFocusTrap on all 4 modals |
-| Phase 5 smoke test doc | ✅ Done — 2026-05-19 | docs/archived/phase-5-smoke-tests.md (archived 2026-07-07) |
-| Fidelity Polish Item 5 — trimEnd | ✅ Done — 2026-05-21 | b3f09b9 + 0f4016c + e7a5134 — gate trimStart/trimEnd UI on video; renderer clamp; encoder flows through frameRenderer |
-| Fidelity Polish Item 1 — AnimationType canvas | ✅ Done — 2026-05-21 | ee5ea67 + 33d5840 + 7dfd934 — canvasAnimations.ts (12 types); KEN_BURNS added to picker; live preview motion.div wrapper |
-| Fidelity Polish Item 4 — Overlay drag | ✅ Done — 2026-05-21 | cf2e3aa — Pointer Events drag in PreviewStage; hard-clamp; updateExtraOverlayPosition in App.tsx |
-| Fidelity Polish Item 2 — KEN_BURNS in picker | ✅ Done — 2026-05-21 | 33d5840 — added to ANIMATION_OPTIONS; dev assert guard extended |
-| Fidelity Polish Item 3 — Preview transitions | ✅ Done — 2026-05-21 | 94f8a37 + 0c49339 + ea5ba65 — useTransitionPreview (pre-roll snapshot); canvas overlay in PreviewStage; mounted-ref guard |
-| Fidelity Polish smoke test doc | ✅ Done — 2026-05-21 | docs/archived/fidelity-polish-smoke-tests.md (archived 2026-07-07) |
-| Main bundle size (post Phase 6.4) | ✅ 442.18 kB / 134.73 kB gzip (post Phase 6.4 wasm removal) | Current measured value; down from 443.50 kB / 135.70 kB at Fidelity Polish |
-| Phase 6.1 — Tauri v2 scaffold | ✅ Done — 2026-05-26 | tauri init, tauri.conf.json, npm scripts, smoke test |
-| Phase 6.2 — Rust IPC bridge | ✅ Done — 2026-05-26 | ffmpeg.rs (9 commands incl. save_bytes_to_disk, pick_save_path, reveal_in_finder); TauriFfmpeg class; IPC smoke test (10/10) |
-| Phase 6.3 — Wire Tauri backend into export | ✅ Done — 2026-05-26 | isTauri() branch in useExport; ffmpegBackend.ts; rfd save dialog (3b61ec3); E2E verified (~8 min, video plays fine) |
-| Phase 6.3.1 — Base64 IPC for frame writes | ✅ Done — 2026-05-26 | ba87174 — bytesToBase64 helper (32 KB chunks); ffmpeg_write_file + save_bytes_to_disk both b64; 551s → 120s (4.6× speedup) |
-| Phase 6.4 — Remove wasm path | ✅ Done — 2026-05-26 | 55ba298 — deleted @ffmpeg/*, comlink, exportWorker.ts, ffmpegLoader.ts, dev test buttons; COOP/COEP headers removed |
-| Phase 6.5 — Bundle ffmpeg sidecar | ✅ Done — 2026-05-27 | c567d5e — evermeet.cx 8.1.1 static build (76 MB, system-libs-only); tauri-build copies to target/debug/ffmpeg; sidecar("ffmpeg") at runtime; portability verified (export works with system ffmpeg disabled) |
-| Divider panel + preview height fixes | ✅ Done — 2026-06-17 | previewHeight initializer from viewport, panel toggle clamps via useEffect (310ms delay), timeline floor 140px enforced during drag and on panel toggle |
-| Anchor-based segment timing (Bug 3 fix) | ✅ Done — 2026-06-18 | VideoSegment.anchorStart + anchorSource; applyAnchorBasedTiming in syncEngine.ts; alignScenesToTranscriptAnchorAware in whisperService.ts; Whisper skip-guard + anchor-aware Option A in useWhisper.ts (anchor-aware aligner + skip-guard later removed in clean-slate 3c, 2026-06-24, commits 5da64df/8523f39) |
-| Heading system complete | ✅ Done — 2026-06-19 | 9 rounds; isHeading flag, headingConfig, "+ Add Heading" UI, × delete with anchor restoration; an audio-pause/duration-splitting approach was tried and rejected entirely — pure overlay model with 50/50 absorption shipped instead |
-| Clean-slate re-sync rebuild (3a–3e) | ✅ Done — 2026-06-24 | Apply Sync now wipes all derived state and re-derives fresh from audio every time — nothing carried forward. Deleted the merge loops, `resolveAnchorSource`/`getComparableText`/`getSegmentStableKey`, the anchor-aware Whisper aligner + skip-guard, PASS 2 anchor backfill, and the dead `anchorSource` demotion in `handleVoiceoverStaged`. Commits: `452e1eb` (3a), 3b tests, `5da64df`/`8523f39` (3c), `eb7fc8e` (3d-1), `f27d557` (3d-2), `6090250` (3e) |
-| Step 5 — headings array-only | ✅ Done — 2026-06-24 | `b3a13e3`/`abcc75e`/`72c1fd3`/`6342c8d`/`2516a7c` — segments array is now the sole source of truth for headings; `[HEADING:]` scene-text tag no longer written (5.3) or read (5.4); deleted dead heading duration-budget logic, fixing a ~1.5s/heading skew. Heading styling survives re-sync intact |
-| Step 7 — final regression (closes Architecture Shift) | ✅ Done — 2026-06-24 | `254ef1b` — combined-pipeline 11→14 regression test (heading carry-forward + real timing together, production order) + no-out-of-order-warning assertion; smoke-test doc updated; 17/17 vitest; manually verified end-to-end in the Tauri app. **Clean-slate re-sync Architecture Shift is now fully complete (all steps 1–7)** |
-| Heading-tag detection false-positive fix | ✅ Done — 2026-06-25 | `cf75695` — `isHeadingTag` used a bare `.includes('HEADING')`, so a scene tag like `[IMAGE: heading_shot.jpg]` false-matched and the whole scene was skipped (vanished from the timeline). Tightened to `/^\[HEADING\s*:/i`, matching how IMAGE/VIDEO tags are anchored. 17/17 vitest, `tsc` clean, manually verified in the Tauri app |
-| Orphaned voiceover blob on re-stage fix | ✅ Done — 2026-06-25 | `3b0593c` — `oldIdx` splice in `handleApplySyncFromFiles` now pairs with `URL.revokeObjectURL` + fire-and-forget `deleteAsset(projectId, oldId)`, mirroring the existing `processMediaFile` pattern. Closes the Known Limitations entry above. 17/17 vitest, `tsc` clean |
-| Review Mapping popup — post-ship polish | ✅ Done — 2026-06-26 | `55aacc1`/`88169fd`/`603a268`/`5bb778e`/`df52dc1`/`1447813`/`67c4547` — scene overlay x/y wiring (lower-third default y=78, preview+export), swatch/toggle/stock-split + bg-color editor + None option, font-size/bubble-width/quote fixes, square toggle + scene row reorder + X/Y sliders, PreviewStage edge-to-edge X/Y positioning + content-based width fix (heading + scene), scene row consolidation (italic moved into formatting row, color+XY rows merged, shadow swatch removed, ban toggle relocated, toggle thumb sizing fixed), Review Mapping control converted from icon to a centered text button. Refinement of the already-delisted task 7 feature — not a new Active Task. Pushed to `origin/main` (billing block resolved; CI now manual-only `workflow_dispatch`, `e725a46`) |
-| Review Mapping — live thumbnail (3b) | ✅ Done — 2026-06-27 | `23c8227` — per-segment thumbnails render a live overlay/heading text layer scaled to the thumbnail box, real-time on edit; modal-only (`PreviewStage`/`frameRenderer`/`types.ts` untouched). Review Mapping modal now feature-complete. `tsc` clean, 17/17 vitest. Pushed to `origin/main` |
-| Shared SegmentControls + drawer/preview/timeline sync | ✅ Done — 2026-06-27 | `4887d33` — extracted the Review Mapping card controls (scene + heading layouts) into shared `src/components/SegmentControls.tsx`, reused by both the modal (thumbnail + controls; pure move, unchanged) and the bottom drawer (controls-only, no thumbnail). Drawer recentered to viewport-anchored 50vw (motion `x: '-50%'`), independent of side panels; mute toggle moved to drawer header (scene-only), body mute row removed (scene/heading drawers equal height); dropped the drawer's phantom shadow control. Left-panel segment click seeks the time-driven preview (`handleSegmentClick`) and `Timeline` auto-scrolls the active segment into view on `currentSegmentId` change. `tsc` clean, 17/17 vitest. Pushed to `origin/main`. Closes backlog item 2 (bottom drawer redesign) |
-| Effects Tab Rebuild Steps 5–7 + drawer effect-pills | ✅ Done — 2026-06-27 | `dd903b2` (Step 5, Apply to selected/all), `d0d8ca2` (Step 6, randomize across segments), `d750ce3` (bonus, read-only drawer effect-pills), `4b13cb0` (Step 7, combined-look presets via new `src/services/lookPresetService.ts`, 20-cap, client-generated id preserved across the service round-trip so the active "Restored" highlight survives a save). `tsc` clean, 17/17 vitest after each commit. **Local on `main`, NOT pushed** — `origin/main` still at `1e249df`. Step 8 (renderer implementation) is the only remaining step in the Effects Tab Rebuild plan |
-| Effects Step 8 — transitions (10/10) | ✅ Done — 2026-06-29 | All 10 slugs in applyTransitionBlend; Batch A (hard-cut/cross-dissolve/zoom/dip-black/dip-white/slide-push/whip-pan/wipe) + Batch B (glitch-rgb/light-leak); screen blend first use; caption fixes; 100/0 timing documented as deferred |
-| Bug 1 fix — cancel ghost project | ✅ Done — 2026-06-30 | Cancel no longer creates blank project; auto-popup removed from zero-projects reload; empty dashboard shows correctly |
-| Bug 2 fix — inline project rename | ✅ Done — 2026-06-30 | Top-left name is inline editable (click/blur/Enter saves, Escape discards); top-right is read-only reactive label; onRename prop added to DropZonePanel |
-| Bug 3 fix — UI state persistence | ✅ Done — 2026-06-30 | activeLeftTab, leftPanelCollapsed, rightPanelCollapsed, previewHeight persisted to kinetix:ui:v1; lazy useState initializers on mount; handleSwitchProject preserveUiState flag preserves currentTime + selectedSegmentId on reload vs reset on project switch |
-| Bug 4 fix — left panel auto-scroll | ✅ Done — 2026-06-30 | scrollIntoView on currentSegmentId change in DropZonePanel; isPlaying guard removed so it fires on manual timeline click while paused too; timeline horizontal scroll persists via listener in Timeline.tsx restored at 300ms after mount |
-| Export quality raise + vignette removal | ✅ Done — 2026-07-02 | `fbc96db` — removed unconditional edge-darkening vignette (export canvas + preview CSS scrim); `-crf 23` → `-crf 16`; `imageSmoothingQuality: 'high'`; pinned bt709 colorspace/primaries/transfer on export |
-| Tier 1 fast path — plain video segments | ✅ Done — 2026-07-02 | `e8eba95` — `isPlainVideoSegment` (`src/services/plainSegment.ts`) bypasses per-frame canvas/PNG/IPC for a single ffmpeg trim+cover-fit encode at CRF 16; flags matched to canvas path for clean concat; desktop-verified A/V sync, no boundary seam |
-| Tier 1 fast path — plain image segments | ✅ Done — 2026-07-02 | `bf003d1` — `isPlainImageSegment` shares `isPlainMediaSegment` core with the video predicate; renders one frame + `-loop 1 -frames:v N` (N = segmentFrameCount) at CRF 16; desktop-verified 3m44s → 40s on a 4-video/10-image project |
-| App-wide native selection disabled | ✅ Done — 2026-07-02 | `b62bd95` — `#root` `user-select: none`, re-enabled for input/textarea/contenteditable + transcription-error message; `draggable={false}` on Timeline segment thumbnails and dashboard project thumbnails |
-| Reload jump fix — preview height + timeline scroll | ✅ Done — 2026-07-02 | `fb6abbb` — `previewHeight` measurement effect and timeline `scrollLeft` restore moved from post-paint `useEffect`/`setTimeout` to pre-paint `useLayoutEffect` |
-| Timeline drag perf — ref+rAF, commit on mouseup only | ✅ Done — 2026-07-02 | `f4da926` — segment-resize and divider drags write live width via `data-seg-id` DOM refs (rAF-coalesced) instead of `setProject` per mousemove; timeline rect/pps cached once at drag start; real commit unchanged (mouseup, `applyDurationChange`) |
-| Timeline scroll-restore race fix | ✅ Done — 2026-07-02 | `34206ee` — one-shot reload scroll restore deferred until `containerWidth`'s `ResizeObserver` first fires (was racing the 800px zoom fallback and getting clamped to 0); both auto-scroll effects gated on `didRestoreRef` so neither overrides the restore |
-| WebCodecs preview migration (Phases 0–8) | ✅ Done — 2026-07-05 (branch `webcodecs-api`) | `VideoDecoder` decode pool + windowed decode-ahead/LRU replaced the dual-`<video>`-slot preview path; cutover to default on capable runtimes, legacy `<video>` path kept as capability-gated fallback. Full plan/evidence in `docs/webcodecs-architecture-plan.md` |
-| Preview/export WebCodecs unification (Phases A–C) | 🟡 Phase A ✅ Done, Phase B ❌ Blocked, Phase C not started | Follow-on effort in `docs/webcodecs-architecture-plan.md` Section 8. A) playhead-driven preview animations + boundary/transition timing — complete 2026-07-06. B) export onto WebCodecs `VideoEncoder` behind ONE shared compositor (ffmpeg mux-only) — blocked: `VideoEncoder.encode()` carries an unexplained, unquantified hang risk on this project's real WKWebView (works when tested, but not reproducibly enough to call production-viable — see the B0 entries and their 2026-07-09 follow-ups). C) real color conversion + drift correction + quality-pinned encode — not started, depends on B |
-| Transition-blend video-element isolation + export pipelining speedup | ✅ Done — 2026-07-09 | `d033cb1` — isolated `blendVideoCache` in `frameRenderer.ts` fixes same-URL transition video-element thrashing. `cd7ea2b` — worker-pool PNG encode (`frameEncodeWorker.ts`) + raw-binary IPC frame write (`ffmpeg_write_file_raw`), replacing per-frame base64. Both independent of the still-blocked Phase B `VideoEncoder` effort above — speedups of the existing ffmpeg/PNG export path, not a step toward replacing it. `tsc --noEmit` clean, `vitest` 277/277 |
