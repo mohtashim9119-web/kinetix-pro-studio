@@ -95,3 +95,71 @@ describe('computeObjectCoverUvRect', () => {
     }
   });
 });
+
+// --- Bug 4 fix (cold-load black screen): GL-init effect re-fire mechanism ----
+//
+// PARTIAL COVERAGE NOTE: this repo has no jsdom/happy-dom/@testing-library/
+// react/react-test-renderer (confirmed absent from node_modules), so
+// useGlPreview cannot actually be rendered and observed here — same
+// limitation this file's own header comment already documents for
+// computeObjectCoverUvRect. The tests below do NOT render the hook or prove
+// React itself re-invokes the effect; they mechanically re-state React's own
+// documented dependency-array shallow-compare (Object.is per entry) applied
+// to the EXACT before/after shapes this fix changes, so the specific claim
+// "adding canvasNode to the deps array is what makes the difference in the
+// cold-load-already-enabled scenario" is at least verified as arithmetically
+// true, independent of trusting a manual read of the diff. Real end-to-end
+// confirmation still requires the real Tauri app (per the prior audit) or a
+// future jsdom-based render harness (a separate, not-yet-made decision).
+describe('GL-init effect dependency-array shallow-compare — pure re-statement of the Bug 4 fix mechanism', () => {
+  /** React re-invokes a useLayoutEffect/useEffect exactly when at least one
+   *  entry of its dependency array differs (Object.is) from the previous
+   *  render's array — this is a direct restatement of that rule, not
+   *  production logic (useGlPreview.ts never calls this; React does the
+   *  equivalent comparison internally). */
+  function depsChanged(prevDeps: readonly unknown[], nextDeps: readonly unknown[]): boolean {
+    return prevDeps.length !== nextDeps.length || prevDeps.some((prev, i) => !Object.is(prev, nextDeps[i]));
+  }
+
+  it('pre-fix shape ([enabled] only): canvas attaching after enabled was already true leaves the deps unchanged — effect would NOT re-fire (reproduces Bug 4)', () => {
+    // Render 1 (cold load, dev toggle persisted true): enabled=true, canvas
+    // not yet mounted. Render 2 (currentSegment/canvas hydrate): enabled is
+    // STILL true (never transitioned), and the pre-fix deps array [enabled]
+    // has no way to see the canvas at all.
+    const prevDeps = [true];
+    const nextDeps = [true];
+    expect(depsChanged(prevDeps, nextDeps)).toBe(false);
+  });
+
+  it('post-fix shape ([enabled, canvasNode]): the same canvas-attach transition DOES change the deps — effect correctly re-fires', () => {
+    const prevDeps = [true, null];
+    const nextDeps = [true, {} as HTMLCanvasElement]; // any distinct reference stands in for "the canvas mounted"
+    expect(depsChanged(prevDeps, nextDeps)).toBe(true);
+  });
+
+  it('the pre-fix OFF->ON toggle workaround also changes the deps (both pre- and post-fix) — confirms why toggling always happened to recover, independent of canvas timing', () => {
+    const prevDeps = [false];
+    const nextDeps = [true];
+    expect(depsChanged(prevDeps, nextDeps)).toBe(true);
+
+    const prevDepsWithCanvas = [false, {} as HTMLCanvasElement];
+    const nextDepsWithCanvas = [true, {} as HTMLCanvasElement];
+    expect(depsChanged(prevDepsWithCanvas, nextDepsWithCanvas)).toBe(true);
+  });
+
+  it('residual gap (per-tick render effect, paused session): canvas attaching while every OTHER dependency stays identical still changes deps once canvasNode is included, closing the gap the mount-effect-only fix would have left', () => {
+    // Models the render effect's larger dependency array collapsed to just
+    // the two values relevant to this scenario (enabled, canvasNode) plus a
+    // stand-in for "everything else" (currentTime) staying frozen — the
+    // paused-at-the-exact-hydration-moment case flagged in the Phase 1 audit.
+    const prevDeps = [true, null, 0]; // enabled, canvasNode, currentTime
+    const nextDeps = [true, {} as HTMLCanvasElement, 0]; // canvas attaches; currentTime unchanged (paused)
+    expect(depsChanged(prevDeps, nextDeps)).toBe(true);
+
+    // Without canvasNode in the array (the pre-fix shape for this effect),
+    // the same paused/late-attach scenario would NOT have re-fired it.
+    const prevDepsNoCanvas = [true, 0]; // enabled, currentTime
+    const nextDepsNoCanvas = [true, 0];
+    expect(depsChanged(prevDepsNoCanvas, nextDepsNoCanvas)).toBe(false);
+  });
+});

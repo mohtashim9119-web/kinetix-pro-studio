@@ -297,11 +297,15 @@ export function PreviewStage({
   const glCapable = import.meta.env.DEV && useWebCodecsPath && isWebGL2Supported();
   const glPathActive = glCapable && glDevToggle;
   // Mid-session toggling takes effect without a segment change because GL's own
-  // effects live in useGlPreview (keyed on the `enabled` prop, so they re-run
-  // when glPathActive flips), and the legacy segment-change/play effects are
-  // already gated by useWebCodecsPathRef (glPathActive requires useWebCodecsPath,
-  // so those effects stay inert whenever GL is active) — no separate ref needed.
-  const glCanvasRef = useRef<HTMLCanvasElement>(null);
+  // effects live in useGlPreview (keyed on the `enabled` prop and its own
+  // internal canvas-mount state, so they re-run both when glPathActive flips
+  // AND when the GL <canvas> itself actually mounts — see UseGlPreviewResult
+  // .canvasRef's doc for why the latter matters on a cold load where the dev
+  // toggle is already persisted true), and the legacy segment-change/play
+  // effects are already gated by useWebCodecsPathRef (glPathActive requires
+  // useWebCodecsPath, so those effects stay inert whenever GL is active).
+  // The canvas ref itself is owned by useGlPreview (glPreview.canvasRef,
+  // below) — attached directly to the JSX ref prop, not held here.
   const toggleGlPreview = useCallback(() => {
     setGlDevToggle(prev => {
       const next = !prev;
@@ -487,7 +491,6 @@ export function PreviewStage({
     [globalTransition, globalTransitionDuration],
   );
   const glPreview = useGlPreview({
-    canvasRef: glCanvasRef,
     segments,
     assets,
     currentSegment,
@@ -1134,7 +1137,7 @@ export function PreviewStage({
                           it; getClipEffectStyle preserves the CSS clip-effect filters. */}
                       {glPathActive && (
                         <canvas
-                          ref={glCanvasRef}
+                          ref={glPreview.canvasRef}
                           className="absolute inset-0 w-full h-full"
                           style={{
                             ...getClipEffectStyle(currentSegment.effectAnimation),

@@ -35,7 +35,7 @@
  * functions and the compositor, not this React hook.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Asset, VideoSegment } from '../types';
 import type { VideoDecoderPool } from '../services/videoDecoderPool';
 import { GlCompositor, type TextureSlot, type TexRect, type UploadSource } from '../services/gl/glCompositor';
@@ -59,8 +59,6 @@ import {
 } from './useWebCodecsPreview';
 
 interface UseGlPreviewParams {
-  /** The GL canvas element PreviewStage.tsx mounts when the path is active. */
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   segments: VideoSegment[];
   assets: Asset[];
   /** From PreviewStage — already isResizing-frozen upstream (App.tsx). Used
@@ -93,6 +91,18 @@ export interface UseGlPreviewResult {
    *  failure) — surfaced for the dev badge; there is no fallback render path
    *  by design (plan Section 3.4). */
   error: string | null;
+  /** Callback ref for the caller (PreviewStage.tsx) to attach to its GL
+   *  `<canvas>` element — replaces a plain `useRef` so the canvas's actual
+   *  DOM attach/detach participates in React's effect-dependency diffing
+   *  (Bug 4 fix). A plain ref's `.current` assignment happens silently
+   *  during commit and is invisible to `useLayoutEffect` dependency arrays;
+   *  if `enabled` was already `true` on this hook's very first render (e.g.
+   *  the dev toggle's persisted localStorage value) while the canvas hadn't
+   *  mounted yet (e.g. `currentSegment` — and so the canvas's own JSX
+   *  condition — hadn't hydrated yet), the context-acquisition effect below
+   *  would fire once, find no canvas, bail silently, and never fire again,
+   *  since `enabled` never changes value a second time in that session. */
+  canvasRef: (node: HTMLCanvasElement | null) => void;
 }
 
 /**
@@ -143,7 +153,6 @@ interface SlotSource {
 }
 
 export function useGlPreview({
-  canvasRef,
   segments,
   assets,
   currentSegment,
@@ -159,6 +168,17 @@ export function useGlPreview({
   const compositorRef = useRef<GlCompositor | null>(null);
   const contextLostRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
+  // The GL <canvas> DOM node, tracked as state (not a plain useRef) so a
+  // canvas that mounts AFTER `enabled` was already true — e.g. the dev
+  // toggle's persisted localStorage value is already true on cold load,
+  // before `currentSegment` (and so the canvas's own JSX condition) has
+  // hydrated — still shows up as a genuine dependency change and re-fires
+  // the effects below (Bug 4 fix; see UseGlPreviewResult.canvasRef's doc).
+  const [canvasNode, setCanvasNode] = useState<HTMLCanvasElement | null>(null);
+  const setCanvasRef = useCallback((node: HTMLCanvasElement | null) => {
+    setCanvasNode(node);
+  }, []);
 
   // Image texture cache (image/color segments) — one HTMLImageElement per
   // asset url, decoded once; a load bumps `imageEpoch` to force one redraw.
@@ -211,7 +231,7 @@ export function useGlPreview({
   // enabled tick would find no compositor and skip a frame.
   useLayoutEffect(() => {
     if (!enabled) return;
-    const canvas = canvasRef.current;
+    const canvas = canvasNode;
     if (!canvas) return;
 
     const gl = acquireGlContext(canvas, {
@@ -245,9 +265,11 @@ export function useGlPreview({
       // is toggled off, useTransitionPreview.ts resumes managing this set.
       pool.setTransitionProtectedIds([]);
     };
-    // canvasRef/pool identities are stable; `enabled` is the real toggle.
+    // pool identity is stable; `enabled` is the dev-toggle/capability gate,
+    // and `canvasNode` (Bug 4 fix) is what makes this effect re-run once the
+    // canvas actually mounts even if `enabled` was already true beforehand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled]);
+  }, [enabled, canvasNode]);
 
   // --- Outgoing session protection (Item-4 B3 mechanism, reused) ------------
   // Keep the outgoing segment's decode session alive through the transition
@@ -388,7 +410,7 @@ export function useGlPreview({
     if (!enabled) return;
     const compositor = compositorRef.current;
     const gl = glRef.current;
-    const canvas = canvasRef.current;
+    const canvas = canvasNode;
     if (!compositor || !gl || !canvas || contextLostRef.current) return;
 
     const displayW = canvas.clientWidth || canvas.width;
@@ -506,6 +528,11 @@ export function useGlPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     enabled,
+    // Bug 4 fix: a canvas that mounts after `enabled` was already true (see
+    // canvasNode's own doc above) must also re-trigger this render pass —
+    // otherwise a paused session with no other input changing could leave
+    // the now-ready compositor/gl un-drawn-to until the next unrelated tick.
+    canvasNode,
     currentTime,
     currentFrame,
     currentFrameSegmentId,
@@ -520,5 +547,5 @@ export function useGlPreview({
     config.grade,
   ]);
 
-  return { error: enabled ? error : null };
+  return { error: enabled ? error : null, canvasRef: setCanvasRef };
 }
