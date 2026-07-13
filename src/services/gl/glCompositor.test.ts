@@ -17,13 +17,18 @@ import { VERTEX_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT } from './shaders';
  * feasibility spike (src/dev/webglFeasibilitySpike/main.ts) proved
  * empirically instead; shaders.ts's sources are promoted from it unchanged.
  *
- * The ping-pong FBO pass-chain exercised by the "zoom+grade both active"
- * tests below is new *structure* beyond what the spike tested (the spike
- * verified each of the 6 shaders standalone, never chained through an
- * offscreen render target) — these tests prove the chain's call sequence
- * and framebuffer bookkeeping are internally consistent against the mock,
- * not that the chained GPU output is pixel-correct on a real device. That
- * remains open for a manual real-app check before Phase 3 integration.
+ * The per-slot ping-pong FBO pass-chain exercised by the transition and
+ * zoom+grade tests below is new *structure* beyond what the spike tested (the
+ * spike verified each of the 6 shaders standalone, never chained through an
+ * offscreen render target) — these tests prove the chain's call sequence and
+ * framebuffer bookkeeping are internally consistent against the mock, not that
+ * the chained GPU output is pixel-correct on a real device. In particular the
+ * Bug 2 per-layer-transform pass order and its vertex-shader FLIP reassignment
+ * (transition programs now sample render targets, not raw uploads) cannot be
+ * verified here — that requires a real-Tauri-app readPixels check (the Phase 2
+ * Step 1 real-GPU-only failure class). The flip-parity test below proves the
+ * WIRING (which VS each program links against); it does NOT prove the pixels
+ * come out upright.
  */
 
 let idCounter = 0;
@@ -128,8 +133,7 @@ class MockWebGL2 {
   drawArrays(): void { this.calls.push('drawArrays'); }
   viewport(): void {}
 
-  /** Most-recent call to a given uniform name — sufficient for these tests
-   *  since each renderFrame call only ever drives one stage-1 program. */
+  /** Most-recent call to a given uniform name. */
   lastUniform(name: string): number[] | undefined {
     for (let i = this.uniformCalls.length - 1; i >= 0; i--) {
       const call = this.uniformCalls[i];
@@ -137,13 +141,20 @@ class MockWebGL2 {
     }
     return undefined;
   }
+
+  /** All calls to a given uniform name, in order — needed now that the
+   *  per-slot prep passes wire the same uniform (u_texRectA / u_scale) more
+   *  than once per renderFrame (once per slot). */
+  allUniform(name: string): number[][] {
+    return this.uniformCalls.filter((c) => c.name === name).map((c) => c.args);
+  }
 }
 
 function makeGl(): MockWebGL2 {
   return new MockWebGL2();
 }
 
-const neutralParams: CompositeParams = { transition: null, animScale: 1, grade: NEUTRAL_GRADE };
+const neutralParams: CompositeParams = { transition: null, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE };
 const fakeSource = {} as unknown as VideoFrame;
 
 beforeEach(() => {
@@ -192,18 +203,15 @@ describe('GlCompositor — uploadFrame', () => {
   });
 
   /**
-   * uploadFrame (glCompositor.ts:269) has NO branching on source type — it
-   * casts VideoFrame|ImageBitmap|HTMLImageElement to TexImageSource and
-   * calls texImage2D once; the browser's own overloaded texImage2D handles
-   * the three source kinds identically. So there is no "routing" branch to
-   * exercise here — these tests instead lock in call-shape parity (each
-   * source kind reaches texImage2D via the same call, for either slot),
-   * which is the property image-segment/video-segment mixing actually
-   * depends on. Phase 2 Step 1's real-GPU 12-combo check already proved
-   * this holds pixel-correct on real hardware for video/video, image/image,
-   * and video/image pairs (docs/webgl-architecture-plan.md Progress
-   * Tracker) — these are the mock-based call-sequencing counterpart that
-   * check didn't leave behind.
+   * uploadFrame has NO branching on source type — it casts
+   * VideoFrame|ImageBitmap|HTMLImageElement to TexImageSource and calls
+   * texImage2D once; the browser's own overloaded texImage2D handles the
+   * three source kinds identically. So there is no "routing" branch to
+   * exercise here — these tests instead lock in call-shape parity (each source
+   * kind reaches texImage2D via the same call, for either slot), which is the
+   * property image-segment/video-segment mixing actually depends on. Phase 2
+   * Step 1's real-GPU 12-combo check already proved this holds pixel-correct
+   * on real hardware for video/video, image/image, and video/image pairs.
    */
   const fakeVideoFrame = { codedWidth: 1280, codedHeight: 720 } as unknown as VideoFrame;
   const fakeImageBitmap = { width: 800, height: 600 } as unknown as ImageBitmap;
@@ -235,32 +243,34 @@ describe('GlCompositor — uploadFrame', () => {
     expect(gl.calls.filter((c) => c === 'texImage2D')).toHaveLength(1);
   });
 
-  it('mixed-source transition — slot "a" a VideoFrame (outgoing video), slot "b" an ImageBitmap (incoming image) — renderFrame drives the same single-pass draw as a same-type pair, unaffected by the upstream source-kind mismatch', () => {
+  it('mixed-source transition — slot "a" a VideoFrame (outgoing video), slot "b" an ImageBitmap (incoming image) — renderFrame drives the same full per-slot transition chain as a same-type pair, unaffected by the upstream source-kind mismatch', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeVideoFrame);
     compositor.uploadFrame('b', fakeImageBitmap);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(1);
-    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
+    // prep A (blit + zoom) + prep B (blit + zoom) + blend = 5 draws; rtA/rtB/scratch = 3 FBOs.
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(5);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(3);
   });
 
-  it('image<->image transition — both slots ImageBitmap/HTMLImageElement — same pass-chain shape as the video<->video case', () => {
+  it('image<->image transition — both slots ImageBitmap/HTMLImageElement — same per-slot pass-chain shape as the video<->video case', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeImageBitmap);
     compositor.uploadFrame('b', fakeImageElement);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1.2, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScaleA: 1.2, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    // dip-black + zoom active: 2 draws (stage1 -> rt, zoom rt -> canvas),
-    // identical shape to the existing "zoom active" video-sourced test.
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
-    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
+    // Every active transition routes through the full per-slot chain
+    // regardless of source kind or whether a slot's zoom is neutral: prep A
+    // (blit + zoom) + prep B (blit + zoom) + blend = 5 draws, 3 FBOs.
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(5);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(3);
   });
 });
 
@@ -278,62 +288,86 @@ describe('GlCompositor — renderFrame pass chain', () => {
     expect(gl.calls).not.toContain('bindFramebuffer:target');
   });
 
-  it('an active transition with no zoom/grade: one draw call using both texture units (still a single pass to canvas)', () => {
+  it('an active transition with no zoom/grade routes through the full per-slot chain (no raw-blend fast path): 5 draws, 3 render targets', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(1);
-    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
-  });
-
-  it('zoom active, grade neutral: two draw calls, one render target pair allocated (stage1 -> rt, zoom rt -> canvas)', () => {
-    const gl = makeGl();
-    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    gl.calls = [];
-
-    compositor.renderFrame({ transition: null, animScale: 1.2, grade: NEUTRAL_GRADE });
-
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
-    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2); // rt0 + rt1 allocated together
-    // createRenderTarget() itself unbinds to the default framebuffer right
-    // after creating each target (extra "canvas" binds unrelated to the
-    // pass chain) — the meaningful assertion is that the canvas bind for
-    // the zoom pass's own output happens before the final draw call.
+    // prep A (blit→scratch, zoom→rtA) + prep B (blit→scratch, zoom→rtB) + blend(rtA,rtB)→canvas
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(5);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(3);
+    // The blend (final pass) goes straight to the canvas when grade is neutral.
     const lastCanvasBindIdx = gl.calls.lastIndexOf('bindFramebuffer:canvas');
     const lastDrawIdx = gl.calls.lastIndexOf('drawArrays');
     expect(lastCanvasBindIdx).toBeGreaterThan(-1);
     expect(lastCanvasBindIdx).toBeLessThan(lastDrawIdx);
   });
 
-  it('zoom AND grade both active: three draw calls, chained through both render targets, final pass to canvas', () => {
+  it('no-transition, zoom active, grade neutral: two draw calls (blit -> rt, zoom rt -> canvas), one render-target pair allocated', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({ transition: null, animScaleA: 1.2, animScaleB: 1, grade: NEUTRAL_GRADE });
+
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2); // rt0 + rt1; the single-slot path never needs the 3rd
+    const lastCanvasBindIdx = gl.calls.lastIndexOf('bindFramebuffer:canvas');
+    const lastDrawIdx = gl.calls.lastIndexOf('drawArrays');
+    expect(lastCanvasBindIdx).toBeGreaterThan(-1);
+    expect(lastCanvasBindIdx).toBeLessThan(lastDrawIdx);
+  });
+
+  it('no-transition, zoom AND grade both active: three draw calls (blit -> rt0, zoom rt0 -> rt1, grade rt1 -> canvas)', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({
+      transition: null,
+      animScaleA: 1.1,
+      animScaleB: 1,
+      grade: { brightness: 0.2, contrast: 0, saturation: 0, temperature: 0 },
+    });
+
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(3);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
+    const lastCanvasBindIdx = gl.calls.lastIndexOf('bindFramebuffer:canvas');
+    const lastDrawIdx = gl.calls.lastIndexOf('drawArrays');
+    expect(lastCanvasBindIdx).toBeGreaterThan(-1);
+    expect(lastCanvasBindIdx).toBeLessThan(lastDrawIdx);
+  });
+
+  it('transition with zoom AND grade: full per-slot chain + grade — six draw calls, three render targets, final pass to canvas', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
     compositor.renderFrame({
       transition: { type: 'dip-black', progress: 0.3 },
-      animScale: 1.1,
+      animScaleA: 1.1,
+      animScaleB: 1.2,
       grade: { brightness: 0.2, contrast: 0, saturation: 0, temperature: 0 },
     });
 
-    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(3);
-    // The canvas bind for the grade pass (always the final stage when
-    // active) must happen before the final draw call.
+    // prep A (2) + prep B (2) + blend(→scratch) (1) + grade(scratch→canvas) (1)
+    expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(6);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(3);
+    // The grade pass (final stage when active) must go to the canvas last.
     const lastCanvasBindIdx = gl.calls.lastIndexOf('bindFramebuffer:canvas');
     const lastDrawIdx = gl.calls.lastIndexOf('drawArrays');
     expect(lastCanvasBindIdx).toBeGreaterThan(-1);
     expect(lastCanvasBindIdx).toBeLessThan(lastDrawIdx);
   });
 
-  it('grade active alone (no zoom): two draw calls, one render target pair allocated', () => {
+  it('no-transition, grade active alone (no zoom): two draw calls, one render-target pair allocated', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: null, animScale: 1, grade: { brightness: 0, contrast: 0.4, saturation: 0, temperature: 0 } });
+    compositor.renderFrame({ transition: null, animScaleA: 1, animScaleB: 1, grade: { brightness: 0, contrast: 0.4, saturation: 0, temperature: 0 } });
 
     expect(gl.calls.filter((c) => c === 'drawArrays')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
@@ -342,7 +376,7 @@ describe('GlCompositor — renderFrame pass chain', () => {
   it('does not re-allocate render targets across calls at the same drawing-buffer size', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    const zoomParams: CompositeParams = { transition: null, animScale: 1.3, grade: NEUTRAL_GRADE };
+    const zoomParams: CompositeParams = { transition: null, animScaleA: 1.3, animScaleB: 1, grade: NEUTRAL_GRADE };
 
     compositor.renderFrame(zoomParams);
     gl.calls = [];
@@ -355,7 +389,7 @@ describe('GlCompositor — renderFrame pass chain', () => {
   it('re-allocates render targets when the drawing-buffer size changes (disposing the old pair first)', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    const zoomParams: CompositeParams = { transition: null, animScale: 1.3, grade: NEUTRAL_GRADE };
+    const zoomParams: CompositeParams = { transition: null, animScaleA: 1.3, animScaleB: 1, grade: NEUTRAL_GRADE };
 
     compositor.renderFrame(zoomParams);
     gl.drawingBufferWidth = 1280;
@@ -367,18 +401,32 @@ describe('GlCompositor — renderFrame pass chain', () => {
     expect(gl.calls.filter((c) => c === 'deleteTexture')).toHaveLength(2);
     expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
   });
+
+  it('lazily allocates the 3rd render target only when a transition first needs it (a prior single-slot render allocated only 2)', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+
+    // Single-slot zoom first — allocates rt0 + rt1 only.
+    compositor.renderFrame({ transition: null, animScaleA: 1.3, animScaleB: 1, grade: NEUTRAL_GRADE });
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(2);
+    gl.calls = [];
+
+    // A transition at the SAME size now needs the 3rd target — exactly one
+    // more framebuffer is allocated, rt0/rt1 are reused (not rebuilt).
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(1);
+    expect(gl.calls.filter((c) => c === 'deleteFramebuffer')).toHaveLength(0); // rt0/rt1 not rebuilt
+  });
 });
 
 describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
   /**
    * Program-selection/uniform-value tests, not pixel tests — the mock never
    * executes GLSL, so it can't independently re-prove "dip-black renders
-   * black." That pixel-math question is already closed (Phase 0 spike,
-   * standalone, both engines + Phase 2 Step 1's chained 12-combo real-GPU
-   * check). What a mock CAN and should catch is a wiring regression: the
-   * wrong program selected for a slug, or the right program fed the wrong
-   * uniform value — exactly the class of bug Step 1 found (two things
-   * sharing a mechanism, differentiated only by a parameter/branch).
+   * black." That pixel-math question is already closed (Phase 0 spike +
+   * Phase 2 Step 1). What a mock CAN and should catch is a wiring regression:
+   * the wrong program selected for a slug, or the right program fed the wrong
+   * uniform value.
    */
 
   it('dip-black selects the dip program with u_dipColor = [0,0,0]', () => {
@@ -386,7 +434,7 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
     expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
     expect(gl.lastUniform('u_progress')).toEqual([0.5]);
@@ -397,7 +445,7 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
     expect(gl.lastUniform('u_dipColor')).toEqual([1, 1, 1]);
   });
@@ -407,16 +455,16 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
 
     gl.calls = [];
-    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.2 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.2 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
     expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
 
     gl.calls = [];
-    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.8 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-white', progress: 0.8 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
     expect(gl.lastUniform('u_dipColor')).toEqual([1, 1, 1]);
 
     // And back again — proves it's not a one-shot/first-call coincidence.
     gl.calls = [];
-    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.6 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.6 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
     expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
   });
 
@@ -425,7 +473,7 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.75 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.75 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
     expect(gl.lastUniform('u_progress')).toEqual([0.75]);
     // cross-dissolve/light-leak share no dip-color uniform.
@@ -437,20 +485,33 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.4 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.4 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
     expect(gl.lastUniform('u_progress')).toEqual([0.4]);
     expect(gl.lastUniform('u_dipColor')).toBeUndefined();
   });
 
-  it('u_scale is wired directly from CompositeParams.animScale (no re-derivation at render time)', () => {
+  it('no-transition zoom: u_scale is wired directly from CompositeParams.animScaleA (no re-derivation at render time)', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
 
-    compositor.renderFrame({ transition: null, animScale: 1.37, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: null, animScaleA: 1.37, animScaleB: 1, grade: NEUTRAL_GRADE });
 
     expect(gl.lastUniform('u_scale')).toEqual([1.37]);
+  });
+
+  it('per-layer zoom (Bug 2 fix): during a transition, slot A prep wires u_scale=animScaleA and slot B prep wires u_scale=animScaleB — two independent scales in prep order, not one shared scalar applied after the blend', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+    gl.uniformCalls = [];
+
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1.2, animScaleB: 1.4, grade: NEUTRAL_GRADE });
+
+    // renderTransition preps slot A then slot B — exactly two zoom passes, each
+    // carrying its own layer's scale, applied BEFORE the blend.
+    expect(gl.allUniform('u_scale').map((a) => a[0])).toEqual([1.2, 1.4]);
   });
 
   it('grade uniforms are wired directly from GradeParams fields', () => {
@@ -460,7 +521,8 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
 
     compositor.renderFrame({
       transition: null,
-      animScale: 1,
+      animScaleA: 1,
+      animScaleB: 1,
       grade: { brightness: 0.3, contrast: -0.2, saturation: 0.1, temperature: 0.4 },
     });
 
@@ -474,80 +536,97 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
 describe('GlCompositor — object-cover UV-crop uniform wiring (u_texRectA/u_texRectB)', () => {
   /**
    * WKWebView performance-fix follow-up (docs/webgl-architecture-plan.md
-   * Section 7's [CORRECTED] object-cover row): the CPU-canvas pre-fit step
-   * that used to apply object-cover before upload measured 36-58ms/frame on
-   * WKWebView (~1800-2900x slower than a direct upload) and was removed;
-   * object-cover is now a UV-crop uniform the 4 drawStage1 programs apply
-   * themselves. These are wiring tests, not pixel tests — same "prove the
-   * right value reaches the right uniform" discipline as the dip-color/
-   * u_scale/grade tests above, not a re-proof that the crop math itself
-   * renders correctly (that's the real-WKWebView readPixels confirmation).
+   * Section 7's [CORRECTED] object-cover row): object-cover is a UV-crop
+   * uniform the shader applies, not a CPU-canvas pre-fit. Under the Bug 2
+   * per-layer pass order the crop is applied in the per-slot PREP pass (blit),
+   * NOT in the transition programs — those now sample the already-cropped
+   * rtA/rtB and so are fed IDENTITY rects. blit is slot-agnostic (it only has
+   * a u_texRectA uniform), so slot A's and slot B's crops both travel through
+   * u_texRectA on their respective prep passes, in prep order. These are
+   * wiring tests, not pixel tests — same discipline as the dip-color/u_scale/
+   * grade tests above.
    */
 
-  it('identity default: uploadFrame with no explicit rect wires u_texRectA = [0,0,1,1] on the blit program', () => {
+  it('identity default: uploadFrame with no explicit rect wires u_texRectA = [0,0,1,1] on the blit prep pass', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource); // no rect arg — identity default
     gl.calls = [];
+    gl.uniformCalls = [];
 
-    compositor.renderFrame(neutralParams); // no transition -> blit only, samples texRectA
+    compositor.renderFrame(neutralParams); // no transition -> single blit, samples texRectA
 
     expect(gl.lastUniform('u_texRectA')).toEqual([0, 0, 1, 1]);
   });
 
-  it('blit wires an explicit crop rect for slot A', () => {
+  it('the blit prep pass wires an explicit crop rect for slot A', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0.2, uScale: 0.5, vScale: 0.6 });
     gl.calls = [];
+    gl.uniformCalls = [];
 
     compositor.renderFrame(neutralParams);
 
     expect(gl.lastUniform('u_texRectA')).toEqual([0.1, 0.2, 0.5, 0.6]);
   });
 
-  it('cross-dissolve wires DISTINCT rects for A and B, not confused/swapped — the outgoing (A) and incoming (B) segments during a real transition will usually have different source dimensions, so a swap would crop the wrong content into the wrong slot', () => {
+  it('cross-dissolve: each slot\'s crop is applied in its own prep pass (slot A then slot B, both via blit\'s u_texRectA), and the transition-blend pass feeds IDENTITY rects (it samples already-cropped rtA/rtB) — a swap would crop the wrong content into the wrong slot', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource, { uOffset: 0.25, vOffset: 0, uScale: 0.5, vScale: 1 });
     compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0.1, uScale: 1, vScale: 0.8 });
     gl.calls = [];
+    gl.uniformCalls = [];
 
-    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    expect(gl.lastUniform('u_texRectA')).toEqual([0.25, 0, 0.5, 1]);
-    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0.1, 1, 0.8]);
+    const texRectA = gl.allUniform('u_texRectA');
+    // prep blit A (slot A crop), prep blit B (slot B crop), then blend (identity)
+    expect(texRectA[0]).toEqual([0.25, 0, 0.5, 1]); // slot A, prep pass
+    expect(texRectA[1]).toEqual([0, 0.1, 1, 0.8]);  // slot B, prep pass
+    expect(texRectA[texRectA.length - 1]).toEqual([0, 0, 1, 1]); // transition-blend feeds identity
+    // u_texRectB is only ever set by the transition-blend pass, now identity.
+    expect(gl.allUniform('u_texRectB')).toEqual([[0, 0, 1, 1]]);
   });
 
-  it('dip wires DISTINCT rects for A and B (same non-confusion property as cross-dissolve, exercised on the dip program specifically)', () => {
+  it('dip: same per-slot prep crop + identity-at-blend property, exercised on the dip program specifically (and u_dipColor still wired)', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0, uScale: 0.8, vScale: 1 });
     compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0.05, uScale: 1, vScale: 0.9 });
     gl.calls = [];
+    gl.uniformCalls = [];
 
-    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'dip-black', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    expect(gl.lastUniform('u_texRectA')).toEqual([0.1, 0, 0.8, 1]);
-    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0.05, 1, 0.9]);
-    // u_dipColor wiring (pre-existing behavior) is unaffected by the new uniform.
+    const texRectA = gl.allUniform('u_texRectA');
+    expect(texRectA[0]).toEqual([0.1, 0, 0.8, 1]);   // slot A prep
+    expect(texRectA[1]).toEqual([0, 0.05, 1, 0.9]);  // slot B prep
+    expect(texRectA[texRectA.length - 1]).toEqual([0, 0, 1, 1]); // blend identity
+    expect(gl.allUniform('u_texRectB')).toEqual([[0, 0, 1, 1]]);
+    // u_dipColor wiring (pre-existing behavior) is unaffected by the crop relocation.
     expect(gl.lastUniform('u_dipColor')).toEqual([0, 0, 0]);
   });
 
-  it('light-leak wires DISTINCT rects for A and B, same as the other 3 stage-1 programs', () => {
+  it('light-leak: same per-slot prep crop + identity-at-blend property as the other stage programs', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource, { uOffset: 0.2, vOffset: 0, uScale: 0.6, vScale: 1 });
     compositor.uploadFrame('b', fakeSource, { uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 });
     gl.calls = [];
+    gl.uniformCalls = [];
 
-    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.5 }, animScale: 1, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: { type: 'light-leak', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
 
-    expect(gl.lastUniform('u_texRectA')).toEqual([0.2, 0, 0.6, 1]);
-    expect(gl.lastUniform('u_texRectB')).toEqual([0, 0, 1, 1]);
+    const texRectA = gl.allUniform('u_texRectA');
+    expect(texRectA[0]).toEqual([0.2, 0, 0.6, 1]); // slot A prep
+    expect(texRectA[1]).toEqual([0, 0, 1, 1]);     // slot B prep (identity crop, but still a real prep-pass wiring)
+    expect(texRectA[texRectA.length - 1]).toEqual([0, 0, 1, 1]); // blend identity
+    expect(gl.allUniform('u_texRectB')).toEqual([[0, 0, 1, 1]]);
   });
 
-  it('zoom and grade never receive a u_texRectA/u_texRectB uniform call — confirmed via total uniform4f call count during a full 3-draw chain (transition+zoom+grade), not just by omission', () => {
+  it('zoom and grade never receive a u_texRectA/u_texRectB uniform call — during a full transition+zoom+grade chain the only texRect calls come from the two prep blits (u_texRectA) and the single blend (u_texRectA + u_texRectB): exactly 4, none from zoom/grade', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     compositor.uploadFrame('a', fakeSource, { uOffset: 0.1, vOffset: 0.1, uScale: 0.8, vScale: 0.8 });
@@ -557,17 +636,17 @@ describe('GlCompositor — object-cover UV-crop uniform wiring (u_texRectA/u_tex
 
     compositor.renderFrame({
       transition: { type: 'dip-black', progress: 0.3 },
-      animScale: 1.1,
+      animScaleA: 1.1,
+      animScaleB: 1.2,
       grade: { brightness: 0.2, contrast: 0, saturation: 0, temperature: 0 },
     });
 
-    // dip (stage1) wires exactly 2 vec4 uniforms (u_texRectA, u_texRectB);
-    // zoom/grade's programs have no uTexRectA/uTexRectB fields at all (see
-    // ZoomProgram/GradeProgram — no getUniformLocation call for either name),
-    // so the total uniform4f call count across the whole 3-draw chain must
-    // be exactly 2, not 4 or 6 — proving zoom/grade contribute none.
+    // prep blit A: u_texRectA (1); prep blit B: u_texRectA (1); blend:
+    // u_texRectA + u_texRectB (2). zoom/grade programs have no texRect uniform
+    // fields at all (see ZoomProgram/GradeProgram), so the total is exactly 4 —
+    // any contribution from zoom/grade would push it above 4.
     const texRectCalls = gl.uniformCalls.filter((c) => c.name === 'u_texRectA' || c.name === 'u_texRectB');
-    expect(texRectCalls).toHaveLength(2);
+    expect(texRectCalls).toHaveLength(4);
   });
 });
 
@@ -588,7 +667,7 @@ describe('GlCompositor — context-loss recreate', () => {
   it('after a restore, a render-target-needing renderFrame allocates fresh targets rather than reusing stale (now-invalid) ones', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    const zoomParams: CompositeParams = { transition: null, animScale: 1.3, grade: NEUTRAL_GRADE };
+    const zoomParams: CompositeParams = { transition: null, animScaleA: 1.3, animScaleB: 1, grade: NEUTRAL_GRADE };
 
     // Allocate render targets once, pre-restore.
     compositor.renderFrame(zoomParams);
@@ -605,8 +684,8 @@ describe('GlCompositor — context-loss recreate', () => {
   });
 });
 
-describe('GlCompositor — vertex-shader flip correction (Phase 2 Step 1 regression)', () => {
-  it('drawStage1 programs (blit/cross-dissolve/dip/light-leak) use the flipped vertex shader; zoom/grade use the straight one', () => {
+describe('GlCompositor — vertex-shader flip parity (Bug 2 per-layer reassignment)', () => {
+  it('the ONLY program that samples a raw upload (blit) uses the flipped vertex shader; every program that samples a RENDER TARGET (transition-blend/zoom/grade) uses the straight one — exactly one net flip, now located at the per-slot prep entry', () => {
     const gl = makeGl();
     new GlCompositor(gl as unknown as WebGL2RenderingContext);
 
@@ -615,21 +694,33 @@ describe('GlCompositor — vertex-shader flip correction (Phase 2 Step 1 regress
     // vertex-shader source in that same order.
     const [blitVS, crossDissolveVS, dipVS, lightLeakVS, zoomVS, gradeVS] = gl.vertexShaderSourcesByProgram;
 
-    // These sample texA/texB directly (raw VideoFrame/ImageBitmap uploads) — need the flip.
+    // blit samples raw texA/texB (VideoFrame/ImageBitmap uploads) in the
+    // per-slot prep pass — it carries the single Y-flip.
     expect(blitVS).toBe(VERTEX_SHADER_SOURCE);
-    expect(crossDissolveVS).toBe(VERTEX_SHADER_SOURCE);
-    expect(dipVS).toBe(VERTEX_SHADER_SOURCE);
-    expect(lightLeakVS).toBe(VERTEX_SHADER_SOURCE);
 
-    // zoom/grade only ever sample a render-target texture in this
-    // compositor's call graph (renderFrame always routes them through
-    // rt0/rt1) — must NOT re-apply the flip, or the chain double-flips.
-    // This is exactly the bug the Phase 2 Step 1 real-GPU smoke test found:
-    // every 2-draw zoom-only/grade-only chain rendered upside-down.
+    // The transition programs now sample the ALREADY-PREPPED rtA/rtB render
+    // targets (not raw uploads), so they must use the STRAIGHT vertex shader.
+    // Pre-Bug-2 they sampled raw uploads and used the flipped shader; behind
+    // the per-slot prep, re-flipping an FBO-sourced sample would double-flip
+    // (the Phase 2 Step 1 real-GPU failure class). This is the critical
+    // flip-parity reassignment — it must be STRAIGHT, definitely not flipped.
+    expect(crossDissolveVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
+    expect(dipVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
+    expect(lightLeakVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
+    expect(crossDissolveVS).not.toBe(VERTEX_SHADER_SOURCE);
+    expect(dipVS).not.toBe(VERTEX_SHADER_SOURCE);
+    expect(lightLeakVS).not.toBe(VERTEX_SHADER_SOURCE);
+
+    // zoom/grade sample render targets — straight, unchanged from Phase 2 Step 1.
     expect(zoomVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
     expect(gradeVS).toBe(VERTEX_SHADER_SOURCE_STRAIGHT);
-    expect(zoomVS).not.toBe(VERTEX_SHADER_SOURCE);
-    expect(gradeVS).not.toBe(VERTEX_SHADER_SOURCE);
+
+    // Net flip count across all 6 programs must be exactly one (blit) — the
+    // single flip from top-left-origin upload orientation to display.
+    const flippedCount = gl.vertexShaderSourcesByProgram.filter((s) => s === VERTEX_SHADER_SOURCE).length;
+    expect(flippedCount).toBe(1);
+    const straightCount = gl.vertexShaderSourcesByProgram.filter((s) => s === VERTEX_SHADER_SOURCE_STRAIGHT).length;
+    expect(straightCount).toBe(5);
   });
 });
 
@@ -648,15 +739,27 @@ describe('GlCompositor — dispose', () => {
     expect(gl.calls.filter((c) => c === 'deleteVertexArray')).toHaveLength(1);
   });
 
-  it('also deletes the render-target textures/framebuffers when they were allocated', () => {
+  it('also deletes the two render-target textures/framebuffers allocated by a single-slot render', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
-    compositor.renderFrame({ transition: null, animScale: 1.3, grade: NEUTRAL_GRADE });
+    compositor.renderFrame({ transition: null, animScaleA: 1.3, animScaleB: 1, grade: NEUTRAL_GRADE });
     gl.calls = [];
 
     compositor.dispose();
 
     expect(gl.calls.filter((c) => c === 'deleteTexture')).toHaveLength(4); // texA, texB, rt0, rt1
     expect(gl.calls.filter((c) => c === 'deleteFramebuffer')).toHaveLength(2);
+  });
+
+  it('deletes all THREE render targets when a transition allocated the 3rd', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.renderFrame({ transition: { type: 'cross-dissolve', progress: 0.5 }, animScaleA: 1, animScaleB: 1, grade: NEUTRAL_GRADE });
+    gl.calls = [];
+
+    compositor.dispose();
+
+    expect(gl.calls.filter((c) => c === 'deleteTexture')).toHaveLength(5); // texA, texB, rt0, rt1, rt2
+    expect(gl.calls.filter((c) => c === 'deleteFramebuffer')).toHaveLength(3);
   });
 });

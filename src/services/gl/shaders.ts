@@ -172,7 +172,7 @@ void main() {
   vec2 uvB = v_uv * u_texRectB.zw + u_texRectB.xy;
   vec3 base = mix(texture(u_texA, uvA).rgb, texture(u_texB, uvB).rgb, u_progress);
   float strength = u_progress * (1.0 - u_progress) * 4.0;
-  vec2 center = vec2(0.75, 0.25);
+  vec2 center = vec2(0.75, 0.75); // Y flipped from 0.25 for the straight-VS orientation (Bug 2) — keeps the leak visually top-right
   float d = distance(v_uv, center); // raw v_uv — bloom stays anchored to the visible frame
   vec3 leak = vec3(1.0, 0.85, 0.6) * smoothstep(0.9, 0.0, d) * strength;
   // Screen blend: 1 - (1-base)*(1-leak).

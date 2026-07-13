@@ -37,7 +37,8 @@ describe('deriveCompositeParams — ordinary mid-segment time', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10 })];
     const result = deriveCompositeParams(segments, 5, baseConfig);
     expect(result.transition).toBeNull();
-    expect(result.animScale).toBe(1);
+    expect(result.animScaleA).toBe(1);
+    expect(result.animScaleB).toBe(1);
     expect(result.grade).toEqual(NEUTRAL_GRADE);
   });
 
@@ -45,7 +46,8 @@ describe('deriveCompositeParams — ordinary mid-segment time', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 5 })];
     const result = deriveCompositeParams(segments, 99, baseConfig);
     expect(result.transition).toBeNull();
-    expect(result.animScale).toBe(1);
+    expect(result.animScaleA).toBe(1);
+    expect(result.animScaleB).toBe(1);
   });
 });
 
@@ -242,49 +244,55 @@ describe('deriveCompositeParams — 50/50 centering (transition-centering fix)',
   });
 });
 
-describe('deriveCompositeParams — zoom animScale', () => {
+describe('deriveCompositeParams — zoom animScaleA (single-segment, no active transition)', () => {
+  // With no active transition, slot A carries the containing segment's zoom
+  // (animScaleA) and slot B is unused (animScaleB === 1). These tests pin the
+  // slot-A scale; the per-layer transition behavior is covered by the
+  // continuity describe block below.
   it('zoom-in scale is exactly 1.0 at segment start (t=0)', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
     const result = deriveCompositeParams(segments, 0, baseConfig);
-    expect(result.animScale).toBeCloseTo(1.0, 6);
+    expect(result.animScaleA).toBeCloseTo(1.0, 6);
+    expect(result.animScaleB).toBe(1);
   });
 
   it('zoom-in scale approaches 1.0 + 0.05*duration as currentTime approaches segment end (half-open [start, start+duration) window, matching findContainingSegment/transitionResolver convention — exactly at the boundary belongs to the next segment, not this one)', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
     const result = deriveCompositeParams(segments, 10 - 1e-6, baseConfig);
-    expect(result.animScale).toBeCloseTo(1.5, 4);
+    expect(result.animScaleA).toBeCloseTo(1.5, 4);
   });
 
   it('zoom-in scale at the midpoint matches the 1.0 + 0.05*t formula exactly', () => {
     const segments = [makeSegment({ id: 'a', startTime: 2, duration: 8, effectAnimation: 'zoom-in' })];
     const result = deriveCompositeParams(segments, 2 + 4, baseConfig); // timeInSegment = 4
-    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * 4, 6);
+    expect(result.animScaleA).toBeCloseTo(1.0 + 0.05 * 4, 6);
   });
 
   it('zoom-out starts at the end-scale a matching zoom-in would reach, and decreases toward 1.0', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-out' })];
     const atStart = deriveCompositeParams(segments, 0, baseConfig);
     const atEnd = deriveCompositeParams(segments, 10, baseConfig);
-    expect(atStart.animScale).toBeCloseTo(1.0 + 0.05 * 10, 6); // 1.5
-    expect(atEnd.animScale).toBeCloseTo(1.0, 6);
+    expect(atStart.animScaleA).toBeCloseTo(1.0 + 0.05 * 10, 6); // 1.5
+    expect(atEnd.animScaleA).toBeCloseTo(1.0, 6);
   });
 
   it('falls back to the legacy AnimationType enum when no effectAnimation slug is set', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, animation: AnimationType.ZOOM_IN })];
     const result = deriveCompositeParams(segments, 5, baseConfig);
-    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * 5, 6);
+    expect(result.animScaleA).toBeCloseTo(1.0 + 0.05 * 5, 6);
   });
 
   it('a non-zoom animation (in or out of the legacy enum) yields the neutral scale — out of scope for this engine', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, animation: AnimationType.KEN_BURNS })];
     const result = deriveCompositeParams(segments, 5, baseConfig);
-    expect(result.animScale).toBe(1);
+    expect(result.animScaleA).toBe(1);
   });
 
   it('a currentTime outside every segment (e.g. past the last segment\'s end) yields the neutral scale, not an extrapolated one — no containing segment means no animation to derive from', () => {
     const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
     const result = deriveCompositeParams(segments, 50, baseConfig); // way past end, no containing segment
-    expect(result.animScale).toBe(1);
+    expect(result.animScaleA).toBe(1);
+    expect(result.animScaleB).toBe(1);
   });
 });
 
@@ -320,12 +328,89 @@ describe('deriveCompositeParams — grade passthrough', () => {
       makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out' }),
     ];
     const grade = { brightness: 0, contrast: 0, saturation: 0.6, temperature: -0.3 };
-    // currentTime=5 is exactly the boundary (progress 0.5) AND bounds-inside
-    // 'b' (timeInSegment=0 for the zoom-out animScale calc below).
+    // currentTime=5 is exactly the boundary (progress 0.5). Per-layer: slot A
+    // (outgoing 'a', no animation) is neutral; slot B (incoming 'b', zoom-out)
+    // is at its own timeInSegment=0 start-scale. Pre-Bug-2 this test asserted a
+    // SINGLE animScale that had already flipped to 'b' at the boundary — now
+    // each layer carries its own scale, which is the whole point of the fix.
     const result = deriveCompositeParams(segments, 5, { ...baseConfig, grade });
     expect(result.transition).toEqual({ type: 'dip-white', progress: 0.5 });
-    expect(result.animScale).toBeCloseTo(1.0 + 0.05 * 5, 6); // zoom-out at timeInSegment=0 of a 5s segment (its start-scale)
+    expect(result.animScaleA).toBe(1); // outgoing 'a' has no animation
+    expect(result.animScaleB).toBeCloseTo(1.0 + 0.05 * 5, 6); // zoom-out at timeInSegment=0 of a 5s segment (its start-scale)
     expect(result.grade).toEqual(grade);
+  });
+});
+
+describe('deriveCompositeParams — per-layer zoom continuity across a transition (Bug 2 fix)', () => {
+  // The pre-Bug-2 single animScale was derived from the bounds-CONTAINING
+  // segment, which flips outgoing→incoming at transition progress 0.5, so the
+  // one scale snapped from the outgoing segment's accumulated zoom to the
+  // incoming segment's fresh zoom mid-blend (a visible pop, masked by opaque
+  // dips but plain through cross-dissolve/light-leak). animScaleA/animScaleB
+  // are each derived from their OWN segment's clock (clamped by
+  // resolveAnimScale to [0, duration]), so each layer's scale is continuous
+  // across the boundary.
+  //
+  // a[0,5) -> b[5,10), cross-dissolve duration 2 centered on the boundary at
+  // t=5 → window [4,6). Sampled just before/after the boundary.
+  function makeZoomAB(aAnim: 'zoom-in' | 'zoom-out', bAnim: 'zoom-in' | 'zoom-out'): VideoSegment[] {
+    return [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: aAnim }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: bAnim }),
+    ];
+  }
+
+  it('animScaleA follows the OUTGOING segment continuously and HOLDS at its end-scale past the boundary (does not reset)', () => {
+    const segs = makeZoomAB('zoom-in', 'zoom-out');
+    const before = deriveCompositeParams(segs, 5 - 1e-4, baseConfig);
+    const after = deriveCompositeParams(segs, 5 + 1e-4, baseConfig);
+    // 'a' zoom-in at t≈5 (clamped to its duration 5) = 1 + 0.05*5 = 1.25.
+    expect(before.animScaleA).toBeCloseTo(1.25, 3);
+    // Past the boundary, currentTime - a.startTime > a.duration, so
+    // resolveAnimScale clamps timeInSegment to a.duration → still 1.25.
+    expect(after.animScaleA).toBeCloseTo(1.25, 3);
+    // Continuity: the outgoing layer's scale barely changes across the boundary
+    // (no snap). Pre-fix, the single scale jumped here to 'b' instead.
+    expect(Math.abs(after.animScaleA - before.animScaleA)).toBeLessThan(1e-2);
+  });
+
+  it('animScaleB follows the INCOMING segment continuously and HOLDS at its start-scale before the boundary', () => {
+    const segs = makeZoomAB('zoom-in', 'zoom-out');
+    const before = deriveCompositeParams(segs, 5 - 1e-4, baseConfig);
+    const after = deriveCompositeParams(segs, 5 + 1e-4, baseConfig);
+    // 'b' zoom-out start-scale = 1 + 0.05*5 = 1.25. Before the boundary
+    // currentTime - b.startTime < 0 → clamped to 0 → still the start-scale.
+    expect(before.animScaleB).toBeCloseTo(1.25, 3);
+    expect(after.animScaleB).toBeCloseTo(1.25, 3);
+    expect(Math.abs(after.animScaleB - before.animScaleB)).toBeLessThan(1e-2);
+  });
+
+  it('the reverse pairing (zoom-out -> zoom-in) is likewise continuous per layer', () => {
+    const segs = makeZoomAB('zoom-out', 'zoom-in');
+    const before = deriveCompositeParams(segs, 5 - 1e-4, baseConfig);
+    const after = deriveCompositeParams(segs, 5 + 1e-4, baseConfig);
+    // 'a' zoom-out at its end (t=5) = (1 + 0.05*5) - 0.05*5 = 1.0; held after.
+    expect(before.animScaleA).toBeCloseTo(1.0, 3);
+    expect(after.animScaleA).toBeCloseTo(1.0, 3);
+    // 'b' zoom-in at its start (t=0) = 1.0; held before.
+    expect(before.animScaleB).toBeCloseTo(1.0, 3);
+    expect(after.animScaleB).toBeCloseTo(1.0, 3);
+  });
+
+  it('the outgoing layer keeps its accumulated zoom while the incoming layer with no zoom stays neutral — the two never bleed onto each other (the exact pop the old single-scalar model produced)', () => {
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 10, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: 'zoom-in' }),
+      makeSegment({ id: 'b', startTime: 10, duration: 5 }), // no zoom on the incoming segment
+    ];
+    // window [9,11); boundary 10. Half a second PAST the boundary.
+    const after = deriveCompositeParams(segments, 10 + 0.5, baseConfig);
+    // Outgoing 'a' zoom-in clamped at its duration 10 = 1 + 0.05*10 = 1.5 — it
+    // keeps its accumulated zoom instead of snapping to the incoming segment.
+    expect(after.animScaleA).toBeCloseTo(1.5, 3);
+    // Incoming 'b' has no zoom — its own layer is neutral. Pre-fix, the single
+    // scale would have already popped to 1.0 here (incoming's fresh scale),
+    // rescaling the whole blended composite at once.
+    expect(after.animScaleB).toBe(1);
   });
 });
 

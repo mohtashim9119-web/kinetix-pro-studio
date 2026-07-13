@@ -59,10 +59,29 @@ export interface TransitionParams {
 export interface CompositeParams {
   /** null when no GL-scoped transition is active this tick. */
   transition: TransitionParams | null;
-  /** 1.0 = no zoom. Already the final resolved scale factor (see
-   *  resolveAnimScale below) — glCompositor.ts's zoom pass consumes this
-   *  directly as `u_scale`, no further derivation needed at render time. */
-  animScale: number;
+  /**
+   * Zoom scale for texture slot A — the OUTGOING segment during an active
+   * transition, or the single containing segment when no transition is
+   * active. 1.0 = no zoom. Already the final resolved scale factor (see
+   * resolveAnimScale below); glCompositor.ts's per-slot prep pass consumes
+   * this directly as `u_scale` for slot A, no further derivation at render
+   * time.
+   *
+   * Split from the pre-Bug-2 single `animScale` field: one scalar applied to
+   * the ALREADY-BLENDED A/B composite was discontinuous at transition
+   * progress 0.5 (the containing segment flips there, so the one scale
+   * snapped from the outgoing segment's accumulated zoom to the incoming
+   * segment's fresh zoom mid-blend — a visible pop). Deriving a scale per
+   * slot from each segment's OWN clock, applied BEFORE the blend, makes each
+   * layer's zoom continuous across the boundary.
+   */
+  animScaleA: number;
+  /**
+   * Zoom scale for texture slot B — the INCOMING segment during an active
+   * transition. 1.0 (unused) whenever no transition is active (slot B is not
+   * drawn then). See animScaleA for the full rationale.
+   */
+  animScaleB: number;
   grade: GradeParams;
 }
 
@@ -214,17 +233,34 @@ export function deriveCompositeParams(
   const containingSeg = findContainingSegment(segments, currentTime);
   const boundary = resolveActiveBoundary(segments, currentTime, config);
 
-  const animScale = containingSeg
-    ? resolveAnimScale(
-        resolveEffectiveAnimation(containingSeg),
-        currentTime - containingSeg.startTime,
-        containingSeg.duration,
-      )
-    : 1;
+  // Per-slot zoom: each scale is derived from its OWN segment's clock, so it
+  // stays continuous across the transition boundary (resolveAnimScale clamps
+  // timeInSegment to [0, duration], so the outgoing layer HOLDS at its
+  // end-scale past the boundary and the incoming layer holds at its
+  // start-scale before it — no mid-blend snap). See CompositeParams's
+  // animScaleA/animScaleB docs for why the pre-Bug-2 single-scalar model
+  // popped at progress 0.5.
+  const scaleFor = (seg: VideoSegment): number =>
+    resolveAnimScale(resolveEffectiveAnimation(seg), currentTime - seg.startTime, seg.duration);
+
+  let animScaleA: number;
+  let animScaleB: number;
+  if (boundary) {
+    // Slot A = outgoing, slot B = incoming (matching deriveSlotPlan's a/b
+    // assignment) — each zoomed by its own segment before they are blended.
+    animScaleA = scaleFor(boundary.outgoing);
+    animScaleB = scaleFor(boundary.incoming);
+  } else {
+    // No transition: only slot A is drawn (the containing segment); slot B is
+    // unused, so its scale is a neutral 1.
+    animScaleA = containingSeg ? scaleFor(containingSeg) : 1;
+    animScaleB = 1;
+  }
 
   return {
     transition: boundary ? { type: boundary.type, progress: boundary.progress } : null,
-    animScale,
+    animScaleA,
+    animScaleB,
     grade: config.grade ?? NEUTRAL_GRADE,
   };
 }
