@@ -248,6 +248,57 @@ describe('VideoDecoderPool', () => {
     expect(MockVideoDecoder.instances).toHaveLength(1);
   });
 
+  it('does not poison the session cache when startSession rejects — a later ensureSession call for the same segment retries fresh instead of reusing the failed promise', async () => {
+    // Regression test for the cold-start black-screen bug: a genuinely cold
+    // process can throw on the FIRST-ever handle.decoder.configure() call
+    // (e.g. a hardware VideoDecoder/GPU-negotiation race with WebGL2 context
+    // creation) — this simulates that with a decoder whose configure()
+    // throws exactly once, then succeeds on every later call, mirroring how
+    // a warm reopen (same process, GPU/media service already negotiated)
+    // succeeds where a cold one didn't.
+    const demuxed = makeDemuxed([0, 33_333]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    let configureAttempts = 0;
+    class ThrowOnceVideoDecoder extends MockVideoDecoder {
+      override configure(config: unknown): void {
+        configureAttempts++;
+        if (configureAttempts === 1) {
+          throw new Error('cold-start configure() failure (simulated)');
+        }
+        super.configure(config);
+      }
+    }
+    vi.stubGlobal('VideoDecoder', ThrowOnceVideoDecoder);
+
+    const pool = new VideoDecoderPool();
+
+    // First attempt: configure() throws — THIS call must surface the
+    // rejection (callers still see the failure on the attempt that made it).
+    await expect(pool.ensureSession('seg1', 'blob:v1', 0, 0.05)).rejects.toThrow(
+      'cold-start configure() failure',
+    );
+
+    // getFrameAt for the now-failed segment must resolve cleanly to null —
+    // not hang, and not reject with the stale configure() error. Pre-fix,
+    // the poisoned session stayed cached (not closed), so getFrameAt's
+    // unguarded `await session.ready` would itself reject here instead of
+    // resolving null.
+    await expect(pool.getFrameAt('seg1', 0)).resolves.toBeNull();
+
+    // Second ensureSession call for the SAME segment/asset/range — the crux
+    // of the fix. Pre-fix, the cache-hit branch would return the SAME
+    // rejected promise (configure() never retried, configureAttempts stuck
+    // at 1) forever. Post-fix, the failed session was evicted from the
+    // cache, so this triggers a genuinely fresh startSession() attempt,
+    // which succeeds this time.
+    await expect(pool.ensureSession('seg1', 'blob:v1', 0, 0.05)).resolves.toBeUndefined();
+    expect(configureAttempts).toBe(2);
+
+    const frame = await pool.getFrameAt('seg1', 0.04);
+    expect(frame?.timestamp).toBe(33_333);
+  });
+
   it('starting a new session for the same segmentId with a different range replaces the old one, reusing its decoder (Phase 4+6 decoder reuse)', async () => {
     const demuxed = makeDemuxed([0, 33_333, 66_667]);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);

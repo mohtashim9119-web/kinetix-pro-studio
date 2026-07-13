@@ -287,7 +287,22 @@ export class VideoDecoderPool {
       closed: false,
       waiters: [],
     };
-    session.ready = this.startSession(session, assetUrl, endSec, initialTargetSec);
+    session.ready = this.startSession(session, assetUrl, endSec, initialTargetSec).catch((err) => {
+      // Don't poison the session cache with a failed startSession — allow a
+      // later ensureSession call for this segment to retry fresh instead of
+      // permanently returning this same rejected promise on every
+      // subsequent cache-hit (mirrors getOrCreateDemux's identical fix in
+      // videoDemuxer.ts — see that function's comment for the rationale).
+      // Only remove the entry if it's still THIS session — a later
+      // ensureSession call for a different range may have already replaced
+      // (and closed) it by the time this rejection settles, and that
+      // newer session must not be evicted out from under itself.
+      if (this.sessions.get(segmentId) === session) {
+        this.sessions.delete(segmentId);
+        this.lastAccess.delete(segmentId);
+      }
+      throw err;
+    });
     this.sessions.set(segmentId, session);
     this.touch(segmentId);
     this.enforceBudget();
