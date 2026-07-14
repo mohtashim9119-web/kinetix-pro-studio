@@ -5,6 +5,12 @@ export interface TauriBackend {
   ffmpeg: FfmpegLike;
   /** Deletes the session temp dir. Idempotent — safe to call multiple times. */
   dispose: () => Promise<void>;
+  /**
+   * Copies a finished file (e.g. `export_final.mp4`) from the session temp dir
+   * straight to `destPath` on disk, without routing the bytes through the
+   * renderer. Must be called before dispose() removes the session dir.
+   */
+  saveOutputToDisk: (fileName: string, destPath: string) => Promise<void>;
 }
 
 /**
@@ -21,5 +27,6 @@ export async function createTauriBackend(): Promise<TauriBackend> {
   return {
     ffmpeg,
     dispose: () => ffmpeg.destroy(),
+    saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
   };
 }

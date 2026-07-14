@@ -6,7 +6,7 @@ import {
   type ExportStage,
 } from '../services/exportPipeline';
 import { type Project } from '../types';
-import { isTauri, bytesToBase64 } from '../services/tauriFfmpeg';
+import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
 
 export type ExportResolution = '1080p' | '4k';
@@ -155,9 +155,8 @@ export function useExport(
     // check its result would overwrite the 'cancelled' error state.
     if (generationRef.current !== gen) return;
 
-    await teardown();
-
     if (!result.ok) {
+      await teardown();
       setState(prev => ({
         ...prev,
         isExporting: false,
@@ -166,13 +165,33 @@ export function useExport(
       return;
     }
 
-    // Write to the path the user already chose before rendering started.
-    // No dialog here — save dialog ran in startExport before any render work.
-    const bytes = new Uint8Array(await result.blob.arrayBuffer());
-    await invoke('save_bytes_to_disk', {
-      path: savedPath,
-      dataB64: bytesToBase64(bytes),
-    });
+    // Copy the finished MP4 from the session temp dir straight to the path the
+    // user chose before rendering started (no dialog here — it ran in startExport
+    // before any render work). This runs BEFORE teardown (which deletes the
+    // session dir) and never pulls the file's bytes into the renderer: the old
+    // readFile → Blob → arrayBuffer → base64 → save_bytes_to_disk chain inflated
+    // the whole file ~5–6× in the WebView heap and crashed WebView2's OOM guard
+    // (STATUS_BREAKPOINT) on large exports.
+    const backend = tauriBackendRef.current;
+    try {
+      if (!backend) throw new Error('export backend was torn down before save');
+      await backend.saveOutputToDisk(result.outputFile, savedPath);
+    } catch (err) {
+      await teardown();
+      if (generationRef.current !== gen) return;
+      setState(prev => ({
+        ...prev,
+        isExporting: false,
+        error: {
+          kind: 'unknown',
+          message: 'Failed to save the exported file to disk.',
+          cause: err instanceof Error ? err.message : String(err),
+        },
+      }));
+      return;
+    }
+
+    await teardown();
     if (generationRef.current !== gen) return;
 
     setState({

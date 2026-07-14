@@ -270,27 +270,16 @@ export async function encodeSegment(
         for (let i = 0; i < totalFrames; i++) {
           if (firstError !== null) break;
 
-          // [timing] instrumentation only — no scheduling change. Strip later
-          // alongside the [export]/[encode] console logs.
-          const renderStart = performance.now();
           await renderFrameToCanvas(i);
           // Exact, non-premultiplied sRGB pixels — same bytes canvas.toBlob would
           // have PNG-encoded. Buffer is transferred (zero-copy) into the worker.
           const imageData = ctx.getImageData(0, 0, w, h);
-          const renderMs = performance.now() - renderStart;
-          const frameNo = i + 1;
           const filename = frameName(i);
           writtenFiles.push(filename);
 
           const job = (async () => {
             try {
-              // workerRoundtrip includes any time this frame waits for a busy
-              // worker, so it reflects wall time from dispatch to PNG-in-hand and
-              // overlaps the next frame's render happening on the main thread.
-              const workerStart = performance.now();
               const pngBytes = await pool.encode(imageData);
-              const workerMs = performance.now() - workerStart;
-              const writeStart = performance.now();
               // Prefer the raw-binary write (no base64 round-trip) when the ffmpeg
               // backend provides it; fall back to the base64 writeFile otherwise.
               // Same on-disk PNG, same frame_%05d filename — transport-only change.
@@ -299,11 +288,6 @@ export async function encodeSegment(
               } else {
                 await ffmpeg.writeFile(filename, pngBytes);
               }
-              const writeMs = performance.now() - writeStart;
-              console.log(
-                `[timing] frame ${frameNo}/${totalFrames} render=${renderMs.toFixed(1)}ms` +
-                ` workerRoundtrip=${workerMs.toFixed(1)}ms writeFile=${writeMs.toFixed(1)}ms`,
-              );
               completed++;
               options.onProgress?.(completed, totalFrames);
             } catch (err) {

@@ -67,6 +67,12 @@ src/
                      #   (no base64) to ffmpeg_write_file_raw; session id + path travel as headers.
                      #   Optional on FfmpegLike — segmentEncoder.ts prefers it when present, else uses
                      #   the base64 writeFile() path above.
+                     #   saveSessionFile(fileName, destPath) (2026-07-14) — invokes save_session_file
+                     #   to copy a finished session file straight to disk natively; the file's bytes
+                     #   NEVER enter the renderer. Replaces the readFile→Blob→arrayBuffer→base64→
+                     #   save_bytes_to_disk chain that inflated the whole MP4 ~5-6× in the WebView heap
+                     #   and crashed WebView2's OOM guard (STATUS_BREAKPOINT) on large exports. Exposed
+                     #   to useExport.ts via ffmpegBackend.ts's TauriBackend.saveOutputToDisk.
                      #   isTauri() guard — checks for window.__TAURI_INTERNALS__.
                      #   probeAudioDuration(blob) — native ffmpeg duration probe (invoke
                      #   'probe_audio_duration'); throws on failure. App.tsx's resolveVoiceoverDuration
@@ -112,8 +118,16 @@ src/
                      #   canvas/PNG/IPC pipeline and hand it to ffmpeg directly (one trim+encode for
                      #   video, one frame + -loop/-frames:v for images). Conservative by design —
                      #   anything not certain to be plain falls back to the canvas path.
-    exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4 Blob.
+    exportPipeline.ts # Orchestrates full export: encode segments → concat → mux audio → final MP4.
                      #   Returns ExportResult (never throws). ExportErrorKind: ffmpeg_load|encode|concat|mux|asset_missing|unknown.
+                     #   On success returns { ok:true, outputFile } — the session-relative name of the
+                     #   final MP4 (export_final.mp4), NOT its bytes/a Blob (changed 2026-07-14). The
+                     #   final file is deliberately left in the session temp dir (excluded from the
+                     #   intermediate-file cleanup) so the native save path (TauriFfmpeg.saveSessionFile)
+                     #   can copy it straight to disk; it's never read back over IPC. Reading it via
+                     #   ffmpeg_read_file (JSON number[], ~8× in the WebView heap) + Blob/base64 copies
+                     #   was the STATUS_BREAKPOINT OOM crash on large exports. ffmpeg.readFile is still
+                     #   used INTERNALLY for bounded per-segment reads (segmentEncoder.ts, untouched).
                      #   Routes each segment through plainSegment.ts's predicates first; plain
                      #   segments bypass frameRenderer.ts entirely (Tier 1 fast path).
     lookPresetService.ts # Combined-look effect presets (Effects Tab Rebuild Step 7): localStorage
@@ -129,7 +143,14 @@ src/
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
     useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
-                             #   calls exportProject(), invokes save_bytes_to_disk IPC for native save dialog.
+                             #   pick_save_path dialog runs BEFORE render; calls exportProject(), then on
+                             #   success copies the finished MP4 to the chosen path via
+                             #   TauriBackend.saveOutputToDisk (native save_session_file copy) — the file's
+                             #   bytes never enter the renderer (2026-07-14; replaced the old
+                             #   result.blob→arrayBuffer→base64→save_bytes_to_disk path that OOM-crashed
+                             #   WebView2 on large exports). The save copy runs BEFORE teardown() (which
+                             #   destroys the session dir); on save failure it tears down and surfaces an
+                             #   'unknown' ExportError.
                              #   ExportSnapshot for retry; generation counter guards stale callbacks.
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
     useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
@@ -191,12 +212,15 @@ src-tauri/
     default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (14 total: 11 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
+                     #   (16 total: 13 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
-    ffmpeg.rs        # 11 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
+    ffmpeg.rs        # 13 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
                      #   no base64 — added 2026-07-09, session id + path travel as request headers),
                      #   read_file, delete_file, exec (sidecar), destroy_session, pick_save_path,
-                     #   save_bytes_to_disk (rfd), probe_audio_duration, reveal_in_finder.
+                     #   save_bytes_to_disk (rfd), save_session_file (native fs::copy of a finished
+                     #   session file to a user path — no bytes through the renderer; added 2026-07-14
+                     #   to fix the large-export STATUS_BREAKPOINT OOM crash), probe_audio_duration,
+                     #   probe_video_fps, reveal_in_finder.
                      #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal
                      #   validation (write_file_raw validates the header-supplied path the same way
                      #   write_file does).
@@ -290,13 +314,18 @@ App.tsx handleExport()  [via useExport hook]
                     │
                     ├── if voiceover: ffmpeg mux audio (AAC 192k -shortest) → export_final.mp4
                     │
-                    └── IPC: ffmpeg_read_file → MP4 bytes → IPC: save_bytes_to_disk (rfd native save dialog)
-                          + IPC: ffmpeg_destroy_session (cleanup $TMPDIR session dir)
+                    │   exportProject returns { ok:true, outputFile:'export_final.mp4' } — the file
+                    │   is LEFT in the session dir (not read into renderer memory).
+                    │
+                    └── useExport.ts: IPC save_session_file → native fs::copy export_final.mp4 →
+                          user's chosen path (bytes never enter the renderer; save dialog already
+                          ran via pick_save_path before render). Then IPC ffmpeg_destroy_session
+                          (cleanup $TMPDIR session dir, incl. export_final.mp4).
 ```
 
 **Key types:**
 - `FfmpegLike` (in `segmentEncoder.ts`) — minimal interface: `writeFile`, `exec`, `readFile`, `deleteFile`, plus an optional `writeFileRaw` (2026-07-09). `TauriFfmpeg` satisfies this contract, including `writeFileRaw`.
-- `ExportResult = { ok: true; blob: Blob } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed.
+- `ExportResult = { ok: true; outputFile: string } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed. `outputFile` is the session-relative name of the final MP4 (left in the session dir), NOT its bytes — the native save path copies it to disk without pulling it into the renderer (2026-07-14 OOM-crash fix).
 - `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`.
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.

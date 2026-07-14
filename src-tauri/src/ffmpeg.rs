@@ -227,6 +227,34 @@ pub async fn save_bytes_to_disk(path: String, data_b64: String) -> Result<(), St
     fs::write(&path, &data).map_err(|e| format!("save_bytes_to_disk: {e}"))
 }
 
+/// Copies a finished file from a session directory straight to a user-chosen
+/// destination path, WITHOUT reading its bytes into a `Vec<u8>` for IPC.
+///
+/// This is the export save path. The old path read the final MP4 back through
+/// `ffmpeg_read_file` (`Vec<u8>` → JSON `number[]`, ~8× the file size in the
+/// WebView heap) and then re-serialized it via Blob → arrayBuffer → base64 →
+/// `save_bytes_to_disk` — a 5–6× memory pile-up that tripped WebView2's OOM guard
+/// (STATUS_BREAKPOINT) on large exports. Copying natively keeps the bytes out of
+/// the renderer entirely.
+///
+/// `file_name` is validated as a session-local filename (same rules as the other
+/// session commands); `dest_path` is the absolute path returned by
+/// `pick_save_path`. Uses `fs::copy` (not `rename`) so it works when `$TMPDIR`
+/// and the destination live on different volumes (common on Windows). The source
+/// is left in place for `ffmpeg_destroy_session` to reclaim.
+#[tauri::command]
+pub fn save_session_file(
+    session_id: String,
+    file_name: String,
+    dest_path: String,
+) -> Result<(), String> {
+    validate_path(&file_name)?;
+    let src = session_dir(&session_id)?.join(&file_name);
+    fs::copy(&src, &dest_path)
+        .map_err(|e| format!("save_session_file({} -> {}): {}", file_name, dest_path, e))?;
+    Ok(())
+}
+
 /// Extracts duration in seconds from ffmpeg's stderr `Duration: HH:MM:SS.ss`
 /// line. Returns None if the line is absent or unparseable (e.g. `Duration: N/A`
 /// for a stream with no known length) — callers surface a real error rather than

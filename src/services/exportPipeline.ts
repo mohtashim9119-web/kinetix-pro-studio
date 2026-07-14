@@ -14,7 +14,7 @@ export type ExportStage =
   | { type: 'loading_ffmpeg' }
   | { type: 'encoding_segment'; index: number; total: number; frame: number; totalFrames: number }
   | { type: 'muxing' }
-  | { type: 'done'; bytes: Uint8Array };
+  | { type: 'done' };
 
 export type ProgressCallback = (stage: ExportStage) => void;
 
@@ -35,7 +35,7 @@ export interface ExportError {
 }
 
 export type ExportResult =
-  | { ok: true; blob: Blob }
+  | { ok: true; outputFile: string }
   | { ok: false; error: ExportError };
 
 function causeString(err: unknown): string {
@@ -292,28 +292,21 @@ export async function exportProject(
     };
   }
 
-  // ── 4. Read output and clean up ──────────────────────────────────────────────
-  let mp4Bytes: Uint8Array;
-  try {
-    const fileData = await ffmpeg.readFile(outputFile);
-    mp4Bytes =
-      fileData instanceof Uint8Array
-        ? fileData
-        : new TextEncoder().encode(fileData as string);
-  } catch (err) {
-    return {
-      ok: false,
-      error: {
-        kind: 'unknown',
-        message: 'Failed to read the exported file from the ffmpeg virtual filesystem.',
-        cause: causeString(err),
-      },
-    };
-  }
+  // ── 4. Clean up intermediates; leave the final MP4 in the session dir ────────
+  // The final file is deliberately NOT read back into renderer memory. Reading it
+  // over IPC (ffmpeg_read_file) returns a JSON number[] (~8× the file size in the
+  // WebView heap), which the old save path then re-copied as a Uint8Array, a Blob,
+  // an arrayBuffer(), and a ~1.37× base64 string — a 5–6× pile-up that crashed
+  // WebView2's OOM guard (STATUS_BREAKPOINT) on large exports. Instead the native
+  // save path copies export_final.mp4 straight from the session temp dir to the
+  // user's chosen path (save_session_file), so its bytes never enter the renderer.
+  //
+  // `outputFile` is excluded from the cleanup below so it survives for that copy;
+  // the whole session dir (including it) is removed by ffmpeg_destroy_session on
+  // teardown.
+  const intermediates = allTempFiles.filter(f => f !== outputFile);
+  await Promise.allSettled(intermediates.map(f => ffmpeg.deleteFile(f)));
 
-  await Promise.allSettled(allTempFiles.map(f => ffmpeg.deleteFile(f)));
-
-  const blob = new Blob([mp4Bytes], { type: 'video/mp4' });
-  onProgress({ type: 'done', bytes: mp4Bytes });
-  return { ok: true, blob };
+  onProgress({ type: 'done' });
+  return { ok: true, outputFile };
 }

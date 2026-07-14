@@ -180,6 +180,28 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
+   * Copies a finished file (e.g. `export_final.mp4`) from this session's temp
+   * dir straight to `destPath` on disk via the native `save_session_file`
+   * command — the bytes never enter the renderer. Replaces the readFile → Blob
+   * → arrayBuffer → base64 → `save_bytes_to_disk` chain, which inflated the whole
+   * MP4 ~5–6× through the WebView heap and crashed WebView2's OOM guard
+   * (STATUS_BREAKPOINT) on large exports. Must be called before destroy() deletes
+   * the session dir.
+   */
+  async saveSessionFile(fileName: string, destPath: string): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('save_session_file', {
+        sessionId: this.#sessionId,
+        fileName,
+        destPath,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
    * Deletes the session directory. Should be called after every export
    * (success or failure). Safe to call multiple times.
    */
