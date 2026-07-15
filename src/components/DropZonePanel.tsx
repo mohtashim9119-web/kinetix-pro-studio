@@ -392,6 +392,12 @@ interface Props {
   // from. See App.tsx's activeGrade/activeGradeSegmentId derivation.
   activeGrade?: SegmentGrade;
   activeGradeSegmentId?: string;
+  // Duration of the active segment — drives the ANIMATIONS zoom-rate slider's
+  // per-segment max bound in EffectsPanel. See App.tsx's activeSegmentDuration.
+  activeSegmentDuration?: number;
+  // Stored zoom rate of the active segment — syncs the rate input's displayed
+  // value when the selection changes. See App.tsx's activeAnimationScaleRate.
+  activeAnimationScaleRate?: number;
   // Effects tab props
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -482,6 +488,8 @@ export function DropZonePanel({
   onGradeLive,
   activeGrade,
   activeGradeSegmentId,
+  activeSegmentDuration,
+  activeAnimationScaleRate,
   globalTransition,
   globalTransitionDuration,
   globalAnimation,
@@ -1615,6 +1623,8 @@ export function DropZonePanel({
               onGradeLive={onGradeLive}
               activeGrade={activeGrade}
               activeGradeSegmentId={activeGradeSegmentId}
+              activeSegmentDuration={activeSegmentDuration}
+              activeAnimationScaleRate={activeAnimationScaleRate}
               onPresetsChange={handleLookPresetsChange}
               projectName={projectName}
             />

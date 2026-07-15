@@ -2,6 +2,8 @@
 // Combined-look effect presets (transition + animation + overlay slugs + durations),
 // persisted in a dedicated localStorage store separate from presetService.ts.
 
+import { capRateForDuration } from './zoomScale';
+
 export interface LookPreset {
   id: string;
   name: string;
@@ -10,6 +12,12 @@ export interface LookPreset {
   animation: string;
   animationDur: number;
   overlay: string;
+  /** Per-second zoom rate captured when the preset's animation is a zoom slug
+   *  (zoom-in/zoom-out); undefined otherwise and on presets saved before this
+   *  field existed. ADDITIVE, OPTIONAL — no schema-version bump: old stored
+   *  presets (no scaleRate) parse fine as undefined, and older app builds
+   *  ignore the extra key. See resolvePresetScaleRate for how it's applied. */
+  scaleRate?: number;
 }
 
 export const MAX_LOOK_PRESETS = 20;
@@ -54,4 +62,19 @@ export function saveLookPreset(preset: LookPreset): LookPreset | null {
 export function deleteLookPreset(id: string): void {
   const existing = loadLookPresets();
   saveRaw(existing.filter(p => p.id !== id));
+}
+
+/**
+ * The effectAnimationScaleRate a preset should write onto a segment of the
+ * given duration when applied:
+ *  - preset carries a scaleRate → capped to the segment's own max
+ *    (capRateForDuration), so a long segment can't be driven past MAX_PEAK_SCALE;
+ *  - preset has no scaleRate (old preset, or a non-zoom animation) → undefined,
+ *    meaning "don't touch the segment's rate" so it keeps its current/default.
+ */
+export function resolvePresetScaleRate(
+  preset: Pick<LookPreset, 'scaleRate'>,
+  segmentDuration: number,
+): number | undefined {
+  return preset.scaleRate == null ? undefined : capRateForDuration(preset.scaleRate, segmentDuration);
 }

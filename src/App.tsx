@@ -76,6 +76,8 @@ import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
+import { capRateForDuration } from './services/zoomScale';
+import { resolvePresetScaleRate } from './services/lookPresetService';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -564,6 +566,7 @@ function preserveEffectFields(
       effectTransitionDuration: prev.effectTransitionDuration,
       effectAnimation: prev.effectAnimation,
       effectAnimationDuration: prev.effectAnimationDuration,
+      effectAnimationScaleRate: prev.effectAnimationScaleRate,
       effectOverlay: prev.effectOverlay,
       effectGrade: prev.effectGrade,
     };
@@ -1049,7 +1052,15 @@ export default function App() {
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             // Reset the legacy twin so a stale segment.animation can't compete
             // with the slug the renderer now reads (effectAnimation wins).
-            return { ...s, effectAnimation: e.value, effectAnimationDuration: e.duration, animation: AnimationType.NONE };
+            // The chosen zoom rate is capped PER SEGMENT so a long segment can't
+            // be driven past MAX_PEAK_SCALE (apply-to-all across mixed lengths).
+            // effectAnimationDuration is left untouched (legacy field).
+            return {
+              ...s,
+              effectAnimation: e.value,
+              effectAnimationScaleRate: capRateForDuration(e.scaleRate, s.duration),
+              animation: AnimationType.NONE,
+            };
           case 'overlay':
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             // Reset the legacy twin (segment.overlayFilter) for the same reason.
@@ -1080,12 +1091,17 @@ export default function App() {
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             // See the 'transition' case above — same legacy-field reset, now
             // extended to the animation + overlay legacy twins.
+            // A preset with a stored zoom rate writes it (capped to THIS
+            // segment's duration); a preset without one (old preset / non-zoom
+            // animation) leaves the segment's existing rate untouched.
+            const presetRate = resolvePresetScaleRate(e.preset, s.duration);
             return {
               ...s,
               effectTransition: e.preset.transition,
               effectTransitionDuration: e.preset.transitionDur,
               effectAnimation: e.preset.animation,
               effectAnimationDuration: e.preset.animationDur,
+              ...(presetRate !== undefined ? { effectAnimationScaleRate: presetRate } : {}),
               effectOverlay: e.preset.overlay,
               transition: TransitionType.NONE,
               animation: AnimationType.NONE,
@@ -1812,6 +1828,20 @@ export default function App() {
     return seg?.effectGrade ?? NEUTRAL_GRADE;
   }, [activeGradeSegmentId, project.segments]);
 
+  // Duration + stored zoom rate of the active segment (same resolution as
+  // activeGrade) — feed the ANIMATIONS zoom-rate control in EffectsPanel: the
+  // duration drives its per-segment max bound, the stored rate syncs its
+  // displayed value on selection change.
+  const activeSegmentDuration = useMemo<number | undefined>(() => {
+    const seg = activeGradeSegmentId ? project.segments.find(s => s.id === activeGradeSegmentId) : undefined;
+    return seg?.duration;
+  }, [activeGradeSegmentId, project.segments]);
+
+  const activeAnimationScaleRate = useMemo<number | undefined>(() => {
+    const seg = activeGradeSegmentId ? project.segments.find(s => s.id === activeGradeSegmentId) : undefined;
+    return seg?.effectAnimationScaleRate;
+  }, [activeGradeSegmentId, project.segments]);
+
   // Live grade preview — the active segment's effectGrade tracks the GRADE
   // sliders as they are dragged (EffectsPanel debounces the calls), so the
   // preview updates with no Apply click: useGlPreview's render effect already
@@ -2215,6 +2245,8 @@ export default function App() {
             onGradeLive={handleGradeLive}
             activeGrade={activeGrade}
             activeGradeSegmentId={activeGradeSegmentId}
+            activeSegmentDuration={activeSegmentDuration}
+            activeAnimationScaleRate={activeAnimationScaleRate}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
             globalAnimation={project.globalAnimation ?? 'none'}

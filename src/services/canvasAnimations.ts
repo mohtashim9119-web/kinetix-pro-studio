@@ -11,6 +11,7 @@
  */
 
 import { AnimationType } from '../types';
+import { computeZoomScale, DEFAULT_ZOOM_SCALE_RATE } from './zoomScale';
 
 /**
  * Explicit set of every AnimationType that has a non-default case in
@@ -90,6 +91,9 @@ export interface AnimationFrameInput {
   timeInSegment: number;
   /** Total segment duration in seconds. */
   segmentDuration: number;
+  /** Per-second zoom rate for ZOOM_IN/ZOOM_OUT (VideoSegment.effectAnimationScaleRate).
+   *  Undefined falls back to DEFAULT_ZOOM_SCALE_RATE. Ignored by every other case. */
+  scaleRate?: number;
   canvasWidth: number;
   canvasHeight: number;
 }
@@ -120,6 +124,7 @@ export function applySegmentAnimation(
   input: AnimationFrameInput,
 ): AnimationFrameResult {
   const { animation, timeInSegment: t, segmentDuration: dur, canvasWidth: w, canvasHeight: h } = input;
+  const zoomRate = input.scaleRate ?? DEFAULT_ZOOM_SCALE_RATE;
 
   switch (animation) {
     // ── Identity / Ken Burns ───────────────────────────────────────────────
@@ -140,8 +145,10 @@ export function applySegmentAnimation(
     }
 
     case AnimationType.ZOOM_IN: {
-      // 0.05/sec rate, matching the preview side (PreviewStage getAnimationWrapperProps).
-      const scale = 1.0 + 0.05 * t;
+      // Shared rate-based scale (services/zoomScale.ts) — identical math to the
+      // GL preview path (compositeParams.ts resolveAnimScale), keyed on the
+      // segment's own per-second rate.
+      const scale = computeZoomScale({ rate: zoomRate, duration: dur, elapsed: t, direction: 'in' });
       ctx.translate(w / 2, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);
@@ -149,9 +156,9 @@ export function applySegmentAnimation(
     }
 
     case AnimationType.ZOOM_OUT: {
-      // 0.05/sec rate; starts at the end-scale a matching zoom-in would reach.
-      const endScale = 1.0 + 0.05 * dur;
-      const scale = endScale - 0.05 * t;
+      // Shared rate-based scale; starts at the peak a matching zoom-in reaches
+      // and eases back to 1.0 (services/zoomScale.ts).
+      const scale = computeZoomScale({ rate: zoomRate, duration: dur, elapsed: t, direction: 'out' });
       ctx.translate(w / 2, h / 2);
       ctx.scale(scale, scale);
       ctx.translate(-w / 2, -h / 2);

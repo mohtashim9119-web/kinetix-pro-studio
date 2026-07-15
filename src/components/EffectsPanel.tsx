@@ -13,6 +13,13 @@ import {
   type EffectOption,
 } from "../effectsOptions";
 import type { SegmentGrade } from "../types";
+import {
+  DEFAULT_ZOOM_SCALE_RATE,
+  MIN_ZOOM_SCALE_RATE,
+  MAX_ZOOM_SCALE_RATE,
+  sliderMaxRate,
+  resolveRateInputSync,
+} from "../services/zoomScale";
 
 /* ============================================================
    Kinetix Pro Studio — Effects Panel
@@ -31,11 +38,14 @@ export interface Preset {
   animation: string;
   animationDur: number;
   overlay: string;
+  /** Per-second zoom rate, captured when animation is a zoom slug. Optional /
+   *  additive — mirrors LookPreset.scaleRate (old presets omit it). */
+  scaleRate?: number;
 }
 
 export type ApplyEvent =
   | { type: "transition"; scope: ApplyScope; value: string; duration: number }
-  | { type: "animation"; scope: ApplyScope; value: string; duration: number }
+  | { type: "animation"; scope: ApplyScope; value: string; scaleRate: number }
   | { type: "overlay"; scope: ApplyScope; value: string }
   | { type: "randomize-transitions"; pool: string[] }
   | { type: "randomize-animations"; pool: string[] }
@@ -96,6 +106,15 @@ export interface EffectsPanelProps {
    *  the sync effect distinguish "a different segment is now active" from
    *  "same segment, its stored grade changed value" (both should re-sync). */
   activeGradeSegmentId?: string;
+  /** Duration (seconds) of the active segment — the single selected segment if
+   *  exactly one is selected, else the playhead segment. Drives the ANIMATIONS
+   *  zoom-rate slider's per-segment max bound (computeMaxRate). Absent/0 =
+   *  no active segment → the slider is unbounded up to MAX_ZOOM_SCALE_RATE. */
+  activeSegmentDuration?: number;
+  /** Stored effectAnimationScaleRate of the active segment (undefined = unset).
+   *  The ANIMATIONS rate input syncs its displayed value FROM this when the
+   *  active segment changes (falling back to the default when unset). */
+  activeAnimationScaleRate?: number;
   /** Count of segments currently batch-selected (drives "Apply to selected (N)").
    *  Distinct from the per-block randomize `picks` Set. */
   selectedCount?: number;
@@ -290,6 +309,9 @@ function EffectSection({
   onValueChange,
   duration,
   onDurationChange,
+  rate,
+  onRateChange,
+  rateMax,
   picks,
   onTogglePick,
   onApply,
@@ -303,8 +325,14 @@ function EffectSection({
   noneValue?: string;
   value: string;
   onValueChange: (v: string) => void;
-  duration: string;
-  onDurationChange: (v: string) => void;
+  /** Duration-mode control (transitions). Present for kind="transition". */
+  duration?: string;
+  onDurationChange?: (v: string) => void;
+  /** Rate-mode control (animations — zoom scale rate/sec). Present for
+   *  kind="animation"; rateMax is computeMaxRate(activeSegmentDuration). */
+  rate?: string;
+  onRateChange?: (v: string) => void;
+  rateMax?: number;
   picks: Set<string>;
   onTogglePick: (name: string) => void;
   onApply?: (event: ApplyEvent) => void;
@@ -313,6 +341,14 @@ function EffectSection({
   const [open, setOpen] = useState(false);
   const isNone = noneValue != null && value === noneValue;
   const randType = kind === "transition" ? "randomize-transitions" : "randomize-animations";
+  const isRate = kind === "animation";
+
+  // Animation Apply emits a per-second scale rate; transition Apply emits a
+  // duration. Built explicitly per branch so each matches its ApplyEvent variant.
+  const makeApply = (scope: ApplyScope): ApplyEvent =>
+    isRate
+      ? { type: "animation", scope, value, scaleRate: parseFloat(rate ?? "") || DEFAULT_ZOOM_SCALE_RATE }
+      : { type: "transition", scope, value, duration: parseFloat(duration ?? "") || 0 };
 
   return (
     <section className={cls.box}>
@@ -321,25 +357,43 @@ function EffectSection({
       <div className="flex gap-2 mb-2.5">
         <SelectField className="flex-1" ariaLabel={`${title} effect`} value={value} onChange={onValueChange} options={options} />
         <div className="flex flex-col items-center">
-          <input
-            type="number"
-            min={0}
-            max={10}
-            step={0.1}
-            value={duration}
-            onChange={(e) => onDurationChange(e.target.value)}
-            aria-label={`${title} duration in seconds`}
-            className={cls.durInput}
-          />
-          <span className="text-[10px] text-[#6e6e76] mt-[3px] tracking-[0.04em]">SECONDS</span>
+          {isRate ? (
+            <>
+              <input
+                type="number"
+                min={MIN_ZOOM_SCALE_RATE}
+                max={rateMax ?? MAX_ZOOM_SCALE_RATE}
+                step={0.001}
+                value={rate ?? ""}
+                onChange={(e) => onRateChange?.(e.target.value)}
+                aria-label={`${title} zoom rate per second`}
+                className={cls.durInput}
+              />
+              <span className="text-[10px] text-[#6e6e76] mt-[3px] tracking-[0.04em]">RATE/S</span>
+            </>
+          ) : (
+            <>
+              <input
+                type="number"
+                min={0}
+                max={10}
+                step={0.1}
+                value={duration ?? ""}
+                onChange={(e) => onDurationChange?.(e.target.value)}
+                aria-label={`${title} duration in seconds`}
+                className={cls.durInput}
+              />
+              <span className="text-[10px] text-[#6e6e76] mt-[3px] tracking-[0.04em]">SECONDS</span>
+            </>
+          )}
         </div>
       </div>
 
       <ApplyPair
         isNone={isNone}
         selectedCount={selectedCount}
-        onSelected={() => onApply?.({ type: kind, scope: "selected", value, duration: parseFloat(duration) || 0 })}
-        onAll={() => onApply?.({ type: kind, scope: "all", value, duration: parseFloat(duration) || 0 })}
+        onSelected={() => onApply?.(makeApply("selected"))}
+        onAll={() => onApply?.(makeApply("all"))}
       />
 
       <div className={cls.divider} />
@@ -642,11 +696,46 @@ function GradeSection({
 
 /* ---------- Main panel ---------- */
 
-export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply, onAutoGrade, onGradeLive, activeGrade, activeGradeSegmentId, selectedCount = 0, projectName }: EffectsPanelProps) {
+export default function EffectsPanel({ initialPresets = [], onPresetsChange, onApply, onAutoGrade, onGradeLive, activeGrade, activeGradeSegmentId, activeSegmentDuration, activeAnimationScaleRate, selectedCount = 0, projectName }: EffectsPanelProps) {
   const [transition, setTransition] = useState(TRANSITIONS[0]!.value);
   const [transitionDur, setTransitionDur] = useState("0.5");
   const [animation, setAnimation] = useState(ANIMATIONS[0]!.value);
+  // Legacy: kept only so the look-preset round-trip (save/restore) preserves its
+  // { animationDur } shape. The ANIMATIONS section no longer surfaces a duration
+  // input — it uses the zoom-rate control below instead.
   const [animationDur, setAnimationDur] = useState("1.0");
+  // Zoom scale rate (scale units/sec), authoring value pushed on Apply. Clamped
+  // to the active segment's per-duration max whenever that max shrinks.
+  const [animationRate, setAnimationRate] = useState(DEFAULT_ZOOM_SCALE_RATE.toFixed(3));
+  // Sync the rate input FROM the newly-active segment's stored rate — guarded by
+  // resolveRateInputSync so it fires ONLY when the active segment id actually
+  // changes, never on a re-render mid-edit, so live typing on the SAME segment is
+  // never clobbered (identity-keyed, mirroring GradeSection's Bug B guard).
+  // Declared BEFORE the clamp effect so, on a segment switch, the synced value is
+  // queued first and the clamp's functional update composes on top of it.
+  const lastSyncedSegmentIdRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const { changed, value } = resolveRateInputSync(
+      lastSyncedSegmentIdRef.current,
+      activeGradeSegmentId,
+      activeAnimationScaleRate,
+    );
+    if (!changed) return;
+    lastSyncedSegmentIdRef.current = activeGradeSegmentId;
+    setAnimationRate(value);
+  }, [activeGradeSegmentId, activeAnimationScaleRate]);
+  const animationRateMax = useMemo(
+    () => sliderMaxRate(activeSegmentDuration ?? 0),
+    [activeSegmentDuration],
+  );
+  // Max bound updates live when the selected segment changes; if it drops below
+  // the current authoring value, pull the value down so it never exceeds the cap.
+  useEffect(() => {
+    setAnimationRate((prev) => {
+      const n = parseFloat(prev);
+      return Number.isFinite(n) && n > animationRateMax ? animationRateMax.toFixed(3) : prev;
+    });
+  }, [animationRateMax]);
   // No picker is bound to this any more — the OVERLAYS section is Coming-Soon
   // inert (see below). It survives only so the preset round-trip keeps its
   // shape: savePreset reads it and applyPreset writes it back. Effectively
@@ -682,6 +771,7 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
 
   const savePreset = (): { text: string; warn?: boolean } => {
     if (presets.length >= MAX_PRESETS) return { text: `Max ${MAX_PRESETS} reached`, warn: true };
+    const isZoom = animation === "zoom-in" || animation === "zoom-out";
     const preset: Preset = {
       id: crypto.randomUUID(),
       name: presetName.trim() || `Preset ${presets.length + 1}`,
@@ -690,6 +780,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
       animation,
       animationDur: Number(animationDur),
       overlay,
+      // Only zoom animations carry a rate; a non-zoom preset leaves it unset so
+      // applying it never touches a segment's rate.
+      ...(isZoom ? { scaleRate: Number(animationRate) } : {}),
     };
     commitPresets([...presets, preset]);
     setActiveId(preset.id);
@@ -702,6 +795,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
     setTransitionDur(String(p.transitionDur));
     setAnimation(p.animation);
     setAnimationDur(String(p.animationDur));
+    // Restore the zoom rate authoring value from the preset; old presets with no
+    // scaleRate fall back to the default.
+    setAnimationRate((p.scaleRate ?? DEFAULT_ZOOM_SCALE_RATE).toFixed(3));
     setOverlay(p.overlay);
     setActiveId(p.id);
   };
@@ -748,8 +844,9 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           noneValue={ANIMATION_NONE}
           value={animation}
           onValueChange={setAnimation}
-          duration={animationDur}
-          onDurationChange={setAnimationDur}
+          rate={animationRate}
+          onRateChange={setAnimationRate}
+          rateMax={animationRateMax}
           picks={animationPicks}
           onTogglePick={(n) => togglePick(animationPicks, setAnimationPicks, n)}
           onApply={onApply}

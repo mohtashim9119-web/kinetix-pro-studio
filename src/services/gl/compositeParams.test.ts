@@ -15,6 +15,7 @@ import {
   type TransitionParams,
 } from './compositeParams';
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
+import { DEFAULT_ZOOM_SCALE_RATE, MAX_PEAK_SCALE, computeZoomScale } from '../zoomScale';
 
 /**
  * Pure-function tests, mock-free — mirroring the style of
@@ -271,41 +272,58 @@ describe('deriveCompositeParams — 50/50 centering (transition-centering fix)',
 });
 
 describe('deriveCompositeParams — zoom animScaleA (single-segment, no active transition)', () => {
-  // With no active transition, slot A carries the containing segment's zoom
-  // (animScaleA) and slot B is unused (animScaleB === 1). These tests pin the
-  // slot-A scale; the per-layer transition behavior is covered by the
-  // continuity describe block below.
+  // Post scale-rate migration: scale comes from services/zoomScale.ts's
+  // computeZoomScale, keyed on the segment's own effectAnimationScaleRate (NOT
+  // a fixed 0.05 constant). These tests set an explicit rate of 0.05 so the
+  // classic end-scale numbers (peak = 1 + rate*duration, uncapped) still hold
+  // and the pinned values stay independent of the implementation. With no
+  // active transition, slot A carries the containing segment's zoom (animScaleA)
+  // and slot B is unused (animScaleB === 1). The per-layer transition behavior
+  // is covered by the continuity describe block below.
+  const RATE = 0.05;
+
   it('zoom-in scale is exactly 1.0 at segment start (t=0)', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in', effectAnimationScaleRate: RATE })];
     const result = deriveCompositeParams(segments, 0, baseConfig);
     expect(result.animScaleA).toBeCloseTo(1.0, 6);
     expect(result.animScaleB).toBe(1);
   });
 
-  it('zoom-in scale approaches 1.0 + 0.05*duration as currentTime approaches segment end (half-open [start, start+duration) window, matching findContainingSegment/transitionResolver convention — exactly at the boundary belongs to the next segment, not this one)', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
+  it('zoom-in scale approaches peak (1 + rate*duration) as currentTime approaches segment end (half-open [start, start+duration) window, matching findContainingSegment/transitionResolver convention — exactly at the boundary belongs to the next segment, not this one)', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in', effectAnimationScaleRate: RATE })];
     const result = deriveCompositeParams(segments, 10 - 1e-6, baseConfig);
-    expect(result.animScaleA).toBeCloseTo(1.5, 4);
+    expect(result.animScaleA).toBeCloseTo(1.5, 4); // 1 + 0.05*10
   });
 
-  it('zoom-in scale at the midpoint matches the 1.0 + 0.05*t formula exactly', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 2, duration: 8, effectAnimation: 'zoom-in' })];
+  it('zoom-in scale at the midpoint matches computeZoomScale for the same rate', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 2, duration: 8, effectAnimation: 'zoom-in', effectAnimationScaleRate: RATE })];
     const result = deriveCompositeParams(segments, 2 + 4, baseConfig); // timeInSegment = 4
-    expect(result.animScaleA).toBeCloseTo(1.0 + 0.05 * 4, 6);
+    expect(result.animScaleA).toBeCloseTo(1.0 + RATE * 4, 6); // 1.2, uncapped linear
+    expect(result.animScaleA).toBeCloseTo(
+      computeZoomScale({ rate: RATE, duration: 8, elapsed: 4, direction: 'in' }),
+      10,
+    );
   });
 
-  it('zoom-out starts at the end-scale a matching zoom-in would reach, and decreases toward 1.0', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-out' })];
+  it('zoom-out starts at the peak a matching zoom-in would reach, and decreases toward 1.0', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-out', effectAnimationScaleRate: RATE })];
     const atStart = deriveCompositeParams(segments, 0, baseConfig);
     const atEnd = deriveCompositeParams(segments, 10, baseConfig);
-    expect(atStart.animScaleA).toBeCloseTo(1.0 + 0.05 * 10, 6); // 1.5
+    expect(atStart.animScaleA).toBeCloseTo(1.0 + RATE * 10, 6); // 1.5
     expect(atEnd.animScaleA).toBeCloseTo(1.0, 6);
   });
 
-  it('falls back to the legacy AnimationType enum when no effectAnimation slug is set', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, animation: AnimationType.ZOOM_IN })];
+  it('a segment with no effectAnimationScaleRate uses the render-time default (DEFAULT_ZOOM_SCALE_RATE)', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
+    const result = deriveCompositeParams(segments, 10 - 1e-6, baseConfig);
+    // peak = 1 + 0.010*10 = 1.10 (default rate), NOT the old 0.05 constant.
+    expect(result.animScaleA).toBeCloseTo(1.0 + DEFAULT_ZOOM_SCALE_RATE * 10, 4);
+  });
+
+  it('falls back to the legacy AnimationType enum when no effectAnimation slug is set (and still honours the segment rate)', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, animation: AnimationType.ZOOM_IN, effectAnimationScaleRate: RATE })];
     const result = deriveCompositeParams(segments, 5, baseConfig);
-    expect(result.animScaleA).toBeCloseTo(1.0 + 0.05 * 5, 6);
+    expect(result.animScaleA).toBeCloseTo(1.0 + RATE * 5, 6);
   });
 
   it('a non-zoom animation (in or out of the legacy enum) yields the neutral scale — out of scope for this engine', () => {
@@ -315,10 +333,18 @@ describe('deriveCompositeParams — zoom animScaleA (single-segment, no active t
   });
 
   it('a currentTime outside every segment (e.g. past the last segment\'s end) yields the neutral scale, not an extrapolated one — no containing segment means no animation to derive from', () => {
-    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in' })];
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectAnimation: 'zoom-in', effectAnimationScaleRate: RATE })];
     const result = deriveCompositeParams(segments, 50, baseConfig); // way past end, no containing segment
     expect(result.animScaleA).toBe(1);
     expect(result.animScaleB).toBe(1);
+  });
+
+  it('a high rate on a long segment is capped so animScaleA never exceeds MAX_PEAK_SCALE', () => {
+    // 0.05 * 60 = peak 4.0 uncapped — must clamp to 1.99 at the segment end.
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 60, effectAnimation: 'zoom-in', effectAnimationScaleRate: RATE })];
+    const atEnd = deriveCompositeParams(segments, 60 - 1e-6, baseConfig);
+    expect(atEnd.animScaleA).toBeCloseTo(MAX_PEAK_SCALE, 3);
+    expect(atEnd.animScaleA).toBeLessThanOrEqual(MAX_PEAK_SCALE);
   });
 });
 
@@ -351,7 +377,7 @@ describe('deriveCompositeParams — grade passthrough', () => {
   it('grade is independent of transition/zoom-OUT state within the same call — the combined-tick test above only ever exercised zoom-in; resolveAnimScale\'s zoom-out branch is a separate formula and deserves its own combined-tick coverage', () => {
     const segments = [
       makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'dip-white', effectTransitionDuration: 1 }),
-      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out' }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: 'zoom-out', effectAnimationScaleRate: 0.05 }),
     ];
     const grade = { brightness: 0, contrast: 0, saturation: 0.6, temperature: -0.3 };
     // currentTime=5 is exactly the boundary (progress 0.5). Per-layer: slot A
@@ -362,7 +388,7 @@ describe('deriveCompositeParams — grade passthrough', () => {
     const result = deriveCompositeParams(segments, 5, { ...baseConfig, grade });
     expect(result.transition).toEqual({ type: 'dip-white', progress: 0.5 });
     expect(result.animScaleA).toBe(1); // outgoing 'a' has no animation
-    expect(result.animScaleB).toBeCloseTo(1.0 + 0.05 * 5, 6); // zoom-out at timeInSegment=0 of a 5s segment (its start-scale)
+    expect(result.animScaleB).toBeCloseTo(1.0 + 0.05 * 5, 6); // zoom-out at timeInSegment=0 of a 5s segment (its start-scale, rate 0.05)
     expect(result.grade).toEqual(grade);
   });
 });
@@ -436,10 +462,12 @@ describe('deriveCompositeParams — per-layer zoom continuity across a transitio
   //
   // a[0,5) -> b[5,10), cross-dissolve duration 2 centered on the boundary at
   // t=5 → window [4,6). Sampled just before/after the boundary.
+  // Explicit rate 0.05 so the classic 1.25 / 1.0 continuity numbers below hold
+  // (peak = 1 + 0.05*5 = 1.25 on each 5s segment, uncapped).
   function makeZoomAB(aAnim: 'zoom-in' | 'zoom-out', bAnim: 'zoom-in' | 'zoom-out'): VideoSegment[] {
     return [
-      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: aAnim }),
-      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: bAnim }),
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: aAnim, effectAnimationScaleRate: 0.05 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectAnimation: bAnim, effectAnimationScaleRate: 0.05 }),
     ];
   }
 
@@ -482,7 +510,7 @@ describe('deriveCompositeParams — per-layer zoom continuity across a transitio
 
   it('the outgoing layer keeps its accumulated zoom while the incoming layer with no zoom stays neutral — the two never bleed onto each other (the exact pop the old single-scalar model produced)', () => {
     const segments = [
-      makeSegment({ id: 'a', startTime: 0, duration: 10, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: 'zoom-in' }),
+      makeSegment({ id: 'a', startTime: 0, duration: 10, effectTransition: 'cross-dissolve', effectTransitionDuration: 2, effectAnimation: 'zoom-in', effectAnimationScaleRate: 0.05 }),
       makeSegment({ id: 'b', startTime: 10, duration: 5 }), // no zoom on the incoming segment
     ];
     // window [9,11); boundary 10. Half a second PAST the boundary.

@@ -490,6 +490,7 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       animation,
       timeInSegment,
       segmentDuration: segment.duration,
+      scaleRate: segment.effectAnimationScaleRate,
       canvasWidth: w,
       canvasHeight: h,
     });

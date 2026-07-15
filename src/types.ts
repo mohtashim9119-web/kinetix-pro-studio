@@ -210,6 +210,14 @@ export interface VideoSegment {
   effectTransitionDuration?: number;
   effectAnimation?: string;
   effectAnimationDuration?: number;
+  /** Per-second zoom rate (scale units/sec) for the ZOOM_IN/ZOOM_OUT
+   *  effectAnimation slugs — the shared zoomScale.ts model derives the actual
+   *  per-frame scale from this + the segment's own `duration`. Distinct from
+   *  `effectAnimationDuration` (untouched, legacy). Absent = the render-time
+   *  default DEFAULT_ZOOM_SCALE_RATE (0.010); never written to disk until the
+   *  user changes it. Carried across Apply Sync by unique-assetId match
+   *  alongside the other effect* fields. */
+  effectAnimationScaleRate?: number;
   effectOverlay?: string;
   /** Per-segment color grade (WebGL2 Phase 4). Each value −1..1, 0 = neutral;
    *  absent = no grade (neutral). Object-valued (mirrors overlayConfig?) so the

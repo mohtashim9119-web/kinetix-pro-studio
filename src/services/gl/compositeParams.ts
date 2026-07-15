@@ -23,6 +23,7 @@
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
 import { ANIMATION_NONE } from '../../effectsOptions';
 import { resolveEffectiveTransition, resolveTransitionProgress } from '../transitionResolver';
+import { computeZoomScale, DEFAULT_ZOOM_SCALE_RATE } from '../zoomScale';
 
 /** The 4 transitions this engine implements (plan Section 5.1). Any other
  *  resolved transition (legacy enum, or an unscoped slug like
@@ -212,26 +213,27 @@ export interface ProjectEffectConfig {
   grade?: GradeParams;
 }
 
-/** Rate-based zoom math shared today by canvasAnimations.ts's ZOOM_IN/
- *  ZOOM_OUT cases (`1.0 ± 0.05*t`) and PreviewStage.tsx's
- *  getAnimationWrapperProps — ported here unchanged, not re-derived, per
- *  plan Section 5.2. `timeInSegment` is clamped to [0, duration] as a
- *  general safety bound on the formula itself (mirrors
- *  useWebCodecsPreview.ts's computeAnimTimeInSegment precedent) — not
- *  reachable today via deriveCompositeParams's own call path below, since
- *  `findContainingSegment`'s half-open window already guarantees
- *  `timeInSegment` is in range whenever a containing segment is found at
- *  all, but this keeps the formula itself correct if a future caller
- *  (e.g. a Phase 3 "held segment" concept) ever invokes it directly with
- *  an out-of-range time. */
-const ZOOM_RATE_PER_SECOND = 0.05;
-
-function resolveAnimScale(slug: ZoomAnimationSlug | null, timeInSegment: number, duration: number): number {
+/** Rate-based zoom scale. The math itself lives in services/zoomScale.ts, the
+ *  single source shared with canvasAnimations.ts's ZOOM_IN/ZOOM_OUT export
+ *  cases — preview and export can no longer drift. `rate` is the segment's
+ *  per-second zoom rate (effectAnimationScaleRate, defaulted upstream in
+ *  scaleFor). computeZoomScale clamps `elapsed` to [0, duration] internally,
+ *  which is what lets the outgoing layer HOLD at its end-scale past a
+ *  transition boundary and the incoming layer hold at its start-scale before
+ *  it (see the per-slot rationale in deriveCompositeParams). */
+function resolveAnimScale(
+  slug: ZoomAnimationSlug | null,
+  timeInSegment: number,
+  duration: number,
+  rate: number,
+): number {
   if (slug === null) return 1;
-  const t = Math.max(0, Math.min(duration, timeInSegment));
-  if (slug === 'zoom-in') return 1.0 + ZOOM_RATE_PER_SECOND * t;
-  const endScale = 1.0 + ZOOM_RATE_PER_SECOND * duration;
-  return endScale - ZOOM_RATE_PER_SECOND * t;
+  return computeZoomScale({
+    rate,
+    duration,
+    elapsed: timeInSegment,
+    direction: slug === 'zoom-in' ? 'in' : 'out',
+  });
 }
 
 /** Slug-wins-else-legacy-enum resolution, matching resolveEffectiveTransition's
@@ -350,7 +352,12 @@ export function deriveCompositeParams(
   // animScaleA/animScaleB docs for why the pre-Bug-2 single-scalar model
   // popped at progress 0.5.
   const scaleFor = (seg: VideoSegment): number =>
-    resolveAnimScale(resolveEffectiveAnimation(seg), currentTime - seg.startTime, seg.duration);
+    resolveAnimScale(
+      resolveEffectiveAnimation(seg),
+      currentTime - seg.startTime,
+      seg.duration,
+      seg.effectAnimationScaleRate ?? DEFAULT_ZOOM_SCALE_RATE,
+    );
 
   let animScaleA: number;
   let animScaleB: number;

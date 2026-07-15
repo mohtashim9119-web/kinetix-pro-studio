@@ -9,6 +9,7 @@ import { X, Lock, Unlock, ArrowLeftRight, Sparkles, Layers } from 'lucide-react'
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { SegmentControls } from './SegmentControls';
 import { labelOf, TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE } from '../effectsOptions';
+import { DEFAULT_ZOOM_SCALE_RATE, isRateCapped } from '../services/zoomScale';
 
 interface Props {
   segment: VideoSegment | null;
@@ -49,17 +50,24 @@ export function BottomDrawer({
   const idx = segmentIndex;
   const h = heading ?? null;
 
+  // A zoom whose rate was limited by the segment's length (apply-to-all across
+  // mixed durations, or a segment dialed to its own max) — surfaced as a small
+  // "capped" note on the animation pill so the reduced zoom isn't a mystery.
+  const zoomCapped = !!s
+    && (s.effectAnimation === 'zoom-in' || s.effectAnimation === 'zoom-out')
+    && isRateCapped(s.effectAnimationScaleRate ?? DEFAULT_ZOOM_SCALE_RATE, s.duration);
+
   const effectPills = s ? [
     s.effectTransition && s.effectTransition !== TRANSITION_NONE
-      ? { icon: ArrowLeftRight, label: labelOf(TRANSITIONS, s.effectTransition) }
+      ? { icon: ArrowLeftRight, label: labelOf(TRANSITIONS, s.effectTransition), capped: false }
       : null,
     s.effectAnimation && s.effectAnimation !== ANIMATION_NONE
-      ? { icon: Sparkles, label: labelOf(ANIMATIONS, s.effectAnimation) }
+      ? { icon: Sparkles, label: labelOf(ANIMATIONS, s.effectAnimation), capped: zoomCapped }
       : null,
     s.effectOverlay && s.effectOverlay !== OVERLAY_NONE
-      ? { icon: Layers, label: labelOf(OVERLAYS, s.effectOverlay) }
+      ? { icon: Layers, label: labelOf(OVERLAYS, s.effectOverlay), capped: false }
       : null,
-  ].filter((p): p is { icon: typeof ArrowLeftRight; label: string } => p !== null && p.label !== undefined) : [];
+  ].filter((p): p is { icon: typeof ArrowLeftRight; label: string; capped: boolean } => p !== null && p.label !== undefined) : [];
 
   const asset = s ? assets.find(a => a.id === s.assetId) : undefined;
   const isVideo = asset?.type === 'video';
@@ -94,10 +102,10 @@ export function BottomDrawer({
               </span>
             </div>
             <div className="flex items-center gap-2 justify-self-center">
-              {effectPills.map(({ icon: Icon, label }, i) => (
+              {effectPills.map(({ icon: Icon, label, capped }, i) => (
                 <div
                   key={i}
-                  title={label}
+                  title={capped ? `${label} — zoom rate capped for this scene's length` : label}
                   className="flex items-center justify-center gap-1.5 px-2 py-1.5 w-[110px]
                              rounded-lg border border-[#282828] bg-[#1A1A1A]
                              text-[9px] font-black uppercase tracking-widest
@@ -105,6 +113,9 @@ export function BottomDrawer({
                 >
                   <Icon className="w-3 h-3 shrink-0 text-gray-500" />
                   <span className="truncate">{label}</span>
+                  {capped && (
+                    <span className="shrink-0 text-[8px] text-amber-500" aria-label="zoom rate capped">▲</span>
+                  )}
                 </div>
               ))}
             </div>
