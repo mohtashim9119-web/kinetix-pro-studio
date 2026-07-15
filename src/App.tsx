@@ -47,6 +47,7 @@ import {
   TransitionType,
   AnimationType,
   TextOverlay,
+  type SegmentGrade,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
@@ -74,7 +75,7 @@ import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProje
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
-import type { ApplyEvent } from './components/EffectsPanel';
+import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -82,7 +83,7 @@ const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
 import { Timeline } from './components/Timeline';
-import { PreviewStage } from './components/PreviewStage';
+import { PreviewStage, type AutoGradeSampler } from './components/PreviewStage';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
@@ -564,6 +565,7 @@ function preserveEffectFields(
       effectAnimation: prev.effectAnimation,
       effectAnimationDuration: prev.effectAnimationDuration,
       effectOverlay: prev.effectOverlay,
+      effectGrade: prev.effectGrade,
     };
   });
 }
@@ -1052,6 +1054,18 @@ export default function App() {
             if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
             // Reset the legacy twin (segment.overlayFilter) for the same reason.
             return { ...s, effectOverlay: e.value, overlayFilter: 'none' };
+          case 'grade':
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
+            // New feature area — no legacy CSS/Canvas2D grade field to reset;
+            // deriveCompositeParams reads effectGrade directly (Phase 4).
+            return { ...s, effectGrade: e.value };
+          case 'grade-clear':
+            if (e.scope === 'selected' && !selectedSegmentIds.has(s.id)) return s;
+            // Grade bug audit Fix C — the only path that actually removes an
+            // applied grade. Sets effectGrade back to undefined (not a neutral
+            // {0,0,0,0} object) so a cleared segment is indistinguishable from
+            // one that was never graded.
+            return { ...s, effectGrade: undefined };
           case 'randomize-transitions': {
             const slug = e.pool[Math.floor(Math.random() * e.pool.length)];
             // See the 'transition' case above — same legacy-field reset.
@@ -1085,6 +1099,38 @@ export default function App() {
       return { ...p, segments };
     });
   }, [selectedSegmentIds]);
+
+  // WebGL2 Phase 4 — auto color-grade. PreviewStage owns the decode pool +
+  // assets, so it populates this ref with the per-segment sampler; App drives
+  // the scope selection + the write. Each target segment is sampled
+  // sequentially (bounds decode-pool pressure — a one-shot, not a per-tick
+  // path), computing its OWN grade from its OWN first frame, then all
+  // successes are written in a single setProject. Segments with no analyzable
+  // frame are counted as failures and reported back to the Auto button's flash,
+  // never silently skipped. Writes effectGrade exactly like the manual
+  // { type: 'grade' } apply path.
+  const autoGradeSamplerRef = useRef<AutoGradeSampler | null>(null);
+  const handleAutoGrade = useCallback(async (scope: ApplyScope): Promise<AutoGradeResult> => {
+    const sampler = autoGradeSamplerRef.current;
+    const targets = project.segments.filter(s => scope === 'all' || selectedSegmentIds.has(s.id));
+    if (!sampler || targets.length === 0) return { applied: 0, failed: targets.length };
+
+    const results = new Map<string, SegmentGrade>();
+    let failed = 0;
+    for (const seg of targets) {
+      const grade = await sampler(seg).catch(() => null);
+      if (grade) results.set(seg.id, grade);
+      else failed++;
+    }
+
+    if (results.size > 0) {
+      setProject(p => ({
+        ...p,
+        segments: p.segments.map(s => (results.has(s.id) ? { ...s, effectGrade: results.get(s.id)! } : s)),
+      }));
+    }
+    return { applied: results.size, failed };
+  }, [project.segments, selectedSegmentIds]);
 
   const handleUnlockAll = useCallback((): void => {
     setProject(prev => ({
@@ -1749,6 +1795,42 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, project.segments, resizeSettleTick]);
 
+  // Grade bug audit Fix B — the segment EffectsPanel's GRADE sliders should
+  // sync FROM: the single selected segment when exactly one is selected
+  // (matches the Apply-to-selected mental model), else the playhead segment,
+  // else none. Resolved as an id first, then looked up separately, so
+  // EffectsPanel/GradeSection can distinguish "a different segment is now
+  // active" (id changed) from "same segment, its stored grade changed value"
+  // (id same, grade differs) — both should re-sync the sliders.
+  const activeGradeSegmentId = useMemo<string | undefined>(() => {
+    if (selectedSegmentIds.size === 1) return [...selectedSegmentIds][0];
+    return currentSegment?.id;
+  }, [selectedSegmentIds, currentSegment]);
+
+  const activeGrade = useMemo<SegmentGrade>(() => {
+    const seg = activeGradeSegmentId ? project.segments.find(s => s.id === activeGradeSegmentId) : undefined;
+    return seg?.effectGrade ?? NEUTRAL_GRADE;
+  }, [activeGradeSegmentId, project.segments]);
+
+  // Live grade preview — the active segment's effectGrade tracks the GRADE
+  // sliders as they are dragged (EffectsPanel debounces the calls), so the
+  // preview updates with no Apply click: useGlPreview's render effect already
+  // lists `segments` as a dep and deriveCompositeParams reads effectGrade off
+  // the containing segment, so this write alone redraws even while paused.
+  //
+  // Deliberately narrower than handleApplyEffect's { type: 'grade' } case,
+  // which is why it's a separate setter rather than another ApplyEvent: this
+  // writes exactly ONE segment (the one the sliders sync FROM, above) and has
+  // no scope concept at all. Apply-to-selected/all stays the way to push a
+  // dialed-in grade onto anything else.
+  const handleGradeLive = useCallback((value: SegmentGrade): void => {
+    if (!activeGradeSegmentId) return;
+    setProject(p => ({
+      ...p,
+      segments: p.segments.map(s => (s.id === activeGradeSegmentId ? { ...s, effectGrade: value } : s)),
+    }));
+  }, [activeGradeSegmentId]);
+
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
   const selectedHeading = (project.headings ?? []).find(h => h.id === selectedHeadingId) ?? null;
@@ -2129,6 +2211,10 @@ export default function App() {
             onSelectAllSegments={onSelectAllSegments}
             onClearSegmentSelection={onClearSegmentSelection}
             onApplyEffect={handleApplyEffect}
+            onAutoGrade={handleAutoGrade}
+            onGradeLive={handleGradeLive}
+            activeGrade={activeGrade}
+            activeGradeSegmentId={activeGradeSegmentId}
             globalTransition={project.globalTransition}
             globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
             globalAnimation={project.globalAnimation ?? 'none'}
@@ -2213,6 +2299,7 @@ export default function App() {
                   onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
+                  autoGradeSamplerRef={autoGradeSamplerRef}
                 />
               </ErrorBoundary>
               </div>

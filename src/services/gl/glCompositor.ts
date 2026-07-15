@@ -56,6 +56,12 @@
 
 import type { CompositeParams, GradeParams, TransitionSlug } from './compositeParams';
 import {
+  brightnessOffsetUniform,
+  contrastGainUniform,
+  saturationMixUniform,
+  temperatureTintUniform,
+} from './compositeParams';
+import {
   VERTEX_SHADER_SOURCE,
   VERTEX_SHADER_SOURCE_STRAIGHT,
   BLIT_FRAGMENT_SHADER_SOURCE,
@@ -493,10 +499,15 @@ export class GlCompositor {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, sourceTexture);
     gl.uniform1i(p.uTexA, 0);
-    gl.uniform1f(p.uBrightness, grade.brightness);
-    gl.uniform1f(p.uContrast, grade.contrast);
-    gl.uniform1f(p.uSaturation, grade.saturation);
-    gl.uniform1f(p.uTemperature, grade.temperature);
+    // Every channel goes through compositeParams.ts's slider→uniform remap
+    // rather than reaching the shader raw — see the block comment above
+    // brightnessOffsetUniform there for why (a raw feed made contrast=−1 a dead
+    // flat-gray state and left the rest of the −1..1 sweep unusable past ~±0.25).
+    // `grade` itself is untouched: only the values handed to the uniforms differ.
+    gl.uniform1f(p.uBrightness, brightnessOffsetUniform(grade.brightness));
+    gl.uniform1f(p.uContrast, contrastGainUniform(grade.contrast));
+    gl.uniform1f(p.uSaturation, saturationMixUniform(grade.saturation));
+    gl.uniform1f(p.uTemperature, temperatureTintUniform(grade.temperature));
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

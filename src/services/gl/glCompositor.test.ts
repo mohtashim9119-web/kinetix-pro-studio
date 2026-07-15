@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { GlCompositor } from './glCompositor';
-import { NEUTRAL_GRADE, type CompositeParams } from './compositeParams';
+import {
+  NEUTRAL_GRADE,
+  brightnessOffsetUniform,
+  contrastGainUniform,
+  saturationMixUniform,
+  temperatureTintUniform,
+  type CompositeParams,
+} from './compositeParams';
 import { VERTEX_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT } from './shaders';
 
 /**
@@ -514,7 +521,28 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
     expect(gl.allUniform('u_scale').map((a) => a[0])).toEqual([1.2, 1.4]);
   });
 
-  it('grade uniforms are wired directly from GradeParams fields', () => {
+  it('every grade uniform receives its compositeParams remap, NOT the raw −1..1 slider value — confirms the remaps actually reach the uniforms rather than existing as unused exports', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    const grade = { brightness: 0.3, contrast: -0.2, saturation: 0.1, temperature: 0.4 };
+    compositor.renderFrame({ transition: null, animScaleA: 1, animScaleB: 1, grade });
+
+    const u = (name: string): number => (gl.lastUniform(name) as number[])[0]!;
+    expect(u('u_brightness')).toBeCloseTo(brightnessOffsetUniform(0.3), 10);
+    expect(u('u_contrast')).toBeCloseTo(contrastGainUniform(-0.2), 10);
+    expect(u('u_saturation')).toBeCloseTo(saturationMixUniform(0.1), 10);
+    expect(u('u_temperature')).toBeCloseTo(temperatureTintUniform(0.4), 10);
+
+    // The superseded raw pass-through, rejected per channel.
+    expect(u('u_brightness')).not.toBeCloseTo(0.3, 2);
+    expect(u('u_contrast')).not.toBeCloseTo(-0.2, 2);
+    expect(u('u_saturation')).not.toBeCloseTo(0.1, 2);
+    expect(u('u_temperature')).not.toBeCloseTo(0.4, 2);
+  });
+
+  it('a neutral grade skips the grade pass entirely, and the remaps agree with that skip — each maps 0 to exactly 0, so the two paths cannot disagree about what "neutral" looks like', () => {
     const gl = makeGl();
     const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
     gl.calls = [];
@@ -523,13 +551,55 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
       transition: null,
       animScaleA: 1,
       animScaleB: 1,
-      grade: { brightness: 0.3, contrast: -0.2, saturation: 0.1, temperature: 0.4 },
+      grade: { brightness: 0, contrast: 0, saturation: 0, temperature: 0 },
     });
 
-    expect(gl.lastUniform('u_brightness')).toEqual([0.3]);
-    expect(gl.lastUniform('u_contrast')).toEqual([-0.2]);
-    expect(gl.lastUniform('u_saturation')).toEqual([0.1]);
-    expect(gl.lastUniform('u_temperature')).toEqual([0.4]);
+    // isNeutralGrade tests the SLIDER values, so the skip is decided upstream of
+    // the remaps: no grade uniform is sent at all.
+    for (const name of ['u_brightness', 'u_contrast', 'u_saturation', 'u_temperature']) {
+      expect(gl.lastUniform(name)).toBeUndefined();
+    }
+    // Which is only sound because a remapped neutral is still a no-op. If any
+    // remap moved 0 off 0, a neutral grade would render one way through the skip
+    // and another way through the grade pass (reachable via a zoomed segment).
+    expect(brightnessOffsetUniform(0)).toBe(0);
+    expect(contrastGainUniform(0)).toBe(0);
+    expect(saturationMixUniform(0)).toBe(0);
+    expect(temperatureTintUniform(0)).toBe(0);
+  });
+
+  it('contrast=-1 (the pre-remap flat-gray/brown collapse point) sends a gain of 0.625×, never gain-zero', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({
+      transition: null,
+      animScaleA: 1,
+      animScaleB: 1,
+      grade: { brightness: 0, contrast: -1, saturation: 0, temperature: 0 },
+    });
+
+    const uContrast = (gl.lastUniform('u_contrast') as number[])[0]!;
+    // The raw feed sent exactly -1 here, making the shader's "1 + u_contrast"
+    // gain exactly 0 (every pixel -> flat gray, then tinted by temperature).
+    expect(1 + uContrast).toBeCloseTo(1 / 1.6, 10);
+    expect(1 + uContrast).toBeGreaterThan(0);
+  });
+
+  it('brightness=+1 sends a +0.25 offset, not the frame-blowing +1', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = [];
+
+    compositor.renderFrame({
+      transition: null,
+      animScaleA: 1,
+      animScaleB: 1,
+      grade: { brightness: 1, contrast: 0, saturation: 0, temperature: 0 },
+    });
+
+    expect((gl.lastUniform('u_brightness') as number[])[0]).toBeCloseTo(0.25, 10);
   });
 });
 

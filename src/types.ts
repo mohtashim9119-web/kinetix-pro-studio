@@ -126,6 +126,20 @@ export interface Asset {
   nativeFps?: number;
 }
 
+/**
+ * Per-segment color-grade values (WebGL2 effects engine, Phase 4). Each field
+ * is −1..1 with 0 = neutral, matching the GL compositor's GradeParams
+ * (src/services/gl/compositeParams.ts) and the grade shader's uniforms 1:1.
+ * Defined here (rather than imported from the gl service) to keep types.ts's
+ * dependency direction clean — services depend on types, never the reverse.
+ */
+export interface SegmentGrade {
+  brightness: number;  // -1..1, 0 = neutral
+  contrast: number;    // -1..1, 0 = neutral
+  saturation: number;  // -1..1, 0 = neutral
+  temperature: number; // -1..1, 0 = neutral (+ = warm)
+}
+
 export interface TextOverlay {
   id: string;
   text: string;
@@ -197,6 +211,12 @@ export interface VideoSegment {
   effectAnimation?: string;
   effectAnimationDuration?: number;
   effectOverlay?: string;
+  /** Per-segment color grade (WebGL2 Phase 4). Each value −1..1, 0 = neutral;
+   *  absent = no grade (neutral). Object-valued (mirrors overlayConfig?) so the
+   *  four coupled values stay atomic across apply/persist/carry-across-sync.
+   *  Carried across Apply Sync by unique-assetId match alongside the other
+   *  effect* fields. */
+  effectGrade?: SegmentGrade;
 }
 
 /**

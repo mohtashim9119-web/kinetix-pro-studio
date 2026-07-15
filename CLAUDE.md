@@ -37,7 +37,14 @@ src/
                      #   coalesced, with the timeline rect/pps cached once at drag start; the real
                      #   state commit happens exactly once on mouseup via applyDurationChange
                      #   (perf fix, commit f4da926).
-  types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums
+  types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
+                     #   SegmentGrade { brightness, contrast, saturation, temperature } — each
+                     #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
+                     #   (object-valued, mirrors overlayConfig?; undefined = never graded, which
+                     #   is DISTINCT from an explicit neutral {0,0,0,0}). Deliberately declared
+                     #   here rather than imported from services/gl so the dependency direction
+                     #   stays services -> types. Carried across Apply Sync by unique-assetId
+                     #   match alongside the other effect* fields (App.tsx's carry loop).
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
@@ -139,6 +146,41 @@ src/
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
     uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
                      #   single source for UI-state persistence (D6 fix).
+    gl/              # WebGL2 effects engine (docs/webgl-architecture-plan.md). Renders ONLY behind
+                     #   PreviewStage.tsx's dev gate (import.meta.env.DEV && glDevToggle) until
+                     #   Phase 5's cutover — a production build never reaches this code today.
+      glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing.
+      shaders.ts     # GLSL ES 3.0 sources (blit, cross-dissolve, dip, light-leak, zoom, grade) +
+                     #   u_texRectA/B object-cover UV-crop uniforms. DO NOT change this math without
+                     #   re-running the real-GPU pixel checks — see the file's own header.
+      glCompositor.ts # GlCompositor — owns programs/render targets; per-layer render chain
+                     #   (prep slot A -> prep slot B -> blend -> grade). drawGrade sends every grade
+                     #   channel through compositeParams.ts's remaps (NOT the raw slider value);
+                     #   a neutral grade skips the grade pass entirely (isNeutralGrade).
+      compositeParams.ts # PURE derivation, no React/DOM/pool: deriveCompositeParams (transition +
+                     #   per-slot zoom + grade for a tick) and deriveSlotPlan (which segment feeds
+                     #   texture slot a/b). Grade resolves from the CONTAINING segment's effectGrade,
+                     #   else config.grade, else NEUTRAL_GRADE — one post-blend pass, so it SNAPS at
+                     #   the transition midpoint (accepted Phase 4 limit, no cross-fade).
+                     #   Also owns the grade slider->uniform remaps: the -1..1 slider domain is
+                     #   user-facing only; each channel maps onto a gentler EFFECTIVE range at the
+                     #   render boundary so every slider position is usable —
+                     #   brightnessOffsetUniform (±0.25 additive), contrastGainUniform
+                     #   (1.6^c - 1 => 0.625x-1.6x gain), saturationMixUniform (x0.6 => 0.4x-1.6x),
+                     #   temperatureTintUniform (x0.4 => ±0.04 channel shift), plus the
+                     #   brightnessFromOffset/contrastFromGain inverses autoGrade.ts solves through.
+                     #   Every remap maps 0 -> 0, which is what makes glCompositor's neutral-skip
+                     #   sound. Feeding raw slider values made the frame unusable at the extremes
+                     #   (63/81 combos solid white/black/flat) — do not remove this indirection.
+      autoGrade.ts   # computeAutoGrade(ImageData) -> SegmentGrade. Pure, mock-free, DOM-free.
+                     #   ONE-SHOT parameter generator (never a per-tick stage): p2-p98 luma-percentile
+                     #   stretch solved in the shader's ACTUAL op order (brightness BEFORE contrast,
+                     #   pivot 0.5) and in compositeParams.ts's effective ranges, converted back to
+                     #   slider terms via its inverses — imports those constants rather than
+                     #   restating them, so Auto and the manual sliders cannot drift. Half-strength
+                     #   gray-world temperature nudge; saturation always 0 (manual only); flat /
+                     #   near-black frames return neutral. PreviewStage.tsx owns the sampler (it
+                     #   holds the decode pool + assets); App.tsx's handleAutoGrade drives scope.
   hooks/
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
@@ -172,7 +214,33 @@ src/
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
-                     #   selected/all, randomize-from-checked-pool, combined-look presets section).
+                     #   selected/all, randomize-from-checked-pool, combined-look presets section,
+                     #   GRADE section).
+                     #   GradeSection (color grading, Phase 4) holds the 4 sliders (-1..1, step .01)
+                     #   as LOCAL draft state that is kept in sync with the ACTIVE segment — the
+                     #   single selected segment if exactly one is selected, else the playhead's
+                     #   (App.tsx derives this as activeGrade/activeGradeSegmentId). Three writers
+                     #   touch that draft and they must not fight each other:
+                     #     1. sync effect — pulls the active segment's stored effectGrade INTO the
+                     #        draft. Compares by VALUE (gradesEqual) not prop identity, so an
+                     #        unrelated parent re-render can't clobber an in-progress drag.
+                     #     2. slider drag — pushes the draft OUT to the active segment only
+                     #        (onGradeLive -> App.handleGradeLive), debounced 120ms, so the preview
+                     #        is live with no Apply click.
+                     #     3. Reset sliders — cancels any pending debounced write, resets the draft,
+                     #        and IMMEDIATELY writes a neutral effectGrade (a click is discrete, so
+                     #        no debounce; but the cancel is load-bearing or the drag's queued value
+                     #        lands ~120ms later and silently re-grades).
+                     #   (2)/(3) echo back through project.segments and would make (1) snap the
+                     #   slider back on every write — selfWriteRef tags our own writes so the sync
+                     #   effect records them without pushing them back into the draft. A pending
+                     #   write is also cancelled when the active segment changes, so a queued value
+                     #   can't land on the segment the user just moved to. Touch any of these three
+                     #   without re-reading the others and you will reintroduce the fight.
+                     #   Reset sliders != Clear grading: Reset writes a neutral {0,0,0,0} on the
+                     #   active segment; Clear ({type:'grade-clear'}) writes effectGrade: undefined
+                     #   over a selected/all scope. Identical on screen today (config.grade is unset),
+                     #   semantically distinct if a project-level grade fallback is ever added.
                      #   Mounted by DropZonePanel.tsx, which owns lookPresetService persistence —
                      #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.

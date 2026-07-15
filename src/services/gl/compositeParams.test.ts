@@ -2,7 +2,15 @@ import { describe, it, expect } from 'vitest';
 import {
   deriveCompositeParams,
   deriveSlotPlan,
+  brightnessOffsetUniform,
+  brightnessFromOffset,
+  contrastGainUniform,
+  contrastFromGain,
+  saturationMixUniform,
+  temperatureTintUniform,
+  SHADER_TEMPERATURE_CHANNEL_SCALE,
   NEUTRAL_GRADE,
+  type GradeParams,
   type ProjectEffectConfig,
   type TransitionParams,
 } from './compositeParams';
@@ -341,6 +349,63 @@ describe('deriveCompositeParams — grade passthrough', () => {
   });
 });
 
+describe('deriveCompositeParams — per-segment grade (Phase 4)', () => {
+  it('resolves grade from the containing segment\'s effectGrade', () => {
+    const grade = { brightness: 0.2, contrast: 0.1, saturation: -0.3, temperature: 0.5 };
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectGrade: grade })];
+    const result = deriveCompositeParams(segments, 5, baseConfig);
+    expect(result.grade).toEqual(grade);
+  });
+
+  it('containing segment\'s effectGrade wins over the project-level config.grade fallback', () => {
+    const segGrade = { brightness: 0.4, contrast: 0, saturation: 0, temperature: 0 };
+    const cfgGrade = { brightness: -0.4, contrast: 0, saturation: 0, temperature: 0 };
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10, effectGrade: segGrade })];
+    const result = deriveCompositeParams(segments, 5, { ...baseConfig, grade: cfgGrade });
+    expect(result.grade).toEqual(segGrade);
+  });
+
+  it('falls back to config.grade when the containing segment has no effectGrade', () => {
+    const cfgGrade = { brightness: -0.4, contrast: 0, saturation: 0.2, temperature: 0 };
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10 })];
+    const result = deriveCompositeParams(segments, 5, { ...baseConfig, grade: cfgGrade });
+    expect(result.grade).toEqual(cfgGrade);
+  });
+
+  it('falls back to NEUTRAL_GRADE when neither the segment nor config supplies a grade', () => {
+    const segments = [makeSegment({ id: 'a', startTime: 0, duration: 10 })];
+    const result = deriveCompositeParams(segments, 5, baseConfig);
+    expect(result.grade).toEqual(NEUTRAL_GRADE);
+  });
+
+  it('grade is per-segment: follows whichever segment currentTime is inside (no transition)', () => {
+    const gradeA = { brightness: 0.3, contrast: 0, saturation: 0, temperature: 0 };
+    const gradeB = { brightness: -0.3, contrast: 0, saturation: 0, temperature: 0 };
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectGrade: gradeA }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectGrade: gradeB }),
+    ];
+    expect(deriveCompositeParams(segments, 2, baseConfig).grade).toEqual(gradeA);
+    expect(deriveCompositeParams(segments, 7, baseConfig).grade).toEqual(gradeB);
+  });
+
+  it('grade snaps at the transition midpoint — follows the containing segment through a centered window (accepted Phase 4 limitation)', () => {
+    const gradeA = { brightness: 0.5, contrast: 0, saturation: 0, temperature: 0 };
+    const gradeB = { brightness: -0.5, contrast: 0, saturation: 0, temperature: 0 };
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'cross-dissolve', effectTransitionDuration: 1, effectGrade: gradeA }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5, effectGrade: gradeB }),
+    ];
+    // Window [4.5, 5.5): before the boundary currentTime is inside 'a', after it's inside 'b'.
+    const before = deriveCompositeParams(segments, 4.9, baseConfig);
+    const after = deriveCompositeParams(segments, 5.1, baseConfig);
+    expect(before.transition).not.toBeNull();
+    expect(after.transition).not.toBeNull();
+    expect(before.grade).toEqual(gradeA); // still inside outgoing 'a'
+    expect(after.grade).toEqual(gradeB);  // now inside incoming 'b'
+  });
+});
+
 describe('deriveCompositeParams — per-layer zoom continuity across a transition (Bug 2 fix)', () => {
   // The pre-Bug-2 single animScale was derived from the bounds-CONTAINING
   // segment, which flips outgoing→incoming at transition progress 0.5, so the
@@ -548,5 +613,171 @@ describe('deriveSlotPlan — texture slot A/B assignment (Phase 3)', () => {
     const afterClose = deriveSlotPlan(segments, 6.0001, null, baseConfig);
     expect(afterClose.a?.id).toBe('b');
     expect(afterClose.b).toBeNull();
+  });
+});
+
+/**
+ * Grade slider → uniform remaps. Each channel maps the full −1..1 slider sweep
+ * onto a gentler EFFECTIVE range so every slider position is usable; the
+ * end-to-end property all four exist to guarantee (no combination flattens the
+ * frame) is pinned by the simulation describe at the bottom.
+ */
+
+const SLIDER_SWEEP = [-1, -0.9, -0.5, -0.25, -0.1, 0, 0.1, 0.25, 0.5, 0.9, 1];
+
+describe('brightnessOffsetUniform — additive brightness remap', () => {
+  it('maps neutral (0) to 0', () => {
+    expect(brightnessOffsetUniform(0)).toBe(0);
+  });
+
+  it('maps ±1 to ±BRIGHTNESS_MAX_OFFSET (±0.25), NOT ±1 — the raw feed spent the entire 0..1 channel range, blowing toward white by ~+0.57', () => {
+    expect(brightnessOffsetUniform(1)).toBeCloseTo(0.25, 10);
+    expect(brightnessOffsetUniform(-1)).toBeCloseTo(-0.25, 10);
+  });
+
+  it('is a strictly increasing odd function across the sweep', () => {
+    for (const b of SLIDER_SWEEP) expect(brightnessOffsetUniform(-b)).toBeCloseTo(-brightnessOffsetUniform(b), 10);
+    for (let i = 1; i < SLIDER_SWEEP.length; i++) {
+      expect(brightnessOffsetUniform(SLIDER_SWEEP[i]!)).toBeGreaterThan(brightnessOffsetUniform(SLIDER_SWEEP[i - 1]!));
+    }
+  });
+
+  it('brightnessFromOffset inverts it exactly', () => {
+    for (const b of SLIDER_SWEEP) expect(brightnessFromOffset(brightnessOffsetUniform(b))).toBeCloseTo(b, 10);
+  });
+});
+
+describe('contrastGainUniform — exponential contrast remap', () => {
+  const gain = (c: number): number => 1 + contrastGainUniform(c);
+
+  it('maps neutral (0) to 0 — the shader\'s "1 + u_contrast" stays 1 (gain 1×)', () => {
+    expect(contrastGainUniform(0)).toBe(0);
+  });
+
+  it('maps +1 to gain CONTRAST_GAIN_MAX (1.6×) and −1 to gain 1/1.6 (0.625×) — the exponential is symmetric in log space, so one constant fixes both ends', () => {
+    expect(gain(1)).toBeCloseTo(1.6, 10);
+    expect(gain(-1)).toBeCloseTo(1 / 1.6, 10);
+  });
+
+  it('never reaches gain 0 for any finite slider value — the dead flat-gray state (every pixel to mid-gray regardless of content) is unreachable by construction, not merely avoided by clamping', () => {
+    for (const c of SLIDER_SWEEP) expect(gain(c)).toBeGreaterThan(0);
+  });
+
+  it('rejects both superseded curves at −1: the raw linear feed (gain 0×, flat gray) and the untightened 2^c (gain 0.5×)', () => {
+    expect(gain(-1)).not.toBeCloseTo(0, 3);
+    expect(gain(-1)).not.toBeCloseTo(0.5, 3);
+  });
+
+  it('rejects the untightened 2^c at +1 too — gain 1.6×, not 2×', () => {
+    expect(gain(1)).not.toBeCloseTo(2, 3);
+  });
+
+  it('contrastFromGain inverts it exactly — this is the inverse autoGrade solves through, so a drift here desyncs Auto from the manual sliders', () => {
+    for (const c of SLIDER_SWEEP) expect(contrastFromGain(gain(c))).toBeCloseTo(c, 10);
+  });
+});
+
+describe('saturationMixUniform — saturation remap', () => {
+  const mix = (s: number): number => 1 + saturationMixUniform(s);
+
+  it('maps neutral (0) to 0 — the shader\'s "1 + u_saturation" mix factor stays 1', () => {
+    expect(saturationMixUniform(0)).toBe(0);
+  });
+
+  it('maps ±1 to a 0.4×–1.6× mix factor', () => {
+    expect(mix(1)).toBeCloseTo(1.6, 10);
+    expect(mix(-1)).toBeCloseTo(0.4, 10);
+  });
+
+  it('keeps some color at the bottom of the sweep — the mix factor never reaches 0 (full grayscale is a look, not a range endpoint)', () => {
+    for (const s of SLIDER_SWEEP) expect(mix(s)).toBeGreaterThan(0);
+  });
+});
+
+describe('temperatureTintUniform — temperature remap', () => {
+  it('maps neutral (0) to 0', () => {
+    expect(temperatureTintUniform(0)).toBe(0);
+  });
+
+  it('maps ±1 to ±TEMPERATURE_MAX_STRENGTH (±0.4) → a ±0.04 R/B channel shift once the shader applies its own 0.1 coefficient — a tint, not a channel-clipping cast', () => {
+    expect(temperatureTintUniform(1)).toBeCloseTo(0.4, 10);
+    expect(temperatureTintUniform(1) * SHADER_TEMPERATURE_CHANNEL_SCALE).toBeCloseTo(0.04, 10);
+    expect(temperatureTintUniform(-1) * SHADER_TEMPERATURE_CHANNEL_SCALE).toBeCloseTo(-0.04, 10);
+  });
+});
+
+/**
+ * The end-to-end property the four remaps exist for, checked the only way that
+ * actually proves it: by running the grade shader's real per-pixel math on the
+ * CPU over every extreme slider combination. Unit-testing each remap's endpoints
+ * alone would NOT catch "brightness +1 and contrast +1 together blow to white" —
+ * that failure only exists in the composition, which is exactly what was broken.
+ */
+describe('grade remaps — no slider combination flattens the frame', () => {
+  /** shaders.ts's GRADE_FRAGMENT_SHADER_SOURCE, transcribed 1:1, fed the same
+   *  remapped uniforms glCompositor.ts's drawGrade sends. */
+  function applyGrade(rgb: [number, number, number], g: GradeParams): [number, number, number] {
+    const bOff = brightnessOffsetUniform(g.brightness);
+    const cGain = 1 + contrastGainUniform(g.contrast);
+    const sMix = 1 + saturationMixUniform(g.saturation);
+    const tTint = temperatureTintUniform(g.temperature);
+
+    let c = rgb.map((v) => v + bOff) as [number, number, number];
+    c = c.map((v) => (v - 0.5) * cGain + 0.5) as [number, number, number];
+    const luma = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    c = c.map((v) => luma + (v - luma) * sMix) as [number, number, number];
+    c[0] += tTint * SHADER_TEMPERATURE_CHANNEL_SCALE;
+    c[2] -= tTint * SHADER_TEMPERATURE_CHANNEL_SCALE;
+    return c.map((v) => Math.max(0, Math.min(1, v))) as [number, number, number];
+  }
+
+  /** Every corner of the 4-D slider space, plus the mid-extremes. */
+  const combos: GradeParams[] = [];
+  for (const brightness of [-1, 0, 1]) {
+    for (const contrast of [-1, 0, 1]) {
+      for (const saturation of [-1, 0, 1]) {
+        for (const temperature of [-1, 0, 1]) combos.push({ brightness, contrast, saturation, temperature });
+      }
+    }
+  }
+
+  /** A normal-exposure test frame: a mid-tone ramp with a little color. Not a
+   *  pathological all-black/all-white input — the claim under test is that
+   *  ordinary content survives every slider position. */
+  const frame: [number, number, number][] = [
+    [0.2, 0.22, 0.25],
+    [0.35, 0.33, 0.3],
+    [0.5, 0.5, 0.5],
+    [0.62, 0.6, 0.55],
+    [0.78, 0.76, 0.8],
+  ];
+
+  it('preserves visible tonal separation across the frame for every extreme slider combination', () => {
+    for (const g of combos) {
+      const out = frame.map((px) => applyGrade(px, g));
+      const lumas = out.map(([r, gg, b]) => 0.2126 * r + 0.7152 * gg + 0.0722 * b);
+      const spread = Math.max(...lumas) - Math.min(...lumas);
+      // The old raw feed produced spread === 0 here (flat gray → tinted flat
+      // color) at contrast=−1, and collapsed to a solid 0 or 1 wherever
+      // brightness and contrast pushed the same way.
+      expect(spread, `flattened at ${JSON.stringify(g)}`).toBeGreaterThan(0.05);
+    }
+  });
+
+  it('never drives the whole frame to solid black or solid white for any extreme slider combination', () => {
+    for (const g of combos) {
+      const out = frame.map((px) => applyGrade(px, g));
+      const allBlack = out.every((px) => px.every((v) => v <= 0.001));
+      const allWhite = out.every((px) => px.every((v) => v >= 0.999));
+      expect(allBlack, `solid black at ${JSON.stringify(g)}`).toBe(false);
+      expect(allWhite, `solid white at ${JSON.stringify(g)}`).toBe(false);
+    }
+  });
+
+  it('leaves the frame untouched at neutral', () => {
+    for (const px of frame) {
+      const out = applyGrade(px, { brightness: 0, contrast: 0, saturation: 0, temperature: 0 });
+      out.forEach((v, i) => expect(v).toBeCloseTo(px[i]!, 10));
+    }
   });
 });

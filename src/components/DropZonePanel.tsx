@@ -25,10 +25,10 @@ import {
   RefreshCw,
   Search,
 } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType, AnimationType, HeadingOverlay } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType, HeadingOverlay, type SegmentGrade } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
 import { PresetPicker, type OverlayConfigPreset } from './PresetPicker';
-import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent } from './EffectsPanel';
+import EffectsPanel, { type Preset as EffectsPreset, type ApplyEvent as EffectsApplyEvent, type ApplyScope as EffectsApplyScope, type AutoGradeResult as EffectsAutoGradeResult } from './EffectsPanel';
 import { loadLookPresets, saveLookPreset, deleteLookPreset, type LookPreset } from '../services/lookPresetService';
 import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
@@ -382,6 +382,16 @@ interface Props {
   onClearSegmentSelection: () => void;
   // Effects Tab Rebuild — Step 5: writes effect fields onto segments.
   onApplyEffect: (e: EffectsApplyEvent) => void;
+  // WebGL2 Phase 4 — one-shot auto color-grade over a scope's segments.
+  onAutoGrade?: (scope: EffectsApplyScope) => Promise<EffectsAutoGradeResult>;
+  // Live grade preview — debounced write-through from the GRADE sliders onto
+  // the active segment, so a drag updates the preview with no Apply click.
+  onGradeLive?: (grade: SegmentGrade) => void;
+  // Grade bug audit Fix B — the grade EffectsPanel's GRADE sliders should sync
+  // FROM (the active segment's stored effectGrade) and which segment it came
+  // from. See App.tsx's activeGrade/activeGradeSegmentId derivation.
+  activeGrade?: SegmentGrade;
+  activeGradeSegmentId?: string;
   // Effects tab props
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -468,6 +478,10 @@ export function DropZonePanel({
   onSelectAllSegments,
   onClearSegmentSelection,
   onApplyEffect,
+  onAutoGrade,
+  onGradeLive,
+  activeGrade,
+  activeGradeSegmentId,
   globalTransition,
   globalTransitionDuration,
   globalAnimation,
@@ -1597,6 +1611,10 @@ export function DropZonePanel({
               initialPresets={lookPresets}
               selectedCount={selectedSegmentIds.size}
               onApply={onApplyEffect}
+              onAutoGrade={onAutoGrade}
+              onGradeLive={onGradeLive}
+              activeGrade={activeGrade}
+              activeGradeSegmentId={activeGradeSegmentId}
               onPresetsChange={handleLookPresetsChange}
               projectName={projectName}
             />

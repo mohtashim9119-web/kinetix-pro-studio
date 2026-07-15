@@ -6,7 +6,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
-import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay } from '../types';
+import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay, type SegmentGrade } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { applyTransitionBlend } from '../services/frameRenderer';
 import { getActiveHeadingAt } from '../services/headingLayer';
@@ -24,6 +24,8 @@ import {
   computeOverlayHoldState,
   computeSnapReleaseBlend,
   computeBlendProgress,
+  toSourceTime,
+  sourceRange,
   SNAP_RELEASE_BLEND_S,
   type OverlayHoldState,
   type SnapReleaseBlend,
@@ -31,6 +33,7 @@ import {
 import { PreviewCanvas } from './PreviewCanvas';
 import { isWebGL2Supported } from '../services/gl/glContext';
 import { useGlPreview } from '../hooks/useGlPreview';
+import { computeAutoGrade } from '../services/gl/autoGrade';
 
 // Live-preview side of the animation pipeline. The export side lives in
 // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
@@ -254,6 +257,34 @@ interface Props {
   /** Path B heading layer (docs/path-b-heading-layer-plan.md) — composited on
    *  top of the frame via getActiveHeadingAt(headings, currentTime). */
   headings?: HeadingOverlay[];
+  /** WebGL2 Phase 4 auto-grade: PreviewStage owns the decode pool + assets, so
+   *  it populates this ref with a per-segment sampler that App's handleAutoGrade
+   *  calls. Assigned on mount, cleared on unmount. */
+  autoGradeSamplerRef?: React.MutableRefObject<AutoGradeSampler | null>;
+}
+
+/** Samples one clean source frame for `segment` and returns its auto-grade, or
+ *  null when the segment has no analyzable frame (missing/color/audio asset, or
+ *  a decode/load failure). */
+export type AutoGradeSampler = (segment: VideoSegment) => Promise<SegmentGrade | null>;
+
+// Downsample size for auto-grade analysis — small enough to be cheap, large
+// enough for stable luma percentiles / channel means (~14k px). 16:9; source
+// aspect is intentionally not preserved (we sample color distribution, not
+// geometry).
+const AUTO_GRADE_W = 160;
+const AUTO_GRADE_H = 90;
+
+/** Loads an image URL for one-shot auto-grade sampling; resolves null on error
+ *  rather than rejecting, so a single bad asset is a per-segment skip, not a
+ *  thrown auto-grade run. */
+function loadImageForSampling(url: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = url;
+  });
 }
 
 export function PreviewStage({
@@ -271,6 +302,7 @@ export function PreviewStage({
   onUpdateExtraOverlayPosition,
   textLayers,
   headings,
+  autoGradeSamplerRef,
 }: Props) {
   const [isFullscreen, setIsFullscreen] = useState(false);
 
@@ -484,8 +516,11 @@ export function PreviewStage({
   // gates ALL work — inert when the dual gate is false. Sources the current/
   // incoming frame from the SAME pool useWebCodecsPreview owns (via its
   // exposed frame/pool), and the outgoing frame via that pool's B3 protected-
-  // session + chase-mutex primitives. Grade is Phase 4 — omitted here, so the
-  // config's grade defaults to neutral (types.ts untouched this phase).
+  // session + chase-mutex primitives. Grade (Phase 4) is per-segment: it flows
+  // through `segments` (already passed to useGlPreview below), which
+  // deriveCompositeParams reads the containing segment's `effectGrade` from —
+  // no grade field is threaded through glConfig. `config.grade` here would only
+  // be a project-level fallback; it's intentionally left unset.
   const glConfig = useMemo(
     () => ({ globalTransition, globalTransitionDuration }),
     [globalTransition, globalTransitionDuration],
@@ -502,6 +537,72 @@ export function PreviewStage({
     isResizingRef,
     enabled: glPathActive,
   });
+
+  // WebGL2 Phase 4 — auto color-grade sampler. Pulls ONE clean source frame per
+  // segment at its own start time and derives grade values via the pure
+  // computeAutoGrade heuristic. This samples the RAW source (a decoded frame /
+  // the loaded image), never a composited or transition-blended output, so the
+  // result reflects only that segment's content. One-shot per user click (never
+  // per tick). Video frames come from the SAME decode pool useWebCodecsPreview
+  // owns (ensureSession seeds a session at the start time, getFrameAt reads it);
+  // image sources load directly from the asset URL. Anything without a
+  // renderable frame (color/audio/missing asset, or a decode/load failure)
+  // resolves null → a non-blocking per-segment skip, surfaced in the Auto
+  // button's flash rather than silently swallowed.
+  const autoGradeCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const getAutoGradeCtx = useCallback((): CanvasRenderingContext2D | null => {
+    let c = autoGradeCanvasRef.current;
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = AUTO_GRADE_W;
+      c.height = AUTO_GRADE_H;
+      autoGradeCanvasRef.current = c;
+    }
+    return c.getContext('2d', { willReadFrequently: true });
+  }, []);
+
+  const autoGradePool = webCodecsPreview.pool;
+  const sampleAutoGrade = useCallback<AutoGradeSampler>(
+    async (segment) => {
+      const asset = assets.find((a) => a.id === segment.assetId);
+      if (!asset || !asset.url) return null;
+      const ctx = getAutoGradeCtx();
+      if (!ctx) return null;
+
+      let source: CanvasImageSource | null = null;
+      if (asset.type === 'image') {
+        source = await loadImageForSampling(asset.url);
+      } else if (asset.type === 'video') {
+        const { start, end } = sourceRange(segment);
+        const target = toSourceTime(segment, segment.startTime);
+        try {
+          await autoGradePool.ensureSession(segment.id, asset.url, start, end, target);
+          source = await autoGradePool.getFrameAt(segment.id, target);
+        } catch {
+          source = null;
+        }
+      }
+      if (!source) return null;
+
+      try {
+        ctx.clearRect(0, 0, AUTO_GRADE_W, AUTO_GRADE_H);
+        ctx.drawImage(source, 0, 0, AUTO_GRADE_W, AUTO_GRADE_H);
+        const data = ctx.getImageData(0, 0, AUTO_GRADE_W, AUTO_GRADE_H);
+        return computeAutoGrade(data);
+      } catch {
+        return null; // e.g. a pool-owned frame closed between resolve and draw
+      }
+    },
+    [assets, autoGradePool, getAutoGradeCtx],
+  );
+
+  useEffect(() => {
+    if (!autoGradeSamplerRef) return;
+    autoGradeSamplerRef.current = sampleAutoGrade;
+    return () => {
+      if (autoGradeSamplerRef) autoGradeSamplerRef.current = null;
+    };
+  }, [autoGradeSamplerRef, sampleAutoGrade]);
 
   // ---------------------------------------------------------------------------
   // Bug 1 (transition flicker) + Bug 2 (animation hard-cut) fix.
