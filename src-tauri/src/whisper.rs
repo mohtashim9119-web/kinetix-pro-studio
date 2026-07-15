@@ -316,6 +316,18 @@ pub async fn whisper_transcribe(
                     }
                     // SIGINT (130) or SIGTERM (143) — user cancelled; silent.
                     130 | 143 => {}
+                    // -1073741795 == 0xC000001D == STATUS_ILLEGAL_INSTRUCTION
+                    // (Windows): the whisper binary executed a CPU instruction
+                    // (e.g. AVX2/FMA) this machine doesn't support. Surface a
+                    // human-readable cause instead of the raw code.
+                    -1073741795 => {
+                        let _ = on_event.send(WhisperEvent::Error {
+                            message: "Transcription failed: your CPU may not support \
+                                      required instructions. This should be fixed by a \
+                                      future update."
+                                .to_string(),
+                        });
+                    }
                     other => {
                         let _ = on_event.send(WhisperEvent::Error {
                             message: format!("whisper exited with code {other}"),

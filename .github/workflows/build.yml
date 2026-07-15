@@ -131,10 +131,20 @@ jobs:
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
           git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
           cd C:\whisper-cpp
+          # GGML_NATIVE=OFF + explicit AVX/FMA/F16C=OFF: build a portable binary
+          # for arbitrary end-user CPUs instead of the CI runner's (AVX2-capable)
+          # CPU. Without this the binary faults with STATUS_ILLEGAL_INSTRUCTION
+          # (0xC000001D) on machines lacking AVX2. Mirrors the macOS x86_64 slice.
           cmake -B build-static `
             -DBUILD_SHARED_LIBS=OFF `
             -DGGML_VULKAN=OFF `
-            -DGGML_CUDA=OFF
+            -DGGML_CUDA=OFF `
+            -DGGML_NATIVE=OFF `
+            -DGGML_AVX=OFF `
+            -DGGML_AVX2=OFF `
+            -DGGML_AVX512=OFF `
+            -DGGML_FMA=OFF `
+            -DGGML_F16C=OFF
           cmake --build build-static --config Release --target whisper-cli
           Copy-Item -Path "C:\whisper-cpp\build-static\bin\Release\whisper-cli.exe" `
             -Destination "$env:GITHUB_WORKSPACE\src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe"

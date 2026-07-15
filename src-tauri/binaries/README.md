@@ -131,10 +131,17 @@ Output: `src-tauri/binaries/whisper-aarch64-apple-darwin`
 
 ### Windows
 
+The CPU-feature flags (`GGML_NATIVE=OFF` + `AVX`/`AVX2`/`AVX512`/`FMA`/`F16C=OFF`)
+are load-bearing: without them GGML auto-detects the *build machine's* CPU and
+emits AVX2/FMA instructions, which crash with `STATUS_ILLEGAL_INSTRUCTION`
+(`0xC000001D`) on end-user machines lacking AVX2. Keep them in sync with CI
+(`.github/workflows/build.yml`).
+
 ```powershell
 git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
 cd C:\whisper-cpp
-cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=OFF -DGGML_CUDA=OFF
+cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=OFF -DGGML_CUDA=OFF `
+  -DGGML_NATIVE=OFF -DGGML_AVX=OFF -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DGGML_F16C=OFF
 cmake --build build-static --config Release --target whisper-cli
 copy build-static\bin\Release\whisper-cli.exe src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe
 ```

@@ -46,6 +46,19 @@ const IDLE_STATE: UseExportState = {
   error: null,
 };
 
+/**
+ * Returns the parent directory of a file path, or null if the path has no
+ * directory component. Handles BOTH `/` (POSIX/macOS) and `\` (Windows)
+ * separators — `pick_save_path` returns native paths, so on Windows the saved
+ * path uses backslashes and a `/`-only split would return an empty string,
+ * silently breaking the "remember last export directory" default. Mirrors the
+ * dual-separator handling in App.tsx's export-filename display.
+ */
+export function parentDir(path: string): string | null {
+  const sep = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return sep >= 0 ? path.substring(0, sep) : null;
+}
+
 function stageLabelFor(stage: ExportStage): string {
   if (stage.type === 'loading_ffmpeg') return 'Loading ffmpeg…';
   if (stage.type === 'encoding_segment') return `Encoding segment ${stage.index + 1} / ${stage.total}`;
@@ -211,7 +224,7 @@ export function useExport(
       const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
       const defaultName = `${project.name.replace(/\s+/g, '_')}_${ts}.mp4`;
       const defaultDir = project.lastExportPath
-        ? project.lastExportPath.substring(0, project.lastExportPath.lastIndexOf('/'))
+        ? parentDir(project.lastExportPath)
         : null;
       const savedPath = await invoke<string | null>('pick_save_path', {
         defaultName,

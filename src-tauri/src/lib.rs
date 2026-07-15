@@ -58,7 +58,6 @@ pub fn run() {
             ffmpeg::ffmpeg_exec,
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::pick_save_path,
-            ffmpeg::save_bytes_to_disk,
             ffmpeg::save_session_file,
             ffmpeg::probe_audio_duration,
             ffmpeg::probe_video_fps,

@@ -214,19 +214,6 @@ pub async fn pick_save_path(
     Ok(handle.map(|p| p.path().to_string_lossy().into_owned()))
 }
 
-/// Writes base64-decoded bytes to an explicit file path chosen by the caller.
-///
-/// The frontend base64-encodes the MP4 blob (same scheme as ffmpeg_write_file)
-/// and passes the path returned by `pick_save_path`. Separating path-picking
-/// from writing lets the user confirm the destination before the render starts.
-#[tauri::command]
-pub async fn save_bytes_to_disk(path: String, data_b64: String) -> Result<(), String> {
-    let data = STANDARD
-        .decode(&data_b64)
-        .map_err(|e| format!("save_bytes_to_disk: base64 decode failed: {e}"))?;
-    fs::write(&path, &data).map_err(|e| format!("save_bytes_to_disk: {e}"))
-}
-
 /// Copies a finished file from a session directory straight to a user-chosen
 /// destination path, WITHOUT reading its bytes into a `Vec<u8>` for IPC.
 ///
