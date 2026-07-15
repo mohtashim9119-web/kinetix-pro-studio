@@ -115,3 +115,50 @@ describe('resolveTransitionProgress — centered transition window', () => {
     expect(resolveTransitionProgress(10, 4, 9)).toBeCloseTo(0.25, 6);
   });
 });
+
+/**
+ * WebGL2 Phase 5 cutover (docs/webgl-architecture-plan.md Section 6). Five
+ * slugs were removed from effectsOptions.ts's TRANSITIONS because the GL
+ * effects engine never implemented them — only the deleted CSS/Canvas2D
+ * snapshot path ever rendered them. Projects saved before the cutover can
+ * still carry one, so this resolver folds them into cross-dissolve.
+ *
+ * This resolver is the ONE function both preview (compositeParams.ts) and
+ * export (segmentEncoder.ts/exportPipeline.ts) resolve through, which is why
+ * the fold lives here: it keeps the two in agreement by construction. These
+ * tests pin that contract at the resolver; compositeParams.test.ts pins the
+ * same fold end-to-end through the derivation.
+ */
+describe('resolveEffectiveTransition — retired slugs (Phase 5 cutover)', () => {
+  const RETIRED = ['wipe', 'slide-push', 'glitch-rgb', 'whip-pan', 'zoom'];
+
+  it.each(RETIRED)('folds the retired slug "%s" into cross-dissolve', (slug) => {
+    const segment = makeSegment({ effectTransition: slug, effectTransitionDuration: 0.8 });
+    expect(resolveEffectiveTransition(segment, TransitionType.NONE, 0.5).transition).toBe('cross-dissolve');
+  });
+
+  it('preserves the retired slug\'s own duration — the transition survives the fold, only its look changes', () => {
+    const segment = makeSegment({ effectTransition: 'whip-pan', effectTransitionDuration: 1.25 });
+    expect(resolveEffectiveTransition(segment, TransitionType.NONE, 0.5).duration).toBe(1.25);
+  });
+
+  it.each(['cross-dissolve', 'dip-black', 'dip-white', 'light-leak'])(
+    'passes the surviving slug "%s" through untouched',
+    (slug) => {
+      const segment = makeSegment({ effectTransition: slug, effectTransitionDuration: 0.8 });
+      expect(resolveEffectiveTransition(segment, TransitionType.NONE, 0.5).transition).toBe(slug);
+    },
+  );
+
+  it('does not fold an unrecognised slug — only the 5 known retirements are remapped', () => {
+    const segment = makeSegment({ effectTransition: 'not-a-real-slug', effectTransitionDuration: 0.8 });
+    expect(resolveEffectiveTransition(segment, TransitionType.NONE, 0.5).transition).toBe('not-a-real-slug');
+  });
+
+  it('does not fold the legacy TransitionType enums that happen to share a retired slug\'s string value (WIPE=\'wipe\', ZOOM=\'zoom\') — the fold is slug-branch only, so export behavior on the legacy enum path is unchanged', () => {
+    const wipe = makeSegment({ transition: TransitionType.WIPE, transitionDuration: 0.8 });
+    expect(resolveEffectiveTransition(wipe, TransitionType.NONE, 0.5).transition).toBe(TransitionType.WIPE);
+    const zoom = makeSegment({ transition: TransitionType.ZOOM, transitionDuration: 0.8 });
+    expect(resolveEffectiveTransition(zoom, TransitionType.NONE, 0.5).transition).toBe(TransitionType.ZOOM);
+  });
+});

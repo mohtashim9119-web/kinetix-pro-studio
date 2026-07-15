@@ -95,13 +95,31 @@ describe('deriveCompositeParams — transition window progress', () => {
     expect(result.transition).toBeNull();
   });
 
-  it('a non-GL-scoped transition slug (e.g. slide-push) resolves to null — out of scope for this engine', () => {
+  it('an unrecognised transition slug resolves to null — the engine only ever renders its own 4 slugs', () => {
+    const segments = [
+      makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'not-a-real-slug', effectTransitionDuration: 1 }),
+      makeSegment({ id: 'b', startTime: 5, duration: 5 }),
+    ];
+    const result = deriveCompositeParams(segments, 5.2, baseConfig);
+    expect(result.transition).toBeNull();
+  });
+
+  // Phase 5 cutover: slide-push was one of the 5 slugs retired from the UI
+  // (effectsOptions.ts) because the GL engine never implemented it. A project
+  // saved before the cutover can still carry it, so transitionResolver.ts folds
+  // it into cross-dissolve — which IS GL-scoped. Without that fold this segment
+  // would show a hard cut in preview while export still rendered a real
+  // slide-push, i.e. exactly the preview/export divergence the cutover exists to
+  // remove. Pins the fold end-to-end through the derivation, not just at the
+  // resolver (transitionResolver.test.ts covers the mapping in isolation).
+  it('a RETIRED slug (slide-push) folds into cross-dissolve and stays GL-rendered — no silent hard cut on a pre-cutover project', () => {
     const segments = [
       makeSegment({ id: 'a', startTime: 0, duration: 5, effectTransition: 'slide-push', effectTransitionDuration: 1 }),
       makeSegment({ id: 'b', startTime: 5, duration: 5 }),
     ];
     const result = deriveCompositeParams(segments, 5.2, baseConfig);
-    expect(result.transition).toBeNull();
+    expect(result.transition).not.toBeNull();
+    expect(result.transition?.type).toBe('cross-dissolve');
   });
 
   it('the legacy TransitionType enum (no effectTransition slug set) also resolves to null — only the 4 new slugs are GL-scoped', () => {

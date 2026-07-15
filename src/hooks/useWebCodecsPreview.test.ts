@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   toSourceTime, sourceRange, computeKeepSet, chaseLatestTarget, startChaseIfIdle, resetChaseMutex, type ChaseMutex,
-  isContentCaughtUp, computeDisplayedSegment, computeAnimTimeInSegment, computeOverlayHoldState, type OverlayHoldState,
+  isContentCaughtUp, computeDisplayedSegment, computeAnimTimeInSegment,
   computeSnapReleaseBlend, computeBlendProgress, type SnapReleaseBlend,
 } from './useWebCodecsPreview';
 import { AnimationType, TransitionType, type VideoSegment } from '../types';
@@ -564,47 +564,6 @@ describe('computeAnimTimeInSegment', () => {
   it('clamps to 0 for a currentTime before the segment starts (defensive floor, matches original Math.max(0, ...))', () => {
     const seg = makeSegment({ startTime: 10, duration: 5 });
     expect(computeAnimTimeInSegment(seg, 9)).toBe(0);
-  });
-});
-
-describe('computeOverlayHoldState', () => {
-  const idle: OverlayHoldState = { wasTransitionActive: false, holding: false };
-
-  it('does not engage the hold at a plain (no-transition) boundary — nothing was active, nothing to hold', () => {
-    // contentCaughtUp false here simulates a video-to-video boundary with no
-    // transition configured: content lags, but since no transition was ever
-    // active there is nothing for the overlay to hold onto.
-    const next = computeOverlayHoldState(idle, false, false);
-    expect(next.holding).toBe(false);
-  });
-
-  it('engages the hold exactly when a real transition window closes before content has caught up', () => {
-    // Render 1: transition window still open.
-    const duringTransition = computeOverlayHoldState(idle, true, false);
-    expect(duringTransition).toEqual({ wasTransitionActive: true, holding: false });
-
-    // Render 2: the boundary crossed — isTransitionActive just went false,
-    // and content has NOT caught up yet. This is the exact Bug 1 scenario.
-    const atBoundary = computeOverlayHoldState(duringTransition, false, false);
-    expect(atBoundary.holding).toBe(true);
-  });
-
-  it('keeps holding across multiple renders while content still has not caught up', () => {
-    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
-    const next = computeOverlayHoldState(holding, false, false);
-    expect(next).toEqual({ wasTransitionActive: false, holding: true });
-  });
-
-  it('releases the hold the instant content catches up', () => {
-    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
-    const next = computeOverlayHoldState(holding, false, true);
-    expect(next.holding).toBe(false);
-  });
-
-  it('a new transition becoming active always clears any stale hold (defensive — should not normally coincide)', () => {
-    const holding: OverlayHoldState = { wasTransitionActive: false, holding: true };
-    const next = computeOverlayHoldState(holding, true, false);
-    expect(next).toEqual({ wasTransitionActive: true, holding: false });
   });
 });
 

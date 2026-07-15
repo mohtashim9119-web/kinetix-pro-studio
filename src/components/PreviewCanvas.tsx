@@ -29,6 +29,14 @@
  * handling is to treat a closed frame as "nothing to paint this tick" and
  * move on; the next tick's frame supersedes it moments later regardless.
  *
+ * NOTE (WebGL2 Phase 5 cutover): the transition-overlay canvas this rationale
+ * turns on no longer exists, and this component now only mounts on a runtime
+ * with WebCodecs but no WebGL2 (PreviewStage's `!glPathActive` branch), where
+ * no transition renders at all. The useLayoutEffect is KEPT regardless — it is
+ * the strictly safer ordering for a draw that must land in its own commit, and
+ * nothing here depends on the overlay being gone. The original reasoning is
+ * preserved below as the historical record of why it is not a plain useEffect.
+ *
  * Transition flash-back fix (S2 -> S1 -> S2 on cross-dissolve boundaries):
  * this draw must run as a `useLayoutEffect`, not `useEffect`. PreviewStage's
  * transition-overlay canvas (z-45, above this component) and this

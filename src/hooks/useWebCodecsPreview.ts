@@ -90,7 +90,8 @@ export interface UseWebCodecsPreviewResult {
    * B2 plumbing (item-4 audit, docs/webcodecs-architecture-plan.md) — the
    * SAME VideoDecoderPool instance this hook privately owns and drives via
    * ensureSession/getFrameAt/setProtectedIds above. Exposed so a sibling
-   * caller (useTransitionPreview.ts, via PreviewStage.tsx) can call
+   * caller (useGlPreview.ts, via PreviewStage.tsx — it took this role over from
+   * useTransitionPreview.ts at the WebGL2 Phase 5 cutover) can call
    * getFrameAt/setTransitionProtectedIds on the OUTGOING segment's session
    * during a transition window — a segment this hook itself has already
    * stopped tracking the instant it falls out of {current, next}. Always
@@ -358,44 +359,6 @@ export function computeAnimTimeInSegment(
 ): number {
   if (!segment) return 0;
   return Math.max(0, Math.min(segment.duration, currentTime - (segment.startTime ?? 0)));
-}
-
-/** Carried across renders (e.g. via a ref in PreviewStage.tsx) — see
- *  computeOverlayHoldState below. */
-export interface OverlayHoldState {
-  wasTransitionActive: boolean;
-  holding: boolean;
-}
-
-/**
- * Bug 1's fix — whether the transition overlay should stay visible past the
- * moment its own transition window closes. A real transition window closing
- * (isTransitionActive true -> false) while content hasn't caught up yet
- * (contentCaughtUp false) engages the hold; the hold releases the instant
- * content catches up. Deliberately does NOT engage merely because
- * `!contentCaughtUp` on its own — a plain (no-transition) boundary has
- * nothing for the overlay to hold, so the hold only ever starts right at a
- * real transition's own close (`prev.wasTransitionActive` true).
- *
- * Extracted as a pure state-transition function (same shape as the
- * ChaseMutex helpers above) so the exact hold/release sequence is directly
- * unit-testable — a caller stores the returned state (e.g. in a ref) and
- * feeds it back in as `prev` on the next render.
- */
-export function computeOverlayHoldState(
-  prev: OverlayHoldState,
-  isTransitionActive: boolean,
-  contentCaughtUp: boolean,
-): OverlayHoldState {
-  let holding = prev.holding;
-  if (isTransitionActive) {
-    holding = false;
-  } else if (prev.wasTransitionActive && !contentCaughtUp) {
-    holding = true;
-  } else if (contentCaughtUp) {
-    holding = false;
-  }
-  return { wasTransitionActive: isTransitionActive, holding };
 }
 
 /** How long the animation-transform release blend (see `computeSnapReleaseBlend`

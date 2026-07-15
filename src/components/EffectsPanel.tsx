@@ -1,7 +1,17 @@
 import { useState, useRef, useMemo, useEffect, type ReactNode } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { Shuffle, ChevronDown, Save, Trash2, Wand2, RotateCcw, Ban } from "lucide-react";
-import { TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE, type EffectOption } from "../effectsOptions";
+import {
+  TRANSITIONS,
+  ANIMATIONS,
+  ANIMATIONS_VISIBLE,
+  OVERLAYS,
+  OVERLAYS_VISIBLE,
+  TRANSITION_NONE,
+  ANIMATION_NONE,
+  OVERLAY_NONE,
+  type EffectOption,
+} from "../effectsOptions";
 import type { SegmentGrade } from "../types";
 
 /* ============================================================
@@ -95,12 +105,16 @@ export interface EffectsPanelProps {
 
 /* ---------- Effect data (Step 2: from shared effectsOptions source) ---------- */
 
-// Each list's "None"/"Hard Cut" off-state is excluded from its randomize pool
-// (you don't shuffle "no effect" onto segments).
+// Each list's "None" off-state is excluded from its randomize pool (you don't
+// shuffle "no effect" onto segments). The animation pool draws from the VISIBLE
+// list, not the full catalog — randomize must only ever land a slug the user
+// could have picked by hand.
 const TRANSITION_POOL: EffectOption[] = TRANSITIONS.slice(1);
-const ANIMATION_POOL: EffectOption[] = ANIMATIONS.slice(1);
+const ANIMATION_POOL: EffectOption[] = ANIMATIONS_VISIBLE.slice(1);
 
-/** Look up a display label by stored value; falls back to the raw value. */
+/** Look up a display label by stored value; falls back to the raw value.
+ *  Callers pass a FULL catalog (never a *_VISIBLE subset) so a segment or
+ *  preset holding a hidden slug still shows its real name. */
 const labelOf = (opts: EffectOption[], value: string): string =>
   opts.find((o) => o.value === value)?.label ?? value;
 
@@ -633,6 +647,10 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
   const [transitionDur, setTransitionDur] = useState("0.5");
   const [animation, setAnimation] = useState(ANIMATIONS[0]!.value);
   const [animationDur, setAnimationDur] = useState("1.0");
+  // No picker is bound to this any more — the OVERLAYS section is Coming-Soon
+  // inert (see below). It survives only so the preset round-trip keeps its
+  // shape: savePreset reads it and applyPreset writes it back. Effectively
+  // pinned at OVERLAYS[0] ('none') unless an older preset carries something else.
   const [overlay, setOverlay] = useState(OVERLAYS[0]!.value);
   const [grade, setGrade] = useState<SegmentGrade>(NEUTRAL_GRADE);
 
@@ -717,10 +735,15 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           selectedCount={selectedCount}
         />
 
+        {/* options={ANIMATIONS_VISIBLE} — the picker offers None + the two GL
+            zooms only. The rest of the ANIMATIONS catalog (Ken Burns + the 5
+            filters) stays fully implemented and rendering on both paths; it is
+            hidden here, not retired, and existing segments using it are left
+            untouched. See effectsOptions.ts's ANIMATIONS doc comment. */}
         <EffectSection
           kind="animation"
           title="ANIMATIONS"
-          options={ANIMATIONS}
+          options={ANIMATIONS_VISIBLE}
           pool={ANIMATION_POOL}
           noneValue={ANIMATION_NONE}
           value={animation}
@@ -733,16 +756,24 @@ export default function EffectsPanel({ initialPresets = [], onPresetsChange, onA
           selectedCount={selectedCount}
         />
 
-        {/* Overlays */}
-        <section className={cls.box}>
-          <h3 className={`${cls.label} mb-3`}>OVERLAYS</h3>
-          <SelectField className="mb-2.5" ariaLabel="Overlay effect" value={overlay} onChange={setOverlay} options={OVERLAYS} />
-          <ApplyPair
-            isNone={overlay === OVERLAY_NONE}
-            selectedCount={selectedCount}
-            onSelected={() => onApply?.({ type: "overlay", scope: "selected", value: overlay })}
-            onAll={() => onApply?.({ type: "overlay", scope: "all", value: overlay })}
-          />
+        {/* Overlays — COMING SOON, deliberately visible but inert.
+            None of the overlay slugs were ever implemented: `effectOverlay` has
+            no renderer on either path (preview or export), so picking one has
+            never done anything. Rather than ship a picker that silently no-ops,
+            the section stays on screen (so the feature reads as planned, not
+            missing) with its controls removed and the dropdown reduced to None.
+            `aria-hidden` + `pointer-events-none` keep it out of both the tab
+            order and the accessibility tree — visible, not interactive. */}
+        <section className={cls.box} aria-hidden="true">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className={cls.label}>OVERLAYS</h3>
+            <span className="px-2 py-0.5 rounded-full bg-[#232327] border-[0.5px] border-[#3a3a40] text-[10px] font-semibold uppercase tracking-wider text-[#6e6e76]">
+              Coming Soon
+            </span>
+          </div>
+          <div className="opacity-40 pointer-events-none select-none">
+            <SelectField ariaLabel="Overlay effect" value={OVERLAY_NONE} onChange={() => {}} options={OVERLAYS_VISIBLE} />
+          </div>
         </section>
 
         {/* Grade */}

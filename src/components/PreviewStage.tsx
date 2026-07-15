@@ -8,12 +8,10 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay, type SegmentGrade } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
-import { applyTransitionBlend } from '../services/frameRenderer';
 import { getActiveHeadingAt } from '../services/headingLayer';
 import { waitForVideoFrame } from '../services/waitForVideoFrame';
 import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
 import { blendWrapperProps } from '../services/animBlend';
-import { useTransitionPreview } from '../hooks/useTransitionPreview';
 import { useFirstFrameCache } from '../hooks/useFirstFrameCache';
 import { isWebCodecsPreviewSupported } from '../services/webcodecsSupport';
 import {
@@ -21,13 +19,11 @@ import {
   isContentCaughtUp,
   computeDisplayedSegment,
   computeAnimTimeInSegment,
-  computeOverlayHoldState,
   computeSnapReleaseBlend,
   computeBlendProgress,
   toSourceTime,
   sourceRange,
   SNAP_RELEASE_BLEND_S,
-  type OverlayHoldState,
   type SnapReleaseBlend,
 } from '../hooks/useWebCodecsPreview';
 import { PreviewCanvas } from './PreviewCanvas';
@@ -48,13 +44,17 @@ import { computeAutoGrade } from '../services/gl/autoGrade';
  * `{ style }` object computed fresh from `timeInSegment` every render (the
  * Framer-Motion-wall-clock approach — `repeat: Infinity` keyframes,
  * mount-triggered entry tweens — was replaced in Phase A; see
- * docs/webcodecs-architecture-plan.md Section 8.1). The outer motion.div
- * drives cross-segment transition (initial/exit). This inner wrapper drives
- * the looping/entry camera-dynamics animation: pauses freeze it, seeks jump
- * it exactly, and it matches canvasAnimations.ts frame-for-frame.
+ * docs/webcodecs-architecture-plan.md Section 8.1). This wrapper drives the
+ * looping/entry camera-dynamics animation: pauses freeze it, seeks jump it
+ * exactly, and it matches canvasAnimations.ts frame-for-frame.
  *
- * NB: segmentDuration is needed for time-scaled entry animations (ZOOM_OUT)
- * and KEN_BURNS; pass it in from the consuming component.
+ * Scope, post-Phase-5-cutover: this renders the 11 animations OUTSIDE the GL
+ * engine's scope. ZOOM_IN/ZOOM_OUT are GL-scoped and have no case here (see
+ * where they used to sit, below); the outer motion.div no longer drives a
+ * cross-segment transition either — the GL compositor owns every transition.
+ *
+ * NB: segmentDuration is needed for time-scaled entry animations and
+ * KEN_BURNS; pass it in from the consuming component.
  */
 function getAnimationWrapperProps(
   animation: AnimationType,
@@ -65,27 +65,28 @@ function getAnimationWrapperProps(
     case AnimationType.NONE:
       return {};
 
-    // Zoom / Ken Burns are driven by timeInSegment (the playhead position
-    // within the segment), NOT Framer Motion's wall-clock. A plain static
-    // `transform` recomputed each render keeps preview in lockstep with the
-    // playhead — pauses freeze, seeks jump correctly, speed follows playback —
-    // and mirrors the export canvas math in canvasAnimations.ts (0.05/sec).
+    // Ken Burns is driven by timeInSegment (the playhead position within the
+    // segment), NOT Framer Motion's wall-clock. A plain static `transform`
+    // recomputed each render keeps preview in lockstep with the playhead —
+    // pauses freeze, seeks jump correctly, speed follows playback — and mirrors
+    // the export canvas math in canvasAnimations.ts (0.05/sec).
     case AnimationType.KEN_BURNS: {
       const scale = 1.0 + 0.05 * timeInSegment;
       const translateX = 0.5 * timeInSegment; // slow pan right, px
       return { style: { transform: `scale(${scale}) translateX(${translateX}px)`, transformOrigin: 'center center' } };
     }
 
-    case AnimationType.ZOOM_IN: {
-      const scale = 1.0 + 0.05 * timeInSegment;
-      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
-    }
-
-    case AnimationType.ZOOM_OUT: {
-      const endScale = 1.0 + 0.05 * segmentDuration;
-      const scale = endScale - 0.05 * timeInSegment;
-      return { style: { transform: `scale(${scale})`, transformOrigin: 'center center' } };
-    }
+    // ZOOM_IN / ZOOM_OUT deliberately have no case here — they fall through to
+    // `default: {}`. Both are GL-scoped effects (docs/webgl-architecture-plan.md
+    // Section 5.2) and the compositor renders them as a UV transform, per-layer,
+    // so they stay continuous across a transition boundary (Bug 2). Their CSS
+    // copies were deleted at the Phase 5 cutover: keeping them would double-apply
+    // the zoom on top of the GL canvas.
+    //
+    // KEN_BURNS above keeps its CSS zoom precisely because it is NOT in GL scope
+    // (it is one of the other 11 animations) — the compositor never touches it,
+    // so this wrapper is still the only thing rendering it. Same 0.05/sec rate,
+    // and canvasAnimations.ts (export) is untouched for all three.
 
     // Phase A (webcodecs-architecture-plan.md Section 8.1) — the remaining
     // 10 types below are all now driven by timeInSegment, mirroring the
@@ -211,24 +212,6 @@ function getClipEffectStyle(slug: string | undefined): React.CSSProperties {
   }
 }
 
-/**
- * Phase A3 companion fix — the segment immediately preceding `seg` in
- * timeline order (its own end coincides with `seg`'s own start). Used as the
- * caption-hold FALLBACK for the post-window "hold" period (see
- * captionSegment's own comment below): once useTransitionPreview's active
- * window has closed but the overlay is still being held visible pending
- * decode catch-up, the hook's own outgoingSegmentId has already reset to
- * null (its per-render candidates no longer match), so this contiguous-
- * predecessor lookup off the now-fully-flipped `currentSegment` is the only
- * way to still find the outgoing segment for that trailing window. Not used
- * for the ACTIVE-window case any more — see captionSegment's comment for why
- * a currentSegment-relative lookup alone is no longer sufficient there.
- */
-function findOutgoingSegment(segments: VideoSegment[], seg: VideoSegment | undefined): VideoSegment | undefined {
-  if (!seg) return undefined;
-  return segments.find(s => Math.abs(s.startTime + s.duration - seg.startTime) < 0.001 && s.id !== seg.id);
-}
-
 interface GlobalOverlayConfig {
   fontFamily: string;
   color: string;
@@ -246,7 +229,6 @@ interface Props {
   globalTransition: TransitionType;
   globalTransitionDuration: number;
   globalOverlayConfig: GlobalOverlayConfig;
-  globalOverlayFilter?: string;
   assets: Asset[];
   isPlaying: boolean;
   isResizingRef: React.RefObject<boolean>;
@@ -295,7 +277,6 @@ export function PreviewStage({
   globalTransition,
   globalTransitionDuration,
   globalOverlayConfig,
-  globalOverlayFilter,
   assets,
   isPlaying,
   isResizingRef,
@@ -316,38 +297,21 @@ export function PreviewStage({
   const useWebCodecsPathRef = useRef(useWebCodecsPath);
   useEffect(() => { useWebCodecsPathRef.current = useWebCodecsPath; }, [useWebCodecsPath]);
 
-  // WebGL2 effects preview path (docs/webgl-architecture-plan.md Phase 3) —
-  // dual-gated exactly like the WebCodecs migration's own Phase 1: capability
-  // AND a dev-only persisted toggle, both required. WebCodecs support is a
-  // structural prerequisite (GL sources its frames from the decode pool), and
-  // import.meta.env.DEV gates the toggle so production can never activate it —
-  // the legacy CSS/Canvas2D effects path stays 100% intact for shipped users.
-  const [glDevToggle, setGlDevToggle] = useState<boolean>(() => {
-    if (!import.meta.env.DEV) return false;
-    try { return localStorage.getItem('kinetix:dev:glPreview') === '1'; } catch { return false; }
-  });
-  const glCapable = import.meta.env.DEV && useWebCodecsPath && isWebGL2Supported();
-  const glPathActive = glCapable && glDevToggle;
-  // Mid-session toggling takes effect without a segment change because GL's own
-  // effects live in useGlPreview (keyed on the `enabled` prop and its own
-  // internal canvas-mount state, so they re-run both when glPathActive flips
-  // AND when the GL <canvas> itself actually mounts — see UseGlPreviewResult
-  // .canvasRef's doc for why the latter matters on a cold load where the dev
-  // toggle is already persisted true), and the legacy segment-change/play
-  // effects are already gated by useWebCodecsPathRef (glPathActive requires
-  // useWebCodecsPath, so those effects stay inert whenever GL is active).
-  // The canvas ref itself is owned by useGlPreview (glPreview.canvasRef,
-  // below) — attached directly to the JSX ref prop, not held here.
-  const toggleGlPreview = useCallback(() => {
-    setGlDevToggle(prev => {
-      const next = !prev;
-      try { localStorage.setItem('kinetix:dev:glPreview', next ? '1' : '0'); } catch { /* ignore */ }
-      return next;
-    });
-  }, []);
-
-  // Canvas overlay for transition blending
-  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  // WebGL2 effects preview path (docs/webgl-architecture-plan.md Phase 5 —
+  // the cutover). Capability-gated ONLY: Phase 3's dual gate (import.meta.env
+  // .DEV + a persisted dev toggle) was removed here, so this is now the sole
+  // path that renders the scoped effects — the 4 transitions, both zooms, and
+  // color grading. WebCodecs support stays a structural prerequisite because GL
+  // sources its frames from that decode pool.
+  //
+  // There is deliberately NO fallback (plan Section 3.4): the CSS/Canvas2D
+  // snapshot path that used to render transitions was deleted at this cutover,
+  // not gated. isWebGL2Supported() survives purely as a diagnostic —
+  // glUnavailable below drives a visible error surface, because a clear message
+  // beats a silent black stage. It is not a router to a second implementation.
+  const webgl2Supported = isWebGL2Supported();
+  const glPathActive = useWebCodecsPath && webgl2Supported;
+  const glUnavailable = !webgl2Supported;
 
   // FIX 1 — Dual persistent video elements (A/B slot pingpong).
   // Neither element is ever unmounted; we swap which is visible on segment change.
@@ -365,12 +329,14 @@ export function PreviewStage({
   // FIX 2 — Mirror currentTime in a ref so effects can read it without dep churn.
   const currentTimeRef = useRef(currentTime);
 
-  // Transition-flicker (Bug 1) / animation-hard-cut (Bug 2) fix — see the
-  // synchronization block below (right after webCodecsPreview is set up)
-  // for the full explanation. These are read AND written synchronously at
-  // render time there, not inside effects, so refs (not state) are correct.
+  // Animation-hard-cut (Bug 2) fix — see the synchronization block below
+  // (right after webCodecsPreview is set up) for the full explanation. Read
+  // AND written synchronously at render time there, not inside an effect, so
+  // a ref (not state) is correct.
+  //
+  // Bug 1's companion `overlayHoldStateRef` was deleted at the Phase 5 cutover
+  // along with the transition overlay it held visible.
   const displayedSegmentRef = useRef<VideoSegment | undefined>(undefined);
-  const overlayHoldStateRef = useRef<OverlayHoldState>({ wasTransitionActive: false, holding: false });
 
   // Snap-back fix (docs/webcodecs-architecture-plan.md, Phase A3 entry's
   // "residual issue 1") — carries the animation-transform release blend's
@@ -468,22 +434,18 @@ export function PreviewStage({
     dragState.current = null;
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // Transition preview — pre-roll snapshot blend
-  // ---------------------------------------------------------------------------
-  const computedFilter = globalOverlayFilter ? getFilterStyle(globalOverlayFilter) : undefined;
-  const globalConfig = {
-    overlayConfig: globalOverlayConfig,
-    globalOverlayFilter: (computedFilter && computedFilter !== 'none') ? computedFilter : undefined,
-  };
+  // Phase 5 cutover — `globalConfig` (overlayConfig + the resolved
+  // globalOverlayFilter CSS string) was built here purely to feed
+  // useTransitionPreview's snapshot renderer, which baked both into the
+  // pre-roll canvases. That hook is deleted, and the GL compositor bakes
+  // nothing — overlays and captions are DOM layers above its canvas (Section
+  // 5.4 keeps them out of GL scope) — so both it and its `computedFilter`
+  // helper are gone with it.
 
   // Phase 1+2 WebCodecs preview path. `enabled` gates ALL work inside the
   // hook (including decode session creation) — when false, this call is
-  // inert. Computed BEFORE useTransitionPreview below (B2 plumbing, item-4
-  // audit) so its already-live `frame`/`frameSegmentId`/`pool` can be
-  // threaded straight into that hook's params — useTransitionPreview
-  // doesn't depend on anything defined between the two calls, so this
-  // reordering is behavior-neutral for both hooks.
+  // inert. Computed before the GL driver below so its already-live
+  // `frame`/`frameSegmentId`/`pool` can be threaded straight into it.
   const webCodecsPreview = useWebCodecsPreview({
     segments,
     assets,
@@ -492,25 +454,12 @@ export function PreviewStage({
     enabled: useWebCodecsPath,
   });
 
-  const transitionPreview = useTransitionPreview({
-    segments,
-    currentTime,
-    assets,
-    globalTransition,
-    globalTransitionDuration,
-    globalConfig,
-    isResizingRef,
-    // B2 plumbing (item-4 audit) — not used by useTransitionPreview yet
-    // (that's B3); threaded through now so B3 doesn't need another
-    // cross-file change here.
-    pool: webCodecsPreview.pool,
-    incomingFrame: webCodecsPreview.frame,
-    incomingFrameSegmentId: webCodecsPreview.frameSegmentId,
-    // Phase 3 — when the GL path owns the frame, this hook goes inert so the
-    // legacy overlay canvas doesn't composite over the GL canvas and the two
-    // don't fight over the pool's transitionProtectedIds set.
-    glPathActive,
-  });
+  // Phase 5 cutover — the useTransitionPreview call that stood here is gone,
+  // along with the hook itself (src/hooks/useTransitionPreview.ts, deleted).
+  // It drove the CSS/Canvas2D pre-roll snapshot blend; the GL compositor now
+  // owns every transition this app renders. It was already fully inert
+  // whenever the GL path was active (its own glPathActive guard), so removing
+  // it changes nothing about what the GL path draws.
 
   // WebGL2 preview driver (docs/webgl-architecture-plan.md Phase 3). `enabled`
   // gates ALL work — inert when the dual gate is false. Sources the current/
@@ -609,7 +558,7 @@ export function PreviewStage({
   //
   // Root cause, confirmed via the [DIAG] timestamps above: `currentSegment`
   // (and everything computed synchronously from it every render — the
-  // animation transform below, useTransitionPreview's own `isActive`) flips
+  // animation transform below) flips
   // in a single render the instant currentTime crosses a segment boundary.
   // But useWebCodecsPreview's `frame` is committed asynchronously — measured
   // up to ~436ms after the flip under real decode load, with zero frame
@@ -624,8 +573,8 @@ export function PreviewStage({
   // very render where the boundary crosses must already reflect this, or a
   // single un-gated frame is enough to show the bug. This is the same
   // "read a ref directly at render time, not as an effect dependency"
-  // pattern useTransitionPreview.ts already uses for isResizingRef, for the
-  // identical reason: an effect would only correct things one paint later,
+  // pattern useGlPreview.ts uses for isResizingRef, for the identical
+  // reason: an effect would only correct things one paint later,
   // which is smaller than but the same class of gap this fix closes.
   // ---------------------------------------------------------------------------
   const contentCaughtUp = isContentCaughtUp(currentSegment?.id, webCodecsPreview.isVideoSegment, webCodecsPreview.frameSegmentId);
@@ -655,156 +604,21 @@ export function PreviewStage({
   const animBlendProgress = computeBlendProgress(snapReleaseRef.current, currentTime, SNAP_RELEASE_BLEND_S);
   lastAnimTimeInSegmentRef.current = animTimeInSegment;
 
-  // Bug 1 — hold the transition overlay visible (at its last-blended
-  // content — the existing "do NOT clearRect" retention in the draw effect
-  // below already keeps that content painted) past the moment its own
-  // transition window closes, for as long as content hasn't caught up to
-  // the segment it's handing off to.
-  const overlayHoldState = computeOverlayHoldState(overlayHoldStateRef.current, transitionPreview.isActive, contentCaughtUp);
-  overlayHoldStateRef.current = overlayHoldState;
-  const showTransitionOverlay = transitionPreview.isActive || overlayHoldState.holding;
-
-  // Phase A3 companion fix, updated for the CENTERED transition window
-  // (docs/webgl-architecture-plan.md's transition-centering entry —
-  // supersedes the old anchored-at-B-start placement, D7 in
-  // project-state.md's Ignored Low Risk Bugs). The body caption (below) is
-  // not occluded by the canvas overlay (it paints above it, z-46 vs z-45)
-  // and must keep reading the OUTGOING segment's text for as long as the
-  // overlay itself is showing, so the caption reads as steady throughout the
-  // crossfade. Under the old anchored-at-B-start window, `currentSegment`
-  // (bounds-based) was ALWAYS the incoming side for the window's entire
-  // active life, so "outgoing" could be derived as currentSegment's
-  // contiguous predecessor unconditionally. Centering breaks that: for the
-  // PRE-boundary half of the window, currentSegment IS the outgoing segment
-  // itself (bounds-containment hasn't crossed the boundary yet), so that
-  // same predecessor lookup would incorrectly walk one segment too far back.
-  // transitionPreview.outgoingSegmentId is authoritative for both active
-  // halves (it's the exact segment useTransitionPreview.ts itself resolved
-  // as outgoing); findOutgoingSegment is kept only as the fallback for the
-  // trailing "hold" period, where the hook's own per-render candidates have
-  // already reset (see that function's own updated doc comment).
-  const captionSegment = showTransitionOverlay
-    ? (segments.find(s => s.id === transitionPreview.outgoingSegmentId)
-        ?? findOutgoingSegment(segments, currentSegment)
-        ?? currentSegment)
-    : currentSegment;
-
-  // Draw the transition blend onto the overlay canvas whenever preview state changes.
-  // The canvas is sized to match the stage via CSS (position:absolute inset-0).
-  useEffect(() => {
-    const canvas = overlayCanvasRef.current;
-    if (!canvas) return;
-
-    if (!transitionPreview.isActive || !transitionPreview.outgoing || !transitionPreview.incoming) {
-      // INTENTIONAL: do NOT clearRect here.
-      //
-      // The canvas element has CSS `transition: opacity 100ms ease`. When isActive
-      // flips false, opacity animates 1 → 0 over 100ms. Calling clearRect now would
-      // erase the last drawn frame in a useEffect that fires post-paint, leaving
-      // the canvas visually transparent within ~16ms (well before the 100ms CSS
-      // fade completes). With nothing drawn on the canvas, bg-black underneath
-      // shows through during the video decode latency window (50-200ms), producing
-      // a visible black flash on video segments.
-      //
-      // Retaining the last frame (incoming snapshot at progress=1) keeps the canvas
-      // visually showing the target media while the live video element decodes its
-      // first frame underneath. The draw path below always clearRects before drawing,
-      // so this stale content is cleaned up on the next transition's frame 0 — at
-      // which point CSS opacity is near 0 again and the stale frame is invisible.
-      return;
-    }
-
-    // Size canvas to match its CSS display size
-    const w = canvas.offsetWidth || 960;
-    const h = canvas.offsetHeight || 540;
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // B3 (item-4 fix) — when the WebCodecs-capable live path is genuinely
-    // caught up to currentSegment (contentCaughtUp, computed above from the
-    // same frame/frameSegmentId this transition's own incoming side is
-    // sourced from — see useWebCodecsPreview.ts), blit its live frame onto
-    // transitionPreview.incoming's persistent canvas right before
-    // compositing below — this is what makes the INCOMING side of the blend
-    // live instead of a frozen one-shot snapshot. Falls through to whatever
-    // transitionPreview.incoming already holds (the one-shot snapshot, non-
-    // video incoming segment, or a not-yet-caught-up live frame) on every
-    // other path — strictly an upgrade over the frozen fallback, never worse.
-    //
-    // The extra `currentSegment?.id === transitionPreview.incomingSegmentId`
-    // guard (added for the centered window, docs/webgl-architecture-plan.md's
-    // transition-centering entry) is required now: under the OLD anchored-
-    // at-B-start window, incomingSeg was ALWAYS currentSegment for the
-    // window's entire active life, so contentCaughtUp (which checks decode
-    // caught up to currentSegment) was sufficient on its own. Centering
-    // breaks that — for the pre-boundary half, currentSegment IS the
-    // OUTGOING segment (bounds-containment hasn't crossed the boundary yet),
-    // so without this guard contentCaughtUp would read as "caught up"
-    // (decode has always been caught up to the segment that's been playing
-    // normally) and this block would blit the OUTGOING segment's own live
-    // frame onto what's meant to be the incoming canvas.
-    if (
-      useWebCodecsPath &&
-      webCodecsPreview.isVideoSegment &&
-      contentCaughtUp &&
-      webCodecsPreview.frame &&
-      currentSegment?.id === transitionPreview.incomingSegmentId
-    ) {
-      try {
-        const incCanvas = transitionPreview.incoming;
-        const incCtx = incCanvas.getContext('2d');
-        const frame = webCodecsPreview.frame;
-        const frameW = frame.displayWidth;
-        const frameH = frame.displayHeight;
-        if (incCtx && frameW && frameH) {
-          // object-cover source rect — mirrors PreviewCanvas.tsx's identical
-          // VideoFrame-to-canvas fit math.
-          const canvasRatio = incCanvas.width / incCanvas.height;
-          const frameRatio = frameW / frameH;
-          let sx = 0, sy = 0, sw = frameW, sh = frameH;
-          if (frameRatio > canvasRatio) {
-            sw = frameH * canvasRatio;
-            sx = (frameW - sw) / 2;
-          } else {
-            sh = frameW / canvasRatio;
-            sy = (frameH - sh) / 2;
-          }
-          incCtx.clearRect(0, 0, incCanvas.width, incCanvas.height);
-          incCtx.drawImage(frame, sx, sy, sw, sh, 0, 0, incCanvas.width, incCanvas.height);
-        }
-      } catch {
-        // Frame closed between being handed to this component and this draw
-        // running (pool eviction/scrub-reset race) — same documented hazard
-        // as PreviewCanvas.tsx's own drawImage call. Skip this tick's
-        // update; transitionPreview.incoming keeps whatever it last held.
-      }
-    }
-
-    // Draw outgoing snapshot as the base layer
-    ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(transitionPreview.outgoing, 0, 0, w, h);
-
-    // Composite incoming snapshot on top via the same blend logic used in export
-    applyTransitionBlend(ctx, {
-      adjacentCanvas: transitionPreview.incoming,
-      alpha: transitionPreview.progress,
-      type: transitionPreview.effectiveTransition,
-    }, w, h);
-  }, [
-    transitionPreview.isActive,
-    transitionPreview.progress,
-    transitionPreview.outgoing,
-    transitionPreview.incoming,
-    transitionPreview.effectiveTransition,
-    useWebCodecsPath,
-    webCodecsPreview.isVideoSegment,
-    webCodecsPreview.frame,
-    contentCaughtUp,
-  ]);
+  // Phase 5 cutover — the caption now always reads `currentSegment`.
+  //
+  // It used to hold the OUTGOING segment's text for the life of the CSS/Canvas2D
+  // transition overlay, so the caption read as steady while that overlay
+  // crossfaded beneath it. Both the overlay and the hold state (Bug 1) are gone:
+  // the GL compositor owns the whole blend on one canvas and retains its last
+  // draw, so there is no separate overlay to stay in sync with and nothing to
+  // hold a caption across.
+  //
+  // Not a behaviour change for anyone: useTransitionPreview reported isActive
+  // false whenever the GL path was on, so showTransitionOverlay was already
+  // always false there and the caption already tracked currentSegment. This is
+  // byte-identical to the GL path that was manually verified pre-cutover — it
+  // only deletes the branch that the (now-removed) legacy path used.
+  const captionSegment = currentSegment;
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -825,43 +639,32 @@ export function PreviewStage({
     }
   };
 
-  // Suppress Framer Motion entry/exit animations while canvas is handling the
-  // transition — extended through the Bug 1 hold window (showTransitionOverlay),
-  // not just the raw transition window, so the wrapper doesn't attempt its own
-  // entrance animation while the overlay is still covering for content catch-up.
-  const suppressMotionAnim = showTransitionOverlay;
-
   // Snap-back fix — the intra-segment animation wrapper's actual props.
   // During the release-blend window (animBlendProgress < 1), blends the
   // frozen OUTGOING pose's own transform/opacity toward the CURRENT
   // segment's live pose (src/services/animBlend.ts); otherwise this is
-  // byte-identical to calling getAnimationWrapperProps directly, exactly as
-  // before this fix. Gated on suppressMotionAnim the same way the direct
-  // call already was — while the transition overlay is covering the
-  // screen, no wrapper transform is applied at all (unchanged behavior).
-  // When the GL path is active it applies scoped zoom-in/zoom-out itself (a UV
-  // transform in the compositor); suppress the CSS wrapper's copy so zoom isn't
-  // double-applied to the GL canvas. The other 11 animation types stay on the
-  // CSS wrapper (out of GL scope) and simply transform the GL canvas element.
-  // Off by default (glPathActive false) → resolveSegmentAnimationType verbatim,
-  // i.e. byte-identical to before Phase 3.
-  const resolveWrapperAnimationType = (seg: VideoSegment): AnimationType => {
-    const t = resolveSegmentAnimationType(seg);
-    if (glPathActive && (t === AnimationType.ZOOM_IN || t === AnimationType.ZOOM_OUT)) {
-      return AnimationType.NONE;
-    }
-    return t;
-  };
-
+  // byte-identical to calling getAnimationWrapperProps directly.
+  //
+  // Phase 5 cutover — two gates that used to wrap this are gone:
+  //  1. `suppressMotionAnim` (returned {} for the life of the CSS/Canvas2D
+  //     transition overlay, which is deleted). It derived from
+  //     showTransitionOverlay, which was already always false whenever the GL
+  //     path was on, so dropping it changes nothing the GL path rendered.
+  //  2. `resolveWrapperAnimationType` (mapped ZOOM_IN/ZOOM_OUT to NONE while GL
+  //     was active, so zoom wasn't applied twice). Redundant now that
+  //     getAnimationWrapperProps has no zoom cases at all — the compositor is
+  //     the only thing that renders zoom, as a UV transform.
+  //
+  // The other 11 animation types stay on this CSS wrapper (out of GL scope,
+  // Section 5.2) and simply transform the GL canvas element.
   const animationWrapperProps = (() => {
-    if (suppressMotionAnim) return {};
     const toSeg = animSegment ?? currentSegment;
     if (!toSeg) return {};
-    const toProps = getAnimationWrapperProps(resolveWrapperAnimationType(toSeg), toSeg.duration, animTimeInSegment);
+    const toProps = getAnimationWrapperProps(resolveSegmentAnimationType(toSeg), toSeg.duration, animTimeInSegment);
     const fromSeg = snapReleaseRef.current.fromSegment;
     if (animBlendProgress >= 1 || !fromSeg) return toProps;
     const fromProps = getAnimationWrapperProps(
-      resolveWrapperAnimationType(fromSeg),
+      resolveSegmentAnimationType(fromSeg),
       fromSeg.duration,
       snapReleaseRef.current.fromTimeInSegment,
     );
@@ -1122,33 +925,44 @@ export function PreviewStage({
           </div>
         )}
 
-        {/* Dev-only WebGL2-effects-preview toggle (docs/webgl-architecture-plan.md
-            Phase 3). import.meta.env.DEV-gated so it can never appear (or activate)
-            in production. Clicking flips the persisted dev toggle; the button
-            colour reflects whether the GL path is actually active. */}
-        {glCapable && (
-          <button
-            onClick={toggleGlPreview}
-            className={`absolute top-16 left-6 z-[1001] px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors ${
-              glPathActive ? 'bg-[#22d3ee] text-black' : 'bg-black/60 text-white border border-white/10'
-            }`}
-          >
-            {glPathActive ? 'WebGL2 Preview: ON' : 'WebGL2 Preview: off'}
-          </button>
+        {/* WebGL2 unavailable — the Phase 5 diagnostic (plan Section 3.4). The
+            effects engine has no fallback path by design, so rather than leave a
+            silently effect-less (or black) stage, say so plainly. This is an
+            error surface, NOT a router: nothing re-renders the scoped effects
+            when it shows. */}
+        {glUnavailable && (
+          <div className="absolute top-16 left-6 z-[1001] px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed">
+            <div className="font-black uppercase tracking-wider mb-0.5">Effects unavailable</div>
+            WebGL2 is not available in this runtime, so transitions, zoom, and
+            colour grading cannot render. Playback and export are unaffected.
+          </div>
         )}
         {glPathActive && glPreview.error && (
-          <div className="absolute top-[6.5rem] left-6 z-[1001] px-3 py-1.5 rounded-lg bg-red-600 text-white text-[10px] font-mono max-w-[280px]">
-            GL: {glPreview.error}
+          <div className="absolute top-16 left-6 z-[1001] px-3 py-2 rounded-lg bg-red-600 text-white text-[10px] max-w-[320px] leading-relaxed">
+            <div className="font-black uppercase tracking-wider mb-0.5">Effects engine error</div>
+            <span className="font-mono">{glPreview.error}</span>
           </div>
         )}
 
+        {/* Phase 5 cutover — the CSS/Framer cross-segment transition path is deleted
+            (plan Section 3.4 names it alongside useTransitionPreview's snapshot
+            machinery). The motion.div below used to drive initial/animate/exit from
+            getMotionProps(currentSegment.transition), i.e. the LEGACY TransitionType
+            enum. The GL compositor is now the only thing that renders a transition,
+            so those props are pinned inert.
+
+            Already inert in practice before this commit: `segment.transition` is
+            written TransitionType.NONE at creation (App.tsx) and reset to NONE by
+            every Effects-tab apply, and no live UI can set it (its picker was
+            replaced by the slug-based EffectsPanel in the Effects Tab Rebuild) — so
+            the NONE branch was the only one this ever took. */}
         <AnimatePresence mode="popLayout" initial={false}>
           {currentSegment ? (
             <motion.div
-              initial={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).initial}
-              animate={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).animate}
-              exit={suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? { opacity: 1 } : getMotionProps(currentSegment.transition || globalTransition).exit}
-              transition={{ duration: suppressMotionAnim || currentSegment.transition === TransitionType.NONE ? 0 : (currentSegment.transitionDuration ?? globalTransitionDuration) }}
+              initial={{ opacity: 1 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 1 }}
+              transition={{ duration: 0 }}
               className="absolute inset-0 bg-black"
             >
               {/* Visuals — media wrapper carries intra-segment camera-dynamics animation.
@@ -1249,15 +1063,17 @@ export function PreviewStage({
                       {/* Image segments — suppressed when the GL path owns the frame
                           (glPathActive); the GL canvas above renders image content too. */}
                       {asset?.url && !isVideoAsset && !glPathActive && (
-                        // Fade-in on segment enter; suppressed when canvas just handled the
-                        // transition (suppressMotionAnim) to avoid a black-to-image stutter
-                        // immediately after the canvas blend completes.
+                        // Fade-in on segment enter. The old `suppressMotionAnim ? 1 : 0`
+                        // initial existed to skip this fade right after the deleted canvas
+                        // overlay finished a blend (it would have read as a black-to-image
+                        // stutter); with no overlay there is nothing to stutter against, so
+                        // the fade is unconditional. Only reachable when the GL path is off.
                         <motion.img
                           key={currentSegment.id}
                           src={asset.url}
                           className="w-full h-full object-cover"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}
-                          initial={{ opacity: suppressMotionAnim ? 1 : 0 }}
+                          initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           transition={{ duration: 0.4 }}
                         />
@@ -1296,18 +1112,16 @@ export function PreviewStage({
               </motion.div>
 
               {/* Extra Overlays Rendering — draggable when onUpdateExtraOverlayPosition is provided.
-                  Wrapper fades out with the canvas overlay during transitions to prevent
-                  double-render (canvas snapshot already contains extra overlays). */}
+                  Phase 5 cutover: this wrapper used to fade to opacity 0 for the life of the
+                  CSS/Canvas2D transition overlay, because that overlay's snapshots already
+                  had the extra overlays baked in and showing both would double-render them.
+                  The GL compositor bakes nothing — overlays are a DOM layer above its canvas
+                  (Section 5.4 keeps them out of GL scope) — so there is nothing to
+                  double-render and the fade is gone. Already the GL path's behaviour before
+                  this commit: showTransitionOverlay was always false whenever GL was on. */}
               <div
                 className="absolute inset-0 pointer-events-none"
-                style={{
-                  zIndex: 40,
-                  // Bug 1 fix — extended through the hold window (showTransitionOverlay),
-                  // same reasoning as the canvas overlay below: don't fade extra overlays
-                  // in until the overlay they're handing off from is actually releasing.
-                  opacity: showTransitionOverlay ? 0 : 1,
-                  transition: 'opacity 100ms ease',
-                }}
+                style={{ zIndex: 40 }}
               >
                 {currentSegment.extraOverlays?.map((o) => {
                   const isDraggable = !!onUpdateExtraOverlayPosition;
@@ -1392,48 +1206,23 @@ export function PreviewStage({
           )}
         </AnimatePresence>
 
-        {/*
-          Canvas overlay for preview transitions (z-index 45, above extra overlays at 40).
-          CSS opacity + transition provides the 100ms edge crossfade to mask mount/unmount flash.
-          pointer-events:none so it never intercepts clicks.
-          Snapshots already contain text+overlays rendered via frameRenderer, so the CSS layer
-          is intentionally still visible here — they fade together (canvas fades in as CSS fades
-          out naturally with AnimatePresence exit). For a fully correct double-render prevention,
-          see the showOverlay gate; complete CSS suppression during canvas transition is not
-          needed because the CSS segment motion.div is already exiting via AnimatePresence.
-        */}
-        <canvas
-          ref={overlayCanvasRef}
-          className="absolute inset-0 w-full h-full pointer-events-none"
-          style={{
-            zIndex: 45,
-            // Bug 1 fix — showTransitionOverlay (not the raw transitionPreview.isActive)
-            // holds this canvas at opacity 1 past the transition window's own end, for as
-            // long as the WebCodecs live layer underneath hasn't caught up to the segment
-            // this overlay is handing off to. The draw effect above already retains the
-            // last-blended (near-fully-incoming) content on the canvas for exactly this
-            // window — see its "do NOT clearRect" comment — so holding opacity just keeps
-            // that correct content visible instead of prematurely revealing the still-stale
-            // live layer beneath it.
-            opacity: showTransitionOverlay ? 1 : 0,
-            transition: 'opacity 100ms ease',
-          }}
-        />
+        {/* Phase 5 cutover — the CSS/Canvas2D transition-overlay canvas that sat
+            here (z-index 45) is deleted. The GL compositor renders the whole
+            blend onto its own canvas inside the animation wrapper above, so
+            there is no second surface to composite, fade, or keep in sync. */}
 
-        {/* Main body caption — hoisted to be a direct sibling of the transition overlay
-            canvas above (not nested inside the per-segment motion.div) so it can paint
-            above it. The motion.div sets no z-index of its own, but framer-motion gives
-            it a `transform`, which independently forms its own stacking context — a
-            z-index on a caption nested inside it would only rank among that motion.div's
-            own children and could never outrank this canvas sibling. zIndex 46 clears the
-            canvas's 45 while staying below Corner Stats (50). Stays visible through the
-            whole transition (no opacity fade); reads captionSegment (not currentSegment
-            directly, see its own comment above) so it stays on the OUTGOING segment's
-            text/position for as long as the transition overlay is showing, switching to
-            the incoming segment's own caption only once the overlay itself releases — so
-            the caption reads as steady throughout the crossfade. The transition snapshot
-            bakes no caption text (skipCaption, see useTransitionPreview.ts), so there's
-            no second caption underneath to dissolve against. */}
+        {/* Main body caption — a direct sibling of the per-segment motion.div rather
+            than nested inside it, so it can outrank it. The motion.div sets no z-index
+            of its own, but framer-motion gives it a `transform`, which independently
+            forms its own stacking context — a z-index on a caption nested inside it
+            would only rank among that motion.div's own children. zIndex 46 stays below
+            Corner Stats (50).
+
+            Phase 5 cutover: this used to also have to clear the transition-overlay
+            canvas's z-index 45, and captionSegment used to hold the OUTGOING segment's
+            text for the life of that overlay. Both are gone — the GL compositor owns the
+            blend on its own canvas inside the wrapper, and captionSegment is now just
+            currentSegment (see its own comment above). */}
         {captionSegment && captionSegment.showOverlay && captionSegment.text && (
           <div className="absolute inset-0 pointer-events-none select-none" style={{ zIndex: 46 }}>
             <motion.div

@@ -2292,7 +2292,6 @@ export default function App() {
                   globalTransition={project.globalTransition}
                   globalTransitionDuration={project.globalTransitionDuration ?? 0.5}
                   globalOverlayConfig={project.globalOverlayConfig}
-                  globalOverlayFilter={project.globalOverlayFilter}
                   assets={project.assets}
                   isPlaying={isPlaying}
                   isResizingRef={isResizingRef}

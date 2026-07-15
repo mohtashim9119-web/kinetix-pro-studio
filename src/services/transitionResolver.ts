@@ -7,6 +7,35 @@ export interface EffectiveTransition {
 }
 
 /**
+ * Slugs retired at the WebGL2 Phase 5 cutover (docs/webgl-architecture-plan.md
+ * Section 6), mapped to the surviving slug they now resolve to.
+ *
+ * These five were removed from `effectsOptions.ts`'s TRANSITIONS list because
+ * the GL effects engine never implemented them — only the CSS/Canvas2D
+ * snapshot path (useTransitionPreview.ts) Phase 5 deletes ever rendered them
+ * in preview. A saved project can still carry one, so they are folded in HERE
+ * rather than migrated in the persistence layer: this resolver is the single
+ * function preview (compositeParams.ts) and export (segmentEncoder.ts /
+ * exportPipeline.ts) both resolve through, so mapping at this one point keeps
+ * the two in agreement BY CONSTRUCTION and covers every source of a stored
+ * value at once — localStorage load, JSON import, and look presets — with no
+ * migration pass to write, version, or forget to run.
+ *
+ * cross-dissolve is the target because all five were "a transition happens
+ * here" effects; resolving them to hard-cut would silently drop the transition
+ * the user deliberately placed. The look changes either way — that is
+ * unavoidable once the effect no longer exists — but the transition itself,
+ * and its duration, survive.
+ */
+const RETIRED_TRANSITIONS: ReadonlyMap<string, string> = new Map([
+  ['wipe', 'cross-dissolve'],
+  ['slide-push', 'cross-dissolve'],
+  ['glitch-rgb', 'cross-dissolve'],
+  ['whip-pan', 'cross-dissolve'],
+  ['zoom', 'cross-dissolve'],
+]);
+
+/**
  * Resolves which transition (and duration) actually applies to `segment`.
  *
  * The slug field (`effectTransition`) is the source of truth when set and
@@ -16,8 +45,8 @@ export interface EffectiveTransition {
  * fallback). Duration is the matching duration field if set, else the
  * global duration — forced to 0 whenever the effective transition is a
  * no-op (legacy NONE, or hard-cut routed through to the legacy branch).
- * Shared by segmentEncoder, exportPipeline, and useTransitionPreview so the
- * precedence logic can't drift between them (the Σ duration ===
+ * Shared by segmentEncoder, exportPipeline, and the GL preview derivation
+ * (compositeParams.ts) so the precedence logic can't drift between them (the Σ duration ===
  * voiceoverDuration invariant depends on all three agreeing).
  */
 export function resolveEffectiveTransition(
@@ -27,7 +56,10 @@ export function resolveEffectiveTransition(
 ): EffectiveTransition {
   if (segment?.effectTransition && segment.effectTransition !== TRANSITION_NONE) {
     return {
-      transition: segment.effectTransition,
+      // Retired slugs (see RETIRED_TRANSITIONS) fold into their surviving
+      // equivalent here, so preview and export resolve a stored value the
+      // same way. A live slug passes through untouched.
+      transition: RETIRED_TRANSITIONS.get(segment.effectTransition) ?? segment.effectTransition,
       duration: segment.effectTransitionDuration ?? globalTransitionDuration,
     };
   }
@@ -60,15 +92,15 @@ export function resolveEffectiveTransition(
  * transition never activates).
  *
  * Coordinate-system agnostic: `boundaryTime`/`currentTime` can be absolute
- * project time (compositeParams.ts, useTransitionPreview.ts) or a segment-
+ * project time (compositeParams.ts) or a segment-
  * local time (segmentEncoder.ts, where `boundaryTime` is the outgoing
  * segment's own `duration`) — the arithmetic doesn't care which, as long as
  * both arguments share the same coordinate system.
  *
- * Shared by compositeParams.ts, useTransitionPreview.ts, and
- * segmentEncoder.ts so the window/progress math can't drift between preview
- * and export the way the pre-centering anchored-at-B-start logic once did
- * (it was hand-duplicated in all three places).
+ * Shared by compositeParams.ts and segmentEncoder.ts so the window/progress
+ * math can't drift between preview and export the way the pre-centering
+ * anchored-at-B-start logic once did (it was hand-duplicated in all three
+ * places, the third being the since-deleted useTransitionPreview.ts).
  */
 export function resolveTransitionProgress(
   boundaryTime: number,

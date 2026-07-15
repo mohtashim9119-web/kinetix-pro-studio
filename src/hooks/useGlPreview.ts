@@ -21,9 +21,11 @@
  *      (shaders.ts's u_texRectA/u_texRectB) instead of a CPU-side draw, then
  *      renderFrame once.
  *
- * Everything here is additive and dual-gated by the caller (PreviewStage.tsx):
- * `enabled` (isWebGL2Supported() && WebCodecs support && a dev-only toggle)
- * gates ALL work — when false this hook is inert even though it stays mounted.
+ * `enabled` (isWebGL2Supported() && WebCodecs support), computed by the caller
+ * (PreviewStage.tsx), gates ALL work — when false this hook is inert even though
+ * it stays mounted. Phase 5's cutover removed the dev-only toggle that used to
+ * be the second half of that gate, so this is now the app's only effects path;
+ * there is no fallback by design (plan Section 3.4).
  *
  * Purity / export-reuse (Section 4): the render is a pure function of
  * currentTime — deriveCompositeParams/deriveSlotPlan + toSourceTime derive
@@ -49,8 +51,8 @@ import {
 // is NOT modified) — the exact segment-local→source-time mapping the decode
 // path already uses, and the "at most one getFrameAt in flight per session"
 // chase mutex whose deadlock/starvation hazards were found and fixed there.
-// Same import useTransitionPreview.ts already makes for the identical reason
-// (do not rebuild a parallel, less-proven mechanism — the B3 lesson).
+// The import the (now-deleted) useTransitionPreview.ts made for the identical
+// reason (do not rebuild a parallel, less-proven mechanism — the B3 lesson).
 import {
   toSourceTime,
   startChaseIfIdle,
@@ -77,27 +79,29 @@ interface UseGlPreviewParams {
   config: ProjectEffectConfig;
   /** D12 — true during a timeline resize-drag; transient boundary geometry
    *  could sweep currentTime into a bogus transition window. Read directly at
-   *  render (not an effect dep), mirroring useTransitionPreview.ts: while true,
-   *  transitions are suppressed (plain blit of the current frame) so the drag
-   *  can't swap in the wrong segment's content. */
+   *  render (not an effect dep), as the deleted useTransitionPreview.ts also
+   *  did: while true, transitions are suppressed (plain blit of the current
+   *  frame) so the drag can't swap in the wrong segment's content. */
   isResizingRef: React.RefObject<boolean>;
-  /** The dual gate (isWebGL2Supported() && WebCodecs support && dev toggle),
-   *  computed by PreviewStage. Gates ALL work in this hook. */
+  /** The capability gate (isWebGL2Supported() && WebCodecs support), computed
+   *  by PreviewStage. Gates ALL work in this hook. Carried a dev-only toggle too
+   *  until the Phase 5 cutover removed it. */
   enabled: boolean;
 }
 
 export interface UseGlPreviewResult {
   /** Non-fatal setup error (context unavailable, compositor construction
-   *  failure) — surfaced for the dev badge; there is no fallback render path
-   *  by design (plan Section 3.4). */
+   *  failure) — surfaced by PreviewStage as a visible error banner, because
+   *  there is no fallback render path by design (plan Section 3.4) and a silent
+   *  black stage would be worse than a message. */
   error: string | null;
   /** Callback ref for the caller (PreviewStage.tsx) to attach to its GL
    *  `<canvas>` element — replaces a plain `useRef` so the canvas's actual
    *  DOM attach/detach participates in React's effect-dependency diffing
    *  (Bug 4 fix). A plain ref's `.current` assignment happens silently
    *  during commit and is invisible to `useLayoutEffect` dependency arrays;
-   *  if `enabled` was already `true` on this hook's very first render (e.g.
-   *  the dev toggle's persisted localStorage value) while the canvas hadn't
+   *  if `enabled` was already `true` on this hook's very first render (which,
+   *  post-cutover, is the normal case on any capable runtime) while the canvas hadn't
    *  mounted yet (e.g. `currentSegment` — and so the canvas's own JSX
    *  condition — hadn't hydrated yet), the context-acquisition effect below
    *  would fire once, find no canvas, bail silently, and never fire again,
@@ -261,12 +265,15 @@ export function useGlPreview({
       compositorRef.current?.dispose();
       compositorRef.current = null;
       glRef.current = null;
-      // Drop the outgoing-session protection this hook owned — when the path
-      // is toggled off, useTransitionPreview.ts resumes managing this set.
+      // Drop the outgoing-session protection this hook owned. Nothing takes it
+      // over: since the Phase 5 cutover this hook is the pool's only
+      // transitionProtectedIds client (useTransitionPreview.ts, the previous
+      // one, is deleted), so releasing it on teardown just leaves the set empty.
       pool.setTransitionProtectedIds([]);
     };
-    // pool identity is stable; `enabled` is the dev-toggle/capability gate,
-    // and `canvasNode` (Bug 4 fix) is what makes this effect re-run once the
+    // pool identity is stable; `enabled` is the capability gate (the dev toggle
+    // it also used to carry was removed at the Phase 5 cutover), and
+    // `canvasNode` (Bug 4 fix) is what makes this effect re-run once the
     // canvas actually mounts even if `enabled` was already true beforehand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, canvasNode]);
@@ -276,9 +283,9 @@ export function useGlPreview({
   // window: useWebCodecsPreview's own {current,next} protection (setProtectedIds)
   // stops covering it the instant the boundary crosses. Separate pool set
   // (transitionProtectedIds) so it never clobbers, or is clobbered by, that
-  // {current,next} set — exactly as useTransitionPreview.ts uses it. GL owns
-  // this set only while enabled; useTransitionPreview is inert (glPathActive)
-  // in that state, so the two never fight over it.
+  // {current,next} set. Since the Phase 5 cutover this hook is that set's only
+  // client — the other one, useTransitionPreview.ts, is deleted — so nothing is
+  // left to contend with it while `enabled`.
   useEffect(() => {
     if (!enabled) return;
     pool.setTransitionProtectedIds(outgoingVideoSeg ? [outgoingVideoSeg.id] : []);
@@ -286,8 +293,8 @@ export function useGlPreview({
 
   // --- Outgoing frame chase (Item-4 B3 chase-mutex, reused) -----------------
   // At most one getFrameAt in flight for the outgoing session; reset on a
-  // genuine outgoing-segment change (new epoch). Mirrors useTransitionPreview's
-  // own outgoing chase exactly, including why (a stale chase must not paint
+  // genuine outgoing-segment change (new epoch). Mirrored the deleted
+  // useTransitionPreview's own outgoing chase exactly, including why (a stale chase must not paint
   // over a new one, and its busy loop must not starve the new segment).
   const outgoingChaseMutexRef = useRef<ChaseMutex>({ chasing: false, epoch: 0 });
   const outgoingLatestTargetRef = useRef(0);
@@ -309,7 +316,8 @@ export function useGlPreview({
     const generation = outgoingGenerationRef.current;
     // Uncapped source time — currentTime has advanced past the outgoing
     // segment's nominal end during a blend, so this continues its source time
-    // forward (same reasoning as useTransitionPreview.ts's outgoing pull).
+    // forward (the same reasoning the deleted useTransitionPreview.ts's
+    // outgoing pull used).
     outgoingLatestTargetRef.current = toSourceTime(outgoingVideoSeg, currentTime);
 
     startChaseIfIdle(
