@@ -87,23 +87,28 @@ jobs:
             -DGGML_METAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES=arm64
           cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
-          # x86_64 slice: GGML_NATIVE=OFF pins an explicit instruction baseline
-          # instead of the CI runner's CPU, so the binary can't fault with
-          # STATUS_ILLEGAL_INSTRUCTION on older end-user Macs. AVX=ON + F16C=ON
-          # (honored here — AppleClang, not MSVC), AVX2/AVX512/FMA=OFF: safe on
-          # any x86 Mac from ~2012 (Ivy Bridge onward) while recovering most of
-          # the speed lost by an all-SIMD-off build. Mirrors the Windows slice.
-          # Keep in sync with binaries/README.md.
+          # x86_64 slice: GGML_NATIVE=OFF is load-bearing — it stops GGML from
+          # detecting the CI runner's CPU and baking in whatever it has. The
+          # actual crash cause identified on a real end-user machine was AVX-512
+          # (a runner with AVX-512 producing a binary that faults with
+          # STATUS_ILLEGAL_INSTRUCTION on any CPU without it), NOT AVX2 — so we
+          # pin an explicit baseline that enables AVX/AVX2/FMA/F16C (all honored
+          # here — AppleClang, not MSVC) but keeps AVX512=OFF. AVX2 (not just AVX)
+          # is what restores near-original transcription speed. Safe on any Intel
+          # Mac with a Haswell-or-newer CPU (~mid-2013 onward); AVX-512 is never
+          # emitted, so it can't crash on the AVX-512-less Intel Macs either.
+          # Tradeoff: drops pre-~2013 Intel Macs (Sandy/Ivy Bridge — AVX but no
+          # AVX2). Mirrors the Windows slice. Keep in sync with binaries/README.md.
           cmake -B build-x64 \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_METAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DGGML_NATIVE=OFF \
             -DGGML_AVX=ON \
-            -DGGML_AVX2=OFF \
-            -DGGML_AVX512=OFF \
-            -DGGML_FMA=OFF \
-            -DGGML_F16C=ON
+            -DGGML_AVX2=ON \
+            -DGGML_FMA=ON \
+            -DGGML_F16C=ON \
+            -DGGML_AVX512=OFF
           cmake --build build-x64 --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
           # Combine arm64 and x86_64 whisper into a universal binary
           lipo -create \
@@ -143,33 +148,36 @@ jobs:
           git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
           cd C:\whisper-cpp
           # GGML_NATIVE=OFF is load-bearing: without it GGML detects the CI
-          # runner's (AVX2-capable) CPU and emits AVX2/FMA, faulting with
-          # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on end-user machines lacking
-          # AVX2. We pin an EXPLICIT instruction baseline instead:
-          #   AVX=ON            -> safe on any x86 CPU from ~2011 (Sandy Bridge /
-          #                        AMD Bulldozer onward).
-          #   AVX2/AVX512/FMA=OFF -> the AVX2 requirement was the original crash.
-          # F16C=ON is passed for parity with the macOS x64 slice but is INERT on
-          # MSVC (ggml only defines GGML_FMA/GGML_F16C for NOT MSVC; MSVC implies
-          # them via AVX2/AVX512). So this Windows binary is effectively AVX-only
-          # — still a large win over the all-SIMD-off build, and even broader CPU
-          # coverage than the macOS AVX+F16C slice.
-          # This recovers most of the speed lost by the earlier all-SIMD-off
-          # build (~15-20x slowdown) while keeping a single static exe — no
-          # multi-variant DLL dispatch (GGML_CPU_ALL_VARIANTS), which this
-          # whisper.cpp only supports via BUILD_SHARED_LIBS + GGML_BACKEND_DL and
-          # which carries an unresolved silent-load-failure bug on Windows/MSVC
-          # (whisper.cpp issue #2963). Keep in sync with binaries/README.md.
+          # runner's CPU and bakes in whatever it has. The actual crash cause,
+          # confirmed on a real end-user machine (Intel Core i3-12100F / Alder
+          # Lake), was AVX-512 — Intel fuses AVX-512 OFF on all Alder Lake
+          # consumer chips, so a runner-native binary built with AVX-512 faults
+          # with STATUS_ILLEGAL_INSTRUCTION (0xC000001D) there. It was NOT AVX2:
+          # the i3-12100F fully supports AVX/AVX2/FMA/F16C (standard since ~2013).
+          # So pin an explicit baseline that ENABLES AVX/AVX2/FMA/F16C and keeps
+          # only AVX512=OFF:
+          #   AVX2=ON (not just AVX) -> restores near-original transcription speed.
+          #   AVX512=OFF             -> the actual crash instruction set, absent on
+          #                             this and many consumer CPUs (all Alder Lake).
+          # On MSVC, ggml only defines GGML_FMA/GGML_F16C for NOT MSVC, so those
+          # two flags are inert here — but AVX2=ON implies FMA+F16C on MSVC, so
+          # they're enabled anyway. Tradeoff vs. the prior AVX-only build: AVX2
+          # drops pre-~2013 CPUs (Sandy/Ivy Bridge) and pre-~2015 AMD, plus
+          # low-power Atom/Goldmont chips that have AVX but not AVX2. Single static
+          # exe, no multi-variant DLL dispatch (GGML_CPU_ALL_VARIANTS) — that
+          # requires BUILD_SHARED_LIBS + GGML_BACKEND_DL and carries an unresolved
+          # silent-load-failure bug on Windows/MSVC (whisper.cpp issue #2963).
+          # Keep in sync with binaries/README.md.
           cmake -B build-static `
             -DBUILD_SHARED_LIBS=OFF `
             -DGGML_VULKAN=OFF `
             -DGGML_CUDA=OFF `
             -DGGML_NATIVE=OFF `
             -DGGML_AVX=ON `
-            -DGGML_AVX2=OFF `
-            -DGGML_AVX512=OFF `
-            -DGGML_FMA=OFF `
-            -DGGML_F16C=ON
+            -DGGML_AVX2=ON `
+            -DGGML_FMA=ON `
+            -DGGML_F16C=ON `
+            -DGGML_AVX512=OFF
           cmake --build build-static --config Release --target whisper-cli
           Copy-Item -Path "C:\whisper-cpp\build-static\bin\Release\whisper-cli.exe" `
             -Destination "$env:GITHUB_WORKSPACE\src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe"

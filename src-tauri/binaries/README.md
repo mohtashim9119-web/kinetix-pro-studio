@@ -121,22 +121,25 @@ behavior. Keep the tag in sync with CI (`.github/workflows/build.yml`).
 
 The CPU-feature flags are load-bearing and must stay in sync with CI:
 
-- `GGML_NATIVE=OFF` — without it GGML auto-detects the *build machine's* CPU and
-  emits AVX2/FMA, which fault with `STATUS_ILLEGAL_INSTRUCTION` on end-user Macs
-  lacking AVX2.
-- `GGML_AVX=ON` + `GGML_F16C=ON`, `AVX2`/`AVX512`/`FMA=OFF` — an explicit
-  instruction baseline. Honored here (AppleClang, not MSVC), so this slice is
-  genuinely AVX+F16C: safe on any x86 Mac from ~2012 (Ivy Bridge onward) while
-  recovering most of the speed lost by an all-SIMD-off build. See the Windows
-  section below for why multi-variant `GGML_CPU_ALL_VARIANTS` dispatch isn't
-  used instead.
+- `GGML_NATIVE=OFF` — without it GGML detects the *build machine's* CPU and bakes
+  in whatever it has. The actual crash cause (see the Windows section) was
+  **AVX-512**, not AVX2 — a build machine with AVX-512 produces a binary that
+  faults with `STATUS_ILLEGAL_INSTRUCTION` on any CPU without it.
+- `GGML_AVX=ON`, `GGML_AVX2=ON`, `GGML_FMA=ON`, `GGML_F16C=ON`, `AVX512=OFF` — an
+  explicit baseline. All honored here (AppleClang, not MSVC). `AVX2=ON` (not just
+  AVX) is what restores near-original transcription speed. `AVX512=OFF` keeps the
+  crash instruction set out; since it's never emitted, the binary is safe even on
+  Intel Macs whose Xeon-W supports AVX-512. Safe on any Intel Mac with a
+  Haswell-or-newer CPU (~mid-2013 onward). **Tradeoff:** drops pre-~2013 Intel
+  Macs (Sandy/Ivy Bridge — AVX but no AVX2). See the Windows section for why
+  multi-variant `GGML_CPU_ALL_VARIANTS` dispatch isn't used instead.
 
 ```sh
 git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper-cpp
 cd /tmp/whisper-cpp
 cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=OFF \
   -DCMAKE_OSX_ARCHITECTURES=x86_64 \
-  -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DGGML_F16C=ON
+  -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=OFF
 cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
 cp build-static/bin/whisper-cli src-tauri/binaries/whisper-x86_64-apple-darwin
 chmod +x src-tauri/binaries/whisper-x86_64-apple-darwin
@@ -154,17 +157,22 @@ Output: `src-tauri/binaries/whisper-aarch64-apple-darwin`
 The CPU-feature flags are load-bearing and must stay in sync with CI
 (`.github/workflows/build.yml`):
 
-- `GGML_NATIVE=OFF` — without it GGML auto-detects the *build machine's* CPU and
-  emits AVX2/FMA, which crash with `STATUS_ILLEGAL_INSTRUCTION` (`0xC000001D`) on
-  end-user machines lacking AVX2.
-- `GGML_AVX=ON`, `AVX2`/`AVX512`/`FMA=OFF` — an explicit instruction baseline.
-  Safe on any x86 CPU from ~2011 (Sandy Bridge / AMD Bulldozer onward). This
-  recovers most of the speed lost by the earlier all-SIMD-off build (whisper
-  went from ~1 min to 15-20 min per voiceover) while staying a single static exe.
-- `GGML_F16C=ON` is passed for parity with the macOS x64 slice but is **inert on
-  MSVC** — ggml only defines `GGML_FMA`/`GGML_F16C` for `NOT MSVC` (MSVC implies
-  them via AVX2/AVX512). So this Windows binary is effectively AVX-only, which is
-  even broader CPU coverage than the macOS AVX+F16C slice.
+- `GGML_NATIVE=OFF` — without it GGML detects the *build machine's* CPU and bakes
+  in whatever it has. The **actual crash cause**, confirmed on a real end-user
+  machine (Intel Core i3-12100F / Alder Lake), was **AVX-512** — Intel fuses
+  AVX-512 off on all Alder Lake consumer chips, so a runner-native binary built
+  with AVX-512 faults with `STATUS_ILLEGAL_INSTRUCTION` (`0xC000001D`) there. It
+  was **not** AVX2: the i3-12100F fully supports AVX/AVX2/FMA/F16C (standard since
+  ~2013). (Earlier revisions of this file wrongly blamed AVX2 — corrected here.)
+- `GGML_AVX=ON`, `GGML_AVX2=ON`, `GGML_FMA=ON`, `GGML_F16C=ON`, `AVX512=OFF` — an
+  explicit baseline. `AVX2=ON` (not just AVX) is what restores near-original
+  transcription speed; the earlier AVX-only build left AVX2 off and stayed slow.
+  `AVX512=OFF` keeps the crash instruction set out. On MSVC, `GGML_FMA`/`GGML_F16C`
+  are inert (ggml defines them only for `NOT MSVC`), but `AVX2=ON` implies FMA+F16C
+  on MSVC, so they're enabled regardless.
+- **Tradeoff** vs. the prior AVX-only build: `AVX2=ON` drops pre-~2013 CPUs
+  (Sandy/Ivy Bridge), pre-~2015 AMD, and low-power Atom/Goldmont chips that have
+  AVX but not AVX2. Acceptable for this app's modern target machines.
 
 **Why not `GGML_CPU_ALL_VARIANTS` (multi-variant runtime dispatch)?** That flag
 would build one binary containing every microarch variant and pick the fastest
@@ -175,16 +183,16 @@ at runtime — fast *and* safe on any CPU. But in this whisper.cpp it requires
 `ggml_backend_load_all()`. That collides with Tauri's single-file `externalBin`
 sidecar model, and it rides on an **open, unresolved silent-load-failure bug on
 Windows/MSVC** (whisper.cpp issue #2963) — if a variant DLL fails to load,
-whisper-cli exits 0 with zero tokens (silent no-transcription). The static AVX
-baseline above was chosen deliberately to avoid that failure mode; the only
-tradeoff is it faults on pre-2011 CPUs and low-power Atom/Goldmont Celerons that
-lack AVX.
+whisper-cli exits 0 with zero tokens (silent no-transcription). The static
+AVX/AVX2/FMA/F16C baseline above was chosen deliberately to avoid that failure
+mode; its tradeoff is the CPU floor noted above (Haswell / ~2013 Intel, ~2015+
+AMD — no pre-AVX2 CPUs).
 
 ```powershell
 git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
 cd C:\whisper-cpp
 cmake -B build-static -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=OFF -DGGML_CUDA=OFF `
-  -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=OFF -DGGML_AVX512=OFF -DGGML_FMA=OFF -DGGML_F16C=ON
+  -DGGML_NATIVE=OFF -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_AVX512=OFF
 cmake --build build-static --config Release --target whisper-cli
 copy build-static\bin\Release\whisper-cli.exe src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe
 ```
