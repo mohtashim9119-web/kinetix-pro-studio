@@ -78,23 +78,32 @@ jobs:
           mkdir -p src-tauri/binaries src-tauri/models
           # Build whisper-cli from source (static, no Metal, arm64)
           brew install cmake
-          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper-cpp
+          # Pinned to whisper.cpp v1.9.1 (commit f049fff9) for reproducible builds
+          # — an unpinned master could silently change CMake flags or behavior.
+          git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git /tmp/whisper-cpp
           cd /tmp/whisper-cpp
           cmake -B build-static \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_METAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES=arm64
           cmake --build build-static --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
+          # x86_64 slice: GGML_NATIVE=OFF pins an explicit instruction baseline
+          # instead of the CI runner's CPU, so the binary can't fault with
+          # STATUS_ILLEGAL_INSTRUCTION on older end-user Macs. AVX=ON + F16C=ON
+          # (honored here — AppleClang, not MSVC), AVX2/AVX512/FMA=OFF: safe on
+          # any x86 Mac from ~2012 (Ivy Bridge onward) while recovering most of
+          # the speed lost by an all-SIMD-off build. Mirrors the Windows slice.
+          # Keep in sync with binaries/README.md.
           cmake -B build-x64 \
             -DBUILD_SHARED_LIBS=OFF \
             -DGGML_METAL=OFF \
             -DCMAKE_OSX_ARCHITECTURES=x86_64 \
             -DGGML_NATIVE=OFF \
-            -DGGML_AVX=OFF \
+            -DGGML_AVX=ON \
             -DGGML_AVX2=OFF \
             -DGGML_AVX512=OFF \
             -DGGML_FMA=OFF \
-            -DGGML_F16C=OFF
+            -DGGML_F16C=ON
           cmake --build build-x64 --config Release --target whisper-cli -j$(sysctl -n hw.logicalcpu)
           # Combine arm64 and x86_64 whisper into a universal binary
           lipo -create \
@@ -129,22 +138,38 @@ jobs:
           New-Item -ItemType Directory -Force -Path src-tauri/models | Out-Null
           # Build whisper-cli from source (static, no GPU, Windows)
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
-          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
+          # Pinned to whisper.cpp v1.9.1 (commit f049fff9) for reproducible builds
+          # — an unpinned master could silently change CMake flags or behavior.
+          git clone --depth 1 --branch v1.9.1 https://github.com/ggml-org/whisper.cpp.git C:\whisper-cpp
           cd C:\whisper-cpp
-          # GGML_NATIVE=OFF + explicit AVX/FMA/F16C=OFF: build a portable binary
-          # for arbitrary end-user CPUs instead of the CI runner's (AVX2-capable)
-          # CPU. Without this the binary faults with STATUS_ILLEGAL_INSTRUCTION
-          # (0xC000001D) on machines lacking AVX2. Mirrors the macOS x86_64 slice.
+          # GGML_NATIVE=OFF is load-bearing: without it GGML detects the CI
+          # runner's (AVX2-capable) CPU and emits AVX2/FMA, faulting with
+          # STATUS_ILLEGAL_INSTRUCTION (0xC000001D) on end-user machines lacking
+          # AVX2. We pin an EXPLICIT instruction baseline instead:
+          #   AVX=ON            -> safe on any x86 CPU from ~2011 (Sandy Bridge /
+          #                        AMD Bulldozer onward).
+          #   AVX2/AVX512/FMA=OFF -> the AVX2 requirement was the original crash.
+          # F16C=ON is passed for parity with the macOS x64 slice but is INERT on
+          # MSVC (ggml only defines GGML_FMA/GGML_F16C for NOT MSVC; MSVC implies
+          # them via AVX2/AVX512). So this Windows binary is effectively AVX-only
+          # — still a large win over the all-SIMD-off build, and even broader CPU
+          # coverage than the macOS AVX+F16C slice.
+          # This recovers most of the speed lost by the earlier all-SIMD-off
+          # build (~15-20x slowdown) while keeping a single static exe — no
+          # multi-variant DLL dispatch (GGML_CPU_ALL_VARIANTS), which this
+          # whisper.cpp only supports via BUILD_SHARED_LIBS + GGML_BACKEND_DL and
+          # which carries an unresolved silent-load-failure bug on Windows/MSVC
+          # (whisper.cpp issue #2963). Keep in sync with binaries/README.md.
           cmake -B build-static `
             -DBUILD_SHARED_LIBS=OFF `
             -DGGML_VULKAN=OFF `
             -DGGML_CUDA=OFF `
             -DGGML_NATIVE=OFF `
-            -DGGML_AVX=OFF `
+            -DGGML_AVX=ON `
             -DGGML_AVX2=OFF `
             -DGGML_AVX512=OFF `
             -DGGML_FMA=OFF `
-            -DGGML_F16C=OFF
+            -DGGML_F16C=ON
           cmake --build build-static --config Release --target whisper-cli
           Copy-Item -Path "C:\whisper-cpp\build-static\bin\Release\whisper-cli.exe" `
             -Destination "$env:GITHUB_WORKSPACE\src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe"
