@@ -51,6 +51,10 @@ import {
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
+import { syncMark } from './services/syncInstrument';
+import { buildWaveformPipeline } from './services/waveformPipeline';
+import type { WaveformSource } from './services/waveformPeaks';
+import { beginGeneration as beginWaveformGeneration, getSnapshot as getWaveformReadySnapshot, subscribe as subscribeWaveformReady, onAllReady as onWaveformAllReady } from './services/waveformReadyTracker';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -81,10 +85,11 @@ import { resolvePresetScaleRate } from './services/lookPresetService';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
+import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
-import { Timeline } from './components/Timeline';
+import { Timeline, ENABLE_LEGACY_BARS } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler } from './components/PreviewStage';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -667,6 +672,96 @@ export default function App() {
   const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
   const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [isSynced, setIsSynced] = useState(false);
+
+  // Voiceover waveform data, built ONCE upfront (services/waveformPipeline) instead
+  // of inside Timeline's render-triggered decode effect (the multi-minute freeze —
+  // docs/waveform-rewrite-plan.md §3). Two writers: handleApplySyncFromFiles awaits
+  // buildVoiceoverWaveform as part of the sync sequence; a reload effect rebuilds it
+  // when a persisted project mounts (canvas bitmaps/peaks are never persisted).
+  // waveformSource MUST stay a stable object reference between builds — SegmentWaveform
+  // is React.memo'd on its identity — so it is only ever replaced by setWaveformSource.
+  const [waveformBars, setWaveformBars] = useState<number[]>([]);
+  const [waveformSource, setWaveformSource] = useState<WaveformSource | null>(null);
+  // Key (voiceover blob URL) the waveform is built-or-building for. Set synchronously
+  // at build start so the explicit Apply-Sync call and the reload effect dedupe
+  // against each other. A new session mints new blob URLs, so this also forces the
+  // rebuild-on-reload correctly; reset to null on failure so a retry can happen.
+  const waveformBuiltForRef = useRef<string | null>(null);
+
+  // Waveform-image draw-completion signal (rewrite Step 4,
+  // services/waveformReadyTracker.ts) — mirrors the registry's per-generation
+  // ready/expected counts into React state for Step 5's loading screen to gate
+  // on. Coalesced to at most one state flush per animation frame (the sole
+  // exception being an immediate flush on the all-ready transition itself) so
+  // up to ~294 individual segment completions per sync don't each trigger their
+  // own App re-render — the registry's own bookkeeping is untouched by this;
+  // only how often App mirrors it into state changes. Defaults reflect "nothing
+  // pending" (matches the registry's own pre-beginGeneration state).
+  const [isWaveformReady, setIsWaveformReady] = useState(true);
+  const [waveformReadyCount, setWaveformReadyCount] = useState(0);
+  const [waveformTotalCount, setWaveformTotalCount] = useState(0);
+  useEffect(() => {
+    let rafId: number | null = null;
+    const flush = () => {
+      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+      const snap = getWaveformReadySnapshot();
+      setIsWaveformReady(snap.allReady);
+      setWaveformReadyCount(snap.ready);
+      setWaveformTotalCount(snap.expected);
+    };
+    const unsubscribeChange = subscribeWaveformReady(() => {
+      if (rafId === null) rafId = requestAnimationFrame(flush);
+    });
+    const unsubscribeAllReady = onWaveformAllReady(flush);
+    flush(); // sync initial state in case a generation began before this mounted
+    return () => {
+      unsubscribeChange();
+      unsubscribeAllReady();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  const buildVoiceoverWaveform = useCallback(async (asset: Asset | undefined | null, segmentCount: number): Promise<void> => {
+    // Every call starts a fresh tracked batch of per-segment waveform draws,
+    // whether or not the peaks below actually need rebuilding (a re-sync against
+    // an unchanged voiceover still mounts a fresh set of SegmentWaveform
+    // instances, each of which draws once on mount) — so the generation always
+    // bumps here, before the dedupe check. 0 when there's no voiceover: no
+    // SegmentWaveform will ever mount to report, so the batch is trivially
+    // complete and waveformReadyTracker fires all-ready immediately.
+    beginWaveformGeneration(asset?.url ? segmentCount : 0);
+    if (!asset?.url) {
+      waveformBuiltForRef.current = null;
+      setWaveformBars([]);
+      setWaveformSource(null);
+      return;
+    }
+    const key = asset.url;
+    if (waveformBuiltForRef.current === key) return; // already built or in flight
+    waveformBuiltForRef.current = key;
+    syncMark('waveform:build-start');
+    try {
+      // computeLegacyBars mirrors ENABLE_LEGACY_BARS (Timeline.tsx) — temporary
+      // freeze-diagnosis toggle; skips the legacy 300-bar computation itself
+      // when disabled, not just its render.
+      const { bars, source } = await buildWaveformPipeline(
+        { file: asset.file, url: asset.url },
+        { computeLegacyBars: ENABLE_LEGACY_BARS },
+      );
+      if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-build
+      setWaveformBars(bars);
+      setWaveformSource(source);
+      syncMark('waveform:committed');
+    } catch (err) {
+      console.error('[waveform] build failed:', err);
+      if (waveformBuiltForRef.current === key) {
+        waveformBuiltForRef.current = null; // allow a later retry
+        setWaveformBars([]);
+        setWaveformSource(null);
+      }
+    }
+  }, []);
+
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(() => {
     try { return (readUiState().selectedSegmentId as string | null) ?? null; }
     catch { return null; }
@@ -1497,6 +1592,7 @@ export default function App() {
   // a single setProject call so finalizeSync never reads stale state.
   // --------------------------------------------------------------------------
   const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<void> => {
+    syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
     // 1. Read text files — strip RTF markup if the file is an .rtf document
@@ -1582,7 +1678,9 @@ export default function App() {
     }
 
     // 5. Parse project data with the fresh, complete data
+    syncMark('assets+duration:done');
     const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
+    syncMark('parseProjectData:done');
 
     // Never wipe existing segments if parse produced nothing
     if (newSegmentsRaw.length === 0 && projectRef.current.segments.length > 0) {
@@ -1623,11 +1721,13 @@ export default function App() {
       }
       finalTimedSegments = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
     }
+    syncMark('align+timing:done');
 
     const committedSegments = preserveEffectFields(
       autoMatchSegments(allAssets, finalTimedSegments),
       previousSegments,
     );
+    syncMark('autoMatch+preserveEffectFields:done');
 
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
@@ -1645,10 +1745,26 @@ export default function App() {
       segments: committedSegments,
       headings: clampHeadingsToDuration(prev.headings ?? [], audioDuration),
     }));
+    syncMark('setProject:called');
+    // Post-commit paint boundary: rAF fires after React commits + the browser
+    // paints the new segment DOM. The waveform-pipeline marks (below) then
+    // attribute the decode/peak-build cost that lands AFTER this first paint.
+    requestAnimationFrame(() => syncMark('first-paint(rAF)'));
 
+    // Reveal the timeline immediately (unchanged reveal timing) — the waveform
+    // then fills in as it's built.
     setIsSynced(true);
-    setIsProcessing(false);
     setSyncStep(4);
+
+    // Build the voiceover waveform ONCE, here in the sync sequence — relocated out
+    // of Timeline's render-triggered decode effect (docs/waveform-rewrite-plan.md
+    // §3). The pipeline yields internally so the main thread stays responsive even
+    // on a 21-min file; isProcessing stays true until it finishes so the UI reflects
+    // "still working" (and gives the Step 5 loading screen a clean hook). The reload
+    // effect dedupes against the same key, so it won't rebuild what this just built.
+    await buildVoiceoverWaveform(voiceoverAsset, committedSegments.length);
+
+    setIsProcessing(false);
   };
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
@@ -1899,6 +2015,18 @@ export default function App() {
   }, [project.assets, project.confirmed, project.id]);
 
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
+
+  // Reload / restore path: when a persisted synced project mounts, its voiceover
+  // blob is restored from IndexedDB under a fresh object URL but the waveform peaks
+  // are never persisted — rebuild them once. buildVoiceoverWaveform dedupes against
+  // waveformBuiltForRef, so this is a no-op when Apply Sync already built the current
+  // voiceover (it sets the same key synchronously before this effect runs). Keyed on
+  // the primitive url/file (not the recomputed `voiceover` object) so it doesn't
+  // re-fire on unrelated re-renders.
+  useEffect(() => {
+    void buildVoiceoverWaveform(voiceover, project.segments.length);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceover?.url, voiceover?.file, buildVoiceoverWaveform]);
 
   // Option C — Apply Sync stays disabled for as long as a voiceover (staged
   // or already committed) hasn't finished transcribing. The cached-token
@@ -2443,8 +2571,8 @@ export default function App() {
                 trimmingSegmentId={trimmingSegmentId}
                 isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
-                voiceoverUrl={voiceover?.url}
-                voiceoverFile={voiceover?.file}
+                waveformBars={waveformBars}
+                waveformSource={waveformSource}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);
@@ -3162,6 +3290,13 @@ export default function App() {
           )}
         </div>
       )}
+
+      <SyncLoadingOverlay
+        isProcessing={isProcessing}
+        isWaveformReady={isWaveformReady}
+        waveformReadyCount={waveformReadyCount}
+        waveformTotalCount={waveformTotalCount}
+      />
 
     </div>
   );

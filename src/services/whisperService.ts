@@ -233,11 +233,37 @@ export function textMateriallyChanged(a: string, b: string): boolean {
   return normalize(a).join(' ') !== normalize(b).join(' ');
 }
 
+// --- TEMP diagnostic instrumentation (alignment freeze audit) ----------------
+// Gated on globalThis.__ALIGN_INSTRUMENT__, dormant by default (mirrors the
+// __WF_INSTRUMENT__ convention in SegmentWaveform.tsx / waveformDrawQueue.ts):
+// zero effect on normal runs. When enabled it times the whole
+// alignScenestoTranscript pass end-to-end plus each segment's scoring cost, so
+// we can attribute wall-clock time on the 294-segment project. Enable in the
+// devtools console with `globalThis.__ALIGN_INSTRUMENT__ = true` before Apply
+// Sync; results are logged once per pass and accumulated on
+// globalThis.__alignRun. Remove after the audit.
+interface AlignInstr {
+  passes: number;
+  perSegmentMs: number[];
+  totalMs: number[];
+}
+function alignInstrEnabled(): boolean {
+  return (globalThis as unknown as { __ALIGN_INSTRUMENT__?: boolean }).__ALIGN_INSTRUMENT__ === true;
+}
+function alignInstr(): AlignInstr {
+  const g = globalThis as unknown as { __alignRun?: AlignInstr };
+  return (g.__alignRun ??= { passes: 0, perSegmentMs: [], totalMs: [] });
+}
+// -----------------------------------------------------------------------------
+
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   silences: SilenceInterval[] = [],
 ): Array<{ t0: number; t1: number }> {
+  const _instrOn = alignInstrEnabled();
+  const _passT0 = _instrOn ? performance.now() : 0;
+
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({ t0: 0, t1: 0 }));
   }
@@ -286,6 +312,8 @@ export function alignScenestoTranscript(
     }
 
     const entrySearchStart = searchStart; // Part C: cursor position BEFORE this segment scores.
+
+    const _segT0 = _instrOn ? performance.now() : 0;
 
     const windowSize = Math.max(targetWords.length, 3);
     let bestScore = -1;
@@ -400,6 +428,8 @@ export function alignScenestoTranscript(
       }
       searchStart = nextSearchStart;
     }
+
+    if (_instrOn) alignInstr().perSegmentMs.push(performance.now() - _segT0);
   }
 
   // Step 2 — override t1 from neighbor anchors.
@@ -484,6 +514,23 @@ export function alignScenestoTranscript(
   // Clamp last segment to actual audio end (skip if locked).
   if (results.length > 0 && !segments[results.length - 1]?.locked) {
     results[results.length - 1]!.t1 = audioEnd;
+  }
+
+  if (_instrOn) {
+    const totalMs = performance.now() - _passT0;
+    const store = alignInstr();
+    store.passes += 1;
+    store.totalMs.push(totalMs);
+    const per = store.perSegmentMs;
+    const sum = per.reduce((a, b) => a + b, 0);
+    const max = per.length ? Math.max(...per) : 0;
+    // eslint-disable-next-line no-console
+    console.log(
+      '[align-instr] pass %d: total %sms over %d segments (%d scored); scoring sum %sms, avg %sms/seg, max %sms/seg; tokens=%d tokenWords=%d',
+      store.passes, totalMs.toFixed(1), segments.length, per.length,
+      sum.toFixed(1), per.length ? (sum / per.length).toFixed(2) : '0', max.toFixed(2),
+      tokens.length, tokenWords.length,
+    );
   }
 
   return results.map(r => ({ t0: r.t0, t1: r.t1 }));

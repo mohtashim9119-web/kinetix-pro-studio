@@ -11,8 +11,22 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
+import { WaveformSource } from '../services/waveformPeaks';
+import { SegmentWaveform } from './SegmentWaveform';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
+
+// TEMPORARY diagnostic A/B toggle (added 2026-07-18, freeze-isolation test —
+// see docs/waveform-rewrite-plan.md). Disables the legacy 300-bar DOM
+// waveform lane (rendered below) to test whether running it simultaneously
+// with the new picture-based waveform system (the SegmentWaveform lane just
+// below it) contributes to the multi-minute post-Apply-Sync freeze on large
+// projects. App.tsx imports this same constant to also skip the legacy bars'
+// computation (buildVoiceoverWaveform → buildWaveformPipeline's
+// computeLegacyBars option), so this one flag gates both.
+// Flip back to `true` to fully restore the legacy lane — reversible
+// diagnostic flag, NOT a removal.
+export const ENABLE_LEGACY_BARS = false;
 
 interface Props {
   segments: VideoSegment[];
@@ -30,8 +44,12 @@ interface Props {
   trimmingSegmentId: string | null;
   isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
-  voiceoverUrl?: string;
-  voiceoverFile?: File;
+  // Waveform data is built ONCE upfront in App.tsx's Apply-Sync flow (and a reload
+  // effect) via services/waveformPipeline, then passed in here. Timeline no longer
+  // decodes/builds anything itself — that render-triggered decode effect was the
+  // multi-minute freeze (docs/waveform-rewrite-plan.md §3).
+  waveformBars: number[];
+  waveformSource: WaveformSource | null;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
@@ -60,8 +78,8 @@ export function Timeline({
   trimmingSegmentId,
   isAdjustingTrim,
   voiceoverName,
-  voiceoverUrl,
-  voiceoverFile,
+  waveformBars,
+  waveformSource,
   onTogglePlay,
   onSeek,
   onResizeStart,
@@ -110,43 +128,9 @@ export function Timeline({
     onPixelsPerSecondChange(pixelsPerSecond);
   }, [pixelsPerSecond, onPixelsPerSecondChange]);
 
-  const [waveformBars, setWaveformBars] = useState<number[]>([]);
-  // useRef available for future use (e.g. AudioContext ref)
-  const _audioCtxRef = useRef<AudioContext | null>(null);
-
-  useEffect(() => {
-    if (!voiceoverUrl) { setWaveformBars([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        let arrayBuf: ArrayBuffer;
-        if (voiceoverFile) {
-          // Prefer the raw File — avoids blob URL fetch restrictions in WebView2 (Windows)
-          arrayBuf = await voiceoverFile.arrayBuffer();
-        } else {
-          const res = await fetch(voiceoverUrl);
-          arrayBuf = await res.arrayBuffer();
-        }
-        const audioCtx = new AudioContext();
-        const decoded = await audioCtx.decodeAudioData(arrayBuf);
-        await audioCtx.close();
-        const raw = decoded.getChannelData(0);
-        const BAR_COUNT = 300;
-        const blockSize = Math.floor(raw.length / BAR_COUNT);
-        const bars: number[] = [];
-        for (let i = 0; i < BAR_COUNT; i++) {
-          let sum = 0;
-          for (let j = 0; j < blockSize; j++) sum += Math.abs(raw[i * blockSize + j] ?? 0);
-          bars.push(sum / blockSize);
-        }
-        const max = Math.max(...bars, 0.001);
-        if (!cancelled) setWaveformBars(bars.map(b => b / max));
-      } catch {
-        if (!cancelled) setWaveformBars([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [voiceoverUrl, voiceoverFile]);
+  // Waveform data (legacy bars + peak source) now arrives as props, built once
+  // upfront by services/waveformPipeline during Apply Sync / reload — see the
+  // Props comment above. No decode/build happens in this component anymore.
 
   // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
   // from the ResizeObserver above — only then are pixelsPerSecond and the segment
@@ -547,8 +531,11 @@ export function Timeline({
           {/* Audio Track — moved inside the lanes wrapper (Path B corrective
               fix) so the playhead (top-0/bottom-0 on the wrapper above)
               naturally spans it too; lane-to-lane spacing now comes uniformly
-              from the wrapper's gap-1 instead of this div's own former mt-1. */}
-          {voiceoverName && (
+              from the wrapper's gap-1 instead of this div's own former mt-1.
+              Gated behind ENABLE_LEGACY_BARS (temporary freeze-diagnosis
+              toggle, see its definition above) — when false this whole lane,
+              including its data-seg-id containers, does not render. */}
+          {ENABLE_LEGACY_BARS && voiceoverName && (
             <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
               <div className="flex h-full w-max">
                 {segments.map((s) => (
@@ -584,6 +571,35 @@ export function Timeline({
                     </div>
                     {currentSegmentId === s.id && (
                       <div className="absolute inset-0 bg-[#F27D26]/5" />
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* TEMPORARY comparison lane (waveform rewrite Step 2) — the NEW
+              peak-based <SegmentWaveform> canvas path, stacked directly BELOW
+              the legacy 300-bar lane above for a side-by-side A/B look. This
+              whole block is throwaway: it has NO data-seg-id (so App.tsx's
+              resize-drag querySelectorAll never touches it) and NO resize
+              handles — purely visual. Remove once the new path replaces the
+              old bars in a later step. */}
+          {voiceoverName && (
+            <div className="h-20 bg-[#0A0A0A] border border-dashed border-[#F27D26]/40 rounded-lg relative overflow-visible flex items-center">
+              <span className="absolute left-1 top-0.5 z-10 text-[9px] uppercase tracking-wide text-[#F27D26]/60 pointer-events-none">
+                new (peaks)
+              </span>
+              <div className="flex h-full w-max">
+                {segments.map((s) => (
+                  <div
+                    key={`vo-new-${s.id}`}
+                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
+                    className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
+                  >
+                    <SegmentWaveform segment={s} source={waveformSource} />
+                    {currentSegmentId === s.id && (
+                      <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
                     )}
                   </div>
                 ))}
