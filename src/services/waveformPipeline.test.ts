@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { buildLegacyBars, buildSourceChunked, LEGACY_BAR_COUNT } from './waveformPipeline';
+import { buildSourceChunked } from './waveformPipeline';
 import { buildWaveformSource } from './waveformPeaks';
 
 // Deterministic pseudo-random PCM in [-1, 1] — a mulberry32 so the two builders
@@ -55,27 +55,6 @@ describe('waveformPipeline — output identity (relocation must not change pixel
       expect(chunked.peaks[i]).toBe(sync.peaks[i]);
     }
   });
-
-  it('buildLegacyBars reproduces the legacy 300-bar mean+normalize math exactly', async () => {
-    const pcm = makePcm(48000 * 3, 999);
-    const bars = await buildLegacyBars(pcm);
-
-    // Reference: the verbatim pre-rewrite loop from Timeline.tsx's decode effect.
-    const blockSize = Math.floor(pcm.length / LEGACY_BAR_COUNT);
-    const ref: number[] = [];
-    for (let i = 0; i < LEGACY_BAR_COUNT; i++) {
-      let sum = 0;
-      for (let j = 0; j < blockSize; j++) sum += Math.abs(pcm[i * blockSize + j] ?? 0);
-      ref.push(sum / blockSize);
-    }
-    const max = Math.max(...ref, 0.001);
-    const refNorm = ref.map((b) => b / max);
-
-    expect(bars.length).toBe(LEGACY_BAR_COUNT);
-    for (let i = 0; i < LEGACY_BAR_COUNT; i++) {
-      expect(bars[i]).toBe(refNorm[i]);
-    }
-  });
 });
 
 describe('waveformPipeline — chunked yielding behavior', () => {
@@ -92,18 +71,6 @@ describe('waveformPipeline — chunked yielding behavior', () => {
 
     // budgetMs: 0 forces a yield at every checkpoint where the clock advanced.
     await buildSourceChunked(pcm, sampleRate, duration, { budgetMs: 0 });
-
-    expect(yieldSpy.mock.calls.length).toBeGreaterThan(0);
-  });
-
-  it('buildLegacyBars yields to the browser during a large build', async () => {
-    const yieldSpy = vi.fn().mockResolvedValue(undefined);
-    (globalThis as unknown as { scheduler: { yield: () => Promise<void> } }).scheduler = {
-      yield: yieldSpy,
-    };
-
-    const pcm = makePcm(48000 * 30, 8080);
-    await buildLegacyBars(pcm, { budgetMs: 0 });
 
     expect(yieldSpy.mock.calls.length).toBeGreaterThan(0);
   });

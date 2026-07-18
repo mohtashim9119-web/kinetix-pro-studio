@@ -55,6 +55,7 @@ import { syncMark } from './services/syncInstrument';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { beginGeneration as beginWaveformGeneration, getSnapshot as getWaveformReadySnapshot, subscribe as subscribeWaveformReady, onAllReady as onWaveformAllReady } from './services/waveformReadyTracker';
+import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform } from './services/waveformStore';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -89,7 +90,7 @@ import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
-import { Timeline, ENABLE_LEGACY_BARS } from './components/Timeline';
+import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler } from './components/PreviewStage';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -676,16 +677,23 @@ export default function App() {
   // Voiceover waveform data, built ONCE upfront (services/waveformPipeline) instead
   // of inside Timeline's render-triggered decode effect (the multi-minute freeze —
   // docs/waveform-rewrite-plan.md §3). Two writers: handleApplySyncFromFiles awaits
-  // buildVoiceoverWaveform as part of the sync sequence; a reload effect rebuilds it
-  // when a persisted project mounts (canvas bitmaps/peaks are never persisted).
+  // buildVoiceoverWaveform as part of the sync sequence; a reload effect re-triggers
+  // it when a persisted project mounts. The peaks (not canvas bitmaps/images) are
+  // now persisted to IndexedDB (services/waveformStore.ts) keyed by asset id, so a
+  // reload of an unchanged voiceover loads cached peaks instead of re-decoding —
+  // see buildVoiceoverWaveform below (persistence reversal, waveform-rewrite-plan.md
+  // "Persistence of peaks").
   // waveformSource MUST stay a stable object reference between builds — SegmentWaveform
   // is React.memo'd on its identity — so it is only ever replaced by setWaveformSource.
-  const [waveformBars, setWaveformBars] = useState<number[]>([]);
   const [waveformSource, setWaveformSource] = useState<WaveformSource | null>(null);
-  // Key (voiceover blob URL) the waveform is built-or-building for. Set synchronously
+  // Key (voiceover asset id) the waveform is built-or-building for. Set synchronously
   // at build start so the explicit Apply-Sync call and the reload effect dedupe
-  // against each other. A new session mints new blob URLs, so this also forces the
-  // rebuild-on-reload correctly; reset to null on failure so a retry can happen.
+  // against each other within a session. Keyed on asset.id, NOT asset.url — url is a
+  // blob: URL re-minted every session (App.tsx's reload path), so it is never a
+  // meaningful identity; asset.id is stable and every upload/replace mints a fresh
+  // id (handleVoiceoverStaged/processMediaFile), so an id match is a safe cache key
+  // both for this in-memory ref and for the IndexedDB cache below. Reset to null on
+  // failure so a retry can happen.
   const waveformBuiltForRef = useRef<string | null>(null);
 
   // Waveform-image draw-completion signal (rewrite Step 4,
@@ -732,31 +740,48 @@ export default function App() {
     beginWaveformGeneration(asset?.url ? segmentCount : 0);
     if (!asset?.url) {
       waveformBuiltForRef.current = null;
-      setWaveformBars([]);
       setWaveformSource(null);
       return;
     }
-    const key = asset.url;
+    const key = asset.id;
     if (waveformBuiltForRef.current === key) return; // already built or in flight
     waveformBuiltForRef.current = key;
     syncMark('waveform:build-start');
+
+    // Reuse persisted peaks when available — skips decodeAudioData + the peak
+    // loop entirely on a reload of an unchanged voiceover. blobSize is read
+    // synchronously off the already-in-hand File (no async probe) and doubles
+    // as the invalidation guard: a same-id asset whose blob size no longer
+    // matches what was persisted is treated as a cache miss, not served stale.
+    const blobSize = asset.file?.size;
+    if (blobSize !== undefined) {
+      try {
+        const cached = await getPersistedWaveform(projectIdRef.current, asset.id, blobSize);
+        if (cached) {
+          if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-lookup
+          setWaveformSource(cached);
+          syncMark('waveform:committed-from-cache');
+          return;
+        }
+      } catch (err) {
+        console.error('[waveform] persisted-peaks read failed, rebuilding:', err);
+      }
+    }
+
     try {
-      // computeLegacyBars mirrors ENABLE_LEGACY_BARS (Timeline.tsx) — temporary
-      // freeze-diagnosis toggle; skips the legacy 300-bar computation itself
-      // when disabled, not just its render.
-      const { bars, source } = await buildWaveformPipeline(
-        { file: asset.file, url: asset.url },
-        { computeLegacyBars: ENABLE_LEGACY_BARS },
-      );
+      const { source } = await buildWaveformPipeline({ file: asset.file, url: asset.url });
       if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-build
-      setWaveformBars(bars);
       setWaveformSource(source);
       syncMark('waveform:committed');
+      if (blobSize !== undefined && source) {
+        void putPersistedWaveform(projectIdRef.current, asset.id, source, blobSize).catch(err =>
+          console.error('[waveform] failed to persist peaks:', err),
+        );
+      }
     } catch (err) {
       console.error('[waveform] build failed:', err);
       if (waveformBuiltForRef.current === key) {
         waveformBuiltForRef.current = null; // allow a later retry
-        setWaveformBars([]);
         setWaveformSource(null);
       }
     }
@@ -1634,6 +1659,9 @@ export default function App() {
           deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
             console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
           );
+          deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
+            console.error('[kinetix] Failed to delete old voiceover peaks:', err),
+          );
         }
         allAssets.push(asset);
         newVoiceoverId = asset.id;
@@ -1830,6 +1858,9 @@ export default function App() {
         deleteAsset(projectIdRef.current, oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
         );
+        deletePersistedWaveform(projectIdRef.current, oldAudio.id).catch(err =>
+          console.error('[kinetix] Failed to delete old voiceover peaks:', err),
+        );
       }
     }
 
@@ -2017,16 +2048,20 @@ export default function App() {
   const voiceover = project.assets.find(a => a.id === project.voiceoverId);
 
   // Reload / restore path: when a persisted synced project mounts, its voiceover
-  // blob is restored from IndexedDB under a fresh object URL but the waveform peaks
-  // are never persisted — rebuild them once. buildVoiceoverWaveform dedupes against
-  // waveformBuiltForRef, so this is a no-op when Apply Sync already built the current
-  // voiceover (it sets the same key synchronously before this effect runs). Keyed on
-  // the primitive url/file (not the recomputed `voiceover` object) so it doesn't
-  // re-fire on unrelated re-renders.
+  // blob is restored from IndexedDB under a fresh object URL every session, so this
+  // effect always re-fires — but buildVoiceoverWaveform now checks IndexedDB-
+  // persisted peaks (services/waveformStore.ts) keyed by the stable voiceover.id
+  // before falling back to a full rebuild, so a reload of an unchanged voiceover
+  // loads cached peaks instead of re-decoding. buildVoiceoverWaveform also dedupes
+  // against waveformBuiltForRef, so this is a no-op when Apply Sync already built
+  // the current voiceover (it sets the same key synchronously before this effect
+  // runs). Keyed on the primitive id/file (not the recomputed `voiceover` object,
+  // and not url — url is a re-minted blob: URL every session, never a meaningful
+  // identity) so it doesn't re-fire on unrelated re-renders.
   useEffect(() => {
     void buildVoiceoverWaveform(voiceover, project.segments.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceover?.url, voiceover?.file, buildVoiceoverWaveform]);
+  }, [voiceover?.id, voiceover?.file, buildVoiceoverWaveform]);
 
   // Option C — Apply Sync stays disabled for as long as a voiceover (staged
   // or already committed) hasn't finished transcribing. The cached-token
@@ -2571,7 +2606,6 @@ export default function App() {
                 trimmingSegmentId={trimmingSegmentId}
                 isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
-                waveformBars={waveformBars}
                 waveformSource={waveformSource}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {

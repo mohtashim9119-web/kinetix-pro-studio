@@ -68,6 +68,21 @@ src/
                      #   applyHeadingTiming() was deleted in Path B Phase 7 (2026-07-09).
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
+    waveformPeaks.ts # Pure peak-extraction + canvas-drawing primitives for the timeline voiceover
+                     #   waveform (docs/waveform-rewrite-plan.md). PEAKS_PER_SECOND (10/sec — a
+                     #   deliberately tuned permanent value, see the constant's own comment) peak
+                     #   extraction, plus drawSegmentWaveform's mirrored-fill routine. No decode —
+                     #   PCM arrives pre-decoded from waveformPipeline.ts.
+    waveformPipeline.ts # Chunked, yielding twin of waveformPeaks.ts's synchronous builder
+                     #   (buildWaveformPipeline/buildSourceChunked) — spreads the ~60M-op peak
+                     #   extraction across yields so a 21-min voiceover never blocks the main thread.
+                     #   Called once from Apply Sync and the reload effect in App.tsx; never from a
+                     #   render-triggered effect (that was the multi-minute freeze this rewrite fixed).
+    waveformStore.ts # IndexedDB persistence for built WaveformSource peaks (DB kinetix-waveforms,
+                     #   separate from assetStore's), keyed by [projectId, assetId] with the source
+                     #   blob's byte size as an invalidation guard. Lets a reload of an unchanged
+                     #   voiceover skip decode+peak-extraction entirely — canvas bitmaps/images are
+                     #   still never persisted, only the small peaks array.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
                      #   writeFileRaw() (2026-07-09) — sends frame bytes as a raw Tauri v2 invoke body
@@ -250,8 +265,19 @@ src/
                      #   during a timeline resize-drag; guard prevents an unwanted reseek to the
                      #   wrong segment's start (D12 fix, commit be45b07).
     SegmentEditorPanel.tsx # Segment list + per-segment controls
+    SegmentWaveform.tsx    # One segment's voiceover waveform, rendered as a memoized <img> (not a
+                     #   live <canvas>) drawn once off-screen via drawSegmentWaveform
+                     #   (services/waveformPeaks.ts) and enqueued through waveformDrawQueue —
+                     #   avoids the WebKit live-canvas-count ceiling that froze the 294-segment
+                     #   reference project. pointer-events:none so it never intercepts resize
+                     #   handles or the row's click-to-seek.
     SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
     StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
+    SyncLoadingOverlay.tsx # Full-screen blocking overlay shown for the duration of Apply Sync's
+                     #   pre-work (isProcessing) and until every segment's waveform image has
+                     #   drawn (isWaveformReady, via services/waveformReadyTracker.ts) — shows a
+                     #   live drawn/total count when a voiceover is present, a generic message
+                     #   otherwise. Hides itself the instant both are done; no minimum display time.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with

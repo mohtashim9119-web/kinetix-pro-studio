@@ -16,18 +16,6 @@ import { SegmentWaveform } from './SegmentWaveform';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
-// TEMPORARY diagnostic A/B toggle (added 2026-07-18, freeze-isolation test —
-// see docs/waveform-rewrite-plan.md). Disables the legacy 300-bar DOM
-// waveform lane (rendered below) to test whether running it simultaneously
-// with the new picture-based waveform system (the SegmentWaveform lane just
-// below it) contributes to the multi-minute post-Apply-Sync freeze on large
-// projects. App.tsx imports this same constant to also skip the legacy bars'
-// computation (buildVoiceoverWaveform → buildWaveformPipeline's
-// computeLegacyBars option), so this one flag gates both.
-// Flip back to `true` to fully restore the legacy lane — reversible
-// diagnostic flag, NOT a removal.
-export const ENABLE_LEGACY_BARS = false;
-
 interface Props {
   segments: VideoSegment[];
   assets: Asset[];
@@ -48,7 +36,6 @@ interface Props {
   // effect) via services/waveformPipeline, then passed in here. Timeline no longer
   // decodes/builds anything itself — that render-triggered decode effect was the
   // multi-minute freeze (docs/waveform-rewrite-plan.md §3).
-  waveformBars: number[];
   waveformSource: WaveformSource | null;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
@@ -78,7 +65,6 @@ export function Timeline({
   trimmingSegmentId,
   isAdjustingTrim,
   voiceoverName,
-  waveformBars,
   waveformSource,
   onTogglePlay,
   onSeek,
@@ -528,68 +514,13 @@ export function Timeline({
           )}
           </div>
 
-          {/* Audio Track — moved inside the lanes wrapper (Path B corrective
-              fix) so the playhead (top-0/bottom-0 on the wrapper above)
-              naturally spans it too; lane-to-lane spacing now comes uniformly
-              from the wrapper's gap-1 instead of this div's own former mt-1.
-              Gated behind ENABLE_LEGACY_BARS (temporary freeze-diagnosis
-              toggle, see its definition above) — when false this whole lane,
-              including its data-seg-id containers, does not render. */}
-          {ENABLE_LEGACY_BARS && voiceoverName && (
-            <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
-              <div className="flex h-full w-max">
-                {segments.map((s) => (
-                  <div
-                    key={`vo-${s.id}`}
-                    data-seg-id={s.id}
-                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                    className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
-                  >
-                    <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
-                    <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
-                    <div className="flex-1 flex items-center px-1">
-                      {(() => {
-                        const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
-                        const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
-                        const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
-                        const bars = waveformBars.slice(startBar, endBar);
-                        if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
-                        return (
-                          <div className="flex items-center h-full w-full gap-px px-0.5">
-                            {bars.map((amp, bi) => (
-                              <div
-                                key={bi}
-                                className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
-                                style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
-                              />
-                            ))}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                    {currentSegmentId === s.id && (
-                      <div className="absolute inset-0 bg-[#F27D26]/5" />
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* TEMPORARY comparison lane (waveform rewrite Step 2) — the NEW
-              peak-based <SegmentWaveform> canvas path, stacked directly BELOW
-              the legacy 300-bar lane above for a side-by-side A/B look. This
-              whole block is throwaway: it has NO data-seg-id (so App.tsx's
-              resize-drag querySelectorAll never touches it) and NO resize
-              handles — purely visual. Remove once the new path replaces the
-              old bars in a later step. */}
+          {/* Audio waveform lane — the peak-based <SegmentWaveform> canvas path.
+              Renders one per-segment waveform image from the WaveformSource built
+              once by the Apply-Sync pipeline (services/waveformPipeline). This lane
+              has NO data-seg-id (so App.tsx's resize-drag querySelectorAll never
+              touches it) and NO resize handles — purely visual. */}
           {voiceoverName && (
-            <div className="h-20 bg-[#0A0A0A] border border-dashed border-[#F27D26]/40 rounded-lg relative overflow-visible flex items-center">
-              <span className="absolute left-1 top-0.5 z-10 text-[9px] uppercase tracking-wide text-[#F27D26]/60 pointer-events-none">
-                new (peaks)
-              </span>
+            <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
               <div className="flex h-full w-max">
                 {segments.map((s) => (
                   <div

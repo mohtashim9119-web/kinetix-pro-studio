@@ -1,10 +1,34 @@
 # Timeline Waveform Rewrite + Apply-Sync Loading Experience — Implementation Plan
 
-> **Status:** Plan only. No application code has been changed.
-> **Baseline:** HEAD = `de4c195`, working tree clean, branch `webgl2-effects-engine`.
-> **Lifecycle:** This document is **temporary**. It exists to let a future
-> session (or a different engineer) implement the rewrite without asking
-> clarifying questions. Delete it once the rewrite is merged and verified.
+> **Status:** Steps 1-6 shipped in commit `f3d429e` on branch
+> `webgl2-effects-engine`. Waveform-peaks persistence (the "Persistence of
+> peaks" addendum, §1/§4.3 below) is implemented on top of that commit but is
+> currently **uncommitted** in the working tree. See "Implementation Status"
+> immediately below for the per-step breakdown.
+> **Baseline:** HEAD = `f3d429e` (this doc was originally written against
+> baseline `de4c195`, before any of Steps 1-6 existed — that baseline is now
+> historical).
+> **Lifecycle:** This document was originally meant to be **temporary** —
+> deleted once the rewrite was merged and verified. That is **deferred**:
+> the persistence layer above is still uncommitted, at least one known issue
+> (timeline scroll-lag) is still open, and this doc is still the active
+> reference for both. Do not delete until everything below is committed and
+> verified.
+
+---
+
+## Implementation Status
+
+| Step | What | Status |
+|---|---|---|
+| 1 | Chunked decode pipeline — `waveformPipeline.ts`'s yielding twin of the synchronous peak builder (`buildSourceChunked`), called once from Apply Sync + the reload effect, never from a render-triggered effect (§3, §4.3) | ✅ Done — `f3d429e` |
+| 2 | Async draw queue — `waveformDrawQueue.ts` + `SegmentWaveform.tsx`'s off-screen-canvas → `<img>` draw (§7 mitigation #1), batched across frames instead of one synchronous flush | ✅ Done — `f3d429e` |
+| 3 | Peak density tuning — `PEAKS_PER_SECOND` retuned from the originally-planned 200 to a shipped value of **10** after evaluating 200/6/30/10 on the 294-segment reference project (§4.2, corrected below) | ✅ Done — `f3d429e` |
+| 4 | Ready-tracker — `waveformReadyTracker.ts`, a generation-tagged draw-completion registry gating the loading overlay (§6.6) | ✅ Done — `f3d429e` |
+| 5 | Loading overlay — `SyncLoadingOverlay.tsx`, spanning both the pre-waveform sync phase (`isProcessing`) and the waveform-draw phase (`isWaveformReady`) (§10) | ✅ Done — `f3d429e` |
+| 6 | Legacy 300-bar system removal — `ENABLE_LEGACY_BARS`, `buildLegacyBars`, `LEGACY_BAR_COUNT`, `waveformBars` state, and the DOM-bar lane JSX all deleted outright, not flagged off (§11 step 6) | ✅ Done — `f3d429e` |
+| 7 | Waveform-peaks persistence — `waveformStore.ts`, an IndexedDB cache keyed by `[projectId, assetId]` + a blob-size invalidation guard, wired into `buildVoiceoverWaveform`'s read/write paths and all three eviction points (voiceover replace ×2, project delete) — an addendum beyond the original 6-step plan (see the "Persistence of peaks" addendum under §1 and the updated §4.3) | ✅ Done — **uncommitted** |
+| — | Delete this document (original "Lifecycle" intent above) | ⏳ Deferred until Step 7 is committed and the open scroll-lag issue is resolved/verified |
 
 ---
 
@@ -69,9 +93,28 @@ This has three concrete defects we are fixing:
   is a timeline-only editor affordance; it never participates in export.
 - **No multi-channel waveform.** Channel 0 only, exactly as today
   (`decoded.getChannelData(0)`).
-- **No persistence of waveform pixels.** Waveforms are recomputed from the
-  decoded audio each app session (the audio decode already reruns each
-  session; see §4.3). We do not serialize canvas bitmaps to IndexedDB.
+- **No persistence of *waveform pixels/canvas bitmaps*.** Canvas bitmaps
+  are never serialized to IndexedDB — they're cheap to redraw from peaks and
+  tied to per-session DPR/zoom geometry.
+  > **Addendum (2026-07-18, `webgl2-effects-engine`):** this bullet originally
+  > covered peaks too — "Waveforms are recomputed from the decoded audio each
+  > app session" — but that part of the decision is **reversed**. An audit
+  > found every project reload re-ran the full `decodeAudioData` + peak-
+  > extraction pass unconditionally (§4.3's reload path), even when the
+  > voiceover was byte-identical to the prior session, because nothing about
+  > the decoded *peaks* (a small `Float32Array`, ~10 columns/sec) was ever
+  > kept — only the blob itself round-tripped through IndexedDB. On a large
+  > voiceover (e.g. the 294-segment/21-minute project referenced throughout
+  > this doc) that's a multi-second rebuild on *every* reload, not just the
+  > first. The reload cost turned out worse in practice than this doc
+  > anticipated when it waved the rebuild off as "the audio decode already
+  > reruns each session" — that framing undersold how much heavier the reload
+  > path is than a cheap redraw. Peaks are now persisted to IndexedDB
+  > (`src/services/waveformStore.ts`), keyed by the voiceover asset's stable
+  > `id` (not its blob URL, which is re-minted every session) with the source
+  > blob's byte size stored alongside as an invalidation guard. Canvas
+  > bitmaps/images remain unpersisted — this reversal is peaks-only. See
+  > updated §4.3 below.
 - **No visual redesign of the rest of the timeline** (ruler, playhead,
   headings, segment rows) beyond swapping the audio-lane bar markup for a
   canvas.
@@ -163,35 +206,63 @@ large; see §7) — keep only the reduced peaks.
 
 ### 4.2 Sampling — peak-based, at max-zoom density
 
-**Target density = one waveform "column" per screen pixel at maximum zoom.**
-Max zoom is `100 px/s` (`Timeline.tsx:103`). To guarantee the drawn image is
-never under-sampled even at the 2× DPR cap (§5.5 / decision #4), sample at
-**max-zoom px/s × DPR-cap columns per second**:
+**Originally planned: one waveform "column" per screen pixel at maximum
+zoom.** Max zoom is `100 px/s` (`Timeline.tsx:103`). The initial design
+called for sampling at **max-zoom px/s × DPR-cap columns per second** so the
+drawn image would never be under-sampled even at the 2× DPR cap (§5.5 /
+decision #4):
 
 ```
-PEAKS_PER_SECOND = ppsMax * DPR_CAP = 100 * 2 = 200   // columns per second
+PEAKS_PER_SECOND = ppsMax * DPR_CAP = 100 * 2 = 200   // originally-planned columns per second
 ```
 
-Define this as an exported constant in `waveformPeaks.ts`:
+> **Addendum (shipped in `f3d429e`) — density retuned to 10/sec, decoupled
+> from `WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP`:** the 200/sec design above was
+> diagnosed as the dominant cost in a ~2.5-minute Apply-Sync freeze on the
+> 294-segment/21-min reference project. Several densities — 200, 6, 30, and
+> 10 peaks/sec — were evaluated on that project before settling on **10/sec**:
+> good enough visual fidelity for this product's zoom levels, while keeping
+> the Apply-Sync peak build fast. `PEAKS_PER_SECOND` is now a deliberate,
+> permanent product choice, **not** derived from `WAVEFORM_MAX_PPS ×
+> WAVEFORM_DPR_CAP` — see `waveformPeaks.ts`'s own comment on the constant,
+> which this addendum mirrors. Because 10/sec is well below
+> `WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP` (200), the "≥1 peak column per
+> backing pixel at max zoom" property this section originally guaranteed
+> **no longer holds** — waveforms are visibly coarser at high timeline zoom.
+> That is an accepted, permanent trade-off, not a bug. The shipped constant:
+>
+> ```ts
+> export const PEAKS_PER_SECOND = 10;
+> ```
+>
+> `WAVEFORM_MAX_PPS` (100) and `WAVEFORM_DPR_CAP` (2) are unchanged and still
+> govern the canvas **backing-store** size (§5.2) — only the peak-extraction
+> density decoupled from them. See §5.3's addendum below for the downstream
+> effect on the drawn curve, and §12 risk #6 for the retired guarantee.
+
+The constants as originally proposed, for historical context on the coupling
+this section used to describe:
 
 ```ts
-export const WAVEFORM_MAX_PPS = 100;   // must equal Timeline.tsx ppsMax
-export const WAVEFORM_DPR_CAP = 2;     // decision #4
-export const PEAKS_PER_SECOND = WAVEFORM_MAX_PPS * WAVEFORM_DPR_CAP; // 200
+export const WAVEFORM_MAX_PPS = 100;   // must equal Timeline.tsx ppsMax — still true
+export const WAVEFORM_DPR_CAP = 2;     // decision #4 — still true
+// PEAKS_PER_SECOND was originally proposed as WAVEFORM_MAX_PPS * WAVEFORM_DPR_CAP
+// (200); see the addendum above for why that derivation was dropped.
 ```
 
 > **Coupling callout:** `WAVEFORM_MAX_PPS` MUST stay equal to `ppsMax` in
 > `Timeline.tsx:103`. Add a `console.assert` (dev-only, matching the repo's
 > `constants.ts` guard style) in `Timeline.tsx` that asserts
-> `WAVEFORM_MAX_PPS === ppsMax`. If someone raises max zoom later, peaks
-> density must rise with it or zoom-in will blur.
+> `WAVEFORM_MAX_PPS === ppsMax`. This remains true independent of the
+> `PEAKS_PER_SECOND` retuning above — `WAVEFORM_MAX_PPS` still sizes the
+> backing store, it just no longer sizes the peak density too.
 
 **Peak (not mean) extraction.** For each output column `c`, take the block of
 PCM samples `[c*blockSize, (c+1)*blockSize)` and record the **max absolute
 amplitude** in that block, not the average:
 
 ```
-blockSize   = round(sampleRate / PEAKS_PER_SECOND)      // e.g. 48000/200 = 240 samples/column
+blockSize   = round(sampleRate / PEAKS_PER_SECOND)      // e.g. 48000/10 = 4800 samples/column (shipped value)
 totalColumns = ceil(pcm.length / blockSize)
 
 for c in 0..totalColumns-1:
@@ -218,7 +289,7 @@ Store the normalized `Float32Array peaks` plus `PEAKS_PER_SECOND` as the
 ```ts
 interface WaveformSource {
   peaks: Float32Array;        // normalized [0,1], global max
-  peaksPerSecond: number;     // = PEAKS_PER_SECOND (200)
+  peaksPerSecond: number;     // = PEAKS_PER_SECOND (10, shipped value — see §4.2 addendum)
   totalDuration: number;      // decoded.duration (s), for bounds
 }
 ```
@@ -245,14 +316,21 @@ endCol   = floor((segment.startTime + segment.duration) * peaksPerSecond)
   flow** (§6.3), so peaks exist before the timeline is revealed. Move the
   decode out of `Timeline.tsx`'s mount effect and into the Apply-Sync
   orchestration in `App.tsx`.
-- **Reload path:** on app load with a persisted project + voiceover blob
-  restored from IndexedDB, the timeline mounts already-synced. The peaks must
-  be rebuilt (canvas bitmaps are not persisted). Run the same decode-to-peaks
-  once in an `App.tsx` effect keyed on the voiceover asset id, then draw all
-  segment canvases. During this rebuild, show a lightweight inline "Loading
-  waveform…" state on the audio lane (NOT the full Apply-Sync screen — the
-  project is already usable). This is an accepted, low-risk async: segments
-  render immediately; each canvas fills in when peaks arrive. See §6.5.
+- **Reload path (updated 2026-07-18 — see Addendum above):** on app load with
+  a persisted project + voiceover blob restored from IndexedDB, the timeline
+  mounts already-synced. An `App.tsx` effect keyed on the voiceover asset id
+  first checks `waveformStore.ts` for persisted peaks matching that asset id
+  + blob size; if found, they're loaded directly and no decode happens at
+  all. Only on a cache miss (first-ever sync, a genuinely new/replaced
+  voiceover, or a size-guard mismatch) does the original decode-to-peaks pass
+  run, after which its result is written back to `waveformStore.ts` for the
+  next reload. Canvas bitmaps are still never persisted — every reload (cache
+  hit or miss) draws all segment canvases fresh from whichever peaks it
+  ended up with. During a cache-miss rebuild, show a lightweight inline
+  "Loading waveform…" state on the audio lane (NOT the full Apply-Sync screen
+  — the project is already usable). This is an accepted, low-risk async:
+  segments render immediately; each canvas fills in when peaks arrive. See
+  §6.5.
 
 ---
 
@@ -335,11 +413,22 @@ maxAmpPx = (H / 2) - 2            // 2px vertical padding top+bottom → 38
 ```
 
 Column-to-x mapping. Let `N = endCol - startCol` be the number of source peak
-columns for this segment, and draw one screen column per output pixel of the
-max-detail width. Because backing width == `W*dpr` and we sample at
-`PEAKS_PER_SECOND = 200 = 100*2`, there is (by construction) **exactly one
-peak column per backing pixel at max zoom** — so we can iterate peak columns
-directly and map each to its x:
+columns for this segment. As originally designed, backing width == `W*dpr`
+and sampling at `PEAKS_PER_SECOND = 200 = 100*2` would give (by construction)
+**exactly one peak column per backing pixel at max zoom** — so peak columns
+could be iterated directly and mapped each to its x:
+
+> **Addendum (shipped in `f3d429e`):** with the retuned `PEAKS_PER_SECOND = 10`
+> (§4.2 addendum), this 1:1 property **does not hold** — `N` is typically far
+> smaller than the backing width in device pixels. The shipped
+> `sampleColumnPeaks`/`drawSegmentWaveform` (`waveformPeaks.ts`) handle this by
+> computing `outputColumns = min(N, canvas.width)`, which in the common case
+> resolves to `N`: the sparse peak columns are spread (not collapsed) across
+> the full CSS width via `xs[i] = (i / M) * W`, same as the mapping below —
+> only now `M` (`= N`) is small relative to `W`, so the drawn curve is
+> deliberately coarser/blockier at high zoom than this section's original
+> "exactly one column per pixel" framing assumed. Still a straight iterate-
+> and-map, just over fewer points.
 
 ```
 for i in 0..N-1:
@@ -383,11 +472,32 @@ document it:
   real audio. Costs more path ops; validate performance with 294 canvases
   (§10).
 
+> **Addendum (shipped in `f3d429e`) — approach (A) confirmed final, at a
+> different density than assumed here:** `drawSegmentWaveform`
+> (`waveformPeaks.ts`) ships straight `lineTo` per column, exactly as (A)
+> describes — no escalation to quadratic (B) was needed. But it runs at the
+> shipped **10 cols/sec** (§4.2 addendum), not the ~200 cols/sec this
+> subsection assumed when judging (A) "already looks smooth." The polyline is
+> visibly coarser as a result, especially at high timeline zoom; that's the
+> same accepted trade-off noted in §4.2 and §5.3's earlier addendum above, not
+> a re-opened decision between (A) and (B).
+
 **Down-sampling when there are more columns than pixels.** At max zoom there
 is ~1 column/pixel, so no down-sampling is needed for the backing store. If
 the `MAX_CANVAS_BACKING_WIDTH` clamp (§5.2) reduces width, collapse multiple
 peak columns into each output x by taking the **max** over the collapsed group
 (never the mean — preserve transients).
+
+> **Addendum (shipped in `f3d429e`) — the shipped density inverts this
+> assumption:** at the originally-planned 200/sec this paragraph's "~1
+> column/pixel, so no down-sampling needed" held. At the shipped 10/sec
+> (§4.2 addendum) the opposite is now the common case at max zoom: **fewer**
+> peak columns than backing pixels, so `sampleColumnPeaks` is *spreading* a
+> sparse `N` across the full backing width rather than collapsing a dense one
+> — see the §5.3 addendum above. The `MAX_CANVAS_BACKING_WIDTH` collapse-by-max
+> path described here still exists in the code for the (now rarer) case where
+> a very long segment's `N` does exceed the clamped backing width, and it is
+> still MAX-based, not mean-based, exactly as originally specified.
 
 ### 5.4 Fill / stroke / color spec (CapCut-like)
 
@@ -760,9 +870,11 @@ canvas-count behavior only reproduces in WKWebView):
    segment, mirrored curve, transients visible (peaks, not flattened).
 2. Sync the 294-segment/21-min reference project: every segment has a
    waveform; scroll end-to-end — no blank canvases, no jank.
-3. Zoom slider from min→max: waveform image scales, **stays sharp at max
-   zoom** (no blur — proves max-detail backing), does not re-decode, does not
-   flicker.
+3. Zoom slider from min→max: waveform image scales, does not re-decode, does
+   not flicker. (Originally written as "stays sharp at max zoom, no blur" —
+   with the shipped 10/sec peak density, §4.2's addendum, the curve is
+   deliberately coarser at high zoom by design, not per-pixel sharp. Check
+   for correct scaling/no-redraw behavior, not pixel sharpness.)
 
 **Redraw-trigger discipline** (temporarily instrument with the
 `console.count` from §6.3):
@@ -928,13 +1040,23 @@ draw once via the normal effect. No blocking, no overlay.
    calls `onDrawn` on the commit after `setProject`. The 8s `Promise.race`
    safety valve covers a missed callback, but validate the happy path resolves
    promptly (should be well under 1s for 294 short draws).
-5. **Smoothing choice (§5.3).** Straight `lineTo` (approach A) assumed
-   sufficient at 200 cols/s. Validate visually against real speech audio in
-   Tauri; escalate to quadratic (approach B) only if jagged.
-6. **DPR cap interaction with `PEAKS_PER_SECOND` (§4.2/§5.2).** Peaks density
-   (200/s) is derived as `ppsMax * DPR_CAP`. This guarantees ≥1 peak column
-   per backing pixel at max zoom for dpr ≤ 2. On a capped-3×-to-2× screen this
-   holds; re-verify the arithmetic if either constant changes.
+5. **Smoothing choice (§5.3) — RESOLVED.** Approach (A) straight `lineTo`
+   shipped (confirmed in `waveformPeaks.ts`'s `drawSegmentWaveform`) — not at
+   the originally-assumed 200 cols/s, but at the shipped **10/sec** density
+   (§4.2 addendum), which is now typically *sparser* than the backing-pixel
+   width rather than roughly 1:1 with it. The curve is visibly coarser at
+   high zoom as a result; accepted as-is, no escalation to quadratic (B) was
+   needed.
+6. **DPR cap interaction with `PEAKS_PER_SECOND` (§4.2/§5.2) — RESOLVED,
+   outcome differs from the original assumption.** This risk originally
+   assumed peaks density (200/s) was derived as `ppsMax * DPR_CAP`,
+   guaranteeing ≥1 peak column per backing pixel at max zoom for dpr ≤ 2.
+   Shipped outcome (`f3d429e`): `PEAKS_PER_SECOND` was retuned to **10/sec**
+   and deliberately decoupled from `WAVEFORM_MAX_PPS * WAVEFORM_DPR_CAP` (see
+   §4.2's addendum) — the ≥1-peak-per-backing-pixel guarantee this risk
+   worried about does **not** hold today, by design. Waveforms are visibly
+   coarser at high timeline zoom; this is an accepted permanent trade-off, not
+   something to re-verify per-arithmetic, since it's no longer meant to hold.
 7. **`isProcessing` reuse (§10.2).** `isProcessing` is also set by the
    zip-extraction flow (`processZipFile`, `App.tsx:1737`); a dedicated
    `syncLoading` flag avoids the coupling. Verify `isProcessing` has no other
