@@ -649,6 +649,20 @@ function computeDragCascade(
   return recomputeStartTimes(segs);
 }
 
+const TEXT_ENTRY_INPUT_TYPES = new Set([
+  'text', 'number', 'password', 'email', 'search', 'tel', 'url',
+  'color', 'date', 'datetime-local', 'month', 'week', 'time', 'datetime',
+]);
+
+function isTextEntryElement(el: Element | null): boolean {
+  if (!el) return false;
+  if (el.tagName === 'TEXTAREA') return true;
+  if (el.tagName === 'INPUT') {
+    return TEXT_ENTRY_INPUT_TYPES.has((el as HTMLInputElement).type);
+  }
+  return false;
+}
+
 export default function App() {
   const [project, setProject] = useState<Project>(makeDefaultProject);
 
@@ -2260,7 +2274,7 @@ export default function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space') {
-        if (document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+        if (!isTextEntryElement(document.activeElement)) {
           e.preventDefault();
           setIsPlaying(p => !p);
         }
@@ -2268,6 +2282,19 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Blur range sliders on release so a drag doesn't leave focus (and the
+  // spacebar guard above) stuck on the slider indefinitely.
+  useEffect(() => {
+    const handler = (e: PointerEvent) => {
+      const target = e.target;
+      if (target instanceof HTMLInputElement && target.type === 'range') {
+        target.blur();
+      }
+    };
+    window.addEventListener('pointerup', handler);
+    return () => window.removeEventListener('pointerup', handler);
   }, []);
 
   // Reset zoom to the default midpoint whenever the active project changes.
