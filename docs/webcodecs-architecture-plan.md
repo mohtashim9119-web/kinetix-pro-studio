@@ -234,7 +234,7 @@ issue. See each item's own entry below for detail.
 - **Phase A3 of 3 — transition-window realignment + caption-hold companion fix (completed
   2026-07-06) — closes Phase A.**
   Per Section 8.1 step 3 ("Transition-timing alignment"). Targets audit-confirmed Finding 4:
-  `useTransitionPreview.ts`'s blend window sat BEFORE the nominal segment boundary (inside the
+  `useTransitionPreview.ts` (file deleted in `2015218` at the WebGL2 Phase 5 cutover)'s blend window sat BEFORE the nominal segment boundary (inside the
   outgoing segment's own trailing span) while `segmentEncoder.ts`/export bakes the blend AFTER the
   boundary (inside the incoming segment's own leading span) — a confirmed preview/export timing
   divergence.
@@ -346,7 +346,7 @@ issue. See each item's own entry below for detail.
   audit session concluded a real ("live blend") fix requires the preview/export-unification work
   Phase B already scopes to do properly, and building it standalone now would mean solving it
   twice: once ad hoc here, once again — properly — in Phase B.
-  - **Structural cause confirmed:** `useTransitionPreview.ts` renders the outgoing/incoming
+  - **Structural cause confirmed:** `useTransitionPreview.ts` (file deleted in `2015218` at the WebGL2 Phase 5 cutover) renders the outgoing/incoming
     segments to offscreen canvases ONCE at pre-roll (~179-310) and blends them purely as a
     function of `progress` for the whole `transitionDuration` — neither source canvas is ever
     re-rendered against a moving `timeInSegment`. Note the blend-DRAW effect itself already
@@ -454,7 +454,7 @@ investigation** — see the A3 entry above.
     newer/different WKWebView build, or a standalone fix considered on its own merits instead of
     waiting on a compositor unification that can no longer proceed as designed.
   - **No pipeline source changed.** `frameRenderer.ts`, `segmentEncoder.ts`, `exportPipeline.ts`,
-    `plainSegment.ts`, `useTransitionPreview.ts`, `videoDecoderPool.ts`, `useWebCodecsPreview.ts` are
+    `plainSegment.ts`, `useTransitionPreview.ts` (file deleted in `2015218` at the WebGL2 Phase 5 cutover), `videoDecoderPool.ts`, `useWebCodecsPreview.ts` are
     all unmodified — this was audit/spike/cleanup only, exactly as scoped.
   - **Verification:** `tsc --noEmit` clean, `vitest run` 159/159 passing (docs + spike-file cleanup
     only, no production code touched, no new tests). Committed in `docs: mark Phase B
@@ -573,7 +573,8 @@ investigation** — see the A3 entry above.
   can no longer wait on it) determined the frozen-frame fix does NOT actually require Phase B's
   shared compositor — it's achievable using only decode-side infrastructure
   (`VideoDecoderPool.getFrameAt`) that already works today; only `VideoEncoder` (export-side) is
-  broken, and this item never touched export. Confirmed reasoning: `useTransitionPreview.ts` renders
+  broken, and this item never touched export. Confirmed reasoning: `useTransitionPreview.ts` (file
+  deleted in `2015218` at the WebGL2 Phase 5 cutover) renders
   both outgoing/incoming segments to offscreen canvases ONCE per boundary via `frameRenderer.ts`'s
   slow HTML5-`<video>`-seek path, then blends purely as a function of `progress` — the fix is to pull
   LIVE frames from the pool (already cheap, already called every tick by `useWebCodecsPreview.ts` for
@@ -743,7 +744,8 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
      decode-ahead effect now issues `pool.getFrameAt(nextSegment.id, start)` alongside `ensureSession`,
      stashing the result in `pendingBoundaryPullRef` for the frame-pull chase to adopt immediately at
      the crossing instant. See the Follow-On Effort ✅ COMPLETED tracker's A2 entry for full detail.
-  3. ✅ **DONE (2026-07-06) — Transition-timing alignment.** `useTransitionPreview.ts`'s window now
+  3. ✅ **DONE (2026-07-06) — Transition-timing alignment.** `useTransitionPreview.ts` (file deleted
+     in `2015218` at the WebGL2 Phase 5 cutover)'s window now
      sits AFTER the nominal segment boundary (inside the incoming segment's own leading span),
      matching `segmentEncoder.ts`/export exactly, with a caption-hold companion fix in
      `PreviewStage.tsx` so the DOM caption keeps reading the outgoing segment for the life of the
@@ -803,18 +805,19 @@ not built, and are not being pursued further right now.
      single time).
   4. **Wire behind a capability + explicit toggle** (mirror Phase 1's dual-gate discipline) so the legacy
      PNG/ffmpeg export remains the default until Phase C's quality pass validates output.
-- **Cross-reference — expected to resolve residual issue 2 (frozen transition frame) as a
-  byproduct, not new scope.** Per the audited disposition in the Follow-On Effort tracker (Section
-  8.1 area, "frozen transition frame audited, deferred to Phase B", 2026-07-06): today
-  `useTransitionPreview.ts` blends two ONE-TIME snapshots because its only video source
-  (`frameRenderer.ts`'s HTML5 `<video>`-seek cache) is too slow (~200-400ms/seek) to sample every
-  render tick, while `segmentEncoder.ts` already renders every export transition frame live via
-  `renderSegmentFrame`. Once step 1's shared compositor puts preview's transition blend on the
-  same live, `VideoDecoderPool`-backed frame source export already uses — instead of
-  `frameRenderer.ts`'s seek-based cache — the frozen-snapshot mechanism is structurally retired.
-  This is expected to fall out of the already-planned steps above as a natural consequence of
-  unifying preview's frame-sourcing onto one compositor, not as separate new work requiring its
-  own step or scope in this section.
+- **Cross-reference — MOOT, preview-side issue already resolved independently (updated
+  2026-07-19).** This cross-reference originally argued that Phase B's shared compositor would
+  retire the frozen-transition-frame problem as a byproduct: per the audited disposition in the
+  Follow-On Effort tracker (Section 8.1 area, "frozen transition frame audited, deferred to Phase
+  B", 2026-07-06), `useTransitionPreview.ts` blended two ONE-TIME snapshots because its only video
+  source (`frameRenderer.ts`'s HTML5 `<video>`-seek cache) was too slow (~200-400ms/seek) to sample
+  every render tick. That mechanism no longer exists — `useTransitionPreview.ts` was deleted
+  entirely at the WebGL2 Phase 5 cutover (`2015218`), an unrelated effort that replaced preview's
+  whole transition/animation/grading path with a live GL compositor sampling `VideoFrame`s directly
+  every tick. The frozen-transition-frame problem this cross-reference described is therefore
+  already gone, resolved on the preview side without Phase B. Phase B's remaining scope, if ever
+  unblocked, is now purely the export-side `VideoEncoder` swap — it carries no preview-side benefit
+  to expect as a byproduct anymore.
 - **Touch surface (all additive):** new `webcodecsEncoder.ts`, new shared-compositor module, new export
   orchestrator, a gated branch in `useExport.ts`. `videoDecoderPool.ts`/`videoDemuxer.ts` reused as-is.
 - **MUST NOT touch (until the new path is proven and cut over):** `frameRenderer.ts`, `segmentEncoder.ts`,
