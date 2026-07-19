@@ -20,7 +20,17 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~2,962 lines — top-level state, orchestration, playback, export.
+  App.tsx            # ~3,578 lines — top-level state, orchestration, playback, export.
+                     #   The window keydown effect's Space branch guards on isTextEntryElement()
+                     #   (not a generic tagName check) so a focused range slider no longer traps
+                     #   spacebar play/pause; a global pointerup listener blurs any focused
+                     #   <input type="range"> on release. +/- branches step the timeline zoom
+                     #   sliderT by 0.1 (10 discrete steps, clamped). ArrowLeft/ArrowRight cycle
+                     #   globalPlaybackSpeed via handleSpeedClick's 1→2→4→8→1 ladder (SpeedBadge.tsx),
+                     #   clamped at both ends. F toggles fullscreen via previewStageRef.current
+                     #   .toggleFullscreen() (PreviewStageHandle, exposed by PreviewStage.tsx's
+                     #   forwardRef/useImperativeHandle). setGlobalPlaybackSpeed(1) resets on
+                     #   project switch and New Project (three reset sites).
                      #   isResizingRef guards the timeline resize-drag gesture: set true
                      #   synchronously in onResizeStart (mousedown), cleared by a resizingId-keyed
                      #   effect (fires after PreviewStage's child effects in the same commit —
@@ -236,6 +246,14 @@ src/
                      #   holds the decode pool + assets); App.tsx's handleAutoGrade drives scope.
   hooks/
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
+    useGlPreview.ts          # WebGL2 preview driver (docs/webgl-architecture-plan.md Section 3.2/6) —
+                             #   per-tick: derive params (compositeParams.ts) → source each slot from
+                             #   the WebCodecs decode pool → upload directly to GPU texture → render.
+                             #   Now takes isFullscreen: boolean in its params, added to the per-tick
+                             #   render effect's dep array so the canvas backing buffer re-measures on
+                             #   fullscreen transitions (fixes a stretched preview when entering
+                             #   fullscreen while paused — tick-driven resize logic otherwise never
+                             #   re-ran until the next currentTime change).
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
     useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
                              #   pick_save_path dialog runs BEFORE render; calls exportProject(), then on
@@ -291,11 +309,32 @@ src/
                      #   Mounted by DropZonePanel.tsx, which owns lookPresetService persistence —
                      #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
+    PreviewCanvas.tsx     # Minimal canvas paint surface for the WebCodecs preview path — draws
+                     #   whatever VideoFrame useWebCodecsPreview.ts hands it, object-cover fit.
+                     #   Now takes an optional isFullscreen?: boolean prop, added to the draw
+                     #   effect's dep array (same stretch fix as useGlPreview.ts, on the fallback
+                     #   non-GL path) so the canvas re-measures on fullscreen transitions.
     PreviewStage.tsx      # Video/image display + overlay rendering. Dual-slot video-swap seek
                      #   effect (~line 449, dep [currentSegment?.id]) skips reseeking while
                      #   isResizingRef.current is true — currentSegment can flip transiently
                      #   during a timeline resize-drag; guard prevents an unwanted reseek to the
                      #   wrong segment's start (D12 fix, commit be45b07).
+                     #   Now a forwardRef component exporting a PreviewStageHandle interface
+                     #   ({ toggleFullscreen: () => void }) via useImperativeHandle — App.tsx holds
+                     #   previewStageRef and calls it from the F-key branch. toggleNativeFullscreen
+                     #   uses Tauri's getCurrentWindow().setFullscreen() (not the browser Fullscreen
+                     #   API, which silently fails in the Tauri WebView shell), with the browser API
+                     #   kept as a dev-preview fallback; an onResized listener syncs isFullscreen
+                     #   state when the user exits via OS controls (Escape, macOS traffic-light)
+                     #   that bypass the app's own handler. restoreWebViewFocus() restores keyboard
+                     #   focus after any fullscreen-exit path (Tauri getCurrentWebview().setFocus()
+                     #   + getCurrentWindow().setFocus() + DOM window/body/#root focus fallbacks) —
+                     #   without it, keys reach the OS window but not the embedded WebView post-exit.
+                     #   Floating controls (play/pause + SpeedBadge + Esc hint) render when
+                     #   isFullscreen. isFullscreen is also passed to useGlPreview and PreviewCanvas
+                     #   so their canvas backing buffer re-measures on fullscreen transitions even
+                     #   while paused (fixes a stretched-preview bug on paused fullscreen entry).
+                     #   New props: onTogglePlay, onSpeedCycle.
     SegmentEditorPanel.tsx # Segment list + per-segment controls
     SegmentWaveform.tsx    # One segment's voiceover waveform, rendered as a memoized <img> (not a
                      #   live <canvas>) drawn once off-screen via drawSegmentWaveform
@@ -304,6 +343,10 @@ src/
                      #   reference project. pointer-events:none so it never intercepts resize
                      #   handles or the row's click-to-seek.
     SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
+    SpeedBadge.tsx     # Compact pill button showing playback speed (1×/2×/4×/8×). Exports
+                     #   SPEED_LADDER = [1,2,4,8] and SpeedBadge({ speed, onCycle }). Click on the
+                     #   badge wraps 1→2→4→8→1. Used in the App.tsx play/pause pill and in
+                     #   PreviewStage's fullscreen floating controls.
     StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
     SyncLoadingOverlay.tsx # Full-screen blocking overlay shown for the duration of Apply Sync's
                      #   pre-work (isProcessing) and until every segment's waveform image has
@@ -341,7 +384,10 @@ src-tauri/
   Cargo.toml         # Rust deps: tauri 2.x, tauri-plugin-shell, tauri-plugin-log, rfd, base64, uuid
   tauri.conf.json    # productName, bundle.externalBin: ["binaries/ffmpeg"], devUrl, beforeDevCommand
   capabilities/
-    default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true }
+    default.json     # core:default + shell:allow-execute { name: "ffmpeg", sidecar: true } +
+                     #   core:window:allow-set-fullscreen + core:webview:allow-set-webview-focus
+                     #   (fullscreen feature — neither is in core:default; PreviewStage.tsx's
+                     #   toggleNativeFullscreen and restoreWebViewFocus need them).
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
                      #   (16 total: 13 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
