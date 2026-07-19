@@ -276,23 +276,6 @@ export function Timeline({
       {/* Timeline Tracks Area */}
       <div
         id="timeline-scroll-area"
-        role="slider"
-        tabIndex={0}
-        aria-label="Timeline position"
-        aria-valuenow={Math.round(currentTime * 10) / 10}
-        aria-valuemin={0}
-        aria-valuemax={Math.round(totalDuration * 10) / 10}
-        aria-valuetext={`${Math.floor(currentTime / 60).toString().padStart(2, '0')}:${Math.floor(currentTime % 60).toString().padStart(2, '0')}`}
-        onKeyDown={(e) => {
-          const step = e.shiftKey ? 5 : 1;
-          if (e.key === 'ArrowRight') {
-            e.preventDefault();
-            onSeek(Math.min(totalDuration, currentTime + step));
-          } else if (e.key === 'ArrowLeft') {
-            e.preventDefault();
-            onSeek(Math.max(0, currentTime - step));
-          }
-        }}
         className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDownCapture={(e) => {
           // Suppress the browser's default click-to-focus behavior for this

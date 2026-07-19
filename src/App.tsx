@@ -93,6 +93,7 @@ const StockSearchModal = lazy(() =>
 );
 import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler } from './components/PreviewStage';
+import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
@@ -2270,6 +2271,14 @@ export default function App() {
 
   const togglePlay = () => setIsPlaying(p => !p);
 
+  const handleSpeedClick = useCallback(() => {
+    setGlobalPlaybackSpeed(prev => {
+      const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
+      if (idx === -1 || idx === SPEED_LADDER.length - 1) return SPEED_LADDER[0];
+      return SPEED_LADDER[idx + 1] ?? prev;
+    });
+  }, []);
+
   // Add spacebar play/pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -2287,6 +2296,24 @@ export default function App() {
         if (!isTextEntryElement(document.activeElement)) {
           e.preventDefault();
           setSliderT(t => Math.max(0, Math.round((t - 0.1) * 100) / 100));
+        }
+      } else if (e.key === 'ArrowRight') {
+        if (!isTextEntryElement(document.activeElement)) {
+          e.preventDefault();
+          setGlobalPlaybackSpeed(prev => {
+            const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
+            if (idx === -1 || idx === SPEED_LADDER.length - 1) return prev;
+            return SPEED_LADDER[idx + 1] ?? prev;
+          });
+        }
+      } else if (e.key === 'ArrowLeft') {
+        if (!isTextEntryElement(document.activeElement)) {
+          e.preventDefault();
+          setGlobalPlaybackSpeed(prev => {
+            const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
+            if (idx <= 0) return prev;
+            return SPEED_LADDER[idx - 1] ?? prev;
+          });
         }
       }
     };
@@ -2310,6 +2337,7 @@ export default function App() {
   // Reset zoom to the default midpoint whenever the active project changes.
   useEffect(() => {
     setSliderT(0.5);
+    setGlobalPlaybackSpeed(1);
   }, [project.id]);
 
   // Auto-scroll timeline to keep playhead in view during playback
@@ -2411,6 +2439,7 @@ export default function App() {
     setProject(fresh);
     setIsSynced(false);
     setCurrentTime(0);
+    setGlobalPlaybackSpeed(1);
     setIsPlaying(false);
     setSelectedSegmentId(null);
   };
@@ -2509,6 +2538,7 @@ export default function App() {
     } else {
       // Explicit switch to a (possibly different) project: reset to the start.
       setCurrentTime(0);
+      setGlobalPlaybackSpeed(1);
       setSelectedSegmentId(null);
     }
   };
@@ -2718,6 +2748,7 @@ export default function App() {
                   ? <Pause size={9} fill="white" className="text-white" />
                   : <Play size={9} fill="white" className="text-white ml-0.5" />}
               </button>
+              <SpeedBadge speed={globalPlaybackSpeed} onCycle={handleSpeedClick} />
               <span className="text-[10px] text-zinc-400 font-mono tabular-nums">
                 {String(Math.floor(currentTime / 60)).padStart(2,'0')}:{String(Math.floor(currentTime % 60)).padStart(2,'0')}:{String(Math.floor((currentTime % 1) * 100)).padStart(2,'0')}
               </span>
