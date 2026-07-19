@@ -279,12 +279,12 @@ export function Timeline({
         className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
         onMouseDownCapture={(e) => {
           // Suppress the browser's default click-to-focus behavior for this
-          // element specifically — role="slider" + tabIndex make it keyboard-
-          // focusable (arrow-key seek, onKeyDown above) and its focus-visible
-          // ring is legitimate for that path, but WebKit/Tauri's focus-visible
-          // heuristic was also firing it on ordinary mouse clicks/drags inside
-          // the timeline (scrubbing, resize-handles, heading drags), showing an
-          // orange ring around the whole timeline during normal mouse use.
+          // element — it's a plain scroll container (mouse-scrub only, no
+          // keyboard seek; role="slider"/tabIndex/onKeyDown were removed in
+          // 299f014), but WebKit/Tauri's focus-visible heuristic was still
+          // firing on ordinary mouse clicks/drags inside the timeline
+          // (scrubbing, resize-handles, heading drags), showing an orange
+          // ring around the whole timeline during normal mouse use.
           // preventDefault on the capture-phase mousedown stops the native
           // focus-shift before any descendant's bubble-phase stopPropagation()
           // can leave it unaffected; real keyboard Tab-focus is untouched since
