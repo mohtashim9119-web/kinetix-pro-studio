@@ -82,7 +82,22 @@ src/
                      #   separate from assetStore's), keyed by [projectId, assetId] with the source
                      #   blob's byte size as an invalidation guard. Lets a reload of an unchanged
                      #   voiceover skip decode+peak-extraction entirely — canvas bitmaps/images are
-                     #   still never persisted, only the small peaks array.
+                     #   still never persisted, only the small peaks array. Also owns peekWaveform()
+                     #   (docs/waveform-image-cache-plan.md) — a small, global, content-addressed
+                     #   (assetId+blobSize, not project-scoped) in-memory LRU mirror of recently
+                     #   resolved WaveformSource records, populated by putWaveform and getWaveform
+                     #   hits; App.tsx's pre-generation-bump identity gate reads it synchronously to
+                     #   skip a redundant IndexedDB round-trip on a same-session project switch-back.
+    waveformImageCache.ts # Sibling cache to waveformStore.ts, but for the RENDERED per-segment
+                     #   waveform thumbnail PNGs SegmentWaveform.tsx draws (not the numeric peaks).
+                     #   Own IndexedDB DB (kinetix-waveform-images). Two tiers: Tier 1 an in-memory
+                     #   LRU Map of cache key -> blob: URL (asset-scoped, survives a same-session
+                     #   project switch); Tier 2 IndexedDB, keyed [projectId, assetId, segmentId]
+                     #   (survives an app restart). Cache key is assetId+blobSize+segmentId+
+                     #   startTime+duration — device pixel ratio deliberately excluded (capped at 2x,
+                     #   effectively constant per device). Ownership note: once an image is cache-
+                     #   owned, only this module's own LRU eviction or its delete* functions may
+                     #   revoke the blob: URL — SegmentWaveform.tsx must not revoke on unmount.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
                      #   writeFileRaw() (2026-07-09) — sends frame bytes as a raw Tauri v2 invoke body
@@ -117,6 +132,25 @@ src/
                      #   segmentEncoder.ts once a segment's transition window finishes encoding.
     canvasAnimations.ts # Canvas 2D animation transforms keyed by AnimationType (Fidelity Polish Item 1).
                      #   applySegmentAnimation() — ctx.save/restore wrapper, easing helpers, dev-only assert guard.
+                     #   ZOOM_IN/ZOOM_OUT cases compute scale via zoomScale.ts's computeZoomScale
+                     #   (shared with the GL preview path) rather than a locally hardcoded rate.
+    zoomScale.ts     # computeZoomScale({ rate, duration, elapsed, direction }) — the single formula
+                     #   (Peak Scale = min(1.99, 1 + rate*duration), linear interpolation to/from it)
+                     #   shared by the GL preview (gl/compositeParams.ts's resolveAnimScale) and the
+                     #   canvas export path (canvasAnimations.ts) for the two zoom animations, closing
+                     #   a prior duplicated-0.05-constant parity risk between the two renderers. Also
+                     #   hosts computeMaxRate/sliderMaxRate/capRateForDuration — per-segment duration-
+                     #   based caps on VideoSegment.effectAnimationScaleRate, feeding both the
+                     #   EffectsPanel rate slider's live upper bound and Apply-to-all's per-segment clamp.
+    transitionResolver.ts # resolveEffectiveTransition(segment, options) — segment.transition (if set
+                     #   and not NONE) else options.globalTransition else NONE; folds RETIRED_TRANSITIONS
+                     #   (wipe, slide-push, glitch-rgb, whip-pan, zoom — slugs the GL engine never
+                     #   implemented, retired at the Phase 5 cutover) to cross-dissolve so an
+                     #   already-saved segment carrying one resolves identically in preview and export.
+                     #   Also owns resolveTransitionProgress(boundaryTime, duration, currentTime) — the
+                     #   shared centered-window (50/50 across the A/B boundary) progress math used by
+                     #   gl/compositeParams.ts, segmentEncoder.ts, and (until its Phase 5 deletion) the
+                     #   legacy useTransitionPreview.ts, so preview and export can't independently drift.
     segmentEncoder.ts # Renders all frames → writes PNGs to ffmpeg FS → libx264 encode → MP4 Uint8Array.
                      #   Reads effectiveTransition = segment.transition || project.globalTransition (see Transition Handling below).
                      #   Also hosts encodePlainVideoSegment/encodeStaticImageSegment — the Tier 1
@@ -161,9 +195,12 @@ src/
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
     uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
                      #   single source for UI-state persistence (D6 fix).
-    gl/              # WebGL2 effects engine (docs/webgl-architecture-plan.md). Renders ONLY behind
-                     #   PreviewStage.tsx's dev gate (import.meta.env.DEV && glDevToggle) until
-                     #   Phase 5's cutover — a production build never reaches this code today.
+    gl/              # WebGL2 effects engine (docs/webgl-architecture-plan.md). Phase 5 cutover
+                     #   (commit 2015218) removed the dev gate — this is now the sole, production-
+                     #   default preview path for the 4 scoped transitions, both zoom animations,
+                     #   and color grading; isWebGL2Supported() survives only as a diagnostic
+                     #   (drives a visible error surface on an unsupported runtime), not a router
+                     #   to a second implementation.
       glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing.
       shaders.ts     # GLSL ES 3.0 sources (blit, cross-dissolve, dip, light-leak, zoom, grade) +
                      #   u_texRectA/B object-cover UV-crop uniforms. DO NOT change this math without
@@ -210,12 +247,6 @@ src/
                              #   'unknown' ExportError.
                              #   ExportSnapshot for retry; generation counter guards stale callbacks.
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
-    useTransitionPreview.ts  # Pre-roll snapshot blend for preview transitions (Fidelity Polish Item 3).
-                             #   Renders outgoing+incoming frames ~400ms before window; blends via applyTransitionBlend.
-                             #   Takes isResizingRef; forces inTransitionWindow/needsPreRoll/isActive false while a
-                             #   timeline resize-drag is in progress (plain per-render read, not an effect dep) —
-                             #   otherwise a drag's transient segment-boundary geometry could sweep currentTime into
-                             #   a bogus transition window and swap in the wrong segment's snapshot (D12, be45b07).
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
@@ -294,7 +325,13 @@ src/
                      #   "0 then scroll" flash. Both auto-scroll effects check didRestoreRef before
                      #   running (fixed in 34206ee, on top of the fb6abbb useLayoutEffect timing fix).
   index.css          # Tailwind base + custom scrollbar
-  main.tsx           # React entry point
+  instrumentFlag.ts  # Rehydrates the __WF_INSTRUMENT__ waveform-pipeline debug flag from
+                     #   localStorage (key kinetix:wf-instrument) before any other app module
+                     #   evaluates — must be the first static import in main.tsx. Gates the
+                     #   [wf-gate]/[wf-gen]/[wf-cache]/[wf-switch]/[wf-blob] console instrumentation
+                     #   across App.tsx/waveformStore.ts/SegmentWaveform.tsx; off by default, no
+                     #   behavior change when unset.
+  main.tsx           # React entry point. Imports instrumentFlag.ts first (see that file's header).
 index.html           # Title: "Kinetix Pro Studio"
 vite.config.ts       # Vite config — plugins (react, tailwindcss) + path alias. COOP/COEP removed (Phase 6.4).
 public/

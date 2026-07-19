@@ -10,8 +10,9 @@
 
 ## 0. TL;DR for whoever picks this up
 
-**Goal 1 — waveform image caching — is DONE, confirmed by data, and the
-cleanup phase (Phase D) is also done and user-verified.** Build each
+**Goal 1 — waveform image caching — is DONE, confirmed by data, committed
+(`71fa4a0`), and the cleanup phase (Phase D) is also done and user-verified.**
+Build each
 project's waveform once, ever — never rebuild it again, whether switching
 projects in the same session or fully quitting/relaunching the app. A live
 instrumented trace showed 294/294 segment lookups all resolving as cache hits
@@ -33,7 +34,7 @@ NOT been done yet. See Section 6 for the exact next step.
 
 ---
 
-## 1. Current working-tree state (uncommitted)
+## 1. Working-tree state at hand-off — now committed in `71fa4a0`
 
 ```
  M src/App.tsx
@@ -47,6 +48,10 @@ NOT been done yet. See Section 6 for the exact next step.
 ?? src/services/waveformImageCache.test.ts
 ?? src/services/waveformImageCache.ts
 ```
+
+All of the above landed in a single commit, `71fa4a0` ("Waveform rendered-image
+caching (Phases A-D): LRU mirror + IndexedDB persistence, identity gate, Phase
+D cleanup"), on `webgl2-effects-engine`.
 
 `src/services/waveformStore.ts`'s modifications are from an EARLIER session
 (the peaks-mirror gate reorder fix / mirror-arm revert — see Section 7 for
@@ -98,7 +103,7 @@ module loads, guarded so it's a no-op in the plain-node vitest environment
 (confirmed via `sceneTagParsing.test.ts`, which transitively imports this
 module via `App.tsx` without the IndexedDB polyfill, and must not crash).
 
-Tests: `src/services/waveformImageCache.test.ts`, 9 cases — roundtrip,
+Tests: `src/services/waveformImageCache.test.ts`, 10 cases — roundtrip,
 cross-"restart" rehydration via `getPersistedImage`, blobSize invalidation,
 per-asset/per-project deletion scoping, LRU eviction. Uses
 `fake-indexeddb/auto` same as `waveformStore.test.ts`.
@@ -343,8 +348,8 @@ Before this session, across several earlier sessions: a long investigation
 into `App.tsx`'s `buildVoiceoverWaveform` gating (`resident`/`mirror`/
 `cold-miss` arms, `waveformReadyTracker.ts`'s generation counter, a
 double-begin race between Apply-Sync and a reload-effect). Two real fixes
-landed and are confirmed stable, already reflected in the current
-(uncommitted) `src/App.tsx` and `src/services/waveformStore.ts` diffs:
+landed and are confirmed stable, already reflected in the `71fa4a0`-committed
+`src/App.tsx` and `src/services/waveformStore.ts` diffs:
 
 1. **Reorder fix (kept)**: an early, synchronous dedupe check
    (`waveformBuiltForRef.current === incomingAssetId`) added before the

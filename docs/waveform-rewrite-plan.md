@@ -2,18 +2,22 @@
 
 > **Status:** Steps 1-6 shipped in commit `f3d429e` on branch
 > `webgl2-effects-engine`. Waveform-peaks persistence (the "Persistence of
-> peaks" addendum, §1/§4.3 below) is implemented on top of that commit but is
-> currently **uncommitted** in the working tree. See "Implementation Status"
-> immediately below for the per-step breakdown.
-> **Baseline:** HEAD = `f3d429e` (this doc was originally written against
+> peaks" addendum, §1/§4.3 below, Step 7) shipped in commit `e7efce5`
+> ("Waveform peaks persistence + doc sync") — this status line was itself
+> stale from the moment `e7efce5` landed (the commit bundled this doc's text
+> together with the code it describes, without updating "uncommitted" to
+> "committed"). See "Implementation Status" immediately below for the
+> per-step breakdown.
+> **Baseline:** HEAD = `71fa4a0` (this doc was originally written against
 > baseline `de4c195`, before any of Steps 1-6 existed — that baseline is now
 > historical).
 > **Lifecycle:** This document was originally meant to be **temporary** —
 > deleted once the rewrite was merged and verified. That is **deferred**:
-> the persistence layer above is still uncommitted, at least one known issue
-> (timeline scroll-lag) is still open, and this doc is still the active
-> reference for both. Do not delete until everything below is committed and
-> verified.
+> at least one known issue (timeline scroll-lag) is still open, and a
+> separate, later investigation (rendered-image caching, not peaks — see
+> `docs/waveform-image-cache-plan.md`) found a related but distinct ~4s
+> reload-pacing problem that is also still open. Do not delete until
+> everything below is committed and verified.
 
 ---
 
@@ -27,8 +31,8 @@
 | 4 | Ready-tracker — `waveformReadyTracker.ts`, a generation-tagged draw-completion registry gating the loading overlay (§6.6) | ✅ Done — `f3d429e` |
 | 5 | Loading overlay — `SyncLoadingOverlay.tsx`, spanning both the pre-waveform sync phase (`isProcessing`) and the waveform-draw phase (`isWaveformReady`) (§10) | ✅ Done — `f3d429e` |
 | 6 | Legacy 300-bar system removal — `ENABLE_LEGACY_BARS`, `buildLegacyBars`, `LEGACY_BAR_COUNT`, `waveformBars` state, and the DOM-bar lane JSX all deleted outright, not flagged off (§11 step 6) | ✅ Done — `f3d429e` |
-| 7 | Waveform-peaks persistence — `waveformStore.ts`, an IndexedDB cache keyed by `[projectId, assetId]` + a blob-size invalidation guard, wired into `buildVoiceoverWaveform`'s read/write paths and all three eviction points (voiceover replace ×2, project delete) — an addendum beyond the original 6-step plan (see the "Persistence of peaks" addendum under §1 and the updated §4.3) | ✅ Done — **uncommitted** |
-| — | Delete this document (original "Lifecycle" intent above) | ⏳ Deferred until Step 7 is committed and the open scroll-lag issue is resolved/verified |
+| 7 | Waveform-peaks persistence — `waveformStore.ts`, an IndexedDB cache keyed by `[projectId, assetId]` + a blob-size invalidation guard, wired into `buildVoiceoverWaveform`'s read/write paths and all three eviction points (voiceover replace ×2, project delete) — an addendum beyond the original 6-step plan (see the "Persistence of peaks" addendum under §1 and the updated §4.3) | ✅ Done — committed in `e7efce5` |
+| — | Delete this document (original "Lifecycle" intent above) | ⏳ Deferred — Step 7 is now committed, but the open scroll-lag issue is still unresolved/unverified, and a related reload-pacing problem surfaced by the later rendered-image-cache work (`docs/waveform-image-cache-plan.md`) is also still open |
 
 ---
 
