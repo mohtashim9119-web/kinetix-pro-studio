@@ -87,6 +87,14 @@ interface UseGlPreviewParams {
    *  by PreviewStage. Gates ALL work in this hook. Carried a dev-only toggle too
    *  until the Phase 5 cutover removed it. */
   enabled: boolean;
+  /** PreviewStage's fullscreen flag. The per-tick render effect below only
+   *  reruns when one of its listed deps changes; none of them reflect the
+   *  stage's on-screen size, so a paused entry into fullscreen left the GL
+   *  canvas's backing buffer (canvas.width/height, synced from
+   *  clientWidth/clientHeight) stretched to the OLD panel's aspect ratio
+   *  until the next tick. Listing isFullscreen forces exactly one extra
+   *  re-run on toggle, which re-measures the now-current stage box. */
+  isFullscreen: boolean;
 }
 
 export interface UseGlPreviewResult {
@@ -167,6 +175,7 @@ export function useGlPreview({
   config,
   isResizingRef,
   enabled,
+  isFullscreen,
 }: UseGlPreviewParams): UseGlPreviewResult {
   const glRef = useRef<WebGL2RenderingContext | null>(null);
   const compositorRef = useRef<GlCompositor | null>(null);
@@ -553,6 +562,13 @@ export function useGlPreview({
     config.globalTransition,
     config.globalTransitionDuration,
     config.grade,
+    // Stretch-on-fullscreen-while-paused fix: none of the deps above change
+    // when the stage's CSS box resizes (e.g. on a fullscreen toggle while
+    // currentTime is frozen), so canvas.width/height (lines above) would stay
+    // stale relative to the new box until the next unrelated tick. Forces one
+    // extra re-run — and one re-measure of clientWidth/clientHeight — right
+    // when the stage actually changes shape.
+    isFullscreen,
   ]);
 
   return { error: enabled ? error : null, canvasRef: setCanvasRef };

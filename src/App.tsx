@@ -92,7 +92,7 @@ const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
 import { Timeline } from './components/Timeline';
-import { PreviewStage, type AutoGradeSampler } from './components/PreviewStage';
+import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
@@ -1009,6 +1009,7 @@ export default function App() {
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const previewStageRef = useRef<PreviewStageHandle>(null);
 
   // Ref that mirrors project.assets so useCallback([]) closures can read the
   // latest asset list without project.assets appearing in their dep arrays.
@@ -2315,6 +2316,11 @@ export default function App() {
             return SPEED_LADDER[idx - 1] ?? prev;
           });
         }
+      } else if (e.key === 'f' || e.key === 'F') {
+        if (!isTextEntryElement(document.activeElement)) {
+          e.preventDefault();
+          previewStageRef.current?.toggleFullscreen();
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -2708,6 +2714,7 @@ export default function App() {
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>
                 <PreviewStage
+                  ref={previewStageRef}
                   segments={project.segments}
                   currentSegment={currentSegment ?? undefined}
                   currentTime={currentTime}
@@ -2722,6 +2729,8 @@ export default function App() {
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
                   autoGradeSamplerRef={autoGradeSamplerRef}
+                  onTogglePlay={togglePlay}
+                  onSpeedCycle={handleSpeedClick}
                 />
               </ErrorBoundary>
               </div>

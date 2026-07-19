@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Maximize, Minimize, MonitorPlay } from 'lucide-react';
+import { Maximize, Minimize, MonitorPlay, Play, Pause } from 'lucide-react';
+import { SpeedBadge } from './SpeedBadge';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay, type SegmentGrade } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { getActiveHeadingAt } from '../services/headingLayer';
@@ -243,6 +244,14 @@ interface Props {
    *  it populates this ref with a per-segment sampler that App's handleAutoGrade
    *  calls. Assigned on mount, cleared on unmount. */
   autoGradeSamplerRef?: React.MutableRefObject<AutoGradeSampler | null>;
+  /** Callback for the floating play/pause button shown in fullscreen mode. */
+  onTogglePlay: () => void;
+  /** Callback for the floating SpeedBadge click shown in fullscreen mode. */
+  onSpeedCycle: () => void;
+}
+
+export interface PreviewStageHandle {
+  toggleFullscreen: () => void;
 }
 
 /** Samples one clean source frame for `segment` and returns its auto-grade, or
@@ -269,7 +278,53 @@ function loadImageForSampling(url: string): Promise<HTMLImageElement | null> {
   });
 }
 
-export function PreviewStage({
+/** Focus-bug fix — Tauri's getCurrentWindow().setFocus() restores OS-level
+ *  window focus but has been observed to NOT reliably carry focus down into
+ *  the embedded WebView (WKWebView/WebView2) after a fullscreen exit, leaving
+ *  keydown events undelivered until the user clicks inside the app. Tries
+ *  several DOM-level focus targets, most-specific to most-general, since
+ *  different WebViews/OSes respond to different ones — cheap, and harmless
+ *  if a given strategy is a no-op on a given platform. Also calls Tauri's
+ *  WebView-level setFocus (distinct from the Window-level one already called
+ *  by our callers) — that is the layer that actually receives keyboard
+ *  events; a window can be the frontmost OS window while its embedded
+ *  WebView still isn't the focused responder within it. Dynamically
+ *  imported, like the existing @tauri-apps/api/window import, so browser
+ *  builds don't bundle Tauri APIs. */
+async function restoreWebViewFocus() {
+  try {
+    window.focus();
+  } catch {
+    // ignore
+  }
+  try {
+    document.body.focus();
+  } catch {
+    // ignore
+  }
+  // If body has no tabindex it can't actually receive focus; the app root
+  // container (made focusable via the tabindex="-1" effect below) is a more
+  // reliable fallback target.
+  const root = document.getElementById('root');
+  if (root) {
+    try {
+      (root as HTMLElement).focus();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (window.__TAURI_INTERNALS__) {
+    try {
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      await getCurrentWebview().setFocus();
+    } catch (err) {
+      console.warn('Failed to set WebView focus:', err);
+    }
+  }
+}
+
+export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function PreviewStage({
   segments,
   currentSegment,
   currentTime,
@@ -284,8 +339,26 @@ export function PreviewStage({
   textLayers,
   headings,
   autoGradeSamplerRef,
-}: Props) {
+  onTogglePlay,
+  onSpeedCycle,
+}, ref) {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Tracks the previous fullscreen value across onResized events (focus-bug
+  // fix, see the Tauri onResized listener below) — only a true→false edge
+  // (fullscreen exit) should refocus the window; every other resize
+  // (windowed→fullscreen, or a same-state resize) must not.
+  const prevFullscreenRef = useRef(false);
+
+  // Focus-bug fix — document.body has no tabindex by default, so
+  // restoreWebViewFocus()'s document.body.focus() call is a no-op without
+  // this. tabindex="-1" makes it programmatically focusable (via .focus())
+  // without adding it to the Tab order — a permanent, harmless attribute set
+  // once on mount, not per fullscreen toggle.
+  useEffect(() => {
+    if (!document.body.hasAttribute('tabindex')) {
+      document.body.setAttribute('tabindex', '-1');
+    }
+  }, []);
 
   // WebCodecs preview path — mounts whenever the runtime supports it
   // (isWebCodecsPreviewSupported is the sole gate); the legacy <video>-element
@@ -485,6 +558,7 @@ export function PreviewStage({
     config: glConfig,
     isResizingRef,
     enabled: glPathActive,
+    isFullscreen,
   });
 
   // WebGL2 Phase 4 — auto color-grade sampler. Pulls ONE clean source frame per
@@ -620,7 +694,64 @@ export function PreviewStage({
   // only deletes the branch that the (now-removed) legacy path used.
   const captionSegment = currentSegment;
 
+  // Syncs isFullscreen to the real window/document state. Tauri's WebView
+  // (WKWebView/WebView2) doesn't reliably honor the browser Fullscreen API
+  // (see toggleNativeFullscreen below), so inside Tauri we track the native
+  // OS window's fullscreen state via onResized (fires on Escape, the macOS
+  // traffic-light button, or any other OS-level exit that bypasses our own
+  // handler) instead of the DOM's fullscreenchange event, which Tauri's
+  // WebView never fires since requestFullscreen() never actually engages.
   useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let cancelled = false;
+
+    if (window.__TAURI_INTERNALS__) {
+      import('@tauri-apps/api/window').then(({ getCurrentWindow }) => {
+        if (cancelled) return;
+        const win = getCurrentWindow();
+        win.onResized(async () => {
+          try {
+            const fullscreen = await win.isFullscreen();
+            // Focus-bug fix: Escape, the macOS traffic-light button, and
+            // Windows' restore control all exit fullscreen WITHOUT going
+            // through toggleNativeFullscreen below, and each has been
+            // observed to leave the OS window (and so its embedded WebView)
+            // without keyboard focus — no keydown reaches the app's window
+            // listener until the user clicks back in. Only the true→false
+            // edge should refocus; windowed→fullscreen and same-state
+            // resizes must not.
+            if (prevFullscreenRef.current && !fullscreen) {
+              try {
+                await win.setFocus();
+              } catch (err) {
+                console.warn('Failed to refocus window:', err);
+              }
+              // setFocus() restores OS-level window focus but has been
+              // observed to not reliably carry down into the embedded
+              // WebView — belt-and-suspenders DOM-level + WebView-level
+              // restoration too.
+              await restoreWebViewFocus();
+            }
+            prevFullscreenRef.current = fullscreen;
+            setIsFullscreen(fullscreen);
+          } catch (err) {
+            console.warn('Failed to query Tauri fullscreen state:', err);
+          }
+        }).then(fn => {
+          if (cancelled) fn();
+          else unlisten = fn;
+        });
+      }).catch(err => {
+        console.warn('Failed to load Tauri window API for fullscreen listener:', err);
+      });
+
+      return () => {
+        cancelled = true;
+        unlisten?.();
+      };
+    }
+
+    // Browser preview fallback (dev server without the Tauri shell).
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
@@ -628,16 +759,57 @@ export function PreviewStage({
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const toggleNativeFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(err => {
-        console.warn(`Error attempting to enable full-screen mode: ${err.message}`);
-        setIsFullscreen(true);
-      });
+  // The browser Fullscreen API (document.documentElement.requestFullscreen())
+  // either silently fails or isn't enabled by default inside Tauri's embedded
+  // WebView (WKWebView on macOS, WebView2 on Windows) — a native desktop app
+  // window isn't the same context the Fullscreen API was designed for. Tauri
+  // exposes the OS window's own fullscreen state directly via
+  // getCurrentWindow().setFullscreen(), which is what actually works there.
+  // Falls back to the browser API when not running inside Tauri (e.g. the
+  // Vite dev server preview), so that path keeps working too.
+  const toggleNativeFullscreen = useCallback(async () => {
+    if (window.__TAURI_INTERNALS__) {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const win = getCurrentWindow();
+        const currentlyFullscreen = await win.isFullscreen();
+        await win.setFullscreen(!currentlyFullscreen);
+        // Focus-bug fix: re-focus the window immediately after toggling —
+        // don't wait for onResized's own refocus (below), since that only
+        // fires once the OS resize event lands. Harmless no-op on the
+        // windowed→fullscreen edge; setFocus() is idempotent.
+        try {
+          await win.setFocus();
+        } catch (err) {
+          console.warn('Failed to refocus window:', err);
+        }
+        // setFocus() restores OS-level window focus but has been observed to
+        // not reliably carry down into the embedded WebView — belt-and-
+        // suspenders DOM-level + WebView-level restoration too.
+        await restoreWebViewFocus();
+        // onResized will also sync this, but set it explicitly to avoid a
+        // visible lag between the API call resolving and the resize event.
+        setIsFullscreen(!currentlyFullscreen);
+      } catch (err) {
+        console.warn('Tauri fullscreen failed:', err);
+      }
     } else {
-      document.exitFullscreen();
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.warn(`Browser fullscreen failed: ${err.message}`);
+        });
+      } else {
+        // exitFullscreen() is async — restoreWebViewFocus() must run after
+        // it resolves (or the browser hasn't actually exited yet).
+        document.exitFullscreen().then(() => restoreWebViewFocus()).catch(() => {});
+      }
+      // State syncs via the fullscreenchange listener above.
     }
-  };
+  }, []);
+
+  useImperativeHandle(ref, () => ({
+    toggleFullscreen: toggleNativeFullscreen,
+  }), [toggleNativeFullscreen]);
 
   // Snap-back fix — the intra-segment animation wrapper's actual props.
   // During the release-blend window (animBlendProgress < 1), blends the
@@ -907,7 +1079,11 @@ export function PreviewStage({
           : 'relative bg-black overflow-hidden group w-full h-full'}
       >
         {/* Floating Controls */}
-        <div className="absolute top-6 right-6 z-[1001] flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div
+          className={`absolute top-6 right-6 z-[1001] flex items-center gap-3 transition-opacity ${
+            isFullscreen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
+        >
           <button
             onClick={toggleNativeFullscreen}
             aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
@@ -916,6 +1092,26 @@ export function PreviewStage({
             {isFullscreen ? <Minimize size={20} /> : <Maximize size={20} />}
           </button>
         </div>
+
+        {/* Fullscreen-only floating playback controls — always visible (no hover-gate),
+            since there's no other UI surface available once the editor chrome is hidden. */}
+        {isFullscreen && (
+          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-[1001] flex items-center gap-3 bg-black/40 backdrop-blur-md rounded-full px-4 py-2 border border-white/10">
+            <button
+              onClick={onTogglePlay}
+              aria-label={isPlaying ? 'Pause' : 'Play'}
+              className="text-white hover:text-[#F27D26] transition-colors"
+            >
+              {isPlaying ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <SpeedBadge speed={globalPlaybackSpeed} onCycle={onSpeedCycle} />
+          </div>
+        )}
+        {isFullscreen && (
+          <div className="absolute top-6 left-6 z-[1001] text-[10px] text-white/50 bg-black/30 px-2 py-1 rounded">
+            Press Esc to exit
+          </div>
+        )}
 
         {/* Dev-only, persistent (not hover-gated) indicator of which video path is
             painting the preview — useful for debugging, has no effect on behavior. */}
@@ -1037,6 +1233,7 @@ export function PreviewStage({
                           frame={webCodecsPreview.frame}
                           className="absolute inset-0 w-full h-full"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}
+                          isFullscreen={isFullscreen}
                         />
                       )}
                       {/* WebGL2 effects preview path (docs/webgl-architecture-plan.md
@@ -1302,4 +1499,4 @@ export function PreviewStage({
       </div>
     </div>
   );
-}
+});

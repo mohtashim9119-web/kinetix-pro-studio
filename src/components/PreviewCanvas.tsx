@@ -65,9 +65,15 @@ interface Props {
   frame: VideoFrame | null;
   className?: string;
   style?: React.CSSProperties;
+  /** PreviewStage's fullscreen flag. The draw effect below is keyed only to
+   *  `frame`, so a paused fullscreen toggle left canvas.width/height (synced
+   *  from clientWidth/clientHeight just below) stretched to the old CSS box's
+   *  aspect ratio until the next frame arrived. Listing it here forces one
+   *  extra re-run — and one re-measure — right when the stage resizes. */
+  isFullscreen?: boolean;
 }
 
-export function PreviewCanvas({ frame, className, style }: Props) {
+export function PreviewCanvas({ frame, className, style, isFullscreen }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useLayoutEffect(() => {
@@ -130,7 +136,7 @@ export function PreviewCanvas({ frame, className, style }: Props) {
       // file header. Skip this tick's paint rather than crash; the next
       // frame supersedes it almost immediately regardless.
     }
-  }, [frame]);
+  }, [frame, isFullscreen]);
 
   return <canvas ref={canvasRef} className={className} style={style} />;
 }
