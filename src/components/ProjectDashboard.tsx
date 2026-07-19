@@ -4,6 +4,7 @@ import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
+import { deleteAllImagesForProject } from '../services/waveformImageCache';
 
 interface Props {
   currentProjectId: string | null;
@@ -48,6 +49,7 @@ export function ProjectDashboard({
   async function handleDelete(id: string): Promise<void> {
     await deleteAllAssets(id);
     await deleteAllWaveforms(id);
+    await deleteAllImagesForProject(id);
     deleteProjectData(id);
     setMetas(prev => prev.filter(m => m.id !== id));
     setConfirmDeleteId(null);

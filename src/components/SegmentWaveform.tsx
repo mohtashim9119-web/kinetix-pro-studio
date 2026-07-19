@@ -7,6 +7,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { drawSegmentWaveform, WaveformSource } from '../services/waveformPeaks';
 import { enqueueWaveformDraw } from '../services/waveformDrawQueue';
 import { getCurrentGeneration, markSegmentFailed, markSegmentReady } from '../services/waveformReadyTracker';
+import { peekImage, putImage, getPersistedImage } from '../services/waveformImageCache';
 
 /**
  * One segment's voiceover waveform, rendered as an <img> (NOT a live <canvas>).
@@ -31,6 +32,15 @@ interface SegmentWaveformProps {
   /** Minimal subset of VideoSegment needed to place + window the waveform. */
   segment: { id: string; startTime: number; duration: number };
   source: WaveformSource | null;
+  /**
+   * Voiceover asset identity (docs/waveform-image-cache-plan.md Phase B) —
+   * together with segment id/startTime/duration these form the rendered-
+   * image cache key. undefined disables caching entirely (falls back to the
+   * pre-Phase-B always-redraw behavior) rather than guessing at a key.
+   */
+  assetId: string | undefined;
+  blobSize: number | undefined;
+  projectId: string | undefined;
 }
 
 const isBlobUrl = (url: string | null): url is string => !!url && url.startsWith('blob:');
@@ -133,12 +143,37 @@ function recordWfEncode(entry: Omit<WfEncodeEntry, 'idx'>): void {
 }
 // -----------------------------------------------------------------------------
 
+// --- TEMP diagnostic instrumentation (gen-6 / blob-revocation audit) ---------
+// Gated on the same globalThis.__WF_INSTRUMENT__ flag. Logs every blob: URL
+// create/revoke for a segment's waveform image, so a runtime capture can show
+// whether a revoke lands while an <img> is still resolving the prior URL.
+// Read-only investigation aid — does not change create/revoke timing or order.
+function wfBlobLog(event: string, segmentId: string, url: string | null): void {
+  if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ !== true) return;
+  // eslint-disable-next-line no-console
+  console.log('[wf-blob]', JSON.stringify({ event, segmentId, url }));
+}
+// -----------------------------------------------------------------------------
+
+interface RenderedWaveformImage {
+  url: string;
+  /**
+   * The encoded PNG, for write-through into waveformImageCache.ts — only
+   * present on the OffscreenCanvas path (a real Blob). The toDataURL
+   * fallback path returns null here: a data: URL isn't a Blob, and
+   * converting one back to a Blob just to persist it isn't worth it for a
+   * fallback that only runs when OffscreenCanvas is unavailable. That
+   * segment simply isn't cached — it correctly redraws again next time.
+   */
+  blob: Blob | null;
+}
+
 async function renderWaveformImageUrl(
   source: WaveformSource,
   startTime: number,
   duration: number,
   segmentId: string,
-): Promise<string | null> {
+): Promise<RenderedWaveformImage> {
   const instr = wfInstr();
   const t0 = instr ? performance.now() : 0;
   if (typeof OffscreenCanvas !== 'undefined') {
@@ -150,6 +185,7 @@ async function renderWaveformImageUrl(
     try {
       const blob = await off.convertToBlob({ type: 'image/png' });
       const url = URL.createObjectURL(blob);
+      wfBlobLog('create', segmentId, url);
       if (instr) {
         const tEncode = performance.now();
         const encodeMs = tEncode - tDraw;
@@ -161,7 +197,7 @@ async function renderWaveformImageUrl(
           segmentId, width: off.width, height: off.height, ms: encodeMs, method: 'offscreen-convert',
         });
       }
-      return url;
+      return { url, blob };
     } catch (e) {
       if (instr) instr.counts['offscreen-convert-failed'] += 1;
       throw e;
@@ -182,17 +218,26 @@ async function renderWaveformImageUrl(
       segmentId, width: canvas.width, height: canvas.height, ms: encodeMs, method: 'fallback-toDataURL',
     });
   }
-  return url;
+  return { url, blob: null };
 }
 
-function SegmentWaveformImpl({ segment, source }: SegmentWaveformProps) {
+function SegmentWaveformImpl({ segment, source, assetId, blobSize, projectId }: SegmentWaveformProps) {
   const [imgUrl, setImgUrl] = useState<string | null>(null);
   // Currently-displayed URL, tracked for revocation on swap/unmount.
   const urlRef = useRef<string | null>(null);
+  // True when urlRef.current came from waveformImageCache.ts's Tier-1 mirror
+  // (docs/waveform-image-cache-plan.md Phase B) and is therefore owned by
+  // that cache — only ITS eviction/invalidation may revoke it. A URL this
+  // component drew itself (via renderWaveformImageUrl) is a separate,
+  // independently-created object URL even after a write-through putImage
+  // call (putImage mints its own fresh URL for the cache), so it remains
+  // this component's own responsibility to revoke, same as before Phase B.
+  const urlIsCacheOwnedRef = useRef(false);
 
   useEffect(() => {
     if (!source) return; // no peaks yet → skip; redraws when source arrives
     let cancelled = false;
+    let handle: ReturnType<typeof enqueueWaveformDraw> | null = null;
 
     // Captured once per draw attempt (rewrite Step 4, waveformReadyTracker.ts):
     // tags this segment's eventual ready/failed report so a completion landing
@@ -200,47 +245,125 @@ function SegmentWaveformImpl({ segment, source }: SegmentWaveformProps) {
     // ignored, rather than corrupting the new batch's count.
     const generation = getCurrentGeneration();
 
-    // Enqueue rather than draw inline (plan §7 chunked scheduling). The queue
-    // runs this at most WAVEFORM_DRAW_BATCH_SIZE per frame.
-    const handle = enqueueWaveformDraw(() => {
-      if (cancelled) return;
-      renderWaveformImageUrl(source, segment.startTime, segment.duration, segment.id)
-        .then((url) => {
-          // Report completion regardless of `cancelled` — the registry only
-          // cares that this segment's draw settled, not whether THIS component
-          // instance still wants the resulting image (a superseded draw is
-          // always followed by a fresh one reporting the same segment id, and
-          // the registry's Set-based bookkeeping makes that idempotent).
-          markSegmentReady(generation, segment.id);
-          if (cancelled) {
-            if (isBlobUrl(url)) URL.revokeObjectURL(url);
+    // Applies an already-resolved cache hit (Tier 1 or Tier 2) directly,
+    // skipping the draw queue entirely — shared by both cache-check paths
+    // below so the swap/revoke bookkeeping only lives in one place.
+    const applyCachedUrl = (cachedUrl: string) => {
+      const prev = urlRef.current;
+      const prevWasCacheOwned = urlIsCacheOwnedRef.current;
+      urlRef.current = cachedUrl;
+      urlIsCacheOwnedRef.current = true;
+      setImgUrl(cachedUrl);
+      markSegmentReady(generation, segment.id);
+      if (!prevWasCacheOwned && isBlobUrl(prev)) {
+        wfBlobLog('revoke-swap', segment.id, prev);
+        URL.revokeObjectURL(prev);
+      }
+    };
+
+    // Draws fresh via the throttled queue (plan §7 chunked scheduling) — the
+    // fallback when neither cache tier has this segment's image yet.
+    const drawFresh = () => {
+      handle = enqueueWaveformDraw(() => {
+        if (cancelled) return;
+        renderWaveformImageUrl(source, segment.startTime, segment.duration, segment.id)
+          .then(({ url, blob }) => {
+            // Report completion regardless of `cancelled` — the registry only
+            // cares that this segment's draw settled, not whether THIS component
+            // instance still wants the resulting image (a superseded draw is
+            // always followed by a fresh one reporting the same segment id, and
+            // the registry's Set-based bookkeeping makes that idempotent).
+            markSegmentReady(generation, segment.id);
+            if (cancelled) {
+              if (isBlobUrl(url)) {
+                wfBlobLog('revoke-cancelled', segment.id, url);
+                URL.revokeObjectURL(url);
+              }
+              return;
+            }
+            const prev = urlRef.current;
+            const prevWasCacheOwned = urlIsCacheOwnedRef.current;
+            urlRef.current = url;
+            urlIsCacheOwnedRef.current = false; // freshly drawn — this component's own URL
+            setImgUrl(url);
+            // Revoke the previous image only after swapping in the new one —
+            // unless the cache still owns it (only its own eviction may revoke).
+            if (!prevWasCacheOwned && isBlobUrl(prev)) {
+              wfBlobLog('revoke-swap', segment.id, prev);
+              URL.revokeObjectURL(prev);
+            }
+            // Write-through so the NEXT mount of this exact segment window
+            // (same-session switch-back, or a future restart's Tier-2 lookup
+            // below) hits the cache instead of redrawing.
+            if (blob && assetId !== undefined && blobSize !== undefined && projectId !== undefined) {
+              void putImage(projectId, assetId, blobSize, segment.id, segment.startTime, segment.duration, blob)
+                .catch(() => { /* best-effort — image stays displayed, just uncached for next time */ });
+            }
+          })
+          .catch(() => {
+            /* draw failed → leave the hairline/empty state in place */
+            markSegmentFailed(generation, segment.id);
+          });
+      });
+    };
+
+    // Tier-1 synchronous cache check (Phase B) — BEFORE touching the draw
+    // queue at all. A hit skips drawing/encoding entirely: first paint
+    // already shows the correct image. Covers same-session remounts (a
+    // project switch back to an asset already seen this session).
+    if (assetId !== undefined && blobSize !== undefined) {
+      const cachedUrl = peekImage(assetId, blobSize, segment.id, segment.startTime, segment.duration);
+      if (cachedUrl) {
+        applyCachedUrl(cachedUrl);
+        return;
+      }
+    }
+
+    // Tier-2 lookup (Phase C, revised) — a single-key IndexedDB get for just
+    // THIS segment, not a bulk cursor scan of the whole asset. An earlier
+    // version bulk-warmed every segment's image upfront, awaited in App.tsx
+    // before the waveform source even committed — a real-device trace showed
+    // that one serialized 294-step cursor walk took the same ~5 seconds the
+    // redraw-from-scratch path did, just moving the delay behind a blocked
+    // overlay instead of removing it. Each segment now resolves its own fast
+    // single-key lookup independently and concurrently with its siblings, so
+    // no one component blocks or is blocked by the rest of the batch.
+    if (assetId !== undefined && blobSize !== undefined && projectId !== undefined) {
+      getPersistedImage(projectId, assetId, segment.id, blobSize, segment.startTime, segment.duration)
+        .then((cachedUrl) => {
+          if (cancelled) return;
+          if (cachedUrl) {
+            applyCachedUrl(cachedUrl);
             return;
           }
-          const prev = urlRef.current;
-          urlRef.current = url;
-          setImgUrl(url);
-          // Revoke the previous image only after swapping in the new one.
-          if (isBlobUrl(prev)) URL.revokeObjectURL(prev);
-        })
-        .catch(() => {
-          /* draw failed → leave the hairline/empty state in place */
-          markSegmentFailed(generation, segment.id);
+          drawFresh();
         });
-    });
+      // The Tier-2 lookup itself needs no cancellation — it doesn't mutate
+      // component state until the `cancelled` check inside its `.then`, and
+      // drawFresh() (which does enqueue a cancellable task) only ever runs
+      // after that check.
+    } else {
+      drawFresh();
+    }
 
     // Redraw-relevant deps ONLY (plan §6.3) — unchanged from Step 2. Do not add
     // currentTime, pixelsPerSecond/sliderT, or any scroll state.
     return () => {
       cancelled = true;
-      handle.cancel();
+      handle?.cancel();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, segment.id, segment.startTime, segment.duration]);
+  }, [source, segment.id, segment.startTime, segment.duration, assetId, blobSize, projectId]);
 
-  // Revoke the last displayed blob URL on unmount.
+  // Revoke the last displayed blob URL on unmount — unless the cache still
+  // owns it (Phase B: only waveformImageCache.ts's own eviction may revoke
+  // a Tier-1-owned URL).
   useEffect(
     () => () => {
-      if (isBlobUrl(urlRef.current)) URL.revokeObjectURL(urlRef.current);
+      if (!urlIsCacheOwnedRef.current && isBlobUrl(urlRef.current)) {
+        wfBlobLog('revoke-unmount', segment.id, urlRef.current);
+        URL.revokeObjectURL(urlRef.current);
+      }
     },
     [],
   );
@@ -270,7 +393,10 @@ export const SegmentWaveform = memo(
     prev.source === next.source &&
     prev.segment.id === next.segment.id &&
     prev.segment.startTime === next.segment.startTime &&
-    prev.segment.duration === next.segment.duration,
+    prev.segment.duration === next.segment.duration &&
+    prev.assetId === next.assetId &&
+    prev.blobSize === next.blobSize &&
+    prev.projectId === next.projectId,
 );
 
 export default SegmentWaveform;

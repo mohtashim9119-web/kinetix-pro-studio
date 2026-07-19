@@ -1,3 +1,4 @@
+import './instrumentFlag'; // must be the first import — see that file's header
 import {StrictMode} from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';

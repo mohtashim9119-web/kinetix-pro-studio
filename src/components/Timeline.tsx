@@ -37,6 +37,12 @@ interface Props {
   // decodes/builds anything itself — that render-triggered decode effect was the
   // multi-minute freeze (docs/waveform-rewrite-plan.md §3).
   waveformSource: WaveformSource | null;
+  // Voiceover asset identity, threaded down to SegmentWaveform for the
+  // rendered-image cache key (docs/waveform-image-cache-plan.md Phase B).
+  // undefined disables that cache (falls back to always-redraw).
+  projectId: string;
+  voiceoverAssetId: string | undefined;
+  voiceoverBlobSize: number | undefined;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
@@ -66,6 +72,9 @@ export function Timeline({
   isAdjustingTrim,
   voiceoverName,
   waveformSource,
+  projectId,
+  voiceoverAssetId,
+  voiceoverBlobSize,
   onTogglePlay,
   onSeek,
   onResizeStart,
@@ -528,7 +537,13 @@ export function Timeline({
                     style={{ width: `${s.duration * pixelsPerSecond}px` }}
                     className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
                   >
-                    <SegmentWaveform segment={s} source={waveformSource} />
+                    <SegmentWaveform
+                      segment={s}
+                      source={waveformSource}
+                      assetId={voiceoverAssetId}
+                      blobSize={voiceoverBlobSize}
+                      projectId={projectId}
+                    />
                     {currentSegmentId === s.id && (
                       <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
                     )}

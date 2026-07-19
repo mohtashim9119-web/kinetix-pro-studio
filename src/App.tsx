@@ -55,7 +55,8 @@ import { syncMark } from './services/syncInstrument';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { beginGeneration as beginWaveformGeneration, getSnapshot as getWaveformReadySnapshot, subscribe as subscribeWaveformReady, onAllReady as onWaveformAllReady } from './services/waveformReadyTracker';
-import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform } from './services/waveformStore';
+import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
+import { deleteImagesForAsset } from './services/waveformImageCache';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import {
@@ -696,6 +697,18 @@ export default function App() {
   // failure so a retry can happen.
   const waveformBuiltForRef = useRef<string | null>(null);
 
+  // Identity of the asset the CURRENTLY-DISPLAYED waveformSource was built
+  // from (gen-6 gate audit, Option A) — updated the instant setWaveformSource
+  // commits real content, cleared to null whenever it's set to null. Distinct
+  // from waveformBuiltForRef: that ref is set synchronously at build START
+  // (before the async cache lookup even resolves) purely to dedupe overlapping
+  // in-flight calls for the SAME key, and is blind across a project switch
+  // (overwritten by whatever project was visited in between). This ref instead
+  // answers "does waveformSource in React state right now already match this
+  // incoming asset+blobSize" — used by the pre-generation-bump gate below to
+  // short-circuit the apply-sync/reload-effect double-fire on the same asset.
+  const waveformResidentRef = useRef<{ assetId: string; blobSize: number } | null>(null);
+
   // Waveform-image draw-completion signal (rewrite Step 4,
   // services/waveformReadyTracker.ts) — mirrors the registry's per-generation
   // ready/expected counts into React state for Step 5's loading screen to gate
@@ -729,22 +742,117 @@ export default function App() {
     };
   }, []);
 
-  const buildVoiceoverWaveform = useCallback(async (asset: Asset | undefined | null, segmentCount: number): Promise<void> => {
+  const buildVoiceoverWaveform = useCallback(async (
+    asset: Asset | undefined | null,
+    segmentCount: number,
+    trigger: 'apply-sync' | 'reload-effect' = 'reload-effect',
+  ): Promise<void> => {
+    const incomingAssetId = asset?.id ?? null;
+    const incomingBlobSize = asset?.file?.size ?? null;
+
+    // --- Cheap in-flight/just-committed dedupe (reorder fix, gen-3/gen-4 bug) -
+    // Runs BEFORE the resident/mirror gate and before any generation bump.
+    // waveformBuiltForRef is set synchronously at the START of a cold build
+    // (no await in between), so this catches the apply-sync + reload-effect
+    // back-to-back double-fire for the SAME asset even while the first call's
+    // build is still in flight — the resident ref only updates once
+    // setWaveformSource actually commits, which is a tick too late to catch
+    // this case (confirmed by trace: both calls logged arm:"cold-miss").
+    if (incomingAssetId !== null && waveformBuiltForRef.current === incomingAssetId) {
+      if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+        // eslint-disable-next-line no-console
+        console.log('[wf-gate]', JSON.stringify({ assetId: incomingAssetId, arm: 'dedupe-skip', trigger }));
+      }
+      return;
+    }
+
+    // --- Pre-generation-bump identity gate (gen-6 gate audit) ----------------
+    // Two synchronous arms:
+    //   'resident' — waveformResidentRef already reflects this exact
+    //     asset+blobSize: waveformSource in React state right now IS this
+    //     content (no intervening project switch).
+    //   'mirror'   — services/waveformStore.ts's in-memory LRU mirror already
+    //     resolved this exact asset+blobSize earlier THIS SESSION (put or a
+    //     prior getWaveform hit). Covers the switch-back case (A -> B -> A):
+    //     the reload effect always re-fires because handleSwitchProject mints
+    //     a fresh File object on every rehydration ([App.tsx] rehydratedFile),
+    //     even when content is byte-identical, but the mirror answers
+    //     synchronously without an IndexedDB round-trip.
+    // Neither arm touches the generation/tracker — a match means the loading
+    // overlay must NOT reappear (that's the whole point of this gate; see the
+    // reverted attempt below). Falls through to the unchanged cold path
+    // ('cold-miss') otherwise.
+    let gateArm: 'resident' | 'mirror' | 'cold-miss' | 'no-asset' = 'no-asset';
+    let mirroredSource: WaveformSource | undefined;
+    if (incomingAssetId !== null && incomingBlobSize !== null) {
+      const resident = waveformResidentRef.current;
+      if (resident && resident.assetId === incomingAssetId && resident.blobSize === incomingBlobSize) {
+        gateArm = 'resident';
+      } else {
+        mirroredSource = peekWaveform(incomingAssetId, incomingBlobSize);
+        gateArm = mirroredSource ? 'mirror' : 'cold-miss';
+      }
+    }
+
+    if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+      // eslint-disable-next-line no-console
+      console.log('[wf-gate]', JSON.stringify({
+        assetId: incomingAssetId,
+        residentAssetId: waveformResidentRef.current?.assetId ?? null,
+        residentBlobSize: waveformResidentRef.current?.blobSize ?? null,
+        incomingBlobSize,
+        arm: gateArm,
+      }));
+    }
+
+    // Tried bumping the generation here with the correct segmentCount (to fix
+    // the tracker's `expected` staying stale across a mirror hit) — reverted:
+    // beginGeneration resets ready to 0 against the new expected count, which
+    // flips isWaveformReady false and reopens the full-screen SyncLoadingOverlay
+    // on every cache-hit switch, exactly the blocking wait this gate exists to
+    // avoid. The stale-`expected` bug is log/diagnostic-only (isWaveformReady
+    // is already true from the previous generation, so nothing user-facing
+    // reads the stale numbers) — not worth trading a visible regression for.
+    if (gateArm === 'resident') {
+      // waveformSource already IS this asset+blobSize — nothing to do.
+      return;
+    }
+    if (gateArm === 'mirror' && mirroredSource && incomingAssetId !== null && incomingBlobSize !== null) {
+      waveformBuiltForRef.current = incomingAssetId;
+      waveformResidentRef.current = { assetId: incomingAssetId, blobSize: incomingBlobSize };
+      setWaveformSource(mirroredSource);
+      syncMark('waveform:committed-from-mirror');
+      return;
+    }
+    // --------------------------------------------------------------------------
+
     // Every call starts a fresh tracked batch of per-segment waveform draws,
     // whether or not the peaks below actually need rebuilding (a re-sync against
     // an unchanged voiceover still mounts a fresh set of SegmentWaveform
     // instances, each of which draws once on mount) — so the generation always
-    // bumps here, before the dedupe check. 0 when there's no voiceover: no
-    // SegmentWaveform will ever mount to report, so the batch is trivially
-    // complete and waveformReadyTracker fires all-ready immediately.
-    beginWaveformGeneration(asset?.url ? segmentCount : 0);
+    // bumps here. 0 when there's no voiceover: no SegmentWaveform will ever
+    // mount to report, so the batch is trivially complete and
+    // waveformReadyTracker fires all-ready immediately.
+    const generation = beginWaveformGeneration(asset?.url ? segmentCount : 0);
+    if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+      // eslint-disable-next-line no-console
+      console.log('[wf-gen]', JSON.stringify({
+        event: 'begin-generation',
+        generation,
+        trigger,
+        projectId: projectIdRef.current,
+        assetId: asset?.id ?? null,
+        segmentCount,
+      }));
+    }
     if (!asset?.url) {
       waveformBuiltForRef.current = null;
+      waveformResidentRef.current = null;
       setWaveformSource(null);
       return;
     }
     const key = asset.id;
-    if (waveformBuiltForRef.current === key) return; // already built or in flight
+    // waveformBuiltForRef already confirmed !== key by the dedupe check above.
     waveformBuiltForRef.current = key;
     syncMark('waveform:build-start');
 
@@ -759,6 +867,15 @@ export default function App() {
         const cached = await getPersistedWaveform(projectIdRef.current, asset.id, blobSize);
         if (cached) {
           if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-lookup
+          waveformResidentRef.current = { assetId: key, blobSize };
+          // Per-segment rendered images (Phase C) are looked up lazily by
+          // SegmentWaveform itself on its own Tier-1 miss, NOT bulk-warmed
+          // here — an earlier version awaited a bulk cursor read of every
+          // segment's image before this setWaveformSource, which traded one
+          // 5-second redraw for one 5-second blocked overlay instead of
+          // actually removing the delay. Committing the source immediately,
+          // same as before Phase C existed, lets each segment resolve its
+          // own (fast, single-key) Tier-2 lookup independently.
           setWaveformSource(cached);
           syncMark('waveform:committed-from-cache');
           return;
@@ -768,20 +885,43 @@ export default function App() {
       }
     }
 
+    if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+      // eslint-disable-next-line no-console
+      console.log('[wf-cache]', JSON.stringify({
+        event: 'entered-pipeline',
+        projectId: projectIdRef.current,
+        assetId: asset.id,
+        currentBlobSize: blobSize ?? null,
+      }));
+    }
+
     try {
       const { source } = await buildWaveformPipeline({ file: asset.file, url: asset.url });
       if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-build
+      waveformResidentRef.current = blobSize !== undefined ? { assetId: key, blobSize } : null;
       setWaveformSource(source);
       syncMark('waveform:committed');
       if (blobSize !== undefined && source) {
-        void putPersistedWaveform(projectIdRef.current, asset.id, source, blobSize).catch(err =>
-          console.error('[waveform] failed to persist peaks:', err),
-        );
+        void putPersistedWaveform(projectIdRef.current, asset.id, source, blobSize)
+          .then(() => {
+            if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+              // eslint-disable-next-line no-console
+              console.log('[wf-cache]', JSON.stringify({ event: 'store-write-ok', assetId: asset.id, blobSize }));
+            }
+          })
+          .catch(err => {
+            if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+              // eslint-disable-next-line no-console
+              console.log('[wf-cache]', JSON.stringify({ event: 'store-write-fail', assetId: asset.id, error: String(err) }));
+            }
+            console.error('[waveform] failed to persist peaks:', err);
+          });
       }
     } catch (err) {
       console.error('[waveform] build failed:', err);
       if (waveformBuiltForRef.current === key) {
         waveformBuiltForRef.current = null; // allow a later retry
+        waveformResidentRef.current = null;
         setWaveformSource(null);
       }
     }
@@ -1662,6 +1802,9 @@ export default function App() {
           deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
             console.error('[kinetix] Failed to delete old voiceover peaks:', err),
           );
+          deleteImagesForAsset(projectRef.current.id, oldAsset.id).catch(err =>
+            console.error('[kinetix] Failed to delete old voiceover waveform images:', err),
+          );
         }
         allAssets.push(asset);
         newVoiceoverId = asset.id;
@@ -1790,7 +1933,7 @@ export default function App() {
     // on a 21-min file; isProcessing stays true until it finishes so the UI reflects
     // "still working" (and gives the Step 5 loading screen a clean hook). The reload
     // effect dedupes against the same key, so it won't rebuild what this just built.
-    await buildVoiceoverWaveform(voiceoverAsset, committedSegments.length);
+    await buildVoiceoverWaveform(voiceoverAsset, committedSegments.length, 'apply-sync');
 
     setIsProcessing(false);
   };
@@ -1860,6 +2003,9 @@ export default function App() {
         );
         deletePersistedWaveform(projectIdRef.current, oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover peaks:', err),
+        );
+        deleteImagesForAsset(projectIdRef.current, oldAudio.id).catch(err =>
+          console.error('[kinetix] Failed to delete old voiceover waveform images:', err),
         );
       }
     }
@@ -2059,7 +2205,7 @@ export default function App() {
   // and not url — url is a re-minted blob: URL every session, never a meaningful
   // identity) so it doesn't re-fire on unrelated re-renders.
   useEffect(() => {
-    void buildVoiceoverWaveform(voiceover, project.segments.length);
+    void buildVoiceoverWaveform(voiceover, project.segments.length, 'reload-effect');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceover?.id, voiceover?.file, buildVoiceoverWaveform]);
 
@@ -2257,7 +2403,9 @@ export default function App() {
     project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
 
     // Rehydrate the target project's assets from IndexedDB.
+    const __wfSwitchT0 = performance.now();
     const storedAssets = await getAllAssetsForProject(saved.project.id);
+    const __wfSwitchTGotAssets = performance.now();
     const blobMap = new Map(storedAssets.map(a => [a.id, a]));
 
     const droppedIds = new Set<string>();
@@ -2276,6 +2424,19 @@ export default function App() {
         return { ...asset, url: rehydratedUrl, file: rehydratedFile };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
+    // TEMP diagnostic (docs/waveform-image-cache-plan.md §6 pacing investigation):
+    // isolates whether the synchronous blob->File->objectURL rehydration loop
+    // (not React, not IndexedDB cache reads) is where the ~4s reload cost is.
+    // Gated on the same instrumentation flag as the rest of the waveform trace.
+    if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+      // eslint-disable-next-line no-console
+      console.log('[wf-switch]', JSON.stringify({
+        assetCount: saved.project.assets.length,
+        segmentCount: saved.project.segments.length,
+        getAllAssetsMs: Number((__wfSwitchTGotAssets - __wfSwitchT0).toFixed(1)),
+        rehydrateLoopMs: Number((performance.now() - __wfSwitchTGotAssets).toFixed(1)),
+      }));
+    }
 
     const rehydratedSegments = saved.project.segments.map(seg => {
       if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
@@ -2607,6 +2768,9 @@ export default function App() {
                 isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
                 waveformSource={waveformSource}
+                projectId={project.id}
+                voiceoverAssetId={voiceover?.id}
+                voiceoverBlobSize={voiceover?.file?.size}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);

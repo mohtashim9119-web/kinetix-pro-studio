@@ -46,6 +46,65 @@ function isStoredWaveform(value: unknown): value is StoredWaveform {
   );
 }
 
+// --- In-memory mirror (gen-6 gate audit, Option B) -----------------------------
+// A small, global (NOT project-scoped — peaks are content-addressed by
+// assetId+blobSize alone; the same voiceover asset produces identical peaks
+// regardless of which project happens to reference it) LRU mirror of recently
+// resolved WaveformSource records. Exists purely so App.tsx's pre-generation-
+// bump gate can answer "have we already seen this exact asset+blobSize THIS
+// SESSION" synchronously, without an IndexedDB round-trip — putWaveform/
+// getWaveform below remain the sole source of truth and never consult this
+// mirror themselves; it is a same-session fast path read by callers via
+// peekWaveform only. Populated on every successful putWaveform and every
+// resolved getWaveform HIT — never on a miss/invalid/mismatch, since mirroring
+// a negative result would need a second key dimension to avoid serving a
+// stale "not found" after a later put.
+const MIRROR_MAX_ENTRIES = 32;
+const mirror = new Map<string, WaveformSource>();
+
+function mirrorKey(assetId: string, blobSize: number): string {
+  return `${assetId}:${blobSize}`;
+}
+
+/** Inserts/refreshes a mirror entry as most-recently-used, evicting the
+ *  least-recently-used entry once the map exceeds MIRROR_MAX_ENTRIES. Map
+ *  iteration order is insertion order, so delete+set is enough to bump an
+ *  existing key to the "most recent" end without a separate LRU structure. */
+function mirrorSet(assetId: string, blobSize: number, source: WaveformSource): void {
+  const key = mirrorKey(assetId, blobSize);
+  mirror.delete(key);
+  mirror.set(key, source);
+  if (mirror.size > MIRROR_MAX_ENTRIES) {
+    const oldestKey = mirror.keys().next().value;
+    if (oldestKey !== undefined) mirror.delete(oldestKey);
+  }
+}
+
+/**
+ * Synchronous same-session lookup — returns a mirrored WaveformSource if
+ * assetId+blobSize was seen earlier this session (via putWaveform or a
+ * getWaveform hit), or undefined on a mirror miss. NOT authoritative: a
+ * mirror miss does not mean "no persisted record exists," only "not seen by
+ * this in-memory mirror yet" (cold app start, or evicted under LRU pressure)
+ * — callers must still fall back to the async getWaveform path. A hit
+ * refreshes the entry's LRU position.
+ */
+export function peekWaveform(assetId: string, blobSize: number): WaveformSource | undefined {
+  const key = mirrorKey(assetId, blobSize);
+  const hit = mirror.get(key);
+  if (hit) {
+    mirror.delete(key);
+    mirror.set(key, hit);
+  }
+  return hit;
+}
+
+/** Test-only: reset the in-memory mirror between unit tests. */
+export function _resetWaveformMirrorForTests(): void {
+  mirror.clear();
+}
+// ---------------------------------------------------------------------------
+
 function openWaveformDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -83,7 +142,10 @@ export function putWaveform(
       new Promise<void>((resolve, reject) => {
         const tx = db.transaction(STORE, 'readwrite');
         const req = tx.objectStore(STORE).put(record);
-        req.onsuccess = () => resolve();
+        req.onsuccess = () => {
+          mirrorSet(assetId, blobSize, source);
+          resolve();
+        };
         req.onerror = () => reject(req.error);
         tx.oncomplete = () => db.close();
         tx.onerror = () => reject(tx.error);
@@ -111,6 +173,19 @@ export function getWaveform(
         const req = tx.objectStore(STORE).get([projectId, assetId]);
         req.onsuccess = () => {
           const record = req.result as unknown;
+          if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
+            const rec = record as Partial<StoredWaveform> | null;
+            // eslint-disable-next-line no-console
+            console.log('[wf-cache]', JSON.stringify({
+              event: 'store-read',
+              projectId, assetId,
+              found: record != null,
+              valid: isStoredWaveform(record),
+              storedBlobSize: rec && typeof rec === 'object' ? rec.blobSize ?? null : null,
+              currentBlobSize: expectedBlobSize,
+              hit: isStoredWaveform(record) && (record as StoredWaveform).blobSize === expectedBlobSize,
+            }));
+          }
           if (!isStoredWaveform(record)) {
             resolve(null);
             return;
@@ -119,11 +194,13 @@ export function getWaveform(
             resolve(null);
             return;
           }
-          resolve({
+          const result: WaveformSource = {
             peaks: record.peaks,
             peaksPerSecond: record.peaksPerSecond,
             totalDuration: record.totalDuration,
-          });
+          };
+          mirrorSet(assetId, expectedBlobSize, result);
+          resolve(result);
         };
         req.onerror = () => reject(req.error);
         tx.oncomplete = () => db.close();
