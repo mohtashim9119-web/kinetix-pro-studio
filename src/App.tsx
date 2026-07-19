@@ -2278,6 +2278,16 @@ export default function App() {
           e.preventDefault();
           setIsPlaying(p => !p);
         }
+      } else if (e.key === '+' || e.key === '=') {
+        if (!isTextEntryElement(document.activeElement)) {
+          e.preventDefault();
+          setSliderT(t => Math.min(1, Math.round((t + 0.1) * 100) / 100));
+        }
+      } else if (e.key === '-' || e.key === '_') {
+        if (!isTextEntryElement(document.activeElement)) {
+          e.preventDefault();
+          setSliderT(t => Math.max(0, Math.round((t - 0.1) * 100) / 100));
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
