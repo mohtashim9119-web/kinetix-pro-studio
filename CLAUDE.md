@@ -69,7 +69,8 @@ src/
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     waveformPeaks.ts # Pure peak-extraction + canvas-drawing primitives for the timeline voiceover
-                     #   waveform (docs/waveform-rewrite-plan.md). PEAKS_PER_SECOND (10/sec — a
+                     #   waveform (docs/history.md, "Waveform Rewrite — Implementation Record", archived).
+                     #   PEAKS_PER_SECOND (10/sec — a
                      #   deliberately tuned permanent value, see the constant's own comment) peak
                      #   extraction, plus drawSegmentWaveform's mirrored-fill routine. No decode —
                      #   PCM arrives pre-decoded from waveformPipeline.ts.
@@ -83,7 +84,7 @@ src/
                      #   blob's byte size as an invalidation guard. Lets a reload of an unchanged
                      #   voiceover skip decode+peak-extraction entirely — canvas bitmaps/images are
                      #   still never persisted, only the small peaks array. Also owns peekWaveform()
-                     #   (docs/waveform-image-cache-plan.md) — a small, global, content-addressed
+                     #   (docs/history.md, "Waveform rendered-image caching," 2026-07-19 entry) — a small, global, content-addressed
                      #   (assetId+blobSize, not project-scoped) in-memory LRU mirror of recently
                      #   resolved WaveformSource records, populated by putWaveform and getWaveform
                      #   hits; App.tsx's pre-generation-bump identity gate reads it synchronously to
@@ -371,9 +372,6 @@ src-tauri/
     ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 (76 MB, Intel macOS).
     ffmpeg-aarch64-apple-darwin # gitignored — osxexperts.net 7.1.1 (48 MB, arm64 macOS).
     ffmpeg-x86_64-pc-windows-msvc.exe # gitignored — gyan.dev essentials (97 MB, Windows).
-docs/
-  archived/
-    fidelity-polish-smoke-tests.md # Fidelity Polish manual smoke test procedures (Items 1–5) — archived, feature stable since 2026-05-25
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY, VITE_COVERR_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```

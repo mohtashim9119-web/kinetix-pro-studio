@@ -1,5 +1,5 @@
 // waveformImageCache.ts — persistence for RENDERED per-segment waveform
-// thumbnail PNGs (docs/waveform-image-cache-plan.md, Phase A). Sibling to
+// thumbnail PNGs (docs/history.md ("Waveform rendered-image caching," 2026-07-19 entry), Phase A). Sibling to
 // waveformStore.ts, which caches the numeric peaks array — but caching peaks
 // alone does not avoid the per-segment canvas draw + PNG encode that
 // SegmentWaveform.tsx runs on every remount (a project switch or an app

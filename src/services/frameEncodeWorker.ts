@@ -1,7 +1,7 @@
 /**
  * frameEncodeWorker.ts — off-main-thread PNG encoder for the export frame loop.
  *
- * Phase 7 Task 10 export speedup. Per docs/phase-7-task-1-export-profiling.md the
+ * Phase 7 Task 10 export speedup. Per docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived) the
  * export is I/O-bound: `canvas.toBlob('image/png')` alone was 47% of per-frame
  * wall time on the main thread, blocking the next frame's render. This worker
  * moves the PNG encode off the main thread so it runs concurrently with the main

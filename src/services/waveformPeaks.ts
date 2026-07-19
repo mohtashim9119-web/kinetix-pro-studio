@@ -1,5 +1,5 @@
 // waveformPeaks.ts — pure, standalone waveform data + canvas-drawing routines
-// for the timeline voiceover waveform rewrite (docs/waveform-rewrite-plan.md
+// for the timeline voiceover waveform rewrite (docs/history.md ("Waveform Rewrite — Implementation Record", archived)
 // §4 data pipeline, §5 canvas drawing).
 //
 // Deliberately React-free and DOM-free except for the single `HTMLCanvasElement`

@@ -16,7 +16,7 @@ import { interleaveHeadingRows } from '../services/headingLayer';
 
 interface ReviewMappingModalProps {
   segments: VideoSegment[];
-  /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level heading
+  /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level heading
    *  overlays, interleaved among segment cards by `interleaveHeadingRows`. */
   headings: HeadingOverlay[];
   assets: Asset[];
@@ -143,7 +143,7 @@ export function ReviewMappingModal({
 }
 
 // ---------------------------------------------------------------------------
-// HeadingReviewRow — Path B (docs/path-b-heading-layer-plan.md, Phase 5) card
+// HeadingReviewRow — Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) card
 // for a top-level HeadingOverlay. Same 35% thumbnail + 65% controls layout as
 // ReviewMappingRow, but reads straight off HeadingOverlay fields — no asset
 // preview (HeadingOverlay carries no background-asset field).

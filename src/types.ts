@@ -228,7 +228,7 @@ export interface VideoSegment {
 }
 
 /**
- * Path B — separate heading layer (docs/path-b-heading-layer-plan.md, Decision 1).
+ * Path B — separate heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 1).
  * A top-level overlay, fully independent of VideoSegment — deliberately
  * NOT shared with TextOverlay so heading-only features never touch
  * segment code. `time` is a fixed absolute timestamp that never moves on re-sync
@@ -269,7 +269,7 @@ export interface Project {
   scriptUpdatedAt?: number;
   sceneDetailsUpdatedAt?: number;
   segments: VideoSegment[];
-  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — the sole
+  /** Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — the sole
    *  source of truth for headings; VideoSegment carries no heading fields.
    *  Optional at the type level so existing Project literals (dev fixtures, older
    *  persisted projects) remain valid; treat as `[]` when absent (Decision 5). */

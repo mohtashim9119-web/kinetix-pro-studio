@@ -433,7 +433,7 @@ investigation** — see the A3 entry above.
     and points at something systemic in this WKWebView build's `VideoEncoder` binding — but this
     was not independently re-verified against a second, unrelated known-good reference
     implementation, so residual uncertainty about the harness is disclosed, not eliminated.
-  - **Confirms and exceeds `docs/phase-7-task-1-export-profiling.md` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”)'s earlier rejection.** That
+  - **Confirms and exceeds `docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived)` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”)'s earlier rejection.** That
     doc rejected the WebCodecs-encoder path for export on the grounds that "WebKit support ...
     [is] recent and inconsistent," based on documentation/risk assessment alone, without a live
     test. This spike is the live test that earlier analysis called for — and finds the situation
@@ -446,7 +446,7 @@ investigation** — see the A3 entry above.
     redirect effort elsewhere. The current ffmpeg PNG/IPC export pipeline remains the shipped,
     working path (slower with effects active, per the existing CLAUDE.md performance figures, but
     functionally correct). The already-recorded next candidate for export speed-up is the
-    OffscreenCanvas/Worker approach from `docs/phase-7-task-1-export-profiling.md`'s own
+    OffscreenCanvas/Worker approach from `docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived)`'s own
     recommendation (I/O-bound `toBlob`/IPC-write bottleneck, ~40–55% projected speedup) — noted
     here only as the existing next candidate, not scoped or started by this entry. Item 4 (frozen
     transition frame), previously deferred to Phase B, is now **BLOCKED transitively** along with
@@ -552,7 +552,7 @@ investigation** — see the A3 entry above.
     clean with these files in the tree.
   - **Cross-reference — the legacy-pipeline speedup this section already anticipated has now
     shipped, separately from Phase B.** The "already-recorded next candidate" noted earlier in this
-    B0 area (`docs/phase-7-task-1-export-profiling.md`'s OffscreenCanvas/Worker approach for the
+    B0 area (`docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived)`'s OffscreenCanvas/Worker approach for the
     I/O-bound `toBlob`/IPC-write bottleneck) was implemented and committed 2026-07-09
     (`cd7ea2b` — worker-pool PNG encode via new `src/services/frameEncodeWorker.ts`, plus a
     raw-binary Tauri IPC frame write replacing the base64 round-trip; see `project-state.md`'s
@@ -668,7 +668,7 @@ investigation** — see the A3 entry above.
   `VideoEncoder.encode()` non-functional on this project's real Tauri WKWebView (macOS 26.5.2): all
   4 tested configs (hardware/software × avc/annexb) hung identically — `flush()` never resolved,
   zero chunks ever emitted, no error surfaced. Confirms and exceeds the risk
-  `docs/phase-7-task-1-export-profiling.md` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”) already flagged. A later B0-reconciliation +
+  `docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived)` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”) already flagged. A later B0-reconciliation +
   end-to-end mux-proof test (2026-07-09) then SUCCEEDED 8/8 on a reconstructed harness and produced
   a full encode → decode → ffmpeg-mux → playable-MP4 proof, without reproducing the hang — so the
   accurate current status is blocked-pending on that unresolved hang-risk contradiction, "works
@@ -772,7 +772,7 @@ entries above for full evidence).** The B0 feasibility spike recorded real `Vide
 hanging on this project's real Tauri WKWebView (macOS 26.5.2) across all 4 hardware/software ×
 avc/annexb configs — `isConfigSupported` reports `true`, but `flush()` never resolves and zero
 output chunks are ever emitted. This confirms and exceeds the risk already on record at
-`docs/phase-7-task-1-export-profiling.md` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”). A later B0-reconciliation + mux-proof test
+`docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived)` (“Alternative paths considered and rejected → WebCodecs `VideoEncoder`”). A later B0-reconciliation + mux-proof test
 (2026-07-09) then succeeded 8/8 and produced a full encode → decode → ffmpeg-mux → playable-MP4
 proof without reproducing the hang, so the accurate current headline is blocked-pending on that
 unresolved hang-risk contradiction ("works when tested, risk unresolved — not production-viable"),

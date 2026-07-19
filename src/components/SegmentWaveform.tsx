@@ -33,7 +33,7 @@ interface SegmentWaveformProps {
   segment: { id: string; startTime: number; duration: number };
   source: WaveformSource | null;
   /**
-   * Voiceover asset identity (docs/waveform-image-cache-plan.md Phase B) —
+   * Voiceover asset identity (docs/history.md ("Waveform rendered-image caching," 2026-07-19 entry) Phase B) —
    * together with segment id/startTime/duration these form the rendered-
    * image cache key. undefined disables caching entirely (falls back to the
    * pre-Phase-B always-redraw behavior) rather than guessing at a key.
@@ -226,7 +226,7 @@ function SegmentWaveformImpl({ segment, source, assetId, blobSize, projectId }: 
   // Currently-displayed URL, tracked for revocation on swap/unmount.
   const urlRef = useRef<string | null>(null);
   // True when urlRef.current came from waveformImageCache.ts's Tier-1 mirror
-  // (docs/waveform-image-cache-plan.md Phase B) and is therefore owned by
+  // (docs/history.md ("Waveform rendered-image caching," 2026-07-19 entry) Phase B) and is therefore owned by
   // that cache — only ITS eviction/invalidation may revoke it. A URL this
   // component drew itself (via renderWaveformImageUrl) is a separate,
   // independently-created object URL even after a write-through putImage

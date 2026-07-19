@@ -4,7 +4,7 @@
  */
 
 // waveformReadyTracker.ts — makes "every segment's waveform image has drawn (or
-// failed)" observable (docs/waveform-rewrite-plan.md §6.6 "draw-completion
+// failed)" observable (docs/history.md ("Waveform Rewrite — Implementation Record", archived) §6.6 "draw-completion
 // registry", rewrite Step 4 of 6). Steps 1-3 built the decode pipeline
 // (waveformPipeline.ts), the per-segment image renderer (SegmentWaveform.tsx),
 // and the FIFO draw scheduler (waveformDrawQueue.ts) — but nothing yet knows

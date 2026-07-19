@@ -9,7 +9,7 @@ export interface FrameGlobalConfig {
   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
   globalOverlayFilter?: string;
   globalTextLayers?: TextOverlay[];
-  /** Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4) —
+  /** Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 4) —
    *  composited on top of the frame, looked up by absolute time. */
   headings?: HeadingOverlay[];
 }
@@ -360,7 +360,7 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
 }
 
 /**
- * Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4):
+ * Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 4):
  * composites a HeadingOverlay on top of whatever has already been drawn to
  * `ctx` — a full-frame `heading.backgroundColor` fill (when non-transparent)
  * with the text positioned at (x%, y%) inside it, matching the visual weight

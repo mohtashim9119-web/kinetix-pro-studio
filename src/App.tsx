@@ -677,13 +677,13 @@ export default function App() {
 
   // Voiceover waveform data, built ONCE upfront (services/waveformPipeline) instead
   // of inside Timeline's render-triggered decode effect (the multi-minute freeze —
-  // docs/waveform-rewrite-plan.md §3). Two writers: handleApplySyncFromFiles awaits
+  // docs/history.md ("Waveform Rewrite — Implementation Record", archived) §3). Two writers: handleApplySyncFromFiles awaits
   // buildVoiceoverWaveform as part of the sync sequence; a reload effect re-triggers
   // it when a persisted project mounts. The peaks (not canvas bitmaps/images) are
   // now persisted to IndexedDB (services/waveformStore.ts) keyed by asset id, so a
   // reload of an unchanged voiceover loads cached peaks instead of re-decoding —
-  // see buildVoiceoverWaveform below (persistence reversal, waveform-rewrite-plan.md
-  // "Persistence of peaks").
+  // see buildVoiceoverWaveform below (persistence reversal, docs/history.md
+  // ("Waveform Rewrite — Implementation Record", archived), "Persistence of peaks").
   // waveformSource MUST stay a stable object reference between builds — SegmentWaveform
   // is React.memo'd on its identity — so it is only ever replaced by setWaveformSource.
   const [waveformSource, setWaveformSource] = useState<WaveformSource | null>(null);
@@ -1416,7 +1416,7 @@ export default function App() {
   }, []);
 
   /**
-   * Path B Phase 5 (docs/path-b-heading-layer-plan.md, Decision 3) — creates a
+   * Path B Phase 5 (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 3) — creates a
    * top-level HeadingOverlay at the boundary timestamp between the two
    * segments the "+ Add Heading" affordance was hovering (time = the
    * following segment's startTime, or the end of the last segment if
@@ -1928,7 +1928,7 @@ export default function App() {
     setSyncStep(4);
 
     // Build the voiceover waveform ONCE, here in the sync sequence — relocated out
-    // of Timeline's render-triggered decode effect (docs/waveform-rewrite-plan.md
+    // of Timeline's render-triggered decode effect (docs/history.md ("Waveform Rewrite — Implementation Record", archived)
     // §3). The pipeline yields internally so the main thread stays responsive even
     // on a 21-min file; isProcessing stays true until it finishes so the UI reflects
     // "still working" (and gives the Step 5 loading screen a clean hook). The reload
@@ -2424,7 +2424,7 @@ export default function App() {
         return { ...asset, url: rehydratedUrl, file: rehydratedFile };
       })
       .filter((a): a is NonNullable<typeof a> => a !== null);
-    // TEMP diagnostic (docs/waveform-image-cache-plan.md §6 pacing investigation):
+    // TEMP diagnostic (project-state.md Active Tasks, "Waveform reload pacing," pacing investigation):
     // isolates whether the synchronous blob->File->objectURL rehydration loop
     // (not React, not IndexedDB cache reads) is where the ~4s reload cost is.
     // Gated on the same instrumentation flag as the rest of the waveform trace.

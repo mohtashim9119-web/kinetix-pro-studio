@@ -243,7 +243,7 @@ export async function encodeSegment(
   // (unchanged) bytesToBase64 + ffmpeg.writeFile IPC. PNG bytes, frame ordering
   // (each frame → its own frame_%05d.png), and the IPC call shape are identical
   // to the sequential path — this is a scheduling change only. See
-  // docs/phase-7-task-1-export-profiling.md.
+  // docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived).
   //
   // Fallback path: the original fully-sequential render → toBlob → writeFile
   // loop, used when OffscreenCanvas/convertToBlob/Worker are unavailable.

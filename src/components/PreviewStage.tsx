@@ -236,7 +236,7 @@ interface Props {
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
   /** Global text layers rendered above all segment content. */
   textLayers?: TextOverlay[];
-  /** Path B heading layer (docs/path-b-heading-layer-plan.md) — composited on
+  /** Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — composited on
    *  top of the frame via getActiveHeadingAt(headings, currentTime). */
   headings?: HeadingOverlay[];
   /** WebGL2 Phase 4 auto-grade: PreviewStage owns the decode pool + assets, so

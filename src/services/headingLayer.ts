@@ -1,7 +1,7 @@
 import type { HeadingOverlay, VideoSegment } from '../types';
 
 /**
- * Path B heading layer (docs/path-b-heading-layer-plan.md, Decision 4).
+ * Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 4).
  * The single shared lookup used by both preview (PreviewStage) and export
  * (frameRenderer/exportPipeline) — no per-caller reimplementation.
  * Start-inclusive / end-exclusive: `t` in [heading.time, heading.time + heading.duration).
@@ -33,7 +33,7 @@ export function clampHeadingsToDuration(
 }
 
 /**
- * Path B corrective fix (docs/path-b-heading-layer-plan.md, Phase 3/4/5
+ * Path B corrective fix (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 3/4/5
  * correction) — centers a newly-placed heading ON the segment boundary
  * instead of starting exactly at it (a 50/50 split of `duration` straddling
  * the cut, instead of a 0/100 split that ran entirely into the next
@@ -47,7 +47,7 @@ export function centerHeadingOnBoundary(boundaryTime: number, duration: number):
 export const MIN_HEADING_DURATION = 0.3; // seconds — mirrors App.tsx's MIN_SEGMENT_DURATION
 
 /**
- * Path B Phase 4 (docs/path-b-heading-layer-plan.md) — pure resize math for the
+ * Path B Phase 4 (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — pure resize math for the
  * timeline's edge-drag handles. `edge: 'end'` (right handle) only changes
  * `duration`; `edge: 'start'` (left handle) shifts `time` and inversely adjusts
  * `duration` so the opposite edge (`time + duration`) stays fixed, mirroring how

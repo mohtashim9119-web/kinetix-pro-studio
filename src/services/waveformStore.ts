@@ -1,5 +1,5 @@
 // waveformStore.ts — IndexedDB persistence for built WaveformSource peaks
-// (docs/waveform-rewrite-plan.md §"Persistence of peaks", added post-launch —
+// (docs/history.md ("Waveform Rewrite — Implementation Record", archived) §"Persistence of peaks", added post-launch —
 // reverses the original "no persistence" decision for peaks ONLY, not canvas
 // bitmaps/images). Mirrors assetStore.ts's project-scoped compound-key pattern.
 //

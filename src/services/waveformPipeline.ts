@@ -1,5 +1,5 @@
 // waveformPipeline.ts — the ONE upfront decode + waveform-build pass, run during
-// the Apply-Sync flow (docs/waveform-rewrite-plan.md §3, §4.3). Relocated verbatim
+// the Apply-Sync flow (docs/history.md ("Waveform Rewrite — Implementation Record", archived) §3, §4.3). Relocated verbatim
 // out of Timeline.tsx's render-triggered decode effect so the heavy work runs once,
 // on Apply Sync, instead of every time the voiceover props change.
 //

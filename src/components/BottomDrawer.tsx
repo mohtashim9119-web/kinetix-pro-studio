@@ -14,7 +14,7 @@ import { DEFAULT_ZOOM_SCALE_RATE, isRateCapped } from '../services/zoomScale';
 interface Props {
   segment: VideoSegment | null;
   segmentIndex: number;
-  /** Path B (docs/path-b-heading-layer-plan.md, Phase 5) — top-level heading
+  /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level heading
    *  overlay target, mutually exclusive with `segment`. When set, the drawer
    *  renders the HeadingOverlay editor instead of the segment editor. */
   heading?: HeadingOverlay | null;

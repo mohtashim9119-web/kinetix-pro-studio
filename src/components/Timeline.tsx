@@ -35,10 +35,10 @@ interface Props {
   // Waveform data is built ONCE upfront in App.tsx's Apply-Sync flow (and a reload
   // effect) via services/waveformPipeline, then passed in here. Timeline no longer
   // decodes/builds anything itself — that render-triggered decode effect was the
-  // multi-minute freeze (docs/waveform-rewrite-plan.md §3).
+  // multi-minute freeze (docs/history.md ("Waveform Rewrite — Implementation Record", archived) §3).
   waveformSource: WaveformSource | null;
   // Voiceover asset identity, threaded down to SegmentWaveform for the
-  // rendered-image cache key (docs/waveform-image-cache-plan.md Phase B).
+  // rendered-image cache key (docs/history.md ("Waveform rendered-image caching," 2026-07-19 entry) Phase B).
   // undefined disables that cache (falls back to always-redraw).
   projectId: string;
   voiceoverAssetId: string | undefined;
@@ -226,7 +226,7 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sliderT]);
 
-  // Path B Phase 4 (docs/path-b-heading-layer-plan.md) — heading band edge-drag.
+  // Path B Phase 4 (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — heading band edge-drag.
   // Reuses the f4da926 ref+rAF live-drag pattern: no setProject/onHeadingResizeCommit
   // per mousemove, live visual feedback via direct DOM style writes on the band
   // element (found via data-heading-id), the real commit fires exactly once on
@@ -328,7 +328,7 @@ export function Timeline({
           window.addEventListener('mouseup', handleMouseUp);
         }}
       >
-        {/* Path B corrective fix (docs/path-b-heading-layer-plan.md, Phase 3/4/5
+        {/* Path B corrective fix (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 3/4/5
             correction) — three stacked lanes, top to bottom: headings, segments,
             voiceover waveform, each with the same bounded-lane border/background
             (bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg). Originally a
