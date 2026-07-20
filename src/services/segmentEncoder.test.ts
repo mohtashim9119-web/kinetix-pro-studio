@@ -11,7 +11,7 @@ import { resolveBlendFrameParams } from './segmentEncoder';
  * segment's trailingExtension, after its own nominal end). The blend zone is
  * now centered on `segmentDuration` (the outgoing segment's own nominal
  * end): half sits BEFORE it (still the segment's own un-extended span), half
- * AFTER (the trailingExtension) — see docs/webgl-architecture-plan.md's
+ * AFTER (the trailingExtension) — see docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
  * transition-centering entry.
  */
 

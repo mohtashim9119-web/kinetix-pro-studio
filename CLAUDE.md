@@ -207,12 +207,13 @@ src/
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
     uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
                      #   single source for UI-state persistence (D6 fix).
-    gl/              # WebGL2 effects engine (docs/webgl-architecture-plan.md). Phase 5 cutover
-                     #   (commit 2015218) removed the dev gate — this is now the sole, production-
-                     #   default preview path for the 4 scoped transitions, both zoom animations,
-                     #   and color grading; isWebGL2Supported() survives only as a diagnostic
-                     #   (drives a visible error surface on an unsupported runtime), not a router
-                     #   to a second implementation.
+    gl/              # WebGL2 effects engine (full plan + verification record archived in
+                     #   docs/history.md -> "WebGL2 Effects Engine — Full Plan, archived 2026-07-20").
+                     #   Phase 5 cutover (commit 2015218) removed the dev gate — this is now the sole,
+                     #   production-default preview path for the 4 scoped transitions, both zoom
+                     #   animations, and color grading; isWebGL2Supported() survives only as a
+                     #   diagnostic (drives a visible error surface on an unsupported runtime), not a
+                     #   router to a second implementation.
       glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing.
       shaders.ts     # GLSL ES 3.0 sources (blit, cross-dissolve, dip, light-leak, zoom, grade) +
                      #   u_texRectA/B object-cover UV-crop uniforms. DO NOT change this math without
@@ -247,7 +248,8 @@ src/
                      #   holds the decode pool + assets); App.tsx's handleAutoGrade drives scope.
   hooks/
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
-    useGlPreview.ts          # WebGL2 preview driver (docs/webgl-architecture-plan.md Section 3.2/6) —
+    useGlPreview.ts          # WebGL2 preview driver (docs/history.md -> "WebGL2 Effects Engine — Full
+                             #   Plan, archived 2026-07-20", Section 3.2/6) —
                              #   per-tick: derive params (compositeParams.ts) → source each slot from
                              #   the WebCodecs decode pool → upload directly to GPU texture → render.
                              #   Now takes isFullscreen: boolean in its params, added to the per-tick

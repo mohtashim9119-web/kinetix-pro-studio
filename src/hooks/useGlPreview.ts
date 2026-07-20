@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * useGlPreview — the thin WebGL2 preview driver (docs/webgl-architecture-plan.md
+ * useGlPreview — the thin WebGL2 preview driver (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
  * Section 3.2/6, Phase 3). Owns nothing about "what a frame should look like"
  * (that is compositeParams.ts's pure derivation) and nothing about GL resource
  * lifecycle math (that is glCompositor.ts / glContext.ts) — it only wires the
@@ -128,7 +128,7 @@ export interface UseGlPreviewResult {
  * canvas — this function's original form, and the ONLY reason a canvas hop
  * ever existed in this hook — measured 36-58ms/frame on WKWebView, ~1800-
  * 2900x slower than uploading the raw source directly; see
- * docs/webgl-architecture-plan.md Section 7's [CORRECTED] object-cover row).
+ * docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 7's [CORRECTED] object-cover row).
  *
  * Pure and dependency-free so it's directly unit-testable (see
  * useGlPreview.test.ts), same discipline as toSourceTime/computeKeepSet.

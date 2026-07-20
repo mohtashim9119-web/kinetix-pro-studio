@@ -12,7 +12,7 @@ import { computeObjectCoverUvRect } from './useGlPreview';
  * shaders.ts's u_texRectA/u_texRectB uniform — replacing the earlier
  * pixel-rect form that fed a CPU-canvas pre-fit step, removed after it was
  * found to cause a severe WKWebView performance regression (see
- * docs/webgl-architecture-plan.md Section 7's [CORRECTED] object-cover row).
+ * docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 7's [CORRECTED] object-cover row).
  */
 
 describe('computeObjectCoverUvRect', () => {

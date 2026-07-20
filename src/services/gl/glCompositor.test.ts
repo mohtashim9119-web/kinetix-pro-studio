@@ -605,7 +605,7 @@ describe('GlCompositor — transition/zoom/grade uniform wiring', () => {
 
 describe('GlCompositor — object-cover UV-crop uniform wiring (u_texRectA/u_texRectB)', () => {
   /**
-   * WKWebView performance-fix follow-up (docs/webgl-architecture-plan.md
+   * WKWebView performance-fix follow-up (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
    * Section 7's [CORRECTED] object-cover row): object-cover is a UV-crop
    * uniform the shader applies, not a CPU-canvas pre-fit. Under the Bug 2
    * per-layer pass order the crop is applied in the per-slot PREP pass (blit),

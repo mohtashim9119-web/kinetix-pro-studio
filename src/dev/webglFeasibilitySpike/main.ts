@@ -4,7 +4,7 @@
  * Standalone. Not imported by any real app code. Purpose: on the REAL Tauri
  * WKWebView (macOS) — and, as a cheaper first pass, on Chromium — empirically
  * answer the questions the WebGL/WebGPU architecture plan
- * (docs/webgl-architecture-plan.md, Part 2) needs answered with evidence,
+ * (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20), Part 2) needs answered with evidence,
  * not assumptions:
  *
  *   1. Does a real WebGL2 context create successfully? (version/renderer strings)

@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * WebGL2 context acquisition on a caller-supplied canvas
- * (docs/webgl-architecture-plan.md Section 6, Phase 1). This module does
+ * (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6, Phase 1). This module does
  * not create or mount any DOM — the caller owns the `<canvas>` element;
  * this module only turns it into a configured WebGL2 context and wires
  * context-loss/restore handling.

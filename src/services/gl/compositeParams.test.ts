@@ -230,7 +230,7 @@ describe('deriveCompositeParams — 50/50 centering (transition-centering fix)',
   // transition duration played AFTER the boundary (100/0 split — D7 in
   // project-state.md's Ignored Low Risk Bugs). These tests exist
   // specifically to pin the centered spec: half before, half after, 0.5
-  // exactly at the boundary — see docs/webgl-architecture-plan.md's
+  // exactly at the boundary — see docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
   // transition-centering entry.
   function makeAB(duration: number): VideoSegment[] {
     return [

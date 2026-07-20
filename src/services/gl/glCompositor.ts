@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  *
- * The WebGL2 effects compositor (docs/webgl-architecture-plan.md Section 6,
+ * The WebGL2 effects compositor (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6,
  * Phase 1). Owns all GL resources for one canvas: the compiled shader
  * programs (shaders.ts), two content texture slots ('a' = current segment,
  * 'b' = incoming segment during a transition), and the fullscreen-triangle
@@ -50,7 +50,7 @@
  * sample the already-upright rtA/rtB and MUST use the straight shader, or the
  * chain double-flips. This is the "Risk 1" flip-parity reassignment from the
  * Bug 2 audit and is verifiable only on a real GPU (see the shaders.ts /
- * webgl-architecture-plan.md Phase 2 Step 1 lesson) — the Node mock cannot
+ * docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Phase 2 Step 1 lesson) — the Node mock cannot
  * prove pixel orientation.
  */
 

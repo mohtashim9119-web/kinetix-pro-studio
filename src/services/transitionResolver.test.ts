@@ -117,7 +117,7 @@ describe('resolveTransitionProgress — centered transition window', () => {
 });
 
 /**
- * WebGL2 Phase 5 cutover (docs/webgl-architecture-plan.md Section 6). Five
+ * WebGL2 Phase 5 cutover (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6). Five
  * slugs were removed from effectsOptions.ts's TRANSITIONS because the GL
  * effects engine never implemented them — only the deleted CSS/Canvas2D
  * snapshot path ever rendered them. Projects saved before the cutover can

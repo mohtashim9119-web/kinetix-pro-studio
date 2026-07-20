@@ -47,7 +47,7 @@ export interface EncodeSegmentOptions {
 
 /**
  * Pure blend-window math for the outgoing segment's per-frame render loop —
- * the centered-window spec (docs/webgl-architecture-plan.md's transition-
+ * the centered-window spec (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-
  * centering entry; supersedes the old 100%-after-the-boundary placement, D7
  * in project-state.md's Ignored Low Risk Bugs) applied in SEGMENT-LOCAL time.
  *
@@ -166,7 +166,7 @@ export async function encodeSegment(
     }
 
     // Compute transition blend alpha for frames in the centered blend zone
-    // (docs/webgl-architecture-plan.md's transition-centering entry —
+    // (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-centering entry —
     // supersedes the old 100%-after-the-boundary placement, D7 in
     // project-state.md's Ignored Low Risk Bugs). The zone is centered on
     // segment.duration (this segment's own nominal end): half sits BEFORE it

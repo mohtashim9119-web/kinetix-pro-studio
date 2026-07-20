@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * PURE derivation of per-tick WebGL2 compositor parameters from
- * (segments, currentTime, config) — docs/webgl-architecture-plan.md
+ * (segments, currentTime, config) — docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
  * Section 3.2/6, Phase 1. No React, no DOM, no pool/decoder dependency:
  * this is the same role toSourceTime/computeKeepSet
  * (src/hooks/useWebCodecsPreview.ts) play for the decode side, and is

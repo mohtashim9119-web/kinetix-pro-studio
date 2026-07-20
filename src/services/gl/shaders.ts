@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * GLSL ES 3.0 shader sources for the WebGL2 effects compositor
- * (docs/webgl-architecture-plan.md Section 6, Phase 1). These are the exact
+ * (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6, Phase 1). These are the exact
  * six effects already pixel-verified on both Chromium and the real Tauri
  * WKWebView by src/dev/webglFeasibilitySpike/main.ts (Section 2.2 of the
  * plan) — promoted here as the permanent source of truth, cleaned up and
@@ -39,7 +39,7 @@ void main() {
  *  already matches window-row order, since the fragment that wrote each
  *  texel came from ordinary window-space rasterization. Reusing the flipped
  *  shader on an FBO-sourced pass flips it AGAIN. Confirmed empirically
- *  (Phase 2 Step 1 real-GPU smoke test, docs/webgl-architecture-plan.md):
+ *  (Phase 2 Step 1 real-GPU smoke test, docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)):
  *  every 2-draw chain (zoom-only or grade-only) rendered upside-down, while
  *  1-draw (skip path) and 3-draw (transition+zoom+grade together) chains
  *  came out correct by flip-parity coincidence. drawStage1 — the only pass
@@ -59,7 +59,7 @@ void main() {
 /**
  * u_texRectA/u_texRectB — object-cover UV-crop rects, (uOffset, vOffset,
  * uScale, vScale). Added to fix a WKWebView performance regression (see
- * docs/webgl-architecture-plan.md Section 7's object-cover risk-register row,
+ * docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 7's object-cover risk-register row,
  * [CORRECTED] annotation): a CPU-side 2D-canvas pre-fit + texImage2D(canvas)
  * step was ~1800-2900x slower than a direct texImage2D(VideoFrame) upload on
  * WKWebView/ANGLE-Metal (36-58ms/frame vs 2.82ms), capping throughput below

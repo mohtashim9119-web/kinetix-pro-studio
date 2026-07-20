@@ -78,7 +78,7 @@ function getAnimationWrapperProps(
     }
 
     // ZOOM_IN / ZOOM_OUT deliberately have no case here — they fall through to
-    // `default: {}`. Both are GL-scoped effects (docs/webgl-architecture-plan.md
+    // `default: {}`. Both are GL-scoped effects (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
     // Section 5.2) and the compositor renders them as a UV transform, per-layer,
     // so they stay continuous across a transition boundary (Bug 2). Their CSS
     // copies were deleted at the Phase 5 cutover: keeping them would double-apply
@@ -370,7 +370,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   const useWebCodecsPathRef = useRef(useWebCodecsPath);
   useEffect(() => { useWebCodecsPathRef.current = useWebCodecsPath; }, [useWebCodecsPath]);
 
-  // WebGL2 effects preview path (docs/webgl-architecture-plan.md Phase 5 —
+  // WebGL2 effects preview path (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Phase 5 —
   // the cutover). Capability-gated ONLY: Phase 3's dual gate (import.meta.env
   // .DEV + a persisted dev toggle) was removed here, so this is now the sole
   // path that renders the scoped effects — the 4 transitions, both zooms, and
@@ -534,7 +534,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   // whenever the GL path was active (its own glPathActive guard), so removing
   // it changes nothing about what the GL path draws.
 
-  // WebGL2 preview driver (docs/webgl-architecture-plan.md Phase 3). `enabled`
+  // WebGL2 preview driver (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Phase 3). `enabled`
   // gates ALL work — inert when the dual gate is false. Sources the current/
   // incoming frame from the SAME pool useWebCodecsPreview owns (via its
   // exposed frame/pool), and the outgoing frame via that pool's B3 protected-
@@ -1236,7 +1236,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           isFullscreen={isFullscreen}
                         />
                       )}
-                      {/* WebGL2 effects preview path (docs/webgl-architecture-plan.md
+                      {/* WebGL2 effects preview path (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
                           Phase 3, dual-gated). One persistent canvas mounted for the
                           whole life of glPathActive (kept mounted across segments so the
                           GL context/compositor survive) — it renders the scoped

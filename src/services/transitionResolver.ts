@@ -7,7 +7,7 @@ export interface EffectiveTransition {
 }
 
 /**
- * Slugs retired at the WebGL2 Phase 5 cutover (docs/webgl-architecture-plan.md
+ * Slugs retired at the WebGL2 Phase 5 cutover (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)
  * Section 6), mapped to the surviving slug they now resolve to.
  *
  * These five were removed from `effectsOptions.ts`'s TRANSITIONS list because
@@ -77,7 +77,7 @@ export function resolveEffectiveTransition(
 
 /**
  * Centered transition-window progress — the single shared arithmetic behind
- * the boundary-centered timing spec (docs/webgl-architecture-plan.md's
+ * the boundary-centered timing spec (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
  * transition-centering entry; supersedes the old 100/0-split-at-the-boundary
  * behavior, D7 in project-state.md's Ignored Low Risk Bugs).
  *

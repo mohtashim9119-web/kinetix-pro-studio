@@ -114,7 +114,7 @@ export async function exportProject(
     const nextSegment = segments[i + 1];
     const nextAsset = nextSegment?.assetId ? assetMap.get(nextSegment.assetId) : undefined;
     const prevSegment = segments[i - 1];
-    // Centered transition window (docs/webgl-architecture-plan.md's
+    // Centered transition window (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
     // transition-centering entry — supersedes the old 100%-after-the-
     // boundary placement, D7 in project-state.md's Ignored Low Risk Bugs):
     // the blend zone straddles the boundary 50/50, so only HALF of the
