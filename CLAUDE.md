@@ -47,6 +47,30 @@ src/
                      #   coalesced, with the timeline rect/pps cached once at drag start; the real
                      #   state commit happens exactly once on mouseup via applyDurationChange
                      #   (perf fix, commit f4da926).
+                     #   The preview stage wrapper div (around <PreviewStage>) keeps a dynamic 16:9
+                     #   aspect ratio via an inline style (`style={{ aspectRatio: '16 / 9' }}` +
+                     #   bg-black, not the aspect-video utility class) so a future project-level
+                     #   aspect-ratio field only needs to change this one value — a same-day D11
+                     #   "fix" (2026-07-20) that removed the aspect ratio entirely to fill the panel
+                     #   was reverted the same day (it stretched the preview when resizing the panel
+                     #   divider); the actual fix instead changed media fit from object-cover to
+                     #   object-contain across every preview path (PreviewStage.tsx's video/img
+                     #   elements, PreviewCanvas.tsx's draw math, the GL compositor's BLIT shader via
+                     #   useGlPreview.ts's computeObjectContainUvRect) so bg-black shows as
+                     #   letterbox/pillarbox bars instead of cropping. Fullscreen's fill/crop behavior
+                     #   is separate (PreviewStage's own isFullscreen branch) and is unaffected either
+                     #   way. Export is unchanged — frameRenderer.ts still uses drawImageCover.
+                     #   sliderT (timeline zoom) is lazy-initialized from persisted UI state
+                     #   (uiStateStore's kinetix:ui:v1) instead of a hardcoded 0.5, and a new effect
+                     #   persists it on every change — so the reload-restored timelineScrollLeft
+                     #   pixel value (Timeline.tsx) maps back to the same zoom level it was saved at.
+                     #   The project-switch zoom-reset effect (keyed on project.id) gates on
+                     #   isHydrating (hasSkippedHydrationResetRef), not a plain first-run guard — a
+                     #   first-run guard is consumed by project.id's initial placeholder value and
+                     #   still fires unguarded when the reload-hydration effect later swaps in the
+                     #   real persisted project, clobbering the just-restored sliderT back to 0.5 on
+                     #   every reload instead of only on a genuine user-initiated switch (D15 fix,
+                     #   2026-07-20).
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
                      #   SegmentGrade { brightness, contrast, saturation, temperature } — each
                      #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
@@ -124,12 +148,19 @@ src/
                      #   probeAudioDuration(blob) — native ffmpeg duration probe (invoke
                      #   'probe_audio_duration'); throws on failure. App.tsx's resolveVoiceoverDuration
                      #   wraps it (File or fetched blob) — replaced the old <audio>+60s-fallback probe.
+                     #   kill() (D13 fix, 2026-07-20) — invokes ffmpeg_kill_session; best-effort,
+                     #   catch-and-warn like destroy(), must run BEFORE destroy() so the sidecar isn't
+                     #   left writing into a session dir about to be deleted. Exposed to useExport.ts
+                     #   via ffmpegBackend.ts's TauriBackend.cancel.
     audioFormats.ts  # AUDIO_EXTENSIONS + isAudioFile(file) — voiceover-slot classifier (broad
                      #   extension list + audio/* MIME fallback). DropZonePanel.addFiles uses it;
                      #   files dropped ON the Voiceover slot that don't classify raise a slot error
                      #   instead of silently misrouting to the image-asset bucket.
-    ffmpegBackend.ts # createTauriBackend() — creates TauriFfmpeg session, returns { ffmpeg, dispose }.
-                     #   dispose() calls ffmpegDestroy to delete $TMPDIR/kinetix-export-<uuid>/ after export.
+    ffmpegBackend.ts # createTauriBackend() — creates TauriFfmpeg session, returns { ffmpeg, dispose,
+                     #   saveOutputToDisk, cancel }. dispose() calls ffmpegDestroy to delete
+                     #   $TMPDIR/kinetix-export-<uuid>/ after export. cancel() (D13 fix, 2026-07-20)
+                     #   calls ffmpeg.kill() to kill the in-flight sidecar; useExport.ts's
+                     #   cancelExport calls it BEFORE dispose().
     frameRenderer.ts   # Pure canvas pipeline: renders one frame for any segment type with filters/overlays/transitions
                      #   Calls applySegmentAnimation (canvasAnimations.ts) for AnimationType canvas transforms.
                      #   Respects segment.trimEnd for video seek clamping.
@@ -205,7 +236,13 @@ src/
                      #   no duplicate row). Deliberately separate from the legacy presetService.ts
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
     uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
-                     #   single source for UI-state persistence (D6 fix).
+                     #   single source for UI-state persistence (D6 fix). Generic key/value store —
+                     #   keys currently include currentTime, selectedSegmentId, leftPanelCollapsed,
+                     #   rightPanelCollapsed, previewHeight, activeLeftTab, timelineScrollLeft
+                     #   (Timeline.tsx), and (D15 fix, 2026-07-20) sliderT — App.tsx lazy-inits
+                     #   sliderT from `readUiState().sliderT` and persists it via
+                     #   `patchUiState({ sliderT })` on every change, so the timeline zoom level
+                     #   survives a reload alongside the scroll position it was saved at.
     gl/              # WebGL2 effects engine (full plan + verification record archived in
                      #   docs/history.md -> "WebGL2 Effects Engine — Full Plan, archived 2026-07-20").
                      #   Phase 5 cutover (commit 2015218) removed the dev gate — this is now the sole,
@@ -215,8 +252,13 @@ src/
                      #   router to a second implementation.
       glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing.
       shaders.ts     # GLSL ES 3.0 sources (blit, cross-dissolve, dip, light-leak, zoom, grade) +
-                     #   u_texRectA/B object-cover UV-crop uniforms. DO NOT change this math without
-                     #   re-running the real-GPU pixel checks — see the file's own header.
+                     #   u_texRectA/B UV-fit uniforms — BLIT (the only shader ever given a
+                     #   non-identity u_texRectA) now does object-CONTAIN, not cover (D11 fix,
+                     #   2026-07-20, driven by useGlPreview.ts's computeObjectContainUvRect), with
+                     #   an explicit out-of-[0,1]-uv check that paints black instead of letting
+                     #   CLAMP_TO_EDGE stretch the source into the letterbox/pillarbox bars. DO NOT
+                     #   change this math without re-running the real-GPU pixel checks — see the
+                     #   file's own header.
       glCompositor.ts # GlCompositor — owns programs/render targets; per-layer render chain
                      #   (prep slot A -> prep slot B -> blend -> grade). drawGrade sends every grade
                      #   channel through compositeParams.ts's remaps (NOT the raw slider value);
@@ -251,6 +293,13 @@ src/
                              #   Plan, archived 2026-07-20", Section 3.2/6) —
                              #   per-tick: derive params (compositeParams.ts) → source each slot from
                              #   the WebCodecs decode pool → upload directly to GPU texture → render.
+                             #   New computeObjectContainUvRect (D11 fix, 2026-07-20) sits alongside the
+                             #   existing computeObjectCoverUvRect — uploadSlot's per-tick texRect now
+                             #   uses the contain variant so the GL preview letterboxes/pillarboxes like
+                             #   the other preview paths instead of cropping; export (frameRenderer.ts's
+                             #   drawImageCover) still uses cover and is untouched. The contain rect's
+                             #   uOffset/uScale intentionally push uvA outside [0,1] for the bar region —
+                             #   shaders.ts's BLIT fragment shader paints that black explicitly.
                              #   Now takes isFullscreen: boolean in its params, added to the per-tick
                              #   render effect's dep array so the canvas backing buffer re-measures on
                              #   fullscreen transitions (fixes a stretched preview when entering
@@ -268,6 +317,11 @@ src/
                              #   'unknown' ExportError.
                              #   ExportSnapshot for retry; generation counter guards stale callbacks.
                              #   Re-exports ExportError so App.tsx doesn't import exportPipeline directly.
+                             #   cancelExport (D13 fix, 2026-07-20) calls TauriBackend.cancel() — which
+                             #   invokes the Rust ffmpeg_kill_session command via TauriFfmpeg.kill() — BEFORE
+                             #   teardown(), so the in-flight ffmpeg sidecar is killed before its session
+                             #   temp dir is deleted, instead of running to completion/error against an
+                             #   already-gone directory.
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
@@ -318,8 +372,13 @@ src/
                      #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
     PreviewCanvas.tsx     # Minimal canvas paint surface for the WebCodecs preview path — draws
-                     #   whatever VideoFrame useWebCodecsPreview.ts hands it, object-cover fit.
-                     #   Now takes an optional isFullscreen?: boolean prop, added to the draw
+                     #   whatever VideoFrame useWebCodecsPreview.ts hands it, object-contain fit
+                     #   (D11 fix, 2026-07-20 — was object-cover; the whole frame now fits inside
+                     #   the canvas, letterboxed/pillarboxed on whichever axis doesn't match, with
+                     #   clearRect's transparent margin reading as black against the stage's
+                     #   bg-black). Export's own cover-fill pipeline (frameRenderer.ts's
+                     #   drawImageCover) is untouched.
+                     #   Takes an optional isFullscreen?: boolean prop, added to the draw
                      #   effect's dep array (same stretch fix as useGlPreview.ts, on the fallback
                      #   non-GL path) so the canvas re-measures on fullscreen transitions.
     PreviewStage.tsx      # Video/image display + overlay rendering. Dual-slot video-swap seek
@@ -327,6 +386,12 @@ src/
                      #   isResizingRef.current is true — currentSegment can flip transiently
                      #   during a timeline resize-drag; guard prevents an unwanted reseek to the
                      #   wrong segment's start (D12 fix, commit be45b07).
+                     #   Media fit changed from object-cover to object-contain on every element
+                     #   here (both <video> slots, the static-image <img>, the motion.img) —
+                     #   D11 fix, 2026-07-20 — so the whole frame fits inside the 16:9 stage
+                     #   (App.tsx's aspect-ratio wrapper div) instead of cropping; letterbox/
+                     #   pillarbox bars show as bg-black. Fullscreen's own fill/crop behavior
+                     #   (the isFullscreen branch) is untouched.
                      #   Now a forwardRef component exporting a PreviewStageHandle interface
                      #   ({ toggleFullscreen: () => void }) via useImperativeHandle — App.tsx holds
                      #   previewStageRef and calls it from the F-key branch. toggleNativeFullscreen
@@ -412,12 +477,16 @@ src-tauri/
                      #   toggleNativeFullscreen and restoreWebViewFocus need them).
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (16 total: 13 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here).
+                     #   (16 total: 13 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here). Also
+                     #   `.manage(ffmpeg::FfmpegProcessState::default())` (D13 fix, 2026-07-20) — shared
+                     #   Mutex<HashMap<session_id, CommandChild>> app state ffmpeg_exec/ffmpeg_kill_session
+                     #   use to track/kill the in-flight sidecar.
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
     ffmpeg.rs        # 13 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
                      #   no base64 — added 2026-07-09, session id + path travel as request headers),
-                     #   read_file, delete_file, exec (sidecar), destroy_session, pick_save_path,
-                     #   save_bytes_to_disk (rfd), save_session_file (native fs::copy of a finished
+                     #   read_file, delete_file, exec (sidecar), kill_session (new, D13 fix, 2026-07-20 —
+                     #   see below), destroy_session, pick_save_path,
+                     #   save_session_file (native fs::copy of a finished
                      #   session file to a user path — no bytes through the renderer; added 2026-07-14
                      #   to fix the large-export STATUS_BREAKPOINT OOM crash), probe_audio_duration,
                      #   probe_video_fps, reveal_in_finder.
@@ -427,6 +496,13 @@ src-tauri/
                      #   probe_audio_duration: runs `ffmpeg -i <file>` (no ffprobe binary bundled),
                      #   parses `Duration:` from stderr — replaces the WebView <audio> duration probe
                      #   (codec-dependent, silent 60s fallback); throws on failure, no fake duration.
+                     #   exec now uses tauri-plugin-shell's spawn() (not output()) so its CommandChild
+                     #   handle can be stored in FfmpegProcessState for the run's duration — output()
+                     #   blocked until completion with no killable handle, so the old export-cancel path
+                     #   only deleted the session dir while the sidecar kept running against it (D13).
+                     #   kill_session removes+kills the stored child for a session_id; a no-op (not an
+                     #   error) when nothing is running for it. Called by useExport.ts's cancelExport
+                     #   (via TauriFfmpeg.kill()) BEFORE destroy_session.
     whisper.rs       # 2 Tauri commands: whisper_transcribe (streams progress via Channel),
                      #   whisper_cancel. WhisperState holds the running child process for cancellation.
                      #   Sidecar: binaries/whisper; model files: models/*.

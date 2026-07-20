@@ -1,9 +1,20 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
+
+/// Tracks the currently-running ffmpeg child process per session (D13 fix).
+/// `ffmpeg_exec` inserts its `CommandChild` here for the duration of the run;
+/// `ffmpeg_kill_session` removes and kills it. At most one entry per session_id
+/// since a session runs its ffmpeg calls sequentially (segment encode, concat,
+/// mux — never concurrently).
+#[derive(Default)]
+pub struct FfmpegProcessState(pub Mutex<HashMap<String, CommandChild>>);
 
 /// Validates a logical filename is safe for use inside a session directory.
 ///
@@ -143,38 +154,86 @@ pub fn ffmpeg_delete_file(session_id: String, path: String) -> Result<(), String
 ///
 /// Uses the Tauri sidecar API (tauri-plugin-shell) so the binary runs from
 /// inside the app bundle — no PATH dependency required. Phase 6.5.
+///
+/// D13 fix — uses `spawn()` instead of `output()` so the child's `CommandChild`
+/// handle can be stored in `FfmpegProcessState` for the duration of the run,
+/// making it killable via `ffmpeg_kill_session` (the frontend's export-cancel
+/// path). Stdout is discarded (as `output()` effectively was for our purposes —
+/// only stderr was ever read); stderr is collected the same way for the same
+/// error-tail reporting.
 #[tauri::command]
 pub async fn ffmpeg_exec(
     app: tauri::AppHandle,
     session_id: String,
     args: Vec<String>,
+    state: tauri::State<'_, FfmpegProcessState>,
 ) -> Result<i32, String> {
     let cwd = session_dir(&session_id)?;
 
-    let output = app
+    let (mut rx, child) = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar error: {e}"))?
         .args(&args)
         .current_dir(&cwd)
-        .output()
-        .await
+        .spawn()
         .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
 
-    let exit_code = output.status.code().unwrap_or(-1);
+    state.0.lock().unwrap().insert(session_id.clone(), child);
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    let mut code: Option<i32> = None;
+    let mut stderr: Vec<u8> = Vec::new();
+    while let Some(event) = rx.recv().await {
+        match event {
+            CommandEvent::Terminated(payload) => code = payload.code,
+            CommandEvent::Stderr(line) => {
+                stderr.extend(line);
+                stderr.push(b'\n');
+            }
+            CommandEvent::Stdout(_) | CommandEvent::Error(_) => {}
+            _ => {}
+        }
+    }
+
+    // Already removed by ffmpeg_kill_session if this run was cancelled — a normal
+    // completion removes it here instead.
+    state.0.lock().unwrap().remove(&session_id);
+
+    let exit_code = code.unwrap_or(-1);
+
+    if exit_code != 0 {
+        let stderr_str = String::from_utf8_lossy(&stderr);
         // Truncate to last 2000 chars to avoid pathologically large error payloads.
-        let tail = if stderr.len() > 2000 {
-            format!("...{}", &stderr[stderr.len() - 2000..])
+        let tail = if stderr_str.len() > 2000 {
+            format!("...{}", &stderr_str[stderr_str.len() - 2000..])
         } else {
-            stderr.to_string()
+            stderr_str.to_string()
         };
         return Err(format!("ffmpeg exited with code {}: {}", exit_code, tail));
     }
 
     Ok(exit_code)
+}
+
+/// Kills the in-flight ffmpeg subprocess for `session_id`, if one is currently
+/// running (D13 fix). A no-op — not an error — when nothing is running for that
+/// session, which covers both "the export already finished" and "cancel raced
+/// ahead of the first ffmpeg_exec call" without the caller needing to know which.
+///
+/// Called from the frontend's export-cancel path BEFORE `ffmpeg_destroy_session`
+/// deletes the session temp dir, so the sidecar is no longer writing into a
+/// directory that's about to disappear out from under it.
+#[tauri::command]
+pub fn ffmpeg_kill_session(
+    session_id: String,
+    state: tauri::State<'_, FfmpegProcessState>,
+) -> Result<(), String> {
+    if let Some(child) = state.0.lock().unwrap().remove(&session_id) {
+        child
+            .kill()
+            .map_err(|e| format!("kill_session({}): {}", session_id, e))?;
+    }
+    Ok(())
 }
 
 /// Deletes the entire session directory and all its contents.

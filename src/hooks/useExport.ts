@@ -255,9 +255,15 @@ export function useExport(
     }
     // Invalidate all in-flight onProgress callbacks from the current generation.
     generationRef.current++;
-    // Fire-and-forget: cancelExport is sync. The in-flight ffmpeg subprocess is
-    // not killed (see cancellation note in runExport; Phase 7 adds a kill command).
-    void teardown();
+    // D13 fix — kill the in-flight ffmpeg subprocess before tearing down the
+    // session dir it's writing into. Fire-and-forget: cancelExport is sync;
+    // cancel() runs before teardown() so the sidecar isn't left running against
+    // an already-deleted temp dir.
+    const backend = tauriBackendRef.current;
+    void (async () => {
+      await backend.cancel();
+      await teardown();
+    })();
     setState({
       isExporting: false,
       stage: null,

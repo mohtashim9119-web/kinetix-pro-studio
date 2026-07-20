@@ -202,6 +202,23 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
+   * Kills the in-flight ffmpeg subprocess for this session, if one is currently
+   * running (D13 fix). Best-effort, mirroring destroy()'s catch-and-warn — a
+   * missing/already-finished process is not an error. Must be called BEFORE
+   * destroy() so the sidecar isn't left writing into a session dir that's about
+   * to be deleted out from under it.
+   */
+  async kill(): Promise<void> {
+    try {
+      await invoke<void>('ffmpeg_kill_session', {
+        sessionId: this.#sessionId,
+      });
+    } catch (err) {
+      console.warn('[tauriFfmpeg] kill failed:', err);
+    }
+  }
+
+  /**
    * Deletes the session directory. Should be called after every export
    * (success or failure). Safe to call multiple times.
    */

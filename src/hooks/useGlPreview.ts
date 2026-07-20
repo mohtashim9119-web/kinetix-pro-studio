@@ -157,6 +157,46 @@ export function computeObjectCoverUvRect(
   return { uOffset: sx / srcW, vOffset: sy / srcH, uScale: sw / srcW, vScale: sh / srcH };
 }
 
+/**
+ * object-contain UV rect — the preview-frame counterpart to
+ * computeObjectCoverUvRect above (kept alongside it; export's canvas pipeline
+ * still uses cover-fill via frameRenderer.ts's drawImageCover, untouched).
+ * Scales so the WHOLE source fits inside the destination, letterboxing
+ * (bars top/bottom) or pillarboxing (bars left/right) the other axis instead
+ * of cropping it.
+ *
+ * Unlike cover, this rect's uOffset/uScale can push `v_uv * uScale + uOffset`
+ * outside [0,1] for the bar region — that's intentional: the BLIT fragment
+ * shader (shaders.ts) treats an out-of-[0,1] uv as "outside the frame" and
+ * paints it black rather than sampling (which CLAMP_TO_EDGE would otherwise
+ * stretch). Same-aspect source/destination still yields identity (0,0,1,1).
+ */
+export function computeObjectContainUvRect(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): TexRect {
+  const dstRatio = dstW / dstH;
+  const srcRatio = srcW / srcH;
+  let uOffset = 0;
+  let vOffset = 0;
+  let uScale = 1;
+  let vScale = 1;
+  if (srcRatio > dstRatio) {
+    // Source proportionally wider than destination — fits by width,
+    // letterboxed top/bottom.
+    vScale = srcRatio / dstRatio;
+    vOffset = -(vScale - 1) / 2;
+  } else if (srcRatio < dstRatio) {
+    // Source proportionally taller/narrower than destination — fits by
+    // height, pillarboxed left/right.
+    uScale = dstRatio / srcRatio;
+    uOffset = -(uScale - 1) / 2;
+  }
+  return { uOffset, vOffset, uScale, vScale };
+}
+
 /** A source resolved for a slot this tick, plus its intrinsic dimensions. */
 interface SlotSource {
   source: UploadSource;
@@ -501,7 +541,8 @@ export function useGlPreview({
     // computeObjectCoverUvRect's/shaders.ts's u_texRectA doc comments for
     // why: the removed CPU-canvas-then-texImage2D(canvas) path measured
     // 36-58ms/frame on WKWebView vs 2.82ms for a direct upload). The
-    // object-cover crop is computed as a UV rect and stored on the
+    // object-contain fit (media-fit preview fix — export's own cover-fill
+    // pipeline is untouched) is computed as a UV rect and stored on the
     // compositor for drawStage1 to wire as a shader uniform, not applied
     // here. Returns false (→ retain) on a closed-frame upload race (the
     // frame was resolved earlier this tick but the pool evicted/reset its
@@ -509,7 +550,7 @@ export function useGlPreview({
     // PreviewCanvas.tsx's drawImage documents, now guarding texImage2D
     // instead.
     const uploadSlot = (slot: TextureSlot, src: SlotSource): boolean => {
-      const texRect = computeObjectCoverUvRect(src.w, src.h, dstW, dstH);
+      const texRect = computeObjectContainUvRect(src.w, src.h, dstW, dstH);
       try {
         compositor.uploadFrame(slot, src.source, texRect);
       } catch {

@@ -84,7 +84,15 @@ void main() {
 
 /** Single-texture straight blit — used when no transition is active this
  *  tick (renders slot 'a' alone) and as the first stage of the pass chain
- *  in that case. */
+ *  in that case. This is the ONLY shader in the compositor that ever
+ *  receives a non-identity u_texRectA (drawTransitionBlend/drawZoom/drawGrade
+ *  always wire IDENTITY_TEX_RECT — see glCompositor.ts's drawTransitionBlend),
+ *  so it's the only one that needs the object-contain out-of-bounds check
+ *  below: useGlPreview.ts now computes an object-CONTAIN rect (not cover),
+ *  whose uOffset/uScale can legitimately push uvA outside [0,1] wherever the
+ *  frame's letterbox/pillarbox bars belong. Without this check,
+ *  TEXTURE_WRAP_S/T's CLAMP_TO_EDGE (glCompositor.ts) would stretch the
+ *  source's edge pixels into the bar area instead of showing black. */
 export const BLIT_FRAGMENT_SHADER_SOURCE = `#version 300 es
 precision mediump float;
 in vec2 v_uv;
@@ -93,7 +101,11 @@ uniform sampler2D u_texA;
 uniform vec4 u_texRectA; // (uOffset, vOffset, uScale, vScale)
 void main() {
   vec2 uvA = v_uv * u_texRectA.zw + u_texRectA.xy;
-  o_color = texture(u_texA, uvA);
+  if (uvA.x < 0.0 || uvA.x > 1.0 || uvA.y < 0.0 || uvA.y > 1.0) {
+    o_color = vec4(0.0, 0.0, 0.0, 1.0);
+  } else {
+    o_color = texture(u_texA, uvA);
+  }
 }`;
 
 /** cross-dissolve: linear mix of the outgoing (A) and incoming (B) textures

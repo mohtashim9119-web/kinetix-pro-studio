@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeObjectCoverUvRect } from './useGlPreview';
+import { computeObjectCoverUvRect, computeObjectContainUvRect } from './useGlPreview';
 
 /**
  * Pure-function tests, mock-free — the useGlPreview hook itself can't be
@@ -93,6 +93,60 @@ describe('computeObjectCoverUvRect', () => {
       expect(r.uOffset).toBeGreaterThanOrEqual(0);
       expect(r.vOffset).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+/**
+ * computeObjectContainUvRect — the preview media-fit fix's object-contain
+ * counterpart to computeObjectCoverUvRect above. Unlike cover, a valid
+ * contain rect legitimately produces uv values outside [0,1] for the
+ * destination's bar region — the BLIT fragment shader (shaders.ts) treats
+ * that as "outside the frame" and paints black instead of sampling.
+ */
+describe('computeObjectContainUvRect', () => {
+  it('same aspect (16:9 source into 16:9 destination): identity — fills perfectly, no bars', () => {
+    const r = computeObjectContainUvRect(1280, 720, 1920, 1080);
+    expect(r).toEqual({ uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 });
+  });
+
+  it('9:16 media into 16:9 frame: fits by height, pillarboxed left/right (uScale > 1)', () => {
+    const r = computeObjectContainUvRect(1080, 1920, 1920, 1080);
+    expect(r.vScale).toBe(1);
+    expect(r.vOffset).toBe(0);
+    expect(r.uScale).toBeGreaterThan(1);
+    expect(r.uOffset).toBeLessThan(0);
+    // Center of the destination must still map to the center of the source.
+    expect(0.5 * r.uScale + r.uOffset).toBeCloseTo(0.5, 9);
+  });
+
+  it('21:9 media into 16:9 frame: fits by width, letterboxed top/bottom (vScale > 1)', () => {
+    const r = computeObjectContainUvRect(2560, 1080, 1920, 1080);
+    expect(r.uScale).toBe(1);
+    expect(r.uOffset).toBe(0);
+    expect(r.vScale).toBeGreaterThan(1);
+    expect(r.vOffset).toBeLessThan(0);
+    expect(0.5 * r.vScale + r.vOffset).toBeCloseTo(0.5, 9);
+  });
+
+  it('9:16 media into 9:16 frame: identity — fills perfectly, no bars', () => {
+    const r = computeObjectContainUvRect(1080, 1920, 1080, 1920);
+    expect(r).toEqual({ uOffset: 0, vOffset: 0, uScale: 1, vScale: 1 });
+  });
+
+  it('16:9 media into 9:16 frame: fits by width, letterboxed top/bottom (vScale > 1)', () => {
+    const r = computeObjectContainUvRect(1920, 1080, 1080, 1920);
+    expect(r.uScale).toBe(1);
+    expect(r.uOffset).toBe(0);
+    expect(r.vScale).toBeGreaterThan(1);
+    expect(r.vOffset).toBeLessThan(0);
+  });
+
+  it('the letterboxed axis reads out-of-[0,1] at the destination edges (shader relies on this to paint black)', () => {
+    const r = computeObjectContainUvRect(2560, 1080, 1920, 1080); // 21:9 into 16:9
+    const vAtTop = 0 * r.vScale + r.vOffset;
+    const vAtBottom = 1 * r.vScale + r.vOffset;
+    expect(vAtTop).toBeLessThan(0);
+    expect(vAtBottom).toBeGreaterThan(1);
   });
 });
 

@@ -33,6 +33,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(whisper::WhisperState::default())
+        .manage(ffmpeg::FfmpegProcessState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -56,6 +57,7 @@ pub fn run() {
             ffmpeg::ffmpeg_read_file,
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,
+            ffmpeg::ffmpeg_kill_session,
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::pick_save_path,
             ffmpeg::save_session_file,

@@ -4,8 +4,11 @@
  *
  * Minimal canvas paint surface for the WebCodecs preview path (Phase 1+2
  * scope of docs/webcodecs-architecture-plan.md). Draws whatever VideoFrame
- * useWebCodecsPreview.ts hands it, fit via the same object-cover behavior
- * the legacy <video className="object-cover"> elements use.
+ * useWebCodecsPreview.ts hands it, fit via the same object-contain behavior
+ * the legacy <video className="object-contain"> elements use (media-fit
+ * preview fix — the whole frame fits inside the canvas, letterboxed/
+ * pillarboxed where its aspect ratio doesn't match; export's own cover-fill
+ * pipeline, frameRenderer.ts's drawImageCover, is untouched).
  *
  * Overlays/filters/animations/captions integration is explicitly Phase 5 —
  * not built here. `style` is accepted only so the existing CSS-filter clip
@@ -114,22 +117,25 @@ export function PreviewCanvas({ frame, className, style, isFullscreen }: Props) 
       const canvasRatio = canvas.width / canvas.height;
       const frameRatio = frameW / frameH;
 
-      // object-cover: scale to fill the canvas, cropping whichever source
-      // dimension overflows — mirrors the legacy <video>'s CSS object-cover.
-      let sx = 0;
-      let sy = 0;
-      let sw = frameW;
-      let sh = frameH;
+      // object-contain: scale the WHOLE source to fit inside the canvas,
+      // letterboxing/pillarboxing whichever axis doesn't match — mirrors the
+      // legacy <video>'s CSS object-contain. clearRect leaves the margin
+      // transparent; the stage container behind this canvas is bg-black, so
+      // the margin reads as black bars.
+      let dx = 0;
+      let dy = 0;
+      let dw = canvas.width;
+      let dh = canvas.height;
       if (frameRatio > canvasRatio) {
-        sw = frameH * canvasRatio;
-        sx = (frameW - sw) / 2;
+        dh = canvas.width / frameRatio;
+        dy = (canvas.height - dh) / 2;
       } else {
-        sh = frameW / canvasRatio;
-        sy = (frameH - sh) / 2;
+        dw = canvas.height * frameRatio;
+        dx = (canvas.width - dw) / 2;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.drawImage(frame, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
+      ctx.drawImage(frame, 0, 0, frameW, frameH, dx, dy, dw, dh);
     } catch {
       // The frame was closed (by pool eviction/scrub-reset) between being
       // handed to this component and this effect actually running — see the

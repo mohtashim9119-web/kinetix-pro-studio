@@ -677,7 +677,13 @@ export default function App() {
     catch { return 0; }
   });
   const [isProcessing, setIsProcessing] = useState(false);
-  const [sliderT, setSliderT] = useState(0.5);
+  // D15 fix — restore the persisted zoom level instead of always starting at the
+  // 0.5 midpoint, so a raw pixel timelineScrollLeft (persisted at whatever zoom
+  // was active) maps back to the same timeline position on reload.
+  const [sliderT, setSliderT] = useState<number>(() => {
+    try { return (readUiState().sliderT as number) ?? 0.5; }
+    catch { return 0.5; }
+  });
   // Live pixels-per-second value from Timeline's zoom formula. Held in a ref so
   // App's two consumer sites (playback auto-scroll, resize-drag) read the current
   // value without re-rendering App on every zoom tick.
@@ -2229,10 +2235,34 @@ export default function App() {
   }, []);
 
   // Reset zoom to the default midpoint whenever the active project changes.
+  // D15 fix (corrected) — a plain "skip the first effect run" guard doesn't
+  // work here: `project` starts as makeDefaultProject() and the reload-hydration
+  // effect (above) later swaps in the real persisted project via setProject,
+  // which changes project.id a SECOND time (after the "first run" guard was
+  // already consumed on mount by the placeholder id) — so the guard's skip
+  // landed on the wrong transition and the real hydration swap still clobbered
+  // the just-restored sliderT back to 0.5 on every reload. Gating on isHydrating
+  // instead: skip entirely while hydration is in flight, and skip exactly once
+  // more right after it completes (the just-loaded project settling in) — a
+  // project.id change strictly after that point is a genuine user-initiated
+  // switch, and only that should reset zoom.
+  const hasSkippedHydrationResetRef = useRef(false);
   useEffect(() => {
+    if (isHydrating) return;
+    if (!hasSkippedHydrationResetRef.current) {
+      hasSkippedHydrationResetRef.current = true;
+      return;
+    }
     setSliderT(0.5);
     setGlobalPlaybackSpeed(1);
-  }, [project.id]);
+  }, [project.id, isHydrating]);
+
+  // D15 fix — persist zoom level alongside timelineScrollLeft (Timeline.tsx's
+  // scroll listener) so a reload restores the pixel offset at the same zoom it
+  // was saved at.
+  useEffect(() => {
+    patchUiState({ sliderT });
+  }, [sliderT]);
 
   // Auto-scroll timeline to keep playhead in view during playback
   useEffect(() => {
@@ -2584,7 +2614,14 @@ export default function App() {
             style={{ height: previewHeight + 'px' }}
           >
             <div className="h-full w-full flex items-center justify-center bg-[#020202]">
-              <div className="h-full aspect-video border border-[#333333]">
+              {/* Frame aspect ratio: 16:9, the only project aspect ratio this
+                  app currently supports (exportResolution is '1080p'|'4k',
+                  both 16:9 — no vertical/square project concept exists yet).
+                  Expressed as an inline style (rather than the aspect-video
+                  utility class) so a future project-level aspect ratio field
+                  only needs to change this one value. bg-black makes the
+                  media's object-contain letterbox/pillarbox bars solid black. */}
+              <div className="h-full bg-black border border-[#333333]" style={{ aspectRatio: '16 / 9' }}>
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>

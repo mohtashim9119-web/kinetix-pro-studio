@@ -11,6 +11,12 @@ export interface TauriBackend {
    * renderer. Must be called before dispose() removes the session dir.
    */
   saveOutputToDisk: (fileName: string, destPath: string) => Promise<void>;
+  /**
+   * Kills the in-flight ffmpeg subprocess for this session, if any (D13 fix).
+   * Must be called before dispose() so the sidecar isn't left running against a
+   * temp dir that's about to be deleted.
+   */
+  cancel: () => Promise<void>;
 }
 
 /**
@@ -28,5 +34,6 @@ export async function createTauriBackend(): Promise<TauriBackend> {
     ffmpeg,
     dispose: () => ffmpeg.destroy(),
     saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
+    cancel: () => ffmpeg.kill(),
   };
 }

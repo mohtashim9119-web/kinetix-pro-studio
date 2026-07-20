@@ -1185,7 +1185,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           preload="auto" tells the browser to buffer the full video. */}
                       <video
                         ref={videoARef}
-                        className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'a' ? '' : ' opacity-0 pointer-events-none'}`}
+                        className={`absolute inset-0 w-full h-full object-contain${isVideoAsset && activeSlot === 'a' ? '' : ' opacity-0 pointer-events-none'}`}
                         style={getClipEffectStyle(currentSegment.effectAnimation)}
                         muted
                         playsInline
@@ -1193,7 +1193,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                       />
                       <video
                         ref={videoBRef}
-                        className={`absolute inset-0 w-full h-full object-cover${isVideoAsset && activeSlot === 'b' ? '' : ' opacity-0 pointer-events-none'}`}
+                        className={`absolute inset-0 w-full h-full object-contain${isVideoAsset && activeSlot === 'b' ? '' : ' opacity-0 pointer-events-none'}`}
                         style={getClipEffectStyle(currentSegment.effectAnimation)}
                         muted
                         playsInline
@@ -1213,7 +1213,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           return coverUrl ? (
                             <img
                               src={coverUrl}
-                              className="absolute inset-0 w-full h-full object-cover"
+                              className="absolute inset-0 w-full h-full object-contain"
                               style={getClipEffectStyle(currentSegment.effectAnimation)}
                               alt=""
                             />
@@ -1268,7 +1268,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                         <motion.img
                           key={currentSegment.id}
                           src={asset.url}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
