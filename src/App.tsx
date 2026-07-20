@@ -91,6 +91,11 @@ import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
+// Dev-only — lazy so its GL/canvas test code and icon imports never enter the
+// production bundle graph; only ever rendered when import.meta.env.DEV is true.
+const DevTestPanel = lazy(() =>
+  import('./components/DevTestPanel').then(m => ({ default: m.DevTestPanel }))
+);
 import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
@@ -1008,6 +1013,7 @@ export default function App() {
   const [stockError, setStockError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [devPanelOpen, setDevPanelOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
 
@@ -2321,6 +2327,9 @@ export default function App() {
           e.preventDefault();
           previewStageRef.current?.toggleFullscreen();
         }
+      } else if (import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        e.preventDefault();
+        setDevPanelOpen(prev => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -2564,23 +2573,25 @@ export default function App() {
     );
   }
 
-  if (showDashboard) {
-    return (
-      <ProjectDashboard
-        currentProjectId={project.confirmed ? project.id : null}
-        onSelectProject={(id) => {
-          void handleSwitchProject(id);
-          setShowDashboard(false);
-        }}
-        onNewProject={() => {
-          setShowDashboard(false);
-          setShowNewProjectModal(true);
-        }}
-      />
-    );
-  }
-
-  return (
+  // Rendered as a variable (not two separate early returns) so DevTestPanel
+  // below has exactly ONE mount point regardless of showDashboard — two
+  // separate <DevTestPanel/> JSX sites would remount it on every dashboard
+  // <-> editor transition, wiping its in-progress spike/fixture results the
+  // instant "Load 500-Segment Fixture" switches the view away from the
+  // dashboard.
+  const mainContent = showDashboard ? (
+    <ProjectDashboard
+      currentProjectId={project.confirmed ? project.id : null}
+      onSelectProject={(id) => {
+        void handleSwitchProject(id);
+        setShowDashboard(false);
+      }}
+      onNewProject={() => {
+        setShowDashboard(false);
+        setShowNewProjectModal(true);
+      }}
+    />
+  ) : (
     <div className="min-h-screen bg-[var(--kx-bg)] text-[#E4E3E0] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen">
 
       {/* Body — 3 columns, full height */}
@@ -3574,5 +3585,19 @@ export default function App() {
       />
 
     </div>
+  );
+
+  return (
+    <>
+      {mainContent}
+      {import.meta.env.DEV && devPanelOpen && (
+        <Suspense fallback={null}>
+          <DevTestPanel
+            onClose={() => setDevPanelOpen(false)}
+            setProject={(p) => { setProject(p); setShowDashboard(false); }}
+          />
+        </Suspense>
+      )}
+    </>
   );
 }
