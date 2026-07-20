@@ -173,19 +173,6 @@ export function getWaveform(
         const req = tx.objectStore(STORE).get([projectId, assetId]);
         req.onsuccess = () => {
           const record = req.result as unknown;
-          if ((globalThis as unknown as { __WF_INSTRUMENT__?: boolean }).__WF_INSTRUMENT__ === true) {
-            const rec = record as Partial<StoredWaveform> | null;
-            // eslint-disable-next-line no-console
-            console.log('[wf-cache]', JSON.stringify({
-              event: 'store-read',
-              projectId, assetId,
-              found: record != null,
-              valid: isStoredWaveform(record),
-              storedBlobSize: rec && typeof rec === 'object' ? rec.blobSize ?? null : null,
-              currentBlobSize: expectedBlobSize,
-              hit: isStoredWaveform(record) && (record as StoredWaveform).blobSize === expectedBlobSize,
-            }));
-          }
           if (!isStoredWaveform(record)) {
             resolve(null);
             return;

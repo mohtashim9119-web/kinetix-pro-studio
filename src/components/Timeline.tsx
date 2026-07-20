@@ -11,8 +11,8 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
-import { WaveformSource } from '../services/waveformPeaks';
-import { SegmentWaveform } from './SegmentWaveform';
+import { WaveformSource, WAVEFORM_MAX_PPS } from '../services/waveformPeaks';
+import { useTimelineWaveform } from './TimelineWaveform';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
@@ -32,17 +32,12 @@ interface Props {
   trimmingSegmentId: string | null;
   isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
-  // Waveform data is built ONCE upfront in App.tsx's Apply-Sync flow (and a reload
-  // effect) via services/waveformPipeline, then passed in here. Timeline no longer
-  // decodes/builds anything itself — that render-triggered decode effect was the
-  // multi-minute freeze (docs/history.md ("Waveform Rewrite — Implementation Record", archived) §3).
+  // Waveform peaks are built ONCE upfront in App.tsx's Apply-Sync flow (and a
+  // reload effect) via services/waveformPipeline, then passed in here. Timeline
+  // draws the ENTIRE waveform to a single off-screen canvas (useTimelineWaveform)
+  // and slices it per segment via a CSS background-image — no per-segment canvas,
+  // no redraw on zoom (docs/history.md).
   waveformSource: WaveformSource | null;
-  // Voiceover asset identity, threaded down to SegmentWaveform for the
-  // rendered-image cache key (docs/history.md ("Waveform rendered-image caching," 2026-07-19 entry) Phase B).
-  // undefined disables that cache (falls back to always-redraw).
-  projectId: string;
-  voiceoverAssetId: string | undefined;
-  voiceoverBlobSize: number | undefined;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
   onResizeStart: (id: string, type: 'start' | 'end') => void;
@@ -72,9 +67,6 @@ export function Timeline({
   isAdjustingTrim,
   voiceoverName,
   waveformSource,
-  projectId,
-  voiceoverAssetId,
-  voiceoverBlobSize,
   onTogglePlay,
   onSeek,
   onResizeStart,
@@ -123,9 +115,11 @@ export function Timeline({
     onPixelsPerSecondChange(pixelsPerSecond);
   }, [pixelsPerSecond, onPixelsPerSecondChange]);
 
-  // Waveform data (legacy bars + peak source) now arrives as props, built once
-  // upfront by services/waveformPipeline during Apply Sync / reload — see the
-  // Props comment above. No decode/build happens in this component anymore.
+  // Draw the whole voiceover waveform to ONE off-screen canvas (at max-zoom
+  // resolution) and get back a blob: URL. Sliced per segment below via a CSS
+  // background-image, so zoom changes only re-scale the image (no redraw). The
+  // peaks source itself is built upfront by services/waveformPipeline.
+  const { waveformUrl } = useTimelineWaveform(waveformSource, totalDuration, WAVEFORM_MAX_PPS);
 
   // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
   // from the ResizeObserver above — only then are pixelsPerSecond and the segment
@@ -506,27 +500,35 @@ export function Timeline({
           )}
           </div>
 
-          {/* Audio waveform lane — the peak-based <SegmentWaveform> canvas path.
-              Renders one per-segment waveform image from the WaveformSource built
-              once by the Apply-Sync pipeline (services/waveformPipeline). This lane
-              has NO data-seg-id (so App.tsx's resize-drag querySelectorAll never
-              touches it) and NO resize handles — purely visual. */}
+          {/* Audio waveform lane — the SINGLE-canvas waveform (useTimelineWaveform).
+              The whole voiceover is drawn once to one wide off-screen canvas; each
+              segment cell shows its slice via a CSS background-image:
+                backgroundSize     scales the max-zoom bitmap to the CURRENT zoom
+                                   (downscale at low zoom = quality preserved; 1:1
+                                   at max zoom), so zoom is never a redraw trigger.
+                backgroundPosition offsets the shared image left by the segment's
+                                   start so each cell shows its own portion.
+              This lane has NO data-seg-id (so App.tsx's resize-drag querySelectorAll
+              never touches it) and NO resize handles — purely visual. */}
           {voiceoverName && (
             <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
               <div className="flex h-full w-max">
                 {segments.map((s) => (
                   <div
                     key={`vo-new-${s.id}`}
-                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
+                    style={{
+                      width: `${s.duration * pixelsPerSecond}px`,
+                      ...(waveformUrl
+                        ? {
+                            backgroundImage: `url(${waveformUrl})`,
+                            backgroundSize: `${totalDuration * pixelsPerSecond}px 100%`,
+                            backgroundPosition: `-${s.startTime * pixelsPerSecond}px 0`,
+                            backgroundRepeat: 'no-repeat',
+                          }
+                        : {}),
+                    }}
                     className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
                   >
-                    <SegmentWaveform
-                      segment={s}
-                      source={waveformSource}
-                      assetId={voiceoverAssetId}
-                      blobSize={voiceoverBlobSize}
-                      projectId={projectId}
-                    />
                     {currentSegmentId === s.id && (
                       <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
                     )}

@@ -82,8 +82,11 @@ src/
                      #   waveform (docs/history.md, "Waveform Rewrite — Implementation Record", archived).
                      #   PEAKS_PER_SECOND (10/sec — a
                      #   deliberately tuned permanent value, see the constant's own comment) peak
-                     #   extraction, plus drawSegmentWaveform's mirrored-fill routine. No decode —
-                     #   PCM arrives pre-decoded from waveformPipeline.ts.
+                     #   extraction, plus drawFullWaveform (the ENTIRE waveform onto one wide canvas,
+                     #   used by TimelineWaveform.tsx's single-canvas path) and the legacy
+                     #   drawSegmentWaveform mirrored-fill routine (no longer wired into the timeline;
+                     #   kept for its unit tests / pure geometry helpers). No decode — PCM arrives
+                     #   pre-decoded from waveformPipeline.ts.
     waveformPipeline.ts # Chunked, yielding twin of waveformPeaks.ts's synchronous builder
                      #   (buildWaveformPipeline/buildSourceChunked) — spreads the ~60M-op peak
                      #   extraction across yields so a 21-min voiceover never blocks the main thread.
@@ -97,18 +100,8 @@ src/
                      #   (docs/history.md, "Waveform rendered-image caching," 2026-07-19 entry) — a small, global, content-addressed
                      #   (assetId+blobSize, not project-scoped) in-memory LRU mirror of recently
                      #   resolved WaveformSource records, populated by putWaveform and getWaveform
-                     #   hits; App.tsx's pre-generation-bump identity gate reads it synchronously to
-                     #   skip a redundant IndexedDB round-trip on a same-session project switch-back.
-    waveformImageCache.ts # Sibling cache to waveformStore.ts, but for the RENDERED per-segment
-                     #   waveform thumbnail PNGs SegmentWaveform.tsx draws (not the numeric peaks).
-                     #   Own IndexedDB DB (kinetix-waveform-images). Two tiers: Tier 1 an in-memory
-                     #   LRU Map of cache key -> blob: URL (asset-scoped, survives a same-session
-                     #   project switch); Tier 2 IndexedDB, keyed [projectId, assetId, segmentId]
-                     #   (survives an app restart). Cache key is assetId+blobSize+segmentId+
-                     #   startTime+duration — device pixel ratio deliberately excluded (capped at 2x,
-                     #   effectively constant per device). Ownership note: once an image is cache-
-                     #   owned, only this module's own LRU eviction or its delete* functions may
-                     #   revoke the blob: URL — SegmentWaveform.tsx must not revoke on unmount.
+                     #   hits; App.tsx's pre-build identity gate reads it synchronously to skip a
+                     #   redundant IndexedDB round-trip on a same-session project switch-back.
     tauriFfmpeg.ts   # TauriFfmpeg class (FfmpegLike) — routes file I/O + exec through Tauri IPC.
                      #   bytesToBase64() helper (chunked 32 KB btoa — avoids stack overflow on large buffers).
                      #   writeFileRaw() (2026-07-09) — sends frame bytes as a raw Tauri v2 invoke body
@@ -345,22 +338,25 @@ src/
                      #   while paused (fixes a stretched-preview bug on paused fullscreen entry).
                      #   New props: onTogglePlay, onSpeedCycle.
     SegmentEditorPanel.tsx # Segment list + per-segment controls
-    SegmentWaveform.tsx    # One segment's voiceover waveform, rendered as a memoized <img> (not a
-                     #   live <canvas>) drawn once off-screen via drawSegmentWaveform
-                     #   (services/waveformPeaks.ts) and enqueued through waveformDrawQueue —
-                     #   avoids the WebKit live-canvas-count ceiling that froze the 294-segment
-                     #   reference project. pointer-events:none so it never intercepts resize
-                     #   handles or the row's click-to-seek.
+    TimelineWaveform.tsx   # useTimelineWaveform hook — the single-canvas voiceover waveform. Draws
+                     #   the ENTIRE waveform ONCE to one wide off-screen canvas (drawFullWaveform,
+                     #   services/waveformPeaks.ts) at max-zoom resolution (capped 16384px), snapshots
+                     #   it to one blob: URL, and returns it. Timeline.tsx slices that single image
+                     #   per segment via a CSS background-image (background-size scales it to the
+                     #   current zoom → downscale at low zoom, 1:1 at max, NO redraw on zoom).
+                     #   Replaced the 294 per-segment SegmentWaveform components (each an IndexedDB
+                     #   image-cache lookup + blob URL + independent setState) whose fan-out was the
+                     #   ~4s reload delay — docs/history.md. Revokes its prior URL on rebuild/unmount.
     SpeedBadge.tsx     # Compact pill button showing playback speed (1×/2×/4×/8×). Exports
                      #   SPEED_LADDER = [1,2,4,8] and SpeedBadge({ speed, onCycle }). Click on the
                      #   badge wraps 1→2→4→8→1. Used in the App.tsx play/pause pill and in
                      #   PreviewStage's fullscreen floating controls.
     StockSearchModal.tsx  # Pexels/Pixabay search modal — lazy-loaded via React.lazy
-    SyncLoadingOverlay.tsx # Full-screen blocking overlay shown for the duration of Apply Sync's
-                     #   pre-work (isProcessing) and until every segment's waveform image has
-                     #   drawn (isWaveformReady, via services/waveformReadyTracker.ts) — shows a
-                     #   live drawn/total count when a voiceover is present, a generic message
-                     #   otherwise. Hides itself the instant both are done; no minimum display time.
+    SyncLoadingOverlay.tsx # Full-screen blocking overlay, shown ONLY while a fresh Apply Sync runs
+                     #   (isProcessing) — its sole prop. No waveform-ready gating (removed when the
+                     #   waveform collapsed to a single instant canvas), so it never appears on a
+                     #   plain project reload/open. Shows one non-technical message ("Preparing your
+                     #   project…") + spinner; hides the instant isProcessing clears.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with
@@ -369,6 +365,12 @@ src/
                      #   instead of the handle, firing an unwanted seek (fixed in be45b07).
                      #   Both track rows carry data-seg-id={s.id} so App.tsx's drag handler can
                      #   write live width directly to the DOM during a resize (commit f4da926).
+                     #   The voiceover waveform lane uses the single-canvas approach: it calls
+                     #   useTimelineWaveform (TimelineWaveform.tsx) once to get ONE full-waveform
+                     #   image URL, then each segment cell shows its slice via CSS background-image
+                     #   (backgroundSize scales to current zoom, backgroundPosition offsets by segment
+                     #   start) — no per-segment canvas, no redraw on zoom. The waveform lane carries
+                     #   NO data-seg-id and no resize handles (purely visual).
                      #   The reload scroll restore is a one-shot effect gated behind a
                      #   didRestoreRef, deferred until containerWidth's ResizeObserver first fires
                      #   (real pixelsPerSecond, not the 800px zoom fallback) — restoring earlier let
@@ -378,13 +380,7 @@ src/
                      #   running (fixed in 34206ee, on top of the fb6abbb useLayoutEffect timing fix).
                      #   Receives `globalPlaybackSpeed` prop but does not use it (dead prop, kept for now).
   index.css          # Tailwind base + custom scrollbar
-  instrumentFlag.ts  # Rehydrates the __WF_INSTRUMENT__ waveform-pipeline debug flag from
-                     #   localStorage (key kinetix:wf-instrument) before any other app module
-                     #   evaluates — must be the first static import in main.tsx. Gates the
-                     #   [wf-gate]/[wf-gen]/[wf-cache]/[wf-switch]/[wf-blob] console instrumentation
-                     #   across App.tsx/waveformStore.ts/SegmentWaveform.tsx; off by default, no
-                     #   behavior change when unset.
-  main.tsx           # React entry point. Imports instrumentFlag.ts first (see that file's header).
+  main.tsx           # React entry point.
 index.html           # Title: "Kinetix Pro Studio"
 vite.config.ts       # Vite config — plugins (react, tailwindcss) + path alias. COOP/COEP removed (Phase 6.4).
 public/

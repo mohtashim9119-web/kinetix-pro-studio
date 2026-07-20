@@ -346,6 +346,99 @@ export function drawSegmentWaveform(
   drawCenterLine();
 }
 
+/**
+ * Draw the ENTIRE voiceover waveform across one wide canvas (single-canvas
+ * timeline waveform — replaces the per-segment SegmentWaveform fan-out). Same
+ * mirrored filled-curve style as drawSegmentWaveform, but spanning the whole
+ * WaveformSource rather than one segment window.
+ *
+ * `width`/`height` are the canvas backing-store dimensions in device px (the
+ * caller sizes them at max-zoom resolution, capped at ~16384px). The bitmap is
+ * later CSS-scaled per segment via a background-image in Timeline.tsx, so zoom
+ * is never a redraw trigger — this draws once per voiceover. Pure: no React,
+ * no async, no side effects beyond drawing to `canvas`.
+ */
+export function drawFullWaveform(
+  source: WaveformSource,
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const W = Math.max(1, Math.floor(width));
+  const H = Math.max(1, Math.floor(height));
+  // Setting width/height resizes AND clears the backing store to transparent.
+  canvas.width = W;
+  canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  const midY = H / 2;
+  const maxAmpPx = midY - VERTICAL_PADDING_PX;
+
+  const drawCenterLine = () => {
+    ctx.strokeStyle = CENTER_LINE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(W, midY);
+    ctx.stroke();
+  };
+
+  const len = source.peaks.length;
+  // No peaks → hairline only.
+  if (len <= 0) {
+    drawCenterLine();
+    return;
+  }
+
+  // One output column per backing pixel at most; fewer only when the source has
+  // fewer peak columns than the canvas is wide (short voiceover at high DPR).
+  const outputColumns = Math.min(len, W);
+  const amps = sampleColumnPeaks(source.peaks, 0, len, outputColumns);
+
+  // Entirely-silent source → hairline only.
+  let maxAmp = 0;
+  for (let i = 0; i < amps.length; i++) {
+    if (amps[i]! > maxAmp) maxAmp = amps[i]!;
+  }
+  if (maxAmp <= 0) {
+    drawCenterLine();
+    return;
+  }
+
+  const M = amps.length;
+  const xs = new Float32Array(M);
+  const topY = new Float32Array(M);
+  const botY = new Float32Array(M);
+  for (let i = 0; i < M; i++) {
+    const shaped = Math.pow(clamp01(amps[i]!), AMP_SHAPE_EXP);
+    const aPx = Math.max(1, shaped * maxAmpPx); // min 1px so quiet spans still show
+    xs[i] = (i / M) * W;
+    topY[i] = midY - aPx;
+    botY[i] = midY + aPx;
+  }
+
+  // Filled body — vertical gradient (strongest at the center line) (§5.4).
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0.0, FILL_EDGE);
+  grad.addColorStop(0.5, FILL_CENTER);
+  grad.addColorStop(1.0, FILL_EDGE);
+  ctx.fillStyle = grad;
+
+  // One continuous mirrored path: top envelope L→R, then bottom envelope R→L.
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  for (let i = 0; i < M; i++) ctx.lineTo(xs[i]!, topY[i]!);
+  ctx.lineTo(W, midY);
+  for (let i = M - 1; i >= 0; i--) ctx.lineTo(xs[i]!, botY[i]!);
+  ctx.closePath();
+  ctx.fill();
+
+  drawCenterLine();
+}
+
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------

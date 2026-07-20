@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildWaveformSource,
   drawSegmentWaveform,
+  drawFullWaveform,
   computeBackingDimensions,
   computeSegmentWindow,
   sampleColumnPeaks,
@@ -415,6 +416,90 @@ describe('drawSegmentWaveform — §5.5 empty / silent / missing-source', () => 
     drawSegmentWaveform(canvas, src, 0, 0);
     expect(rec.fill).toBe(0);
     expect(rec.stroke).toBe(1);
+  });
+});
+
+// ===========================================================================
+// drawFullWaveform — single-canvas timeline waveform
+// ===========================================================================
+//
+// Same recording-fake-canvas approach as drawSegmentWaveform above: no
+// rasterizer, so we assert the correct draw branch (fill vs. stroke-only) and
+// canvas sizing rather than pixel colors. drawFullWaveform draws directly in
+// canvas pixel space (no setTransform), so the checks below are on
+// dimensions + fill/stroke/lineTo counts.
+
+describe('drawFullWaveform — sizing', () => {
+  it('sizes the canvas to exactly the width/height passed in', () => {
+    const { canvas } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0.5));
+    drawFullWaveform(src, canvas, 1234, 80);
+    expect(canvas.width).toBe(1234);
+    expect(canvas.height).toBe(80);
+  });
+
+  it('floors fractional dimensions and never falls below 1px', () => {
+    const { canvas } = makeFakeCanvas();
+    const src = srcOf([0.5]);
+    drawFullWaveform(src, canvas, 100.9, 60.9);
+    expect(canvas.width).toBe(100);
+    expect(canvas.height).toBe(60);
+
+    const { canvas: c2 } = makeFakeCanvas();
+    drawFullWaveform(src, c2, 0, 0);
+    expect(c2.width).toBeGreaterThanOrEqual(1);
+    expect(c2.height).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('drawFullWaveform — draws the mirrored fill for real audio', () => {
+  it('clears, fills, and strokes without throwing (non-empty output)', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0).map((_, i) => (i % 3 === 0 ? 1 : 0.2)));
+    expect(() => drawFullWaveform(src, canvas, 800, 80)).not.toThrow();
+
+    expect(rec.clearRect).toBeGreaterThan(0);
+    expect(rec.fill).toBe(1); // filled body drawn (proxy for non-transparent pixels)
+    expect(rec.stroke).toBe(1); // center line drawn
+    // 3-stop gradient, strongest at center.
+    expect(rec.gradientStops.map((s) => s[0])).toEqual([0, 0.5, 1]);
+    // Mirrored path traces top L→R then bottom R→L → many lineTo calls.
+    expect(rec.lineTo).toBeGreaterThan(10);
+  });
+
+  it('draws a fill for a single-peak source (edge case)', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf([1]);
+    expect(() => drawFullWaveform(src, canvas, 200, 80)).not.toThrow();
+    expect(rec.fill).toBe(1);
+    expect(rec.stroke).toBe(1);
+  });
+
+  it('collapses a very long peaks array (peaks >> width) without throwing', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    // 50k peak columns collapsed onto a 300px canvas → sampleColumnPeaks MAX-collapse.
+    const src = srcOf(new Array(50000).fill(0).map((_, i) => (i % 7 === 0 ? 1 : 0.1)));
+    expect(() => drawFullWaveform(src, canvas, 300, 80)).not.toThrow();
+    expect(rec.fill).toBe(1);
+    expect(rec.stroke).toBe(1);
+  });
+});
+
+describe('drawFullWaveform — empty / silent source → hairline only', () => {
+  it('empty peaks → center-line hairline only (stroke, no fill)', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf([]);
+    expect(() => drawFullWaveform(src, canvas, 400, 80)).not.toThrow();
+    expect(rec.stroke).toBe(1);
+    expect(rec.fill).toBe(0);
+  });
+
+  it('entirely-silent source → hairline only (no fill)', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0));
+    drawFullWaveform(src, canvas, 400, 80);
+    expect(rec.stroke).toBe(1);
+    expect(rec.fill).toBe(0);
   });
 });
 
