@@ -11,12 +11,16 @@
 // id match alone is a safe cache key. blobSize is still stored and checked on
 // read as a defense-in-depth guard against future code that might violate
 // that invariant; it costs nothing (the size is already on hand via
-// asset.file.size, no async probe needed).
+// asset.file.size, no async probe needed). peaksPerSecond is checked the same
+// way (getWaveform's expectedPeaksPerSecond, defaulting to the live
+// PEAKS_PER_SECOND constant) so retuning that density in waveformPeaks.ts
+// self-invalidates every previously-cached record instead of silently
+// serving coarser peaks built under the old density forever.
 //
 // A separate DB (not assetStore's kinetix-assets) so the two stores can be
 // wiped/versioned independently — peaks are a derived cache, not source data.
 
-import type { WaveformSource } from './waveformPeaks';
+import { PEAKS_PER_SECOND, type WaveformSource } from './waveformPeaks';
 
 const DB_NAME = 'kinetix-waveforms';
 const DB_VERSION = 1;
@@ -156,15 +160,23 @@ export function putWaveform(
 /**
  * Returns persisted peaks for (projectId, assetId), or null on any cache
  * miss: no record, a malformed/corrupt record (defensive — schema drift),
- * or a blobSize mismatch against expectedBlobSize (the underlying audio
+ * a blobSize mismatch against expectedBlobSize (the underlying audio
  * changed under this id, which today's upload flow never does, but this
- * guard makes that safe rather than assumed). Never throws — callers treat
- * a null return as "fall back to rebuild."
+ * guard makes that safe rather than assumed), or a peaksPerSecond mismatch
+ * against expectedPeaksPerSecond (defaults to the LIVE PEAKS_PER_SECOND
+ * constant). The peaksPerSecond guard is what makes retuning that constant
+ * (waveformPeaks.ts) self-invalidating: a record built under an old density
+ * fails this check and falls back to rebuild, rather than silently serving
+ * stale, coarser peaks forever — same defense-in-depth idiom as the
+ * blobSize check, not a compound-key change (avoids an IndexedDB schema
+ * migration for what is purely a derived cache). Never throws — callers
+ * treat a null return as "fall back to rebuild."
  */
 export function getWaveform(
   projectId: string,
   assetId: string,
   expectedBlobSize: number,
+  expectedPeaksPerSecond: number = PEAKS_PER_SECOND,
 ): Promise<WaveformSource | null> {
   return openWaveformDB().then(
     (db) =>
@@ -178,6 +190,10 @@ export function getWaveform(
             return;
           }
           if (record.blobSize !== expectedBlobSize) {
+            resolve(null);
+            return;
+          }
+          if (record.peaksPerSecond !== expectedPeaksPerSecond) {
             resolve(null);
             return;
           }

@@ -34,19 +34,30 @@ export const WAVEFORM_DPR_CAP = 2;
  * runs the identical blockSize calc — one value drives both the synchronous
  * and chunked builders, so retuning it here is sufficient everywhere.
  *
- * 10/sec is a deliberate, permanent product choice, not derived from
- * WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP. The original density (200/sec =
- * ppsMax × dpr-cap) was diagnosed as the dominant cost in a ~2.5-minute
- * Apply-Sync freeze on large projects. Several densities (200, 6, 30, and
- * 10 peaks/sec) were evaluated on the 294-segment/21-min reference project
- * before settling on 10/sec: good enough visual fidelity for this
- * product's zoom levels, while keeping the Apply-Sync peak build fast.
- * Because it's well below WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP, the "≥1 peak
- * column per backing pixel at max zoom" property this file originally
- * guaranteed no longer holds — waveforms are visibly coarser at high
- * timeline zoom. That's an accepted, permanent trade-off, not a bug.
+ * 100/sec is a deliberate, permanent product choice (confirmed 2026-07-20,
+ * user-verified as visually sharp at all zoom levels), not derived from
+ * WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP. History: the original density
+ * (200/sec = ppsMax × dpr-cap) was diagnosed as the dominant cost in a
+ * ~2.5-minute Apply-Sync freeze on large projects, and was dropped to 10/sec
+ * as the fix. But 10/sec was a compromise forced by the THEN-single-canvas
+ * timeline waveform (drawFullWaveform), which collapses the entire voiceover
+ * into one canvas capped at ~16384px — on a long voiceover at max zoom,
+ * anything above ~13.6 peaks/sec (16384px / ~1200s) was averaged away
+ * regardless of how dense the source peaks were, so 100/sec looked
+ * identical to 10/sec and wasn't worth its 10x IndexedDB cache size and
+ * extraction cost. The multi-tile rendering added alongside this constant's
+ * bump to 100 (drawWaveformRange + useTimelineWaveform's tile array,
+ * TimelineWaveform.tsx) removed that ceiling — each tile independently gets
+ * ~1 peak-column per backing pixel — so 100/sec now delivers real, visible
+ * fidelity at every zoom level instead of being wasted. Because it's well
+ * below WAVEFORM_MAX_PPS × WAVEFORM_DPR_CAP, the "≥1 peak column per backing
+ * pixel at max zoom" property this file originally guaranteed still doesn't
+ * hold in the strict single-canvas sense — but tiling restores the
+ * PRACTICAL equivalent for any voiceover length. waveformStore.ts's
+ * getWaveform checks this constant against each cached record on read, so
+ * retuning it here self-invalidates old cached peaks automatically.
  */
-export const PEAKS_PER_SECOND = 10;
+export const PEAKS_PER_SECOND = 100;
 
 /** Audio lane height in CSS px (Timeline.tsx:552, h-20 = 80px) (§5.2). */
 export const LANE_HEIGHT_PX = 80;
@@ -399,6 +410,113 @@ export function drawFullWaveform(
   const amps = sampleColumnPeaks(source.peaks, 0, len, outputColumns);
 
   // Entirely-silent source → hairline only.
+  let maxAmp = 0;
+  for (let i = 0; i < amps.length; i++) {
+    if (amps[i]! > maxAmp) maxAmp = amps[i]!;
+  }
+  if (maxAmp <= 0) {
+    drawCenterLine();
+    return;
+  }
+
+  const M = amps.length;
+  const xs = new Float32Array(M);
+  const topY = new Float32Array(M);
+  const botY = new Float32Array(M);
+  for (let i = 0; i < M; i++) {
+    const shaped = Math.pow(clamp01(amps[i]!), AMP_SHAPE_EXP);
+    const aPx = Math.max(1, shaped * maxAmpPx); // min 1px so quiet spans still show
+    xs[i] = (i / M) * W;
+    topY[i] = midY - aPx;
+    botY[i] = midY + aPx;
+  }
+
+  // Filled body — vertical gradient (strongest at the center line) (§5.4).
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0.0, FILL_EDGE);
+  grad.addColorStop(0.5, FILL_CENTER);
+  grad.addColorStop(1.0, FILL_EDGE);
+  ctx.fillStyle = grad;
+
+  // One continuous mirrored path: top envelope L→R, then bottom envelope R→L.
+  ctx.beginPath();
+  ctx.moveTo(0, midY);
+  for (let i = 0; i < M; i++) ctx.lineTo(xs[i]!, topY[i]!);
+  ctx.lineTo(W, midY);
+  for (let i = M - 1; i >= 0; i--) ctx.lineTo(xs[i]!, botY[i]!);
+  ctx.closePath();
+  ctx.fill();
+
+  drawCenterLine();
+}
+
+/**
+ * Draw a TIME RANGE [startTime, endTime) of the voiceover waveform onto
+ * `canvas` — the per-tile primitive behind the multi-tile timeline waveform
+ * (TimelineWaveform.tsx). Same mirrored filled-curve style and column-collapse
+ * approach as drawFullWaveform, but scoped to a sub-range of `source.peaks`
+ * instead of the whole array, so a long voiceover can be split across several
+ * ≤16384px canvases and still get ~1 peak-column per backing pixel in each
+ * tile (drawFullWaveform alone collapses ALL peaks into one canvas capped at
+ * 16384px, which is the density loss the diagnostic above identified).
+ *
+ * Peak index i falls in range when `startTime <= i / source.peaksPerSecond <
+ * endTime` — equivalent to computeSegmentWindow's floor(time * pps) column
+ * mapping, applied here directly since a tile isn't tied to a VideoSegment.
+ *
+ * `width`/`height` are the canvas backing-store dimensions in device px (the
+ * caller sizes them per-tile, DPR-scaled and capped at ~16384px). Pure: no
+ * React, no async, no side effects beyond drawing to `canvas`.
+ */
+export function drawWaveformRange(
+  source: WaveformSource,
+  canvas: HTMLCanvasElement,
+  width: number,
+  height: number,
+  startTime: number,
+  endTime: number,
+): void {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  const W = Math.max(1, Math.floor(width));
+  const H = Math.max(1, Math.floor(height));
+  // Setting width/height resizes AND clears the backing store to transparent.
+  canvas.width = W;
+  canvas.height = H;
+  ctx.clearRect(0, 0, W, H);
+
+  const midY = H / 2;
+  const maxAmpPx = midY - VERTICAL_PADDING_PX;
+
+  const drawCenterLine = () => {
+    ctx.strokeStyle = CENTER_LINE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, midY);
+    ctx.lineTo(W, midY);
+    ctx.stroke();
+  };
+
+  const len = source.peaks.length;
+  const pps = source.peaksPerSecond;
+  let startCol = clampInt(Math.floor(startTime * pps), 0, len);
+  let endCol = clampInt(Math.floor(endTime * pps), 0, len);
+  if (endCol < startCol) endCol = startCol;
+
+  const N = endCol - startCol;
+  // No peaks in range → hairline only.
+  if (N <= 0) {
+    drawCenterLine();
+    return;
+  }
+
+  // One output column per backing pixel at most; fewer only when the range has
+  // fewer peak columns than the canvas is wide.
+  const outputColumns = Math.min(N, W);
+  const amps = sampleColumnPeaks(source.peaks, startCol, endCol, outputColumns);
+
+  // Entirely-silent range → hairline only.
   let maxAmp = 0;
   for (let i = 0; i < amps.length; i++) {
     if (amps[i]! > maxAmp) maxAmp = amps[i]!;

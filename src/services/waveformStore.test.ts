@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 import { describe, it, expect } from 'vitest';
 import { putWaveform, getWaveform, deleteWaveform, deleteAllWaveforms } from './waveformStore';
-import type { WaveformSource } from './waveformPeaks';
+import { PEAKS_PER_SECOND, type WaveformSource } from './waveformPeaks';
 
 // This suite polyfills `indexedDB` via fake-indexeddb/auto (no jsdom needed —
 // matches the repo's plain-node vitest environment). Each test opens the same
@@ -9,7 +9,16 @@ import type { WaveformSource } from './waveformPeaks';
 // every test uses its own project/asset id namespace to avoid cross-test
 // interference instead of resetting the DB between tests.
 
-function makeSource(peaks: number[], peaksPerSecond = 10, totalDuration = peaks.length / 10): WaveformSource {
+// Default peaksPerSecond MUST track the live PEAKS_PER_SECOND constant, not a
+// hardcoded literal — getWaveform's peaksPerSecond guard (waveformStore.ts)
+// treats a mismatch as a cache miss, so a stale literal here would silently
+// desync from the constant and every getWaveform call below (which relies on
+// its own default-to-PEAKS_PER_SECOND behavior) would start missing.
+function makeSource(
+  peaks: number[],
+  peaksPerSecond = PEAKS_PER_SECOND,
+  totalDuration = peaks.length / peaksPerSecond,
+): WaveformSource {
   return { peaks: new Float32Array(peaks), peaksPerSecond, totalDuration };
 }
 

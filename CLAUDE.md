@@ -80,13 +80,19 @@ src/
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     waveformPeaks.ts # Pure peak-extraction + canvas-drawing primitives for the timeline voiceover
                      #   waveform (docs/history.md, "Waveform Rewrite — Implementation Record", archived).
-                     #   PEAKS_PER_SECOND (10/sec — a
-                     #   deliberately tuned permanent value, see the constant's own comment) peak
-                     #   extraction, plus drawFullWaveform (the ENTIRE waveform onto one wide canvas,
-                     #   used by TimelineWaveform.tsx's single-canvas path) and the legacy
-                     #   drawSegmentWaveform mirrored-fill routine (no longer wired into the timeline;
-                     #   kept for its unit tests / pure geometry helpers). No decode — PCM arrives
-                     #   pre-decoded from waveformPipeline.ts.
+                     #   PEAKS_PER_SECOND (100/sec — a
+                     #   deliberately tuned permanent value confirmed 2026-07-20, see the constant's
+                     #   own comment; was 10/sec until multi-tile rendering made the higher density
+                     #   visible) peak extraction, plus drawWaveformRange (draws a [startTime, endTime) slice of
+                     #   the waveform onto a canvas — the per-tile primitive behind
+                     #   TimelineWaveform.tsx's multi-tile timeline waveform, each tile getting ~1
+                     #   peak-column per backing pixel instead of the whole voiceover being collapsed
+                     #   into one 16384px-capped canvas), drawFullWaveform (the ENTIRE waveform onto
+                     #   one wide canvas — kept for its unit tests / as a single-tile reference, no
+                     #   longer wired into the timeline), and the legacy drawSegmentWaveform
+                     #   mirrored-fill routine (no longer wired into the timeline; kept for its unit
+                     #   tests / pure geometry helpers). No decode — PCM arrives pre-decoded from
+                     #   waveformPipeline.ts.
     waveformPipeline.ts # Chunked, yielding twin of waveformPeaks.ts's synchronous builder
                      #   (buildWaveformPipeline/buildSourceChunked) — spreads the ~60M-op peak
                      #   extraction across yields so a 21-min voiceover never blocks the main thread.
@@ -338,15 +344,23 @@ src/
                      #   while paused (fixes a stretched-preview bug on paused fullscreen entry).
                      #   New props: onTogglePlay, onSpeedCycle.
     SegmentEditorPanel.tsx # Segment list + per-segment controls
-    TimelineWaveform.tsx   # useTimelineWaveform hook — the single-canvas voiceover waveform. Draws
-                     #   the ENTIRE waveform ONCE to one wide off-screen canvas (drawFullWaveform,
-                     #   services/waveformPeaks.ts) at max-zoom resolution (capped 16384px), snapshots
-                     #   it to one blob: URL, and returns it. Timeline.tsx slices that single image
-                     #   per segment via a CSS background-image (background-size scales it to the
-                     #   current zoom → downscale at low zoom, 1:1 at max, NO redraw on zoom).
-                     #   Replaced the 294 per-segment SegmentWaveform components (each an IndexedDB
-                     #   image-cache lookup + blob URL + independent setState) whose fan-out was the
-                     #   ~4s reload delay — docs/history.md. Revokes its prior URL on rebuild/unmount.
+    TimelineWaveform.tsx   # useTimelineWaveform hook — the TILED voiceover waveform (replaced the
+                     #   earlier single-canvas approach, which collapsed the whole voiceover into one
+                     #   canvas capped at 16384px — on long audio at high zoom that averaged many
+                     #   peak columns into a single pixel, discarding density PEAKS_PER_SECOND
+                     #   provides). Splits the current-zoom timeline width into multiple tiles, each
+                     #   ≤16384px (device px, DPR-scaled) and drawn via drawWaveformRange
+                     #   (services/waveformPeaks.ts) onto its own off-screen canvas, snapshotted to
+                     #   its own blob: URL — every tile individually gets ~1 peak-column per backing
+                     #   pixel, true 1:1 fidelity at any zoom level. Returns { tiles, isReady } where
+                     #   tiles: { url, startTime, endTime, width }[]. Rebuild is debounced 200ms
+                     #   (REDRAW_DEBOUNCE_MS) and re-runs on waveformSource or current-zoom
+                     #   (pixelsPerSecond) change; a change mid-rebuild is handled via a cancelled
+                     #   flag so a stale Promise.all resolution can't clobber a newer one. Revokes
+                     #   all prior tile blob URLs on rebuild/unmount. Replaced the 294 per-segment
+                     #   SegmentWaveform components (each an IndexedDB image-cache lookup + blob URL
+                     #   + independent setState) whose fan-out was the ~4s reload delay —
+                     #   docs/history.md.
     SpeedBadge.tsx     # Compact pill button showing playback speed (1×/2×/4×/8×). Exports
                      #   SPEED_LADDER = [1,2,4,8] and SpeedBadge({ speed, onCycle }). Click on the
                      #   badge wraps 1→2→4→8→1. Used in the App.tsx play/pause pill and in
@@ -365,12 +379,15 @@ src/
                      #   instead of the handle, firing an unwanted seek (fixed in be45b07).
                      #   Both track rows carry data-seg-id={s.id} so App.tsx's drag handler can
                      #   write live width directly to the DOM during a resize (commit f4da926).
-                     #   The voiceover waveform lane uses the single-canvas approach: it calls
-                     #   useTimelineWaveform (TimelineWaveform.tsx) once to get ONE full-waveform
-                     #   image URL, then each segment cell shows its slice via CSS background-image
-                     #   (backgroundSize scales to current zoom, backgroundPosition offsets by segment
-                     #   start) — no per-segment canvas, no redraw on zoom. The waveform lane carries
-                     #   NO data-seg-id and no resize handles (purely visual).
+                     #   The voiceover waveform is a single SHARED lane (not per-segment): it calls
+                     #   useTimelineWaveform (TimelineWaveform.tsx) to get an array of tiles, each
+                     #   ≤16384px, and lays them all out as CSS multi-background layers on one
+                     #   absolutely-positioned div spanning the full timeline width — backgroundImage/
+                     #   backgroundPosition/backgroundSize are comma-separated lists, one entry per
+                     #   tile, tile position = tile.startTime * pixelsPerSecond. Segment cells render
+                     #   on top with only their own border/active-highlight, no background image of
+                     #   their own. The waveform lane carries NO data-seg-id and no resize handles,
+                     #   and is pointer-events-none (purely visual).
                      #   The reload scroll restore is a one-shot effect gated behind a
                      #   didRestoreRef, deferred until containerWidth's ResizeObserver first fires
                      #   (real pixelsPerSecond, not the 800px zoom fallback) — restoring earlier let

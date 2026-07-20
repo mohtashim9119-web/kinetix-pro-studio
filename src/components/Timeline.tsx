@@ -11,7 +11,7 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
-import { WaveformSource, WAVEFORM_MAX_PPS } from '../services/waveformPeaks';
+import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
@@ -34,9 +34,10 @@ interface Props {
   voiceoverName: string | undefined;
   // Waveform peaks are built ONCE upfront in App.tsx's Apply-Sync flow (and a
   // reload effect) via services/waveformPipeline, then passed in here. Timeline
-  // draws the ENTIRE waveform to a single off-screen canvas (useTimelineWaveform)
-  // and slices it per segment via a CSS background-image — no per-segment canvas,
-  // no redraw on zoom (docs/history.md).
+  // splits the waveform into multiple ≤16384px canvas tiles at the current zoom
+  // level (useTimelineWaveform) and lays them out as CSS multi-background layers
+  // on one shared lane — true 1:1 fidelity at any zoom, debounced rebuild on
+  // zoom change (docs/history.md).
   waveformSource: WaveformSource | null;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
@@ -115,11 +116,12 @@ export function Timeline({
     onPixelsPerSecondChange(pixelsPerSecond);
   }, [pixelsPerSecond, onPixelsPerSecondChange]);
 
-  // Draw the whole voiceover waveform to ONE off-screen canvas (at max-zoom
-  // resolution) and get back a blob: URL. Sliced per segment below via a CSS
-  // background-image, so zoom changes only re-scale the image (no redraw). The
-  // peaks source itself is built upfront by services/waveformPipeline.
-  const { waveformUrl } = useTimelineWaveform(waveformSource, totalDuration, WAVEFORM_MAX_PPS);
+  // Draw the voiceover waveform as multiple ≤16384px-wide tiles sized to the
+  // CURRENT zoom level (debounced rebuild on zoom change — TimelineWaveform.tsx),
+  // each a separate blob: URL. Rendered below as a single shared CSS
+  // multi-background layer spanning the whole timeline, not per-segment.
+  // The peaks source itself is built upfront by services/waveformPipeline.
+  const { tiles: waveformTiles } = useTimelineWaveform(waveformSource, totalDuration, pixelsPerSecond);
 
   // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
   // from the ResizeObserver above — only then are pixelsPerSecond and the segment
@@ -500,40 +502,54 @@ export function Timeline({
           )}
           </div>
 
-          {/* Audio waveform lane — the SINGLE-canvas waveform (useTimelineWaveform).
-              The whole voiceover is drawn once to one wide off-screen canvas; each
-              segment cell shows its slice via a CSS background-image:
-                backgroundSize     scales the max-zoom bitmap to the CURRENT zoom
-                                   (downscale at low zoom = quality preserved; 1:1
-                                   at max zoom), so zoom is never a redraw trigger.
-                backgroundPosition offsets the shared image left by the segment's
-                                   start so each cell shows its own portion.
-              This lane has NO data-seg-id (so App.tsx's resize-drag querySelectorAll
-              never touches it) and NO resize handles — purely visual. */}
+          {/* Audio waveform lane — TILED waveform (useTimelineWaveform). The
+              voiceover is split into multiple ≤16384px-wide canvas tiles at the
+              CURRENT zoom level (debounced rebuild on zoom change), each its own
+              blob: URL, so every tile gets ~1 peak-column per backing pixel
+              (true 1:1 fidelity) instead of the old single-canvas approach's
+              density loss on long audio. All tiles are applied as CSS
+              multi-background layers on ONE shared lane div spanning the full
+              timeline width:
+                backgroundImage    comma-separated url()s, one per tile
+                backgroundPosition each tile offset by its own startTime * pps
+                backgroundSize     each tile's own CSS width at the current zoom
+              Segment cells render on top (their own borders/highlight only, no
+              background image of their own) and this shared layer has NO
+              data-seg-id (so App.tsx's resize-drag querySelectorAll never
+              touches it) and NO resize handles — purely visual,
+              pointer-events-none. */}
           {voiceoverName && (
             <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
-              <div className="flex h-full w-max">
-                {segments.map((s) => (
+              <div
+                className="relative h-full"
+                style={{ width: `${totalDuration * pixelsPerSecond}px` }}
+              >
+                {waveformTiles.length > 0 && (
                   <div
-                    key={`vo-new-${s.id}`}
+                    className="absolute inset-0 pointer-events-none"
                     style={{
-                      width: `${s.duration * pixelsPerSecond}px`,
-                      ...(waveformUrl
-                        ? {
-                            backgroundImage: `url(${waveformUrl})`,
-                            backgroundSize: `${totalDuration * pixelsPerSecond}px 100%`,
-                            backgroundPosition: `-${s.startTime * pixelsPerSecond}px 0`,
-                            backgroundRepeat: 'no-repeat',
-                          }
-                        : {}),
+                      backgroundImage: waveformTiles.map((t) => `url(${t.url})`).join(', '),
+                      backgroundPosition: waveformTiles
+                        .map((t) => `${t.startTime * pixelsPerSecond}px 0`)
+                        .join(', '),
+                      backgroundSize: waveformTiles.map((t) => `${t.width}px 100%`).join(', '),
+                      backgroundRepeat: 'no-repeat',
                     }}
-                    className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
-                  >
-                    {currentSegmentId === s.id && (
-                      <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
-                    )}
-                  </div>
-                ))}
+                  />
+                )}
+                <div className="relative flex h-full w-max">
+                  {segments.map((s) => (
+                    <div
+                      key={`vo-new-${s.id}`}
+                      style={{ width: `${s.duration * pixelsPerSecond}px` }}
+                      className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
+                    >
+                      {currentSegmentId === s.id && (
+                        <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           )}

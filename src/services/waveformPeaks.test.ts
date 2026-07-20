@@ -3,6 +3,7 @@ import {
   buildWaveformSource,
   drawSegmentWaveform,
   drawFullWaveform,
+  drawWaveformRange,
   computeBackingDimensions,
   computeSegmentWindow,
   sampleColumnPeaks,
@@ -504,6 +505,127 @@ describe('drawFullWaveform — empty / silent source → hairline only', () => {
 });
 
 // ===========================================================================
+// drawWaveformRange — per-tile timeline waveform primitive
+// ===========================================================================
+//
+// Same recording-fake-canvas approach as drawFullWaveform above. In addition
+// to sizing/fill-vs-stroke checks, these tests confirm the RANGE SCOPING
+// itself: sampleColumnPeaks is fed only the [startCol, endCol) slice implied
+// by [startTime, endTime), not the full peaks array — verified via a
+// distinguishable "signal only outside the requested range" construction
+// (silence inside the range → hairline-only, even though the full source is
+// loud elsewhere).
+
+describe('drawWaveformRange — draws without error for a time range', () => {
+  it('clears, fills, and strokes for a range containing signal', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0).map((_, i) => (i % 3 === 0 ? 1 : 0.2)));
+    // [0s, 10s) at PEAKS_PER_SECOND covers columns [0, 10*PEAKS_PER_SECOND).
+    expect(() => drawWaveformRange(src, canvas, 500, 80, 0, 10)).not.toThrow();
+
+    expect(rec.clearRect).toBeGreaterThan(0);
+    expect(rec.fill).toBe(1);
+    expect(rec.stroke).toBe(1);
+    expect(rec.gradientStops.map((s) => s[0])).toEqual([0, 0.5, 1]);
+    expect(rec.lineTo).toBeGreaterThan(10);
+  });
+
+  it('sizes the canvas to exactly the width/height passed in', () => {
+    const { canvas } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0.5));
+    drawWaveformRange(src, canvas, 777, 80, 0, 5);
+    expect(canvas.width).toBe(777);
+    expect(canvas.height).toBe(80);
+  });
+});
+
+describe('drawWaveformRange — only draws peaks within [startTime, endTime)', () => {
+  it('a silent range within an otherwise-loud source draws hairline only', () => {
+    // 20 s of source: loud everywhere EXCEPT a silent window [5s, 10s).
+    const totalCols = 20 * PEAKS_PER_SECOND;
+    const peaks = new Array(totalCols).fill(0.8);
+    const silentStart = 5 * PEAKS_PER_SECOND;
+    const silentEnd = 10 * PEAKS_PER_SECOND;
+    for (let i = silentStart; i < silentEnd; i++) peaks[i] = 0;
+    const src = srcOf(peaks);
+
+    // Range fully inside the silent window → no fill, hairline only. If the
+    // full peaks array (not the scoped range) were being sampled, this would
+    // pick up the loud signal outside [5,10) and incorrectly draw a fill.
+    const { canvas, rec } = makeFakeCanvas();
+    drawWaveformRange(src, canvas, 200, 80, 6, 9);
+    expect(rec.fill).toBe(0);
+    expect(rec.stroke).toBe(1);
+  });
+
+  it('a range overlapping only the loud portion draws a fill', () => {
+    const totalCols = 20 * PEAKS_PER_SECOND;
+    const peaks = new Array(totalCols).fill(0);
+    const loudStart = 12 * PEAKS_PER_SECOND;
+    for (let i = loudStart; i < totalCols; i++) peaks[i] = 0.9;
+    const src = srcOf(peaks);
+
+    // Range entirely before the loud portion → silent → hairline only.
+    const { canvas: silentCanvas, rec: silentRec } = makeFakeCanvas();
+    drawWaveformRange(src, silentCanvas, 200, 80, 0, 5);
+    expect(silentRec.fill).toBe(0);
+
+    // Range overlapping the loud portion → fill drawn.
+    const { canvas: loudCanvas, rec: loudRec } = makeFakeCanvas();
+    drawWaveformRange(src, loudCanvas, 200, 80, 12, 18);
+    expect(loudRec.fill).toBe(1);
+  });
+});
+
+describe('drawWaveformRange — edge cases', () => {
+  it('empty range (endTime <= startTime) → hairline only', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0.5));
+    drawWaveformRange(src, canvas, 200, 80, 5, 5);
+    expect(rec.fill).toBe(0);
+    expect(rec.stroke).toBe(1);
+  });
+
+  it('range entirely past the end of the source → hairline only', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(100).fill(0.5)); // 1s of data at PEAKS_PER_SECOND
+    drawWaveformRange(src, canvas, 200, 80, 50, 60);
+    expect(rec.fill).toBe(0);
+    expect(rec.stroke).toBe(1);
+  });
+
+  it('range covering the entire source draws the same as drawFullWaveform', () => {
+    const src = srcOf(new Array(2000).fill(0).map((_, i) => (i % 5 === 0 ? 1 : 0.3)));
+    const totalDuration = src.peaks.length / src.peaksPerSecond;
+
+    const { canvas: fullCanvas, rec: fullRec } = makeFakeCanvas();
+    drawFullWaveform(src, fullCanvas, 400, 80);
+
+    const { canvas: rangeCanvas, rec: rangeRec } = makeFakeCanvas();
+    drawWaveformRange(src, rangeCanvas, 400, 80, 0, totalDuration);
+
+    expect(rangeRec.fill).toBe(fullRec.fill);
+    expect(rangeRec.stroke).toBe(fullRec.stroke);
+  });
+
+  it('partial overlap at the very start of the source (range straddles t=0)', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf(new Array(2000).fill(0.6));
+    // Negative startTime clamps to column 0 (mirrors computeSegmentWindow).
+    expect(() => drawWaveformRange(src, canvas, 200, 80, -5, 3)).not.toThrow();
+    expect(rec.fill).toBe(1);
+  });
+
+  it('no peaks at all (empty source) → hairline only, never throws', () => {
+    const { canvas, rec } = makeFakeCanvas();
+    const src = srcOf([]);
+    expect(() => drawWaveformRange(src, canvas, 200, 80, 0, 10)).not.toThrow();
+    expect(rec.fill).toBe(0);
+    expect(rec.stroke).toBe(1);
+  });
+});
+
+// ===========================================================================
 // Constant coupling guards — §4.2
 // ===========================================================================
 
@@ -513,11 +635,11 @@ describe('waveform constants', () => {
     expect(WAVEFORM_DPR_CAP).toBe(2);
   });
 
-  it('PEAKS_PER_SECOND is the deliberately-tuned permanent extraction density (10/sec)', () => {
+  it('PEAKS_PER_SECOND is the deliberately-tuned permanent extraction density (100/sec, confirmed 2026-07-20 — was 10/sec before multi-tile rendering made the higher density visible)', () => {
     // The one place this value is pinned as a literal — every other test in
     // this file derives its expected peak/column counts FROM this live
     // export instead of repeating the number, so retuning it here is all
     // that's needed if the density is ever revisited again.
-    expect(PEAKS_PER_SECOND).toBe(10);
+    expect(PEAKS_PER_SECOND).toBe(100);
   });
 });
