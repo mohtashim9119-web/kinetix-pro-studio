@@ -152,7 +152,8 @@ src/
                      #   a prior duplicated-0.05-constant parity risk between the two renderers. Also
                      #   hosts computeMaxRate/sliderMaxRate/capRateForDuration — per-segment duration-
                      #   based caps on VideoSegment.effectAnimationScaleRate, feeding both the
-                     #   EffectsPanel rate slider's live upper bound and Apply-to-all's per-segment clamp.
+                     #   EffectsPanel rate input's (type="number", not a range slider) live upper
+                     #   bound and Apply-to-all's per-segment clamp.
     transitionResolver.ts # resolveEffectiveTransition(segment, options) — segment.transition (if set
                      #   and not NONE) else options.globalTransition else NONE; folds RETIRED_TRANSITIONS
                      #   (wipe, slide-push, glitch-rgb, whip-pan, zoom — slugs the GL engine never
@@ -278,6 +279,12 @@ src/
                      #   longer in-array segments. Click-outside backdrop closes drawer.
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
+    DropZonePanel.tsx  # Left-panel host with the Script/Assets/Editor/Effects tabs. The Effects
+                     #   tab is where the former standalone SettingsPanel.tsx's controls (global
+                     #   aesthetics, export quality resolution/fps, JSON import/export, "New
+                     #   Project" reset) now live, moved inline during the pre-WebGL2 layout
+                     #   redesign (SettingsPanel.tsx tombstoned, see docs/history.md). Also mounts
+                     #   EffectsPanel.tsx and owns lookPresetService persistence.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
                      #   selected/all, randomize-from-checked-pool, combined-look presets section,
                      #   GRADE section).
@@ -342,7 +349,6 @@ src/
                      #   avoids the WebKit live-canvas-count ceiling that froze the 294-segment
                      #   reference project. pointer-events:none so it never intercepts resize
                      #   handles or the row's click-to-seek.
-    SettingsPanel.tsx     # Global aesthetics, export quality (resolution/fps), JSON import/export, "New Project" reset
     SpeedBadge.tsx     # Compact pill button showing playback speed (1×/2×/4×/8×). Exports
                      #   SPEED_LADDER = [1,2,4,8] and SpeedBadge({ speed, onCycle }). Click on the
                      #   badge wraps 1→2→4→8→1. Used in the App.tsx play/pause pill and in
@@ -368,6 +374,7 @@ src/
                      #   follow, zoom-center) would re-scroll shortly after, producing a visible
                      #   "0 then scroll" flash. Both auto-scroll effects check didRestoreRef before
                      #   running (fixed in 34206ee, on top of the fb6abbb useLayoutEffect timing fix).
+                     #   Receives `globalPlaybackSpeed` prop but does not use it (dead prop, kept for now).
   index.css          # Tailwind base + custom scrollbar
   instrumentFlag.ts  # Rehydrates the __WF_INSTRUMENT__ waveform-pipeline debug flag from
                      #   localStorage (key kinetix:wf-instrument) before any other app module
