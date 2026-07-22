@@ -112,3 +112,63 @@ export function acquireGlContext(
 
   return gl;
 }
+
+export interface AcquireOffscreenGlContextOptions extends WebGLContextAttributes {
+  /**
+   * Called the moment the export worker's context is lost. Unlike
+   * `acquireGlContext` above (preview, which wants to recover), this module
+   * deliberately never calls `event.preventDefault()` inside its
+   * `contextlost` listener. Per the same spec rule `acquireGlContext`'s own
+   * `onContextLost` doc cites — an unhandled loss event is what leaves a
+   * context abandoned rather than restorable — omitting `preventDefault()`
+   * here GUARANTEES the browser will never fire `contextrestored` for this
+   * context. That is exactly the plan's requirement (docs/webcodecs-export-plan.md
+   * §4.1: "Worker OffscreenCanvas context loss is a hard fail … never a
+   * silent restore-and-continue") enforced structurally, by construction,
+   * rather than by a flag this module would otherwise have to remember to
+   * check everywhere — there is no restore path to build, reason about, or
+   * accidentally wire a dead listener for (the mistake the plan's §6 already
+   * corrected once, for the on-screen `acquireGlContext` case). `onLost` is
+   * invoked exactly once, synchronously, so the caller (exportWorker.ts) can
+   * post a typed error and tear down immediately.
+   */
+  onLost?: (event: Event) => void;
+}
+
+/**
+ * Acquires a real WebGL2 context on an `OffscreenCanvas` for the export
+ * worker (docs/webcodecs-export-plan.md §4.1/§6). Additive sibling of
+ * `acquireGlContext` above — that function is untouched, and its only
+ * production caller (useGlPreview.ts) is unaffected by this addition.
+ *
+ * Deliberately a SEPARATE function rather than a widened `acquireGlContext`
+ * signature: `OffscreenCanvas` fires the short-named `contextlost`/
+ * `contextrestored` events, not the on-screen canvas's `webglcontextlost`/
+ * `webglcontextrestored` — a signature-widening would have wired listeners
+ * that never fire (the plan §6 correction to the original draft, which made
+ * exactly this mistake).
+ *
+ * Returns `null` if context creation fails, same hard-failure contract as
+ * `acquireGlContext` — there is no fallback rendering path for export either.
+ */
+export function acquireOffscreenGlContext(
+  canvas: OffscreenCanvas,
+  options: AcquireOffscreenGlContextOptions = {},
+): WebGL2RenderingContext | null {
+  const { onLost, ...contextAttributes } = options;
+  const gl = canvas.getContext('webgl2', {
+    desynchronized: true,
+    ...contextAttributes,
+  }) as WebGL2RenderingContext | null;
+  if (!gl) return null;
+
+  // No `contextrestored` listener: per this file's own onLost doc above, the
+  // absence of `preventDefault()` in the listener below means the UA can
+  // never dispatch one for this context — wiring a listener that can
+  // provably never fire would repeat the exact mistake plan §6 corrected.
+  canvas.addEventListener('contextlost', (event) => {
+    onLost?.(event);
+  });
+
+  return gl;
+}

@@ -5,13 +5,88 @@ import {
   type ExportError,
   type ExportStage,
 } from '../services/exportPipeline';
+import {
+  exportProjectWebCodecs,
+  cancelExportWebCodecs,
+  type WebCodecsFfmpeg,
+} from '../services/webcodecsExport/exportPipelineWebCodecs';
 import { type Project } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
+import { isWebGL2Supported } from '../services/gl/glContext';
+import { readUiState, patchUiState } from '../services/uiStateStore';
 
 export type ExportResolution = '1080p' | '4k';
 export type ExportFps = 24 | 30 | 60;
 export type { ExportError } from '../services/exportPipeline';
+
+// ---------------------------------------------------------------------------
+// WebCodecs export gate — capability probe + persisted user toggle
+// (docs/webcodecs-export-plan.md §4.4/§6). The new path only runs when BOTH
+// are true; either one being false is byte-identical to today (legacy path).
+// ---------------------------------------------------------------------------
+
+const WEBCODECS_EXPORT_TOGGLE_KEY = 'webcodecsExportEnabled';
+
+let cachedWebCodecsExportCapability: boolean | null = null;
+
+/**
+ * Capability probe: WebCodecs encode+decode, WebGL2, and module-worker
+ * support are all required by the new path's worker (exportWorker.ts).
+ * Memoized — runtime capability can't change mid-session, matching the
+ * isWebGL2Supported()/isWebCodecsPreviewSupported() memoization pattern
+ * already used elsewhere (glContext.ts, webcodecsSupport.ts).
+ */
+export function isWebCodecsExportCapable(): boolean {
+  if (cachedWebCodecsExportCapability !== null) return cachedWebCodecsExportCapability;
+  cachedWebCodecsExportCapability = (() => {
+    if (typeof window === 'undefined') return false;
+    if (!('VideoEncoder' in window) || !('VideoDecoder' in window) || !('EncodedVideoChunk' in window)) {
+      return false;
+    }
+    if (!isWebGL2Supported()) return false;
+    if (typeof Worker === 'undefined') return false;
+    // Module-worker probe: constructing with { type: 'module' } throws
+    // synchronously on a runtime that doesn't support it. An empty module
+    // script is valid and never executes anything before terminate().
+    try {
+      const url = URL.createObjectURL(new Blob([''], { type: 'text/javascript' }));
+      const worker = new Worker(url, { type: 'module' });
+      worker.terminate();
+      URL.revokeObjectURL(url);
+      return true;
+    } catch {
+      return false;
+    }
+  })();
+  return cachedWebCodecsExportCapability;
+}
+
+/** Test-only: clears the memoized capability result. */
+export function __resetWebCodecsExportCapabilityForTests(): void {
+  cachedWebCodecsExportCapability = null;
+}
+
+/**
+ * Persisted user toggle — defaults ON for users who have never touched it
+ * (macOS Intel verified; macOS arm64/Windows unverified but accepted risk).
+ * An explicit prior choice (stored true or false) is always respected.
+ */
+export function isWebCodecsExportToggleOn(): boolean {
+  try {
+    const stored = readUiState()[WEBCODECS_EXPORT_TOGGLE_KEY];
+    return typeof stored === 'boolean' ? stored : true;
+  } catch { return true; }
+}
+
+export function setWebCodecsExportToggle(enabled: boolean): void {
+  patchUiState({ [WEBCODECS_EXPORT_TOGGLE_KEY]: enabled });
+}
+
+/** The gate itself — capability AND user toggle both required. */
+export function isWebCodecsExportGateOpen(): boolean {
+  return isWebCodecsExportCapable() && isWebCodecsExportToggleOn();
+}
 
 export interface UseExportState {
   isExporting: boolean;
@@ -98,6 +173,11 @@ export function useExport(
   // Last snapshot — retryExport re-runs with the same inputs as the last startExport.
   const lastSnapshotRef = useRef<ExportSnapshot | null>(null);
 
+  // Which orchestrator the CURRENT (or most recently started) export is using
+  // — decided fresh at the top of every runExport call from the gate check.
+  // cancelExport reads this to pick the matching cancel sequence (plan §9.1).
+  const activePathRef = useRef<'legacy' | 'webcodecs'>('legacy');
+
   // Tear down the active backend and null the ref.
   // Async because session cleanup (dispose) awaits an IPC call.
   const teardown = useCallback(async (): Promise<void> => {
@@ -149,20 +229,40 @@ export function useExport(
     const resWidth = resolution === '4k' ? 3840 : 1920;
     const resHeight = resolution === '4k' ? 2160 : 1080;
 
-    const result = await exportProject(
-      snap,
-      tauriBackendRef.current.ffmpeg,
-      { fps, width: resWidth, height: resHeight },
-      (stage: ExportStage) => {
-        if (generationRef.current !== gen) return;
-        setState(prev => ({
-          ...prev,
-          stage,
-          progress: progressFor(stage),
-          stageLabel: stageLabelFor(stage),
-        }));
-      },
-    );
+    // Gate branch (plan §4.4): decided fresh per run, capability + toggle
+    // both required. When closed, this is byte-identical to the pre-Step-7
+    // code — same exportProject call, same args, same onProgress shape.
+    const useWebCodecsPath = isWebCodecsExportGateOpen();
+    activePathRef.current = useWebCodecsPath ? 'webcodecs' : 'legacy';
+
+    const onProgress = (stage: ExportStage): void => {
+      if (generationRef.current !== gen) return;
+      setState(prev => ({
+        ...prev,
+        stage,
+        progress: progressFor(stage),
+        stageLabel: stageLabelFor(stage),
+      }));
+    };
+
+    const result = useWebCodecsPath
+      ? await exportProjectWebCodecs(
+          snap,
+          // TauriFfmpeg (the concrete runtime type behind TauriBackend.ffmpeg)
+          // implements appendFileRaw/saveSessionFile/kill/destroy in addition
+          // to the base FfmpegLike surface — it structurally satisfies
+          // WebCodecsFfmpeg even though TauriBackend's own field type doesn't
+          // declare those extra members.
+          tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg,
+          { fps, width: resWidth, height: resHeight },
+          onProgress,
+        )
+      : await exportProject(
+          snap,
+          tauriBackendRef.current.ffmpeg,
+          { fps, width: resWidth, height: resHeight },
+          onProgress,
+        );
 
     // Guard required: cancelExport increments the generation counter; without this
     // check its result would overwrite the 'cancelled' error state.
@@ -260,8 +360,23 @@ export function useExport(
     // cancel() runs before teardown() so the sidecar isn't left running against
     // an already-deleted temp dir.
     const backend = tauriBackendRef.current;
+    const wasWebCodecsPath = activePathRef.current === 'webcodecs';
     void (async () => {
-      await backend.cancel();
+      if (wasWebCodecsPath) {
+        // Plan §9.1 cancel sequence: post 'cancel' to the worker + terminate
+        // it FIRST, then kill+destroy the same ffmpeg session the pipeline
+        // was using (cancelExportWebCodecs's own module-level activeFfmpeg is
+        // the exact `backend.ffmpeg` instance passed into
+        // exportProjectWebCodecs above — same session, no separate handle to
+        // thread through this hook).
+        await cancelExportWebCodecs();
+      } else {
+        await backend.cancel();
+      }
+      // teardown() nulls tauriBackendRef regardless of path. For the
+      // WebCodecs path this is a second, idempotent destroy() on top of the
+      // one cancelExportWebCodecs() already did (TauriFfmpeg.destroy()'s own
+      // doc comment: safe to call more than once) — never a second live kill.
       await teardown();
     })();
     setState({

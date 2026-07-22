@@ -34,6 +34,7 @@ import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
+import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -567,6 +568,20 @@ export function DropZonePanel({
       }
     }
     setLookPresets(loadLookPresets());
+  };
+  // WebCodecs export toggle (docs/webcodecs-export-plan.md §6) — additive,
+  // gated on both a persisted user choice and a one-time runtime capability
+  // probe. Local state mirrors the persisted value (uiStateStore, via
+  // useExport.ts's isWebCodecsExportToggleOn/setWebCodecsExportToggle) so
+  // flipping it re-renders this switch immediately; useExport.ts reads the
+  // persisted value fresh on every export start, so no prop threading through
+  // App.tsx is needed for the toggle to take effect.
+  const [webcodecsExportEnabled, setWebcodecsExportEnabledState] = useState(() => isWebCodecsExportToggleOn());
+  const webcodecsExportCapable = isWebCodecsExportCapable();
+  const handleToggleWebcodecsExport = (): void => {
+    const next = !webcodecsExportEnabled;
+    setWebcodecsExportEnabledState(next);
+    setWebCodecsExportToggle(next);
   };
   // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
   // -1 = before all segments; i = after segment[i].
@@ -1662,6 +1677,34 @@ export function DropZonePanel({
               <p className="text-[8px] leading-snug text-amber-500/90">
                 Staged videos have different native frame rates — pick the Frame Rate
                 that best matches your footage; it won&apos;t be auto-set for you.
+              </p>
+            )}
+          </div>
+
+          {/* Section: Export Engine (WebCodecs export toggle, additive — plan §6) */}
+          <div className="px-4 py-3 border-b border-[#111] space-y-2">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Engine</p>
+            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
+              <span>Use WebCodecs export (faster, beta)</span>
+              <button
+                onClick={handleToggleWebcodecsExport}
+                disabled={!webcodecsExportCapable}
+                aria-label={webcodecsExportEnabled ? 'Disable WebCodecs export' : 'Enable WebCodecs export'}
+                aria-pressed={webcodecsExportEnabled}
+                className={`w-10 h-5 rounded-full transition-colors relative ${
+                  !webcodecsExportCapable
+                    ? 'bg-[#1A1A1A] border border-[#282828] opacity-40 cursor-not-allowed'
+                    : webcodecsExportEnabled
+                      ? 'bg-[#F27D26]'
+                      : 'bg-[#1A1A1A] border border-[#282828]'
+                }`}
+              >
+                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${webcodecsExportEnabled && webcodecsExportCapable ? 'translate-x-5' : ''}`} />
+              </button>
+            </label>
+            {!webcodecsExportCapable && (
+              <p className="text-[8px] leading-snug text-gray-600">
+                Not available on this device — requires WebCodecs, WebGL2, and module worker support.
               </p>
             )}
           </div>

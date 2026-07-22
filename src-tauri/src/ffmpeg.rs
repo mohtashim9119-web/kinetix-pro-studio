@@ -123,12 +123,141 @@ pub fn ffmpeg_write_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), Str
     }
 }
 
+/// Append-binary variant of `ffmpeg_write_file_raw`, for the WebCodecs export
+/// worker's streamed annexb chunk output (docs/webcodecs-export-plan.md §6).
+///
+/// Same header extraction + `validate_path` + `session_dir` pattern as
+/// `ffmpeg_write_file_raw`; the only difference is `OpenOptions::append(true)`
+/// instead of a truncating `fs::write`. `create(true)` means the first append
+/// for a given path creates the file; every subsequent append for that path
+/// extends it — exactly the semantics a per-run `run_K.h264` stream needs as
+/// `VideoEncoder` chunks arrive one at a time.
+#[tauri::command]
+pub fn ffmpeg_append_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+    use std::io::Write;
+
+    let headers = request.headers();
+    let session_id = headers
+        .get("session-id")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "append_file_raw: missing or invalid 'session-id' header".to_string())?;
+    let path = headers
+        .get("path")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "append_file_raw: missing or invalid 'path' header".to_string())?;
+
+    validate_path(path)?;
+    let full = session_dir(session_id)?.join(path);
+
+    match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => {
+            let mut file = fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&full)
+                .map_err(|e| format!("append_file_raw({}): open: {}", path, e))?;
+            file.write_all(data)
+                .map_err(|e| format!("append_file_raw({}): write: {}", path, e))
+        }
+        tauri::ipc::InvokeBody::Json(_) => {
+            Err("append_file_raw: expected a raw byte body, got JSON".to_string())
+        }
+    }
+}
+
 /// Reads <session_dir>/<path> and returns its bytes.
 #[tauri::command]
 pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, String> {
     validate_path(&path)?;
     let full = session_dir(&session_id)?.join(&path);
     fs::read(&full).map_err(|e| format!("read_file({}): {}", path, e))
+}
+
+/// Counts H.264 Annex B coded-picture NAL units (type 1 = non-IDR slice, type 5
+/// = IDR slice) in <session_dir>/<path>, without ever sending the file's bytes
+/// to the renderer.
+///
+/// Replaces the WebCodecs export orchestrator's previous frame-count guard
+/// (`exportPipelineWebCodecs.ts`'s `ffmpeg.readFile` + JS `countAnnexbFrames`
+/// scan), which cost ~5s per export pulling the whole concatenated annexb
+/// file's bytes across IPC just to count frames. This command reads the file
+/// in bounded 64 KB chunks — never the whole file at once — and performs the
+/// identical left-to-right Annex-B start-code scan the JS version used, so the
+/// count matches it exactly.
+///
+/// Boundary handling: a start code (`00 00 01`) or its following NAL-type
+/// header byte can straddle a 64 KB chunk boundary. Each iteration only
+/// resolves positions where the header byte is definitely inside the current
+/// window (`i + 3 < len`); anything closer to the end (at most 3 bytes) is
+/// carried into the next chunk instead of guessed at. The final leftover
+/// (after EOF) is scanned with the exact bounds semantics of the original
+/// whole-file scan — a header byte beyond the true end of file is never
+/// counted, matching `bytes[headerIdx] ... if (headerIdx < n)` in the JS
+/// reference implementation.
+#[tauri::command]
+pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<u64, String> {
+    use std::io::Read;
+
+    validate_path(&path)?;
+    let full = session_dir(&session_id)?.join(&path);
+    let mut file = fs::File::open(&full)
+        .map_err(|e| format!("count_annexb_frames({}): open: {}", path, e))?;
+
+    const CHUNK_SIZE: usize = 64 * 1024;
+    let mut read_buf = vec![0u8; CHUNK_SIZE];
+    let mut leftover: Vec<u8> = Vec::with_capacity(4);
+    let mut count: u64 = 0;
+
+    loop {
+        let n = file
+            .read(&mut read_buf)
+            .map_err(|e| format!("count_annexb_frames({}): read: {}", path, e))?;
+        if n == 0 {
+            break;
+        }
+
+        // Combine any carried-over tail bytes from the previous chunk with
+        // this chunk's new bytes so a start code (or its header byte) that
+        // straddles a chunk boundary is never missed.
+        let mut window = std::mem::take(&mut leftover);
+        window.extend_from_slice(&read_buf[..n]);
+
+        let len = window.len();
+        let mut i = 0usize;
+        while i + 3 < len {
+            if window[i] == 0 && window[i + 1] == 0 && window[i + 2] == 1 {
+                let nal_type = window[i + 3] & 0x1f;
+                if nal_type == 1 || nal_type == 5 {
+                    count += 1;
+                }
+                i += 3;
+            } else {
+                i += 1;
+            }
+        }
+        leftover = window[i..].to_vec();
+    }
+
+    // Final pass over whatever remains (at most 3 bytes) using the true-EOF
+    // bounds semantics described above.
+    let n = leftover.len();
+    let mut i = 0usize;
+    while i + 2 < n {
+        if leftover[i] == 0 && leftover[i + 1] == 0 && leftover[i + 2] == 1 {
+            let header_idx = i + 3;
+            if header_idx < n {
+                let nal_type = leftover[header_idx] & 0x1f;
+                if nal_type == 1 || nal_type == 5 {
+                    count += 1;
+                }
+            }
+            i = header_idx;
+        } else {
+            i += 1;
+        }
+    }
+
+    Ok(count)
 }
 
 /// Deletes <session_dir>/<path>. Missing file is treated as success.

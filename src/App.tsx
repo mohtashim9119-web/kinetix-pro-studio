@@ -3145,6 +3145,13 @@ export default function App() {
                     <p className="text-[10px] text-white font-bold">{exportFps} Constant</p>
                   </div>
                 </div>
+
+                <button
+                  onClick={cancelExport}
+                  className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
+                >
+                  Cancel Export
+                </button>
               </div>
             )}
           </motion.div>

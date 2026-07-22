@@ -1,0 +1,43 @@
+<!--
+  THROWAWAY verification spike — WebCodecs+WebGL2 export worker, Step 2
+  (docs/webcodecs-export-plan.md). Not linked from the real app. Loaded
+  directly against the Vite dev server (no devUrl repoint needed — Step 0
+  already established Chromium as a valid proxy for this plumbing). Delete
+  this file + src/dev/webcodecsStep2Spike/ once Step 2 is reviewed.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WebCodecs Export Worker — Step 2 Spike (throwaway)</title>
+    <style>
+      body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+      #log { white-space: pre-wrap; background: #000; padding: 8px; max-height: 60vh; overflow-y: auto; font-size: 12px; }
+      h1 { font-size: 15px; }
+      .canvases { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
+      .canvases figure { margin: 0; }
+      .canvases figcaption { font-size: 11px; margin-bottom: 4px; }
+      canvas { border: 1px solid #444; background: #222; max-width: 320px; }
+    </style>
+  </head>
+  <body>
+    <h1>WebCodecs Export Worker — Step 2 Spike: decode -&gt; composite -&gt; transfer (throwaway, not the real app)</h1>
+    <p><button id="rerun">Re-run</button></p>
+    <div class="canvases">
+      <figure>
+        <figcaption>worker output (neutral grade, frame 2)</figcaption>
+        <canvas id="worker-canvas"></canvas>
+      </figure>
+      <figure>
+        <figcaption>legacy frameRenderer reference (same time)</figcaption>
+        <canvas id="reference-canvas"></canvas>
+      </figure>
+      <figure>
+        <figcaption>worker output (brightness +0.8 grade, frame 2)</figcaption>
+        <canvas id="graded-canvas"></canvas>
+      </figure>
+    </div>
+    <pre id="log">(starting...)</pre>
+    <script type="module" src="/src/dev/webcodecsStep2Spike/main.ts"></script>
+  </body>
+</html>

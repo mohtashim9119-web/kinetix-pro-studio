@@ -71,6 +71,10 @@ src/
                      #   real persisted project, clobbering the just-restored sliderT back to 0.5 on
                      #   every reload instead of only on a genuine user-initiated switch (D15 fix,
                      #   2026-07-20).
+                     #   A "Cancel Export" button renders in the export progress panel alongside
+                     #   the resolution/fps readout, wired to useExport.ts's cancelExport — no
+                     #   local state, purely additive (docs/history.md -> "WebCodecs + WebGL2
+                     #   Worker Export — Implementation Record").
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
                      #   SegmentGrade { brightness, contrast, saturation, temperature } — each
                      #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
@@ -152,6 +156,17 @@ src/
                      #   catch-and-warn like destroy(), must run BEFORE destroy() so the sidecar isn't
                      #   left writing into a session dir about to be deleted. Exposed to useExport.ts
                      #   via ffmpegBackend.ts's TauriBackend.cancel.
+                     #   appendFileRaw(path, data) — WebCodecs export path only: same raw-body/
+                     #   header transport as writeFileRaw, but invokes ffmpeg_append_file_raw
+                     #   (OpenOptions::append, not truncating) so the export worker's streamed
+                     #   EncodedVideoChunk bytes can land in one growing per-run .h264 file, one
+                     #   append per chunk, caller-ordered.
+                     #   countAnnexbFrames(path) — invokes ffmpeg_count_annexb_frames, a native
+                     #   Rust NAL scanner that counts H.264 Annex B coded-picture units (type 1/5)
+                     #   entirely on the Rust side (bounded 64 KB chunks, file bytes never cross
+                     #   into the renderer). Backs exportPipelineWebCodecs.ts's post-concat
+                     #   frame-count guard; replaced an earlier JS scan that cost ~5s per export
+                     #   pulling the whole concatenated annexb file across IPC just to count frames.
     audioFormats.ts  # AUDIO_EXTENSIONS + isAudioFile(file) — voiceover-slot classifier (broad
                      #   extension list + audio/* MIME fallback). DropZonePanel.addFiles uses it;
                      #   files dropped ON the Voiceover slot that don't classify raise a slot error
@@ -228,6 +243,121 @@ src/
                      #   used INTERNALLY for bounded per-segment reads (segmentEncoder.ts, untouched).
                      #   Routes each segment through plainSegment.ts's predicates first; plain
                      #   segments bypass frameRenderer.ts entirely (Tier 1 fast path).
+    webcodecsExport/ # WebCodecs+WebGL2 worker export path (docs/webcodecs-export-plan.md;
+                     #   implementation record: docs/history.md -> "WebCodecs + WebGL2 Worker
+                     #   Export — Implementation Record"). Main-thread orchestrator + worker-side
+                     #   decode/composite/encode pipeline — an ADDITIVE sibling of the legacy
+                     #   segmentEncoder.ts/exportPipeline.ts path above, gated by useExport.ts's
+                     #   isWebCodecsExportGateOpen() (capability probe + persisted toggle,
+                     #   defaults ON on every platform), NOT a replacement — the legacy path is
+                     #   untouched and remains the fallback when the gate is closed.
+      exportWorker.ts # Worker entry point — one GL-compositable RUN (a maximal contiguous span
+                     #   of GL-eligible segments) per 'init' message: sequential decode
+                     #   (sequentialDecode.ts) -> composite (GlCompositor/compositeParams.ts,
+                     #   UNCHANGED — the real production preview classes, not a reimplementation)
+                     #   -> text (textRenderer.ts) -> VideoEncoder (avc:{format:'annexb'},
+                     #   backpressure-paced via encodeQueueSize/dequeue) -> stream each
+                     #   EncodedVideoChunk's bytes to the main thread (zero-copy transfer) for
+                     #   append-to-disk. Worker-safe: no React/DOM/window anywhere in its import
+                     #   graph (traced import-by-import, see the file's own header).
+      exportPipelineWebCodecs.ts # Main-thread orchestrator — ExportResult-compatible sibling of
+                     #   ../exportPipeline.ts (never throws, same typed-error contract). Routes
+                     #   every segment to a tier (Tier 1 plain video/image via ../plainSegment.ts
+                     #   UNCHANGED, Tier GL via ./glCompositable.ts NEW, Tier C canvas fallback
+                     #   via ../segmentEncoder.ts UNCHANGED), splits the routed timeline into
+                     #   pieces (maximal contiguous GL runs — one worker call each, so a real
+                     #   transition between two GL segments still renders as one continuous
+                     #   encode; one piece PER SEGMENT for Tier 1/C, since both underlying
+                     #   encoders are inherently single-segment), encodes each piece in order
+                     #   (Tier 1/C pieces remuxed MP4->annexb via -bsf:v h264_mp4toannexb, GL
+                     #   pieces streamed straight from the worker), concatenates every piece's
+                     #   annexb in timeline order (ffmpeg concat protocol) -> video_all.h264,
+                     #   verifies its actual coded-frame count (countAnnexbFrames, backed by the
+                     #   Rust NAL scanner) against the summed expected count per piece — a typed
+                     #   'concat' error, never a silently short/corrupt export, on mismatch — then
+                     #   ./muxOnly.ts -> export_final.mp4. groupConnectedComponents (a tiny
+                     #   Union-Find over segment array indices) closes a gap the plan's own
+                     #   per-segment routing predicate alone can't: two segments individually
+                     #   eligible for different tiers but joined by a real, non-zero-duration
+                     #   GL-slug transition are unioned into one component, and the WHOLE
+                     #   component downgrades to Tier C if ANY member is disqualified — otherwise
+                     #   the transition could be silently dropped (if the GL run excluded its
+                     #   partner) or double-rendered (if both sides independently tried to render
+                     #   their own half). cancelExportWebCodecs() posts 'cancel' to the worker +
+                     #   terminates it, then kills+destroys the ffmpeg session the worker was
+                     #   streaming into — useExport.ts's cancelExport picks this sequence over the
+                     #   legacy backend.cancel() via an activePathRef set fresh on every run.
+      glCompositable.ts # isGlCompositableSegment(segment, neighbors) — conservative routing
+                     #   predicate, sibling of ../plainSegment.ts, same philosophy: anything not
+                     #   certain to be GL-expressible routes to the proven canvas path (Tier C).
+                     #   A segment is GL-compositable only when its effective animation resolves
+                     #   to zoom-in/zoom-out/none, it carries no color filter (segment/project
+                     #   overlayFilter — the 24-filter CSS system), BOTH its transition edges
+                     #   resolve to a GL slug (GL_TRANSITION_SLUGS) / hard-cut / zero-duration
+                     #   no-op, and it resolves to a real video/image asset (exportWorker.ts has
+                     #   no code path for a no-asset/audio-only segment — routing one into a GL
+                     #   run would silently shorten that run's frame count). Text is deliberately
+                     #   NOT checked here — textRenderer.ts renders all of it regardless of which
+                     #   tier a segment's media/transition compositing lands in. Pure — no I/O,
+                     #   DOM, or React — evaluated on the main thread by the orchestrator.
+      sequentialDecode.ts # decodeSegmentFrames() — one dedicated VideoDecoder per call, no
+                     #   pooling, no session/window concept — walks a GL run's source range
+                     #   exactly once, start to end. Deliberately NOT a retrofit of
+                     #   ../videoDecoderPool.ts (that module's windowed decode-ahead/LRU/handle-
+                     #   reuse machinery exists for a scrubbable, randomly-seekable PREVIEW
+                     #   timeline shared across many segments — export has none of those
+                     #   requirements). Reuses getOrCreateDemux (../videoDemuxer.ts) for the chunk
+                     #   list/decoder config and findChunkRange (../videoDecoderPool.ts) for
+                     #   keyframe-backed range selection, both pure with respect to this file — no
+                     #   shared mutable state crosses the boundary. DECODE_AHEAD_CAP=8 bounds
+                     #   in-flight undelivered VideoFrames so decode can't race ahead of GL
+                     #   upload+encode and accumulate unbounded live-frame GPU/CPU buffers.
+                     #   Worker-safe (no DOM/React/window — only WebCodecs globals, identical on
+                     #   self in a worker and window on the main thread).
+      textRenderer.ts # GLTextRenderer — parity port of ../frameRenderer.ts's caption/overlay/
+                     #   heading wrap/sizing/positioning math (byte-for-byte the same formulas,
+                     #   read frameRenderer.ts end-to-end before touching this file) onto a
+                     #   Canvas2D "atlas" (OffscreenCanvas, one per unique text config, bounded
+                     #   LRU-cached — verified on the 500-segment fixture, Ctrl/Cmd+Shift+D dev
+                     #   panel) that is then GPU-composited as an alpha-blended textured quad,
+                     #   drawn AFTER GlCompositor's grade pass, instead of drawing straight into
+                     #   the frame's own 2D context. The Path B heading's atlas is the one
+                     #   exception — frame-sized, not bounding-box-sized, because its 90%-of-
+                     #   frame wrap width and vertical centering are computed against the full
+                     #   frame (matching drawHeadingLayerOverlay). Text is static — export has no
+                     #   text animation today (TEXT_ANIMATIONS is preview-DOM-only) — so this is
+                     #   parity, not a scope gap. Worker-safe (OffscreenCanvas + self.fonts, both
+                     #   confirmed available in the real WKWebView worker by Step 0).
+      fontResolver.ts # resolveFontBytes(usedFamilies) — parses the SAME Google Fonts CSS
+                     #   @import src/index.css:1 loads into document.fonts (byte-identical URL,
+                     #   fetched here instead), then fetches the actual font BYTES on the MAIN
+                     #   THREAD and passes them into the worker as FontConfig.bytes. The worker
+                     #   cannot build its own FontFace(url) — confirmed empirically to fail with a
+                     #   NetworkError against fonts.gstatic.com from inside a real WKWebView
+                     #   worker (CSP/network restriction); DO NOT revert to a URL-based FontFace
+                     #   construction inside exportWorker.ts/textRenderer.ts. Non-fatal on
+                     #   failure — a family that fails to parse/fetch falls back to a system font,
+                     #   matching the preview path's own ensureFont fallback behavior.
+      muxOnly.ts     # Two-step mux (docs/webcodecs-export-plan.md §3.5/§7.2), separately callable/
+                     #   testable rather than inlined into exportPipelineWebCodecs.ts. Step 1
+                     #   (buildVideoRemuxArgs): remuxes the raw annexb stream to MP4 using -r
+                     #   <fps>, NOT the plan's originally-specified -framerate — -framerate only
+                     #   affects ffmpeg -i's DISPLAYED r_frame_rate, not the per-packet duration
+                     #   the mp4 muxer writes for PTS-less annexb packets; reproduced against the
+                     #   bundled ffmpeg binary, a real VideoToolbox-encoded 300-frame/30fps stream
+                     #   muxed with -framerate produced a 1.67s/179.97fps file, wrong by exactly
+                     #   6x, while -r 30 produced the correct 10.00s/30fps file. Step 2
+                     #   (buildAudioMuxArgs): muxes audio in a SEPARATE ffmpeg invocation from the
+                     #   -r remux — combining -shortest with a still-PTS-less -c:v copy video
+                     #   stream in ONE command silently drops audio entirely (reproduced: output
+                     #   file size byte-identical with vs. without the audio input, despite
+                     #   ffmpeg's own log showing the AAC encoder ran). Both steps tag
+                     #   -colorspace/-color_primaries/-color_trc bt709 at mux time (Step 6 color-
+                     #   space fix) — VideoFrame/VideoEncoder expose no colorSpace API for a
+                     #   canvas-source frame (confirmed against MDN + a real TS overload-rejection
+                     #   error), so the tag has to land here, mirroring segmentEncoder.ts's own
+                     #   libx264 bt709 tagging on the legacy path; without it, preview-vs-export
+                     #   color match was measured at 0.2%.
     lookPresetService.ts # Combined-look effect presets (Effects Tab Rebuild Step 7): localStorage
                      #   key kinetix:lookPresets:v1, global across projects, cap MAX_LOOK_PRESETS=20.
                      #   loadLookPresets/saveLookPreset/deleteLookPreset. saveLookPreset persists the
@@ -250,7 +380,28 @@ src/
                      #   animations, and color grading; isWebGL2Supported() survives only as a
                      #   diagnostic (drives a visible error surface on an unsupported runtime), not a
                      #   router to a second implementation.
-      glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing.
+      glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing (preview,
+                     #   on-screen canvas — untouched by the addition below).
+                     #   acquireOffscreenGlContext(canvas, options) (WebCodecs export path,
+                     #   docs/webcodecs-export-plan.md §4.1/§6) — additive sibling for the export
+                     #   worker's OffscreenCanvas, `desynchronized: true` (measured ~12% speedup,
+                     #   Step 8). Deliberately a SEPARATE function, not a widened
+                     #   acquireGlContext: OffscreenCanvas fires the short-named
+                     #   contextlost/contextrestored events, not the on-screen canvas's
+                     #   webglcontextlost/webglcontextrestored — a signature-widening would wire
+                     #   listeners that never fire. Its contextlost listener never calls
+                     #   event.preventDefault(), which per spec GUARANTEES the browser never
+                     #   fires contextrestored for that context — a hard fail by construction
+                     #   (export worker context loss is a hard fail, never a silent
+                     #   restore-and-continue), not a flag callers have to remember to check.
+      uvRect.ts      # computeObjectCoverUvRect / computeObjectContainUvRect — moved verbatim out
+                     #   of useGlPreview.ts (docs/webcodecs-export-plan.md §4.5) so the WebCodecs
+                     #   export worker (no DOM, cannot import a React hook module) can share the
+                     #   same UV-fit math as the preview path. useGlPreview.ts re-exports both
+                     #   names from this file so its existing public surface/importers (incl.
+                     #   useGlPreview.test.ts) are unaffected. Export uses COVER (matching legacy
+                     #   export's drawImageCover), not the preview path's CONTAIN (D11) — a
+                     #   deliberate, explicit choice (plan §4.5), not an oversight.
       shaders.ts     # GLSL ES 3.0 sources (blit, cross-dissolve, dip, light-leak, zoom, grade) +
                      #   u_texRectA/B UV-fit uniforms — BLIT (the only shader ever given a
                      #   non-identity u_texRectA) now does object-CONTAIN, not cover (D11 fix,
@@ -305,6 +456,11 @@ src/
                              #   fullscreen transitions (fixes a stretched preview when entering
                              #   fullscreen while paused — tick-driven resize logic otherwise never
                              #   re-ran until the next currentTime change).
+                             #   computeObjectCoverUvRect/computeObjectContainUvRect no longer defined
+                             #   here — moved verbatim to services/gl/uvRect.ts (docs/webcodecs-export-plan.md
+                             #   §4.5, so the WebCodecs export worker can import the same UV-fit math
+                             #   without pulling in a React hook module) and re-exported from this file
+                             #   so its public surface (and useGlPreview.test.ts) is unchanged.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
     useExport.ts             # Export orchestration: Tauri-only (Phase 6.4+). Creates TauriFfmpeg session,
                              #   pick_save_path dialog runs BEFORE render; calls exportProject(), then on
@@ -322,6 +478,25 @@ src/
                              #   teardown(), so the in-flight ffmpeg sidecar is killed before its session
                              #   temp dir is deleted, instead of running to completion/error against an
                              #   already-gone directory.
+                             #   WebCodecs export gate (docs/webcodecs-export-plan.md §4.4/§6; full
+                             #   record: docs/history.md -> "WebCodecs + WebGL2 Worker Export —
+                             #   Implementation Record"). isWebCodecsExportCapable() — memoized
+                             #   probe (VideoEncoder/VideoDecoder/EncodedVideoChunk + isWebGL2Supported()
+                             #   + a module-Worker construction probe). isWebCodecsExportToggleOn()/
+                             #   setWebCodecsExportToggle() — persisted user choice in uiStateStore
+                             #   under 'webcodecsExportEnabled', DEFAULTS ON for any user who has never
+                             #   touched it (macOS Intel verified; arm64/Windows unverified but
+                             #   accepted risk — Step 9 owed). isWebCodecsExportGateOpen() — capability
+                             #   AND toggle both required; runExport decides fresh every run and routes
+                             #   to exportProjectWebCodecs (services/webcodecsExport/
+                             #   exportPipelineWebCodecs.ts) instead of the legacy exportProject when
+                             #   open — byte-identical to pre-gate behavior when closed (same args,
+                             #   same onProgress shape). activePathRef records which path the current/
+                             #   most-recent run used so cancelExport can pick the matching cancel
+                             #   sequence: cancelExportWebCodecs() (posts 'cancel' to the worker +
+                             #   terminates it, then kills+destroys the ffmpeg session) for the
+                             #   WebCodecs path, vs. the pre-existing backend.cancel() for legacy —
+                             #   teardown() runs after either, idempotently.
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
@@ -340,6 +515,14 @@ src/
                      #   Project" reset) now live, moved inline during the pre-WebGL2 layout
                      #   redesign (SettingsPanel.tsx tombstoned, see docs/history.md). Also mounts
                      #   EffectsPanel.tsx and owns lookPresetService persistence.
+                     #   The Effects tab's "Export Engine" section (additive, docs/webcodecs-export-plan.md
+                     #   §6) holds the WebCodecs export toggle — a switch mirroring
+                     #   useExport.ts's isWebCodecsExportToggleOn()/setWebCodecsExportToggle()
+                     #   persisted value, disabled (with an explanatory line) when
+                     #   isWebCodecsExportCapable() is false. Local state only mirrors the
+                     #   persisted value for immediate re-render; useExport.ts reads the
+                     #   persisted value fresh at the top of every export run, so no prop
+                     #   threading through App.tsx is needed for a toggle flip to take effect.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
                      #   selected/all, randomize-from-checked-pool, combined-look presets section,
                      #   GRADE section).
@@ -477,22 +660,30 @@ src-tauri/
                      #   toggleNativeFullscreen and restoreWebViewFocus need them).
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (16 total: 13 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here). Also
+                     #   (18 total: 15 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here). Also
                      #   `.manage(ffmpeg::FfmpegProcessState::default())` (D13 fix, 2026-07-20) — shared
                      #   Mutex<HashMap<session_id, CommandChild>> app state ffmpeg_exec/ffmpeg_kill_session
                      #   use to track/kill the in-flight sidecar.
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
-    ffmpeg.rs        # 13 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
+    ffmpeg.rs        # 15 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
                      #   no base64 — added 2026-07-09, session id + path travel as request headers),
-                     #   read_file, delete_file, exec (sidecar), kill_session (new, D13 fix, 2026-07-20 —
+                     #   append_file_raw (WebCodecs export path, docs/webcodecs-export-plan.md §6 —
+                     #   OpenOptions::append(true).create(true) instead of write_file_raw's truncating
+                     #   fs::write, so the export worker's streamed annexb chunks land in one growing
+                     #   per-run file), read_file, count_annexb_frames (WebCodecs export path — counts
+                     #   H.264 Annex B coded-picture NAL units, type 1/5, in bounded 64 KB chunks entirely
+                     #   on the Rust side; backs exportPipelineWebCodecs.ts's post-concat frame-count
+                     #   guard, replacing a JS readFile+scan that cost ~5s per export moving the whole
+                     #   file's bytes over IPC just to count frames), delete_file, exec (sidecar),
+                     #   kill_session (new, D13 fix, 2026-07-20 —
                      #   see below), destroy_session, pick_save_path,
                      #   save_session_file (native fs::copy of a finished
                      #   session file to a user path — no bytes through the renderer; added 2026-07-14
                      #   to fix the large-export STATUS_BREAKPOINT OOM crash), probe_audio_duration,
                      #   probe_video_fps, reveal_in_finder.
                      #   Session-scoped temp dirs ($TMPDIR/kinetix-export-<uuid>/); path traversal
-                     #   validation (write_file_raw validates the header-supplied path the same way
-                     #   write_file does).
+                     #   validation (write_file_raw/append_file_raw both validate the header-supplied
+                     #   path the same way write_file does).
                      #   probe_audio_duration: runs `ffmpeg -i <file>` (no ffprobe binary bundled),
                      #   parses `Duration:` from stderr — replaces the WebView <audio> duration probe
                      #   (codec-dependent, silent 60s fallback); throws on failure, no fake duration.
@@ -539,7 +730,7 @@ project: Project {
 
 Playback uses a ~16ms requestAnimationFrame loop when a voiceover is loaded; `currentSegment` is derived from `currentTime` via `useMemo`.
 
-Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3.
+Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3. As of 2026-07-22, export runs through one of two gated paths decided fresh on every run by `useExport.ts`'s `isWebCodecsExportGateOpen()` — the new WebCodecs+WebGL2 worker path (default ON) or the legacy canvas/ffmpeg path (fallback) — see the **WebCodecs + WebGL2 Worker Export Path** subsection below.
 
 ### Persistence Model
 
@@ -601,9 +792,72 @@ App.tsx handleExport()  [via useExport hook]
 - `ExportResult = { ok: true; outputFile: string } | { ok: false; error: ExportError }` — `exportProject` never throws; all failures are typed. `outputFile` is the session-relative name of the final MP4 (left in the session dir), NOT its bytes — the native save path copies it to disk without pulling it into the renderer (2026-07-14 OOM-crash fix).
 - `ExportErrorKind`: `ffmpeg_load | encode | concat | mux | asset_missing | unknown`.
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
-- `FrameGlobalConfig` — carries `overlayConfig`, `hideAllText`, `globalOverlayFilter` into the renderer.
+- `FrameGlobalConfig` (`frameRenderer.ts:8-15`) — carries `overlayConfig`, `globalOverlayFilter`, `globalTextLayers`, and `headings` into the renderer. (Corrected 2026-07-22: an earlier revision of this note listed a `hideAllText` field that has never existed on this interface — read the type directly if this list ever needs re-verifying.)
 
-**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested. These figures predate the Tier 1 fast path (2026-07-02) and describe the full per-frame canvas pipeline — they still apply to composited segments, but plain segments (no caption/overlay/transition/filter/animation/speed change) now bypass this path entirely; measured 3m44s → 40s on a mixed 4-video/10-image project.
+**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested. These figures predate the Tier 1 fast path (2026-07-02) and describe the full per-frame canvas pipeline — they still apply to composited segments routed through this legacy path (or its Tier 1 fast path), but as of 2026-07-22 this is no longer the export default — see the WebCodecs export path below, now gated on by default. Plain segments (no caption/overlay/transition/filter/animation/speed change) bypass this legacy path's per-frame pipeline entirely regardless of which export path is active; measured 3m44s → 40s on a mixed 4-video/10-image project under the legacy path.
+
+### WebCodecs + WebGL2 Worker Export Path (default since 2026-07-22)
+
+**Additive sibling of the legacy pipeline above, not a replacement.** Gated by `useExport.ts`'s `isWebCodecsExportGateOpen()` — a runtime capability probe (`VideoEncoder`/`VideoDecoder`/`EncodedVideoChunk`, `isWebGL2Supported()`, module-Worker construction) AND a persisted user toggle (`DropZonePanel.tsx`'s Export Engine section), both required. **The toggle defaults ON for every platform** (a deliberate decision — see `docs/history.md` → "WebCodecs + WebGL2 Worker Export — Implementation Record"), so this is now the export path most users hit; when the gate is closed (unsupported runtime, or the user switches it off) the legacy pipeline above runs byte-identical to before the gate existed. Full architecture, invariants, and the step-by-step build record: `docs/webcodecs-export-plan.md` (live plan — Step 9, production-build verification, is still open) and `docs/history.md`'s implementation-record section (steps 1-8, done).
+
+Full chain, left to right:
+
+```
+useExport.ts runExport()  — isWebCodecsExportGateOpen() ? webcodecs : legacy
+  │
+  └─ exportPipelineWebCodecs.ts  exportProjectWebCodecs(project, tauriFfmpeg, options, onProgress)
+        │
+        ├── ROUTE every segment to a tier:
+        │     Tier 1 (plainSegment.ts, UNCHANGED)   — plain video/image, ffmpeg direct
+        │     Tier GL (glCompositable.ts, NEW)       — GL-expressible (4 transitions, 2 zooms,
+        │                                              grade, no color filter)
+        │     Tier C (segmentEncoder.ts, UNCHANGED)  — everything else (canvas fallback)
+        │     groupConnectedComponents unions segments joined by a real GL-slug transition so a
+        │     mixed-eligibility pair can't have its transition silently dropped or double-rendered.
+        │
+        ├── SPLIT into pieces: maximal contiguous Tier-GL runs (one worker call each — a real
+        │     transition between two GL segments still encodes as one continuous run); one piece
+        │     PER SEGMENT for Tier 1/C.
+        │
+        ├── for each Tier-GL piece:  →  exportWorker.ts (dedicated Worker, one 'init' per run)
+        │       ├─ DECODE    sequentialDecode.ts — one dedicated VideoDecoder per segment, walks
+        │       │             the run's source range once, DECODE_AHEAD_CAP=8
+        │       ├─ COMPOSITE compositeParams.ts + GlCompositor (BOTH UNCHANGED — the same classes
+        │       │             the WebGL2 preview uses) upload to an OffscreenCanvas GL context
+        │       │             (glContext.ts's acquireOffscreenGlContext, desynchronized:true)
+        │       ├─ TEXT      textRenderer.ts's GLTextRenderer — Canvas2D atlas → GPU quad, parity
+        │       │             port of frameRenderer.ts's caption/overlay/heading math
+        │       ├─ ENCODE    VideoEncoder, avc:{format:'annexb'}, backpressure-paced
+        │       └─ STREAM    each EncodedVideoChunk's bytes transferred (zero-copy) to the main
+        │                     thread, appended via TauriFfmpeg.appendFileRaw → IPC
+        │                     ffmpeg_append_file_raw → run_K.h264 in the session dir
+        │
+        ├── for each Tier 1/C piece: existing encoder (ffmpeg direct-trim / segmentEncoder.ts) →
+        │     remux MP4→annexb via `-bsf:v h264_mp4toannexb` (same annexb format as the GL pieces)
+        │
+        ├── CONCAT every piece's annexb, timeline order (ffmpeg concat protocol) → video_all.h264
+        │
+        ├── GUARD: TauriFfmpeg.countAnnexbFrames (IPC ffmpeg_count_annexb_frames, a native Rust
+        │     NAL scanner — bounded 64 KB chunks, file bytes never cross into the renderer) vs.
+        │     the summed expected frame count across all pieces → typed 'concat' ExportError on
+        │     mismatch, never a silently short/corrupt export
+        │
+        ├── MUX (muxOnly.ts): buildVideoRemuxArgs (-r <fps>, NOT -framerate) then, in a SEPARATE
+        │     ffmpeg invocation, buildAudioMuxArgs (never combine -shortest with a still-PTS-less
+        │     -c:v copy stream — silently drops audio) → export_final.mp4, both steps tagging
+        │     -colorspace/-color_primaries/-color_trc bt709 at mux time
+        │
+        └── same save path as legacy: TauriBackend.saveOutputToDisk → native save_session_file
+              copy → user's chosen path; bytes never enter the renderer either way.
+```
+
+**Cancel:** `useExport.ts` tracks which path the current/most-recent run used (`activePathRef`) and picks the matching cancel sequence — `cancelExportWebCodecs()` (posts `'cancel'` to the worker + terminates it, THEN kills+destroys the ffmpeg session the worker was streaming into) for this path, vs. the legacy `backend.cancel()` otherwise; `teardown()` runs after either, idempotently.
+
+**Key invariants:** annexb (not AVCC) is mandatory end-to-end — `avc:{format:'annexb'}` on the encoder config, verified by the frame-count guard; all timestamps are absolute (`Math.round(frameIndex·1e6/fps)`, not an accumulating per-frame delta, which drifts ~10µs/s at 30fps); the frame-count guard is a loud, typed failure, never a silent short export; the worker's encoder backpressure (`encodeQueueSize`/`dequeue`) and `sequentialDecode.ts`'s `DECODE_AHEAD_CAP=8` are what keep memory bounded on long exports (no chunk streaming would otherwise cap it); cancel must terminate the worker BEFORE killing the ffmpeg session, or the worker can still be mid-`appendFileRaw` against a session about to be destroyed.
+
+**What this does NOT change:** the legacy pipeline above (`exportPipeline.ts`/`segmentEncoder.ts`/`frameRenderer.ts`/`frameEncodeWorker.ts`) is untouched and is exactly what runs when the gate is closed; the WebGL2 **preview** path (`useGlPreview.ts`/`glCompositor.ts`/`compositeParams.ts`) is untouched except for the verbatim `uvRect.ts` extraction; sync engine, timeline/editing, and persistence are untouched.
+
+**Performance — honest numbers, not aspirational:** Step 8's synthetic effects-heavy benchmark measured 194s → 6.8s (~28×). Real projects measure roughly ~2.3× — the gap is GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView, which the synthetic benchmark's effects-heavy composition doesn't fully represent. `desynchronized: true` on the OffscreenCanvas GL context measured ~12% on top of that. Tier 1/C segments run at legacy speed (unchanged encoders). **Verified on macOS Intel x86_64 only** — macOS arm64 and Windows/WebView2 are UNVERIFIED (no hardware access during implementation), and `tauri build` (production bundling — Step 9) has not yet been run on any platform; the dev-server verification this record describes does not prove the worker's ES-module format loads correctly in a bundled production app. See `docs/history.md`'s implementation record for the full per-step verification detail and the cross-platform status table.
 
 ### Transition Handling
 
@@ -744,6 +998,9 @@ App.tsx                    — top-level state + orchestration only
 | Recreating functions inside render without `useCallback` | Causes spurious effect re-runs (see `togglePlay` keyboard listener bug) |
 | Filters in the `FILTERS` array without a `getFilterStyle` case | Shows in dropdown, applies nothing — either implement or remove |
 | Segment IDs that aren't globally unique | Timeline and React keys break on collision |
+| `-framerate` on an ffmpeg mux of a raw annexb stream | Only sets the demuxer's displayed `r_frame_rate` — the muxer writes wrong per-packet duration for PTS-less packets (measured 6x-wrong file); use `-r <fps>` instead (`muxOnly.ts`) |
+| `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
+| Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
 
 ---
 

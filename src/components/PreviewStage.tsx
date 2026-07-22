@@ -956,7 +956,6 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
       // ping-pong run can't tear down a cover armed for a newer segment.
       setCoverState(prev => {
         if (prev && prev.segmentId === segId) {
-          console.log(`//FFCACHE segment ${segId}: cover swapped -> live`);
           return null;
         }
         return prev;
@@ -966,7 +965,6 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     if (liveReady) {
       // //FFCACHE — live slot already holds the correct painted frame: show it
       // immediately, no cover needed. Clear any stale cover from a prior segment.
-      console.log(`//FFCACHE segment ${segId}: live-immediate (slot painted, readyState>=2, playing=${isPlaying})`);
       setCoverState(prev => (prev && prev.segmentId !== segId) ? null : prev);
       reveal();
     } else {
@@ -974,10 +972,6 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
       // cached first frame (or bg-black if the cache isn't ready — truthful,
       // never the wrong clip) until the live slot paints the correct frame.
       // Runs in the playing path too.
-      const cached = getFirstFrame(segId);
-      console.log(
-        `//FFCACHE segment ${segId}: painting ${cached ? 'cached-frame' : 'bg-black-fallback (cache not ready)'} while live slot decodes (playing=${isPlaying})`,
-      );
       setCoverState({ segmentId: segId });
       void waitForVideoFrame(activeEl).then(reveal);
     }

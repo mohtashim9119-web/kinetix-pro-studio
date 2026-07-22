@@ -1,6 +1,20 @@
 # WebCodecs Architecture Shift — Phased Migration Plan
 
 **Status:** The core **Phases 0–8** preview migration is **✅ COMPLETE** and archived in full to `docs/history.md` → *WebCodecs Preview Migration Phases 0–8 (Archived)*. This document now tracks only the **follow-on Preview/Export Unification effort (Phases A–C)**: **Quick wins ✅ complete**, **Phase A ✅ complete**, **Phase B ⚠️ BLOCKED-PENDING** (works when tested, but on an unresolved `VideoEncoder` hang-risk on this runtime), **Phase C ⬜ not started**. See the Architectural Context, the Follow-On Effort tracker, and Section 8 below.
+>
+> **Superseded, 2026-07-22 — read before treating Phase B as an open blocker.** Phase B as scoped
+> below (a single shared compositor + a main-thread `VideoEncoder`) was never built as such. A
+> related but architecturally distinct effort — the WebCodecs + WebGL2 **Worker** Export pipeline
+> (`docs/webcodecs-export-plan.md`; as-built record in `docs/history.md` → *WebCodecs + WebGL2
+> Worker Export — Implementation Record*) — shipped instead: it drives `VideoEncoder` from inside a
+> dedicated Worker against an `OffscreenCanvas`, reusing the same `GlCompositor`/`compositeParams.ts`
+> class the preview uses (instantiated separately for export, not literally shared live with
+> preview the way Phase B envisioned). Steps 1-8 of that work are DONE and verified on macOS Intel
+> x86_64, and — critically — **the `VideoEncoder` hang risk that blocks Phase B below was never
+> reproduced** in that real-WKWebView testing. Phase B's own scope (a literal one-instance shared
+> compositor, main-thread encoder) is not being pursued further; its goal is considered achieved by
+> the Worker-based path instead. Treat every "BLOCKED-PENDING" status for Phase B below as historical
+> — accurate as of when it was written, superseded by the above.
 
 **Branch:** `webcodecs-api` (off `main` @ `d8cc5db`). `main` is not touched until this effort is reviewed and merged.
 
@@ -663,7 +677,9 @@ investigation** — see the A3 entry above.
   separate future investigation.
 - **Phase B — ⚠️ BLOCKED-PENDING on this runtime: works when tested, but on an unresolved,
   unquantified hang-risk contradiction — not simply infeasible (B0 spike + B0 reconciliation both
-  complete, see ✅ COMPLETED above).**
+  complete, see ✅ COMPLETED above). Superseded 2026-07-22 — see the note at the top of this
+  document; the WebCodecs + WebGL2 Worker Export pipeline shipped in its place and never hit this
+  hang risk.**
   Originally scoped to migrate export onto WebCodecs `VideoEncoder` behind ONE shared compositor,
   retiring the per-frame HTML5-seek → PNG → IPC path. The B0 feasibility spike found real
   `VideoEncoder.encode()` non-functional on this project's real Tauri WKWebView (macOS 26.5.2): all
@@ -770,7 +786,11 @@ Phases A–C are additive to the shipped WebCodecs preview path; the legacy `<vi
 
 **⚠️ BLOCKED-PENDING on this runtime: works when tested, but on an unresolved, unquantified
 hang-risk contradiction — not simply infeasible (see the ✅ COMPLETED / ⬜ NOT STARTED tracker
-entries above for full evidence).** The B0 feasibility spike recorded real `VideoEncoder.encode()`
+entries above for full evidence). Superseded 2026-07-22 — see the note at the top of this document.
+The steps below were never built as scoped; the WebCodecs + WebGL2 Worker Export pipeline
+(`docs/webcodecs-export-plan.md`) achieves this phase's goal via a Worker + `OffscreenCanvas`
+instead of a main-thread encoder + a single literally-shared compositor instance, and its real
+testing never reproduced the hang risk this section is blocked on.** The B0 feasibility spike recorded real `VideoEncoder.encode()`
 hanging on this project's real Tauri WKWebView (macOS 26.5.2) across all 4 hardware/software ×
 avc/annexb configs — `isConfigSupported` reports `true`, but `flush()` never resolves and zero
 output chunks are ever emitted. This confirms and exceeds the risk already on record at

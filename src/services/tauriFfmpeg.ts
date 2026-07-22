@@ -141,6 +141,30 @@ export class TauriFfmpeg implements FfmpegLike {
     }
   }
 
+  /**
+   * Append-binary variant of `writeFileRaw` — sends `data` as the Tauri v2 raw
+   * invoke body to `ffmpeg_append_file_raw`, which opens the target file with
+   * `OpenOptions::append(true).create(true)` instead of truncating. Same
+   * session-id/path header transport as `writeFileRaw`; only the Rust-side
+   * open mode differs. Used by the WebCodecs export worker's orchestrator to
+   * stream `EncodedVideoChunk` bytes straight to a per-run `run_K.h264` file
+   * as they arrive — the caller is responsible for awaiting each call before
+   * issuing the next so appends land in chunk order (docs/webcodecs-export-plan.md §4.4).
+   */
+  async appendFileRaw(path: string, data: Uint8Array): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('ffmpeg_append_file_raw', data, {
+        headers: {
+          'session-id': this.#sessionId,
+          path,
+        },
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
   async exec(args: string[]): Promise<number> {
     this.#assertAlive();
     try {
@@ -162,6 +186,26 @@ export class TauriFfmpeg implements FfmpegLike {
         path,
       });
       return new Uint8Array(bytes);
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
+   * Counts H.264 Annex B coded-picture NAL units (type 1/5) in <path> via the
+   * native `ffmpeg_count_annexb_frames` command — the file is scanned in
+   * bounded 64 KB chunks entirely on the Rust side, so its bytes never cross
+   * into the renderer. Replaces the WebCodecs export orchestrator's old
+   * `readFile` + JS-scan frame-count guard, which cost ~5s per export moving
+   * the whole concatenated video file's bytes over IPC just to count frames.
+   */
+  async countAnnexbFrames(path: string): Promise<number> {
+    this.#assertAlive();
+    try {
+      return await invoke<number>('ffmpeg_count_annexb_frames', {
+        sessionId: this.#sessionId,
+        path,
+      });
     } catch (err) {
       throw new Error(typeof err === 'string' ? err : String(err));
     }
