@@ -295,9 +295,10 @@ src/
                      #   used INTERNALLY for bounded per-segment reads (segmentEncoder.ts, untouched).
                      #   Routes each segment through plainSegment.ts's predicates first; plain
                      #   segments bypass frameRenderer.ts entirely (Tier 1 fast path).
-    webcodecsExport/ # WebCodecs+WebGL2 worker export path (docs/webcodecs-export-plan.md;
-                     #   implementation record: docs/history.md -> "WebCodecs + WebGL2 Worker
-                     #   Export — Implementation Record"). Main-thread orchestrator + worker-side
+    webcodecsExport/ # WebCodecs+WebGL2 worker export path — the standalone design-plan doc was
+                     #   archived and deleted once Step 9 (production-build verification) closed
+                     #   it out (2026-07-22); full record: docs/history.md -> "WebCodecs + WebGL2
+                     #   Worker Export — Implementation Record"). Main-thread orchestrator + worker-side
                      #   decode/composite/encode pipeline — an ADDITIVE sibling of the legacy
                      #   segmentEncoder.ts/exportPipeline.ts path above, gated by useExport.ts's
                      #   isWebCodecsExportGateOpen() (capability probe + persisted toggle,
@@ -390,7 +391,7 @@ src/
                      #   construction inside exportWorker.ts/textRenderer.ts. Non-fatal on
                      #   failure — a family that fails to parse/fetch falls back to a system font,
                      #   matching the preview path's own ensureFont fallback behavior.
-      muxOnly.ts     # Two-step mux (docs/webcodecs-export-plan.md §3.5/§7.2), separately callable/
+      muxOnly.ts     # Two-step mux (design rationale: docs/history.md's implementation record), separately callable/
                      #   testable rather than inlined into exportPipelineWebCodecs.ts. Step 1
                      #   (buildVideoRemuxArgs): remuxes the raw annexb stream to MP4 using -r
                      #   <fps>, NOT the plan's originally-specified -framerate — -framerate only
@@ -435,7 +436,7 @@ src/
       glContext.ts   # isWebGL2Supported() + context acquisition/loss-restore plumbing (preview,
                      #   on-screen canvas — untouched by the addition below).
                      #   acquireOffscreenGlContext(canvas, options) (WebCodecs export path,
-                     #   docs/webcodecs-export-plan.md §4.1/§6) — additive sibling for the export
+                     #   see docs/history.md's implementation record) — additive sibling for the export
                      #   worker's OffscreenCanvas, `desynchronized: true` (measured ~12% speedup,
                      #   Step 8). Deliberately a SEPARATE function, not a widened
                      #   acquireGlContext: OffscreenCanvas fires the short-named
@@ -447,7 +448,7 @@ src/
                      #   (export worker context loss is a hard fail, never a silent
                      #   restore-and-continue), not a flag callers have to remember to check.
       uvRect.ts      # computeObjectCoverUvRect / computeObjectContainUvRect — moved verbatim out
-                     #   of useGlPreview.ts (docs/webcodecs-export-plan.md §4.5) so the WebCodecs
+                     #   of useGlPreview.ts (see docs/history.md's implementation record) so the WebCodecs
                      #   export worker (no DOM, cannot import a React hook module) can share the
                      #   same UV-fit math as the preview path. useGlPreview.ts re-exports both
                      #   names from this file so its existing public surface/importers (incl.
@@ -509,8 +510,8 @@ src/
                              #   fullscreen while paused — tick-driven resize logic otherwise never
                              #   re-ran until the next currentTime change).
                              #   computeObjectCoverUvRect/computeObjectContainUvRect no longer defined
-                             #   here — moved verbatim to services/gl/uvRect.ts (docs/webcodecs-export-plan.md
-                             #   §4.5, so the WebCodecs export worker can import the same UV-fit math
+                             #   here — moved verbatim to services/gl/uvRect.ts (see docs/history.md's
+                             #   implementation record — so the WebCodecs export worker can import the same UV-fit math
                              #   without pulling in a React hook module) and re-exported from this file
                              #   so its public surface (and useGlPreview.test.ts) is unchanged.
     usePersistProject.ts     # Debounced (500ms) project save; accepts enabled flag to gate hydration
@@ -530,15 +531,16 @@ src/
                              #   teardown(), so the in-flight ffmpeg sidecar is killed before its session
                              #   temp dir is deleted, instead of running to completion/error against an
                              #   already-gone directory.
-                             #   WebCodecs export gate (docs/webcodecs-export-plan.md §4.4/§6; full
+                             #   WebCodecs export gate (full
                              #   record: docs/history.md -> "WebCodecs + WebGL2 Worker Export —
                              #   Implementation Record"). isWebCodecsExportCapable() — memoized
                              #   probe (VideoEncoder/VideoDecoder/EncodedVideoChunk + isWebGL2Supported()
                              #   + a module-Worker construction probe). isWebCodecsExportToggleOn()/
                              #   setWebCodecsExportToggle() — persisted user choice in uiStateStore
                              #   under 'webcodecsExportEnabled', DEFAULTS ON for any user who has never
-                             #   touched it (macOS Intel verified; arm64/Windows unverified but
-                             #   accepted risk — Step 9 owed). isWebCodecsExportGateOpen() — capability
+                             #   touched it (macOS Intel verified, incl. production build per Step 9,
+                             #   2026-07-22; arm64/Windows unverified but accepted risk — cross-platform
+                             #   validation is the only remaining gap). isWebCodecsExportGateOpen() — capability
                              #   AND toggle both required; runExport decides fresh every run and routes
                              #   to exportProjectWebCodecs (services/webcodecsExport/
                              #   exportPipelineWebCodecs.ts) instead of the legacy exportProject when
@@ -575,7 +577,7 @@ src/
                      #   resolution/fps, JSON import/export, "New Project" reset) had lived inline
                      #   here since the pre-WebGL2 layout redesign (SettingsPanel.tsx tombstoned,
                      #   see docs/history.md), then the WebCodecs export toggle joined them
-                     #   (docs/webcodecs-export-plan.md §6) — but Project Settings + Aspect Ratio
+                     #   (see docs/history.md's implementation record) — but Project Settings + Aspect Ratio
                      #   Step 6 (2026-07-22) deleted all three sections (Export Quality, Export
                      #   Engine, Display/Text-Overlay-default) and their supporting local state/
                      #   props from this file entirely, relocating them into ProjectSettingsModal.tsx
@@ -798,8 +800,8 @@ src-tauri/
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
     ffmpeg.rs        # 15 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
                      #   no base64 — added 2026-07-09, session id + path travel as request headers),
-                     #   append_file_raw (WebCodecs export path, docs/webcodecs-export-plan.md §6 —
-                     #   OpenOptions::append(true).create(true) instead of write_file_raw's truncating
+                     #   append_file_raw (WebCodecs export path, see docs/history.md's implementation
+                     #   record — OpenOptions::append(true).create(true) instead of write_file_raw's truncating
                      #   fs::write, so the export worker's streamed annexb chunks land in one growing
                      #   per-run file), read_file, count_annexb_frames (WebCodecs export path — counts
                      #   H.264 Annex B coded-picture NAL units, type 1/5, in bounded 64 KB chunks entirely
@@ -938,7 +940,7 @@ App.tsx handleExport()  [via useExport hook]
 
 ### WebCodecs + WebGL2 Worker Export Path (default since 2026-07-22)
 
-**Additive sibling of the legacy pipeline above, not a replacement.** Gated by `useExport.ts`'s `isWebCodecsExportGateOpen()` — a runtime capability probe (`VideoEncoder`/`VideoDecoder`/`EncodedVideoChunk`, `isWebGL2Supported()`, module-Worker construction) AND a persisted user toggle (`ProjectSettingsModal.tsx`'s Export Engine section — relocated here from `DropZonePanel.tsx`'s Effects tab by Project Settings + Aspect Ratio Step 6, 2026-07-22; same persisted key, same gate logic, only the UI location moved), both required. **The toggle defaults ON for every platform** (a deliberate decision — see `docs/history.md` → "WebCodecs + WebGL2 Worker Export — Implementation Record"), so this is now the export path most users hit; when the gate is closed (unsupported runtime, or the user switches it off) the legacy pipeline above runs byte-identical to before the gate existed. Full architecture, invariants, and the step-by-step build record: `docs/webcodecs-export-plan.md` (live plan — Step 9, production-build verification, is still open) and `docs/history.md`'s implementation-record section (steps 1-8, done).
+**Additive sibling of the legacy pipeline above, not a replacement.** Gated by `useExport.ts`'s `isWebCodecsExportGateOpen()` — a runtime capability probe (`VideoEncoder`/`VideoDecoder`/`EncodedVideoChunk`, `isWebGL2Supported()`, module-Worker construction) AND a persisted user toggle (`ProjectSettingsModal.tsx`'s Export Engine section — relocated here from `DropZonePanel.tsx`'s Effects tab by Project Settings + Aspect Ratio Step 6, 2026-07-22; same persisted key, same gate logic, only the UI location moved), both required. **The toggle defaults ON for every platform** (a deliberate decision — see `docs/history.md` → "WebCodecs + WebGL2 Worker Export — Implementation Record"), so this is now the export path most users hit; when the gate is closed (unsupported runtime, or the user switches it off) the legacy pipeline above runs byte-identical to before the gate existed. Full architecture, invariants, and the step-by-step build record now live entirely in `docs/history.md`'s implementation-record section (steps 1-9, all done — the standalone plan doc was archived and deleted once Step 9's production-build verification closed it out, 2026-07-22).
 
 Full chain, left to right:
 
@@ -997,7 +999,7 @@ useExport.ts runExport()  — isWebCodecsExportGateOpen() ? webcodecs : legacy
 
 **What this does NOT change:** the legacy pipeline above (`exportPipeline.ts`/`segmentEncoder.ts`/`frameRenderer.ts`/`frameEncodeWorker.ts`) is untouched and is exactly what runs when the gate is closed; the WebGL2 **preview** path (`useGlPreview.ts`/`glCompositor.ts`/`compositeParams.ts`) is untouched except for the verbatim `uvRect.ts` extraction; sync engine, timeline/editing, and persistence are untouched.
 
-**Performance — honest numbers, not aspirational:** Step 8's synthetic effects-heavy benchmark measured 194s → 6.8s (~28×). Real projects measure roughly ~2.3× — the gap is GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView, which the synthetic benchmark's effects-heavy composition doesn't fully represent. `desynchronized: true` on the OffscreenCanvas GL context measured ~12% on top of that. Tier 1/C segments run at legacy speed (unchanged encoders). **Verified on macOS Intel x86_64 only** — macOS arm64 and Windows/WebView2 are UNVERIFIED (no hardware access during implementation), and `tauri build` (production bundling — Step 9) has not yet been run on any platform; the dev-server verification this record describes does not prove the worker's ES-module format loads correctly in a bundled production app. See `docs/history.md`'s implementation record for the full per-step verification detail and the cross-platform status table.
+**Performance — honest numbers, not aspirational:** Step 8's synthetic effects-heavy benchmark measured 194s → 6.8s (~28×). Real projects measure roughly ~2.3× — the gap is GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView, which the synthetic benchmark's effects-heavy composition doesn't fully represent. `desynchronized: true` on the OffscreenCanvas GL context measured ~12% on top of that. Tier 1/C segments run at legacy speed (unchanged encoders). **Verified on macOS Intel x86_64 only** — macOS arm64 and Windows/WebView2 remain UNVERIFIED (no hardware access during implementation). `tauri build` (production bundling — Step 9) was run and verified on macOS Intel x86_64 on 2026-07-22: the app builds, packages (`.app`/`.dmg`), and launches cleanly in release mode (window renders, project dashboard loads real data, clean quit) — proving the worker's ES-module format loads correctly in a bundled production app. A full in-app export-flow walkthrough (an actual WebCodecs export triggered from the packaged app) is a separate manual step the user performs, not yet completed. See `docs/history.md`'s implementation record for the full per-step verification detail and the cross-platform status table.
 
 ### Transition Handling
 
