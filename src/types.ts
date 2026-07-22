@@ -109,6 +109,16 @@ export enum AnimationType {
   SURGE = 'surge',
 }
 
+/** Project-level frame shape, locked at creation via NewProjectModal — never
+ *  editable after (not exposed in Project Settings). Pixel dimensions are
+ *  derived, never stored — see services/resolutionConfig.ts's lookup table. */
+export type AspectRatio = '16:9' | '9:16' | '1:1';
+
+/** Project-level resolution tier. Doubles as the export-quality tier
+ *  (services/resolutionConfig.ts); dimensions are derived per (AspectRatio,
+ *  ResolutionTier) via the same lookup table, never stored directly. */
+export type ResolutionTier = '720p' | '1080p';
+
 export interface Asset {
   id: string;
   name: string;
@@ -296,6 +306,17 @@ export interface Project {
   /** True only after the user has explicitly named the project via NewProjectModal.
    *  Unconfirmed projects (blank defaults) are never auto-saved to the registry. */
   confirmed?: boolean;
+  /** Locked at project creation via NewProjectModal — never editable after
+   *  (not exposed in Project Settings). Undefined on projects created before
+   *  this feature; treat as DEFAULT_ASPECT_RATIO ('16:9', services/resolutionConfig.ts) —
+   *  the only ratio the app has ever supported. */
+  aspectRatio?: AspectRatio;
+  /** The project's native resolution TIER — set at creation, editable later
+   *  in Project Settings. NOT pixel dimensions: width/height are derived from
+   *  (aspectRatio, resolutionTier) via services/resolutionConfig.ts's lookup
+   *  table. Undefined on pre-existing projects; treat as DEFAULT_RESOLUTION_TIER
+   *  ('1080p') — matches today's hardcoded exportResolution default. */
+  resolutionTier?: ResolutionTier;
 }
 
 export interface ProjectMeta {

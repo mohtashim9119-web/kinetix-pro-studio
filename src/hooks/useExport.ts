@@ -10,13 +10,19 @@ import {
   cancelExportWebCodecs,
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
-import { type Project } from '../types';
+import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
 import { isWebGL2Supported } from '../services/gl/glContext';
 import { readUiState, patchUiState } from '../services/uiStateStore';
+import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
 
-export type ExportResolution = '1080p' | '4k';
+/** Export quality tier — the same closed set as the project's own native
+ *  resolutionTier (services/resolutionConfig.ts); dimensions are always
+ *  derived from (project.aspectRatio, this tier), never stored directly.
+ *  Kept as a distinct exported name (rather than importing ResolutionTier
+ *  everywhere) so callers don't need to know the two concepts share a type. */
+export type ExportResolution = ResolutionTier;
 export type ExportFps = 24 | 30 | 60;
 export type { ExportError } from '../services/exportPipeline';
 
@@ -226,8 +232,10 @@ export function useExport(
     if (generationRef.current !== gen) return;
 
     const { resolution, fps, project: snap, savedPath } = snapshot;
-    const resWidth = resolution === '4k' ? 3840 : 1920;
-    const resHeight = resolution === '4k' ? 2160 : 1080;
+    const { width: resWidth, height: resHeight } = resolveDimensions(
+      snap.aspectRatio ?? DEFAULT_ASPECT_RATIO,
+      resolution,
+    );
 
     // Gate branch (plan §4.4): decided fresh per run, capability + toggle
     // both required. When closed, this is byte-identical to the pre-Step-7

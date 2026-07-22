@@ -48,6 +48,8 @@ import {
   AnimationType,
   TextOverlay,
   type SegmentGrade,
+  type AspectRatio,
+  type ResolutionTier,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
@@ -82,6 +84,7 @@ import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
 import { resolvePresetScaleRate } from './services/lookPresetService';
+import { aspectRatioToCss, resolveDimensions, DEFAULT_ASPECT_RATIO, DEFAULT_RESOLUTION_TIER } from './services/resolutionConfig';
 import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
@@ -99,6 +102,8 @@ import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
+import { ProjectSettingsModal } from './components/ProjectSettingsModal';
+import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
@@ -904,6 +909,8 @@ export default function App() {
   const [stockError, setStockError] = useState<string | null>(null);
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
+  const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
+  const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
@@ -1508,7 +1515,7 @@ export default function App() {
     };
   }, [project.script, project.assets, project.voiceoverId]);
 
-  /** '1080p' | '4k' */
+  /** '720p' | '1080p' */
   const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
   /** frames per second */
   const [exportFps, setExportFps] = useState<ExportFps>(30);
@@ -1525,6 +1532,21 @@ export default function App() {
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
+
+  // ExportSettingsModal's Continue commits exportResolution/exportFps via
+  // setState, then must call startExport — but startExport is a useCallback
+  // closed over the OLD exportResolution/exportFps until the next render, so
+  // calling it synchronously in the same handler would export with stale
+  // values. exportTriggerCount forces a render to land first; this effect
+  // fires only on that render (never on resolution/fps changes coming from
+  // elsewhere, e.g. the native-fps auto-match effect below) and reads the
+  // freshly-closed-over startExport from that same render.
+  const [exportTriggerCount, setExportTriggerCount] = useState(0);
+  useEffect(() => {
+    if (exportTriggerCount === 0) return;
+    startExport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTriggerCount]);
 
   // Exported-video judder audit — auto-suggest exportFps from staged video
   // assets' probed native frame rate when they all agree, instead of always
@@ -2011,6 +2033,17 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, project.segments, resizeSettleTick]);
 
+  // Project Settings Step 2 — the preview's native backing-buffer dimensions,
+  // derived from (project.aspectRatio, project.resolutionTier) via
+  // resolutionConfig.ts's lookup table. Threaded into PreviewStage, which
+  // forwards it to PreviewCanvas (Canvas2D path) and useGlPreview (GL path)
+  // so both size their canvas's backing buffer to the project's real
+  // resolution instead of the panel's measured client size.
+  const previewNativeDimensions = useMemo(
+    () => resolveDimensions(project.aspectRatio ?? DEFAULT_ASPECT_RATIO, project.resolutionTier ?? DEFAULT_RESOLUTION_TIER),
+    [project.aspectRatio, project.resolutionTier],
+  );
+
   // Grade bug audit Fix B — the segment EffectsPanel's GRADE sliders should
   // sync FROM: the single selected segment when exactly one is selected
   // (matches the Apply-to-selected mental model), else the playhead segment,
@@ -2336,7 +2369,7 @@ export default function App() {
     setShowNewProjectModal(true);
   };
 
-  const handleNewProjectConfirm = (name: string): void => {
+  const handleNewProjectConfirm = (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): void => {
     setShowNewProjectModal(false);
     // Discard any staging-time voiceover transcription left over from the
     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
@@ -2350,6 +2383,10 @@ export default function App() {
     // the dashboard next renders.
     const fresh = makeDefaultProject();
     fresh.name = name;
+    // Locked forever at creation (aspectRatio) / editable later in Project
+    // Settings (resolutionTier) — Project Settings + Aspect Ratio Step 3.
+    fresh.aspectRatio = aspectRatio;
+    fresh.resolutionTier = resolutionTier;
     // Mark as confirmed so auto-save and saveNow will persist it going forward.
     fresh.confirmed = true;
     saveProject(fresh); // persist full project JSON
@@ -2554,9 +2591,6 @@ export default function App() {
             globalAnimation={project.globalAnimation ?? 'none'}
             globalOverlayFilter={project.globalOverlayFilter ?? 'none'}
             globalOverlayConfig={project.globalOverlayConfig}
-            exportResolution={exportResolution}
-            exportFps={exportFps}
-            mixedNativeFpsWarning={mixedNativeFpsWarning}
             currentTransition={project.globalTransition}
             currentAnimation={project.globalAnimation ?? ''}
             currentOverlayFilter={project.globalOverlayFilter ?? ''}
@@ -2569,9 +2603,6 @@ export default function App() {
             onFilterChange={(v) => setProject(p => ({ ...p, globalOverlayFilter: v }))}
             onApplyFilterToAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, overlayFilter: p.globalOverlayFilter })) }))}
             onOverlayConfigChange={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
-            onSetAllOverlay={handleSetAllOverlay}
-            onExportResolutionChange={(v) => setExportResolution(v as ExportResolution)}
-            onExportFpsChange={(v) => { exportFpsUserSetRef.current = true; setExportFps(v as ExportFps); }}
             onApplyTransitionPreset={(v) => setProject(p => ({ ...p, globalTransition: v as TransitionType }))}
             onApplyAnimationPreset={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
@@ -2614,14 +2645,15 @@ export default function App() {
             style={{ height: previewHeight + 'px' }}
           >
             <div className="h-full w-full flex items-center justify-center bg-[#020202]">
-              {/* Frame aspect ratio: 16:9, the only project aspect ratio this
-                  app currently supports (exportResolution is '1080p'|'4k',
-                  both 16:9 — no vertical/square project concept exists yet).
-                  Expressed as an inline style (rather than the aspect-video
-                  utility class) so a future project-level aspect ratio field
-                  only needs to change this one value. bg-black makes the
+              {/* Frame aspect ratio: derived from the project's own
+                  aspectRatio field (Project Settings Step 2), locked at
+                  creation via NewProjectModal — '16:9' when absent (every
+                  pre-existing project), matching the previous hardcoded
+                  behavior exactly. Expressed as an inline style (rather than
+                  the aspect-video utility class) so this stays the one place
+                  that needs to change per project. bg-black makes the
                   media's object-contain letterbox/pillarbox bars solid black. */}
-              <div className="h-full bg-black border border-[#333333]" style={{ aspectRatio: '16 / 9' }}>
+              <div className="h-full bg-black border border-[#333333]" style={{ aspectRatio: aspectRatioToCss(project.aspectRatio ?? DEFAULT_ASPECT_RATIO) }}>
               <ErrorBoundary fallback={(err, reset) => (
                 <PanelFallback label="Preview" error={err} reset={reset} />
               )}>
@@ -2637,6 +2669,8 @@ export default function App() {
                   assets={project.assets}
                   isPlaying={isPlaying}
                   isResizingRef={isResizingRef}
+                  nativeWidth={previewNativeDimensions.width}
+                  nativeHeight={previewNativeDimensions.height}
                   onUpdateExtraOverlayPosition={updateExtraOverlayPosition}
                   textLayers={project.textLayers ?? []}
                   headings={project.headings ?? []}
@@ -2971,34 +3005,47 @@ export default function App() {
           style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
           className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          {/* Project name + save status */}
-          <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
-            <p className="text-xs text-zinc-400 truncate">{project.name}</p>
-            <p className="text-[10px] text-zinc-600 mt-0.5">
-              {lastSavedAt ? `Saved` : `Unsaved`}
-            </p>
+          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+            {/* Project name + save status */}
+            <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
+              <p className="text-xs text-zinc-400 truncate">{project.name}</p>
+              <p className="text-[10px] text-zinc-600 mt-0.5">
+                {lastSavedAt ? `Saved` : `Unsaved`}
+              </p>
+            </div>
+
+            {/* Export button */}
+            <div className="p-3 border-b border-[#1A1A1A]">
+              <button
+                onClick={() => setShowExportSettingsModal(true)}
+                className="w-full py-2 px-3 bg-[#F27D26] hover:bg-[#E06A15] text-white text-sm font-semibold rounded-lg transition-colors"
+              >
+                Export
+              </button>
+            </div>
+
+            {SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL && (
+              <TextLayersPanel
+                textLayers={project.textLayers ?? []}
+                segments={project.segments}
+                onAddTextLayer={handleAddTextLayer}
+                onUpdateTextLayer={handleUpdateTextLayer}
+                onDeleteTextLayer={handleDeleteTextLayer}
+                onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
+              />
+            )}
           </div>
 
-          {/* Export button */}
-          <div className="p-3 border-b border-[#1A1A1A]">
+          {/* Pinned footer — Project Settings trigger (plan §2.3) */}
+          <div className="flex-shrink-0 px-3 pb-3 pt-2 border-t border-[#1A1A1A]">
             <button
-              onClick={startExport}
+              onClick={() => setShowProjectSettingsModal(true)}
               className="w-full py-2 px-3 bg-[#F27D26] hover:bg-[#E06A15] text-white text-sm font-semibold rounded-lg transition-colors"
             >
-              Export
+              Project Settings
             </button>
           </div>
 
-          {SHOW_GLOBAL_TEXT_LAYERS_IN_RIGHT_PANEL && (
-            <TextLayersPanel
-              textLayers={project.textLayers ?? []}
-              segments={project.segments}
-              onAddTextLayer={handleAddTextLayer}
-              onUpdateTextLayer={handleUpdateTextLayer}
-              onDeleteTextLayer={handleDeleteTextLayer}
-              onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
-            />
-          )}
         </div>
 
       </div>
@@ -3138,7 +3185,10 @@ export default function App() {
                   </div>
                   <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
                     <p className="text-[8px] text-gray-600 font-black uppercase mb-1">Resolution</p>
-                    <p className="text-[10px] text-white font-bold">{exportResolution === '4k' ? '3840×2160' : '1920×1080'}</p>
+                    <p className="text-[10px] text-white font-bold">{(() => {
+                      const { width, height } = resolveDimensions(project.aspectRatio ?? DEFAULT_ASPECT_RATIO, exportResolution);
+                      return `${width}×${height}`;
+                    })()}</p>
                   </div>
                   <div className="p-3 bg-[#0A0A0A] border border-[#1A1A1A] rounded-2xl">
                     <p className="text-[8px] text-gray-600 font-black uppercase mb-1">FPS</p>
@@ -3163,6 +3213,41 @@ export default function App() {
         <NewProjectModal
           onConfirm={handleNewProjectConfirm}
           onCancel={() => { setShowNewProjectModal(false); setShowDashboard(true); }}
+        />
+      )}
+
+      {/* Project Settings Modal (docs/project-settings-plan.md §2.1-2.3) */}
+      {showProjectSettingsModal && (
+        <ProjectSettingsModal
+          segments={project.segments}
+          aspectRatio={project.aspectRatio ?? DEFAULT_ASPECT_RATIO}
+          resolutionTier={project.resolutionTier ?? DEFAULT_RESOLUTION_TIER}
+          onResolutionTierChange={(v) => setProject(p => ({ ...p, resolutionTier: v }))}
+          onSetAllOverlay={handleSetAllOverlay}
+          onClose={() => setShowProjectSettingsModal(false)}
+        />
+      )}
+
+      {/* Export Settings Modal — resolution + fps chosen at export time
+          (industry-standard pattern), replacing the old Project Settings
+          "Export Quality" section. Appears BEFORE the native save-path
+          dialog: Continue commits exportResolution/exportFps then triggers
+          startExport via exportTriggerCount (see its declaration above for
+          why); Cancel closes with no state change and no export. */}
+      {showExportSettingsModal && (
+        <ExportSettingsModal
+          aspectRatio={project.aspectRatio ?? DEFAULT_ASPECT_RATIO}
+          exportResolution={exportResolution}
+          exportFps={exportFps}
+          mixedNativeFpsWarning={mixedNativeFpsWarning}
+          onContinue={(resolution, fps) => {
+            exportFpsUserSetRef.current = true;
+            setExportResolution(resolution);
+            setExportFps(fps);
+            setShowExportSettingsModal(false);
+            setExportTriggerCount(c => c + 1);
+          }}
+          onCancel={() => setShowExportSettingsModal(false)}
         />
       )}
 

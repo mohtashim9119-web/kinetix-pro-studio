@@ -233,6 +233,16 @@ interface Props {
   assets: Asset[];
   isPlaying: boolean;
   isResizingRef: React.RefObject<boolean>;
+  /** Backing-buffer dimensions (NOT the CSS display size) — the project's
+   *  native resolution, derived by App.tsx via resolutionConfig.ts's
+   *  resolveDimensions from (project.aspectRatio, project.resolutionTier).
+   *  Threaded into PreviewCanvas and useGlPreview so both preview paths
+   *  render at the project's real resolution instead of the panel's
+   *  measured client size — the CSS box (App.tsx's aspect-ratio wrapper)
+   *  already matches this same aspect ratio, so the browser scales the
+   *  fixed-size backing buffer to fit without distortion. */
+  nativeWidth: number;
+  nativeHeight: number;
   /** Called when the user drags an extra overlay to a new position. */
   onUpdateExtraOverlayPosition?: (segmentId: string, overlayId: string, x: number, y: number) => void;
   /** Global text layers rendered above all segment content. */
@@ -335,6 +345,8 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   assets,
   isPlaying,
   isResizingRef,
+  nativeWidth,
+  nativeHeight,
   onUpdateExtraOverlayPosition,
   textLayers,
   headings,
@@ -558,6 +570,8 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     config: glConfig,
     isResizingRef,
     enabled: glPathActive,
+    nativeWidth,
+    nativeHeight,
     isFullscreen,
   });
 
@@ -1227,6 +1241,8 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           frame={webCodecsPreview.frame}
                           className="absolute inset-0 w-full h-full"
                           style={getClipEffectStyle(currentSegment.effectAnimation)}
+                          width={nativeWidth}
+                          height={nativeHeight}
                           isFullscreen={isFullscreen}
                         />
                       )}
@@ -1236,11 +1252,16 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           GL context/compositor survive) — it renders the scoped
                           transitions + zoom for BOTH video and image segments, replacing
                           PreviewCanvas (video) and the <img> (image) above/below. Hidden
-                          (display:none → clientWidth 0 → the driver's render effect no-ops
-                          and retains) on a missing-asset segment so the placeholder below
-                          shows through without tearing down the GL context. Inside the
-                          animation wrapper so the non-scoped CSS animations still transform
-                          it; getClipEffectStyle preserves the CSS clip-effect filters. */}
+                          (display:none) on a missing-asset segment so the placeholder below
+                          shows through without tearing down the GL context — the driver's
+                          render effect independently no-ops and retains on this same
+                          segment (resolveSlotSource finds no renderable asset, useGlPreview.ts),
+                          so display:none is purely visual here, not what causes the no-op
+                          (the backing buffer is still sized to the project's native
+                          resolution regardless of visibility, Project Settings Step 2).
+                          Inside the animation wrapper so the non-scoped CSS animations
+                          still transform it; getClipEffectStyle preserves the CSS
+                          clip-effect filters. */}
                       {glPathActive && (
                         <canvas
                           ref={glPreview.canvasRef}

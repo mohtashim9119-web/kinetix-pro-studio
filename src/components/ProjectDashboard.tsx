@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllAssets } from '../services/assetStore';
@@ -20,6 +20,8 @@ export function ProjectDashboard({
   const [search, setSearch] = useState('');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [showBulkConfirm, setShowBulkConfirm] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -44,6 +46,8 @@ export function ProjectDashboard({
   const filtered = metas.filter(m =>
     m.name.toLowerCase().includes(search.toLowerCase())
   );
+  const visibleIds = filtered.map(m => m.id);
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
 
   async function handleDelete(id: string): Promise<void> {
     await deleteAllAssets(id);
@@ -52,6 +56,42 @@ export function ProjectDashboard({
     setMetas(prev => prev.filter(m => m.id !== id));
     setConfirmDeleteId(null);
     setMenuOpenId(null);
+  }
+
+  function toggleSelect(id: string): void {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function handleSelectAllToggle(): void {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleIds.forEach(id => next.delete(id));
+      } else {
+        visibleIds.forEach(id => next.add(id));
+      }
+      return next;
+    });
+  }
+
+  async function handleBulkDelete(): Promise<void> {
+    const ids = Array.from(selectedIds);
+    for (const id of ids) {
+      await deleteAllAssets(id);
+      await deleteAllWaveforms(id);
+      deleteProjectData(id);
+    }
+    setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
+    setSelectedIds(new Set());
+    setShowBulkConfirm(false);
   }
 
   function formatDate(ts: number): string {
@@ -85,6 +125,25 @@ export function ProjectDashboard({
                          focus:outline-none focus:border-[#F27D26] w-52"
             />
           </div>
+          {/* Select All / Deselect All */}
+          <button
+            onClick={handleSelectAllToggle}
+            className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-lg
+                       px-4 py-2 text-sm text-zinc-200 transition-colors"
+          >
+            {allVisibleSelected ? 'Deselect All' : 'Select All'}
+          </button>
+          {/* Delete Selected */}
+          <button
+            onClick={() => setShowBulkConfirm(true)}
+            disabled={selectedIds.size === 0}
+            className="flex items-center gap-2 bg-red-600/80 hover:bg-red-500
+                       disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-600/80
+                       text-white font-semibold text-sm px-4 py-2 rounded-lg transition-colors"
+          >
+            <Trash2 size={14} />
+            Delete Selected ({selectedIds.size})
+          </button>
           {/* New Project button */}
           <button
             onClick={onNewProject}
@@ -124,8 +183,26 @@ export function ProjectDashboard({
                 ${meta.id === currentProjectId
                   ? 'border-[#F27D26]'
                   : 'border-transparent hover:border-zinc-600'
-                }`}
+                }
+                ${selectedIds.has(meta.id) ? 'ring-2 ring-blue-500' : ''}`}
             >
+              {/* Selection checkbox — visible on hover or when selected */}
+              <button
+                onClick={e => {
+                  e.stopPropagation();
+                  toggleSelect(meta.id);
+                }}
+                className={`absolute top-2 left-2 z-20 w-5 h-5 rounded flex items-center justify-center
+                            border transition-opacity
+                            ${selectedIds.has(meta.id)
+                              ? 'bg-[#F27D26] border-[#F27D26] opacity-100'
+                              : 'bg-black/60 border-zinc-500 opacity-0 group-hover:opacity-100'
+                            }`}
+                aria-label={selectedIds.has(meta.id) ? `Deselect "${meta.name}"` : `Select "${meta.name}"`}
+              >
+                {selectedIds.has(meta.id) && <Check size={12} className="text-white" />}
+              </button>
+
               {/* Thumbnail */}
               <div className="aspect-video bg-zinc-800 flex items-center justify-center overflow-hidden">
                 {meta.thumbnailUrl ? (
@@ -186,7 +263,7 @@ export function ProjectDashboard({
 
               {/* Current project badge */}
               {meta.id === currentProjectId && (
-                <span className="absolute top-2 left-2 text-[10px] bg-green-600/80 text-white px-1.5 py-0.5 rounded-full font-medium">
+                <span className="absolute top-2 left-9 text-[10px] bg-green-600/80 text-white px-1.5 py-0.5 rounded-full font-medium">
                   Current
                 </span>
               )}
@@ -214,6 +291,34 @@ export function ProjectDashboard({
               </button>
               <button
                 onClick={() => handleDelete(confirmDeleteId)}
+                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500
+                           text-white rounded-lg transition-colors font-medium"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk delete confirmation overlay */}
+      {showBulkConfirm && (
+        <div className="fixed inset-0 z-[300] bg-black/70 flex items-center justify-center">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
+            <h3 className="text-white font-semibold mb-2">Delete Projects</h3>
+            <p className="text-zinc-400 text-sm mb-6">
+              Delete {selectedIds.size} project{selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setShowBulkConfirm(false)}
+                className="px-4 py-2 text-sm text-zinc-400 hover:text-white
+                           rounded-lg hover:bg-zinc-800 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleBulkDelete()}
                 className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500
                            text-white rounded-lg transition-colors font-medium"
               >

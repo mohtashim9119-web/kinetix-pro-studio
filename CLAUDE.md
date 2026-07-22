@@ -20,7 +20,7 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~3,578 lines — top-level state, orchestration, playback, export.
+  App.tsx            # ~3,588 lines — top-level state, orchestration, playback, export.
                      #   The window keydown effect's Space branch guards on isTextEntryElement()
                      #   (not a generic tagName check) so a focused range slider no longer traps
                      #   spacebar play/pause; a global pointerup listener blurs any focused
@@ -47,12 +47,12 @@ src/
                      #   coalesced, with the timeline rect/pps cached once at drag start; the real
                      #   state commit happens exactly once on mouseup via applyDurationChange
                      #   (perf fix, commit f4da926).
-                     #   The preview stage wrapper div (around <PreviewStage>) keeps a dynamic 16:9
-                     #   aspect ratio via an inline style (`style={{ aspectRatio: '16 / 9' }}` +
-                     #   bg-black, not the aspect-video utility class) so a future project-level
-                     #   aspect-ratio field only needs to change this one value — a same-day D11
-                     #   "fix" (2026-07-20) that removed the aspect ratio entirely to fill the panel
-                     #   was reverted the same day (it stretched the preview when resizing the panel
+                     #   The preview stage wrapper div (around <PreviewStage>) keeps a dynamic
+                     #   aspect ratio via an inline style (`style={{ aspectRatio:
+                     #   aspectRatioToCss(project.aspectRatio ?? DEFAULT_ASPECT_RATIO) }}` +
+                     #   bg-black, not the aspect-video utility class) — a same-day D11 "fix"
+                     #   (2026-07-20) that removed the aspect ratio entirely to fill the panel was
+                     #   reverted the same day (it stretched the preview when resizing the panel
                      #   divider); the actual fix instead changed media fit from object-cover to
                      #   object-contain across every preview path (PreviewStage.tsx's video/img
                      #   elements, PreviewCanvas.tsx's draw math, the GL compositor's BLIT shader via
@@ -60,6 +60,28 @@ src/
                      #   letterbox/pillarbox bars instead of cropping. Fullscreen's fill/crop behavior
                      #   is separate (PreviewStage's own isFullscreen branch) and is unaffected either
                      #   way. Export is unchanged — frameRenderer.ts still uses drawImageCover.
+                     #   The D11 comment above originally said this hardcoded '16 / 9' value would
+                     #   need to change "when a future project-level aspect-ratio field" arrived —
+                     #   that field now exists (Project Settings + Aspect Ratio, 2026-07-22) and the
+                     #   value is dynamic, per the updated line above. The preview's canvas backing
+                     #   buffer (PreviewCanvas.tsx/useGlPreview.ts, threaded via PreviewStage.tsx's
+                     #   nativeWidth/nativeHeight props) is derived the same way, from
+                     #   previewNativeDimensions = resolveDimensions(project.aspectRatio ??
+                     #   DEFAULT_ASPECT_RATIO, project.resolutionTier ?? DEFAULT_RESOLUTION_TIER)
+                     #   (memoized on those two fields), replacing client-measured sizing.
+                     #   NewProjectModal's onConfirm now also passes aspectRatio/resolutionTier;
+                     #   handleNewProjectConfirm writes both onto the fresh Project (locked
+                     #   aspectRatio forever, resolutionTier editable later). Two new modals are
+                     #   mounted here: ProjectSettingsModal (showProjectSettingsModal state, a
+                     #   button in the right panel) and ExportSettingsModal (showExportSettingsModal
+                     #   state, opened by the Export button before the save-path dialog). Because
+                     #   ExportSettingsModal's onContinue setState call and the subsequent
+                     #   startExport() call would otherwise both read the useExport hook's
+                     #   exportResolution/exportFps closure from the SAME render (stale — React
+                     #   batches the setState), a small exportTriggerCount counter is bumped in
+                     #   onContinue and a dedicated effect (dep [exportTriggerCount]) calls
+                     #   startExport() on the NEXT render, once the hook has re-created with the
+                     #   just-committed values.
                      #   sliderT (timeline zoom) is lazy-initialized from persisted UI state
                      #   (uiStateStore's kinetix:ui:v1) instead of a hardcoded 0.5, and a new effect
                      #   persists it on every change — so the reload-restored timelineScrollLeft
@@ -83,6 +105,18 @@ src/
                      #   here rather than imported from services/gl so the dependency direction
                      #   stays services -> types. Carried across Apply Sync by unique-assetId
                      #   match alongside the other effect* fields (App.tsx's carry loop).
+                     #   AspectRatio ('16:9'|'9:16'|'1:1') and ResolutionTier ('720p'|'1080p')
+                     #   (Project Settings + Aspect Ratio, 2026-07-22) are plain string-literal
+                     #   unions, not enums — matches the newer effectTransition/effectAnimation
+                     #   slug fields rather than the legacy TransitionType/AnimationType enums.
+                     #   Project gains optional aspectRatio/resolutionTier fields: aspectRatio is
+                     #   locked at creation (NewProjectModal.tsx), never editable after, and absent
+                     #   from Project Settings entirely; resolutionTier is set at creation but
+                     #   editable later in ProjectSettingsModal.tsx. Both undefined on
+                     #   pre-existing projects — treat as DEFAULT_ASPECT_RATIO/
+                     #   DEFAULT_RESOLUTION_TIER (services/resolutionConfig.ts). The Project NEVER
+                     #   stores width/height directly — pixel dimensions are always derived from
+                     #   (aspectRatio, resolutionTier) via resolutionConfig.ts's resolveDimensions.
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
@@ -90,6 +124,24 @@ src/
   services/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
+    resolutionConfig.ts # Project Settings + Aspect Ratio (2026-07-22) — the single source of truth
+                     #   mapping (AspectRatio, ResolutionTier) -> pixel dimensions. Pure,
+                     #   dependency-free, worker-safe (same pattern as zoomScale.ts below) —
+                     #   imported by the preview path (PreviewCanvas.tsx, useGlPreview.ts via
+                     #   PreviewStage.tsx, App.tsx) and the export pipeline alike (useExport.ts).
+                     #   RESOLUTION_TABLE: Record<AspectRatio, Record<ResolutionTier,
+                     #   FrameDimensions>> — TypeScript-exhaustiveness-checked (a missing ratio/tier
+                     #   cell is a compile error, not a silent runtime gap). resolveDimensions(ratio,
+                     #   tier) looks up the table; aspectRatioToCss(ratio) maps '16:9' -> '16 / 9'
+                     #   for the preview wrapper's inline aspectRatio style.
+                     #   DEFAULT_ASPECT_RATIO ('16:9') / DEFAULT_RESOLUTION_TIER ('1080p') are the
+                     #   fallback for every project persisted before this feature existed —
+                     #   resolves to 1920×1080, i.e. exactly pre-existing behavior, so migration is
+                     #   invisible. Only 720p and 1080p tiers exist (all 6 combinations across the
+                     #   3 aspect ratios); 4K/2K were deliberately removed from the UI and the type,
+                     #   not merely left untested — see the DO NOT DO list. 12 unit tests in
+                     #   resolutionConfig.test.ts assert all 6 (ratio, tier) -> dimension pairs,
+                     #   aspectRatioToCss for all 3 ratios, and both defaults.
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     syncEngine.ts    # Content-only matching + timing helpers (no heading logic — headings
                      #   moved to a separate overlay layer in Path B Phase 7, 2026-07-09):
@@ -497,6 +549,13 @@ src/
                              #   terminates it, then kills+destroys the ffmpeg session) for the
                              #   WebCodecs path, vs. the pre-existing backend.cancel() for legacy —
                              #   teardown() runs after either, idempotently.
+                             #   ExportResolution (Project Settings + Aspect Ratio, 2026-07-22) is
+                             #   now a type alias for the shared ResolutionTier ('720p'|'1080p',
+                             #   services/resolutionConfig.ts) — the old `'1080p' | '4k'` union is
+                             #   gone. runExport derives { width, height } via
+                             #   resolveDimensions(snap.aspectRatio ?? DEFAULT_ASPECT_RATIO,
+                             #   resolution) instead of a hardcoded ternary — the only place export
+                             #   pixel dimensions are decided.
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
@@ -510,19 +569,19 @@ src/
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
     DropZonePanel.tsx  # Left-panel host with the Script/Assets/Editor/Effects tabs. The Effects
-                     #   tab is where the former standalone SettingsPanel.tsx's controls (global
-                     #   aesthetics, export quality resolution/fps, JSON import/export, "New
-                     #   Project" reset) now live, moved inline during the pre-WebGL2 layout
-                     #   redesign (SettingsPanel.tsx tombstoned, see docs/history.md). Also mounts
-                     #   EffectsPanel.tsx and owns lookPresetService persistence.
-                     #   The Effects tab's "Export Engine" section (additive, docs/webcodecs-export-plan.md
-                     #   §6) holds the WebCodecs export toggle — a switch mirroring
-                     #   useExport.ts's isWebCodecsExportToggleOn()/setWebCodecsExportToggle()
-                     #   persisted value, disabled (with an explanatory line) when
-                     #   isWebCodecsExportCapable() is false. Local state only mirrors the
-                     #   persisted value for immediate re-render; useExport.ts reads the
-                     #   persisted value fresh at the top of every export run, so no prop
-                     #   threading through App.tsx is needed for a toggle flip to take effect.
+                     #   tab mounts only EffectsPanel.tsx and owns lookPresetService persistence —
+                     #   it no longer holds any settings sections. The former standalone
+                     #   SettingsPanel.tsx's controls (global aesthetics, export quality
+                     #   resolution/fps, JSON import/export, "New Project" reset) had lived inline
+                     #   here since the pre-WebGL2 layout redesign (SettingsPanel.tsx tombstoned,
+                     #   see docs/history.md), then the WebCodecs export toggle joined them
+                     #   (docs/webcodecs-export-plan.md §6) — but Project Settings + Aspect Ratio
+                     #   Step 6 (2026-07-22) deleted all three sections (Export Quality, Export
+                     #   Engine, Display/Text-Overlay-default) and their supporting local state/
+                     #   props from this file entirely, relocating them into ProjectSettingsModal.tsx
+                     #   and ExportSettingsModal.tsx (see those files' entries below). Nothing in
+                     #   this file reads or writes `webcodecsExportEnabled`/`exportResolution`/
+                     #   `exportFps`/`onSetAllOverlay` anymore.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
                      #   selected/all, randomize-from-checked-pool, combined-look presets section,
                      #   GRADE section).
@@ -554,6 +613,32 @@ src/
                      #   Mounted by DropZonePanel.tsx, which owns lookPresetService persistence —
                      #   EffectsPanel itself only takes initialPresets/onPresetsChange/onApply props.
     ErrorBoundary.tsx     # Class-based error boundary (getDerivedStateFromError); PanelFallback with dev stack trace.
+    ExportSettingsModal.tsx # Export-time settings dialog (Project Settings + Aspect Ratio, export-
+                     #   settings amendment, 2026-07-22) — resolution + fps are chosen HERE, at
+                     #   export time, not in Project Settings — the industry-standard pattern
+                     #   (matches Premiere/Resolve/Final Cut). App.tsx's Export button opens this
+                     #   modal first; its Continue commits the draft resolution/fps back into
+                     #   App.tsx's existing exportResolution/exportFps state (via
+                     #   exportTriggerCount, see App.tsx's entry below) and proceeds to the
+                     #   save-path dialog + export run. Cancel/Escape discard the draft, no export
+                     #   triggered. Draft state is seeded from the current exportResolution/
+                     #   exportFps so the last export's choice is remembered. Same blocking-modal
+                     #   shell as ProjectSettingsModal.tsx (no backdrop-close, Escape = Cancel).
+                     #   Shows derived dimensions (via resolutionConfig.ts's resolveDimensions)
+                     #   and, when mixedNativeFpsWarning is true, an amber note that staged videos
+                     #   have different native frame rates and the fps won't be auto-set.
+    NewProjectModal.tsx # New Project dialog. Beyond the project-name field, now also collects
+                     #   aspect ratio (3-way segmented control, 16:9/9:16/1:1, locked forever once
+                     #   created — Project Settings + Aspect Ratio Step 3, 2026-07-22) and native
+                     #   resolution tier (a <select> offering 720p/1080p whose option labels show
+                     #   derived dimensions for the currently-selected ratio via resolutionConfig.ts's
+                     #   resolveDimensions, e.g. "1080p — 1080 × 1920" under 9:16). Both tiers are
+                     #   always offered for every ratio — only the derived dimensions shown change.
+                     #   onConfirm signature widened to (name, aspectRatio, resolutionTier);
+                     #   App.tsx's handleNewProjectConfirm writes both onto the fresh Project
+                     #   before confirming it. Defaults: '16:9' / '1080p' (DEFAULT_ASPECT_RATIO /
+                     #   DEFAULT_RESOLUTION_TIER from resolutionConfig.ts) — matches every
+                     #   pre-existing project's effective resolution, so migration is invisible.
     PreviewCanvas.tsx     # Minimal canvas paint surface for the WebCodecs preview path — draws
                      #   whatever VideoFrame useWebCodecsPreview.ts hands it, object-contain fit
                      #   (D11 fix, 2026-07-20 — was object-cover; the whole frame now fits inside
@@ -564,6 +649,15 @@ src/
                      #   Takes an optional isFullscreen?: boolean prop, added to the draw
                      #   effect's dep array (same stretch fix as useGlPreview.ts, on the fallback
                      #   non-GL path) so the canvas re-measures on fullscreen transitions.
+                     #   Backing-buffer `width`/`height` props (Project Settings + Aspect Ratio
+                     #   Step 2, 2026-07-22) are now the project's NATIVE resolution — derived via
+                     #   resolutionConfig.ts's resolveDimensions(project.aspectRatio,
+                     #   project.resolutionTier) and threaded from App.tsx/PreviewStage.tsx as
+                     #   nativeWidth/nativeHeight — instead of being measured from
+                     #   canvas.clientWidth/clientHeight every frame. The object-contain fit math
+                     #   (canvasRatio vs. frameRatio) is unchanged; only the source of the
+                     #   backing-buffer size changed, so it now compares against the project's real
+                     #   aspect ratio rather than whatever size the panel happens to be measured at.
     PreviewStage.tsx      # Video/image display + overlay rendering. Dual-slot video-swap seek
                      #   effect (~line 449, dep [currentSegment?.id]) skips reseeking while
                      #   isResizingRef.current is true — currentSegment can flip transiently
@@ -571,10 +665,17 @@ src/
                      #   wrong segment's start (D12 fix, commit be45b07).
                      #   Media fit changed from object-cover to object-contain on every element
                      #   here (both <video> slots, the static-image <img>, the motion.img) —
-                     #   D11 fix, 2026-07-20 — so the whole frame fits inside the 16:9 stage
-                     #   (App.tsx's aspect-ratio wrapper div) instead of cropping; letterbox/
-                     #   pillarbox bars show as bg-black. Fullscreen's own fill/crop behavior
-                     #   (the isFullscreen branch) is untouched.
+                     #   D11 fix, 2026-07-20 — so the whole frame fits inside the stage's aspect-
+                     #   ratio wrapper div (App.tsx) instead of cropping; letterbox/pillarbox bars
+                     #   show as bg-black. That wrapper's ratio is dynamic since Project Settings +
+                     #   Aspect Ratio Step 2 (2026-07-22) — aspectRatioToCss(project.aspectRatio),
+                     #   not a hardcoded 16:9 — so this fit behavior now also applies correctly to
+                     #   9:16 and 1:1 projects. Fullscreen's own fill/crop behavior (the
+                     #   isFullscreen branch) is untouched.
+                     #   Takes nativeWidth/nativeHeight props (Project Settings + Aspect Ratio
+                     #   Step 2) — the project's derived native resolution — and threads them into
+                     #   useGlPreview/PreviewCanvas as their canvas backing-buffer size, replacing
+                     #   client-measured sizing on those paths.
                      #   Now a forwardRef component exporting a PreviewStageHandle interface
                      #   ({ toggleFullscreen: () => void }) via useImperativeHandle — App.tsx holds
                      #   previewStageRef and calls it from the F-key branch. toggleNativeFullscreen
@@ -591,6 +692,36 @@ src/
                      #   so their canvas backing buffer re-measures on fullscreen transitions even
                      #   while paused (fixes a stretched-preview bug on paused fullscreen entry).
                      #   New props: onTogglePlay, onSpeedCycle.
+    ProjectDashboard.tsx  # Full-screen project picker/grid (opened when no project is confirmed,
+                     #   or via a "Projects" entry point). Bulk Select + Delete Projects
+                     #   (2026-07-22, self-contained — no App.tsx or service changes): per-card
+                     #   hover checkbox (top-left, always visible once selected, `ring-2
+                     #   ring-blue-500` highlight on the card) with stopPropagation so a checkbox
+                     #   click doesn't also open the project; header gains a "Select All"/"Deselect
+                     #   All" toggle button (filter-respecting — operates on `visibleIds`, the
+                     #   currently-searched/filtered set, not every project) and a "Delete Selected
+                     #   (N)" button (disabled at N=0) that opens a confirm dialog distinct from the
+                     #   existing single-project delete confirm. Confirming calls
+                     #   handleBulkDelete(), which sequentially awaits deleteAllAssets +
+                     #   deleteAllWaveforms + deleteProjectData per selected id (same three calls
+                     #   the existing single-delete handleDelete already made, just looped), then
+                     #   clears selectedIds and refreshes the metas list. Selection state
+                     #   (selectedIds: Set<string>, showBulkConfirm) is local, not persisted —
+                     #   resets on remount.
+    ProjectSettingsModal.tsx # Project Settings modal (Project Settings + Aspect Ratio Steps 1-6,
+                     #   2026-07-22) — a blocking, draft-then-commit dialog opened from a button in
+                     #   the right panel (App.tsx), pulling the Export Engine (WebCodecs toggle) and
+                     #   Text Overlay (segments-default showOverlay cascade) sections OUT of the
+                     #   Effects tab (DropZonePanel.tsx), plus a new Project section: the project's
+                     #   native resolution TIER (a <select>, editable) with derived dimensions shown
+                     #   as read-only helper text, and the locked aspect ratio (display only, never
+                     #   an input — "Aspect ratio is locked at project creation"). Export Quality
+                     #   (resolution/fps) is deliberately NOT here — Feature 2's amendment moved
+                     #   that to ExportSettingsModal.tsx, chosen at export time instead. All edits
+                     #   are local draft state (draftNativeTier/draftWebcodecsEnabled/
+                     #   draftOverlayOn) committed atomically on Save via onResolutionTierChange/
+                     #   setWebCodecsExportToggle/onSetAllOverlay; Cancel/Escape discard everything
+                     #   (no backdrop-click-to-close, matching NewProjectModal's precedent).
     SegmentEditorPanel.tsx # Segment list + per-segment controls
     TimelineWaveform.tsx   # useTimelineWaveform hook — the TILED voiceover waveform (replaced the
                      #   earlier single-canvas approach, which collapsed the whole voiceover into one
@@ -723,6 +854,13 @@ project: Project {
   assets[]        — Asset[], added via file upload or stock search (blob: URLs)
   voiceoverId     — ID of the audio asset used for sync
   globalTransition / globalAnimation / globalOverlayFilter / globalOverlayConfig
+  aspectRatio?    — '16:9' | '9:16' | '1:1' (Project Settings + Aspect Ratio, 2026-07-22) — locked
+                    at creation via NewProjectModal, never editable after; undefined on
+                    pre-existing projects, treat as DEFAULT_ASPECT_RATIO ('16:9')
+  resolutionTier? — '720p' | '1080p' — set at creation, editable later in ProjectSettingsModal;
+                    undefined on pre-existing projects, treat as DEFAULT_RESOLUTION_TIER ('1080p').
+                    Neither field stores pixel dimensions directly — width/height are always
+                    derived via services/resolutionConfig.ts's resolveDimensions(aspectRatio, tier)
 }
 ```
 
@@ -730,7 +868,7 @@ project: Project {
 
 Playback uses a ~16ms requestAnimationFrame loop when a voiceover is loaded; `currentSegment` is derived from `currentTime` via `useMemo`.
 
-Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3. As of 2026-07-22, export runs through one of two gated paths decided fresh on every run by `useExport.ts`'s `isWebCodecsExportGateOpen()` — the new WebCodecs+WebGL2 worker path (default ON) or the legacy canvas/ffmpeg path (fallback) — see the **WebCodecs + WebGL2 Worker Export Path** subsection below.
+Export: see **Export Pipeline** section below. MediaRecorder removed in Phase 3. As of 2026-07-22, export runs through one of two gated paths decided fresh on every run by `useExport.ts`'s `isWebCodecsExportGateOpen()` — the new WebCodecs+WebGL2 worker path (default ON) or the legacy canvas/ffmpeg path (fallback) — see the **WebCodecs + WebGL2 Worker Export Path** subsection below. Export resolution/fps are chosen at **export time** via `ExportSettingsModal.tsx` (opened first when the user clicks Export), not stored as project settings — see **Export Pipeline** below and the Project Settings + Aspect Ratio / Export Settings dialog write-up in `docs/history.md`.
 
 ### Persistence Model
 
@@ -739,6 +877,8 @@ localStorage (key `kinetix:project:v1`, versioned for future migrations) holds t
 ### Export Pipeline
 
 **Desktop-only (Tauri app required).** No `crossOriginIsolated` requirement — ffmpeg.wasm removed in Phase 6.4. Export uses the native ffmpeg sidecar bundled in `src-tauri/binaries/` (gitignored; see `binaries/README.md` for re-provisioning on a fresh checkout).
+
+**Export-time settings dialog (2026-07-22 amendment):** clicking Export first opens `ExportSettingsModal.tsx` (resolution + fps, seeded from the current `exportResolution`/`exportFps` state) — the industry-standard pattern (Premiere/Resolve/Final Cut choose export quality at export time, not as a project-wide setting). Continue commits the draft back into `App.tsx`'s existing state and proceeds to the `pick_save_path` dialog below; Cancel/Escape aborts with no export triggered. This is a UI relocation only — resolution/fps were already session-level `App.tsx` state before this amendment (previously edited inline in the Effects tab, then in `ProjectSettingsModal.tsx`'s now-removed Export Quality section); the export pipeline itself, and the `{ width, height, fps }` options shape passed into it, are unchanged. Width/height for the chosen resolution tier are derived from `resolutionConfig.ts`'s `resolveDimensions(project.aspectRatio ?? DEFAULT_ASPECT_RATIO, resolution)` inside `useExport.ts`'s `runExport` — not a hardcoded 1920×1080/3840×2160 ternary.
 
 Full chain, left to right:
 
@@ -794,11 +934,11 @@ App.tsx handleExport()  [via useExport hook]
 - `ExportStage` union: `loading_ffmpeg | encoding_segment | muxing | done` — drives the progress modal via `useExport`.
 - `FrameGlobalConfig` (`frameRenderer.ts:8-15`) — carries `overlayConfig`, `globalOverlayFilter`, `globalTextLayers`, and `headings` into the renderer. (Corrected 2026-07-22: an earlier revision of this note listed a `hideAllText` field that has never existed on this interface — read the type directly if this list ever needs re-verifying.)
 
-**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. 4K untested. These figures predate the Tier 1 fast path (2026-07-02) and describe the full per-frame canvas pipeline — they still apply to composited segments routed through this legacy path (or its Tier 1 fast path), but as of 2026-07-22 this is no longer the export default — see the WebCodecs export path below, now gated on by default. Plain segments (no caption/overlay/transition/filter/animation/speed change) bypass this legacy path's per-frame pipeline entirely regardless of which export path is active; measured 3m44s → 40s on a mixed 4-video/10-image project under the legacy path.
+**Performance (post Phase 6.3.1):** macOS Intel (x86_64): ~10× realtime (120s for 12s of 1080p/30fps output). Windows: ~6× realtime (6 min per 1 min of video). macOS arm64: pending measurement. (4K is no longer a resolution option at all as of Project Settings + Aspect Ratio — see the DO NOT DO list — so there is nothing to measure there; only 720p/1080p exist.) These figures predate the Tier 1 fast path (2026-07-02) and describe the full per-frame canvas pipeline — they still apply to composited segments routed through this legacy path (or its Tier 1 fast path), but as of 2026-07-22 this is no longer the export default — see the WebCodecs export path below, now gated on by default. Plain segments (no caption/overlay/transition/filter/animation/speed change) bypass this legacy path's per-frame pipeline entirely regardless of which export path is active; measured 3m44s → 40s on a mixed 4-video/10-image project under the legacy path.
 
 ### WebCodecs + WebGL2 Worker Export Path (default since 2026-07-22)
 
-**Additive sibling of the legacy pipeline above, not a replacement.** Gated by `useExport.ts`'s `isWebCodecsExportGateOpen()` — a runtime capability probe (`VideoEncoder`/`VideoDecoder`/`EncodedVideoChunk`, `isWebGL2Supported()`, module-Worker construction) AND a persisted user toggle (`DropZonePanel.tsx`'s Export Engine section), both required. **The toggle defaults ON for every platform** (a deliberate decision — see `docs/history.md` → "WebCodecs + WebGL2 Worker Export — Implementation Record"), so this is now the export path most users hit; when the gate is closed (unsupported runtime, or the user switches it off) the legacy pipeline above runs byte-identical to before the gate existed. Full architecture, invariants, and the step-by-step build record: `docs/webcodecs-export-plan.md` (live plan — Step 9, production-build verification, is still open) and `docs/history.md`'s implementation-record section (steps 1-8, done).
+**Additive sibling of the legacy pipeline above, not a replacement.** Gated by `useExport.ts`'s `isWebCodecsExportGateOpen()` — a runtime capability probe (`VideoEncoder`/`VideoDecoder`/`EncodedVideoChunk`, `isWebGL2Supported()`, module-Worker construction) AND a persisted user toggle (`ProjectSettingsModal.tsx`'s Export Engine section — relocated here from `DropZonePanel.tsx`'s Effects tab by Project Settings + Aspect Ratio Step 6, 2026-07-22; same persisted key, same gate logic, only the UI location moved), both required. **The toggle defaults ON for every platform** (a deliberate decision — see `docs/history.md` → "WebCodecs + WebGL2 Worker Export — Implementation Record"), so this is now the export path most users hit; when the gate is closed (unsupported runtime, or the user switches it off) the legacy pipeline above runs byte-identical to before the gate existed. Full architecture, invariants, and the step-by-step build record: `docs/webcodecs-export-plan.md` (live plan — Step 9, production-build verification, is still open) and `docs/history.md`'s implementation-record section (steps 1-8, done).
 
 Full chain, left to right:
 
@@ -975,7 +1115,7 @@ App.tsx                    — top-level state + orchestration only
 ### Export Format
 - Output is MP4 (H.264 + AAC). Name the download `{name}_{timestamp}.mp4`
 - The canvas render pipeline in `frameRenderer.ts` captures overlays and filters — exports are full-fidelity relative to what the renderer implements
-- Export quality settings (resolution, fps) live in `App.tsx` state (`exportResolution`, `exportFps`) and are surfaced in SettingsPanel
+- Export quality settings (resolution, fps) live in `App.tsx` state (`exportResolution`, `exportFps`) and are surfaced in `ExportSettingsModal.tsx`, opened at export time (not a settings panel — `SettingsPanel.tsx` was tombstoned long before this; see `docs/history.md`). Pixel dimensions for the chosen tier are derived via `resolutionConfig.ts`'s `resolveDimensions`, never hardcoded.
 
 ### Environment Variables
 - Client-safe (Pexels, Pixabay): `VITE_` prefix, `import.meta.env`
@@ -1001,6 +1141,9 @@ App.tsx                    — top-level state + orchestration only
 | `-framerate` on an ffmpeg mux of a raw annexb stream | Only sets the demuxer's displayed `r_frame_rate` — the muxer writes wrong per-packet duration for PTS-less packets (measured 6x-wrong file); use `-r <fps>` instead (`muxOnly.ts`) |
 | `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
 | Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
+| Adding 4K (or any resolution tier) back without updating `RESOLUTION_TABLE` for all 3 aspect ratios | `resolutionConfig.ts`'s `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes a missing cell a compile error, not a silent runtime hole — but every new tier still needs a deliberate dimension decision for `9:16` and `1:1`, not just `16:9` |
+| Storing `width`/`height` directly on `Project` | Pixel dimensions are always derived from `(aspectRatio, resolutionTier)` via `resolutionConfig.ts`'s `resolveDimensions` — never persisted directly, so there is exactly one source of truth for what a project's frame size is |
+| Exposing `aspectRatio` as an editable field anywhere in the UI | Locked forever at creation (`NewProjectModal.tsx`) by design — changing it after segments/timing exist has no defined reflow behavior; `resolutionTier` is the only editable-later field (`ProjectSettingsModal.tsx`) |
 
 ---
 

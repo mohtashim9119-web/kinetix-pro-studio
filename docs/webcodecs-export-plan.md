@@ -459,7 +459,7 @@ stays Canvas2D via frameRenderer.ts. Both unchanged.
 | `src-tauri/src/lib.rs` | Register `ffmpeg_append_file_raw` in the invoke_handler. | — | None — one line. |
 | `vite.config.ts` | Add `worker: { format: 'es' }` (verified absent today). | Production ESM worker chunks. | None — dev already works (Step 0); build-only. |
 | `tsconfig.json` | **No `lib` change.** (Original draft added `"WebWorker"` to the global `lib` — that conflicts with `"DOM"` globals project-wide. Instead: `/// <reference lib="webworker" />` at the top of each worker-scoped file + `declare const self: DedicatedWorkerGlobalScope`.) | Worker types without polluting app-wide type space. | None. |
-| `src/components/DropZonePanel.tsx` (Effects tab) | Additive toggle for the new export path (mirrors how WebGL2 shipped dev-gated, then cut over). | Gate control. | None — additive UI. |
+| `src/components/DropZonePanel.tsx` (Effects tab) | Additive toggle for the new export path (mirrors how WebGL2 shipped dev-gated, then cut over). | Gate control. | None — additive UI. **Relocated 2026-07-22** (after this step shipped): the toggle UI moved from here into `ProjectSettingsModal.tsx`'s Export Engine section (Project Settings + Aspect Ratio Step 6, `docs/history.md`) — same persisted key, same gate logic, only the UI location changed. |
 
 **Files explicitly NOT modified:** `exportPipeline.ts`, `segmentEncoder.ts`,
 `frameRenderer.ts`, `frameEncodeWorker.ts`, `videoDecoderPool.ts`,
@@ -530,7 +530,7 @@ What the worker/orchestrator must receive — derived from what
 
 | Field | Source | Consumer |
 |---|---|---|
-| `width`, `height`, `fps` | export options (`useExport`: 1080p/4k, 24/30/60) | canvas size, timestamps, encoder config |
+| `width`, `height`, `fps` | export options (`useExport`: 720p/1080p — was 1080p/4k at the time this row was written, before 4K was removed and the tier became aspect-ratio-derived, 2026-07-22 — 24/30/60) | canvas size, timestamps, encoder config |
 | `globalTransition`, `globalTransitionDuration` | project | `ProjectEffectConfig` → compositeParams / routing predicate |
 | project-level grade fallback | `ProjectEffectConfig.grade` (currently unset in preview usage — thread as undefined for parity) | compositeParams |
 | `globalOverlayConfig` | project | caption per-field fallback (text renderer) |

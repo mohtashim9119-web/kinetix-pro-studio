@@ -34,7 +34,6 @@ import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
-import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -405,12 +404,6 @@ interface Props {
   globalAnimation: string;
   globalOverlayFilter: string;
   globalOverlayConfig: { color: string; backgroundColor: string; fontFamily: string };
-  exportResolution: string;
-  exportFps: number;
-  /** True when staged video assets' native frame rates disagree — auto-match
-   *  is skipped in that case, so surface it as an open edge case rather than
-   *  silently leaving exportFps at whatever it was. */
-  mixedNativeFpsWarning: boolean;
   currentTransition: string;
   currentAnimation: string;
   currentOverlayFilter: string;
@@ -423,10 +416,6 @@ interface Props {
   onFilterChange: (v: string) => void;
   onApplyFilterToAll: () => void;
   onOverlayConfigChange: (v: Partial<{ color: string; backgroundColor: string; fontFamily: string }>) => void;
-  /** Master "Overlay Text Display" setter — bulk-writes showOverlay across all segments. */
-  onSetAllOverlay: (value: boolean) => void;
-  onExportResolutionChange: (v: string) => void;
-  onExportFpsChange: (v: number) => void;
   onApplyTransitionPreset: (preset: OverlayConfigPreset | string) => void;
   onApplyAnimationPreset: (preset: OverlayConfigPreset | string) => void;
   onApplyOverlayFilterPreset: (preset: OverlayConfigPreset | string) => void;
@@ -496,9 +485,6 @@ export function DropZonePanel({
   globalAnimation,
   globalOverlayFilter,
   globalOverlayConfig,
-  exportResolution,
-  exportFps,
-  mixedNativeFpsWarning,
   currentTransition,
   currentAnimation,
   currentOverlayFilter,
@@ -511,9 +497,6 @@ export function DropZonePanel({
   onFilterChange,
   onApplyFilterToAll,
   onOverlayConfigChange,
-  onSetAllOverlay,
-  onExportResolutionChange,
-  onExportFpsChange,
   onApplyTransitionPreset,
   onApplyAnimationPreset,
   onApplyOverlayFilterPreset,
@@ -534,9 +517,6 @@ export function DropZonePanel({
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [segmentSearch, setSegmentSearch] = useState('');
 
-  // Master "Overlay Text Display" state: ON only when every segment shows its overlay.
-  // Empty segments → true (vacuously), which is harmless — there is nothing to toggle.
-  const allOverlayOn = segments.every((s) => s.showOverlay);
   const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
   const maxSegmentDuration = Math.max(1, ...segments.map((s) => s.duration));
 
@@ -568,20 +548,6 @@ export function DropZonePanel({
       }
     }
     setLookPresets(loadLookPresets());
-  };
-  // WebCodecs export toggle (docs/webcodecs-export-plan.md §6) — additive,
-  // gated on both a persisted user choice and a one-time runtime capability
-  // probe. Local state mirrors the persisted value (uiStateStore, via
-  // useExport.ts's isWebCodecsExportToggleOn/setWebCodecsExportToggle) so
-  // flipping it re-renders this switch immediately; useExport.ts reads the
-  // persisted value fresh on every export start, so no prop threading through
-  // App.tsx is needed for the toggle to take effect.
-  const [webcodecsExportEnabled, setWebcodecsExportEnabledState] = useState(() => isWebCodecsExportToggleOn());
-  const webcodecsExportCapable = isWebCodecsExportCapable();
-  const handleToggleWebcodecsExport = (): void => {
-    const next = !webcodecsExportEnabled;
-    setWebcodecsExportEnabledState(next);
-    setWebCodecsExportToggle(next);
   };
   // Index of the inter-segment gap currently being hovered for "+ heading" insertion.
   // -1 = before all segments; i = after segment[i].
@@ -1643,86 +1609,6 @@ export function DropZonePanel({
               onPresetsChange={handleLookPresetsChange}
               projectName={projectName}
             />
-          </div>
-
-          {/* Section: Export Quality */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Quality</p>
-            <div className="flex gap-2">
-              <div className="flex-1 space-y-1">
-                <label className="text-[8px] uppercase tracking-widest text-gray-600">Resolution</label>
-                <select
-                  value={exportResolution}
-                  onChange={(e) => onExportResolutionChange(e.target.value)}
-                  className="w-full bg-[#111] border border-[#222] p-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
-                >
-                  <option value="1080p">1080p</option>
-                  <option value="4k">4K</option>
-                </select>
-              </div>
-              <div className="flex-1 space-y-1">
-                <label className="text-[8px] uppercase tracking-widest text-gray-600">Frame Rate</label>
-                <select
-                  value={exportFps}
-                  onChange={(e) => onExportFpsChange(Number(e.target.value))}
-                  className="w-full bg-[#111] border border-[#222] p-1.5 rounded-lg text-[9px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26]"
-                >
-                  <option value={24}>24 fps</option>
-                  <option value={30}>30 fps</option>
-                  <option value={60}>60 fps</option>
-                </select>
-              </div>
-            </div>
-            {mixedNativeFpsWarning && (
-              <p className="text-[8px] leading-snug text-amber-500/90">
-                Staged videos have different native frame rates — pick the Frame Rate
-                that best matches your footage; it won&apos;t be auto-set for you.
-              </p>
-            )}
-          </div>
-
-          {/* Section: Export Engine (WebCodecs export toggle, additive — plan §6) */}
-          <div className="px-4 py-3 border-b border-[#111] space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Engine</p>
-            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-              <span>Use WebCodecs export (faster, beta)</span>
-              <button
-                onClick={handleToggleWebcodecsExport}
-                disabled={!webcodecsExportCapable}
-                aria-label={webcodecsExportEnabled ? 'Disable WebCodecs export' : 'Enable WebCodecs export'}
-                aria-pressed={webcodecsExportEnabled}
-                className={`w-10 h-5 rounded-full transition-colors relative ${
-                  !webcodecsExportCapable
-                    ? 'bg-[#1A1A1A] border border-[#282828] opacity-40 cursor-not-allowed'
-                    : webcodecsExportEnabled
-                      ? 'bg-[#F27D26]'
-                      : 'bg-[#1A1A1A] border border-[#282828]'
-                }`}
-              >
-                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${webcodecsExportEnabled && webcodecsExportCapable ? 'translate-x-5' : ''}`} />
-              </button>
-            </label>
-            {!webcodecsExportCapable && (
-              <p className="text-[8px] leading-snug text-gray-600">
-                Not available on this device — requires WebCodecs, WebGL2, and module worker support.
-              </p>
-            )}
-          </div>
-
-          {/* Section: Display */}
-          <div className="px-4 py-3 space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Display</p>
-            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-              Overlay Text Display (Default)
-              <button
-                onClick={() => onSetAllOverlay(!allOverlayOn)}
-                aria-label={allOverlayOn ? 'Hide overlay text on all segments' : 'Show overlay text on all segments'}
-                aria-pressed={allOverlayOn}
-                className={`w-10 h-5 rounded-full transition-colors relative ${allOverlayOn ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
-              >
-                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${allOverlayOn ? 'translate-x-5' : ''}`} />
-              </button>
-            </label>
           </div>
 
         </div>

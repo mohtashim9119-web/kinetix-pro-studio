@@ -93,13 +93,18 @@ interface UseGlPreviewParams {
    *  by PreviewStage. Gates ALL work in this hook. Carried a dev-only toggle too
    *  until the Phase 5 cutover removed it. */
   enabled: boolean;
+  /** Backing-buffer dimensions (NOT the CSS display size) — the project's
+   *  native resolution, derived via resolutionConfig.ts's resolveDimensions
+   *  from (project.aspectRatio, project.resolutionTier). The GL canvas still
+   *  fills its CSS box via the caller's className/style (w-full h-full); the
+   *  browser scales this fixed-size backing buffer to fit. */
+  nativeWidth: number;
+  nativeHeight: number;
   /** PreviewStage's fullscreen flag. The per-tick render effect below only
-   *  reruns when one of its listed deps changes; none of them reflect the
-   *  stage's on-screen size, so a paused entry into fullscreen left the GL
-   *  canvas's backing buffer (canvas.width/height, synced from
-   *  clientWidth/clientHeight) stretched to the OLD panel's aspect ratio
-   *  until the next tick. Listing isFullscreen forces exactly one extra
-   *  re-run on toggle, which re-measures the now-current stage box. */
+   *  reruns when one of its listed deps changes; listing isFullscreen forces
+   *  exactly one extra re-run on toggle so a paused fullscreen entry still
+   *  gets a fresh draw at the (unchanged) native resolution the moment the
+   *  stage resizes. */
   isFullscreen: boolean;
 }
 
@@ -141,6 +146,8 @@ export function useGlPreview({
   config,
   isResizingRef,
   enabled,
+  nativeWidth,
+  nativeHeight,
   isFullscreen,
 }: UseGlPreviewParams): UseGlPreviewResult {
   const glRef = useRef<WebGL2RenderingContext | null>(null);
@@ -396,12 +403,10 @@ export function useGlPreview({
     const canvas = canvasNode;
     if (!compositor || !gl || !canvas || contextLostRef.current) return;
 
-    const displayW = canvas.clientWidth || canvas.width;
-    const displayH = canvas.clientHeight || canvas.height;
-    if (displayW === 0 || displayH === 0) return;
-    if (canvas.width !== displayW || canvas.height !== displayH) {
-      canvas.width = displayW;
-      canvas.height = displayH;
+    if (nativeWidth === 0 || nativeHeight === 0) return;
+    if (canvas.width !== nativeWidth || canvas.height !== nativeHeight) {
+      canvas.width = nativeWidth;
+      canvas.height = nativeHeight;
     }
     const dstW = canvas.width;
     const dstH = canvas.height;
@@ -529,12 +534,16 @@ export function useGlPreview({
     config.globalTransition,
     config.globalTransitionDuration,
     config.grade,
+    // The backing buffer now tracks the project's native resolution
+    // (nativeWidth/nativeHeight) rather than the CSS box size, so a
+    // resolutionTier change must re-fire this effect to resize the canvas.
+    nativeWidth,
+    nativeHeight,
     // Stretch-on-fullscreen-while-paused fix: none of the deps above change
     // when the stage's CSS box resizes (e.g. on a fullscreen toggle while
-    // currentTime is frozen), so canvas.width/height (lines above) would stay
-    // stale relative to the new box until the next unrelated tick. Forces one
-    // extra re-run — and one re-measure of clientWidth/clientHeight — right
-    // when the stage actually changes shape.
+    // currentTime is frozen). The backing buffer itself no longer depends on
+    // the CSS box, but this still forces one extra re-run — and one fresh
+    // draw — right when the stage actually changes shape.
     isFullscreen,
   ]);
 

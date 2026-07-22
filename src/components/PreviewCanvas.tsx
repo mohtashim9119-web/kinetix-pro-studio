@@ -68,15 +68,27 @@ interface Props {
   frame: VideoFrame | null;
   className?: string;
   style?: React.CSSProperties;
+  /** Backing-buffer dimensions (NOT the CSS display size) — the project's
+   *  native resolution, derived via resolutionConfig.ts's resolveDimensions
+   *  from (project.aspectRatio, project.resolutionTier). The canvas still
+   *  fills its CSS box via `className`/`style` (w-full h-full); the browser
+   *  scales this fixed-size backing buffer to fit, so the object-contain
+   *  fit math below (canvasRatio vs frameRatio) always compares against the
+   *  project's real aspect ratio rather than whatever size the panel happens
+   *  to be measured at. */
+  width: number;
+  height: number;
   /** PreviewStage's fullscreen flag. The draw effect below is keyed only to
-   *  `frame`, so a paused fullscreen toggle left canvas.width/height (synced
-   *  from clientWidth/clientHeight just below) stretched to the old CSS box's
-   *  aspect ratio until the next frame arrived. Listing it here forces one
-   *  extra re-run — and one re-measure — right when the stage resizes. */
+   *  `frame`, so a paused fullscreen toggle left the last-painted bitmap
+   *  stretched to the old CSS box until the next frame arrived. Listing it
+   *  here forces one extra re-run right when the stage resizes — the backing
+   *  buffer itself no longer depends on the CSS box size, but a re-run still
+   *  guarantees a fresh draw at the (unchanged) native resolution the moment
+   *  fullscreen toggles. */
   isFullscreen?: boolean;
 }
 
-export function PreviewCanvas({ frame, className, style, isFullscreen }: Props) {
+export function PreviewCanvas({ frame, className, style, width, height, isFullscreen }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   useLayoutEffect(() => {
@@ -85,12 +97,10 @@ export function PreviewCanvas({ frame, className, style, isFullscreen }: Props) 
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const displayW = canvas.clientWidth || canvas.width;
-    const displayH = canvas.clientHeight || canvas.height;
-    if (displayW === 0 || displayH === 0) return;
-    if (canvas.width !== displayW || canvas.height !== displayH) {
-      canvas.width = displayW;
-      canvas.height = displayH;
+    if (width === 0 || height === 0) return;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
     }
 
     if (!frame) {
@@ -142,7 +152,7 @@ export function PreviewCanvas({ frame, className, style, isFullscreen }: Props) 
       // file header. Skip this tick's paint rather than crash; the next
       // frame supersedes it almost immediately regardless.
     }
-  }, [frame, isFullscreen]);
+  }, [frame, width, height, isFullscreen]);
 
   return <canvas ref={canvasRef} className={className} style={style} />;
 }

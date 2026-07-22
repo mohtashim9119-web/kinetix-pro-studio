@@ -1964,3 +1964,79 @@ All 6 merge-gate criteria met or documented-pending. The WebGL2 effects-engine r
 - **Sync engine, timeline/editing, persistence, Tauri capabilities** (beyond the two new IPC commands) — all untouched.
 
 Test count grew from 612 to **739** (127 new tests) across the 8 steps, primarily in `services/webcodecsExport/*.test.ts` (`fontResolver.test.ts`, `glCompositable.test.ts`, `muxOnly.test.ts`, `sequentialDecode.test.ts`, `textRenderer.test.ts`).
+
+---
+
+## Project Settings + Aspect Ratio + Bulk Delete — Implementation Record
+
+> Added 2026-07-22, landed on top of the WebCodecs + WebGL2 Worker Export work above (same uncommitted tree). The original design doc (`docs/project-settings-plan.md`) was deleted after implementation completed — this section is now the full record. See `CLAUDE.md`'s File Map (`resolutionConfig.ts`, `ProjectSettingsModal.tsx`, `ExportSettingsModal.tsx`, `NewProjectModal.tsx`, `ProjectDashboard.tsx` entries) and Export Pipeline section for the architecture as it now stands, and `project-state.md`'s Active Tasks/Decisions Log for current status.
+
+Three features, landed together in one session: **Project Settings + Aspect Ratio** (Steps 1-6), an **Export Settings dialog** (a same-day amendment to the first), and **Bulk Select + Delete Projects** (independent, self-contained).
+
+### 1. The resolution model — aspectRatio + resolutionTier → derived dimensions
+
+The core design decision: `Project` never stores pixel width/height directly. It stores two small categorical fields —
+
+```ts
+export type AspectRatio = '16:9' | '9:16' | '1:1';
+export type ResolutionTier = '720p' | '1080p';
+```
+
+— and a single new pure module, `src/services/resolutionConfig.ts`, is the one place that maps `(AspectRatio, ResolutionTier)` to actual pixel dimensions:
+
+```ts
+export const RESOLUTION_TABLE: Record<AspectRatio, Record<ResolutionTier, FrameDimensions>> = {
+  '16:9': { '720p': { width: 1280, height: 720 }, '1080p': { width: 1920, height: 1080 } },
+  '9:16': { '720p': { width: 720, height: 1280 }, '1080p': { width: 1080, height: 1920 } },
+  '1:1':  { '720p': { width: 720, height: 720 },  '1080p': { width: 1080, height: 1080 } },
+};
+```
+
+`resolveDimensions(ratio, tier)` looks up the table; `aspectRatioToCss(ratio)` maps `'16:9' → '16 / 9'` for the preview wrapper's inline `aspectRatio` style. The `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes the table **TypeScript-exhaustiveness-checked** — omitting a ratio or tier cell is a compile error, not a silent runtime hole. 12 tests in `resolutionConfig.test.ts` assert all 6 `(ratio, tier)` combinations, `aspectRatioToCss` for all 3 ratios, and both defaults (`DEFAULT_ASPECT_RATIO = '16:9'`, `DEFAULT_RESOLUTION_TIER = '1080p'`).
+
+**Why this shape, not direct width/height fields on `Project`:** confirmed by reading the actual rendering/export code end to end that the preview and export pipelines were already width/height-agnostic — `frameRenderer.ts`'s `drawImageCover`, `gl/uvRect.ts`'s cover/contain math, and `glCompositor.ts`'s render-target allocation all take `width`/`height` as plain parameters with no embedded ratio assumption. The 16:9 assumption lived in exactly two places (`App.tsx`'s preview-wrapper inline style, `useExport.ts`'s resolution→dimensions ternary), so a lookup-table indirection was small, clean plumbing rather than a deep rewrite. Existing projects default to `aspectRatio: '16:9'`, `resolutionTier: '1080p'` at read time (both fields optional, undefined on pre-existing projects, no `projectStore.ts` version bump — the same pattern already used for `headings?: HeadingOverlay[]`) — this resolves to 1920×1080, i.e. today's actual behavior, so migration is invisible.
+
+**4K removed, not merely left untested.** The old `ExportResolution = '1080p' | '4k'` union (`useExport.ts`) is gone — `ExportResolution` is now a type alias for the shared `ResolutionTier`. Only 720p and 1080p exist, across all 3 aspect ratios (6 combinations total). This is a deliberate scope decision: reinstating 4K later is additive at the type/table level (one new union member + 3 new lookup-table rows, one per aspect ratio — the exhaustiveness check forces all 3 to be filled in), but ships with a decision made per new cell (what does "4K, square" mean?), not automatically.
+
+### 2. Project Settings modal + aspect ratio at creation (Steps 1-6)
+
+**`NewProjectModal.tsx`** — beyond the existing project-name field, now collects aspect ratio (a 3-way segmented control, `16:9`/`9:16`/`1:1`, defaulting to `16:9`) and native resolution tier (a `<select>` offering `720p`/`1080p`, options showing derived dimensions for the currently-selected ratio via `resolveDimensions`, e.g. `"1080p — 1080 × 1920"` under `9:16`, defaulting to `1080p`). Aspect ratio is explicitly labeled "Locked forever once created — cannot be changed later." `onConfirm`'s signature widened to `(name, aspectRatio, resolutionTier)`; `App.tsx`'s `handleNewProjectConfirm` writes both onto the fresh `Project` before confirming it.
+
+**New `ProjectSettingsModal.tsx`** — a blocking, draft-then-commit dialog (all edits are local `useState` draft, committed atomically on Save; Cancel/Escape discard everything, no backdrop-click-to-close, matching `NewProjectModal`'s existing precedent) opened from a new button in the right panel (`App.tsx`, `showProjectSettingsModal` state). Three sections:
+1. **Project** (new) — the native resolution tier (editable `<select>`, `720p`/`1080p`) with derived dimensions shown as read-only helper text, and the locked aspect ratio (display only — "Aspect ratio is locked at project creation").
+2. **Export Engine** — the WebCodecs export toggle, pulled out of `DropZonePanel.tsx`'s Effects tab (mirrors `isWebCodecsExportCapable()`/`isWebCodecsExportToggleOn()`/`setWebCodecsExportToggle()`, same persisted `uiStateStore` key, same capability-gated disabled state).
+3. **Text Overlay** — the segments-default `showOverlay` cascade, also pulled out of the Effects tab.
+
+**`DropZonePanel.tsx` cleanup** — the Effects tab's former Export Quality/Export Engine/Display sections and their supporting local state/props (`webcodecsExportEnabled`/`webcodecsExportCapable`/`handleToggleWebcodecsExport`, the `exportResolution`/`exportFps`/`mixedNativeFpsWarning`/`onSetAllOverlay` props, the `allOverlayOn` derivation) were deleted entirely — relocated, not duplicated. The Effects tab now mounts only `EffectsPanel.tsx` and owns `lookPresetService` persistence, same as before these sections existed.
+
+**Preview wiring** — `App.tsx`'s preview-wrapper inline style changed from a hardcoded `aspectRatio: '16 / 9'` to `aspectRatio: aspectRatioToCss(project.aspectRatio ?? DEFAULT_ASPECT_RATIO)`. The preview canvas backing buffers (`PreviewCanvas.tsx`'s `width`/`height` props, `useGlPreview.ts`'s `nativeWidth`/`nativeHeight`, both threaded through `PreviewStage.tsx`) now come from `previewNativeDimensions = resolveDimensions(project.aspectRatio ?? DEFAULT_ASPECT_RATIO, project.resolutionTier ?? DEFAULT_RESOLUTION_TIER)` (memoized in `App.tsx`) instead of being measured from `canvas.clientWidth`/`clientHeight` every frame — the preview now renders at the project's actual native resolution, and the CSS aspect-ratio wrapper matches it by construction so there's no distortion at any panel size. The object-contain fit math in both files is unchanged; only the backing-buffer size source changed.
+
+### 3. Export Settings dialog (same-day amendment)
+
+**New `ExportSettingsModal.tsx`** — resolution + fps are chosen **at export time**, in a dialog that opens when the user clicks Export, before the native save-path dialog — not in Project Settings. This is the industry-standard pattern: Premiere, Resolve, and Final Cut all separate a project's native/working format from a per-export delivery format chosen at render time. `ProjectSettingsModal.tsx` was amended the same day to remove its own (just-added, never-shipped) Export Quality section once this landed, so the setting exists in exactly one place, not two.
+
+Draft state is seeded from the current `exportResolution`/`exportFps` (so the last export's choice is remembered across runs); Continue commits the draft back into `App.tsx`'s existing state and proceeds to `pick_save_path` + the render; Cancel/Escape discard the draft, no export triggered. `useExport.ts`'s `runExport` derives export width/height via `resolveDimensions(snap.aspectRatio ?? DEFAULT_ASPECT_RATIO, resolution)` instead of the old hardcoded `resolution === '4k' ? 3840 : 1920` ternary.
+
+**The stale-closure fix:** `ExportSettingsModal`'s `onContinue` commits `exportResolution`/`exportFps` via `setState`, then must trigger `startExport` — but `startExport` is a `useCallback` closed over the OLD values until the next render, so calling it synchronously in the same handler would export with stale settings. `App.tsx` gained a small `exportTriggerCount` counter + a dedicated effect (`useEffect(() => { if (exportTriggerCount === 0) return; startExport(); }, [exportTriggerCount])`) that fires only on the render where the counter changes, reading the freshly-closed-over `startExport` from that same render — never on resolution/fps changes coming from elsewhere (e.g. the native-fps auto-match effect).
+
+### 4. Bulk Select + Delete Projects (independent, self-contained)
+
+**`ProjectDashboard.tsx` only** — no `App.tsx` or service changes. Adds:
+- A per-card hover checkbox (top-left, `opacity-0 group-hover:opacity-100` unless selected, then always visible with a `ring-2 ring-blue-500` card highlight) — `onClick` calls `e.stopPropagation()` so selecting a card doesn't also open the project.
+- A header "Select All"/"Deselect All" toggle button — **filter-respecting**: it operates on `visibleIds` (the currently search-filtered set), not every project in the registry, so selecting-all while a search is active only selects the visible matches.
+- A "Delete Selected (N)" button (disabled at `N=0`) opening a bulk confirm dialog, distinct from the existing single-project delete confirm (`confirmDeleteId` state stays separate from the new `showBulkConfirm`/`selectedIds` state).
+- `handleBulkDelete()` sequentially awaits `deleteAllAssets` + `deleteAllWaveforms` + `deleteProjectData` per selected id — the exact same three calls the existing single-delete `handleDelete()` already made, just looped — then clears `selectedIds` and refreshes the metas list.
+
+Selection state (`selectedIds: Set<string>`, `showBulkConfirm`) is local component state, not persisted — resets on remount, matching the existing (also-unpersisted) single-delete confirm state's precedent.
+
+### Test count
+
+Grew from 739 to **751** (12 new tests, all in `services/resolutionConfig.test.ts` — none of the other two features needed new test files: `ExportSettingsModal.tsx`/`ProjectSettingsModal.tsx`/`NewProjectModal.tsx`/`ProjectDashboard.tsx` are UI components with no existing test-harness precedent in this repo, per the same jsdom/testing-library gap noted elsewhere in this file for other hook/component work).
+
+### What this does NOT change
+
+- **The export pipeline itself** (`exportPipeline.ts`, `segmentEncoder.ts`, `frameRenderer.ts`, `exportPipelineWebCodecs.ts` and everything under `services/webcodecsExport/`) — untouched; only the `{ width, height }` values passed into it changed source (derived, not hardcoded).
+- **The WebCodecs export gate logic** (`isWebCodecsExportCapable()`/`isWebCodecsExportGateOpen()` in `useExport.ts`) — untouched; only the toggle's on-screen location moved.
+- **Sync engine, timeline/editing, Whisper alignment, silence detection** — none of these read aspect ratio or resolution.
+- **`EffectsPanel.tsx` itself** — confirmed by reading it in full that none of the three relocated Effects-tab sections ever lived there; it needed zero changes.
+- **Per-project delete plumbing** (`deleteAllAssets`/`deleteAllWaveforms`/`deleteProjectData`) — reused as-is by the bulk path, not modified.
