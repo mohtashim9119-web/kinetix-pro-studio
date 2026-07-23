@@ -78,7 +78,6 @@ import { exportProject } from '../../services/exportPipeline';
 import {
   exportProjectWebCodecs,
   countAnnexbFrames,
-  concatAnnexbPieces,
 } from '../../services/webcodecsExport/exportPipelineWebCodecs';
 import { useEffect, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -1488,7 +1487,7 @@ async function runConcatGuardNegativeTest(): Promise<ConcatGuardNegativeResult> 
     let tripMechanism: ConcatGuardNegativeResult['tripMechanism'] = 'none';
     let concatError: string | undefined;
     try {
-      await concatAnnexbPieces(ffmpeg, ['good_piece.h264', 'bad_piece.h264'], 'video_all_corrupt.h264');
+      await ffmpeg.concatAnnexbPieces(['good_piece.h264', 'bad_piece.h264'], 'video_all_corrupt.h264');
       const rawBytes = await ffmpeg.readFile('video_all_corrupt.h264');
       const bytes = typeof rawBytes === 'string' ? new TextEncoder().encode(rawBytes) : rawBytes;
       actualFrames = countAnnexbFrames(bytes);

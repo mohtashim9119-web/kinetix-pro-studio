@@ -260,6 +260,91 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<u6
     Ok(count)
 }
 
+/// Stream-concatenates a list of AnnexB H.264 piece files (in order) into a
+/// single `output_path`, keeping only TWO file descriptors open at any instant
+/// (one read, one write) — independent of piece count.
+///
+/// Replaces the WebCodecs export orchestrator's previous ffmpeg concat-protocol
+/// pipe-list (`ffmpeg -i "concat:piece_0.h264|piece_1.h264|..."`), which opens
+/// EVERY input simultaneously. On macOS the default per-process soft
+/// file-descriptor limit (`ulimit -n`) is 256, so a large-segment export (each
+/// non-GL segment becomes its own `piece_NN.h264`) blows past it partway through
+/// the open phase — reproduced as `ffmpeg exited with code 232: Too many open
+/// files` on a 407-segment project. Windows has no fixed per-process FD cap, so
+/// it never surfaced there; this helper is OS-independent by construction.
+///
+/// Raw byte concatenation of AnnexB streams is spec-valid: every NAL unit is
+/// start-code-prefixed (`00 00 01` / `00 00 00 01`), so appending one stream's
+/// bytes after another's needs no container/framing rewrite. This helper is
+/// therefore deliberately NOT AnnexB-aware — it does no NAL parsing (that is
+/// `ffmpeg_count_annexb_frames`'s job, used by the orchestrator's post-concat
+/// frame-count guard to prove the result is byte-correct). Uses a fixed 64 KB
+/// copy buffer, matching `ffmpeg_count_annexb_frames`'s chunk size.
+///
+/// `output_path` is truncated/created. Every piece path (and the output path)
+/// is `validate_path`-checked up front, before the output is opened, so a bad
+/// path can never truncate an existing output. On ANY error (a missing or
+/// unreadable piece, a write failure), the partial `output_path` is removed
+/// before returning `Err` — a failed concat never leaves a half-written file
+/// behind for a later step to mistake for a complete one.
+#[tauri::command]
+pub fn ffmpeg_concat_annexb_pieces(
+    session_id: String,
+    piece_paths: Vec<String>,
+    output_path: String,
+) -> Result<(), String> {
+    validate_path(&output_path)?;
+    for piece in &piece_paths {
+        validate_path(piece)?;
+    }
+
+    let dir = session_dir(&session_id)?;
+    let out_full = dir.join(&output_path);
+
+    let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full);
+    if result.is_err() {
+        // Don't leave a partial/corrupt output behind on failure. The write
+        // handle inside `concat_annexb_pieces_inner` has already been dropped
+        // (closed) by the time it returns, so this remove is safe.
+        let _ = fs::remove_file(&out_full);
+    }
+    result
+}
+
+fn concat_annexb_pieces_inner(
+    dir: &std::path::Path,
+    piece_paths: &[String],
+    out_full: &std::path::Path,
+) -> Result<(), String> {
+    use std::io::{Read, Write};
+
+    let mut out = fs::File::create(out_full)
+        .map_err(|e| format!("concat_annexb_pieces: create output: {}", e))?;
+
+    const CHUNK_SIZE: usize = 64 * 1024;
+    let mut buf = vec![0u8; CHUNK_SIZE];
+
+    for piece in piece_paths {
+        let piece_full = dir.join(piece);
+        let mut input = fs::File::open(&piece_full)
+            .map_err(|e| format!("concat_annexb_pieces: open piece({}): {}", piece, e))?;
+        loop {
+            let n = input
+                .read(&mut buf)
+                .map_err(|e| format!("concat_annexb_pieces: read piece({}): {}", piece, e))?;
+            if n == 0 {
+                break;
+            }
+            out.write_all(&buf[..n])
+                .map_err(|e| format!("concat_annexb_pieces: write output: {}", e))?;
+        }
+    }
+
+    out.flush()
+        .map_err(|e| format!("concat_annexb_pieces: flush output: {}", e))?;
+    Ok(())
+}
+
 /// Deletes <session_dir>/<path>. Missing file is treated as success.
 #[tauri::command]
 pub fn ffmpeg_delete_file(session_id: String, path: String) -> Result<(), String> {
@@ -594,4 +679,106 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates a real session directory (matching `session_dir`'s layout) so the
+    /// public `ffmpeg_concat_annexb_pieces` command — including its on-error
+    /// cleanup — can be exercised end to end.
+    fn make_session() -> (String, PathBuf) {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+        fs::create_dir_all(&dir).unwrap();
+        (id, dir)
+    }
+
+    #[test]
+    fn concat_annexb_pieces_produces_exact_byte_concatenation() {
+        let (id, dir) = make_session();
+        fs::write(dir.join("piece_0.h264"), [0u8, 1, 2, 3]).unwrap();
+        fs::write(dir.join("piece_1.h264"), [4u8, 5]).unwrap();
+        fs::write(dir.join("piece_2.h264"), [6u8, 7, 8, 9, 10]).unwrap();
+
+        let result = ffmpeg_concat_annexb_pieces(
+            id,
+            vec![
+                "piece_0.h264".to_string(),
+                "piece_1.h264".to_string(),
+                "piece_2.h264".to_string(),
+            ],
+            "video_all.h264".to_string(),
+        );
+        assert!(result.is_ok(), "concat should succeed: {:?}", result);
+
+        let out = fs::read(dir.join("video_all.h264")).unwrap();
+        assert_eq!(out, vec![0u8, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_annexb_pieces_handles_larger_than_chunk_input() {
+        // A piece larger than the 64 KB copy buffer must be streamed across
+        // multiple read/write iterations with no byte loss at the boundary.
+        let (id, dir) = make_session();
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        fs::write(dir.join("piece_0.h264"), &big).unwrap();
+        fs::write(dir.join("piece_1.h264"), [42u8, 43, 44]).unwrap();
+
+        let result = ffmpeg_concat_annexb_pieces(
+            id,
+            vec!["piece_0.h264".to_string(), "piece_1.h264".to_string()],
+            "video_all.h264".to_string(),
+        );
+        assert!(result.is_ok(), "concat should succeed: {:?}", result);
+
+        let out = fs::read(dir.join("video_all.h264")).unwrap();
+        let mut expected = big.clone();
+        expected.extend_from_slice(&[42u8, 43, 44]);
+        assert_eq!(out, expected);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_annexb_pieces_missing_piece_errors_and_leaves_no_partial_output() {
+        let (id, dir) = make_session();
+        fs::write(dir.join("piece_0.h264"), [10u8, 11, 12]).unwrap();
+        // piece_1.h264 deliberately absent.
+        fs::write(dir.join("piece_2.h264"), [20u8, 21]).unwrap();
+
+        let result = ffmpeg_concat_annexb_pieces(
+            id,
+            vec![
+                "piece_0.h264".to_string(),
+                "piece_1.h264".to_string(),
+                "piece_2.h264".to_string(),
+            ],
+            "video_all.h264".to_string(),
+        );
+        assert!(result.is_err(), "expected Err for a missing piece");
+        assert!(
+            !dir.join("video_all.h264").exists(),
+            "partial output must be cleaned up on error"
+        );
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_annexb_pieces_rejects_traversal_paths() {
+        let (id, _dir) = make_session();
+        let result = ffmpeg_concat_annexb_pieces(
+            id.clone(),
+            vec!["../escape.h264".to_string()],
+            "video_all.h264".to_string(),
+        );
+        assert!(result.is_err(), "path traversal in a piece path must be rejected");
+
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }

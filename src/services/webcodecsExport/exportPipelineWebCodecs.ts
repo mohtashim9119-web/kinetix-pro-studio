@@ -126,6 +126,15 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * below for why this replaced a `readFile` + JS-scan approach.
    */
   countAnnexbFrames(path: string): Promise<number>;
+  /**
+   * Stream-concatenates `piecePaths` (in order) into a single `outputPath`
+   * entirely on the native side (`TauriFfmpeg.concatAnnexbPieces`, backed by the
+   * Rust `ffmpeg_concat_annexb_pieces` command) — only 2 file descriptors are
+   * ever open, independent of piece count. Replaced the ffmpeg concat-protocol
+   * (`-i concat:a|b|c|...`), which opened every piece simultaneously and
+   * exhausted macOS's default 256 per-process FD limit on large-segment exports.
+   */
+  concatAnnexbPieces(piecePaths: string[], outputPath: string): Promise<void>;
 }
 
 function causeString(err: unknown): string {
@@ -740,15 +749,16 @@ export function countAnnexbFrames(bytes: Uint8Array): number {
   return count;
 }
 
-/**
- * Exported (beyond this file's own internal use) so the Step 5 spike's
- * concat-guard negative test (`src/dev/webcodecsStep2Spike/main.ts`) can
- * exercise the REAL concat call against a deliberately-corrupted piece,
- * rather than re-deriving the same ffmpeg command in test-only code.
- */
-export async function concatAnnexbPieces(ffmpeg: WebCodecsFfmpeg, pieceFiles: string[], outFile: string): Promise<void> {
-  await ffmpeg.exec(['-f', 'h264', '-i', `concat:${pieceFiles.join('|')}`, '-c', 'copy', '-y', outFile]);
-}
+// Concatenation itself is now a native Rust helper (`ffmpeg.concatAnnexbPieces`
+// -> `ffmpeg_concat_annexb_pieces`), NOT an ffmpeg concat-protocol invocation.
+// The old `concat:piece_0.h264|piece_1.h264|...` pipe-list opened every piece
+// file at once; on a large-segment export (each non-GL segment becomes its own
+// `piece_NN.h264`) that blew past macOS's default 256 per-process
+// file-descriptor limit (`Too many open files`, reproduced at 407 segments).
+// The Rust helper stream-copies piece bytes with only 2 FDs open at any moment,
+// so it scales to arbitrary segment counts and is OS-independent. Raw AnnexB
+// byte concatenation is spec-valid (every NAL unit is start-code-prefixed); the
+// frame-count guard below proves the concatenated result is byte-correct.
 
 // ---------------------------------------------------------------------------
 // Part 5b — Used-font-family discovery, for `resolveFontBytes` (fontResolver.ts).
@@ -970,7 +980,7 @@ export async function exportProjectWebCodecs(
       // the SAME frame-count guard below via a plain rename-by-reference
       // (ffmpeg's own file, reused directly as `video_all.h264`'s stand-in).
     } else {
-      await concatAnnexbPieces(ffmpeg, pieceFiles, videoAllFile);
+      await ffmpeg.concatAnnexbPieces(pieceFiles, videoAllFile);
     }
   } catch (err) {
     activeFfmpeg = null;

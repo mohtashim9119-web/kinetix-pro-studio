@@ -211,6 +211,29 @@ export class TauriFfmpeg implements FfmpegLike {
     }
   }
 
+  /**
+   * Stream-concatenates `piecePaths` (in order) into a single `outputPath` via
+   * the native `ffmpeg_concat_annexb_pieces` command — only 2 file descriptors
+   * are ever open (one read, one write), independent of piece count. Replaces
+   * the ffmpeg concat-protocol (`-i concat:a|b|c|...`), which opened every piece
+   * at once and exhausted macOS's default 256 per-process FD limit on
+   * large-segment exports (`Too many open files`). Raw AnnexB byte concatenation
+   * is spec-valid (every NAL unit is start-code-prefixed); the orchestrator's
+   * post-concat `countAnnexbFrames` guard proves the result is byte-correct.
+   */
+  async concatAnnexbPieces(piecePaths: string[], outputPath: string): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('ffmpeg_concat_annexb_pieces', {
+        sessionId: this.#sessionId,
+        piecePaths,
+        outputPath,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
   async deleteFile(path: string): Promise<void> {
     this.#assertAlive();
     try {
