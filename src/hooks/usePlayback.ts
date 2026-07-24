@@ -6,6 +6,11 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import type { Asset, VideoSegment } from '../types';
 
+// Smaller than one frame at 60 fps (~16.7 ms) — large enough that ordinary
+// float-precision jitter in repeated `audio.currentTime` reads can't trip it,
+// small enough that a real seek/advance always clears it (QB2 fix).
+export const CURRENT_TIME_EPSILON_SEC = 0.01;
+
 interface UsePlaybackParams {
   isPlaying: boolean;
   setIsPlaying: (v: boolean | ((p: boolean) => boolean)) => void;
@@ -36,6 +41,15 @@ export function usePlayback({
 }: UsePlaybackParams): void {
   const rafRef = useRef<number | null>(null);
   const segmentsRef = useRef<VideoSegment[]>(segments);
+  // Last value this hook actually committed via setCurrentTime — lets tick()
+  // skip redundant/near-identical updates instead of setting state every
+  // frame regardless of whether the audio position meaningfully moved (QB2).
+  const currentTimeRef = useRef(0);
+  // Derived boolean instead of depending on the `voiceover` object's identity
+  // directly — the rAF effect below only ever checks voiceover's truthiness,
+  // never its fields, so a same-presence-different-identity object (e.g. the
+  // assets array being rebuilt during Apply Sync) shouldn't restart the loop.
+  const hasVoiceover = !!voiceover;
 
   // Keep segmentsRef current so the setInterval closure always reads the latest
   // durations without segments appearing in the interval's dependency array.
@@ -61,13 +75,23 @@ export function usePlayback({
       rafRef.current = null;
     }
 
-    if (!isPlaying || !voiceover) return;
+    if (!isPlaying || !hasVoiceover) return;
 
     const tick = () => {
       const audio = audioRef.current;
       if (!audio) return;
 
-      setCurrentTime(audio.currentTime);
+      // Delta guard (QB2 fix): only push a new currentTime when it actually
+      // moved meaningfully. Without this, every tick calls setCurrentTime
+      // unconditionally, and if anything else (e.g. an unrelated commit like
+      // Apply Sync landing new segments) causes this effect to re-run while
+      // the audio position hasn't really advanced, the resulting state-update
+      // stream can compound with downstream currentTime consumers and blow
+      // React's nested-update budget ("Maximum update depth exceeded").
+      if (Math.abs(audio.currentTime - currentTimeRef.current) > CURRENT_TIME_EPSILON_SEC) {
+        currentTimeRef.current = audio.currentTime;
+        setCurrentTime(audio.currentTime);
+      }
 
       // Defensive resume: if audio stalled mid-playback for any reason, restart it.
       // Guard with !audio.ended so a naturally-finished audio is not restarted here.
@@ -79,6 +103,7 @@ export function usePlayback({
       if (segDur > 0 && audio.currentTime >= segDur) {
         setIsPlaying(false);
         audio.currentTime = 0;
+        currentTimeRef.current = 0;
         setCurrentTime(0);
         return;
       }
@@ -87,6 +112,7 @@ export function usePlayback({
       if (audio.ended) {
         setIsPlaying(false);
         audio.currentTime = 0;
+        currentTimeRef.current = 0;
         setCurrentTime(0);
         return; // do not schedule next frame
       }
@@ -102,13 +128,13 @@ export function usePlayback({
         rafRef.current = null;
       }
     };
-  }, [isPlaying, voiceover]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, hasVoiceover]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Playback: setInterval manual-advance — no-voiceover path ---
   // Only runs when isPlaying is true and no voiceover asset is loaded.
   // (Decision 1 / Batch C: keep no-voiceover path as a separate setInterval, unchanged.)
   useEffect(() => {
-    if (!isPlaying || voiceover) return;
+    if (!isPlaying || hasVoiceover) return;
 
     const interval = setInterval(() => {
       const segDur = segmentsRef.current.reduce((acc, s) => acc + s.duration, 0);
@@ -124,7 +150,7 @@ export function usePlayback({
     }, 100);
 
     return () => clearInterval(interval);
-  }, [isPlaying, voiceover, globalPlaybackSpeed]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isPlaying, hasVoiceover, globalPlaybackSpeed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Playback: playbackRate sync ---
   // Separate effect so neither loop gains globalPlaybackSpeed as a dep.

@@ -731,7 +731,7 @@ Three bugs surfaced during WS1a's manual verification pass, none of them WS1a re
 - **Fix approach:** Track destination-group control words explicitly (`\fonttbl`, `\colortbl`, `\stylesheet`, `\info`, the `\*` generic-destination prefix, etc.) during the character walk and suppress emission for their entire subtree regardless of depth, rather than the current blanket `depth >= 1` check.
 - **Accepted limitations:** none identified yet — needs a fixture pass across a few real TextEdit-exported `.rtf`/`.txt` samples once implemented.
 - **Files affected:** `src/services/textUtils.ts` (`stripRtfIfNeeded`, lines ~14–126).
-- **Status:** Not started. Queued for next workstream.
+- **Status:** RESOLVED. Manually verified: user staged an RTF-formatted .txt file; no font-table residue in segments. Fix: `skipDepth` counter suppresses emission inside destination groups (`\fonttbl`, `\colortbl`, `\stylesheet`, `\info`, `\pict`, `\object`, `\fldinst`, `\data`, `\themedata`, `\colorschememapping`) and `\*` starred destinations; body text and formatting control words unaffected. 9 unit tests added in `textUtils.test.ts`.
 
 ### QB2 — `usePlayback.ts` infinite update-depth loop
 
@@ -740,7 +740,7 @@ Three bugs surfaced during WS1a's manual verification pass, none of them WS1a re
 - **Fix approach:** Add a minimal-delta guard before calling `setCurrentTime` in `tick()` (skip the call when the new value hasn't meaningfully changed from the last committed one), and audit every `currentTime`-keyed consumer in `App.tsx` for an unconditional state-setter call in response to the 60 Hz stream.
 - **Accepted limitations:** none yet — needs a runtime repro (React DevTools profiler or a stack trace from the actual "Maximum update depth exceeded" throw) to confirm the exact consumer that tips it over, since static review of `usePlayback.ts` alone does not show a synchronous self-trigger within a single React commit.
 - **Files affected:** `src/hooks/usePlayback.ts`, and potentially `src/App.tsx`'s `currentTime`-keyed effects/memos (`:2024-2034`, `:2301-2327`) depending on the runtime repro.
-- **Status:** Not started. Queued for next workstream.
+- **Status:** RESOLVED. Manually verified: user ran Apply Sync, no `Maximum update depth exceeded` error; playback (play/pause/seek) works. Fix: delta guard in `tick()` (only `setCurrentTime` when `|audio.currentTime - currentTimeRef.current| > CURRENT_TIME_EPSILON_SEC` = 0.01s); both rAF and setInterval effects' dependency arrays stabilized (replaced `voiceover` object with derived `hasVoiceover` boolean, so asset-rebuilds during Apply Sync no longer restart the loop). 7 unit tests added in `usePlayback.test.ts` (mechanical verification of the epsilon boundary and dep-array identity, per the `useGlPreview.test.ts` precedent — the hook is not renderable in this repo's test setup).
 
 ### QB3 — Whisper timestamp accuracy on continuous speech (audio energy refinement)
 

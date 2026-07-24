@@ -26,8 +26,30 @@ export function stripRtfIfNeeded(text: string): string {
 
   // Step 2: walk characters to remove RTF groups by depth
   // We keep only text-run content (chars outside groups or in plain-text positions)
+  //
+  // RTF nests non-document metadata (font table, color table, stylesheet,
+  // document info, etc.) inside their own brace groups — "destination
+  // groups" — which the generic `depth >= 1` check cannot distinguish from
+  // the real document body. `skipDepth` tracks the depth at which a
+  // destination group was entered; while non-null, no text (including
+  // paragraph/line-break control words) is emitted, and it is cleared once
+  // `depth` falls back below it (the group's matching closing brace).
+  const DESTINATION_WORDS = new Set([
+    'fonttbl',
+    'colortbl',
+    'stylesheet',
+    'info',
+    'pict',
+    'object',
+    'fldinst',
+    'data',
+    'themedata',
+    'colorschememapping',
+  ]);
+
   let result = '';
   let depth = 0;
+  let skipDepth: number | null = null;
   let i = 0;
   const len = protected_.length;
 
@@ -41,6 +63,9 @@ export function stripRtfIfNeeded(text: string): string {
     }
     if (ch === '}') {
       depth--;
+      if (skipDepth !== null && depth < skipDepth) {
+        skipDepth = null;
+      }
       i++;
       continue;
     }
@@ -51,10 +76,13 @@ export function stripRtfIfNeeded(text: string): string {
       const next = protected_[i]!;
       // control symbol (single non-alpha char)
       if (!/[a-zA-Z]/.test(next)) {
-        // \n and \r are not RTF escapes, treat as literal
-        if (next === '\n' || next === '\r') {
-          // keep the newline
-          result += '\n';
+        // \* marks the enclosing group as an optional/ignorable destination
+        // (e.g. `{\*\generator ...}`) — skip its entire subtree.
+        if (next === '*') {
+          if (skipDepth === null) skipDepth = depth;
+        } else if (next === '\n' || next === '\r') {
+          // \n and \r are not RTF escapes, treat as literal — keep the newline
+          if (skipDepth === null) result += '\n';
         }
         // all other control symbols: skip
         i++;
@@ -72,19 +100,32 @@ export function stripRtfIfNeeded(text: string): string {
       // optional trailing space (delimiter) — consume but do not emit
       if (i < len && protected_[i]! === ' ') i++;
 
-      // convert paragraph/line breaks to newlines
       const lc = word.toLowerCase();
-      if (lc === 'par' || lc === 'pard' || lc === 'sect') {
-        result += '\n\n';
-      } else if (lc === 'line' || lc === 'tab') {
-        result += '\n';
+
+      // destination control word — the group it opens (this control word's
+      // own depth) must be skipped entirely, unless already inside a
+      // skipped group.
+      if (DESTINATION_WORDS.has(lc)) {
+        if (skipDepth === null) skipDepth = depth;
+        continue;
+      }
+
+      // convert paragraph/line breaks to newlines (never inside a skipped
+      // destination group)
+      if (skipDepth === null) {
+        if (lc === 'par' || lc === 'pard' || lc === 'sect') {
+          result += '\n\n';
+        } else if (lc === 'line' || lc === 'tab') {
+          result += '\n';
+        }
       }
       // all other control words: skip
       continue;
     }
 
-    // plain character — only emit if we're inside the outermost group (depth >= 1)
-    if (depth >= 1) {
+    // plain character — only emit if we're inside the outermost group
+    // (depth >= 1) and not inside a skipped destination group
+    if (depth >= 1 && skipDepth === null) {
       result += ch;
     }
     i++;
