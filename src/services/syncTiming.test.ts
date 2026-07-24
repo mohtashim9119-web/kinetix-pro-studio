@@ -4,6 +4,8 @@ import {
   distributeSegmentTimes,
   alignScenestoTranscript,
   canonicalizeForAlignment,
+  extractSegmentAlignments,
+  alignQueryToSubject,
 } from './whisperService';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
@@ -576,18 +578,21 @@ describe('D16 — alignment robustness (Parts A + C)', () => {
     }
   });
 
-  // Part C safety net: an UNHANDLED mismatch type (a made-up token the
-  // canonicalizer can't fix) drops a segment to low confidence AND spuriously
-  // matches a common word far ahead. Without the guard, the greedy cursor
-  // over-advances past the following segment's true words and strands it at ~0
-  // (the D16 cascade). The guard holds the cursor so the next segment still
-  // finds its real position further along the audio.
-  it('SAFETY NET (Part C): a low-confidence segment does not cascade drift onto the next', () => {
+  // SAFETY NET (re-baselined for the Hirschberg aligner, WS1a). An unmatchable
+  // segment (made-up tokens the normalizer can't reconcile) that ALSO contains a
+  // common word appearing far ahead used to over-advance the greedy cursor and
+  // strand the following segment at ~0 (the D16 cascade). The diff aligner has no
+  // cursor: global optimization assigns the shared word "hotel" to s2 (which
+  // wholly matches "echo foxtrot golf hotel"), so s1 is correctly classified
+  // UNCOVERED (confidence 0) and its covered neighbors keep their matched
+  // positions. Doc §6.1: this is the outcome-test replacement for the old
+  // console-warn mechanism assertion; under R12 (WS1b) s1's single-segment gap
+  // will interpolate rather than abort.
+  it('SAFETY NET: an unmatchable segment is uncovered and does not displace its covered neighbors', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
-      // Two words match nothing; "hotel" spuriously matches the far-ahead
-      // token, which (pre-guard) would over-advance the cursor to the end and
-      // strand s2 at ~0.
+      // Two words match nothing; "hotel" also occurs far ahead in s2's phrase —
+      // the aligner must NOT anchor s1 there.
       makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),
       makeSegment({ id: 's2', order: 2, text: 'echo foxtrot golf hotel' }),
     ];
@@ -597,37 +602,40 @@ describe('D16 — alignment robustness (Parts A + C)', () => {
       ...wordTokens('echo foxtrot golf hotel', 4.5, 0.5),   // idx 7–10
     ];
 
-    // Low-confidence match on s1 is expected — assert it's logged, not silent.
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const t0 = alignT0s(segments, tokens);
-    expect(warnSpy).toHaveBeenCalled();
-    warnSpy.mockRestore();
+    // Per-segment classification: s0/s2 fully covered, s1 uncovered (global
+    // optimality gives "hotel" to s2, not s1). No neighbor displacement.
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[0]!.confidence).toBe(1);
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[1]!.confidence).toBe(0);
+    expect(cov[2]!.matched).toBe(true);
+    expect(cov[2]!.confidence).toBe(1);
 
+    // Full pipeline: s0 at the front, s2 near its true phrase in the second half
+    // of the audio — NOT stranded at ~0 by a cascading cursor.
+    const t0 = alignT0s(segments, tokens);
     expect(t0[0]).toBeLessThan(0.5);
-    // The critical assertion: s2 lands in the second half of the audio, near its
-    // true "echo foxtrot golf hotel" phrase, NOT stranded at ~0 by an
-    // over-advanced cursor. Pre-guard this would collapse toward 0.
-    // Since the D16 overshoot guard (see next describe block), s1 no longer
-    // overshoots to ~5s but sits in its real ~2.25–3.75s window, so gap-fill now
-    // places the s1→s2 boundary at the midpoint of the real silent gap (~3.75s)
-    // instead of the pre-fix ~4.5s. Still firmly in the second half — no cascade.
     expect(t0[2]!).toBeGreaterThan(3.0);
   });
 });
 
 // ---------------------------------------------------------------------------
-// D16 — overshoot guard (primary fix) + backstop monotonic clamp.
+// Diff-aligner outcome tests (re-baselined from the D16 overshoot guard, WS1a).
 //
-// A low-confidence segment whose best (coincidental) match lands FAR AHEAD of
-// the entry cursor used to anchor its t0/t1 to that overshot position, pushing
-// its span past the next segment's real match and collapsing both to ~0 (the
-// real-project 48 / 152–153 / 173 / 183 repro). The primary fix snaps such an
-// overshoot back to the cursor; the backstop clamp in applyAnchorBasedTiming
-// guarantees anchors stay monotonic even for an overshoot the primary guard
-// misses. In-tolerance low-confidence matches (bestStart at/near the cursor)
-// are deliberately untouched.
+// These scenarios (a low-confidence/unmatchable segment whose only "match" is a
+// common word far ahead; two such segments in a row) used to be handled by the
+// greedy matcher's overshoot guard + low-confidence cursor hold, and the old
+// tests asserted those guards' console-warn internals. Both guards are DELETED —
+// the Hirschberg diff aligner has no cursor, so global optimization assigns each
+// shared word to the segment that maximizes total score and classifies the
+// genuinely unmatchable segments as UNCOVERED (confidence 0) instead of
+// overshooting. Per doc §6.1 these are rewritten as OUTCOME tests: the covered
+// segments land at their true audio positions with no cascade or inversion. The
+// backstop monotonic clamp in applyAnchorBasedTiming (test (d)) is matcher-
+// independent and survives unchanged as defense-in-depth.
 // ---------------------------------------------------------------------------
-describe('D16 — overshoot guard + backstop clamp', () => {
+describe('diff-aligner outcomes + backstop clamp', () => {
   function alignSpans(
     segments: VideoSegment[],
     tokens: TranscriptToken[],
@@ -637,13 +645,13 @@ describe('D16 — overshoot guard + backstop clamp', () => {
     }));
   }
 
-  // (a) Regression guard for the 8 already-safe cases: a low-confidence segment
-  // whose partial match sits AT the cursor (delta 0, within tolerance) must NOT
-  // be snapped — only the low-confidence hold applies, exactly as before.
-  it('(a) low-confidence match AT the cursor is left untouched (no overshoot snap)', () => {
+  // (a) A partially-matched segment ("echo" matches, two words don't) stays in
+  // its real audio window; the aligner does not strand or collapse it or its
+  // neighbors. (No console-warn assertions — the guards that emitted them are gone.)
+  it('(a) a partially-matched segment keeps its real window; no cascade', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
-      // "echo" matches right at the cursor (idx 4); the other two match nothing.
+      // "echo" matches idx 4; the other two match nothing.
       makeSegment({ id: 's1', order: 1, text: 'echo qwerty asdf' }),
       makeSegment({ id: 's2', order: 2, text: 'foxtrot golf hotel india' }),
     ];
@@ -653,26 +661,23 @@ describe('D16 — overshoot guard + backstop clamp', () => {
       ...wordTokens('foxtrot golf hotel india', 4.5, 0.5),  // idx 7–10
     ];
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // s1 is partially covered (1 of 3 words) — covered, not stranded.
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[1]!.matched).toBe(true);
+    expect(cov[1]!.confidence).toBeCloseTo(1 / 3, 5);
+
     const spans = alignSpans(segments, tokens);
-
-    // The low-confidence hold still logs, but the overshoot branch must NOT:
-    // proves this in-tolerance case takes the unchanged (byte-identical) path.
-    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('low-confidence'))).toBe(true);
-    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('overshoot'))).toBe(false);
-    warnSpy.mockRestore();
-
-    // s1 keeps a sane, non-collapsed span near its real audio; nothing strands.
     expect(spans[1]!.dur).toBeGreaterThan(0.5);
     expect(spans[0]!.t0).toBeLessThanOrEqual(spans[1]!.t0);
     expect(spans[1]!.t0).toBeLessThanOrEqual(spans[2]!.t0);
     expect(spans[2]!.t0).toBeGreaterThan(3.0);
   });
 
-  // (b) The core fix: a low-confidence segment whose ONLY match is far ahead
-  // (spurious "hotel" at idx 10) now anchors at the cursor instead of
-  // overshooting — so it no longer collapses, and the next segment is unharmed.
-  it('(b) far-ahead low-confidence match anchors at the cursor, not the overshoot', () => {
+  // (b) An unmatchable segment whose only shared word ("hotel") occurs far ahead
+  // is classified UNCOVERED — global optimality gives "hotel" to s2 — and the
+  // following segment lands near its true phrase, uninverted (pre-rewrite this
+  // over-advanced the cursor and collapsed s1 to the floor while inverting s2).
+  it('(b) a far-ahead shared word does not anchor its segment; no inversion', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
       makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),
@@ -681,30 +686,29 @@ describe('D16 — overshoot guard + backstop clamp', () => {
     const tokens: TranscriptToken[] = [
       ...wordTokens('alpha bravo charlie delta', 0.0, 0.5), // idx 0–3
       ...wordTokens('lorem ipsum dolor', 2.5, 0.5),         // idx 4–6 (s1's real, unmatched audio)
-      ...wordTokens('echo foxtrot golf hotel', 4.5, 0.5),   // idx 7–10 (spurious "hotel" far ahead)
+      ...wordTokens('echo foxtrot golf hotel', 4.5, 0.5),   // idx 7–10 (shared "hotel" far ahead)
     ];
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const spans = alignSpans(segments, tokens);
-    expect(warnSpy.mock.calls.some(c => String(c[0]).includes('overshoot'))).toBe(true);
-    warnSpy.mockRestore();
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[1]!.matched).toBe(false); // "hotel" belongs to s2, not s1
+    expect(cov[2]!.confidence).toBe(1);
 
-    // Pre-fix: s1 overshot to ~5.0s, inverting with s2 (~4.5s) and collapsing to
-    // the 0.1 floor. Post-fix: s1 sits in its real ~2.5–4s window, uncollapsed.
-    expect(spans[1]!.dur).toBeGreaterThan(0.5);
-    expect(spans[1]!.t0).toBeLessThan(spans[2]!.t0); // no inversion
-    expect(spans[2]!.t0).toBeGreaterThan(3.0);       // s2 still near its true phrase
-    expect(spans.every(s => s.dur > 0)).toBe(true);
+    const spans = alignSpans(segments, tokens);
+    expect(spans[1]!.t0).toBeLessThanOrEqual(spans[2]!.t0); // no inversion
+    expect(spans[2]!.t0).toBeGreaterThan(3.0);              // s2 near its true phrase
+    expect(spans.every(s => s.t1 >= s.t0)).toBe(true);
   });
 
-  // (c) Consecutive-pair (152/153-style): two adjacent low-confidence segments
-  // that would each overshoot must resolve to sane, non-negative, non-
-  // overlapping durations rather than mutually corrupting each other.
-  it('(c) two consecutive overshoot segments resolve without collapse or inversion', () => {
+  // (c) Two consecutive unmatchable segments (their only shared words, "hotel"/
+  // "golf", both belong to the covered s3) are both classified UNCOVERED. The
+  // covered segments s0 and s3 keep their true, non-collapsed positions; the run
+  // stays monotonic with no inversion. Under R12 (WS1b) this 2-consecutive-gap
+  // will HARD-ABORT — WS1a only classifies; nothing gates yet.
+  it('(c) two consecutive unmatchable segments are uncovered; covered ones keep their true spans', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
-      makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),  // spurious "hotel" ahead
-      makeSegment({ id: 's2', order: 2, text: 'zzz yyy golf' }),        // spurious "golf" ahead
+      makeSegment({ id: 's1', order: 1, text: 'qwerty asdf hotel' }),  // shared "hotel" ahead
+      makeSegment({ id: 's2', order: 2, text: 'zzz yyy golf' }),        // shared "golf" ahead
       makeSegment({ id: 's3', order: 3, text: 'echo foxtrot golf hotel' }),
     ];
     const tokens: TranscriptToken[] = [
@@ -713,12 +717,18 @@ describe('D16 — overshoot guard + backstop clamp', () => {
       ...wordTokens('echo foxtrot golf hotel', 5.5, 0.5),    // idx 9–12
     ];
 
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const spans = alignSpans(segments, tokens);
-    warnSpy.mockRestore();
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[2]!.matched).toBe(false);
+    expect(cov[3]!.matched).toBe(true);
 
-    // No collapse, no inversion, monotonic starts across the whole run.
-    expect(spans.every(s => s.dur > 0.3)).toBe(true);
+    const spans = alignSpans(segments, tokens);
+    // Covered endpoints keep real, non-collapsed spans.
+    expect(spans[0]!.dur).toBeGreaterThan(0.5);
+    expect(spans[3]!.dur).toBeGreaterThan(0.5);
+    expect(spans[3]!.t0).toBeGreaterThan(3.0);
+    // Monotonic, no inversion across the whole run.
     for (let i = 0; i < spans.length - 1; i++) {
       expect(spans[i]!.t0).toBeLessThanOrEqual(spans[i + 1]!.t0);
     }
@@ -750,6 +760,287 @@ describe('D16 — overshoot guard + backstop clamp', () => {
     expect(result[2]!.startTime).toBe(3);
     // d1 (the overshoot) is the one that collapses, not its neighbors.
     expect(result[1]!.duration).toBeLessThan(0.5);
+  });
+});
+
+// ===========================================================================
+// WS1a — Hirschberg diff aligner (architecture doc §3.1, §3.1.1, §6.2)
+// ===========================================================================
+describe('WS1a — Hirschberg diff aligner', () => {
+  // A single-word insertion in the transcript (a Whisper hallucination) is a
+  // subject word with no scene-doc counterpart. The aligner matches the
+  // surrounding words and absorbs the insertion as a free gap — the segment is
+  // fully covered and not shifted (doc §6.2, "single-word insertion").
+  it('absorbs a single-word transcript insertion (Whisper hallucination) without shifting', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the quick brown fox' }),
+      makeSegment({ id: 's1', order: 1, text: 'jumps over lazy dogs' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      // "zzz" is a hallucinated insertion between "brown" and "fox".
+      ...wordTokens('the quick brown zzz fox', 0.0, 0.5),
+      ...wordTokens('jumps over lazy dogs', 3.0, 0.5),
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[0]!.confidence).toBe(1);      // all 4 scene-doc words matched
+    expect(cov[1]!.confidence).toBe(1);      // neighbor undisturbed by the insertion
+    // s0 spans its real audio (first word "the" ~0.0 to last word "fox" ~2.75).
+    expect(cov[0]!.audioRegion!.startSec).toBeLessThan(0.5);
+  });
+
+  // A single-word deletion (a scene-doc word absent from the transcript) is a
+  // penalized query gap: the aligner matches the remaining words and lowers the
+  // segment's confidence rather than failing it (doc §6.2, "single-word deletion").
+  it('tolerates a single-word scene-doc deletion (word absent from transcript), lowering confidence', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the quick brown fox' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('the quick fox', 0.0, 0.5), // "brown" never spoken
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[0]!.confidence).toBeCloseTo(3 / 4, 5); // 3 of 4 words matched
+  });
+
+  // Repeated phrases ("let us go" three times) must be disambiguated by GLOBAL
+  // optimality — each scene segment matches the occurrence its unique context
+  // selects, not the greedy first match (doc §6.2, "repeated phrases"; fixes S4).
+  it('disambiguates a phrase repeated 3× by global optimality, not greedy first-match', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'intro alpha let us go' }),
+      makeSegment({ id: 's1', order: 1, text: 'middle bravo let us go' }),
+      makeSegment({ id: 's2', order: 2, text: 'outro charlie let us go' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('intro alpha let us go', 0.0, 0.5),   // 0.0 → 2.5
+      ...wordTokens('middle bravo let us go', 3.0, 0.5),  // 3.0 → 5.5
+      ...wordTokens('outro charlie let us go', 6.0, 0.5), // 6.0 → 8.5
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    // Each "let us go" resolves to its OWN occurrence — every segment fully covered.
+    expect(cov.map(c => c.confidence)).toEqual([1, 1, 1]);
+    // First-matched word of each segment falls in its own phrase window, in order.
+    expect(cov[0]!.audioRegion!.startSec).toBeLessThan(0.5);
+    expect(cov[1]!.audioRegion!.startSec).toBeGreaterThanOrEqual(3.0);
+    expect(cov[1]!.audioRegion!.startSec).toBeLessThan(5.5);
+    expect(cov[2]!.audioRegion!.startSec).toBeGreaterThanOrEqual(6.0);
+  });
+
+  // Per-segment confidence extraction (doc §3.1.1, R11).
+  it('extracts per-segment confidence: 3 of 5 words matched → 0.6, matched=true', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta echo' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie', 0.0, 0.5), // only 3 of the 5 words spoken
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.confidence).toBeCloseTo(0.6, 5);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[0]!.audioRegion).toBeDefined();
+  });
+
+  it('extracts per-segment confidence: 0 of 5 words matched → 0, matched=false, no audio region', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta echo' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('zulu yankee xray whiskey victor', 0.0, 0.5), // nothing in common
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.confidence).toBe(0);
+    expect(cov[0]!.matched).toBe(false);
+    expect(cov[0]!.audioRegion).toBeUndefined();
+  });
+
+  // AlignResult widening (doc §3.1.1, §4) — the per-segment result carries the
+  // new confidence / matched / audioRegion fields WS1b threads through.
+  it('AlignResult carries confidence, matched, and audioRegion (present iff matched)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'nomatch words here' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo', 0.0, 0.5),
+      ...wordTokens('completely different speech', 2.0, 0.5),
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(typeof cov[0]!.confidence).toBe('number');
+    expect(typeof cov[0]!.matched).toBe('boolean');
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[0]!.audioRegion).toBeDefined();
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[1]!.audioRegion).toBeUndefined();
+  });
+
+  // Zero-token segment neutrality (doc §3.1.1 point 4, §6.2 item 15): an
+  // empty-text segment between covered neighbors is classification-neutral —
+  // uncovered but never a gap member, anchored at the previous boundary, and it
+  // does not crash the aligner.
+  it('treats a zero-token segment as neutral: uncovered, anchored at the previous boundary', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: '   ' }), // empty after trim
+      makeSegment({ id: 's2', order: 2, text: 'charlie delta' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo charlie delta', 0.0, 0.5),
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[2]!.matched).toBe(true);
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[1]!.confidence).toBe(0);
+    expect(cov[1]!.audioRegion).toBeUndefined();
+    // Anchored at the previous segment's boundary (t0 === t1).
+    expect(cov[1]!.t0).toBe(cov[1]!.t1);
+  });
+});
+
+// ===========================================================================
+// WS1a — Hirschberg ≡ full-matrix NW property test (doc §6.2 item 14, R7)
+// ===========================================================================
+// The correctness gate for the free-end-gap / linear-space traceback: a
+// TEST-SIDE full-matrix reference (same scoring: match +1, mismatch −1, gap −1;
+// free leading + trailing subject gaps) must yield the same optimal SCORE as the
+// Hirschberg aligner on random and hand-built fixtures, including free-end-gap
+// cases. Score equality is the rigorous optimality gate; for hand-built
+// fixtures with a unique optimum the exact match set is also asserted.
+describe('WS1a — Hirschberg ≡ full-matrix NW (property)', () => {
+  const MATCH = 1, MISMATCH = -1, GAP = -1;
+
+  // Reference full-matrix semi-global NW score (free leading + trailing subject gaps).
+  function refSemiGlobalScore(q: string[], s: string[]): number {
+    const n = q.length, m = s.length;
+    const H: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+    for (let j = 0; j <= m; j++) H[0]![j] = 0;              // free leading subject gap
+    for (let i = 1; i <= n; i++) {
+      H[i]![0] = i * GAP;                                   // query deletions charged
+      for (let j = 1; j <= m; j++) {
+        const diag = H[i - 1]![j - 1]! + (q[i - 1] === s[j - 1] ? MATCH : MISMATCH);
+        const del = H[i - 1]![j]! + GAP;
+        const ins = H[i]![j - 1]! + GAP;
+        H[i]![j] = Math.max(diag, del, ins);
+      }
+    }
+    let best = H[n]![0]!;                                   // free trailing subject gap
+    for (let j = 1; j <= m; j++) best = Math.max(best, H[n]![j]!);
+    return best;
+  }
+
+  it('matches the reference score on 300 random small fixtures', () => {
+    // Small alphabet to force matches, repeats, and ties.
+    const alphabet = ['a', 'b', 'c', 'd'];
+    let seed = 123456789;
+    const rand = () => (seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff;
+    const randArr = (maxLen: number): string[] => {
+      const len = Math.floor(rand() * (maxLen + 1));
+      return Array.from({ length: len }, () => alphabet[Math.floor(rand() * alphabet.length)]!);
+    };
+    for (let iter = 0; iter < 300; iter++) {
+      const q = randArr(7);
+      const s = randArr(9);
+      const got = alignQueryToSubject(q, s).score;
+      const ref = refSemiGlobalScore(q, s);
+      expect(got).toBe(ref);
+    }
+  });
+
+  it('matches the reference score AND match set on hand-built free-end-gap fixtures', () => {
+    const cases: Array<{ q: string[]; s: string[]; matches: Array<[number, number]> }> = [
+      // Free leading subject gap: leading "a","a" cost nothing.
+      { q: ['b', 'c'], s: ['a', 'a', 'b', 'c'], matches: [[0, 2], [1, 3]] },
+      // Free trailing subject gap: trailing "c","c" cost nothing.
+      { q: ['a', 'b'], s: ['a', 'b', 'c', 'c'], matches: [[0, 0], [1, 1]] },
+      // Both ends free.
+      { q: ['b', 'c'], s: ['a', 'b', 'c', 'd'], matches: [[0, 1], [1, 2]] },
+      // Interior deletion (scene-doc "x" not spoken).
+      { q: ['a', 'x', 'b'], s: ['a', 'b'], matches: [[0, 0], [2, 1]] },
+      // Interior insertion (transcript "x" hallucinated).
+      { q: ['a', 'b'], s: ['a', 'x', 'b'], matches: [[0, 0], [1, 2]] },
+      // No overlap at all → empty infix, all deletions.
+      { q: ['x', 'y'], s: ['a', 'b'], matches: [] },
+    ];
+    for (const { q, s, matches } of cases) {
+      const al = alignQueryToSubject(q, s);
+      expect(al.score).toBe(refSemiGlobalScore(q, s));
+      const got: Array<[number, number]> = [];
+      al.matchedSubjectOf.forEach((sj, qi) => { if (sj >= 0) got.push([qi, sj]); });
+      expect(got).toEqual(matches);
+    }
+  });
+
+  it('returned matches are structurally sound (equal words, strictly increasing)', () => {
+    const q = ['a', 'b', 'a', 'c', 'b'];
+    const s = ['z', 'a', 'b', 'q', 'a', 'c', 'b', 'z'];
+    const subjectOf = ['z', 'a', 'b', 'q', 'a', 'c', 'b', 'z'];
+    const al = alignQueryToSubject(q, s);
+    let prevQi = -1, prevSj = -1;
+    al.matchedSubjectOf.forEach((sj, qi) => {
+      if (sj >= 0) {
+        expect(q[qi]).toBe(subjectOf[sj]);   // matched words are equal
+        expect(qi).toBeGreaterThan(prevQi);  // strictly increasing query index
+        expect(sj).toBeGreaterThan(prevSj);  // strictly increasing subject index
+        prevQi = qi; prevSj = sj;
+      }
+    });
+  });
+});
+
+// ===========================================================================
+// WS1a — unified normalizer (architecture doc §3.2, R1)
+// ===========================================================================
+describe('WS1a — unified normalizer (R1 carve-out, ZW-join, NFC)', () => {
+  // R1 hyphen carve-out: number-word / digit compounds split; everything else
+  // keeps its hyphen as one token.
+  it('splits number-word / digit hyphen compounds, preserves everything else', () => {
+    // thirty-seven ≡ 37 ≡ "thirty seven" (the existing D16 equivalence at :393 relies on this).
+    expect(canonicalizeForAlignment('thirty-seven')).toEqual(['thirty', 'seven']);
+    expect(canonicalizeForAlignment('thirty-seven')).toEqual(canonicalizeForAlignment('37'));
+    // all-digit sub-parts split too.
+    expect(canonicalizeForAlignment('3-4')).toEqual(['three', 'four']);
+    // "twenty" is a number word, so twenty-twenty splits.
+    expect(canonicalizeForAlignment('twenty-twenty')).toEqual(['twenty', 'twenty']);
+    // "first" is an ordinal (NOT in NUMBER_WORDS) → the compound stays one token.
+    expect(canonicalizeForAlignment('twenty-first')).toEqual(['twenty-first']);
+    // A non-number compound keeps its hyphen as a single token.
+    expect(canonicalizeForAlignment('co-operate')).toEqual(['co-operate']);
+    expect(canonicalizeForAlignment('co-operate')).toHaveLength(1);
+    // "cooperate" is a distinct single token — by the LOCKED design (doc §3.2, R1)
+    // co-operate keeps its hyphen and is NOT folded to "cooperate"; any residual
+    // mismatch is a local diff cost in the aligner, not a normalizer concern.
+    expect(canonicalizeForAlignment('cooperate')).toEqual(['cooperate']);
+    expect(canonicalizeForAlignment('co-operate')).not.toEqual(canonicalizeForAlignment('cooperate'));
+  });
+
+  // Abbreviations: periods are token boundaries (e.g. → ["e","g"]). The
+  // normalizer does NOT collapse "e.g." to "eg"; abbreviation equivalence is
+  // handled downstream as a local diff cost by the aligner (doc §2.2 B2, §3.1),
+  // not by the normalizer — so this asserts the ACTUAL, correct behavior.
+  it('tokenizes abbreviations on their periods (no false eg-equivalence)', () => {
+    expect(canonicalizeForAlignment('e.g.')).toEqual(['e', 'g']);
+    expect(canonicalizeForAlignment('U.S.A.')).toEqual(['u', 's', 'a']);
+    // Each side is a single token vs. multiple — deliberately NOT equal.
+    expect(canonicalizeForAlignment('e.g.')).not.toEqual(canonicalizeForAlignment('eg'));
+  });
+
+  // ZW/BOM/directional removal with JOIN semantics — an in-word zero-width space
+  // is deleted (not turned into a space), preserving word adjacency (S1).
+  it('joins across an in-word zero-width space (ZWSP → single token)', () => {
+    expect(canonicalizeForAlignment('wor​ld')).toEqual(['world']);
+    expect(canonicalizeForAlignment('wor​ld')).toEqual(canonicalizeForAlignment('world'));
+    // BOM at the front is stripped, not spaced.
+    expect(canonicalizeForAlignment('﻿hello')).toEqual(['hello']);
+  });
+
+  // NFC normalization (S2): NFD and NFC forms of the same accented word
+  // canonicalize identically (both sides symmetric).
+  it('normalizes NFD and NFC accented forms to the same tokens', () => {
+    const nfc = 'café';        // "café" precomposed (U+00E9)
+    const nfd = 'café';       // "café" as e + combining acute (U+0065 U+0301)
+    expect(canonicalizeForAlignment(nfd)).toEqual(canonicalizeForAlignment(nfc));
   });
 });
 

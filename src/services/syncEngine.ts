@@ -4,6 +4,7 @@
  */
 
 import { Asset, VideoSegment } from '../types';
+import { canonicalizeForFilename } from './textNormalize';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
@@ -37,16 +38,19 @@ export const findAssetByContext = (text: string, assets: Asset[]): Asset | null 
 /**
  * Normalizes a string for strict tag/filename comparison: Unicode NFC form,
  * smart quotes/dashes folded to their plain ASCII equivalents, and zero-width
- * characters (U+200B, U+FEFF) stripped — the encoding artifacts a filename
- * commonly picks up surviving a copy-paste from Word/Google Docs.
+ * characters (U+200B, U+FEFF and the other zero-width/directional marks)
+ * stripped — the encoding artifacts a filename commonly picks up surviving a
+ * copy-paste from Word/Google Docs.
+ *
+ * Now a thin wrapper over the SHARED Unicode-hygiene layer in ./textNormalize
+ * (the unified-normalizer refactor, architecture doc §3.2 — closes G4), so the
+ * filename path and the alignment path can never drift on NFC/apostrophe/quote/
+ * dash/zero-width handling again. Behavior is identical to the former inline
+ * version (no lowercasing, no tokenization); the only difference is a slightly
+ * broader — strictly superset — apostrophe and zero-width fold set.
  */
 export function normalizeForMatch(s: string): string {
-  return s
-    .normalize('NFC')
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/[–—]/g, '-')
-    .replace(/[​﻿]/g, '');
+  return canonicalizeForFilename(s);
 }
 
 /**
