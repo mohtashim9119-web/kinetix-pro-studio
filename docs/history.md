@@ -1968,6 +1968,26 @@ Test count grew from 612 to **739** (127 new tests) across the 8 steps, primaril
 
 ---
 
+## macOS EMFILE Fix — AnnexB Concat (Implementation Record)
+
+> Added 2026-07-23, commit `e11efcf`. Follow-up to the WebCodecs + WebGL2 Worker Export path above — fixes a piece-concat failure found on a large real-world export, not part of the original 9-step build. Cross-reference: `project-state.md`'s 2026-07-23 Decisions Log entry.
+
+**What failed:** a 407-segment project export on macOS failed with `ffmpeg exited with code 232: Too many open files`, during the concat step that joins every piece's AnnexB stream into `video_all.h264` before mux.
+
+**Root cause:** `exportPipelineWebCodecs.ts`'s original concat step invoked ffmpeg's concat protocol — `-i concat:piece_0.h264|piece_1.h264|...|piece_406.h264` — which opens every listed input file simultaneously before reading any of them. macOS's default per-process soft file-descriptor limit (`ulimit -n`) is 256; 407 piece files exceeded it during the open phase, well before any actual concatenation happened. Windows was never at risk from the same code path — Windows has no equivalent fixed per-process FD cap, and the team's existing 400-500 segment exports on Windows had already run fine.
+
+Piece count in this project comes from `buildPiecePlans`: Tier 1 (plain video/image) and Tier C (canvas fallback) segments each produce their own single-segment piece by design — `groupConnectedComponents`'s Union-Find only groups *contiguous GL-tier* segments into a shared run. Incremental append is implemented within a GL run but not across separate Tier 1/C pieces, so a project with many non-GL segments accumulates one piece per segment. This is a design property of the existing routing, not something this fix touched — flagged as a possible future optimization (batching Tier 1/C encodes to reduce piece count) but not scheduled.
+
+**Fix:** new Rust command `ffmpeg_concat_annexb_pieces` (`src-tauri/src/ffmpeg.rs`) stream-copies each piece file's bytes into the output file in order, one piece at a time — at most 2 file descriptors open at any instant (one read handle on the current piece, one write handle on the output), completely independent of piece count. AnnexB byte concatenation is spec-valid here because every NAL unit is start-code-prefixed, so a plain byte-for-byte join of correctly-formed AnnexB streams is itself a correctly-formed AnnexB stream — no re-muxing or re-encoding needed. `src/services/tauriFfmpeg.ts` gained a thin `concatAnnexbPieces(piecePaths, outputPath)` wrapper; `exportPipelineWebCodecs.ts`'s orchestrator now calls that instead of building a concat-protocol pipe-string and invoking `ffmpeg.exec`. The existing Step 5 frame-count guard (`countAnnexbFrames`, the native Rust NAL scanner) is unchanged and validates the Rust-concatenated output exactly as it validated the old ffmpeg-concatenated output — the guard doesn't care how the file was assembled, only what's in it.
+
+**Verification:** a 294-segment export reproducer ran on macOS Intel x86_64 and completed successfully, with the output file confirmed to play correctly. 294 exceeds macOS's 256 FD limit, so the pre-fix code would have failed on this exact reproducer — a valid regression test in practice, even though it isn't (yet) encoded as an automated test. Windows is unaffected by construction: the new path opens strictly fewer file handles than the old one, on any OS.
+
+**Files changed:** `src-tauri/src/ffmpeg.rs` (+`ffmpeg_concat_annexb_pieces` command, +4 unit tests: exact byte concatenation, larger-than-chunk input, missing-piece error with no partial output left behind, path-traversal rejection), `src-tauri/src/lib.rs` (command registration, IPC command count 15→16 in `ffmpeg.rs` / 18→19 total), `src/services/tauriFfmpeg.ts` (+`concatAnnexbPieces` wrapper), `src/services/webcodecsExport/exportPipelineWebCodecs.ts` (orchestrator: removed the concat-protocol pipe-string construction and the local `concatAnnexbPieces` helper that wrapped `ffmpeg.exec`, calls the new native wrapper instead), `src/services/webcodecsExport/exportPipelineWebCodecs.test.ts` (new, 3 orchestrator wiring tests), `src/dev/webcodecsStep2Spike/main.ts` (dev spike updated to import the relocated helper).
+
+**Test counts:** `tsc --noEmit` clean, `vitest` **754/754** (was 751 — +3 new), `cargo check` clean, `cargo test` **4/4** new pass (all in `src-tauri/src/ffmpeg.rs`'s `concat_annexb_pieces_*` tests).
+
+---
+
 ## Project Settings + Aspect Ratio + Bulk Delete — Implementation Record
 
 > Added 2026-07-22, landed on top of the WebCodecs + WebGL2 Worker Export work above (same uncommitted tree). The original design doc (`docs/project-settings-plan.md`) was deleted after implementation completed — this section is now the full record. See `CLAUDE.md`'s File Map (`resolutionConfig.ts`, `ProjectSettingsModal.tsx`, `ExportSettingsModal.tsx`, `NewProjectModal.tsx`, `ProjectDashboard.tsx` entries) and Export Pipeline section for the architecture as it now stands, and `project-state.md`'s Active Tasks/Decisions Log for current status.

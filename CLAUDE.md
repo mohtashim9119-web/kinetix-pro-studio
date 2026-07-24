@@ -324,7 +324,12 @@ src/
                      #   encoders are inherently single-segment), encodes each piece in order
                      #   (Tier 1/C pieces remuxed MP4->annexb via -bsf:v h264_mp4toannexb, GL
                      #   pieces streamed straight from the worker), concatenates every piece's
-                     #   annexb in timeline order (ffmpeg concat protocol) -> video_all.h264,
+                     #   annexb in timeline order via TauriFfmpeg.concatAnnexbPieces (Rust
+                     #   ffmpeg_concat_annexb_pieces, a stream-copy with only 2 file descriptors
+                     #   open at once — replaced an ffmpeg concat-protocol invocation that opened
+                     #   every piece simultaneously and hit macOS's 256 per-process FD limit on
+                     #   large-segment exports, macOS EMFILE fix, 2026-07-23, see docs/history.md's
+                     #   implementation record) -> video_all.h264,
                      #   verifies its actual coded-frame count (countAnnexbFrames, backed by the
                      #   Rust NAL scanner) against the summed expected count per piece — a typed
                      #   'concat' error, never a silently short/corrupt export, on mismatch — then
@@ -793,12 +798,12 @@ src-tauri/
                      #   toggleNativeFullscreen and restoreWebViewFocus need them).
   src/
     lib.rs           # Tauri Builder — registers tauri_plugin_shell, invoke_handler for all IPC commands
-                     #   (18 total: 15 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here). Also
+                     #   (19 total: 16 in ffmpeg.rs + 2 in whisper.rs + fetch_url_bytes here). Also
                      #   `.manage(ffmpeg::FfmpegProcessState::default())` (D13 fix, 2026-07-20) — shared
                      #   Mutex<HashMap<session_id, CommandChild>> app state ffmpeg_exec/ffmpeg_kill_session
                      #   use to track/kill the in-flight sidecar.
                      #   fetch_url_bytes: proxy for stock CDN CORS bypass (returns base64).
-    ffmpeg.rs        # 15 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
+    ffmpeg.rs        # 16 Tauri commands: create_session, write_file (b64), write_file_raw (raw-body,
                      #   no base64 — added 2026-07-09, session id + path travel as request headers),
                      #   append_file_raw (WebCodecs export path, see docs/history.md's implementation
                      #   record — OpenOptions::append(true).create(true) instead of write_file_raw's truncating
@@ -807,7 +812,14 @@ src-tauri/
                      #   H.264 Annex B coded-picture NAL units, type 1/5, in bounded 64 KB chunks entirely
                      #   on the Rust side; backs exportPipelineWebCodecs.ts's post-concat frame-count
                      #   guard, replacing a JS readFile+scan that cost ~5s per export moving the whole
-                     #   file's bytes over IPC just to count frames), delete_file, exec (sidecar),
+                     #   file's bytes over IPC just to count frames), concat_annexb_pieces (macOS EMFILE
+                     #   fix, 2026-07-23 — stream-concatenates all of a run's AnnexB piece files into one
+                     #   output with only 2 file descriptors open at any time, one read + one write,
+                     #   independent of piece count; replaced the ffmpeg concat-protocol invocation
+                     #   `-i concat:a|b|c|...`, which opened every piece simultaneously and exhausted
+                     #   macOS's default 256 per-process FD limit on large-segment exports — reproduced
+                     #   at 407 segments, `Too many open files`/exit code 232; see docs/history.md's
+                     #   implementation record), delete_file, exec (sidecar),
                      #   kill_session (new, D13 fix, 2026-07-20 —
                      #   see below), destroy_session, pick_save_path,
                      #   save_session_file (native fs::copy of a finished
@@ -977,7 +989,12 @@ useExport.ts runExport()  — isWebCodecsExportGateOpen() ? webcodecs : legacy
         ├── for each Tier 1/C piece: existing encoder (ffmpeg direct-trim / segmentEncoder.ts) →
         │     remux MP4→annexb via `-bsf:v h264_mp4toannexb` (same annexb format as the GL pieces)
         │
-        ├── CONCAT every piece's annexb, timeline order (ffmpeg concat protocol) → video_all.h264
+        ├── CONCAT every piece's annexb, timeline order, via TauriFfmpeg.concatAnnexbPieces (Rust
+        │     ffmpeg_concat_annexb_pieces — stream-copy with only 2 file descriptors open at once,
+        │     independent of piece count; macOS EMFILE fix, 2026-07-23 — replaced an ffmpeg
+        │     concat-protocol invocation, `-i concat:a|b|c|...`, which opened every piece
+        │     simultaneously and exceeded macOS's default 256 per-process FD limit on
+        │     large-segment exports) → video_all.h264
         │
         ├── GUARD: TauriFfmpeg.countAnnexbFrames (IPC ffmpeg_count_annexb_frames, a native Rust
         │     NAL scanner — bounded 64 KB chunks, file bytes never cross into the renderer) vs.
@@ -995,7 +1012,7 @@ useExport.ts runExport()  — isWebCodecsExportGateOpen() ? webcodecs : legacy
 
 **Cancel:** `useExport.ts` tracks which path the current/most-recent run used (`activePathRef`) and picks the matching cancel sequence — `cancelExportWebCodecs()` (posts `'cancel'` to the worker + terminates it, THEN kills+destroys the ffmpeg session the worker was streaming into) for this path, vs. the legacy `backend.cancel()` otherwise; `teardown()` runs after either, idempotently.
 
-**Key invariants:** annexb (not AVCC) is mandatory end-to-end — `avc:{format:'annexb'}` on the encoder config, verified by the frame-count guard; all timestamps are absolute (`Math.round(frameIndex·1e6/fps)`, not an accumulating per-frame delta, which drifts ~10µs/s at 30fps); the frame-count guard is a loud, typed failure, never a silent short export; the worker's encoder backpressure (`encodeQueueSize`/`dequeue`) and `sequentialDecode.ts`'s `DECODE_AHEAD_CAP=8` are what keep memory bounded on long exports (no chunk streaming would otherwise cap it); cancel must terminate the worker BEFORE killing the ffmpeg session, or the worker can still be mid-`appendFileRaw` against a session about to be destroyed.
+**Key invariants:** annexb (not AVCC) is mandatory end-to-end — `avc:{format:'annexb'}` on the encoder config, verified by the frame-count guard; all timestamps are absolute (`Math.round(frameIndex·1e6/fps)`, not an accumulating per-frame delta, which drifts ~10µs/s at 30fps); the frame-count guard is a loud, typed failure, never a silent short export; the worker's encoder backpressure (`encodeQueueSize`/`dequeue`) and `sequentialDecode.ts`'s `DECODE_AHEAD_CAP=8` are what keep memory bounded on long exports (no chunk streaming would otherwise cap it); cancel must terminate the worker BEFORE killing the ffmpeg session, or the worker can still be mid-`appendFileRaw` against a session about to be destroyed; the final piece-concat step (`ffmpeg_concat_annexb_pieces`) holds at most 2 file descriptors open at once regardless of piece count (macOS EMFILE fix, 2026-07-23) — do not reintroduce an ffmpeg concat-protocol invocation there, which opens every piece file simultaneously and exceeds macOS's default 256 per-process FD limit on large-segment exports (reproduced at 407 pieces).
 
 **What this does NOT change:** the legacy pipeline above (`exportPipeline.ts`/`segmentEncoder.ts`/`frameRenderer.ts`/`frameEncodeWorker.ts`) is untouched and is exactly what runs when the gate is closed; the WebGL2 **preview** path (`useGlPreview.ts`/`glCompositor.ts`/`compositeParams.ts`) is untouched except for the verbatim `uvRect.ts` extraction; sync engine, timeline/editing, and persistence are untouched.
 
@@ -1144,6 +1161,7 @@ App.tsx                    — top-level state + orchestration only
 | `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
 | Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
 | Adding 4K (or any resolution tier) back without updating `RESOLUTION_TABLE` for all 3 aspect ratios | `resolutionConfig.ts`'s `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes a missing cell a compile error, not a silent runtime hole — but every new tier still needs a deliberate dimension decision for `9:16` and `1:1`, not just `16:9` |
+| An ffmpeg concat-protocol invocation (`-i concat:a\|b\|c\|...`) to join the WebCodecs export path's AnnexB piece files | Opens every piece file simultaneously — exhausts macOS's default 256 per-process file-descriptor limit on large-segment exports (`Too many open files`, exit code 232, reproduced at 407 segments); use `TauriFfmpeg.concatAnnexbPieces` (Rust `ffmpeg_concat_annexb_pieces`) instead, which stream-copies with only 2 file descriptors open at once regardless of piece count (macOS EMFILE fix, 2026-07-23) |
 | Storing `width`/`height` directly on `Project` | Pixel dimensions are always derived from `(aspectRatio, resolutionTier)` via `resolutionConfig.ts`'s `resolveDimensions` — never persisted directly, so there is exactly one source of truth for what a project's frame size is |
 | Exposing `aspectRatio` as an editable field anywhere in the UI | Locked forever at creation (`NewProjectModal.tsx`) by design — changing it after segments/timing exist has no defined reflow behavior; `resolutionTier` is the only editable-later field (`ProjectSettingsModal.tsx`) |
 
