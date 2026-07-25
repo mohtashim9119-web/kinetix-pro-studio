@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parseProjectData } from '../App';
+import { parseProjectData, evaluateCoverageGate, filterToCoveredSegments } from '../App';
 import { normalizeForMatch, isExactFilenameMatch, contiguousWordMatch, stripMediaExtension, cleanTagName, autoMatchSegments } from './syncEngine';
+import { extractSegmentAlignments, countTranscriptWords } from './whisperService';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
 import { TransitionType, AnimationType } from '../types';
-import type { Asset, VideoSegment } from '../types';
+import type { Asset, VideoSegment, TranscriptToken } from '../types';
 
 function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string }): VideoSegment {
   return {
@@ -14,6 +15,14 @@ function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string
     animation: AnimationType.NONE,
     ...partial,
   };
+}
+
+function wordTokens(text: string, startAt: number, wordDurationSec: number): TranscriptToken[] {
+  return text.split(' ').map((word, i) => ({
+    text: word,
+    startSec: Number((startAt + i * wordDurationSec).toFixed(3)),
+    endSec: Number((startAt + (i + 1) * wordDurationSec).toFixed(3)),
+  }));
 }
 
 /**
@@ -585,5 +594,149 @@ describe('contiguous-word fallback — parseProjectData ladder integration', () 
     const parsed = await parseProjectData('Line one.', '[year_2003]\nLine one.', assets, 10);
     expect(parsed[0]?.assetId).toBe('a1');
     expect(parsed[0]?.unmatchedExplicitTag).toBeUndefined();
+  });
+});
+
+// ===========================================================================
+// Parser fix: a tag's description may follow it INLINE on the same line
+// (e.g. "[missing1] This is a test missing segment.") — not only on a
+// subsequent line. The old block-splitting logic assumed the tag always
+// occupied its own line (`lines[0]` = tag, `lines.slice(1)` = description),
+// so an inline description was swallowed into the "tag" and lost, silently
+// falling back to slicing the voiceover script for text instead. TAG_REGEX
+// itself was never the problem — digit/hyphen/underscore tag names were
+// already recognized correctly; only the inline-text case was broken.
+// ===========================================================================
+describe('parseProjectData — inline tag+text on the same line (parser fix)', () => {
+  it('extracts a digit-suffixed tag ([missing1]) and its inline description text correctly', async () => {
+    const segments = await parseProjectData('', '[missing1] This is a test missing segment.', [], 10);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.text).toBe('This is a test missing segment.');
+  });
+
+  it('extracts a fully-numeric-suffixed tag ([tag123]) and its inline description text correctly', async () => {
+    const segments = await parseProjectData('', '[tag123] Some inline description text.', [], 10);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.text).toBe('Some inline description text.');
+  });
+
+  it('extracts a hyphenated tag ([my-tag]) inline and matches a hyphenated asset filename', async () => {
+    const assets = [makeAsset({ id: 'a1', name: 'my-tag.jpg' })];
+    const segments = await parseProjectData('', '[my-tag] Inline text for a hyphenated tag.', assets, 10);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.text).toBe('Inline text for a hyphenated tag.');
+    expect(segments[0]?.assetId).toBe('a1');
+  });
+
+  it('extracts an underscored tag ([my_tag]) inline and matches an underscored asset filename', async () => {
+    const assets = [makeAsset({ id: 'a1', name: 'my_tag.jpg' })];
+    const segments = await parseProjectData('', '[my_tag] Inline text for an underscored tag.', assets, 10);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.text).toBe('Inline text for an underscored tag.');
+    expect(segments[0]?.assetId).toBe('a1');
+  });
+
+  it('still parses pure-letter tags ([cafe], [time]) with inline text — no regression', async () => {
+    const segments = await parseProjectData(
+      '',
+      '[cafe] We meet at the café every morning.\n[time] The meeting starts at ten thirty sharp.',
+      [],
+      10,
+    );
+    expect(segments).toHaveLength(2);
+    expect(segments[0]?.text).toBe('We meet at the café every morning.');
+    expect(segments[1]?.text).toBe('The meeting starts at ten thirty sharp.');
+  });
+
+  it('produces 6 correctly-ordered, correctly-texted segments from the full repro scene doc (all tags inline, one paragraph)', async () => {
+    const sceneDoc =
+      '[cafe] We meet at the café every morning. [time] The meeting starts at ten thirty sharp. ' +
+      "[late] Please don't be late, the team is waiting. [missing1] This is a test missing segment. " +
+      '[missing2] This is a test missing segment 2 [team] Our team must cooperate to finish on time.';
+    const segments = await parseProjectData('', sceneDoc, [], 30);
+    expect(segments).toHaveLength(6);
+    expect(segments.map(s => s.text)).toEqual([
+      'We meet at the café every morning.',
+      'The meeting starts at ten thirty sharp.',
+      "Please don't be late, the team is waiting.",
+      'This is a test missing segment.',
+      'This is a test missing segment 2',
+      'Our team must cooperate to finish on time.',
+    ]);
+  });
+
+  it('produces the same 6 segments when only missing1/missing2 are inline and the rest are newline-separated (the originally-reported mix)', async () => {
+    const sceneDoc =
+      '[cafe]\nWe meet at the café every morning.\n' +
+      '[time]\nThe meeting starts at ten thirty sharp.\n' +
+      "[late]\nPlease don't be late, the team is waiting.\n" +
+      '[missing1] This is a test missing segment.\n' +
+      '[missing2] This is a test missing segment 2\n' +
+      '[team]\nOur team must cooperate to finish on time.';
+    const segments = await parseProjectData('', sceneDoc, [], 30);
+    expect(segments).toHaveLength(6);
+    expect(segments.map(s => s.text)).toEqual([
+      'We meet at the café every morning.',
+      'The meeting starts at ten thirty sharp.',
+      "Please don't be late, the team is waiting.",
+      'This is a test missing segment.',
+      'This is a test missing segment 2',
+      'Our team must cooperate to finish on time.',
+    ]);
+  });
+});
+
+// ===========================================================================
+// R4-1 end-to-end (was R12): the parser fix above is what makes this scenario
+// possible — before it, missing1/missing2 parsed to EMPTY text segments. With
+// the parser fix in place they parse to 2 real, non-empty, unmatched scenes in
+// the middle. Round 4 (R4-1) reversed R12's abort: instead of erroring, the two
+// unmatched scenes are SKIPPED and the timeline is built from the 4 matched
+// scenes only.
+// ===========================================================================
+describe('R4-1 end-to-end — parsed missing1/missing2 segments are SKIPPED, not aborted', () => {
+  it('scene doc with 2 consecutive uncovered segments in the middle proceeds and skips them', async () => {
+    const sceneDoc =
+      '[cafe] alpha bravo charlie.\n' +
+      '[time] delta echo foxtrot.\n' +
+      '[late] golf hotel india.\n' +
+      '[missing1] This is a test missing segment.\n' +
+      '[missing2] This is a test missing segment 2\n' +
+      '[team] juliet kilo lima.';
+    const segments = await parseProjectData('', sceneDoc, [], 30);
+    expect(segments).toHaveLength(6);
+    expect(segments.map(s => s.text)).toEqual([
+      'alpha bravo charlie.',
+      'delta echo foxtrot.',
+      'golf hotel india.',
+      'This is a test missing segment.',
+      'This is a test missing segment 2',
+      'juliet kilo lima.',
+    ]);
+
+    // The audio genuinely never speaks the missing1/missing2 text — every
+    // other segment's words are present in the transcript.
+    const tokens = [
+      ...wordTokens('alpha bravo charlie', 0, 0.5),
+      ...wordTokens('delta echo foxtrot', 2.0, 0.5),
+      ...wordTokens('golf hotel india', 4.0, 0.5),
+      ...wordTokens('juliet kilo lima', 6.0, 0.5),
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.text)).toEqual([
+      'alpha bravo charlie.',
+      'delta echo foxtrot.',
+      'golf hotel india.',
+      'juliet kilo lima.',
+    ]);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([3, 4]);
+    expect(skipped.map(r => r.segmentText)).toEqual([
+      'This is a test missing segment.',
+      'This is a test missing segment 2',
+    ]);
   });
 });

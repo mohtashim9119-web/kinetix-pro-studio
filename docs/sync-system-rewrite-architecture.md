@@ -1,18 +1,18 @@
 # Sync System Rewrite — Target Architecture
 
-> **Status: FINAL DESIGN — implementation-ready. Round 3 rulings applied 2026-07-24.** Written from a two-pass code audit plus final user decisions on every open question. Round 2 surfaced 10 open questions (OQ1–OQ10) and 3 reviewer findings (M1–M3); Round 3 surfaced 4 new questions (N1–N4). The user has ruled on all 17 — see Section 10's rulings tables. Every ruling is LOCKED and folded into the sections below as final design; the closing re-analysis found no remaining open questions. Nothing here is committed work; `project-state.md`'s Decisions Log entries are written only AFTER the rewrite lands and is hardware-verified (see Section 9).
+> **Status: FINAL DESIGN — implementation-ready. Round 4 rulings applied 2026-07-25.** Written from a two-pass code audit plus final user decisions on every open question. Round 2 surfaced 10 open questions (OQ1–OQ10) and 3 reviewer findings (M1–M3); Round 3 surfaced 4 new questions (N1–N4); Round 4 replaced the partial-coverage design outright with **skip-unmatched** (R4-1…R4-5, Section 10). All rulings are LOCKED and folded into the sections below as final design. Nothing here is committed work; `project-state.md`'s Decisions Log entries are written only AFTER the rewrite lands and is hardware-verified (see Section 9).
 >
 > Ruling principle (user's words): *"industry level work, best, permanent, long term fix even if it takes more work or time."*
 >
-> Scope: the sync system only (scene doc + voiceover script + audio → timed timeline segments), plus the two changes the partial-coverage design forces outside it — export-mux audio padding (Section 3.14) and the preview fallback clock (Section 3.15). Not a general architecture doc — see `CLAUDE.md` for the rest of the app.
+> Scope: the sync system only (scene doc + voiceover script + audio → timed timeline segments). Round 4 removed this rewrite's only two out-of-sync-system changes — the export-mux audio padding (Section 3.14) and the preview fallback clock (Section 3.15) — because nothing extends the timeline past the audio anymore; both sections are retained below marked SUPERSEDED. Not a general architecture doc — see `CLAUDE.md` for the rest of the app.
 
 ---
 
 ## 1. Executive Summary
 
-The sync system takes a scene doc, a voiceover script, and an audio file, and produces a timed timeline. Today it produces a *plausible-looking* timeline for **any** combination of inputs — including a voiceover that has nothing to do with the scene doc — because its word matcher is a greedy positional scanner with only local, per-segment guards and no global measure of whether the two texts correspond at all. This rewrite replaces the matcher with an industry-standard token-level diff aligner (Needleman-Wunsch scoring with Hirschberg linear-space traceback, explicit insertions/deletions), adds a two-signal abort gate (contiguous covered-run check + bidirectional noise floor) for mismatched inputs, defines exact semantics for audio that covers only part of the scene doc (including export-side audio padding and a preview fallback clock), and closes a set of confirmed hardening gaps (silent failures, malformed timestamps, hardcoded English, stage directions matched as spoken words).
+The sync system takes a scene doc, a voiceover script, and an audio file, and produces a timed timeline. Today it produces a *plausible-looking* timeline for **any** combination of inputs — including a voiceover that has nothing to do with the scene doc — because its word matcher is a greedy positional scanner with only local, per-segment guards and no global measure of whether the two texts correspond at all. This rewrite replaces the matcher with an industry-standard token-level diff aligner (Needleman-Wunsch scoring with Hirschberg linear-space traceback, explicit insertions/deletions), adds a two-signal abort gate (contiguous covered-run check + bidirectional noise floor) for mismatched inputs, defines exact semantics for audio that covers only part of the scene doc (**Round 4: uncovered segments are skipped, not timed by any fallback**), and closes a set of confirmed hardening gaps (silent failures, malformed timestamps, hardcoded English, stage directions matched as spoken words).
 
-**The one-line behavioral contract:** *Audio is the source of truth for what it covers; unmatched segments use character-based timing; mismatched inputs hard-abort with a clear message.*
+**The one-line behavioral contract (Round 4, R4-1/R4-2):** *Audio is the source of truth. A segment either appears on the timeline at its Whisper-anchored time or it does not appear at all; mismatched inputs hard-abort with a clear message.*
 
 ---
 
@@ -27,6 +27,13 @@ The sync system takes a scene doc, a voiceover script, and an audio file, and pr
 - **Static checks:** `tsc --noEmit` clean, `vitest run` 768/768. Manual verification on real fixtures confirmed the aligner and normalizer behave correctly. The s2-on-"lot" visual offset is **not** a WS1a defect — see the re-attribution note below and QB3.
 
 See the "Quick Bugs to Fix" section (after Section 10) for the 3 bugs surfaced during WS1a's manual verification pass — queued, not fixed, in this workstream.
+
+**WS1b — Coverage metric + R13 abort gate + R12 removal (skip-unmatched) + snap clamps + parser fix + re-tile: COMPLETE and verified on macOS Intel x86_64.**
+
+- **What landed:** Bidirectional coverage metric (scene-doc + transcript coverage, bidirectional = min). R13 two-signal abort gate (contiguous covered run ≥ 2 AND bidirectional ≥ 0.1). R12 middle-gap abort REMOVED — unmatched segments are skipped, not aborted. Snap clamps (±150ms tolerance, R4). Parser fix (TAG_REGEX inline-text extraction bug — tags with digits + inline descriptions now parse correctly). Re-tile after skip (covered segments tile contiguously, last extends to audio end). Empty-input aborts. 826/826 tests pass.
+- **Bugs fixed by WS1b:** B1 (cross-script mismatch aborts), S15 (empty-input toasts), S21 (snap clamps), and the parser bug (inline-text extraction).
+- **Bugs NOT fixed by WS1b:** S6, S7, S8, S10, S13, S14, S16-S20 (later workstreams); the s2-on-"lot" playback offset (project-specific, deferred).
+- **Verification:** macOS Intel x86_64 only. macOS arm64 + Windows/WebView2 unverified.
 
 ---
 
@@ -151,7 +158,7 @@ Audit-discovered findings:
 
 Each subsystem: (a) today, (b) after, (c) the specific change, (d) files/lines, (e) why this approach.
 
-All tuning constants introduced below (`LOW_CONFIDENCE_RATIO`, `MIN_COVERED_RUN_LENGTH`, `NOISE_FLOOR_COVERAGE`, `SNAP_TOLERANCE_SEC`, `MAX_INTERPOLABLE_GAP`, `FALLBACK_RATE_MIN_CHARS`, `FALLBACK_RATE_MIN_SECONDS`, `DEFAULT_CHARS_PER_SEC`, `NUMBER_WORDS`) live in **one new exported module, `src/services/syncConstants.ts`** (R8 point 5, R3, R12, R13) — no constant is defined inline at its use site.
+All tuning constants introduced below (`LOW_CONFIDENCE_RATIO`, `MIN_COVERED_RUN_LENGTH`, `NOISE_FLOOR_COVERAGE`, `SNAP_TOLERANCE_SEC`, `NUMBER_WORDS`) live in **one new exported module, `src/services/syncConstants.ts`** (R8 point 5, R13) — no constant is defined inline at its use site. *(Round 4: `MAX_INTERPOLABLE_GAP` is deleted with R12 — R4-1 — and `FALLBACK_RATE_MIN_CHARS`/`FALLBACK_RATE_MIN_SECONDS`/`DEFAULT_CHARS_PER_SEC` are deleted with the char-rate subsystem — R4-2. None of the four have a consumer under skip-unmatched.)*
 
 ### 3.1 Token-level diff aligner — Hirschberg (replaces the greedy positional matcher)
 
@@ -184,7 +191,7 @@ The Hirschberg aligner produces one global op sequence; per-segment results are 
    - **confidence** = (matched transcript words) / (total scene-doc tokens in the segment).
    - **Zero matches** (all gaps/substitutions): the segment is **uncovered** — `matched = false`, `confidence = 0`, no t0/t1.
 3. Edge cases: partially matched (some words matched, some gapped) → covered with `confidence < 1.0`; all words matched → `confidence = 1.0`; no words matched → uncovered. A segment is **covered** when `matched = true` AND `confidence ≥ LOW_CONFIDENCE_RATIO` (starting value 0.4; tuned per R8).
-4. **Zero-token segments** — text that is empty or normalizes to zero words (including text fully consumed by stage-direction stripping where the keep-original guard of 3.8 doesn't apply because the raw text itself was empty; today's handling at `whisperService.ts:301-311`): classification-**neutral**. They are neither covered nor uncovered — they are excluded from the covered-run scan (3.4), the gap scan (3.5/R12), and both coverage denominators (3.3), and they keep today's behavior of anchoring at the previous segment's boundary (`:303,310`). Rationale: an intentionally-textless segment must not be able to trigger a 2-consecutive-gap abort or dilute the coverage metrics.
+4. **Zero-token segments** — text that is empty or normalizes to zero words (including text fully consumed by stage-direction stripping where the keep-original guard of 3.8 doesn't apply because the raw text itself was empty; today's handling at `whisperService.ts:301-311`): classification-**neutral**. They are neither covered nor uncovered — they are excluded from the covered-run scan (3.4) and both coverage denominators (3.3), and they keep today's behavior of anchoring at the previous segment's boundary (`:303,310`). Rationale: an intentionally-textless segment must not be able to dilute the coverage metrics or break a covered run. *(Round 4: neutrality governs the GATE only. At commit time a zero-token segment has no audio coverage and is skipped like any other uncovered segment — 3.5.)*
 5. The contiguous-run and gap checks (3.4/3.5) consume the per-segment `matched`/covered flags produced here.
 
 ### 3.2 Unified normalizer (replaces the two-normalizer split)
@@ -237,23 +244,22 @@ Both fall out of the single global alignment for free. Their role has changed fr
 
 **(e) Why two signals.** Run-length is robust to document length (a 3-segment project and a 300-segment project both prove correspondence with one real contiguous run), while an aggregate-only gate mis-scales: 14 covered segments out of 51 is a legitimate partial-coverage project at ~27% scene-doc coverage — an aggregate-0.4 gate would wrongly abort it. The noise floor covers the opposite failure: a couple of coincidental function-word matches forming a tiny "run" over essentially-zero real overlap.
 
-### 3.4 Abort gate + plain-language error messages (R9, R13)
+### 3.4 Abort gate + plain-language error messages (R13; R12 REVERSED by R4-1)
 
 **(a) Today.** No gate. `applySyncDisabled` (`App.tsx:2177`) only requires that a transcript *exists*; the commit at `App.tsx:1838-1850` happens unconditionally once timing is computed.
 
 **(b) After.** A gate in `handleApplySyncFromFiles` between alignment and commit (immediately after the `alignFromCache` call at `App.tsx:1809-1814`, before `preserveEffectFields`/`setProject` at `:1829-1850`). On abort: the failure surfaces through the unified `SyncWarning` surface (R10, severity `'error'`), `setIsProcessing(false)`, `return` — **no partial timeline is committed; the pre-sync project state is untouched** (free today because the commit is already a single atomic `setProject`).
 
-**(c) The gate — two-signal flow (R13), exact order:**
+**(c) The gate — two-signal flow (R13), exact order.** **Round 4 (R4-1) DELETED the former step 2, the R12 middle-gap check.** A gap of any length — 1 segment, 2, or 40 — no longer aborts; those segments are simply skipped (3.5). The gate is now exactly three checks:
 
-1. **Align** (Hirschberg) → per-segment `matched`/`confidence`/`t0`/`t1` (3.1.1); zero-token segments excluded from all scans below.
-2. **Middle-gap check (R12):** if any run of **2+ consecutive uncovered segments** exists between covered segments → **abort**:
-   `"Audio does not exist for segments X to Y. Cannot create timeline."` (X/Y 1-based; first offending run named if several exist). **If any segment in the run is locked (R9)**, the message is the specific variant:
-   `"Segment X is locked but has no audio coverage. The audio does not cover segments Y to Z. Cannot create timeline."`
-   (A single uncovered segment between covered neighbors does NOT abort — it interpolates, 3.5.)
-3. **Contiguous covered-run check (Signal 1, primary):** compute all maximal contiguous runs of covered segments. If the longest run < `MIN_COVERED_RUN_LENGTH` (start 2; tuned per R8) — i.e., 0 or 1 covered segments — this is near-zero coverage (the B1 case) → **abort**:
+1. **Empty-input checks** (3.11) — run before alignment; see the two messages below.
+2. **Align** (Hirschberg) → per-segment `matched`/`confidence`/`t0`/`t1` (3.1.1); zero-token segments are classification-neutral and excluded from the coverage metrics.
+3. **Contiguous covered-run check (R13 Signal 1, primary):** compute all maximal contiguous runs of covered segments. If the longest run < `MIN_COVERED_RUN_LENGTH` (start 2; tuned per R8) — i.e., 0 or 1 covered segments — this is near-zero coverage (the B1 case) → **abort**:
    `"This voiceover doesn't match your scene doc. No timeline will be created."`
-4. **Noise-floor check (Signal 2, anti-noise):** if bidirectional coverage (3.3) < `NOISE_FLOOR_COVERAGE` (start 0.1; tuned per R8) → **abort** with the same full-mismatch message. Catches a technically-contiguous run built on coincidental word overlap.
-5. **Proceed** with partial-coverage sync (leading/trailing fallback + single-segment interpolation, 3.5).
+4. **Noise-floor check (R13 Signal 2, anti-noise):** if bidirectional coverage (3.3) < `NOISE_FLOOR_COVERAGE` (start 0.1; tuned per R8) → **abort** with the same full-mismatch message. Catches a technically-contiguous run built on coincidental word overlap.
+5. **All checks pass → proceed:** build the timeline **from the covered segments only**; every uncovered segment is filtered out before the commit (3.5), and its index/text/skip-reason is recorded for the skip log (R4-4).
+
+**Deleted with R12 (R4-1):** the middle-gap message `"Audio does not exist for segments X to Y. Cannot create timeline."`, its R9 locked-segment variant `"Segment X is locked but has no audio coverage…"`, and the `MAX_INTERPOLABLE_GAP` constant. A locked segment with no audio coverage is skipped like any other uncovered segment — the lock governs *timing* for segments that are committed, and a skipped segment has no timing to protect.
 
 Plus the empty-input checks (3.11), which run before alignment:
 
@@ -266,40 +272,36 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 **(d) Files/lines.** `App.tsx:1806-1850` (gate + messages), `useWhisper.ts` (plumbing), `whisperService.ts` (inputs), `syncConstants.ts`.
 
-**(e) Why hard-stop (Decision 1).** No partial timelines, no escape hatch: a garbage timeline costs the user more than a blocked sync, and every "proceed anyway" path becomes a support burden. Messages are plain language by design — the audience is YouTube creators, not developers. The locked-segment variant (R9) exists because "your locked segment is inside the uncovered region" is actionable in a way the generic gap message is not.
+**(e) Why hard-stop only for full mismatch (Decision 1, narrowed by R4-1/R4-3).** The abort exists for one failure mode: *these two inputs do not correspond at all* (B1). There, a garbage timeline costs the user more than a blocked sync, and every "proceed anyway" path becomes a support burden. An internal gap is a different situation entirely — the inputs demonstrably correspond (a real contiguous run exists), the audio simply doesn't say some of the scenes. Round 4's ruling: that is not an error, it is information — the covered scenes form the timeline, the uncovered ones are skipped and reported in the skip log (R4-4). Messages stay plain language by design — the audience is YouTube creators, not developers.
 
-### 3.5 Partial-coverage sync logic (R2, R3, R9, R12, N1, N3)
+### 3.5 Partial-coverage sync logic — SKIP UNMATCHED (R4-1, R4-2; supersedes R2/R3/R12/N1/N2/N3)
 
 **(a) Today.** Every segment gets *some* Whisper-derived window no matter what; segments with no spoken counterpart get near-zero slivers at the cursor (overshoot guard `:361-370`) or absorb neighbors (S6). There is no concept of "this segment has no audio."
 
-**(b) After — classification and gap rule (R12).** Using per-segment covered flags from 3.1.1 (zero-token segments excluded/neutral throughout; **classification ignores locked status** — a gap is a gap whether or not a segment in it is locked, R9):
+**(b) After — one rule: covered segments are committed, uncovered segments are skipped.** Using the per-segment covered flags from 3.1.1 (`matched === true` AND `confidence ≥ LOW_CONFIDENCE_RATIO`):
 
-- **0 uncovered segments between covered regions:** normal flow.
-- **Exactly 1 uncovered segment between two covered segments (≤ `MAX_INTERPOLABLE_GAP` = 1): INTERPOLATE, don't abort.** The segment takes the window between its covered neighbors: `t0 = prev.t1`, `t1 = next.t0` (timeline contiguity — `applyAnchorBasedTiming` derives durations as next-anchor − this-anchor, `syncEngine.ts:221-237`, so the window must be filled exactly; with a single segment, R12's "proportion the window by char-rate" degenerates to the segment occupying the whole window — the shared char-rate helper still owns the math so multi-segment windows, if `MAX_INTERPOLABLE_GAP` is ever raised, proportion correctly). `anchorSource = 'fallback'`. This absorbs Whisper's routine single-word drops without killing the sync.
-- **2+ consecutive uncovered segments between covered regions: HARD ABORT** (gate step 2 in 3.4, with the R9 locked-segment message variant when applicable).
-- **Leading-unmatched** (before the first covered segment): character-based timing packed into `[0, t0(firstCovered))` — the audio-covered region starts at `firstCovered`'s Whisper t0, not 0:00 (Decision 5; the window interpretation is confirmed by R3's own text, "interpolated into the window `[0, t0(firstCoveredSegment)]`"). `anchorSource = 'fallback'`.
-- **Trailing-unmatched** (after the last covered segment): character-based durations appended after `lastCovered`'s end; the timeline extends past the audio file's duration. `anchorSource = 'fallback'`. **Hard dependencies, shipped in the same workstream:** the export-mux audio-padding change (3.14/R2) and the preview fallback clock (3.15/N2) — both are "timeline extends past audio" concerns; without them, trailing segments are silently truncated at export and unreachable in preview.
+- **Covered segment →** committed to the timeline at its **Whisper-anchored time**, exactly as a fully-covered sync produces today. Nothing about audio-anchored timing changes.
+- **Uncovered segment →** **filtered out of the committed `segments` array before `setProject`.** It does not appear on the timeline at all. No char-based timing, no interpolation, no sliver, no placeholder. Position in the scene doc is irrelevant: leading, middle (any length), and trailing uncovered runs are all treated identically.
+- **Zero-token (neutral) segments** are uncovered by construction (no text to align, `covered === false`) and are therefore skipped as well. They remain classification-*neutral* for the coverage metrics (3.3) and the R13 run scan — neutrality governs the *gate*, skipping governs the *commit*.
+- **Locked status is irrelevant to skipping.** A lock protects the *timing* of a segment that is on the timeline; a segment with no audio coverage has no audio timing to protect and is skipped like any other.
 
-**Duration floors (N1 — final).** The `MIN_SEGMENT_DURATION` floor (0.3s, `App.tsx:263`) applies to **`anchorSource:'whisper'` segments only**. **`anchorSource:'fallback'` segments have NO minimum duration floor** — their duration is whatever the interpolation window (R12) or char-rate (R3) produces, clamped only at ≥0 for degenerate inputs. Concretely, the code-level 0.1s floors at `whisperService.ts:552` (`Math.max(0.1, …)` in `distributeSegmentTimes`) and `syncEngine.ts:235` (`Math.max(0.1, …)` in `applyAnchorBasedTiming`) are made conditional on the segment's classification: retained for whisper-anchored segments, relaxed to a non-negative guard for fallback segments. Rationale: audio truth must not be distorted to satisfy a cosmetic floor — widening a sliver requires moving an audio-anchored neighbor's boundary off its measured position, corrupting real timing. A visually-tiny fallback segment is correct data; Phase 2's UI will flag it visually (deferred, not Phase 1).
+**The audio is the source of truth and it plays continuously as one file.** The timeline duration is the audio file's duration, unchanged. Covered segments sit at their real audio timestamps. A skipped segment leaves a **gap** — a region of the timeline where no segment exists and the audio simply keeps playing with nothing composited over it. **No stitching, no splitting, no muting** (R4-1): the audio is never cut, re-timed, or silenced to close a gap, and neighbouring covered segments are never stretched to swallow one.
 
-**Character-rate — three-tier strategy (R3), shared by leading, trailing, and interpolation windows:**
+**Character-based fallback timing is ELIMINATED (R4-2).** There is no leading char-fallback, no trailing char-fallback, and no single-segment interpolation. A segment is either audio-covered or absent. This removes, wholesale, the need for: `anchorSource: 'fallback'` (Section 4), the three-tier char-rate (R3), `Project.lastSyncObservedRate` (N3), the export-mux audio padding (R2, 3.14), and the preview fallback clock (N2, 3.15) — every one of those existed only to give an *un*covered segment a plausible duration or to survive a timeline that extends past the audio. Nothing extends past the audio anymore.
 
-1. **Observed rate** — seconds-per-character computed from the audio-covered segments of *this* sync. Used when the covered region is statistically significant: ≥ `FALLBACK_RATE_MIN_CHARS` (100) characters of scene-doc text AND ≥ `FALLBACK_RATE_MIN_SECONDS` (30) seconds of audio. Most accurate — reflects the actual narration pace.
-2. **Project historical rate** — when this sync's covered region is too small, use `Project.lastSyncObservedRate` (N3 — accepted; Section 4): the observed rate persisted from the project's most recent sync whose covered region *did* clear the tier-1 thresholds. Written on every successful qualifying sync. Handles short-audio edge cases without collapsing to a global default. Absent on old projects → tier 2 falls through to tier 3 until the first qualifying sync under the new system.
-3. **Global default** — `DEFAULT_CHARS_PER_SEC` (15 chars/sec, ~average English narration pace). Used only when neither tier above is available.
-
-All three tier constants live in `syncConstants.ts`. Leading segments proportion their char-rate-implied durations *into* the fixed window `[0, t0(firstCovered))` (scaled to fit exactly); trailing segments use the rate directly (no bounding window). The earlier "no Project changes" posture is amended to: **one additive scalar field, no structural changes** (N3; Section 4).
+**Duration floors (R4-5, moots N1).** With no fallback segments in existence, the sliver concern N1 addressed cannot arise. `MIN_SEGMENT_DURATION` (0.3s, `App.tsx:263`) and the code-level 0.1s floors (`whisperService.ts:552`, `syncEngine.ts:235`) apply **uniformly to every committed segment** — all of which are audio-covered. No classification-conditional floor logic is needed or wanted.
 
 **(c) The change — where each piece lives.**
 
-- The aligner emits classification per segment (3.1.1 + a ~10-line contiguity scan).
-- `distributeSegmentTimes` (`whisperService.ts:543-562`) is the insertion seam: its map (`:548-560`) currently writes `anchorStart`/`anchorSource:'whisper'` unconditionally; it gains the per-segment classification and writes `anchorSource:'fallback'` + char-based/interpolated anchors for leading/trailing/interpolated segments (char-weight math extracted from the bootstrap at `App.tsx:417-422` into a shared helper), with the N1 conditional floor.
-- `applyAnchorBasedTiming`'s PASS 3 (`syncEngine.ts:239-243`) clamps the LAST segment to `audioDuration` — with trailing fallback segments this would crush them. The clamp moves to the last *audio-covered* segment; trailing fallback segments keep their char-based durations after it. Conditional on fallback segments existing, so fully-covered projects are byte-identical. The `:235` floor becomes classification-conditional (N1).
-- **Timeline UI changes are POSTPONED** (Decision 5): audio-offset rendering, hiding the waveform under non-audio segments, visible coverage affordances, and the N1 short-segment visual flag — all Phase 2. Phase 1 delivers correct per-segment timings, coverage marks (`anchorSource:'fallback'`), correct export (3.14), and reachable preview (3.15).
+- The aligner already emits per-segment coverage (3.1.1); no aligner change is required for skipping.
+- **The filter is the whole of the logic:** after the gate passes (3.4) and before the commit, the orchestrator partitions the aligned segments by their covered flag, commits the covered ones, and records the rest. This is the entirety of what was WS2's partial-coverage work — a single pure function (`filterToCoveredSegments`) plus its call site, not a timing subsystem.
+- **Timing of committed segments is unchanged.** Each covered segment keeps the `startTime`/`duration` `applyAnchorBasedTiming` derived for it (its own anchor → the next segment's anchor). Because an uncovered segment's anchor sits at the *end of the preceding covered segment's spoken words*, dropping it leaves its span as an actual hole rather than folding that span into its neighbour — which is precisely the intended "gap where no segment exists."
+- **Skip logging (R4-4).** For each skipped segment the orchestrator records `{ segmentIndex, segmentText, reason }` where `reason ∈ { 'no audio match' (nothing matched), 'low confidence' (matched below `LOW_CONFIDENCE_RATIO`) }`. Persisting this log and surfacing it in the UI is a separate workstream (**WS-logs**); this workstream produces the records and logs them to the console under a DEV gate.
+- **Timeline UI changes are POSTPONED** (Decision 5): gap rendering affordances, waveform treatment across gaps, and coverage marks are Phase 2. Phase 1 delivers a correct, audio-true timeline plus the skip records.
 
-**(d) Files/lines.** `whisperService.ts:543-562`, `syncEngine.ts:170-246` (incl. `:235` floor), `App.tsx:417-422` (helper extraction), `types.ts` (`anchorSource` union + `Project.lastSyncObservedRate`, Section 4), `syncConstants.ts`, plus the 3.14 export files and 3.15's `usePlayback.ts`.
+**(d) Files/lines.** `App.tsx` (the covered-segment filter + skip-record collection in `handleApplySyncFromFiles`). That is all. Explicitly **NOT** touched by this ruling: `whisperService.ts`'s `distributeSegmentTimes`, `syncEngine.ts`'s `applyAnchorBasedTiming` floors, `types.ts` (`anchorSource` keeps its two-value union), `usePlayback.ts`, and both export paths — the changes the previous design required of all five are cancelled by R4-2.
 
-**(e) Why the contiguous invariant with a 1-segment tolerance.** A 2+ segment gap means the scene doc and audio disagree about *structure* — silently bridging it is the garbage-timeline class the user reported. A 1-segment gap is overwhelmingly a Whisper transcription artifact (a dropped word or two), not a structural disagreement — aborting on it would make the gate brittle against routine ASR noise. Leading/trailing coverage has an obvious correct interpretation (intro/outro scenes without narration) and degrades gracefully.
+**(e) Why skip rather than abort or interpolate.** Aborting on a middle gap (R12) fails the user's actual workflow: a scene doc routinely contains scenes the voiceover doesn't narrate, and refusing to build any timeline for a project whose audio demonstrably corresponds (a real contiguous covered run exists) throws away all the correct work over an incomplete part. Interpolating or char-filling is the opposite failure — it invents timing the audio never justified and puts it on the timeline looking exactly as authoritative as measured timing. Skipping is the only option that never lies: what appears is measured, what wasn't measured doesn't appear, and the skip log (R4-4) tells the user exactly what was left out and why. Full mismatch remains an abort (R4-3/R13) because there is nothing correct to keep.
 
 ### 3.6 Silence-snap guards with bounded tolerance (S21, R4)
 
@@ -322,9 +324,9 @@ All three tier constants live in `syncConstants.ts`. Leading segments proportion
 
 **(a) Today.** Nothing is stored; confidence is discarded.
 
-**(b) After.** A `CoverageMap` (type in Section 4) lives only in the sync run's in-memory scope: produced by the aligner, consumed by the orchestrator's abort gate and `distributeSegmentTimes`' classification, then dropped. It is **not** written to `VideoSegment`, `Project`, localStorage, or IndexedDB. The "never persisted" framing refers to per-segment coverage metadata — confidence, matched flags, audio regions — which remain transient. `Project.lastSyncObservedRate` (N3, Section 4) is **not** coverage metadata: it is a single scalar narration-rate characteristic of the project, and persisting it does not create the staleness class this section guards against (a stale rate degrades a fallback *estimate* gracefully; stale per-segment coverage would misdescribe specific segments).
+**(b) After.** A `CoverageMap` (type in Section 4) lives only in the sync run's in-memory scope: produced by the aligner, consumed by the orchestrator's abort gate and the covered-segment filter (§3.5), then dropped. It is **not** written to `VideoSegment`, `Project`, localStorage, or IndexedDB. *(Round 4: with N3 superseded, this rule now has no exception at all — the rewrite persists nothing. The skip records of R4-4 are a separate concern: they are a user-facing **log of what the sync did**, not per-segment coverage metadata, and their persistence is WS-logs' design decision, not this section's.)*
 
-**(e) Rationale.** Sync metadata is transient — it describes one alignment run against one transcript, invalidated by any re-sync, text edit, or audio change. The durable per-segment signal is `anchorSource` (`'whisper' | 'estimate' | 'fallback'`), which already survives persistence and is enough for any future UI (Phase 2) to distinguish audio-backed from fallback segments. Persisting a richer map would create a staleness class of bugs for no current consumer.
+**(e) Rationale.** Sync metadata is transient — it describes one alignment run against one transcript, invalidated by any re-sync, text edit, or audio change. Under skip-unmatched every committed segment is audio-backed by construction, so no durable per-segment coverage signal is needed at all; `anchorSource` (`'whisper' | 'estimate'`) remains what it is today. Persisting a richer map would create a staleness class of bugs for no current consumer.
 
 ### 3.8 Stage-direction / speaker-label stripping + parser fix (S19, R5, N4)
 
@@ -386,7 +388,7 @@ All three tier constants live in `syncConstants.ts`. Leading segments proportion
 
 **(d) Files.** `whisper.rs:365-415` + its two callers; `whisperService.ts:26-34`.
 
-**(e) Why skip rather than clamp.** A missing word-token is invisible to the diff aligner (one fewer transcript token — a local gap at worst; at most it turns one covered segment into an interpolable single-segment gap, R12); a t=0 token corrupts ordering globally.
+**(e) Why skip rather than clamp.** A missing word-token is invisible to the diff aligner (one fewer transcript token — a local gap at worst; at most it drops one segment's confidence below the covered threshold, and that segment is then skipped, R4-1); a t=0 token corrupts ordering globally.
 
 ### 3.13 Last-segment-end standardization (S7)
 
@@ -396,7 +398,9 @@ All three tier constants live in `syncConstants.ts`. Leading segments proportion
 
 **(d) Files.** `whisperService.ts:259-263` (signature), `:515-517` (clamp), both call sites (`useWhisper.ts:34, 173`).
 
-### 3.14 Export pipeline: audio padding for extended timelines (R2)
+### 3.14 Export pipeline: audio padding for extended timelines (R2) — **SUPERSEDED by R4-2, NOT IMPLEMENTED**
+
+> **Round 4 (2026-07-25): this entire section is cancelled.** It existed solely because trailing char-fallback segments made the timeline longer than the audio. Under skip-unmatched (R4-2) an uncovered trailing segment is skipped, the timeline never exceeds the audio duration, and `-shortest` remains exactly correct on both export paths. **No `apad`, no `timelineDurationSecs` plumbing, no change to `muxOnly.ts`, `exportPipelineWebCodecs.ts`, or `exportPipeline.ts`.** Retained below as the record of why the change was designed and why it is no longer needed; do not implement it.
 
 **(a) Today.** Both export paths mux audio with `-shortest` against the audio stream:
 
@@ -421,7 +425,9 @@ When no trailing-fallback segments exist (`timelineDuration ≤ audioDuration`, 
 
 **(e) Why `apad` at mux time.** It is the minimal, container-level fix: no re-render, no synthetic silent audio files to generate and track in the session dir, no change to the annexb/PTS invariants the WebCodecs path documents as hard-won (`muxOnly.ts:10-58`). Manual verification requirement: a real trailing-fallback project exported on both paths, output duration = timeline duration, silence after the voiceover ends, video content present to the last segment (Section 6.4).
 
-### 3.15 Preview playback: fallback clock for trailing segments (N2)
+### 3.15 Preview playback: fallback clock for trailing segments (N2) — **SUPERSEDED by R4-2, NOT IMPLEMENTED**
+
+> **Round 4 (2026-07-25): this entire section is cancelled.** Like 3.14, it existed only to make a timeline that runs past the audio watchable. Under skip-unmatched (R4-2) the timeline never runs past the audio, so `usePlayback.ts`'s audio-clocked rAF loop and its `audio.ended` → stop/reset branch are correct as they stand and are **not modified**. (Playback across a *gap* needs nothing new either: the audio is one continuous file and keeps playing; `currentSegment` simply resolves to nothing while the playhead is inside a gap, which is the existing no-segment render path.) Retained below as the record of the cancelled design; do not implement it.
 
 **(a) Today.** `usePlayback.ts`'s voiceover path is an rAF loop with the audio element as master clock (`usePlayback.ts:58-105`): every frame reads `audio.currentTime` (`:70`), and when `audio.ended` fires the loop **stops playback and resets to 0** (`:87-92`). With trailing-fallback segments (3.5), the timeline extends past the audio, so trailing segments are unreachable in preview — they export (3.14) but can never be watched. A separate wall-clock `setInterval` path already exists but only when NO voiceover is loaded (`:110-127`), advancing `0.1 × globalPlaybackSpeed` per 100ms tick (`:117`).
 
@@ -440,26 +446,22 @@ When no trailing-fallback segments exist (`timelineDuration ≤ audioDuration`, 
 
 ## 4. Data Model Changes
 
-**`VideoSegment.anchorSource`** (`types.ts:208`) — union extended additively:
+**`VideoSegment.anchorSource`** (`types.ts:208`) — **UNCHANGED** (`'whisper' | 'estimate'`). The third value `'fallback'` was required only by char-based fallback timing, which R4-2 eliminated: every committed segment is audio-covered, so every anchor is `'whisper'` (or `'estimate'` on the no-transcript path, as today). `project-state.md`'s invariant (e) needs no amendment.
+
+**`Project.lastSyncObservedRate`** — **NOT ADDED** (N3 superseded by R4-2). It existed solely as tier 2 of the three-tier char-rate; with no char-rate there is no consumer. **This rewrite adds NO persisted field** — the persistence posture reverts to the original "no `Project` changes."
+
+**Skip records (R4-4)** — in-memory in this workstream, persisted by **WS-logs**:
 
 ```ts
-anchorSource?: 'whisper' | 'estimate' | 'fallback';
+type SegmentSkipReason = 'no audio match' | 'low confidence';
+interface SkippedSegmentRecord {
+  segmentIndex: number;   // 0-based index in the PRE-filter (parsed) segments array
+  segmentText: string;    // the segment's scene-doc text, for the log UI
+  reason: SegmentSkipReason;
+}
 ```
 
-`'fallback'` = char-based or interpolated timing for a segment the audio does not cover (leading, trailing, or an R12-interpolated single-gap segment) — distinct from `'estimate'` ("the whole project was timed by character weight because no transcript existed"). `project-state.md`'s invariant (e) ("anchorSource provenance only ever moves one direction") gains a third state — ordering becomes `whisper > fallback ≈ estimate`; the invariant's wording is updated when the Decisions Log entry is written (Section 9).
-
-**`Project.lastSyncObservedRate`** — new optional scalar field (N3 — accepted; the ONLY persisted field added by this rewrite):
-
-```ts
-/** Observed seconds-per-character narration rate from the most recent sync
- *  whose covered region cleared the tier-1 significance thresholds
- *  (syncConstants.ts: ≥100 chars AND ≥30s). Tier-2 char-rate fallback input
- *  for partial-coverage syncs (§3.5). Absent until the first qualifying sync
- *  (old projects: tier 2 falls through to tier 3). */
-lastSyncObservedRate?: number;
-```
-
-Additive, optional, invisible to old projects (absent → tier 3 default; same invisible-migration pattern as `aspectRatio`/`resolutionTier`, `types.ts:313-319`). Updated on every successful sync whose covered region meets the tier-1 thresholds. This does not contradict §3.7's "coverage metadata is never persisted" rule — that rule covers per-segment confidence/matched/audio-region data, which remain transient; a scalar narration rate is a project-level characteristic, not transient sync metadata. The rewrite's persistence posture is: **one additive scalar field, no structural changes.**
+Produced alongside the covered-segment filter (§3.5(c)). WS-logs persists these on the project (surviving app close/reopen) and renders them in a sync-log panel; this workstream only produces and DEV-logs them.
 
 **`SyncWarning`** — new type, the single warning currency for the unified surface (R10):
 
@@ -481,8 +483,9 @@ interface SegmentCoverage {
   matchedWords: number;
   totalWords: number;              // 0 for zero-token segments (classification-neutral, 3.1.1)
   confidence: number;              // matchedWords / totalWords (0 when totalWords is 0)
-  classification: 'covered' | 'leading-fallback' | 'trailing-fallback'
-                | 'interpolated' | 'gap-error' | 'no-text';
+  // Round 4 (R4-1/R4-2): the fallback/interpolated/gap-error classes are gone —
+  // a segment is committed, skipped, or textless. Nothing else exists.
+  classification: 'covered' | 'skipped' | 'no-text';
 }
 interface CoverageMap {
   perSegment: SegmentCoverage[];   // index-parallel to the segments array
@@ -520,24 +523,21 @@ Any post-rewrite regression test for this project should assert the boundary lan
 
 | File | Change | Rulings/Decisions |
 |---|---|---|
-| `src/services/syncConstants.ts` (NEW) | All tuning constants + `NUMBER_WORDS` (Section 3 preamble, R1). | R1, R8, R12, R13 |
+| `src/services/syncConstants.ts` (NEW) | All tuning constants + `NUMBER_WORDS` (Section 3 preamble, R1). *(Round 4: `MAX_INTERPOLABLE_GAP` and the three char-rate constants are deleted — R4-1/R4-2.)* | R1, R8, R13, **R4-1, R4-2** |
 | `src/services/whisperService.ts` | Replace the greedy matcher core (`:291-433`) with the Hirschberg aligner (3.1) + per-segment extraction (3.1.1, zero-token neutrality). Rewrite `canonicalizeForAlignment` (`:145-211`) to the unified order incl. the R1 hyphen carve-out (3.2). Extend the return type with per-segment coverage + `CoverageMap` incl. `longestCoveredRun` (3.3). Delete `maxStart`, overshoot guard, cursor hold. | D2/D3/D4, R1, R7, R11, R13 |
 | `src/services/syncEngine.ts` | `normalizeForMatch` (`:43-50`) refactored onto shared Unicode primitives (behavior identical). | D4 |
 | `src/hooks/useWhisper.ts` | `alignSegmentsFromCachedTranscript` (`:27-48`) threads the coverage result; fresh path (`:170-197`) gains the same plumbing. | R13 |
-| `src/App.tsx` | Two-signal abort gate in `handleApplySyncFromFiles` between alignment and commit (`:1806-1850`): gap check (R12) → run check → noise floor (R13); locked-in-gap message variant (R9); empty-input aborts (3.11). | D1, R9, R12, R13 |
+| `src/App.tsx` | Two-signal abort gate in `handleApplySyncFromFiles` between alignment and commit (`:1806-1850`): run check → noise floor (R13); empty-input aborts (3.11). *(Round 4: the R12 gap check and the R9 locked-in-gap message variant are DELETED — R4-1.)* | D1, R13, **R4-1** |
 
-### Workstream 2 — Partial-coverage sync logic + last-segment-end standardization + export audio padding + preview fallback clock
+### Workstream 2 — Skip-unmatched filter + last-segment-end standardization
+
+> **Round 4 (R4-1/R4-2) collapsed this workstream.** Everything it contained beyond the two rows below — char-rate fallback timing, single-gap interpolation, the N1 conditional floors, the `types.ts` additions, the preview fallback clock (N2), and the export audio padding (R2) across all three export files — is cancelled. What remains of "partial-coverage logic" is one pure filter and its call site.
 
 | File | Change | Rulings/Decisions |
 |---|---|---|
-| `src/services/whisperService.ts` | `distributeSegmentTimes` (`:543-562`) consumes classification: `anchorSource:'fallback'` + three-tier char-rate anchors (R3) for leading/trailing, window-fill for interpolated single gaps (R12); the `:552` 0.1s floor becomes classification-conditional (N1). `alignScenestoTranscript` gains `audioDurationSecs`; `:515-517` clamps to file duration (3.13). | D5, D10, R3, R12, N1 |
-| `src/services/syncEngine.ts` | `applyAnchorBasedTiming` PASS 3 (`:239-243`) clamps the last *audio-covered* segment; trailing fallback segments exempt. The `:235` 0.1s floor becomes classification-conditional (N1). No-op when no fallback segments exist. | D5, D10, N1 |
-| `src/App.tsx` | Char-weight proportioning (`:417-422`) extracted to a shared helper used by the bootstrap, the fallback classifier, and the interpolation window math. Writes `Project.lastSyncObservedRate` after a tier-1-qualifying sync (N3). | R3, R12, N3 |
-| `src/types.ts` | `anchorSource` + `'fallback'` (`:208`); `Project.lastSyncObservedRate?: number`; `CoverageMap` types (Section 4). | D5, R3, N3 |
-| `src/hooks/usePlayback.ts` | Audio-`ended` branch (`:87-92`) transitions to the wall-clock fallback loop when trailing-fallback segments exist (advance × `globalPlaybackSpeed`, end check per `:78-84`); scrub-back into the audio-covered region resumes audio-clocked sync (3.15). | **N2** |
-| `src/services/webcodecsExport/muxOnly.ts` | `buildAudioMuxArgs` (`:129-144`) + `muxOnly` (`:157-200`) gain `timelineDurationSecs`; conditional `-af apad=whole_dur=…` when timeline > audio (3.14). | **R2** |
-| `src/services/webcodecsExport/exportPipelineWebCodecs.ts` | Threads timeline duration into `muxOnly`. | **R2** |
-| `src/services/exportPipeline.ts` | Audio-mux exec (`:264-274`) gains the same conditional `apad` (3.14). | **R2** |
+| `src/App.tsx` | `filterToCoveredSegments` (pure, module-level, unit-testable) partitions the aligned segments by covered flag after the gate passes; `handleApplySyncFromFiles` commits only the covered ones and collects `SkippedSegmentRecord[]` (DEV-logged here, persisted by WS-logs). | **R4-1, R4-2, R4-4** |
+| `src/services/whisperService.ts` | `alignScenestoTranscript` gains `audioDurationSecs`; `:515-517` clamps to file duration (3.13). *(The `distributeSegmentTimes` classification work and the `:552` floor change are cancelled — R4-2/R4-5.)* | D10 |
+| `src/services/syncEngine.ts` | *(No change. The PASS 3 last-covered-segment clamp and the `:235` conditional floor were both trailing-fallback consequences — cancelled by R4-2/R4-5. The existing file-duration clamp is already correct.)* | **R4-2, R4-5** |
 
 ### Workstream 3 — Silence-snap guards (independent)
 
@@ -561,7 +561,7 @@ Any post-rewrite regression test for this project should assert the boundary lan
 
 | File | Change |
 |---|---|
-| `src/services/syncTiming.test.ts` (+ siblings) | Re-baseline + extend (Section 6), incl. the N1 floor-scoping updates at `:210, :247`, the Hirschberg≡NW property test, and parser/mux-args tests in their homes (`muxOnly.test.ts`, a `parseProjectData` test). |
+| `src/services/syncTiming.test.ts` (+ siblings) | Re-baseline + extend (Section 6), incl. the skip tests (R4-1) and the skip-filter test (R4-2), the Hirschberg≡NW property test, and a parser test in its home. *(Round 4: the N1 floor-scoping updates at `:210, :247` and the `muxOnly.test.ts` apad-args test are cancelled — R4-5/R4-2.)* |
 | Fixture tuning pass | R8's threshold derivation on the four named fixtures; final constants recorded in `syncConstants.ts`. |
 | git tag | `sync-known-good-2026-07-24` after all tests pass (Section 6.3). |
 
@@ -569,9 +569,15 @@ Any post-rewrite regression test for this project should assert the boundary lan
 
 | File | Change |
 |---|---|
-| `CLAUDE.md` | Update `whisperService.ts`/`syncEngine.ts`/`useWhisper.ts`/`usePlayback.ts`/`whisper.rs`/`muxOnly.ts`/`exportPipeline.ts` File Map entries; update the Anchor-Based Segment Timing section; DO-NOT-DO additions (e.g., "never commit a timeline that failed the coverage gate"; "never mux a trailing-fallback timeline without `apad`"; "never apply the 0.3s/0.1s duration floors to fallback-classified segments"). |
-| `project-state.md` | Decisions Log entries (Section 9) — only after landing + verification; invariant (a)/(b)/(e) wording updates. |
+| `CLAUDE.md` | Update `whisperService.ts`/`syncEngine.ts`/`useWhisper.ts`/`whisper.rs` File Map entries; update the Anchor-Based Segment Timing section for skip-unmatched; DO-NOT-DO additions (e.g., "never commit a timeline that failed the coverage gate"; "never give an uncovered segment fallback timing — skip it"). *(Round 4: no `usePlayback.ts`/`muxOnly.ts`/`exportPipeline.ts` entries to update — those changes are cancelled.)* |
+| `project-state.md` | Decisions Log entries (Section 9) — only after landing + verification; invariant (a) wording update. *(Round 4: invariants (b) and (e) need no amendment — the timeline never exceeds the audio duration and `anchorSource` keeps its two-value union.)* |
 | `docs/history.md` | Implementation record — only after verification. |
+
+### Workstream LOGS (WS-logs) — persistent sync log (R4-4), follows this workstream
+
+| File | Change |
+|---|---|
+| (TBD, WS-logs' own design) | Persist the `SkippedSegmentRecord[]` produced by §3.5(c) on the project so it survives app close/reopen, and surface it in a sync-log panel. Scope: **sync-only messages** — skip notices, abort notices, warnings. Not designed here; this workstream only produces the records and DEV-logs them to the console. |
 
 ---
 
@@ -582,11 +588,11 @@ Any post-rewrite regression test for this project should assert the boundary lan
 The matcher rewrite **deliberately re-baselines** this suite (Decision 3). Per describe block:
 
 - **`cached-token sync pipeline (Option C)` (1 test, `:40-86`).** Exact expected values (`3.7/3.85/3.95`, `:73-79`) may shift within the silence windows under the new aligner + tolerance clamps; the Σ-duration assertion (`:83-84`) must keep passing for this fully-covered case. Re-baseline values by hand-verifying the new output against the token fixture.
-- **`clean-slate re-sync (11→14 Civic repro)` (2 tests, `:101-255`).** Contiguity, duration floors, Σ=AUDIO_DURATION (`:214, :251`), and tape-deck ordering must all still pass — this fixture is fully covered, so the new aligner must reproduce the same qualitative result. **The ≥0.3s assertions at `:210` and `:247` are updated to apply only to segments where `anchorSource !== 'fallback'`** (N1) — a no-op for these fully-covered fixtures (every segment is whisper-anchored), but the scoping keeps the invariant honest once partial-coverage fixtures share the helpers.
+- **`clean-slate re-sync (11→14 Civic repro)` (2 tests, `:101-255`).** Contiguity, duration floors, Σ=AUDIO_DURATION (`:214, :251`), and tape-deck ordering must all still pass — this fixture is fully covered, so the new aligner must reproduce the same qualitative result. **The ≥0.3s assertions at `:210` and `:247` stay UNSCOPED** (R4-5 moots N1): every committed segment is audio-covered, so the floor applies uniformly and needs no `anchorSource` condition.
 - **`stale-anchor squeeze (synthetic)` (2 tests, `:274-329`).** `applyAnchorBasedTiming` mechanics — unaffected; expected to pass unchanged.
 - **`legacy project (pre-6/18)` (1 test, `:342-375`).** `applyAnchorBasedTiming` only (`:373` Σ check) — unchanged, must pass. The PASS 3 clamp change (WS2) must be verified a no-op here (no fallback segments).
 - **`D16 canonicalization equivalence (Part A)` (7 tests, `:386-459`).** Survive under R1: **`'thirty-seven' ≡ '37'` (`:393-394`) continues to pass** — the number-word carve-out splits it to `['thirty','seven']`. New cases required: `co-operate` one token; `3-4` splits (all-digit sub-parts); `twenty-first` stays whole (mixed number+ordinal); abbreviations (`e.g.`, `U.S.A.`); ZW-char join (`foo​bar` → `foobar`); NFC (`café` NFD ≡ NFC).
-- **`D16 alignment robustness (Parts A + C)` (6 tests, `:461-616`).** The *scenarios* (number/contraction/symbol/glued-token alignment without neighbor drift) are preserved; the *mechanism assertions* change — there is no cursor. The safety-net test (`:585-615`) becomes "an unmatchable segment yields low per-segment confidence and does not displace its neighbors' matched positions" — and under R12 it now classifies as an interpolable single gap.
+- **`D16 alignment robustness (Parts A + C)` (6 tests, `:461-616`).** The *scenarios* (number/contraction/symbol/glued-token alignment without neighbor drift) are preserved; the *mechanism assertions* change — there is no cursor. The safety-net test (`:585-615`) becomes "an unmatchable segment yields low per-segment confidence and does not displace its neighbors' matched positions" — and under R4-1 that segment is simply skipped at commit time.
 - **`D16 overshoot guard + backstop clamp` (4 tests, `:630-754`).** Tests (a)–(c) assert guard internals (`overshoot`/`low-confidence` console messages) that **no longer exist** — rewritten as outcome tests under the diff aligner. Test (d) (`:732-753`, `applyAnchorBasedTiming` backstop) is matcher-independent and survives as-is — the backstop clamp is retained as defense-in-depth.
 
 ### 6.2 New tests required
@@ -594,34 +600,34 @@ The matcher rewrite **deliberately re-baselines** this suite (Decision 3). Per d
 1. **Full-mismatch abort** — cross-script fixture: longest covered run = 0 → abort with the mismatch message (R13 Signal 1).
 2. **Near-zero-coverage abort** — exactly 1 covered segment (longest run = 1 < `MIN_COVERED_RUN_LENGTH`) → abort (R13 Signal 1).
 3. **Matched-on-noise abort** — a contiguous run ≥ 2 exists but bidirectional coverage < `NOISE_FLOOR_COVERAGE` → abort (R13 Signal 2).
-4. **Partial-coverage proceed** — longest run ≥ 2, leading + trailing uncovered: proceeds; s1 char-timed in `[0, t0(firstCovered))`, trailing char-timed after the last covered segment, `anchorSource:'fallback'` on exactly the unmatched set, covered segments unchanged vs. a fully-covered control (R13, D5).
-5. **Single-segment interpolation** — one uncovered segment between covered neighbors: no abort; `t0 = prev.t1`, `t1 = next.t0`, `anchorSource:'fallback'`, duration = the window (R12).
-6. **Sliver acceptance (N1)** — a single-segment interpolation whose window is sub-0.3s: the fallback segment keeps the sub-0.3s duration (not clamped to 0.1/0.3, not errored); neighbors' audio-anchored boundaries unmoved.
-7. **Whisper floor retained (N1)** — a whisper-anchored segment that would fall below the floor still triggers it (the floor is scoped, not removed).
-8. **Two-segment gap abort** — 2 consecutive uncovered segments → abort with "segments X to Y" (R12); locked-segment variant asserts the R9 message.
-9. **Three-tier char-rate** — tier 1 (big covered region → observed rate, and `lastSyncObservedRate` written), tier 2 (small region + `lastSyncObservedRate` present → historical), tier 3 (neither → 15 chars/sec) (R3, N3).
+4. **Partial-coverage proceed** — longest run ≥ 2 with leading + trailing uncovered segments: no abort (R13, R4-1).
+5. **Middle-gap SKIP, not abort (R4-1)** — the R12 abort tests are replaced by their skip counterparts: 2 consecutive uncovered segments between covered ones → no abort; 1 uncovered between covered ones → no abort; leading uncovered → no abort; trailing uncovered → no abort. A locked segment inside a gap is likewise not an abort (the R9 message variant no longer exists).
+6. **Skip filtering (R4-2)** — a coverage array with 5 covered + 3 uncovered segments commits **exactly 5** segments, not 8; the kept segments are the covered ones, in order, with their Whisper-anchored `startTime` intact; the 3 skipped ones produce skip records carrying the right `segmentIndex`/`segmentText`.
+7. **Skip reasons (R4-4)** — a segment with zero matched words records `'no audio match'`; a segment that matched but below `LOW_CONFIDENCE_RATIO` records `'low confidence'`.
+8. *(Deleted — the two-segment gap abort was R12's; superseded by item 5.)*
+9. *(Deleted — the three-tier char-rate was R3's; eliminated by R4-2.)*
 10. **Snap tolerance** — a silence midpoint within +150ms past `nextSpokenStart` is ACCEPTED; one beyond it is clamped; backward mirror; degenerate window falls back to token midpoint (R4).
 11. **Stage-direction strip** — `(pause)`/`[laughs]`/`NARRATOR:` stripped; `Narrator:` kept; fully-parenthesized text kept unstripped (D13).
 12. **Parser line-anchor** — a description line containing `[laughs]` mid-line does NOT split into a new scene; a line-start `[IMAGE: x]` still does (R5); covers both `TAG_REGEX` sites (`App.tsx:279, 294`).
 13. **Malformed-token skip** — Rust unit tests (`parse_timestamp` → `None`; `parse_stdout_tokens` drops the token); TS mirror for `parseTimestamp` (D14).
 14. **Hirschberg ≡ full-matrix NW property test** — on small random and hand-built fixtures (including free-end-gap cases), the Hirschberg traceback must produce the same optimal-score alignment as a reference full-matrix implementation kept test-side only (R7; the correctness gate for the free-end-gap/recursion subtlety, 3.1(c)).
-15. **Zero-token segment neutrality** — an empty-text segment between covered neighbors neither aborts (not a gap member) nor dilutes coverage; anchors at the previous boundary (3.1.1 point 4).
-16. **Export mux args** — `buildAudioMuxArgs` with `timelineDurationSecs` > audio duration includes `apad=whole_dur=…`; without trailing overhang, args are byte-identical to today (R2; in `muxOnly.test.ts`).
+15. **Zero-token segment neutrality** — an empty-text segment neither aborts nor dilutes the coverage metrics (3.1.1 point 4); at commit time it is skipped like any other uncovered segment (R4-1).
+16. *(Deleted — the export mux `apad` args test was R2's; the change is not implemented, §3.14.)*
 17. **Language flow (frontend side)** — detected non-English surfaces a `SyncWarning` (severity `'warn'`), does not block; detection-failure falls back silently (R6, D9). Rust detect-pass logic covered by manual testing + Rust unit tests where practical.
 18. **Unified warning surface** — silence-failure, language, and empty-input events all arrive as `SyncWarning` through the single dispatcher, from both cached and fresh paths (R10).
 
 ### 6.3 Threshold tuning pass + regression tag
 
-R8's tuning pass (3.3(c)) runs after WS1–WS4 land, on the four named fixtures; the derived constants are committed to `syncConstants.ts` with the observed distributions noted. Then tag **`sync-known-good-2026-07-24`** — locking the Hirschberg pipeline, two-signal gate, partial-coverage semantics (incl. the N1 floor scoping), snap tolerance, export padding, and preview fallback clock as the new known-good baseline. The old `sync-known-good-2026-06-20` tag is **kept** as the historical pre-rewrite baseline (Decision 15). The repo also carries `sync-known-good-2026-06-23`/`-24`; the Decisions Log entry states that the new tag is the active bisect target. `project-state.md` invariant (a) (which still says "8 vitest tests") is updated to the new count and tag.
+R8's tuning pass (3.3(c)) runs after WS1–WS4 land, on the four named fixtures; the derived constants are committed to `syncConstants.ts` with the observed distributions noted. Then tag **`sync-known-good-2026-07-24`** — locking the Hirschberg pipeline, two-signal gate, skip-unmatched semantics (R4-1/R4-2), and snap tolerance as the new known-good baseline. The old `sync-known-good-2026-06-20` tag is **kept** as the historical pre-rewrite baseline (Decision 15). The repo also carries `sync-known-good-2026-06-23`/`-24`; the Decisions Log entry states that the new tag is the active bisect target. `project-state.md` invariant (a) (which still says "8 vitest tests") is updated to the new count and tag.
 
 ### 6.4 Manual test plan (separate from vitest)
 
 1. **294-segment macOS Intel reproducer** — must still sync correctly and within acceptable wall-clock time (validates Hirschberg cost at scale; use `__ALIGN_INSTRUMENT__`, `whisperService.ts:236-257`).
 2. **The s2-on-"lot" project** — s2's boundary must land at/on "on", not "lot" (validates 3.1 per Section 4.5).
 3. **Cross-script mismatch** — a real voiceover against an unrelated scene doc: must hard-abort with the full-mismatch message; project state untouched.
-4. **Partial-coverage project** — s1 + s16–s51 unscripted, s2–s15 spoken: char-fallback on the edges, audio timing in the middle; a middle-gap variant (2+ segments) must abort naming the run; a single-gap variant must interpolate, not abort.
-5. **Trailing-fallback export (R2)** — the partial-coverage project exported on BOTH paths (WebCodecs gate on and off): output duration = timeline duration, silence after voiceover end, video renders to the last segment.
-6. **Trailing-fallback preview (N2)** — the same project in preview: playback continues past audio end on the fallback clock, trailing segments are reachable and play at their computed durations, scrubbing back into the audio region resumes audio-synced playback, and playback stops/resets at timeline end.
+4. **Partial-coverage project (R4-1/R4-2)** — s1 + s16–s51 unscripted, s2–s15 spoken: the timeline is built from the spoken scenes ONLY, at their real audio timestamps; the unscripted scenes do not appear anywhere on it; no abort. A middle-gap variant (2+ consecutive unmatched between matched) must likewise skip, not abort, and leave a visible hole in the timeline where those scenes would have been. The skip records (console, DEV) must name exactly the skipped scenes with the right reason.
+5. **Export of a skipped-segment project** — the same project exported on BOTH paths (WebCodecs gate on and off): output duration = audio duration, the gap regions render as whatever the no-segment path produces, no truncation. No export-code change was made (§3.14), so this is a regression check, not a verification of new behavior.
+6. **Preview of a skipped-segment project** — the same project in preview: the audio plays continuously as one file, covered segments appear at their real timestamps, the playhead crosses gap regions without stalling, and playback stops/resets at audio end exactly as today. No playback-code change was made (§3.15), so this too is a regression check.
 7. **Punctuation cases** — `10:30` / `10.30` / `10,30` in scene text vs. spoken "ten thirty": no neighbor desync (B2 verification).
 8. **Non-English audio (R6)** — detect pass picks the language; transcription runs on the multilingual model; the warning shows; sync proceeds; an English file still transcribes on the `.en` model (verify via logs).
 9. **Existing-project re-parse spot check (R5/N4)** — re-sync a real saved project and confirm segment count is unchanged (its scene doc has no mid-line brackets); the mid-line-bracket behavior change itself ships silent by ruling.
@@ -632,16 +638,16 @@ R8's tuning pass (3.3(c)) runs after WS1–WS4 land, on the four named fixtures;
 
 ```
 WS1 (foundation: Hirschberg aligner + normalizer + coverage + two-signal gate)
- ├──> WS2 (partial coverage + interpolation + N1 floor scoping + last-end
- │         standardization + EXPORT APAD (R2) + PREVIEW FALLBACK CLOCK (N2)
- │         — the export and playback changes are WS2 dependencies of
- │         trailing-fallback, shipped together, never separately)
+ ├──> WS2 (skip-unmatched filter + skip records + last-end standardization
+ │         — Round 4 collapsed this workstream: no interpolation, no char-rate,
+ │         no floor scoping, no export or playback change)
  ├─ WS3 (snap tolerance clamps)  — independent (pure clamp on existing
  │                                  AlignResult fields)
  ├─ WS4 (hardening: strip + TAG_REGEX (R5/N4), dual-model language (R6),
  │        SyncWarning surface (R10), fail-loud, Option<f64>)  — independent
  └──> WS5 (tests + R8 threshold tuning + tag) — depends on WS1–WS4
         └──> WS6 (docs) — last, after verification
+               └──> WS-logs (persistent sync log, R4-4) — follows this rewrite
 ```
 
 **Recommended sequence:** WS1 → WS2 → WS3 → WS4 → WS5 → WS6. WS1+WS2 are the coupled core and re-baseline the tests once. WS3 and WS4 can run in parallel with each other and with WS2 (disjoint line ranges except `whisperService.ts`, where conflicts are trivial). The R6 model provisioning (a download + README update) can happen any time before WS4's whisper.rs work. R8's tuning pass is strictly last-before-tag: it needs all behavior final.
@@ -652,17 +658,17 @@ WS1 (foundation: Hirschberg aligner + normalizer + coverage + two-signal gate)
 
 ## 8. Risks and Tradeoffs
 
-1. **The 23-test re-baseline is deliberate, not accidental.** These tests lock the *current* matcher's exact outputs, including its bugs; a rewrite keeping them all green would by definition not have fixed B2. Mitigation is discipline: every re-baselined expected value is hand-verified against its fixture (6.1), and the qualitative invariants (contiguity, Σ-duration on fully-covered projects, no whisper-anchored slivers, tape-deck ordering) must survive untouched. The N1 floor scoping deliberately narrows the sliver invariant to whisper-anchored segments — recorded in the tests themselves, not just here.
-2. **The contiguous-audio invariant is stricter than current behavior — by explicit user decision, softened by R12's 1-segment interpolation tolerance.** Projects that today "work" by silently bridging a multi-segment gap will start hard-aborting; single-segment Whisper drop-outs no longer abort (they interpolate), which keeps the gate robust against routine ASR noise. Trailing-fallback timelines extend past the audio duration, which amends `project-state.md` invariant (b) (Σ content-segment duration = voiceoverDuration → holds for the audio-covered region; total may exceed it when trailing fallback exists) — the wording change is part of the Section 9 log entry.
-3. **The export-mux change (R2) is in WS2 and touches both export paths.** `apad` is added to the legacy exec (`exportPipeline.ts:264-274`) and the WebCodecs `buildAudioMuxArgs` (`muxOnly.ts:129-144`) — the second inside a mux step whose current shape was hard-won against real VideoToolbox streams (`muxOnly.ts:29-58`). The change is audio-side only and preserves the premux/PTS structure, but it MUST be manually verified with a real trailing-fallback export on both paths (6.4 item 5) before the tag — an args-level unit test is not sufficient proof for this file, per its own header's warning.
-4. **The preview fallback clock (N2) modifies the playback engine's most-trodden path.** The audio-clocked rAF loop (`usePlayback.ts:58-105`) is behaviorally byte-identical for fully-covered projects (the fallback branch is gated on trailing-fallback segments existing), but the ended-branch transition and scrub-back resume are real state-machine additions to a hook that has historically produced subtle bugs (the "Maximum update depth" incident, `project-state.md` 2026-07-07 Decisions Log entry). Manual test 6.4 item 6 is the gate.
-5. **Phase 1 / Phase 2 split.** Phase 1 delivers correct per-segment timings + `anchorSource:'fallback'` marks + correct export (3.14) + reachable preview (3.15). Phase 2 (deferred): timeline UI for audio offset, waveform dimming under non-audio segments, visible coverage affordances, and the N1 short-segment visual flag. Accepted.
-6. **One additive persisted field (N3).** `Project.lastSyncObservedRate?: number` is the rewrite's only persistence-model change — additive, optional, backward-compatible (old projects load unchanged; the field is absent until the first tier-1-qualifying sync writes it; no `projectStore.ts` version bump needed, same pattern as `aspectRatio`/`resolutionTier`). The risk is negligible by construction, listed here so the persistence surface is complete.
+1. **The 23-test re-baseline is deliberate, not accidental.** These tests lock the *current* matcher's exact outputs, including its bugs; a rewrite keeping them all green would by definition not have fixed B2. Mitigation is discipline: every re-baselined expected value is hand-verified against its fixture (6.1), and the qualitative invariants (contiguity, Σ-duration on fully-covered projects, no slivers, tape-deck ordering) must survive untouched. Under R4-5 those invariants stay unscoped — every committed segment is audio-covered.
+2. **Skip-unmatched is a visible behavior change: segments the user wrote can silently vanish from the timeline (R4-1/R4-2).** A project that today produces 51 segments may produce 14, and the remaining 37 scenes simply are not there. This is the ruled-on intent — the audio is the source of truth — but it is the single biggest user-facing risk in the rewrite, and its mitigation is **entirely** the skip log (R4-4): until WS-logs ships the persistent, user-visible log, a skipped segment is only reported in a DEV console line. **WS-logs is not optional polish; it is the mitigation for this risk.** Note also what did NOT change: `project-state.md` invariant (b) (Σ content-segment duration = voiceoverDuration) still holds over the audio-covered region, the timeline never exceeds the audio duration, and invariant (e) (`anchorSource` provenance) is untouched.
+3. **Gaps are a timeline state the rest of the app has never had to render.** A skipped segment leaves a region where `currentSegment` resolves to nothing while the audio keeps playing. The preview, export, and timeline UI all already have no-segment code paths, so no change was needed — but "no change was needed" is a claim that must be *checked*, not assumed: manual tests 6.4 items 5–6 are regression checks on exactly this, on both export paths and in preview.
+4. *(Removed — the preview fallback clock (N2) is cancelled; `usePlayback.ts` is not modified. §3.15.)*
+5. **Phase 1 / Phase 2 split.** Phase 1 delivers a correct, audio-true timeline plus in-memory skip records. Phase 2 (deferred): timeline UI affordances for gap regions and waveform treatment across them. Accepted.
+6. *(Removed — `Project.lastSyncObservedRate` (N3) is not added; the rewrite persists no new field. §4.)*
 7. **Installer size +~74MB (R6).** The multilingual `ggml-base.bin` ships alongside the English model — accepted explicitly by the user's ruling. Provisioning follows the existing gitignored-model pattern (`.gitignore:17-18`, `src-tauri/models/README.md`); CI/build docs must be updated or fresh checkouts will build without the new model — the detect pass degrades gracefully (R6 step 5: detection failure falls back to the English model).
 8. **Detect-then-transcribe latency (R6).** Every transcription gains a detect-only pre-pass (small); non-English audio pays a full second transcription on the multilingual model. Progress UX: the detect pass reports no percent (brief 0% phase) — accepted. The existing transcode-to-WAV step (`whisper.rs:115-150`) runs once and its output is reused by both passes.
 9. **Hirschberg implementation complexity (R7).** Meaningfully harder to implement correctly than full-matrix NW — recursive divide-and-conquer, forward+backward scoring passes, and the free-end-gap boundary handling (3.1(c)). The mitigation is structural: the Hirschberg≡NW property test (6.2 item 14) with a test-side full-matrix reference implementation is the non-negotiable correctness gate, and it must include free-end-gap fixtures specifically.
 10. **`TAG_REGEX` line-anchoring is a parse behavior change on existing data (R5/N4).** A saved scene doc containing mid-line brackets parses to *fewer* scenes after the fix — shipped silent by explicit ruling (N4): it is the corrected interpretation, the coverage gate protects against genuinely wrong outcomes, and the change is recorded in the Decisions Log (Section 9, item 8). Correctly-authored docs are unaffected.
-11. **Cross-platform validation gap.** Verified on macOS Intel first; macOS arm64 and Windows/WebView2 remain unverified until hardware is available (the project's standing pattern). The rewrite is mostly pure TS, but WS4's whisper.rs changes (dual model, detect pass) and R2's mux change alter sidecar invocations on all platforms.
+11. **Cross-platform validation gap.** Verified on macOS Intel first; macOS arm64 and Windows/WebView2 remain unverified until hardware is available (the project's standing pattern). The rewrite is mostly pure TS; the only sidecar-invocation change left after Round 4 is WS4's `whisper.rs` work (dual model, detect pass) — R2's mux change is cancelled, so no export invocation changes on any platform.
 12. **Near-match partial credit (S3) can mis-anchor.** Prefix-stem credit ("world"/"worlds") also matches unrelated pairs ("care"/"careful"). Ships behind a single constant; the R8 fixture pass decides whether it stays on.
 
 ---
@@ -672,16 +678,17 @@ WS1 (foundation: Hirschberg aligner + normalizer + coverage + two-signal gate)
 Checklist only; `project-state.md` records closed work, `docs/history.md` records verified closed work, and this rewrite is open until verified.
 
 1. **Sync matcher rewritten to a token-level diff aligner (NW scoring, Hirschberg linear-space traceback, free end-gaps)** — supersedes the greedy positional matcher and all D16 cursor guards; why (B2/G3), what was deleted, the Hirschberg≡NW property-test gate, test re-baseline note.
-2. **Two-signal abort gate (contiguous covered-run + bidirectional noise floor) + hard abort** — explicitly recording that **R13 superseded Decision 8's "both directions < 0.4" aggregate rule**; the tuned constants and the R8 fixture distributions behind them; the exact user-facing messages incl. the R9 locked-segment variant; the no-partial-timeline guarantee (B1 closed).
-3. **Partial-coverage semantics** — contiguous-audio invariant with `MAX_INTERPOLABLE_GAP = 1` interpolation; leading/trailing three-tier char-fallback (R3) incl. the new persisted `Project.lastSyncObservedRate` (N3); `anchorSource:'fallback'`; the N1 floor scoping (duration floors apply to whisper-anchored segments only); explicit note that invariant (b) (Σ=voiceoverDuration) and invariant (e) (anchorSource one-directional) were amended, with the new wording.
-4. **Export audio padding (`apad`) for trailing-fallback timelines (R2)** — both paths (`exportPipeline.ts`, `muxOnly.ts`), byte-identical when no overhang; manual both-path verification record.
-5. **Preview fallback clock for trailing-fallback timelines (N2)** — `usePlayback`'s audio-ended branch transitions to a wall-clock loop instead of stop/reset when the timeline extends past the audio; scrub-back resumes audio sync; byte-identical for fully-covered projects; manual verification record.
+2. **Two-signal abort gate (contiguous covered-run + bidirectional noise floor) + hard abort** — explicitly recording that **R13 superseded Decision 8's "both directions < 0.4" aggregate rule**, and that **R4-1 removed the R12 middle-gap abort from the gate entirely**; the tuned constants and the R8 fixture distributions behind them; the exact user-facing message; the no-partial-timeline guarantee for the full-mismatch case (B1 closed).
+3. **Skip-unmatched semantics (R4-1/R4-2/R4-5)** — uncovered segments are filtered out of the committed timeline rather than aborted (reverses R12) or char-timed (reverses the partial-coverage fallback design); no `anchorSource:'fallback'`, no three-tier char-rate, no persisted `lastSyncObservedRate`, no floor scoping; skip records (`segmentIndex`/`segmentText`/`reason`) produced for the log; explicit note that invariants (b) and (e) did NOT need amendment after all.
+4. *(Dropped — export audio padding (R2) was cancelled by R4-2; no export change to log.)*
+5. *(Dropped — the preview fallback clock (N2) was cancelled by R4-2; no playback change to log.)*
 6. **Unified alignment normalizer** — NFC + ZW-join + hyphen-preserve with the `NUMBER_WORDS` carve-out (R1) adopted onto the timing path.
 7. **Silence-snap clamps with `SNAP_TOLERANCE_SEC` ±150ms (R4)** — with the s2-on-"lot" innocence finding recorded (Section 4.5) so the attribution survives.
 8. **`TAG_REGEX` anchored to line-start (R5/N4)** — *"TAG_REGEX anchored to line-start; mid-line `[...]` no longer splits scenes. Existing scene docs with mid-line brackets parse to fewer scenes after this change. This is the corrected interpretation; the coverage gate protects against genuinely wrong outcomes."* Shipped silent by explicit ruling (no re-parse `SyncWarning`).
 9. **Dual-model language handling (R6)** — both models bundled (+74MB accepted), detect-then-transcribe flow, model-specific `--dtw` selection, warn-not-block; provisioning docs updated.
 10. **Hardening batch** — stage-direction strip grammar (D13), unified `SyncWarning` surface (R10), silence fail-loud (D11), empty-input aborts (D12), `Option<f64>` timestamp skip (D14).
 11. **New regression tag `sync-known-good-2026-07-24`** — what it locks, that `sync-known-good-2026-06-20` is retained as the historical baseline and the new tag is the active bisect target; invariant (a) updated (test count, tag name).
+12. **Persistent sync log (R4-4)** — logged by **WS-logs**, not this rewrite: what is recorded (skip notices, abort notices, warnings — sync-only messages), where it is stored, and that it survives app close/reopen so skipped segments are cross-verifiable.
 
 ---
 
@@ -692,31 +699,49 @@ Checklist only; `project-state.md` records closed work, `docs/history.md` record
 | ID | Ruling (one line) |
 |---|---|
 | **R1** (was OQ1) | Hyphen-join default with a `NUMBER_WORDS` carve-out: hyphenated tokens whose sub-parts are all number words/digit runs split; everything else keeps the hyphen (`'thirty-seven'≡'37'` preserved, `co-operate` one token) — §3.2. |
-| **R2** (was OQ2) | Export mux pads audio to the timeline duration via `-af apad=whole_dur=…` on both export paths; scoped into WS2 as a hard dependency of trailing-fallback — §3.14. |
-| **R3** (was OQ3) | Three-tier char-rate: observed (≥100 chars AND ≥30s covered) → project historical (`Project.lastSyncObservedRate`) → global default 15 chars/sec; named constants — §3.5. |
+| ~~**R2**~~ (was OQ2) | ~~Export mux pads audio to the timeline duration via `-af apad=whole_dur=…` on both export paths.~~ **SUPERSEDED by R4-2** — nothing extends past the audio, so no padding is needed; not implemented (§3.14). |
+| ~~**R3**~~ (was OQ3) | ~~Three-tier char-rate: observed → project historical (`Project.lastSyncObservedRate`) → global default 15 chars/sec.~~ **SUPERSEDED by R4-2** — char-based fallback timing is eliminated; the constants are deleted (§3.5). |
 | **R4** (was OQ4) | Snap clamps carry `SNAP_TOLERANCE_SEC = 0.150` (half of Whisper's ~300ms error) on both sides — not exact bounds — §3.6. |
 | **R5** (was OQ5) | `TAG_REGEX` anchored to line-start (parser change IN SCOPE, WS4); mid-line `[...]` no longer splits scenes — §3.8. |
 | **R6** (was OQ6) | Bundle BOTH whisper models (+74MB accepted); detect-only pass on the multilingual model, then transcribe on `.en` (English) or multilingual (non-English, with warn-not-block); detection failure → English fallback — §3.9. |
 | **R7** (was OQ7) | Hirschberg from the start (O(n+m) space, same optimal alignment) — not a measured fallback — §3.1. |
 | **R8** (was OQ8) | Thresholds derived from fixture confidence distributions (4 named fixtures, separation-with-margin method); 0.4/2/0.1 are starting points; constants in one exported module; explicit WS5 tuning step — §3.3, §6.3. |
-| **R9** (was OQ9) | Classification ignores locked status (a gap is a gap); a locked segment inside an aborting gap gets a specific message naming it — §3.4, §3.5. |
+| **R9** (was OQ9) | Classification ignores locked status (a gap is a gap). *Partially superseded by R4-1:* there is no aborting gap anymore, so the locked-segment message variant is deleted; the "locked status is irrelevant to coverage classification" half stands — a locked, uncovered segment is skipped like any other (§3.5). |
 | **R10** (was OQ10) | All warnings unify through a single `SyncWarning` type + `onSyncWarning` dispatcher owned by `useWhisper`; both paths funnel; one UI surface — §4, §3.9–3.11. |
 | **R11** (was M1) | Per-segment confidence extraction from the global alignment formalized (t0/t1 from first/last matched word; confidence = matched/total; zero matches = uncovered) — §3.1.1. |
-| **R12** (was M2) | Single uncovered segment between covered neighbors INTERPOLATES (`MAX_INTERPOLABLE_GAP = 1`); 2+ consecutive abort; leading/trailing char-fallback never abort — §3.5. |
+| ~~**R12**~~ (was M2) | ~~Single uncovered segment between covered neighbors INTERPOLATES (`MAX_INTERPOLABLE_GAP = 1`); 2+ consecutive abort.~~ **REVERSED by R4-1** — no gap of any length aborts, and nothing interpolates; uncovered segments are skipped (§3.4, §3.5). |
 | **R13** (was M3) | Two-signal abort gate: contiguous covered-run length (primary, `MIN_COVERED_RUN_LENGTH` = 2) + bidirectional noise floor (secondary, `NOISE_FLOOR_COVERAGE` = 0.1); supersedes Decision 8's "both < 0.4" aggregate rule — §3.3, §3.4. |
 
 ### Round 3 Rulings (all LOCKED — applied throughout this doc)
 
 | ID | Ruling (one line) |
 |---|---|
-| **N1** | Interpolated/fallback slivers are ACCEPTED: the 0.3s/0.1s duration floors (`App.tsx:263`, `whisperService.ts:552`, `syncEngine.ts:235`) apply to whisper-anchored segments only; fallback segments have no floor (≥0 guard only); audio-anchored boundaries are never moved to widen a sliver; Phase 2 UI flags short segments visually — §3.5, §6.1, §6.2 items 6–7. |
-| **N2** | Preview playback continues past audio end on a wall-clock fallback (× `globalPlaybackSpeed`) when trailing-fallback segments exist; scrub-back resumes audio-clocked sync; Phase 1, scoped into WS2 alongside R2 — new §3.15, §5 WS2, §6.4 item 6. |
-| **N3** | `Project.lastSyncObservedRate?: number` is ACCEPTED — the rewrite's only persisted field, additive/optional/backward-compatible; §3.7's "coverage metadata never persisted" rule is unchanged (it covers per-segment data, not a scalar project characteristic) — §4, §3.5 tier 2, §8 item 6. |
+| ~~**N1**~~ | ~~Interpolated/fallback slivers are ACCEPTED: the duration floors apply to whisper-anchored segments only.~~ **MOOT under R4-5** — there are no fallback segments, so the floors apply uniformly to all (audio-covered) committed segments; no scoping logic (§3.5, §6.1, §6.2). |
+| ~~**N2**~~ | ~~Preview playback continues past audio end on a wall-clock fallback.~~ **SUPERSEDED by R4-2** — the timeline never extends past the audio; `usePlayback.ts` is not modified (§3.15). |
+| ~~**N3**~~ | ~~`Project.lastSyncObservedRate?: number` is ACCEPTED as the rewrite's only persisted field.~~ **SUPERSEDED by R4-2** — it was tier 2 of the char-rate; with no char-rate it has no consumer. The rewrite persists NO new field (§4). |
 | **N4** | The `TAG_REGEX` re-parse behavior change ships SILENT (no `SyncWarning`); the coverage gate catches genuinely wrong outcomes; the change is documented in the post-implementation Decisions Log — §3.8, §9 item 8. |
 
-### Final re-analysis (Round 3 close-out)
+### Round 4 Rulings (all LOCKED — applied throughout this doc, 2026-07-25)
+
+Round 4 replaces the partial-coverage design wholesale. Where an earlier ruling conflicts, **Round 4 wins**.
+
+| ID | Ruling |
+|---|---|
+| **R4-1** (reverses R12) | **Unmatched segments are SKIPPED from the timeline, not aborted.** Middle gaps no longer trigger a hard error — a gap of any length is fine. The audio plays continuously as one file and is the source of truth; matched segments appear at their real audio timestamps; unmatched segments simply don't appear. **No stitching, no splitting, no muting** of the audio, and no stretching of neighbouring segments to close a gap — §3.4, §3.5. |
+| **R4-2** (reverses the partial-coverage fallback design) | **Character-based fallback timing is ELIMINATED.** All unmatched segments are skipped — no leading char-fallback, no trailing char-fallback, no single-segment interpolation. A segment is either audio-covered (appears on the timeline at its Whisper-anchored time) or skipped (does not appear). This removes the need for `anchorSource: 'fallback'`, the three-tier char-rate (**R3**), `Project.lastSyncObservedRate` (**N3**), export audio padding (**R2**), and the preview fallback clock (**N2**) — **those entire subsystems are no longer needed** — §3.5, §3.14, §3.15, §4. |
+| **R4-3** (preserves R13) | **The full-mismatch abort stays.** If zero contiguous covered runs exist (longest run < `MIN_COVERED_RUN_LENGTH`) OR bidirectional coverage < `NOISE_FLOOR_COVERAGE`, abort with *"This voiceover doesn't match your scene doc. No timeline will be created."* This catches the cross-script mismatch case (**B1**) — §3.3, §3.4. |
+| **R4-4** (new — skip logging) | **A persistent log records which segments were skipped and why.** The log survives app close/reopen and is stored on the project so teammates can cross-verify. Scope: **sync-only messages** — skip notices, abort notices, warnings. Implementation is a separate workstream (**WS-logs**) following this one; this rewrite produces the `SkippedSegmentRecord[]` and DEV-logs it — §3.5(c), §4, §5. |
+| **R4-5** (reverses N1 — sliver floor) | Since unmatched segments are skipped (not interpolated), the sliver-floor concern (**N1**) is **moot** for fallback segments — there are none. The `MIN_SEGMENT_DURATION` floor applies **uniformly to all committed (audio-covered) segments** — §3.5, §6.1. |
+
+### Final re-analysis (Round 3 close-out — superseded in part by Round 4)
 
 The full doc was re-read after applying N1–N4, checking specifically for: contradictions among the 17 rulings (N1 vs. the test floor invariants — resolved by the `:210`/`:247` scoping in §6.1 and tests 6–7 in §6.2; N2 vs. R3 rate consistency — resolved by construction, the fallback clock advances real seconds over durations already computed from the char-rate; N3 vs. §3.7's no-persistence rule — resolved by the explicit scalar-vs-per-segment distinction in §3.7 and §4; N4 vs. R10's unified warnings — consistent, N4 deliberately adds no warning and §3.8 says so; R2 vs. N2 — both in WS2, both gated on the same trailing-fallback condition), missing specifications (every §3 subsystem states algorithm, data flow, file:line touchpoints, error handling, and test coverage; no TBD language remains), missing file touchpoints (§5 covers `usePlayback.ts` in WS2, `types.ts` with `lastSyncObservedRate` and `SyncWarning`, both export files in WS2, `whisper.rs` + model provisioning in WS4, `syncConstants.ts` in WS1), missing test cases (§6.2 covers sliver acceptance and floor retention (N1), §6.4 covers fallback-clock preview (N2), §6.2 item 9 covers the persisted-rate tiers (N3), §6.2 item 12 + §6.4 item 9 cover the parser change (R5/N4)), and implementation-order soundness (§7 reflects WS2's expanded scope and WS4's parser + dual-model additions).
+
+*(The paragraph above records the Round 3 close-out as it stood on 2026-07-24. Round 4 cancelled several of the tensions it resolved — N1 vs. the floor invariants, N2 vs. R3 rate consistency, N3 vs. §3.7, R2 vs. N2 — by removing both sides of each: with fallback timing eliminated there is no fallback floor, no fallback clock, no persisted rate, and no export overhang.)*
+
+### Final re-analysis (Round 4 close-out)
+
+The doc was re-read after applying R4-1…R4-5, checking for residue of the cancelled design: §3.4's gate is now three checks (empty-input → R13 Signal 1 → R13 Signal 2) with the R12 step and both gap messages deleted; §3.5 is a single filter with no timing logic; §3.14/§3.15 are retained but marked SUPERSEDED/NOT IMPLEMENTED at the top so no future reader implements them; §4 carries no `'fallback'` `anchorSource`, no persisted field, and gains the `SkippedSegmentRecord` shape; §5's WS2 is two rows (the filter, and the unrelated §3.13 clamp) plus an explicit list of the five files no longer touched, and a WS-logs row; §6.1/§6.2/§6.4 replace the abort tests with skip tests and delete the char-rate/interpolation/sliver/apad items; §8 replaces the export-padding, playback, char-rate, and persisted-field risks with the one risk skip-unmatched actually creates (segments silently vanishing, mitigated by R4-4's log); §9's checklist drops the R2/N2 entries and adds the WS-logs entry. The constants preamble and §5's `syncConstants.ts` row both name the four deleted constants.
 
 **No remaining open questions. The doc is implementation-ready.**
 

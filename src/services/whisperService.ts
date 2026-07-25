@@ -2,7 +2,10 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize } from './textNormalize';
-import { ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE } from './syncConstants';
+import {
+  ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE,
+  LOW_CONFIDENCE_RATIO, SNAP_TOLERANCE_SEC,
+} from './syncConstants';
 
 export type { TranscriptToken };
 
@@ -345,8 +348,20 @@ export interface AlignResult {
   lastTokenIdx: number;           // token index of the last matched word, -1 if none
   confidence: number;             // matched scene-doc words / total scene-doc words (0..1) — R11
   matched: boolean;               // at least one matched transcript word (confidence > 0)
+  matchedWords: number;           // WS1b: numerator for confidence + the bidirectional coverage metric (§3.3)
+  totalWords: number;             // WS1b: 0 for a zero-token (classification-neutral) segment (§3.1.1 point 4)
   audioRegion?: { startSec: number; endSec: number }; // matched transcript time range, present iff matched
 }
+
+/**
+ * WS1b: `alignScenestoTranscript`'s public return widens from `{t0,t1}` to
+ * this full per-segment result (doc §3.1.1, §4) — same shape as `AlignResult`,
+ * a distinct name because the per-segment result IS the alignment result;
+ * nothing here is aligner-internal. Lets the orchestrator (App.tsx) compute
+ * the bidirectional coverage metric (§3.3) and run the two-signal abort gate
+ * (§3.4/R13) + middle-gap check (§3.5/R12) before committing.
+ */
+export type SegmentAlignment = AlignResult;
 
 /**
  * Builds the scene-doc query, aligns it to the transcript with the Hirschberg
@@ -360,7 +375,10 @@ export function extractSegmentAlignments(
   tokens: TranscriptToken[],
 ): AlignResult[] {
   if (!tokens.length || !segments.length) {
-    return segments.map(() => ({ t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1, confidence: 0, matched: false }));
+    return segments.map(() => ({
+      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+    }));
   }
 
   // Expand each token into all its words — Whisper tokens may contain multiple
@@ -402,7 +420,10 @@ export function extractSegmentAlignments(
     // Zero-token segment: classification-neutral (neither covered nor uncovered);
     // anchors at the previous boundary, exactly as the old empty-text path did.
     if (totalWords === 0) {
-      results.push({ t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1, confidence: 0, matched: false });
+      results.push({
+        t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1,
+        confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+      });
       continue;
     }
 
@@ -425,7 +446,10 @@ export function extractSegmentAlignments(
     // not gate on this yet (WS1b wires the abort gate) — anchor at the previous
     // boundary as a placeholder so the unchanged downstream stages see no hole.
     if (!matched) {
-      results.push({ t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1, confidence, matched });
+      results.push({
+        t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1,
+        confidence, matched, matchedWords: 0, totalWords,
+      });
       continue;
     }
 
@@ -435,7 +459,11 @@ export function extractSegmentAlignments(
     const rawT1 = tokens[lastTokenIdx]?.endSec ?? t0 + 0.1;
     const t1 = Math.max(t0 + 0.05, rawT1);
 
-    results.push({ t0, t1, firstTokenIdx, lastTokenIdx, confidence, matched, audioRegion: { startSec: t0, endSec: rawT1 } });
+    results.push({
+      t0, t1, firstTokenIdx, lastTokenIdx, confidence, matched,
+      matchedWords: matchedCount, totalWords,
+      audioRegion: { startSec: t0, endSec: rawT1 },
+    });
   }
 
   return results;
@@ -445,12 +473,15 @@ export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   silences: SilenceInterval[] = [],
-): Array<{ t0: number; t1: number }> {
+): SegmentAlignment[] {
   const _instrOn = alignInstrEnabled();
   const _passT0 = _instrOn ? performance.now() : 0;
 
   if (!tokens.length || !segments.length) {
-    return segments.map(() => ({ t0: 0, t1: 0 }));
+    return segments.map(() => ({
+      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+    }));
   }
 
   // Hirschberg semi-global alignment + per-segment extraction (doc §3.1/§3.1.1).
@@ -531,6 +562,20 @@ export function alignScenestoTranscript(
       boundary = (lastSpokenEnd + nextSpokenStart) / 2;
     }
 
+    // Snap clamps (doc §3.6, R4): bound the chosen boundary to within
+    // SNAP_TOLERANCE_SEC of the real matched-word edges on both sides — a
+    // snap can still correct Whisper's ~300ms timestamp error, but can never
+    // relocate the boundary across a spoken word (S21). Backward clamp first,
+    // then forward; if the two tolerance windows don't overlap (segments too
+    // close for a clean boundary), the honest answer is their midpoint.
+    const backwardBound = lastSpokenEnd - SNAP_TOLERANCE_SEC;
+    const forwardBound = nextSpokenStart + SNAP_TOLERANCE_SEC;
+    boundary = Math.max(boundary, backwardBound);
+    boundary = Math.min(boundary, forwardBound);
+    if (backwardBound > forwardBound) {
+      boundary = (backwardBound + forwardBound) / 2;
+    }
+
     curr.t1 = boundary;
     next.t0 = boundary;
   }
@@ -552,7 +597,98 @@ export function alignScenestoTranscript(
     );
   }
 
-  return results.map(r => ({ t0: r.t0, t1: r.t1 }));
+  // WS1b: return the full per-segment result (not narrowed to {t0,t1}) — the
+  // orchestrator (App.tsx) needs matched/confidence/matchedWords/totalWords
+  // for the coverage metric (§3.3) and the abort gate (§3.4/R13, §3.5/R12).
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// Bidirectional coverage metric (architecture doc §3.3, R13) — WS1b
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-segment covered/neutral classification (doc §3.1.1 points 3-4). A
+ * segment is "covered" when it has at least one matched word AND its match
+ * fraction clears LOW_CONFIDENCE_RATIO. A zero-token segment is "neutral" —
+ * excluded from the covered-run scan (§3.4 Signal 1) and the middle-gap scan
+ * (§3.5/R12): it can neither break nor extend a run, and does not dilute the
+ * coverage denominators (§3.3).
+ */
+export interface SegmentCoverageFlags {
+  covered: boolean;
+  neutral: boolean;
+}
+
+export function classifyCoverage(alignments: SegmentAlignment[]): SegmentCoverageFlags[] {
+  return alignments.map(a => {
+    const neutral = a.totalWords === 0;
+    return {
+      neutral,
+      covered: !neutral && a.matched && a.confidence >= LOW_CONFIDENCE_RATIO,
+    };
+  });
+}
+
+/**
+ * Total transcript word count, using the SAME tokenization
+ * `extractSegmentAlignments` uses internally for the subject sequence
+ * (normalize() per token, empty words filtered) — exposed so the orchestrator
+ * can compute transcript coverage without re-deriving the aligner's subject
+ * sequence itself.
+ */
+export function countTranscriptWords(tokens: TranscriptToken[]): number {
+  let count = 0;
+  for (const t of tokens) {
+    for (const w of normalize(t.text)) if (w.length > 0) count++;
+  }
+  return count;
+}
+
+export interface CoverageSummary {
+  /** Fraction of scene-doc words matched in the transcript — "does the audio
+   *  say what the doc says?" (doc §3.3(b)). */
+  sceneDocCoverage: number;
+  /** Fraction of transcript words consumed by a match — "is the audio saying
+   *  anything else?" (doc §3.3(b)). */
+  transcriptCoverage: number;
+  /** min(sceneDocCoverage, transcriptCoverage) — Signal 2 (noise floor)
+   *  input (R13). */
+  bidirectionalCoverage: number;
+  /** Longest maximal run of consecutive covered segments — zero-token
+   *  segments are skipped (transparent) rather than breaking the run. Signal 1
+   *  (contiguous covered-run) input (R13). */
+  longestCoveredRun: number;
+}
+
+export function computeCoverageSummary(
+  alignments: SegmentAlignment[],
+  totalTranscriptWords: number,
+): CoverageSummary {
+  let matchedWords = 0;
+  let totalSceneDocWords = 0;
+  let longestCoveredRun = 0;
+  let currentRun = 0;
+  for (const a of alignments) {
+    if (a.totalWords === 0) continue; // zero-token: neutral (§3.1.1 point 4)
+    matchedWords += a.matchedWords;
+    totalSceneDocWords += a.totalWords;
+    const covered = a.matched && a.confidence >= LOW_CONFIDENCE_RATIO;
+    if (covered) {
+      currentRun += 1;
+      if (currentRun > longestCoveredRun) longestCoveredRun = currentRun;
+    } else {
+      currentRun = 0;
+    }
+  }
+  const sceneDocCoverage = totalSceneDocWords > 0 ? matchedWords / totalSceneDocWords : 0;
+  const transcriptCoverage = totalTranscriptWords > 0 ? matchedWords / totalTranscriptWords : 0;
+  return {
+    sceneDocCoverage,
+    transcriptCoverage,
+    bidirectionalCoverage: Math.min(sceneDocCoverage, transcriptCoverage),
+    longestCoveredRun,
+  };
 }
 
 /**

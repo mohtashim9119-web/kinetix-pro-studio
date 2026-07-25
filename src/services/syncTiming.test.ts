@@ -6,7 +6,21 @@ import {
   canonicalizeForAlignment,
   extractSegmentAlignments,
   alignQueryToSubject,
+  classifyCoverage,
+  computeCoverageSummary,
+  countTranscriptWords,
 } from './whisperService';
+import {
+  evaluateCoverageGate,
+  filterToCoveredSegments,
+  retileCoveredSegments,
+  emptySceneDocAbortMessage,
+  emptyTranscriptAbortMessage,
+  EMPTY_SCENE_DOC_MESSAGE,
+  EMPTY_TRANSCRIPT_MESSAGE,
+  FULL_MISMATCH_MESSAGE,
+} from '../App';
+import { LOW_CONFIDENCE_RATIO } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -1041,6 +1055,607 @@ describe('WS1a — unified normalizer (R1 carve-out, ZW-join, NFC)', () => {
     const nfc = 'café';        // "café" precomposed (U+00E9)
     const nfd = 'café';       // "café" as e + combining acute (U+0065 U+0301)
     expect(canonicalizeForAlignment(nfd)).toEqual(canonicalizeForAlignment(nfc));
+  });
+});
+
+// ===========================================================================
+// WS1b — bidirectional coverage metric (doc §3.3, R13)
+// ===========================================================================
+describe('WS1b — bidirectional coverage metric', () => {
+  it('fully-covered fixture: sceneDocCoverage = transcriptCoverage = bidirectionalCoverage = 1', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+    expect(summary.sceneDocCoverage).toBe(1);
+    expect(summary.transcriptCoverage).toBe(1);
+    expect(summary.bidirectionalCoverage).toBe(1);
+  });
+
+  it('half-covered fixture: 4 of 8 scene-doc words matched, all 4 transcript words consumed', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),   // never spoken
+      makeSegment({ id: 's3', order: 3, text: 'golf hotel' }),     // never spoken
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5); // only s0+s1's words
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+    expect(summary.sceneDocCoverage).toBeCloseTo(0.5, 5);   // 4 of 8 scene-doc words
+    expect(summary.transcriptCoverage).toBe(1);              // all 4 transcript words consumed
+    expect(summary.bidirectionalCoverage).toBeCloseTo(0.5, 5);
+  });
+
+  it('zero-coverage fixture: no segment matches anything', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    const tokens = wordTokens('zulu yankee xray whiskey', 0, 0.5); // nothing in common
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+    expect(summary.sceneDocCoverage).toBe(0);
+    expect(summary.transcriptCoverage).toBe(0);
+    expect(summary.bidirectionalCoverage).toBe(0);
+  });
+});
+
+// ===========================================================================
+// WS1b — two-signal abort gate (doc §3.4, R13) + middle-gap error (§3.5, R12)
+// ===========================================================================
+describe('WS1b — evaluateCoverageGate: R13 two-signal abort gate', () => {
+  it('full mismatch (longest covered run = 0) aborts with the mismatch message', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('zulu yankee xray whiskey victor uniform', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+
+  it('near-zero coverage (longest covered run = 1) aborts — run below MIN_COVERED_RUN_LENGTH', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),      // matched
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),    // never spoken
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),     // never spoken
+    ];
+    const tokens = wordTokens('alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+
+  it('partial coverage (run >= 2, bidirectional >= floor) proceeds — no abort', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),     // trailing, never spoken
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+  });
+
+  it('matched-on-noise (run >= 2 but bidirectional < NOISE_FLOOR_COVERAGE) aborts', () => {
+    // A tiny, genuinely-covered 2-segment run diluted by one huge, entirely
+    // unmatched segment elsewhere — technically contiguous, but the aggregate
+    // scene-doc coverage collapses under the noise floor (Signal 2).
+    const noiseWords = Array.from({ length: 40 }, (_, i) => {
+      const a = String.fromCharCode(97 + Math.floor(i / 26));
+      const b = String.fromCharCode(97 + (i % 26));
+      return `noise${a}${b}`;
+    }).join(' ');
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: noiseWords }),        // trailing, none spoken
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+});
+
+// Round 4 (R4-1) reversed R12: an internal run of uncovered segments — of any
+// length — no longer aborts. These tests are the former R12 abort tests turned
+// into their skip counterparts: the gate passes, and the uncovered segments are
+// filtered out of the committed timeline (filterToCoveredSegments) instead.
+describe('R4-1 — middle gaps SKIP instead of aborting', () => {
+  it('2 consecutive unmatched between matched: no abort; both are skipped; only the matched segments are committed', () => {
+    // s0+s1 form a contiguous covered run of 2 (>= MIN_COVERED_RUN_LENGTH), so
+    // R13 Signal 1 passes even though s2/s3 break the coverage in the middle.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),     // never spoken
+      makeSegment({ id: 's3', order: 3, text: 'golf hotel' }),       // never spoken
+      makeSegment({ id: 's4', order: 4, text: 'india juliet' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo charlie delta', 0, 0.5), ...wordTokens('india juliet', 4.0, 0.5)];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's4']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([2, 3]);
+    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
+    expect(skipped.map(r => r.segmentText)).toEqual(['echo foxtrot', 'golf hotel']);
+  });
+
+  it('1 unmatched between matched: no abort; the unmatched one is skipped', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),     // never spoken
+      makeSegment({ id: 's3', order: 3, text: 'golf hotel' }),
+      makeSegment({ id: 's4', order: 4, text: 'india juliet' }),
+    ];
+    const tokens = [
+      ...wordTokens('alpha bravo charlie delta', 0, 0.5),
+      ...wordTokens('golf hotel india juliet', 4.0, 0.5),
+    ];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's3', 's4']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([2]);
+  });
+
+  it('leading unmatched: no abort; skipped', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'echo foxtrot' }),     // never spoken, leading
+      makeSegment({ id: 's1', order: 1, text: 'alpha bravo' }),
+      makeSegment({ id: 's2', order: 2, text: 'charlie delta' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s1', 's2']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([0]);
+  });
+
+  it('trailing unmatched: no abort; skipped', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),     // never spoken, trailing
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([2]);
+  });
+
+  it('all unmatched (full mismatch): STILL aborts — R13 fires, nothing is committed', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('zulu yankee xray whiskey victor uniform', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+
+  it('a locked segment with no audio coverage is skipped like any other — no abort, no special message', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot', locked: true }), // uncovered + locked
+      makeSegment({ id: 's3', order: 3, text: 'golf hotel' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo charlie delta', 0, 0.5), ...wordTokens('golf hotel', 3.0, 0.5)];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's3']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([2]);
+  });
+
+  // Neutral (zero-token) segments: still classification-neutral for the METRICS
+  // (they neither break a covered run nor dilute the denominators), and skipped
+  // at commit time like any other segment the audio doesn't cover.
+  it('neutral (zero-token) segments never abort and are skipped at commit time', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: '' }),      // neutral
+      makeSegment({ id: 's2', order: 2, text: '   ' }),   // neutral
+      makeSegment({ id: 's3', order: 3, text: 'golf hotel' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('golf hotel', 3.0, 0.5)];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's3']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([1, 2]);
+    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
+  });
+});
+
+// ===========================================================================
+// R4-1 re-tile — after filtering, survivors must tile contiguously (no gaps
+// left where skipped segments used to sit); the last extends to the audio end.
+// ===========================================================================
+describe('R4-1 — retileCoveredSegments', () => {
+  it('re-derives each duration from the next start; last extends to audioDuration', () => {
+    const kept: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'a', startTime: 0, duration: 1, anchorStart: 0 }),
+      makeSegment({ id: 's1', order: 1, text: 'b', startTime: 3, duration: 1, anchorStart: 3 }),
+      makeSegment({ id: 's2', order: 2, text: 'c', startTime: 7, duration: 1, anchorStart: 7 }),
+      makeSegment({ id: 's3', order: 3, text: 'd', startTime: 10, duration: 1, anchorStart: 10 }),
+      makeSegment({ id: 's4', order: 4, text: 'e', startTime: 15, duration: 1, anchorStart: 15 }),
+    ];
+
+    const out = retileCoveredSegments(kept, 20);
+
+    expect(out.map(s => s.duration)).toEqual([3, 4, 3, 5, 5]);
+    // Each segment's end reaches the next segment's start — contiguous, no gaps.
+    for (let i = 0; i < out.length - 1; i++) {
+      expect(out[i]!.startTime + out[i]!.duration).toBeCloseTo(out[i + 1]!.startTime, 6);
+    }
+    // Last segment ends exactly at the audio duration.
+    const last = out[out.length - 1]!;
+    expect(last.startTime + last.duration).toBeCloseTo(20, 6);
+  });
+
+  it('startTime and anchorStart are preserved — only duration changes', () => {
+    const kept: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'a', startTime: 0, duration: 99, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'b', startTime: 4, duration: 99, anchorStart: 4, anchorSource: 'whisper' }),
+    ];
+
+    const out = retileCoveredSegments(kept, 10);
+
+    expect(out.map(s => s.startTime)).toEqual([0, 4]);
+    expect(out.map(s => s.anchorStart)).toEqual([0, 4]);
+    expect(out.map(s => s.anchorSource)).toEqual(['whisper', 'whisper']);
+    expect(out.map(s => s.duration)).toEqual([4, 6]);
+  });
+
+  it('last kept segment extends to audioDuration regardless of its original t1', () => {
+    const kept: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'a', startTime: 0, duration: 2, anchorStart: 0 }),
+      // Its original duration ends at 6, well short of the 18s audio.
+      makeSegment({ id: 's1', order: 1, text: 'b', startTime: 5, duration: 1, anchorStart: 5 }),
+    ];
+
+    const out = retileCoveredSegments(kept, 18);
+
+    const last = out[out.length - 1]!;
+    expect(last.startTime + last.duration).toBeCloseTo(18, 6);
+    expect(last.duration).toBeCloseTo(13, 6);
+  });
+
+  it('defensive clamp: duplicate startTimes never produce a zero/negative duration', () => {
+    const kept: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'a', startTime: 5, duration: 2, anchorStart: 5 }),
+      makeSegment({ id: 's1', order: 1, text: 'b', startTime: 5, duration: 3, anchorStart: 5 }),
+      makeSegment({ id: 's2', order: 2, text: 'c', startTime: 9, duration: 1, anchorStart: 9 }),
+    ];
+
+    const out = retileCoveredSegments(kept, 12);
+
+    // No segment may end up with a non-positive duration.
+    for (const s of out) expect(s.duration).toBeGreaterThan(0);
+    // The degenerate pair (both startTime 5) keeps its original duration for the
+    // one whose next-start equals its own start (nextDuration <= 0 -> fallback).
+    expect(out.find(s => s.id === 's0')!.duration).toBe(2); // 5->5 = 0, keeps original 2
+    expect(out.find(s => s.id === 's1')!.duration).toBe(4); // 5->9 = 4
+    expect(out.find(s => s.id === 's2')!.duration).toBe(3); // 9->12 (audio end) = 3
+  });
+
+  it('empty input returns empty', () => {
+    expect(retileCoveredSegments([], 10)).toEqual([]);
+  });
+
+  // Integration: filter (skips 3,4,5) THEN retile — the survivors tile
+  // contiguously and segment 2's end reaches segment 6's start, NOT the removed
+  // segment 3's position (the bug this fix closes).
+  it('skip + retile: covered [0,1,2,6,7,8,9] tile contiguously with no gaps', () => {
+    // 10 segments, indices 3/4/5 never spoken. Each spoken phrase is 4 words @
+    // 0.5s = 2s, with a 1s silence between phrases (words at 0,2 / 3,5 / 6,8 ...).
+    const spoken = [
+      'alpha bravo charlie delta',      // s0  0.0–2.0
+      'echo foxtrot golf hotel',        // s1  3.0–5.0
+      'india juliet kilo lima',         // s2  6.0–8.0
+      'quebec romeo sierra tango',      // s6  9.0–11.0
+      'uniform victor whiskey xray',    // s7 12.0–14.0
+      'yankee zulu alfa bravo2',        // s8 15.0–17.0
+      'charlie2 delta2 echo2 foxtrot2', // s9 18.0–20.0
+    ];
+    const unspoken = ['mike november', 'oscar papa', 'quebec2 romeo2'];
+    const texts = [
+      spoken[0]!, spoken[1]!, spoken[2]!,
+      unspoken[0]!, unspoken[1]!, unspoken[2]!,   // s3, s4, s5 — skipped
+      spoken[3]!, spoken[4]!, spoken[5]!, spoken[6]!,
+    ];
+    const segments: VideoSegment[] = texts.map((text, i) => makeSegment({ id: `s${i}`, order: i, text }));
+
+    let wordStart = 0;
+    const tokens: TranscriptToken[] = [];
+    for (const phrase of spoken) {
+      tokens.push(...wordTokens(phrase, wordStart, 0.5));
+      wordStart += 3; // 2s of words + 1s silence
+    }
+    const AUDIO_DURATION = 20;
+
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(evaluateCoverageGate(segments, cov, countTranscriptWords(tokens)).aborted).toBe(false);
+
+    // Mirror the real pipeline: alignment windows land on the segments (startTime
+    // = t0) BEFORE filtering, so the survivors carry real Whisper-anchored starts.
+    const timed = distributeSegmentTimes(segments, cov, AUDIO_DURATION);
+    const { kept, skipped } = filterToCoveredSegments(timed, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2', 's6', 's7', 's8', 's9']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([3, 4, 5]);
+
+    const retiled = retileCoveredSegments(kept, AUDIO_DURATION);
+
+    // Contiguous: every segment's end == the next segment's start (no gaps).
+    for (let i = 0; i < retiled.length - 1; i++) {
+      expect(retiled[i]!.startTime + retiled[i]!.duration).toBeCloseTo(retiled[i + 1]!.startTime, 6);
+    }
+    // Last extends to the audio end.
+    const last = retiled[retiled.length - 1]!;
+    expect(last.startTime + last.duration).toBeCloseTo(AUDIO_DURATION, 6);
+
+    // Segment s2's end reaches s6's start (~9s), NOT the removed s3's position.
+    const s2 = retiled.find(s => s.id === 's2')!;
+    const s6 = retiled.find(s => s.id === 's6')!;
+    expect(s2.startTime + s2.duration).toBeCloseTo(s6.startTime, 6);
+    expect(s6.startTime).toBeGreaterThan(8); // s6 begins around 9s, past the s2 phrase end
+  });
+});
+
+// ===========================================================================
+// R4-2 — the skip filter itself (covered segments in, uncovered segments out)
+// ===========================================================================
+describe('R4-2 — filterToCoveredSegments', () => {
+  it('5 covered + 3 uncovered commits exactly 5 segments, not 8', () => {
+    const spoken = ['alpha bravo', 'charlie delta', 'echo foxtrot', 'golf hotel', 'india juliet'];
+    const unspoken = ['kilo lima', 'mike november', 'oscar papa'];
+    // Interleaved so the uncovered set spans leading, middle, and trailing
+    // positions — all three are skipped identically (R4-1).
+    const texts = [
+      unspoken[0]!, spoken[0]!, spoken[1]!, unspoken[1]!,
+      spoken[2]!, spoken[3]!, spoken[4]!, unspoken[2]!,
+    ];
+    const segments: VideoSegment[] = texts.map((text, i) =>
+      makeSegment({ id: `s${i}`, order: i, text }),
+    );
+    const tokens = wordTokens(spoken.join(' '), 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(evaluateCoverageGate(segments, cov, countTranscriptWords(tokens)).aborted).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept).toHaveLength(5);
+    expect(skipped).toHaveLength(3);
+    expect(kept.map(s => s.id)).toEqual(['s1', 's2', 's4', 's5', 's6']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([0, 3, 7]);
+    expect(skipped.map(r => r.segmentText)).toEqual(unspoken);
+  });
+
+  it('kept segments carry their Whisper-anchored startTime through untouched (no re-timing)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 1 }),
+      makeSegment({ id: 's1', order: 1, text: 'kilo lima', startTime: 1, duration: 2 }),   // uncovered
+      makeSegment({ id: 's2', order: 2, text: 'charlie delta', startTime: 3, duration: 1 }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 3.0, 0.5)];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const { kept } = filterToCoveredSegments(segments, cov);
+    // The dropped segment's [1, 3) span becomes a real gap — s2 is NOT pulled
+    // back to 1, and s0 is NOT stretched to 3 (R4-1: no stitching).
+    expect(kept.map(s => ({ id: s.id, startTime: s.startTime, duration: s.duration }))).toEqual([
+      { id: 's0', startTime: 0, duration: 1 },
+      { id: 's2', startTime: 3, duration: 1 },
+    ]);
+  });
+
+  it('a fully-covered project skips nothing (no regression for the normal case)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta echo foxtrot', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept).toHaveLength(3);
+    expect(skipped).toHaveLength(0);
+  });
+
+  it('records `low confidence` for a segment that matched below LOW_CONFIDENCE_RATIO', () => {
+    // 1 of 6 words spoken → confidence 0.167, under the 0.4 threshold: matched,
+    // but not covered — a materially different skip reason from "never spoken".
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'zulu victor whiskey xray yankee echo' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta echo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[2]!.matched).toBe(true);
+    expect(cov[2]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
+    expect(skipped).toEqual([
+      { segmentIndex: 2, segmentText: 'zulu victor whiskey xray yankee echo', reason: 'low confidence' },
+    ]);
+  });
+});
+
+// ===========================================================================
+// WS1b — empty-input hard aborts (doc §3.4/§3.11, S15)
+// ===========================================================================
+describe('WS1b — empty-input hard aborts', () => {
+  it('empty scene doc (0 parsed segments) aborts with the empty-scene message', () => {
+    expect(emptySceneDocAbortMessage(0)).toBe(EMPTY_SCENE_DOC_MESSAGE);
+  });
+
+  it('a non-empty parse does not trigger the empty-scene abort', () => {
+    expect(emptySceneDocAbortMessage(3)).toBeNull();
+  });
+
+  it('empty transcript (0 tokens) with a voiceover staged aborts with the empty-transcript message', () => {
+    expect(emptyTranscriptAbortMessage(true, 0)).toBe(EMPTY_TRANSCRIPT_MESSAGE);
+  });
+
+  it('a non-empty transcript does not trigger the empty-transcript abort', () => {
+    expect(emptyTranscriptAbortMessage(true, 42)).toBeNull();
+  });
+
+  it('no voiceover staged at all is not an empty-transcript error (character-timed projects are valid)', () => {
+    expect(emptyTranscriptAbortMessage(false, 0)).toBeNull();
+  });
+});
+
+// ===========================================================================
+// WS1b — silence-snap guards with bounded tolerance (doc §3.6, R4)
+// ===========================================================================
+describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
+  it('a snap that would move the boundary forward past nextSpokenStart + tolerance is clamped to the forward bound', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    // lastSpokenEnd (bravo) = 1.0; nextSpokenStart (charlie) = 3.0.
+    // forwardBound = 3.0 + 0.15 = 3.15. Silence center (3.3) is beyond it.
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 0.5 },
+      { text: 'bravo', startSec: 0.5, endSec: 1.0 },
+      { text: 'charlie', startSec: 3.0, endSec: 3.5 },
+      { text: 'delta', startSec: 3.5, endSec: 4.0 },
+    ];
+    const silences: SilenceInterval[] = [{ startSec: 3.2, endSec: 3.4 }];
+    const results = alignScenestoTranscript(segments, tokens, silences);
+    expect(results[0]!.t1).toBeCloseTo(3.15, 5);
+    expect(results[1]!.t0).toBeCloseTo(3.15, 5);
+  });
+
+  it('a snap that would move the boundary backward past lastSpokenEnd - tolerance is clamped to the backward bound', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    // lastSpokenEnd (bravo) = 2.0; nextSpokenStart (charlie) = 4.0.
+    // backwardBound = 2.0 - 0.15 = 1.85. Silence center (1.65) is before it.
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },
+      { text: 'charlie', startSec: 4.0, endSec: 4.5 },
+      { text: 'delta', startSec: 4.5, endSec: 5.0 },
+    ];
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.7 }];
+    const results = alignScenestoTranscript(segments, tokens, silences);
+    expect(results[0]!.t1).toBeCloseTo(1.85, 5);
+    expect(results[1]!.t0).toBeCloseTo(1.85, 5);
+  });
+
+  it('a snap within tolerance of both bounds is unchanged', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    // Same tokens as the backward-clamp case (bounds [1.85, 4.15]); silence
+    // center (3.0) sits comfortably inside the tolerance window.
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },
+      { text: 'charlie', startSec: 4.0, endSec: 4.5 },
+      { text: 'delta', startSec: 4.5, endSec: 5.0 },
+    ];
+    const silences: SilenceInterval[] = [{ startSec: 2.9, endSec: 3.1 }];
+    const results = alignScenestoTranscript(segments, tokens, silences);
+    expect(results[0]!.t1).toBeCloseTo(3.0, 5);
+    expect(results[1]!.t0).toBeCloseTo(3.0, 5);
+  });
+
+  it('conflicting clamps (backward bound > forward bound) resolve to their midpoint', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    // lastSpokenEnd (bravo) = 2.0 -> backwardBound = 1.85.
+    // nextSpokenStart (charlie) = 1.6 -> forwardBound = 1.75.
+    // backwardBound (1.85) > forwardBound (1.75): the tolerance windows don't
+    // overlap (segments' spoken words sit too close together) — the boundary
+    // must land at the midpoint of the two clamp bounds, 1.80, regardless of
+    // where a candidate silence sits.
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },
+      { text: 'charlie', startSec: 1.6, endSec: 2.4 },
+      { text: 'delta', startSec: 2.4, endSec: 3.0 },
+    ];
+    const silences: SilenceInterval[] = [{ startSec: 2.6, endSec: 2.8 }];
+    const results = alignScenestoTranscript(segments, tokens, silences);
+    expect(results[0]!.t1).toBeCloseTo(1.8, 5);
+    expect(results[1]!.t0).toBeCloseTo(1.8, 5);
+  });
+});
+
+// ===========================================================================
+// WS1b — integration: cross-script mismatch (primary B1 validation, doc §6.2/§6.4)
+// ===========================================================================
+describe('WS1b — cross-script mismatch integration', () => {
+  it('a scene doc and a completely unrelated transcript hard-abort with the full-mismatch message', () => {
+    // Scene doc: a cooking-recipe project.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'preheat oven three fifty degrees' }),
+      makeSegment({ id: 's1', order: 1, text: 'whisk eggs sugar together' }),
+      makeSegment({ id: 's2', order: 2, text: 'fold flour gently' }),
+    ];
+    // Transcript: an unrelated financial-report project — zero word overlap.
+    const tokens = wordTokens('quarterly revenue exceeded analyst expectations twelve percent', 0, 0.4);
+
+    const cov = extractSegmentAlignments(segments, tokens);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+    // The orchestrator (App.tsx handleApplySyncFromFiles) returns immediately
+    // on gate.aborted, before preserveEffectFields/setProject are ever
+    // reached — no partial timeline is committed (doc §3.4(b)).
   });
 });
 

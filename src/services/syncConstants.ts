@@ -30,11 +30,12 @@ export const ALIGN_GAP_SCORE = -1;
 // A segment is "covered" when it has at least one matched transcript word AND
 // its match fraction clears this ratio. Relocated here verbatim from its former
 // inline definition in whisperService.ts; its VALUE is unchanged in WS1a (WS5
-// R8 tunes it). Not yet consumed as a gate in WS1a — the aligner emits the raw
-// per-segment confidence and matched flag; WS1b wires the two-signal gate.
+// R8 tunes it). Consumed starting WS1b: whisperService.ts's classifyCoverage/
+// computeCoverageSummary derive "covered" from this ratio, feeding the two-
+// signal gate below.
 export const LOW_CONFIDENCE_RATIO = 0.4;
 
-// --- Two-signal abort gate (doc §3.3, §3.4, R13) — declared for WS1b --------
+// --- Two-signal abort gate (doc §3.3, §3.4, R13) — consumed WS1b ------------
 // Primary signal: the longest contiguous run of covered segments must reach
 // this length, else the inputs don't correspond (the B1 mismatch case).
 export const MIN_COVERED_RUN_LENGTH = 2;
@@ -42,12 +43,21 @@ export const MIN_COVERED_RUN_LENGTH = 2;
 // even when a technically-contiguous run exists (matched-on-noise).
 export const NOISE_FLOOR_COVERAGE = 0.1;
 
-// --- Partial-coverage sync (doc §3.5, R3, R12) — declared for WS2 -----------
-export const MAX_INTERPOLABLE_GAP = 1;
+// --- Silence-snap tolerance (doc §3.6, R4) ----------------------------------
+// Consumed by whisperService.ts's silence-snap clamps. This is the architecture
+// doc's naming; do not introduce a second constant under a different name for
+// the same tolerance.
 export const SNAP_TOLERANCE_SEC = 0.15;
-export const FALLBACK_RATE_MIN_CHARS = 100;
-export const FALLBACK_RATE_MIN_SECONDS = 30;
-export const DEFAULT_CHARS_PER_SEC = 15;
+
+// --- Deleted by the Round 4 skip-unmatched ruling (doc §10) ------------------
+// MAX_INTERPOLABLE_GAP (R12) is gone with the middle-gap abort: an uncovered
+// segment is SKIPPED from the timeline regardless of how many of them are
+// adjacent (R4-1), so there is no gap length to compare against.
+// FALLBACK_RATE_MIN_CHARS / FALLBACK_RATE_MIN_SECONDS / DEFAULT_CHARS_PER_SEC
+// (R3's three-tier char-rate) are gone with character-based fallback timing
+// itself (R4-2): a segment is either audio-covered or absent, so no segment
+// ever needs a rate-derived duration. Do not reintroduce any of the four —
+// see the doc's §3.5 for why fallback timing is not coming back.
 
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).

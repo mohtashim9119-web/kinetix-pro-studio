@@ -3,6 +3,7 @@ import {
   transcribeWithProgress,
   alignScenestoTranscript,
   distributeSegmentTimes,
+  type SegmentAlignment,
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval } from '../services/silenceDetector';
@@ -29,7 +30,7 @@ async function alignSegmentsFromCachedTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   durationSecs: number,
-): Promise<VideoSegment[]> {
+): Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[] }> {
   const silences = await fetchAndDetectSilences(audioAsset);
   const alignments = alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
@@ -44,7 +45,14 @@ async function alignSegmentsFromCachedTranscript(
   // Subsumes the old segment-0-only clamp (PASS 1 handles index 0 the same
   // way); for an already-fully-anchored input (click 2) every pass here is a
   // no-op, since PASS 1-4 just re-derive the same values they're given.
-  return applyAnchorBasedTiming(updated, durationSecs);
+  //
+  // WS1b: `alignments` is also returned as `coverage` — the per-segment
+  // matched/confidence/matchedWords/totalWords the orchestrator needs for the
+  // bidirectional coverage metric + two-signal abort gate (App.tsx). Untouched
+  // by the applyAnchorBasedTiming pass below, which only re-derives
+  // startTime/duration from anchors, not match quality.
+  const final = applyAnchorBasedTiming(updated, durationSecs);
+  return { segments: final, coverage: alignments };
 }
 
 export interface UseWhisperApi {
@@ -59,13 +67,19 @@ export interface UseWhisperApi {
   ) => Promise<void>;
   cancelTranscription: () => void;
   dismissError: () => void;
-  /** Re-times segments from already-cached tokens — no network/IPC call. */
+  /**
+   * Re-times segments from already-cached tokens — no network/IPC call.
+   * WS1b: also returns the per-segment `coverage` (matched/confidence/
+   * matchedWords/totalWords) alongside the re-timed `segments`, so the caller
+   * (App.tsx's handleApplySyncFromFiles) can run the coverage gate before
+   * committing.
+   */
   alignFromCache: (
     audioAsset: Asset,
     segments: VideoSegment[],
     tokens: TranscriptToken[],
     durationSecs: number,
-  ) => Promise<VideoSegment[]>;
+  ) => Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[] }>;
 }
 
 export function useWhisper(): UseWhisperApi {
@@ -107,7 +121,11 @@ export function useWhisper(): UseWhisperApi {
 
       if (alreadyTranscribed) {
         const tokens = project.transcriptTokens!;
-        const finalSegments = await alignSegmentsFromCachedTranscript(audioAsset, segments, tokens, durationSecs);
+        // Staging-time call, always paired with a no-op onSegmentsUpdated
+        // (the only call site, App.tsx handleVoiceoverStaged) — coverage is
+        // discarded here; nothing commits from this path (WS1b's gate lives
+        // in the orchestrator's direct alignFromCache call instead).
+        const { segments: finalSegments } = await alignSegmentsFromCachedTranscript(audioAsset, segments, tokens, durationSecs);
         if (!segmentSetStillValid(finalSegments)) {
           console.warn('[whisper] Discarding Option A alignment — segment set no longer matches');
           return;

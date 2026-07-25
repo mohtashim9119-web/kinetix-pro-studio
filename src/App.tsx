@@ -54,6 +54,8 @@ import {
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
+import { computeCoverageSummary, classifyCoverage, countTranscriptWords, type SegmentAlignment } from './services/whisperService';
+import { MIN_COVERED_RUN_LENGTH, NOISE_FLOOR_COVERAGE } from './services/syncConstants';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -283,10 +285,33 @@ export const parseProjectData = async (
   const scenes: { tag: string; description: string }[] = [];
 
   rawDetails.forEach(block => {
-    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
-    const tag = lines[0];
-    if (tag !== undefined) {
-      scenes.push({ tag, description: lines.slice(1).join(' ') });
+    const trimmedBlock = block.trim();
+    // Anchor the tag at the start of the block (TAG_REGEX guarantees every
+    // block begins with a `[` in the normal case) rather than assuming it
+    // occupies its own line — a tag's description may follow it inline on
+    // the SAME line (e.g. "[missing1] This is a test missing segment.") just
+    // as validly as on subsequent lines. Splitting on `lines[0]` alone
+    // swallowed the whole "tag + inline text" line as the tag and left the
+    // description empty, silently falling back to script-slicing.
+    const tagMatch = trimmedBlock.match(/^\[[^\]]*\]/);
+    if (tagMatch) {
+      const tag = tagMatch[0];
+      const description = trimmedBlock
+        .slice(tag.length)
+        .split(/\r?\n/)
+        .map(l => l.trim())
+        .filter(l => l !== '')
+        .join(' ');
+      scenes.push({ tag, description });
+    } else {
+      // No bracket anchored at the block's start (e.g. stray text before the
+      // first real tag) — preserve the original first-line-is-the-tag
+      // fallback rather than silently dropping the block.
+      const lines = block.split(/\r?\n/).map(l => l.trim()).filter(l => l !== '');
+      const tag = lines[0];
+      if (tag !== undefined) {
+        scenes.push({ tag, description: lines.slice(1).join(' ') });
+      }
     }
   });
 
@@ -586,6 +611,161 @@ function preserveEffectFields(
       effectOverlay: prev.effectOverlay,
       effectGrade: prev.effectGrade,
     };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// WS1b — empty-input hard aborts (doc §3.4/§3.11, S15) + the coverage-gate
+// abort policy (doc §3.4, R12/R13). Pure predicates/functions, module-level so
+// they're directly unit-testable (imported by name from ../App in
+// syncTiming.test.ts, the same precedent as parseProjectData in
+// sceneTagParsing.test.ts). handleApplySyncFromFiles (the orchestrator) calls
+// these and acts on the result — showing a toast and aborting the commit —
+// but never contains the policy logic itself.
+// ---------------------------------------------------------------------------
+
+export const EMPTY_SCENE_DOC_MESSAGE = 'Your scene doc has no scenes to sync. Add scene tags and try again.';
+export const EMPTY_TRANSCRIPT_MESSAGE = 'No speech was found in the audio. No timeline will be created.';
+export const FULL_MISMATCH_MESSAGE = "This voiceover doesn't match your scene doc. No timeline will be created.";
+
+/** doc §3.11(b) — empty scene doc: a hard abort regardless of whether a
+ *  previous sync's segments still exist (also covers the fresh-project case,
+ *  which used to fall through silently). */
+export function emptySceneDocAbortMessage(parsedSegmentCount: number): string | null {
+  return parsedSegmentCount === 0 ? EMPTY_SCENE_DOC_MESSAGE : null;
+}
+
+/** doc §3.11(b) — empty transcript: only an error when a voiceover was
+ *  actually staged for this sync (a no-voiceover, character-timed project is
+ *  not an error case). */
+export function emptyTranscriptAbortMessage(hasVoiceover: boolean, transcriptTokenCount: number): string | null {
+  return hasVoiceover && transcriptTokenCount === 0 ? EMPTY_TRANSCRIPT_MESSAGE : null;
+}
+
+export type SyncGateResult = { aborted: false } | { aborted: true; message: string };
+
+/**
+ * R13 two-signal abort gate — applied by the orchestrator immediately after
+ * alignFromCache, before any commit (doc §3.4(b)). `coverage` must be
+ * index-parallel to the aligned segments (true of every alignFromCache result).
+ *
+ * Round 4 (R4-1) DELETED the former first step, R12's middle-gap check: an
+ * internal run of uncovered segments — of ANY length — no longer aborts. Those
+ * segments are skipped at commit time instead (filterToCoveredSegments below),
+ * so the only abort left here is full mismatch (R4-3): the inputs don't
+ * correspond at all. With it went the two gap messages ("Audio does not exist
+ * for segments X to Y…" and its R9 locked-segment variant) and the
+ * MAX_INTERPOLABLE_GAP constant. Do not reintroduce a gap check here — a gap is
+ * information for the skip log (R4-4), not an error.
+ */
+export function evaluateCoverageGate(
+  _segments: VideoSegment[],
+  coverage: SegmentAlignment[],
+  totalTranscriptWords: number,
+): SyncGateResult {
+  // R13 Signal 1 — contiguous covered-run check (primary): near-zero coverage
+  // (the B1 mismatch case).
+  const summary = computeCoverageSummary(coverage, totalTranscriptWords);
+  if (summary.longestCoveredRun < MIN_COVERED_RUN_LENGTH) {
+    return { aborted: true, message: FULL_MISMATCH_MESSAGE };
+  }
+
+  // R13 Signal 2 — bidirectional noise floor (anti-noise): a technically-
+  // contiguous run built on coincidental word overlap.
+  if (summary.bidirectionalCoverage < NOISE_FLOOR_COVERAGE) {
+    return { aborted: true, message: FULL_MISMATCH_MESSAGE };
+  }
+
+  return { aborted: false };
+}
+
+/** Why a segment was left off the timeline (doc §3.5(c), R4-4). */
+export type SegmentSkipReason = 'no audio match' | 'low confidence';
+
+/**
+ * One skipped segment, recorded for the sync log. `segmentIndex` is 0-based
+ * into the PRE-filter (parsed/aligned) segments array, so the record still
+ * points at the scene the user wrote even though it isn't on the timeline.
+ * In-memory only here — persisting these and surfacing them in the UI is the
+ * separate WS-logs workstream (R4-4).
+ */
+export interface SkippedSegmentRecord {
+  segmentIndex: number;
+  segmentText: string;
+  reason: SegmentSkipReason;
+}
+
+export interface CoveredSegmentFilter {
+  kept: VideoSegment[];
+  skipped: SkippedSegmentRecord[];
+}
+
+/**
+ * R4-1/R4-2 — skip unmatched. Partitions the aligned segments into the ones
+ * that go on the timeline (covered: matched AND confidence >=
+ * LOW_CONFIDENCE_RATIO, per classifyCoverage) and the ones that are dropped.
+ *
+ * There is deliberately no fallback timing of any kind: a segment either
+ * appears at its Whisper-anchored time or it does not appear. Kept segments
+ * carry their startTime/duration through untouched, so a dropped segment's
+ * span becomes an actual gap in the timeline rather than being folded into a
+ * neighbour. Zero-token (neutral) segments are uncovered by construction and
+ * are skipped too — neutrality governs the coverage METRICS (doc §3.1.1
+ * point 4), not the commit.
+ */
+export function filterToCoveredSegments(
+  segments: VideoSegment[],
+  coverage: SegmentAlignment[],
+): CoveredSegmentFilter {
+  const flags = classifyCoverage(coverage);
+  const kept: VideoSegment[] = [];
+  const skipped: SkippedSegmentRecord[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    if (flags[i]?.covered) {
+      kept.push(seg);
+      continue;
+    }
+    skipped.push({
+      segmentIndex: i,
+      segmentText: seg.text ?? '',
+      // Matched-but-below-threshold is a materially different story for the
+      // log than "the audio never said this at all".
+      reason: coverage[i]?.matched ? 'low confidence' : 'no audio match',
+    });
+  }
+  return { kept, skipped };
+}
+
+/**
+ * R4-1 re-tile (WS1b) — after `filterToCoveredSegments` drops the unmatched
+ * segments, the survivors still carry durations computed against the FULL
+ * pre-filter array (each segment's t1 was pinned to its immediate neighbour's
+ * t0 by the aligner, then `applyAnchorBasedTiming` re-derived spans over every
+ * segment). So a covered segment sitting right before a skipped run ends at the
+ * skipped segment's position, not the next SURVIVING segment's — a gap that
+ * compounds down the timeline.
+ *
+ * This closes the gaps by re-deriving each survivor's duration from the next
+ * survivor's startTime; the last survivor extends to `audioDuration` (the audio
+ * is the source of truth for total length). Whisper-anchored startTime and
+ * anchorStart are correct and are preserved untouched — only `duration` changes.
+ * If a recomputed duration would be ≤ 0 (degenerate: non-monotonic or duplicate
+ * startTimes), the segment's original duration is kept rather than emitting a
+ * zero/negative span. Pure.
+ */
+export function retileCoveredSegments(kept: VideoSegment[], audioDuration: number): VideoSegment[] {
+  if (kept.length === 0) return kept;
+  // Defensive: sort by startTime ascending (survivors should already be in order).
+  const ordered = [...kept].sort((a, b) => a.startTime - b.startTime);
+  return ordered.map((seg, i) => {
+    const isLast = i === ordered.length - 1;
+    const end = isLast ? audioDuration : ordered[i + 1]!.startTime;
+    const nextDuration = end - seg.startTime;
+    // Non-monotonic / duplicate startTime (or audioDuration before the last
+    // start): keep the original duration rather than a zero/negative span.
+    const duration = nextDuration > 0 ? nextDuration : seg.duration;
+    return { ...seg, duration: Number(duration.toFixed(3)) };
   });
 }
 
@@ -1785,9 +1965,13 @@ export default function App() {
     const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
     syncMark('parseProjectData:done');
 
-    // Never wipe existing segments if parse produced nothing
-    if (newSegmentsRaw.length === 0 && projectRef.current.segments.length > 0) {
-      console.warn('[sync] parseProjectData returned 0 segments — keeping existing segments');
+    // WS1b — empty scene-doc hard abort (doc §3.4/§3.11, S15). Always aborts
+    // on zero parsed segments now, not only when previous segments existed —
+    // the fresh-project case used to fall through silently.
+    const sceneDocAbortMsg = emptySceneDocAbortMessage(newSegmentsRaw.length);
+    if (sceneDocAbortMsg) {
+      console.warn('[sync] parseProjectData returned 0 segments — aborting sync');
+      showToast(sceneDocAbortMsg);
       setIsProcessing(false);
       return;
     }
@@ -1803,15 +1987,70 @@ export default function App() {
               && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
+    // WS1b — empty transcript hard abort (doc §3.4/§3.11, S15): a voiceover
+    // was staged for this sync but Whisper produced zero tokens (silent or
+    // corrupted audio) — abort rather than silently falling back to
+    // character-based timing for a sync that was supposed to be audio-driven.
+    const transcriptAbortMsg = emptyTranscriptAbortMessage(
+      !!voiceoverAsset,
+      projectRef.current.transcriptTokens?.length ?? 0,
+    );
+    if (transcriptAbortMsg) {
+      showToast(transcriptAbortMsg);
+      setIsProcessing(false);
+      return;
+    }
+
     let finalTimedSegments: VideoSegment[];
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
-      finalTimedSegments = await alignFromCache(
+      const aligned = await alignFromCache(
         voiceoverAsset!,
         anchorTimed,
         projectRef.current.transcriptTokens!,
         audioDuration,
       );
+
+      // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
+      // (§3.4/R13), applied BEFORE the commit (doc §3.4(b): "immediately after
+      // the alignFromCache call... before setProject"). Nothing is committed on
+      // abort — the pre-sync project state is untouched (we return before
+      // setProject). The gate's only remaining case is full mismatch (R4-3);
+      // internal gaps are skipped below, not aborted (R4-1).
+      const totalTranscriptWords = countTranscriptWords(projectRef.current.transcriptTokens!);
+
+      const gate = evaluateCoverageGate(aligned.segments, aligned.coverage, totalTranscriptWords);
+
+      if (gate.aborted) {
+        console.warn('[sync] coverage gate aborted:', gate.message);
+        showToast(gate.message);
+        setIsProcessing(false);
+        return;
+      }
+
+      // R4-1/R4-2 — skip unmatched. Only audio-covered segments reach the
+      // timeline; the rest are dropped (no char-fallback, no interpolation) and
+      // recorded for the sync log. Skipped segments leave real gaps: the audio
+      // keeps playing as one continuous file, and no neighbour is stretched to
+      // cover the hole.
+      const { kept, skipped } = filterToCoveredSegments(aligned.segments, aligned.coverage);
+      if (import.meta.env.DEV && skipped.length > 0) {
+        // R4-4 — in-memory for now; WS-logs persists these on the project and
+        // surfaces them in the sync-log panel.
+        console.warn(
+          `[sync] skipped ${skipped.length} uncovered segment(s) of ${aligned.segments.length}:`,
+          skipped,
+        );
+      }
+
+      // R4-1 re-tile — filterToCoveredSegments carries each kept segment's
+      // startTime/duration through untouched, but those durations were computed
+      // against the FULL array: a covered segment sitting just before a skipped
+      // one still ends at the skipped segment's t0, leaving a gap that grows
+      // across the timeline. Close it by re-deriving each survivor's duration
+      // from the NEXT survivor's start (last extends to audioDuration). Starts
+      // and anchors are Whisper-correct and are preserved untouched.
+      finalTimedSegments = retileCoveredSegments(kept, audioDuration);
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface
