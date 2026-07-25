@@ -20,7 +20,8 @@ import {
   EMPTY_TRANSCRIPT_MESSAGE,
   FULL_MISMATCH_MESSAGE,
 } from '../App';
-import { LOW_CONFIDENCE_RATIO } from './syncConstants';
+import { snapCoveredBoundaries } from './snapBoundaries';
+import { LOW_CONFIDENCE_RATIO, SNAP_TOLERANCE_SEC } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -1252,6 +1253,40 @@ describe('R4-1 — middle gaps SKIP instead of aborting', () => {
     expect(skipped.map(r => r.segmentIndex)).toEqual([2]);
   });
 
+  it('carries the segment tag and coverage word-counts onto the skip record (WS-logs skip detail)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'echo foxtrot golf', tag: 'missing1' }), // never spoken
+      makeSegment({ id: 's2', order: 2, text: 'india juliet' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('india juliet', 2.0, 0.5)];
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const { skipped } = filterToCoveredSegments(segments, cov);
+    expect(skipped).toHaveLength(1);
+    // A skipped segment is by construction unmatched (matched === false, WS1a),
+    // so matchedWords/confidence are always 0 here — only totalWords varies.
+    expect(skipped[0]).toMatchObject({
+      segmentIndex: 1,
+      segmentTag: 'missing1',
+      matchedWords: 0,
+      totalWords: 3,
+      confidence: 0,
+    });
+  });
+
+  it('omits segmentTag on the skip record when the segment has no tag', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'echo foxtrot' }), // never spoken, no tag
+    ];
+    const tokens = wordTokens('alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const { skipped } = filterToCoveredSegments(segments, cov);
+    expect(skipped[0]!.segmentTag).toBeUndefined();
+  });
+
   it('all unmatched (full mismatch): STILL aborts — R13 fires, nothing is committed', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
@@ -1503,9 +1538,14 @@ describe('R4-2 — filterToCoveredSegments', () => {
     expect(skipped).toHaveLength(0);
   });
 
-  it('records `low confidence` for a segment that matched below LOW_CONFIDENCE_RATIO', () => {
+  // Bug 2 fix: a matched segment is KEPT regardless of confidence — the skip
+  // filter no longer gates on the LOW_CONFIDENCE_RATIO threshold at all. Only
+  // `covered` (used by R13's contiguous-run gate, unchanged) still applies the
+  // threshold; `filterToCoveredSegments` now keys purely off `matched`.
+  it('keeps a segment that matched below LOW_CONFIDENCE_RATIO instead of skipping it (Bug 2)', () => {
     // 1 of 6 words spoken → confidence 0.167, under the 0.4 threshold: matched,
-    // but not covered — a materially different skip reason from "never spoken".
+    // but not "covered". Under the old (buggy) behavior this was skipped with
+    // reason 'low confidence'; the fix keeps it on the timeline.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
@@ -1515,12 +1555,147 @@ describe('R4-2 — filterToCoveredSegments', () => {
     const cov = extractSegmentAlignments(segments, tokens);
     expect(cov[2]!.matched).toBe(true);
     expect(cov[2]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
+    // `covered` (R13 input) is still false — unaffected by the fix.
+    expect(classifyCoverage(cov)[2]!.covered).toBe(false);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2']);
+    expect(skipped).toEqual([]);
+  });
+
+  it('a matched=false, confidence=0 segment is still skipped with reason "no audio match" (Bug 2)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'never spoken words here' }),
+    ];
+    const tokens = wordTokens('alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[1]!.confidence).toBe(0);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0']);
+    // toMatchObject, not toEqual: the record also carries the WS-logs skip-detail
+    // fields (segmentTag/matchedWords/totalWords/confidence) — asserted separately
+    // above, not the concern of this Bug-2 regression guard.
+    expect(skipped).toMatchObject([
+      { segmentIndex: 1, segmentText: 'never spoken words here', reason: 'no audio match' },
+    ]);
+  });
+
+  it('never produces a "low confidence" skip reason (Bug 2 regression guard)', () => {
+    // A mix of unmatched and weakly-matched segments — only the fully unmatched
+    // one should appear in `skipped`, and always with 'no audio match'.
+    const spoken = ['alpha bravo', 'charlie delta echo foxtrot golf'];
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: spoken[0]! }),
+      // 1 of 5 words spoken → weak match, confidence 0.2 — kept, not skipped.
+      makeSegment({ id: 's1', order: 1, text: spoken[1]! }),
+      makeSegment({ id: 's2', order: 2, text: 'never spoken at all' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
 
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
-    expect(skipped).toEqual([
-      { segmentIndex: 2, segmentText: 'zulu victor whiskey xray yankee echo', reason: 'low confidence' },
-    ]);
+    expect(skipped.map(r => r.reason)).toEqual(['no audio match']);
+    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
+  });
+
+  it('294-segment-like fixture: a weakly-matched segment (confidence 0.33, mirroring the reported segment 135) is kept while R13 passes on the strongly-covered majority (Bug 2 + regression)', () => {
+    // Simulates the reported repro (segment 135, "Navigational charts
+    // cross-referenced.", matched=true/confidence=0.3333/words=1/3): many
+    // strongly-covered segments surrounding one weakly-matched segment (1 of 3
+    // unique words spoken). Words are unique per segment (no repeats across
+    // segments) so the aligner's monotonic matching is unambiguous.
+    const before = Array.from({ length: 10 }, (_, i) => `beforeA${i} beforeB${i}`);
+    const after = Array.from({ length: 10 }, (_, i) => `afterA${i} afterB${i}`);
+    const segments: VideoSegment[] = [
+      ...before.map((text, i) => makeSegment({ id: `before${i}`, order: i, text })),
+      makeSegment({
+        id: 'weak135',
+        order: before.length,
+        text: 'weakone weaktwo weakthree', // 1 of 3 words will be spoken -> confidence 1/3
+      }),
+      ...after.map((text, i) =>
+        makeSegment({ id: `after${i}`, order: before.length + 1 + i, text }),
+      ),
+    ];
+    // Transcript speaks every "before"/"after" word in full, plus exactly one
+    // of the weak segment's three words ("weaktwo").
+    const tokens = wordTokens([...before, 'weaktwo', ...after].join(' '), 0, 0.25);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const weakIdx = before.length;
+    expect(cov[weakIdx]!.matched).toBe(true);
+    expect(cov[weakIdx]!.matchedWords).toBe(1);
+    expect(cov[weakIdx]!.totalWords).toBe(3);
+    expect(cov[weakIdx]!.confidence).toBeCloseTo(1 / 3, 4);
+    expect(cov[weakIdx]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
+    // `covered` (R13 input) is false for this segment — unaffected by the fix.
+    expect(classifyCoverage(cov)[weakIdx]!.covered).toBe(false);
+
+    // R13 gate: still passes — the strongly-covered runs are long enough, and
+    // overall bidirectional coverage clears the noise floor.
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(false);
+
+    // Bug 2 fix: the weak segment is KEPT (matched === true), not skipped.
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toContain('weak135');
+    expect(kept).toHaveLength(segments.length);
+    expect(skipped).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// R13 gate — unchanged: still keys on `covered` (matched && confidence >=
+// LOW_CONFIDENCE_RATIO), independent of the Bug 2 skip-filter fix above.
+// ===========================================================================
+describe('R13 gate is unaffected by the Bug 2 skip-filter change', () => {
+  it('a project where every segment is weakly matched (confidence 0.2-0.4) still aborts', () => {
+    // Every segment matches SOME words but never clears the 0.4 covered
+    // threshold, so the contiguous-covered-run signal stays at 0 and R13 fires
+    // — even though, post-Bug-2-fix, none of these segments would be skipped
+    // by the commit-time filter if the gate let the run through.
+    const segments: VideoSegment[] = Array.from({ length: 6 }, (_, i) =>
+      makeSegment({
+        id: `s${i}`,
+        order: i,
+        // 5 words per segment; only 1 will match → confidence 0.2, matched=true.
+        text: `zulu${i} victor${i} whiskey${i} xray${i} common`,
+      }),
+    );
+    const tokens = wordTokens('common common common common common common', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    // Every segment is matched (weakly) but none is `covered`.
+    const flags = classifyCoverage(cov);
+    expect(cov.every(a => a.matched)).toBe(true);
+    expect(flags.every(f => !f.covered)).toBe(true);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+  });
+
+  it('cross-script mismatch (all segments fully unmatched) still aborts (regression guard)', () => {
+    const segments: VideoSegment[] = Array.from({ length: 5 }, (_, i) =>
+      makeSegment({ id: `s${i}`, order: i, text: `unrelated${i} content${i} here${i}` }),
+    );
+    const tokens = wordTokens('totally different transcript audio entirely', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov.every(a => !a.matched)).toBe(true);
+
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+
+    // And even if the orchestrator somehow ran the filter anyway (it doesn't,
+    // it returns early on abort), nothing would be kept.
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept).toHaveLength(0);
+    expect(skipped).toHaveLength(5);
+    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
   });
 });
 
@@ -1551,15 +1726,23 @@ describe('WS1b — empty-input hard aborts', () => {
 
 // ===========================================================================
 // WS1b — silence-snap guards with bounded tolerance (doc §3.6, R4)
+//
+// AMENDED by the silence-sharing fix: the R4 clamps apply to the NO-SILENCE
+// fallback only. A boundary that came from a detected silence is acoustic
+// ground truth and outranks Whisper's ~300ms-error word timestamps, so it is
+// never clamped against them — clamping it was pulling boundaries back OUT of
+// the silence they were meant to split, handing the whole silence to one side
+// instead of sharing it 50/50.
 // ===========================================================================
-describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
-  it('a snap that would move the boundary forward past nextSpokenStart + tolerance is clamped to the forward bound', () => {
+describe('WS1b — silence-snap clamps (fallback only; SNAP_TOLERANCE_SEC = 0.150)', () => {
+  it('a silence centre beyond nextSpokenStart + tolerance is NOT clamped (silence wins)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
     ];
     // lastSpokenEnd (bravo) = 1.0; nextSpokenStart (charlie) = 3.0.
-    // forwardBound = 3.0 + 0.15 = 3.15. Silence center (3.3) is beyond it.
+    // forwardBound would be 3.0 + 0.15 = 3.15; the silence centre (3.3) is
+    // beyond it and is kept anyway.
     const tokens: TranscriptToken[] = [
       { text: 'alpha', startSec: 0.0, endSec: 0.5 },
       { text: 'bravo', startSec: 0.5, endSec: 1.0 },
@@ -1568,17 +1751,18 @@ describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
     ];
     const silences: SilenceInterval[] = [{ startSec: 3.2, endSec: 3.4 }];
     const results = alignScenestoTranscript(segments, tokens, silences);
-    expect(results[0]!.t1).toBeCloseTo(3.15, 5);
-    expect(results[1]!.t0).toBeCloseTo(3.15, 5);
+    expect(results[0]!.t1).toBeCloseTo(3.3, 5);
+    expect(results[1]!.t0).toBeCloseTo(3.3, 5);
   });
 
-  it('a snap that would move the boundary backward past lastSpokenEnd - tolerance is clamped to the backward bound', () => {
+  it('a silence centre before lastSpokenEnd - tolerance is NOT clamped (silence wins)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
     ];
     // lastSpokenEnd (bravo) = 2.0; nextSpokenStart (charlie) = 4.0.
-    // backwardBound = 2.0 - 0.15 = 1.85. Silence center (1.65) is before it.
+    // backwardBound would be 2.0 - 0.15 = 1.85; the silence centre (1.65) is
+    // before it and is kept anyway.
     const tokens: TranscriptToken[] = [
       { text: 'alpha', startSec: 0.0, endSec: 1.0 },
       { text: 'bravo', startSec: 1.0, endSec: 2.0 },
@@ -1587,8 +1771,8 @@ describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
     ];
     const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.7 }];
     const results = alignScenestoTranscript(segments, tokens, silences);
-    expect(results[0]!.t1).toBeCloseTo(1.85, 5);
-    expect(results[1]!.t0).toBeCloseTo(1.85, 5);
+    expect(results[0]!.t1).toBeCloseTo(1.65, 5);
+    expect(results[1]!.t0).toBeCloseTo(1.65, 5);
   });
 
   it('a snap within tolerance of both bounds is unchanged', () => {
@@ -1610,7 +1794,7 @@ describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
     expect(results[1]!.t0).toBeCloseTo(3.0, 5);
   });
 
-  it('conflicting clamps (backward bound > forward bound) resolve to their midpoint', () => {
+  it('conflicting clamps (backward bound > forward bound) resolve to their midpoint on the no-silence fallback', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
@@ -1618,9 +1802,30 @@ describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
     // lastSpokenEnd (bravo) = 2.0 -> backwardBound = 1.85.
     // nextSpokenStart (charlie) = 1.6 -> forwardBound = 1.75.
     // backwardBound (1.85) > forwardBound (1.75): the tolerance windows don't
-    // overlap (segments' spoken words sit too close together) — the boundary
-    // must land at the midpoint of the two clamp bounds, 1.80, regardless of
-    // where a candidate silence sits.
+    // overlap (segments' spoken words sit too close together) — the fallback
+    // boundary lands at the midpoint of the two clamp bounds, 1.80.
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },
+      { text: 'charlie', startSec: 1.6, endSec: 2.4 },
+      { text: 'delta', startSec: 2.4, endSec: 3.0 },
+    ];
+    const results = alignScenestoTranscript(segments, tokens, []);
+    expect(results[0]!.t1).toBeCloseTo(1.8, 5);
+    expect(results[1]!.t0).toBeCloseTo(1.8, 5);
+  });
+
+  it('the same conflicting-bounds fixture keeps the silence centre when a silence IS found', () => {
+    // Same tokens as above, but a real silence now overlaps the search window
+    // ([0.8, 3.0] here, capped at next's last spoken end). Its centre (2.7) is
+    // outside BOTH tolerance bounds and is kept: the clamps no longer apply to
+    // a silence-derived boundary. This is the deliberate precedence rule, not
+    // an oversight — the search window already bounds the silence to the pair's
+    // own spoken extent.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
     const tokens: TranscriptToken[] = [
       { text: 'alpha', startSec: 0.0, endSec: 1.0 },
       { text: 'bravo', startSec: 1.0, endSec: 2.0 },
@@ -1629,8 +1834,31 @@ describe('WS1b — silence-snap clamps (SNAP_TOLERANCE_SEC = 0.150)', () => {
     ];
     const silences: SilenceInterval[] = [{ startSec: 2.6, endSec: 2.8 }];
     const results = alignScenestoTranscript(segments, tokens, silences);
-    expect(results[0]!.t1).toBeCloseTo(1.8, 5);
-    expect(results[1]!.t0).toBeCloseTo(1.8, 5);
+    expect(results[0]!.t1).toBeCloseTo(2.7, 5);
+    expect(results[1]!.t0).toBeCloseTo(2.7, 5);
+  });
+
+  it('the no-silence fallback always lands inside the R4 tolerance window', () => {
+    // The fallback boundary is the spoken-word midpoint, which is inside
+    // [lastSpokenEnd - tol, nextSpokenStart + tol] by construction whenever the
+    // two edges are in order — and collapses to that same midpoint via the
+    // conflicting-bounds branch when they are not. The clamps therefore cannot
+    // move a fallback boundary; they remain as an explicit guard on the one
+    // branch where an unbounded estimate would otherwise be possible.
+    const inOrder: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+    ];
+    const inOrderTokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },
+      { text: 'charlie', startSec: 4.0, endSec: 4.5 },
+      { text: 'delta', startSec: 4.5, endSec: 5.0 },
+    ];
+    const r1 = alignScenestoTranscript(inOrder, inOrderTokens, []);
+    expect(r1[0]!.t1).toBeGreaterThanOrEqual(2.0 - SNAP_TOLERANCE_SEC);
+    expect(r1[0]!.t1).toBeLessThanOrEqual(4.0 + SNAP_TOLERANCE_SEC);
+    expect(r1[0]!.t1).toBeCloseTo(3.0, 5);
   });
 });
 
@@ -1659,3 +1887,345 @@ describe('WS1b — cross-script mismatch integration', () => {
   });
 });
 
+
+// ===========================================================================
+// Middle-gap position-offset fix — snapCoveredBoundaries (services/snapBoundaries.ts)
+//
+// The aligner's own snap runs on the FULL segment array, so a boundary shared
+// with an UNMATCHED segment is computed from that segment's -1 token sentinels
+// (i.e. from placeholder anchors, not from anything spoken). The covered
+// segment on the other side keeps that corrupted boundary through the filter.
+// snapCoveredBoundaries re-runs the snap on the covered-only array, where every
+// token index is real, and derives durations from the result (subsuming the
+// R4-1 re-tile).
+// ===========================================================================
+describe('snapCoveredBoundaries — covered-only boundary snap', () => {
+  // Two covered segments: 'alpha bravo' spoken 0.0-1.0, 'charlie delta' spoken
+  // 2.0-3.0. Every test below varies only the silences.
+  function twoCoveredSegments() {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 3, anchorStart: 2, anchorSource: 'whisper' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 2.0, 0.5)];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    // Precondition for every case here: both segments really are matched, so
+    // their token indices are real and none of the -1-sentinel fallbacks fire.
+    expect(alignments.every(a => a.matched)).toBe(true);
+    return { segments, tokens, alignments };
+  }
+
+  it('places the boundary at the midpoint of a detected silence between two covered segments', () => {
+    const { segments, tokens, alignments } = twoCoveredSegments();
+    // Deliberately OFF-CENTRE (mid 1.75, not the 1.5 token midpoint) so this
+    // asserts the silence was actually used, not merely that the fallback
+    // happened to agree.
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
+
+    expect(out[1]!.startTime).toBeCloseTo(1.75, 6);
+    expect(out[1]!.anchorStart).toBeCloseTo(1.75, 6);
+    // Durations come from the boundary — this is the re-tile, subsumed.
+    expect(out[0]!.duration).toBeCloseTo(1.75, 6);
+    expect(out[1]!.duration).toBeCloseTo(3.25, 6);
+    // Contiguous: no gap left behind.
+    expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(out[1]!.startTime, 6);
+  });
+
+  it('falls back to the spoken-word midpoint when no silence overlaps the search window', () => {
+    const { segments, tokens, alignments } = twoCoveredSegments();
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 5);
+
+    // lastSpokenEnd 1.0, nextSpokenStart 2.0 -> 1.5.
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);
+    expect(out[1]!.anchorStart).toBeCloseTo(1.5, 6);
+    expect(out[0]!.duration).toBeCloseTo(1.5, 6);
+    expect(out[1]!.duration).toBeCloseTo(3.5, 6);
+  });
+
+  it('does NOT clamp a silence midpoint that sits beyond SNAP_TOLERANCE_SEC of the spoken edges (both directions)', () => {
+    // Silence-sharing fix: the R4 clamps are the no-silence fallback's guard,
+    // not the silence path's. A detected silence is acoustic ground truth and
+    // outranks Whisper's word timestamps in both directions.
+    // Forward: a silence centred at 2.6, past nextSpokenStart (2.0) + tolerance.
+    {
+      const { segments, tokens, alignments } = twoCoveredSegments();
+      const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 2.3, endSec: 2.9 }], 5);
+      expect(out[1]!.startTime).toBeCloseTo(2.6, 6);           // NOT 2.15
+      expect(out[1]!.startTime).toBeGreaterThan(2.0 + SNAP_TOLERANCE_SEC);
+    }
+    // Backward: a silence centred at 0.45, before lastSpokenEnd (1.0) - tolerance.
+    {
+      const { segments, tokens, alignments } = twoCoveredSegments();
+      const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 0.2, endSec: 0.7 }], 5);
+      expect(out[1]!.startTime).toBeCloseTo(0.45, 6);          // NOT 0.85
+      expect(out[1]!.startTime).toBeLessThan(1.0 - SNAP_TOLERANCE_SEC);
+    }
+  });
+
+  it('leaves a silence centre that already sits inside the tolerance window untouched (no regression)', () => {
+    // The pre-fix behaviour for an in-window silence was already "use the
+    // silence centre" — this asserts the fix changed nothing for that case.
+    const { segments, tokens, alignments } = twoCoveredSegments();
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.4, endSec: 1.7 }], 5);
+    const boundary = out[1]!.startTime;
+    expect(boundary).toBeCloseTo(1.55, 6);
+    expect(boundary).toBeGreaterThanOrEqual(1.0 - SNAP_TOLERANCE_SEC);
+    expect(boundary).toBeLessThanOrEqual(2.0 + SNAP_TOLERANCE_SEC);
+  });
+
+  it('still clamps the NO-SILENCE fallback into the R4 tolerance window', () => {
+    const { segments, tokens, alignments } = twoCoveredSegments();
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 5);
+    // Fallback = the spoken-word midpoint (1.5), which the clamps bound into
+    // [1.0 - 0.15, 2.0 + 0.15]. The clamp branch runs on this path and only
+    // this path.
+    expect(out[1]!.startTime).toBeGreaterThanOrEqual(1.0 - SNAP_TOLERANCE_SEC);
+    expect(out[1]!.startTime).toBeLessThanOrEqual(2.0 + SNAP_TOLERANCE_SEC);
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);
+  });
+
+  it('reproduces the 14-segment regression: silence 6.56-7.12 vs nextSpokenStart 6.40 keeps the 6.84 centre', () => {
+    // The exact shape of pair i=2 on the reported 14-segment project. Before the
+    // fix the forward clamp (6.40 + 0.150 = 6.55) pulled the boundary to BEFORE
+    // the silence even started (6.56), handing the whole 0.56s silence to the
+    // next segment. The boundary must be the silence centre, 6.84, so the two
+    // segments share the silence evenly.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 5.3, duration: 1.1, anchorStart: 5.3, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 6.4, duration: 1.6, anchorStart: 6.4, anchorSource: 'whisper' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 5.30, endSec: 5.80 },
+      { text: 'bravo', startSec: 5.80, endSec: 6.30 },   // lastSpokenEnd = 6.30
+      { text: 'charlie', startSec: 6.40, endSec: 7.20 }, // nextSpokenStart = 6.40
+      { text: 'delta', startSec: 7.20, endSec: 8.00 },
+    ];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 6.56, endSec: 7.12 }], 8);
+
+    expect(out[1]!.startTime).toBeCloseTo(6.84, 6);
+    expect(out[1]!.startTime).not.toBeCloseTo(6.4 + SNAP_TOLERANCE_SEC, 6); // the old 6.55
+    // The silence really is shared 50/50 either side of the boundary.
+    expect(out[1]!.startTime - 6.56).toBeCloseTo(7.12 - out[1]!.startTime, 6);
+    // …and the aligner's own snap agrees, so preview and the covered re-snap
+    // cannot drift apart on this pair.
+    const viaAligner = alignScenestoTranscript(segments, tokens, [{ startSec: 6.56, endSec: 7.12 }]);
+    expect(viaAligner[1]!.t0).toBeCloseTo(6.84, 6);
+  });
+
+  it('applies the monotonic check to a silence-derived boundary too', () => {
+    // Three covered segments. Pair 0 claims silence A (centre 2.6, well past
+    // its own search window's right edge — legal, the window only requires
+    // OVERLAP). Pair 1's only remaining candidate is silence B (centre 2.35),
+    // which would move the boundary BACKWARDS past pair 0's — so the monotonic
+    // safety net fires and the pair falls back to its spoken-word midpoint
+    // (2.2 + 2.3) / 2 = 2.25, unclamped.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2, anchorStart: 0 }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie', startTime: 2, duration: 0.3, anchorStart: 2 }),
+      makeSegment({ id: 's2', order: 2, text: 'delta echo', startTime: 2.3, duration: 1.2, anchorStart: 2.3 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 0.5 },
+      { text: 'bravo', startSec: 0.5, endSec: 1.0 },   // pair 0 lastSpokenEnd = 1.0
+      { text: 'charlie', startSec: 2.0, endSec: 2.2 }, // pair 0 nextSpokenStart = 2.0
+      { text: 'delta', startSec: 2.3, endSec: 2.8 },   // pair 1 nextSpokenStart = 2.3
+      { text: 'echo', startSec: 2.8, endSec: 3.3 },
+    ];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const silences: SilenceInterval[] = [
+      { startSec: 2.10, endSec: 3.10 }, // A — centre 2.60, claimed by pair 0
+      { startSec: 2.25, endSec: 2.45 }, // B — centre 2.35, only pair 1 can see it
+    ];
+    const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
+
+    expect(out[1]!.startTime).toBeCloseTo(2.6, 6);  // pair 0 → silence A's centre
+    expect(out[2]!.startTime).toBeCloseTo(2.25, 6); // pair 1 → monotonic fallback, not 2.35
+  });
+
+  it('extends the last kept segment to audioDuration', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 1, anchorStart: 0 }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 1, anchorStart: 2 }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot', startTime: 4, duration: 1, anchorStart: 4 }),
+    ];
+    const tokens = [
+      ...wordTokens('alpha bravo', 0, 0.5),
+      ...wordTokens('charlie delta', 2.0, 0.5),
+      ...wordTokens('echo foxtrot', 4.0, 0.5),
+    ];
+    const alignments = extractSegmentAlignments(segments, tokens);
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 12);
+
+    const last = out[out.length - 1]!;
+    expect(last.startTime + last.duration).toBeCloseTo(12, 6);
+    // …and the whole timeline is still contiguous from 0 to audioDuration.
+    expect(out[0]!.startTime).toBe(0);
+    for (let i = 0; i < out.length - 1; i++) {
+      expect(out[i]!.startTime + out[i]!.duration).toBeCloseTo(out[i + 1]!.startTime, 6);
+    }
+  });
+
+  it('never moves or shrinks a locked segment', () => {
+    const { segments, tokens, alignments } = twoCoveredSegments();
+    const locked = segments.map((s, i) => (i === 1 ? { ...s, locked: true } : s));
+
+    const out = snapCoveredBoundaries(locked, alignments, tokens, [{ startSec: 1.6, endSec: 1.9 }], 5);
+
+    // The pair touches a locked segment, so the boundary is left exactly as
+    // supplied — startTime, anchorStart and duration all untouched.
+    expect(out[1]!.startTime).toBe(2);
+    expect(out[1]!.anchorStart).toBe(2);
+    expect(out[1]!.duration).toBe(3);
+    expect(out[0]!.duration).toBe(2);
+  });
+
+  it('does not mutate the input segments', () => {
+    const { segments, tokens, alignments } = twoCoveredSegments();
+    const before = segments.map(s => ({ ...s }));
+
+    snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.6, endSec: 1.9 }], 5);
+
+    expect(segments).toEqual(before);
+  });
+});
+
+describe('filterToCoveredSegments — keptAlignments', () => {
+  it('returns the kept segments’ alignments, in the same order and the same length as kept', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'never spoken words' }),  // unmatched
+      makeSegment({ id: 's2', order: 2, text: 'charlie delta' }),
+      makeSegment({ id: 's3', order: 3, text: 'also never spoken' }),   // unmatched
+      makeSegment({ id: 's4', order: 4, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta echo foxtrot', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    const { kept, skipped, keptAlignments } = filterToCoveredSegments(segments, cov);
+
+    expect(kept.map(s => s.id)).toEqual(['s0', 's2', 's4']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([1, 3]);
+    expect(keptAlignments).toHaveLength(kept.length);
+    // Index-parallel: keptAlignments[i] is the alignment coverage[] held for
+    // kept[i] at its ORIGINAL position.
+    expect(keptAlignments).toEqual([cov[0], cov[2], cov[4]]);
+    expect(keptAlignments.every(a => a.matched)).toBe(true);
+  });
+});
+
+// ===========================================================================
+// REGRESSION — the middle-gap position offset itself.
+//
+// Same audio, same covered scenes, two scene docs: one where the covered scenes
+// are adjacent, one where unmatched scenes sit between them. Before the fix the
+// covered scene after the unmatched run drifted (measured 0.13s on the real
+// project) because the aligner snapped its boundary against the unmatched
+// neighbour's placeholder anchors. After the fix its position is identical in
+// both docs — a scene that never reaches the timeline cannot move one that does.
+// ===========================================================================
+describe('middle-gap position offset — unmatched neighbours no longer shift covered segments', () => {
+  const AUDIO_DURATION = 6;
+  // 'alpha bravo charlie delta' spoken 0.0-2.0, then a real pause, then
+  // 'india juliet kilo lima' spoken 3.0-5.0.
+  const TOKENS: TranscriptToken[] = [
+    ...wordTokens('alpha bravo charlie delta', 0, 0.5),
+    ...wordTokens('india juliet kilo lima', 3.0, 0.5),
+  ];
+  const SILENCES: SilenceInterval[] = [{ startSec: 2.1, endSec: 2.9 }];
+
+  /** The production cached-token path, end to end (App.tsx handleApplySyncFromFiles
+   *  + useWhisper.ts alignSegmentsFromCachedTranscript). */
+  function runPipeline(segments: VideoSegment[]) {
+    const alignments = alignScenestoTranscript(segments, TOKENS, SILENCES);
+    const distributed = distributeSegmentTimes(segments, alignments, AUDIO_DURATION);
+    const anchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
+    const { kept, keptAlignments, skipped } = filterToCoveredSegments(anchored, alignments);
+    const snapped = snapCoveredBoundaries(kept, keptAlignments, TOKENS, SILENCES, AUDIO_DURATION);
+    return { snapped, skipped, alignments };
+  }
+
+  const coveredScenes = () => [
+    makeSegment({ id: 'c0', order: 0, text: 'alpha bravo' }),
+    makeSegment({ id: 'c1', order: 1, text: 'charlie delta' }),
+    makeSegment({ id: 'c2', order: 2, text: 'india juliet' }),   // the target scene
+    makeSegment({ id: 'c3', order: 3, text: 'kilo lima' }),
+  ];
+
+  it('the target scene lands at the same startTime with and without unmatched scenes before it', () => {
+    // Doc A — every scene is spoken.
+    const docA = coveredScenes();
+    // Doc B — two scenes that appear in NO part of the audio are inserted
+    // immediately before the target scene.
+    const docB = [
+      ...coveredScenes().slice(0, 2),
+      makeSegment({ id: 'u0', order: 2, text: 'zulu whiskey tango' }),
+      makeSegment({ id: 'u1', order: 3, text: 'quebec sierra romeo' }),
+      ...coveredScenes().slice(2),
+    ];
+
+    const a = runPipeline(docA);
+    const b = runPipeline(docB);
+
+    // Doc B really does exercise the skip path (otherwise this test proves nothing).
+    expect(a.skipped).toHaveLength(0);
+    expect(b.skipped.map(r => r.segmentIndex)).toEqual([2, 3]);
+
+    // The target scene — and in fact every covered scene — occupies exactly the
+    // same span in both documents.
+    expect(b.snapped.map(s => s.id)).toEqual(a.snapped.map(s => s.id));
+    expect(b.snapped.map(s => s.startTime)).toEqual(a.snapped.map(s => s.startTime));
+    expect(b.snapped.map(s => s.duration)).toEqual(a.snapped.map(s => s.duration));
+    expect(b.snapped.map(s => s.anchorStart)).toEqual(a.snapped.map(s => s.anchorStart));
+
+    // Concretely: the boundary before the target scene is the real silence's
+    // midpoint (2.5), reached from the two REAL spoken edges (2.0 and 3.0) —
+    // not the 2.85 the unmatched neighbour's placeholder anchors produced.
+    const target = b.snapped.find(s => s.id === 'c2')!;
+    expect(target.startTime).toBeCloseTo(2.5, 6);
+  });
+
+  it('pre-fix witness: the aligner alone DOES shift the target when unmatched scenes precede it', () => {
+    // This is the bug, isolated: alignScenestoTranscript's own snap (the FULL
+    // array, unmatched segments included) gives the target a different t0 in the
+    // two documents. It documents WHY snapCoveredBoundaries exists — if this
+    // ever stops differing, the covered-only re-snap has become redundant and
+    // this whole mechanism should be re-examined rather than silently kept.
+    const docA = coveredScenes();
+    const docB = [
+      ...coveredScenes().slice(0, 2),
+      makeSegment({ id: 'u0', order: 2, text: 'zulu whiskey tango' }),
+      makeSegment({ id: 'u1', order: 3, text: 'quebec sierra romeo' }),
+      ...coveredScenes().slice(2),
+    ];
+
+    const targetT0A = alignScenestoTranscript(docA, TOKENS, SILENCES)[2]!.t0;
+    const targetT0B = alignScenestoTranscript(docB, TOKENS, SILENCES)[4]!.t0;
+
+    expect(targetT0A).toBeCloseTo(2.5, 6);
+    expect(targetT0B).not.toBeCloseTo(targetT0A, 3);
+  });
+
+  it('with nothing skipped, the covered-only re-snap reproduces the aligner’s own boundaries', () => {
+    // The fix must be a no-op on projects where every scene is covered — the
+    // overwhelmingly common case. Same window, same silence pick, same clamps.
+    const docA = coveredScenes();
+    const alignments = alignScenestoTranscript(docA, TOKENS, SILENCES);
+    const distributed = distributeSegmentTimes(docA, alignments, AUDIO_DURATION);
+    const anchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
+    const { kept, keptAlignments } = filterToCoveredSegments(anchored, alignments);
+
+    const snapped = snapCoveredBoundaries(kept, keptAlignments, TOKENS, SILENCES, AUDIO_DURATION);
+
+    expect(snapped.map(s => s.startTime)).toEqual(anchored.map(s => s.startTime));
+    expect(snapped.map(s => s.duration)).toEqual(anchored.map(s => s.duration));
+  });
+});

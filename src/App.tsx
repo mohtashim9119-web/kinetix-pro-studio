@@ -50,12 +50,21 @@ import {
   type SegmentGrade,
   type AspectRatio,
   type ResolutionTier,
+  type SyncLogEntry,
+  type SyncLogEntryType,
+  type SyncRunSummary,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
-import { computeCoverageSummary, classifyCoverage, countTranscriptWords, type SegmentAlignment } from './services/whisperService';
-import { MIN_COVERED_RUN_LENGTH, NOISE_FLOOR_COVERAGE } from './services/syncConstants';
+import { computeCoverageSummary, countTranscriptWords, type SegmentAlignment } from './services/whisperService';
+import { snapCoveredBoundaries } from './services/snapBoundaries';
+import {
+  MIN_COVERED_RUN_LENGTH,
+  NOISE_FLOOR_COVERAGE,
+  MAX_LOG_ENTRIES,
+  MAX_SYNC_RUN_SUMMARIES,
+} from './services/syncConstants';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -105,6 +114,7 @@ import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
+import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
@@ -118,6 +128,7 @@ import { invoke } from '@tauri-apps/api/core';
 interface RawSegment {
   text: string;
   assetId?: string;
+  tag?: string;
   unmatchedExplicitTag?: boolean;
   transition: TransitionType;
   animation: AnimationType;
@@ -367,6 +378,11 @@ export const parseProjectData = async (
     // bracket occurrences), so this is "was a non-empty name actually written
     // inside the brackets" — false only for a literal empty `[]` tag.
     const hasExplicitTagName = name.length > 0;
+
+    // WS-logs skip display — remember the cleaned tag name regardless of
+    // whether it went on to resolve to an asset, so a skip entry can show
+    // "[missing1] ..." even when the tag never matched anything.
+    current.tag = name || undefined;
 
     if (name) {
       // First match wins (upload/array order). Because the match is now
@@ -679,8 +695,11 @@ export function evaluateCoverageGate(
   return { aborted: false };
 }
 
-/** Why a segment was left off the timeline (doc §3.5(c), R4-4). */
-export type SegmentSkipReason = 'no audio match' | 'low confidence';
+/** Why a segment was left off the timeline (doc §3.5(c), R4-4).
+ *  Only fully-unmatched segments (no transcript match at all) are skipped;
+ *  matched-but-low-confidence segments are KEPT (Bug 2 fix), so 'low
+ *  confidence' is no longer a possible skip reason. */
+export type SegmentSkipReason = 'no audio match';
 
 /**
  * One skipped segment, recorded for the sync log. `segmentIndex` is 0-based
@@ -693,58 +712,98 @@ export interface SkippedSegmentRecord {
   segmentIndex: number;
   segmentText: string;
   reason: SegmentSkipReason;
+  /** The segment's cleaned scene-doc tag name (no brackets), if it had one —
+   *  see VideoSegment.tag. Omitted for an untagged scene. */
+  segmentTag?: string;
+  /** Coverage-array numbers for this segment at sync time (WS-logs display). */
+  matchedWords?: number;
+  totalWords?: number;
+  confidence?: number;
 }
 
 export interface CoveredSegmentFilter {
   kept: VideoSegment[];
   skipped: SkippedSegmentRecord[];
+  /** The alignments for `kept`, in the same order — `keptAlignments[i]` belongs
+   *  to `kept[i]`. Collected here in the same pass because `snapCoveredBoundaries`
+   *  (services/snapBoundaries.ts) needs each survivor's real token indices to
+   *  re-snap the boundaries BETWEEN survivors; re-deriving this correspondence
+   *  at the call site would mean a second scan over the coverage array that
+   *  could silently fall out of step with this one. */
+  keptAlignments: SegmentAlignment[];
 }
 
 /**
  * R4-1/R4-2 — skip unmatched. Partitions the aligned segments into the ones
- * that go on the timeline (covered: matched AND confidence >=
- * LOW_CONFIDENCE_RATIO, per classifyCoverage) and the ones that are dropped.
+ * that go on the timeline and the ones that are dropped.
+ *
+ * Bug 2 fix: the keep test is `matched === true`, NOT `covered === true`. A
+ * segment is kept as long as the audio matched at least one of its words, no
+ * matter how weak the confidence — the old app kept every matched segment, and
+ * gating on the LOW_CONFIDENCE_RATIO (0.4) threshold here was a regression that
+ * dropped legitimately-spoken scenes (e.g. "Navigational charts
+ * cross-referenced.", 1/3 words matched → confidence 0.33). Only a fully
+ * unmatched segment (confidence 0, `matched === false` — which also covers
+ * zero-token/neutral segments by construction) is dropped, and its only
+ * possible skip reason is now 'no audio match'.
+ *
+ * The `covered` flag (matched AND confidence ≥ LOW_CONFIDENCE_RATIO) is
+ * deliberately NOT used here anymore — it survives only inside
+ * `computeCoverageSummary`'s R13 contiguous-run scan (the conservative
+ * full-mismatch gate), which is intentionally left unchanged.
  *
  * There is deliberately no fallback timing of any kind: a segment either
  * appears at its Whisper-anchored time or it does not appear. Kept segments
  * carry their startTime/duration through untouched, so a dropped segment's
  * span becomes an actual gap in the timeline rather than being folded into a
- * neighbour. Zero-token (neutral) segments are uncovered by construction and
- * are skipped too — neutrality governs the coverage METRICS (doc §3.1.1
- * point 4), not the commit.
+ * neighbour.
  */
 export function filterToCoveredSegments(
   segments: VideoSegment[],
   coverage: SegmentAlignment[],
 ): CoveredSegmentFilter {
-  const flags = classifyCoverage(coverage);
   const kept: VideoSegment[] = [];
+  const keptAlignments: SegmentAlignment[] = [];
   const skipped: SkippedSegmentRecord[] = [];
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!;
-    if (flags[i]?.covered) {
+    const alignment = coverage[i];
+    if (alignment?.matched) {
       kept.push(seg);
+      keptAlignments.push(alignment);
       continue;
     }
+    const cov = coverage[i];
     skipped.push({
       segmentIndex: i,
       segmentText: seg.text ?? '',
-      // Matched-but-below-threshold is a materially different story for the
-      // log than "the audio never said this at all".
-      reason: coverage[i]?.matched ? 'low confidence' : 'no audio match',
+      reason: 'no audio match',
+      segmentTag: seg.tag || undefined,
+      matchedWords: cov?.matchedWords,
+      totalWords: cov?.totalWords,
+      confidence: cov?.confidence,
     });
   }
-  return { kept, skipped };
+  return { kept, skipped, keptAlignments };
 }
 
 /**
- * R4-1 re-tile (WS1b) — after `filterToCoveredSegments` drops the unmatched
- * segments, the survivors still carry durations computed against the FULL
- * pre-filter array (each segment's t1 was pinned to its immediate neighbour's
- * t0 by the aligner, then `applyAnchorBasedTiming` re-derived spans over every
- * segment). So a covered segment sitting right before a skipped run ends at the
- * skipped segment's position, not the next SURVIVING segment's — a gap that
- * compounds down the timeline.
+ * R4-1 re-tile (WS1b) — FALLBACK ONLY since the middle-gap position-offset fix.
+ * The Whisper path now uses `snapCoveredBoundaries` (services/snapBoundaries.ts)
+ * instead, which subsumes this re-tile: it re-derives the boundaries BETWEEN
+ * survivors from their real spoken-word edges and sets durations from those,
+ * rather than accepting startTimes that an unmatched neighbour helped compute.
+ * This function survives for callers that have no tokens/silences to snap
+ * against (the no-transcript paths), where closing the gaps arithmetically is
+ * still strictly better than leaving them.
+ *
+ * After `filterToCoveredSegments` drops the unmatched segments, the survivors
+ * still carry durations computed against the FULL pre-filter array (each
+ * segment's t1 was pinned to its immediate neighbour's t0 by the aligner, then
+ * `applyAnchorBasedTiming` re-derived spans over every segment). So a covered
+ * segment sitting right before a skipped run ends at the skipped segment's
+ * position, not the next SURVIVING segment's — a gap that compounds down the
+ * timeline.
  *
  * This closes the gaps by re-deriving each survivor's duration from the next
  * survivor's startTime; the last survivor extends to `audioDuration` (the audio
@@ -767,6 +826,173 @@ export function retileCoveredSegments(kept: VideoSegment[], audioDuration: numbe
     const duration = nextDuration > 0 ? nextDuration : seg.duration;
     return { ...seg, duration: Number(duration.toFixed(3)) };
   });
+}
+
+// ---------------------------------------------------------------------------
+// WS-logs — persistent sync log (R4-4). filterToCoveredSegments already tells
+// us exactly which scenes were left off the timeline and why; until now that
+// was a DEV-only console.warn that died with the tab. These pure builders turn
+// a run's outcome into SyncLogEntry/SyncRunSummary records, and
+// appendSyncLogEntries folds them onto the Project — which the existing
+// projectStore serializer persists as a unit, so no separate store is involved.
+//
+// Every function here is pure and module-level (same testability precedent as
+// the WS1b gate functions above): the orchestrator decides WHEN a run aborted
+// or skipped, these decide WHAT the log says about it.
+// ---------------------------------------------------------------------------
+
+/** Skip entries store a preview, not the whole scene — the log is a scannable
+ *  list, and a long scene would dominate both the panel and the saved blob. */
+export const SYNC_LOG_TEXT_PREVIEW_CHARS = 80;
+
+function previewSegmentText(text: string): string {
+  const trimmed = text.trim();
+  return trimmed.length > SYNC_LOG_TEXT_PREVIEW_CHARS
+    ? `${trimmed.slice(0, SYNC_LOG_TEXT_PREVIEW_CHARS)}…`
+    : trimmed;
+}
+
+/** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
+ *  WKWebView/WebView2, and Vite dev over localhost — a secure context). The
+ *  counter fallback exists only so a non-secure-context or jsdom environment
+ *  can't throw mid-sync; ids are never persisted across runs as keys. */
+let syncLogIdCounter = 0;
+function mintSyncLogId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  syncLogIdCounter += 1;
+  return `synclog-${Date.now()}-${syncLogIdCounter}`;
+}
+
+/** Builds one entry. `timestamp` is injectable so a whole run's entries can
+ *  share a single Date.now() reading (and so tests are deterministic). */
+export function makeSyncLogEntry(
+  syncRunId: string,
+  type: SyncLogEntryType,
+  message: string,
+  extra?: Pick<
+    SyncLogEntry,
+    'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
+  >,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return {
+    id: mintSyncLogId(),
+    timestamp,
+    syncRunId,
+    type,
+    message,
+    ...extra,
+  };
+}
+
+/**
+ * One 'skip' entry per SkippedSegmentRecord. `segmentIndex` is carried through
+ * as the record's PRE-filter index (see SkippedSegmentRecord) — the scene the
+ * user wrote, not a position on the committed timeline, which by definition no
+ * longer contains it. The displayed index is 1-based; the stored one is not.
+ */
+export function buildSkipLogEntries(
+  syncRunId: string,
+  skipped: SkippedSegmentRecord[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return skipped.map(record =>
+    makeSyncLogEntry(
+      syncRunId,
+      'skip',
+      `Scene ${record.segmentIndex + 1} skipped — ${record.reason}.`,
+      {
+        segmentIndex: record.segmentIndex,
+        segmentText: previewSegmentText(record.segmentText),
+        reason: record.reason,
+        segmentTag: record.segmentTag,
+        matchedWords: record.matchedWords,
+        totalWords: record.totalWords,
+        confidence: record.confidence,
+      },
+      timestamp,
+    ),
+  );
+}
+
+/**
+ * The summary line for a successful sync (Bug 1 fix). Built on EVERY successful
+ * run now — clean or with skips — not only the 0-skip case. `matchedSegments`
+ * is how many landed on the timeline, `totalSegments` the pre-filter count, and
+ * `skippedSegments` how many were dropped for having no audio match.
+ */
+export function buildSyncInfoMessage(
+  totalSegments: number,
+  matchedSegments: number,
+  skippedSegments: number,
+): string {
+  const base = `Sync completed: ${matchedSegments} of ${totalSegments} segments matched.`;
+  return skippedSegments > 0 ? `${base} ${skippedSegments} skipped.` : base;
+}
+
+/**
+ * The 'info' entry for a successful run. Emitted on every successful sync
+ * regardless of skip count (Bug 1 fix) — alongside any skip entries, not
+ * instead of them.
+ */
+export function buildSyncInfoEntry(
+  syncRunId: string,
+  totalSegments: number,
+  matchedSegments: number,
+  skippedSegments: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'info',
+    buildSyncInfoMessage(totalSegments, matchedSegments, skippedSegments),
+    undefined,
+    timestamp,
+  );
+}
+
+/** The 'abort' entry for a run that never reached the commit. Carries no
+ *  segmentIndex — an abort is about the run, not about one scene. */
+export function buildSyncAbortEntry(
+  syncRunId: string,
+  message: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(syncRunId, 'abort', message, undefined, timestamp);
+}
+
+/**
+ * Folds a run's entries + summary onto the project. Pure — returns a new
+ * Project, never mutates. Both fields are treated as [] when absent, which is
+ * what makes a pre-WS-logs project (syncLog: undefined) work unchanged.
+ *
+ * Pruning keeps the MOST RECENT records: entries are appended at the end, so
+ * an over-cap array is sliced from the END. `summary` is optional so a future
+ * caller can log a standalone warning without inventing a run rollup for it.
+ */
+export function appendSyncLogEntries(
+  project: Project,
+  entries: SyncLogEntry[],
+  summary?: SyncRunSummary,
+): Project {
+  const nextLog = [...(project.syncLog ?? []), ...entries];
+  const nextSummaries = summary
+    ? [...(project.syncRunSummaries ?? []), summary]
+    : [...(project.syncRunSummaries ?? [])];
+  return {
+    ...project,
+    syncLog: nextLog.length > MAX_LOG_ENTRIES ? nextLog.slice(-MAX_LOG_ENTRIES) : nextLog,
+    syncRunSummaries: nextSummaries.length > MAX_SYNC_RUN_SUMMARIES
+      ? nextSummaries.slice(-MAX_SYNC_RUN_SUMMARIES)
+      : nextSummaries,
+  };
+}
+
+/** Empties both log fields. Pure; backs the panel's "Clear log" button. */
+export function clearSyncLog(project: Project): Project {
+  return { ...project, syncLog: [], syncRunSummaries: [] };
 }
 
 /** Recomputes sequential startTimes from accumulated durations. Pure. */
@@ -1875,6 +2101,31 @@ export default function App() {
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
+    // WS-logs — one id for every entry this run emits, plus one timestamp so a
+    // run's entries sort together rather than smearing across the ms boundary
+    // of a long sync. Minted before the first await so it's stable end-to-end.
+    const syncRunId = mintSyncLogId();
+    const syncRunAt = Date.now();
+
+    /** Records an aborted run (entry + summary) and persists it. The abort
+     *  paths below return before the segment commit, so this is the ONLY
+     *  setProject they make — segments/assets are deliberately untouched. */
+    const logSyncAbort = (message: string, totalSegments: number): void => {
+      setProject(prev => appendSyncLogEntries(
+        prev,
+        [buildSyncAbortEntry(syncRunId, message, syncRunAt)],
+        {
+          syncRunId,
+          timestamp: syncRunAt,
+          totalSegments,
+          coveredSegments: 0,
+          skippedSegments: 0,
+          aborted: true,
+          abortReason: message,
+        },
+      ));
+    };
+
     // 1. Read text files — strip RTF markup if the file is an .rtf document
     const scriptText = staged.scriptFile
       ? stripRtfIfNeeded(await staged.scriptFile.file.text())
@@ -1954,7 +2205,11 @@ export default function App() {
         // No fake-duration fallback (the old code silently used 60 s). Abort the
         // sync and tell the user rather than proportioning every segment wrong.
         console.error('[sync] voiceover duration probe failed:', err);
-        showToast("Couldn't read the voiceover's duration — sync aborted. Try re-adding the audio file.");
+        const msg = "Couldn't read the voiceover's duration — sync aborted. Try re-adding the audio file.";
+        showToast(msg);
+        // totalSegments is 0 here by necessity — the scene doc hasn't been
+        // parsed yet at this point in the sequence.
+        logSyncAbort(msg, 0);
         setIsProcessing(false);
         return;
       }
@@ -1972,6 +2227,7 @@ export default function App() {
     if (sceneDocAbortMsg) {
       console.warn('[sync] parseProjectData returned 0 segments — aborting sync');
       showToast(sceneDocAbortMsg);
+      logSyncAbort(sceneDocAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
       return;
     }
@@ -1997,11 +2253,17 @@ export default function App() {
     );
     if (transcriptAbortMsg) {
       showToast(transcriptAbortMsg);
+      logSyncAbort(transcriptAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
       return;
     }
 
     let finalTimedSegments: VideoSegment[];
+    // WS-logs — staged by whichever timing branch runs, committed by the single
+    // setProject below. Every branch that reaches the commit sets both, so a
+    // committed run always leaves exactly one summary behind.
+    let pendingLogEntries: SyncLogEntry[] = [];
+    let pendingLogSummary: SyncRunSummary | undefined;
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
       const aligned = await alignFromCache(
@@ -2024,6 +2286,7 @@ export default function App() {
       if (gate.aborted) {
         console.warn('[sync] coverage gate aborted:', gate.message);
         showToast(gate.message);
+        logSyncAbort(gate.message, aligned.segments.length);
         setIsProcessing(false);
         return;
       }
@@ -2033,35 +2296,90 @@ export default function App() {
       // recorded for the sync log. Skipped segments leave real gaps: the audio
       // keeps playing as one continuous file, and no neighbour is stretched to
       // cover the hole.
-      const { kept, skipped } = filterToCoveredSegments(aligned.segments, aligned.coverage);
+      const { kept, skipped, keptAlignments } = filterToCoveredSegments(aligned.segments, aligned.coverage);
+
       if (import.meta.env.DEV && skipped.length > 0) {
-        // R4-4 — in-memory for now; WS-logs persists these on the project and
-        // surfaces them in the sync-log panel.
         console.warn(
           `[sync] skipped ${skipped.length} uncovered segment(s) of ${aligned.segments.length}:`,
           skipped,
         );
       }
 
-      // R4-1 re-tile — filterToCoveredSegments carries each kept segment's
-      // startTime/duration through untouched, but those durations were computed
-      // against the FULL array: a covered segment sitting just before a skipped
-      // one still ends at the skipped segment's t0, leaving a gap that grows
-      // across the timeline. Close it by re-deriving each survivor's duration
-      // from the NEXT survivor's start (last extends to audioDuration). Starts
-      // and anchors are Whisper-correct and are preserved untouched.
-      finalTimedSegments = retileCoveredSegments(kept, audioDuration);
+      // WS-logs (R4-4) — the skip records are no longer DEV-console-only: one
+      // 'skip' entry per dropped scene. Bug 1 fix: a summary 'info' entry is now
+      // emitted on EVERY successful run — alongside the skip entries, not
+      // instead of them — so a run with 2 skips produces 3 entries (2 skip + 1
+      // info). Staged into locals here and folded onto the project inside the
+      // one atomic setProject below, so the log commits with the segments it
+      // describes rather than in a second render.
+      pendingLogEntries = [
+        ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
+        buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
+      ];
+      pendingLogSummary = {
+        syncRunId,
+        timestamp: syncRunAt,
+        totalSegments: aligned.segments.length,
+        coveredSegments: kept.length,
+        skippedSegments: skipped.length,
+        aborted: false,
+      };
+
+      // Covered-only boundary re-snap (middle-gap position-offset fix).
+      //
+      // The aligner's own snap ran on the FULL array, so any boundary shared
+      // with an UNMATCHED segment was computed from that segment's -1 token
+      // sentinels — i.e. from placeholder anchors, not from anything spoken.
+      // Re-snapping here, on the survivors only, gives every boundary two
+      // matched segments with real spoken-word edges, so a scene that never
+      // reaches the timeline can no longer shift the position of one that does
+      // (measured drift before this: 0.13s). It also SUBSUMES the old R4-1
+      // re-tile — durations come from the re-snapped boundaries, and the last
+      // survivor still runs to audioDuration.
+      //
+      // The plain arithmetic re-tile stays as the fallback for the degenerate
+      // case where there is nothing to snap against (no tokens): closing the
+      // skip gaps is still better than leaving them.
+      const transcriptTokens = projectRef.current.transcriptTokens!;
+      finalTimedSegments = transcriptTokens.length > 0
+        ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
+        : retileCoveredSegments(kept, audioDuration);
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface
       // it loudly rather than silently shipping character-based timing.
-      if (voiceoverAsset && isTauri()) {
+      const unexpectedFallback = !!voiceoverAsset && isTauri();
+      if (unexpectedFallback) {
         console.warn(
           '[sync] Apply Sync committed with no cached transcript — falling back to character-based timing',
-          { voiceoverAssetId: voiceoverAsset.id },
+          { voiceoverAssetId: voiceoverAsset!.id },
         );
       }
       finalTimedSegments = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
+      // WS-logs — this branch commits too, so it owes the log a summary. There
+      // is no coverage data here (nothing was aligned against audio), so every
+      // segment counts as covered and none as skipped. The defensive case gets
+      // a 'warning' rather than an 'info' — the same signal as the console.warn
+      // above, but one a teammate can still see tomorrow.
+      pendingLogEntries = [
+        makeSyncLogEntry(
+          syncRunId,
+          unexpectedFallback ? 'warning' : 'info',
+          unexpectedFallback
+            ? `Sync completed on character-based timing — no cached transcript was available for the voiceover. ${finalTimedSegments.length} segment(s) placed.`
+            : `Sync completed: ${finalTimedSegments.length} segment(s) placed using character-based timing (no voiceover transcript).`,
+          undefined,
+          syncRunAt,
+        ),
+      ];
+      pendingLogSummary = {
+        syncRunId,
+        timestamp: syncRunAt,
+        totalSegments: finalTimedSegments.length,
+        coveredSegments: finalTimedSegments.length,
+        skippedSegments: 0,
+        aborted: false,
+      };
     }
     syncMark('align+timing:done');
 
@@ -2075,7 +2393,10 @@ export default function App() {
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
     //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
     setProject(prev => ({
-      ...prev,
+      // WS-logs — fold this run's entries/summary in FIRST so they commit
+      // atomically with the segments they describe (appendSyncLogEntries is
+      // pure and only touches syncLog/syncRunSummaries).
+      ...appendSyncLogEntries(prev, pendingLogEntries, pendingLogSummary),
       script: scriptText,
       sceneDetails: sceneText,
       scriptFileName: staged.scriptFile?.file.name ?? prev.scriptFileName ?? '',
@@ -2108,6 +2429,12 @@ export default function App() {
 
     setIsProcessing(false);
   };
+
+  // WS-logs — empties both log fields. The setProject alone persists it (the
+  // debounced usePersistProject save writes the whole Project).
+  const handleClearSyncLog = useCallback(() => {
+    setProject(prev => clearSyncLog(prev));
+  }, []);
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
@@ -3273,6 +3600,13 @@ export default function App() {
                 onToggleTextLayerOnSegment={handleToggleTextLayerOnSegment}
               />
             )}
+
+            {/* WS-logs — persistent sync log (R4-4). Reads straight off the
+                project; `?? []` is what makes a pre-WS-logs project render. */}
+            <SyncLogPanel
+              syncLog={project.syncLog ?? []}
+              onClearLog={handleClearSyncLog}
+            />
           </div>
 
           {/* Pinned footer — Project Settings trigger (plan §2.3) */}

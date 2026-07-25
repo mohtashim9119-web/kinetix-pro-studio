@@ -558,22 +558,36 @@ export function alignScenestoTranscript(
 
     // Monotonic sanity check: a boundary must not go backwards past the previous one.
     // If it does, the chosen silence belongs to an earlier boundary — fall back.
+    // This applies to BOTH the silence-centre and the token-midpoint boundary.
     if (i > 0 && boundary < results[i - 1]!.t1) {
       boundary = (lastSpokenEnd + nextSpokenStart) / 2;
     }
 
-    // Snap clamps (doc §3.6, R4): bound the chosen boundary to within
-    // SNAP_TOLERANCE_SEC of the real matched-word edges on both sides — a
-    // snap can still correct Whisper's ~300ms timestamp error, but can never
-    // relocate the boundary across a spoken word (S21). Backward clamp first,
-    // then forward; if the two tolerance windows don't overlap (segments too
-    // close for a clean boundary), the honest answer is their midpoint.
-    const backwardBound = lastSpokenEnd - SNAP_TOLERANCE_SEC;
-    const forwardBound = nextSpokenStart + SNAP_TOLERANCE_SEC;
-    boundary = Math.max(boundary, backwardBound);
-    boundary = Math.min(boundary, forwardBound);
-    if (backwardBound > forwardBound) {
-      boundary = (backwardBound + forwardBound) / 2;
+    // Snap clamps (doc §3.6, R4) — FALLBACK CASE ONLY.
+    //
+    // These bound the boundary to within SNAP_TOLERANCE_SEC of the matched-word
+    // edges. They exist to stop the no-silence TOKEN-MIDPOINT estimate from
+    // drifting away from the spoken words, and they are deliberately NOT applied
+    // when a real silence was detected: the silence is acoustic ground truth and
+    // is more reliable than Whisper's word timestamps (which carry ~300ms of
+    // error). Clamping a silence centre against those timestamps was pulling
+    // boundaries back OUT of the silence they were meant to split — measured on a
+    // 14-segment project, a silence at 6.56-7.12 (centre 6.84) against a
+    // nextSpokenStart of 6.40 was clamped to 6.55, i.e. before the silence even
+    // starts, handing the whole silence to the next segment instead of sharing it
+    // 50/50. Do not reapply these to the `gap` branch.
+    //
+    // Backward clamp first, then forward; if the two tolerance windows don't
+    // overlap (segments too close for a clean boundary), the honest answer is
+    // their midpoint.
+    if (!gap) {
+      const backwardBound = lastSpokenEnd - SNAP_TOLERANCE_SEC;
+      const forwardBound = nextSpokenStart + SNAP_TOLERANCE_SEC;
+      boundary = Math.max(boundary, backwardBound);
+      boundary = Math.min(boundary, forwardBound);
+      if (backwardBound > forwardBound) {
+        boundary = (backwardBound + forwardBound) / 2;
+      }
     }
 
     curr.t1 = boundary;

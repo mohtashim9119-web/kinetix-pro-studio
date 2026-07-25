@@ -35,6 +35,19 @@ See the "Quick Bugs to Fix" section (after Section 10) for the 3 bugs surfaced d
 - **Bugs NOT fixed by WS1b:** S6, S7, S8, S10, S13, S14, S16-S20 (later workstreams); the s2-on-"lot" playback offset (project-specific, deferred).
 - **Verification:** macOS Intel x86_64 only. macOS arm64 + Windows/WebView2 unverified.
 
+**WS-logs + Bug 1 + Bug 2 + tag/match-count + position-offset + silence-sharing fix: COMPLETE and verified on macOS Intel x86_64.**
+
+- **What landed:**
+  - **WS-logs:** Persistent sync-log panel in the right panel. `SyncLogEntry`/`SyncRunSummary` types on `Project` (additive, optional, backward-compatible). Persists via existing `projectStore` IndexedDB save. Capped at 500 entries / 10 run summaries. UI: collapsible section below Text Layers, newest-first, color-coded (skip=yellow, abort=red, warning=orange, info=gray), clear-log with confirmation. Survives app close/reopen.
+  - **Bug 1 fix:** Info entry now ALWAYS fires on successful sync (was only on 0-skip syncs). Message: "Sync completed: X of Y segments matched. Z skipped." (Z omitted when 0).
+  - **Bug 2 fix:** `filterToCoveredSegments` keeps segments where `matched === true` (was `covered === true`, i.e. `matched && confidence >= 0.4`). Matched-but-low-confidence segments no longer skipped. R13 gate unchanged (still uses `covered` for contiguous-run). "low confidence" skip reason removed; only "no audio match" remains. Fixes segment 135 regression.
+  - **Tag + match-count display:** `VideoSegment.tag` field added. `SkippedSegmentRecord`/`SyncLogEntry` extended with `segmentTag`/`matchedWords`/`totalWords`/`confidence`. Skip entries render 3-line format: "Segment N skipped — reason" / "[tag] text" / "matched X of Y words (confidence Z)". Backward compatible.
+  - **Position-offset fix:** New `src/services/snapBoundaries.ts` with `snapCoveredBoundaries`. Snap runs AFTER filtering on the covered-only array, so every snap pair has two matched segments with real spoken-word ends. Replaces `retileCoveredSegments` on primary path (retile kept as fallback). Fixes ~0.13s drift on covered segments adjacent to skipped ones.
+  - **Silence-sharing fix:** R4 snap clamps (`SNAP_TOLERANCE_SEC = 0.150`) are now CONDITIONAL on `!silenceFound`. When a silence IS found, its center is used as the boundary WITHOUT clamping (silence is acoustic ground truth). When NO silence is found (fallback to token midpoint), the R4 clamps still apply. The monotonic check still applies in both cases. Fixes the silence-sharing regression on the 14-segment project where clamps were pulling boundaries away from silence centers.
+- **Known cleanup item:** The R4 clamps are now mathematically unreachable as a modification on the no-silence fallback branch (the token midpoint always lands inside the tolerance window). Kept as a documented guard; could be pruned as dead code in a future cleanup pass.
+- **Bugs fixed:** WS-logs info-entry-missing (Bug 1), matched-but-low-confidence skip regression (Bug 2), middle-gap position offset, silence-sharing regression.
+- **Verification:** macOS Intel x86_64 only. macOS arm64 + Windows/WebView2 unverified.
+
 ---
 
 ## 2. Current State (the problem)
@@ -320,6 +333,8 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 **(e) Scope honesty — what these guards do NOT fix.** They do **not** fix the s2-on-"lot" case (Section 4.5): the runtime diagnostic proved that snap innocent. The guards fix *other* cases where a chosen silence genuinely relocates a boundary across a spoken word.
 
+**(f) Silence-sharing fix (2026-07-25) — clamps are now conditional on no-silence.** The clamps described in (b) are applied **only** on the fallback branch, when no real silence candidate was found for the boundary (the token-midpoint estimate). When a silence **is** found, its center is trusted as acoustic ground truth and used directly, **without** clamping — clamping it against Whisper's word timestamps (which carry their own ~300ms error) was pulling boundaries back out of the silence they were meant to split, breaking the intended 50/50 silence-sharing between adjacent segments (measured on a 14-segment project). The monotonic check in (a) still applies to both branches. Practically, this means the clamps in (b) are now unreachable except on the no-silence fallback path — see the "Known cleanup item" in the Implementation Status entry above.
+
 ### 3.7 Coverage metadata storage — sidecar `CoverageMap`, not persisted
 
 **(a) Today.** Nothing is stored; confidence is discarded.
@@ -515,6 +530,8 @@ Any post-rewrite regression test for this project should assert the boundary lan
 
 **Final re-attribution (2026-07-25, post-QB3 investigation).** QB3's audio energy refinement was implemented and then re-investigated against the real s2-on-"lot" project with full acoustic data (wide-window spectral flux + energy envelope + raw PCM samples). Finding: the sync boundary **is correct** — the UI shows the boundary at 9.04s, Whisper reports "on" starting at 9.05s, and the energy data confirms the "on" vowel onset actually occurs at 9.01–9.05s. There is no Whisper timestamp inaccuracy in this case after all. The originally reported "boundary lands on lot" symptom is a **project-specific playback issue**: that one segment's audio plays back ~650ms earlier than its timeline position, for reasons unrelated to sync timing — other segments in the same project play back correctly. QB3's `audioBoundaryRefinement.ts` was removed as dead code addressing a problem that does not exist. See QB3's entry below for the closed status.
 
+**Final note (2026-07-25).** The playback offset (~650ms on one segment, project-specific) is deferred as a separate investigation. The sync boundary itself is confirmed correct (UI shows 9.04s, Whisper says "on" at 9.05s, energy data confirms "on" vowel onset at 9.01-9.05s). The audio energy refinement code (QB3) was removed as it addressed a non-existent sync problem.
+
 ---
 
 ## 5. File-by-File Change List
@@ -575,9 +592,19 @@ Any post-rewrite regression test for this project should assert the boundary lan
 
 ### Workstream LOGS (WS-logs) — persistent sync log (R4-4), follows this workstream
 
+**Landed (2026-07-25):**
+
 | File | Change |
 |---|---|
-| (TBD, WS-logs' own design) | Persist the `SkippedSegmentRecord[]` produced by §3.5(c) on the project so it survives app close/reopen, and surface it in a sync-log panel. Scope: **sync-only messages** — skip notices, abort notices, warnings. Not designed here; this workstream only produces the records and DEV-logs them to the console. |
+| `src/types.ts` | `SyncLogEntry`/`SyncRunSummary` types on `Project` (additive, optional, backward-compatible); `VideoSegment.tag`; `SkippedSegmentRecord`/`SyncLogEntry` extended with `segmentTag`/`matchedWords`/`totalWords`/`confidence`. |
+| `src/services/syncConstants.ts` | `MAX_LOG_ENTRIES = 500`, `MAX_SYNC_RUN_SUMMARIES = 10`. |
+| `src/components/SyncLogPanel.tsx` (NEW) | Sync-log panel UI in the right panel — collapsible, newest-first, color-coded (skip=yellow, abort=red, warning=orange, info=gray), clear-log with confirmation. |
+| `src/services/snapBoundaries.ts` (NEW) | `snapCoveredBoundaries` — pure snap-boundary refinement for the covered-only array (post-filter). Replaces `retileCoveredSegments` on the primary sync path (§4.5 position-offset fix); retile kept as fallback. |
+| `src/App.tsx` | WS-logs wiring (persist via existing `projectStore` save); Bug 1 fix (info entry always fires on success — §Implementation Status); Bug 2 fix (`filterToCoveredSegments` keeps `matched`, not `covered`); `snapCoveredBoundaries` call site; `buildSyncInfoMessage`; tag population; `handleClearSyncLog`. |
+| `src/services/whisperService.ts` | Silence-sharing fix — R4 snap clamps conditional on `!gap` (no silence found); see updated §3.6. |
+| `src/hooks/useWhisper.ts` | Silences threading; `alignFromCache` return extended. |
+
+Scope: **sync-only messages** — skip notices, abort notices, warnings, info.
 
 ---
 

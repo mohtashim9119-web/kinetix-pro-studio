@@ -59,6 +59,15 @@ export const SNAP_TOLERANCE_SEC = 0.15;
 // ever needs a rate-derived duration. Do not reintroduce any of the four —
 // see the doc's §3.5 for why fallback timing is not coming back.
 
+// --- Persistent sync-log caps (WS-logs, R4-4) -------------------------------
+// The log lives ON the Project (types.ts's SyncLogEntry/SyncRunSummary) and is
+// persisted by the existing localStorage serializer, so it shares that store's
+// quota with the rest of the project. These caps keep an old, heavily re-synced
+// project from growing the blob without bound; pruning always drops the OLDEST
+// entries (appendSyncLogEntries in App.tsx keeps the tail).
+export const MAX_LOG_ENTRIES = 500;
+export const MAX_SYNC_RUN_SUMMARIES = 10;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

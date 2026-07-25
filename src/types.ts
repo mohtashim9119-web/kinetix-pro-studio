@@ -235,6 +235,11 @@ export interface VideoSegment {
    *  Carried across Apply Sync by unique-assetId match alongside the other
    *  effect* fields. */
   effectGrade?: SegmentGrade;
+  /** WS-logs skip display — the cleaned scene-doc tag name (no brackets, e.g.
+   *  "missing1") parseProjectData matched against assets for this segment.
+   *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
+   *  downstream branches on it. */
+  tag?: string;
 }
 
 /**
@@ -317,6 +322,66 @@ export interface Project {
    *  table. Undefined on pre-existing projects; treat as DEFAULT_RESOLUTION_TIER
    *  ('1080p') — matches today's hardcoded exportResolution default. */
   resolutionTier?: ResolutionTier;
+  /** WS-logs — persistent sync log, newest entries appended at the END. Capped
+   *  at MAX_LOG_ENTRIES (services/syncConstants.ts); older entries are pruned
+   *  from the front. Undefined on projects saved before WS-logs — treat as []. */
+  syncLog?: SyncLogEntry[];
+  /** WS-logs — per-run rollups, same append/prune discipline, capped at
+   *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
+  syncRunSummaries?: SyncRunSummary[];
+}
+
+// ---------------------------------------------------------------------------
+// WS-logs — persistent sync log (R4-4). The skip records filterToCoveredSegments
+// already produces were in-memory only; these types give them a home ON the
+// Project, so they survive an app close/reopen and are visible to anyone who
+// opens the project. Persisted by the existing projectStore serializer (Project
+// is saved as a unit) — there is deliberately no separate store.
+// ---------------------------------------------------------------------------
+
+export type SyncLogEntryType = 'skip' | 'abort' | 'warning' | 'info';
+
+/** One line in the sync log. Entries from a single Apply Sync run share a
+ *  `syncRunId`, so the UI can group them without a nested data structure. */
+export interface SyncLogEntry {
+  id: string;
+  /** Date.now() at creation. */
+  timestamp: number;
+  /** Groups every entry emitted by one Apply Sync run. */
+  syncRunId: string;
+  type: SyncLogEntryType;
+  message: string;
+  /** Skip entries only: 0-based index into the PRE-filter (aligned) segments
+   *  array, so it still points at the scene the user wrote. */
+  segmentIndex?: number;
+  /** Skip entries only: the segment's text, truncated for display. */
+  segmentText?: string;
+  /** Skip entries only: why it was left off the timeline. */
+  reason?: string;
+  /** Skip entries only: the segment's cleaned scene-doc tag name (no
+   *  brackets), if it had one. Undefined on pre-WS-logs-tag entries and on
+   *  untagged scenes — both render identically (line omits the tag prefix). */
+  segmentTag?: string;
+  /** Skip entries only: transcript words matched, from the coverage array at
+   *  sync time. Undefined on entries logged before this field existed. */
+  matchedWords?: number;
+  /** Skip entries only: total scene-doc words for this segment, from the
+   *  coverage array at sync time. Undefined on older entries. */
+  totalWords?: number;
+  /** Skip entries only: matchedWords / totalWords at sync time. Undefined on
+   *  older entries. */
+  confidence?: number;
+}
+
+/** One Apply Sync run, rolled up. Written alongside that run's entries. */
+export interface SyncRunSummary {
+  syncRunId: string;
+  timestamp: number;
+  totalSegments: number;
+  coveredSegments: number;
+  skippedSegments: number;
+  aborted: boolean;
+  abortReason?: string;
 }
 
 export interface ProjectMeta {

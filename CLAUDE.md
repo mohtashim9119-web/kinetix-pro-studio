@@ -156,6 +156,19 @@ src/
                      #   whisper-cli sidecar; canonicalizeForAlignment/normalize/textMateriallyChanged
                      #   symmetric token canonicalization (D16). No heading-timing logic — the old
                      #   applyHeadingTiming() was deleted in Path B Phase 7 (2026-07-09).
+                     #   R4 snap clamps (SNAP_TOLERANCE_SEC) are conditional on no silence being found
+                     #   for a boundary (silence-sharing fix, 2026-07-25): when a real silence IS found,
+                     #   its center is used directly as the boundary, NOT clamped — the silence is
+                     #   trusted as acoustic ground truth over Whisper's own ~300ms-inaccurate word
+                     #   timestamps. Clamps still apply on the no-silence fallback (token-midpoint)
+                     #   branch. See docs/sync-system-rewrite-architecture.md Section 3.6(f).
+    snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
+                     #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
+                     #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
+                     #   adjacent to skipped ones (middle-gap fix, sync rewrite WS-logs bundle,
+                     #   2026-07-25). Replaces retileCoveredSegments on the primary sync path;
+                     #   retileCoveredSegments (App.tsx) is kept as the fallback when tokens/silences
+                     #   are unavailable to snap against.
     silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
     waveformPeaks.ts # Pure peak-extraction + canvas-drawing primitives for the timeline voiceover
@@ -757,6 +770,14 @@ src/
                      #   waveform collapsed to a single instant canvas), so it never appears on a
                      #   plain project reload/open. Shows one non-technical message ("Preparing your
                      #   project…") + spinner; hides the instant isProcessing clears.
+    SyncLogPanel.tsx # Persistent sync-log panel (WS-logs, sync rewrite, 2026-07-25), right panel,
+                     #   below Text Layers. Renders Project.syncLog (SyncLogEntry[], newest-first),
+                     #   collapsible, color-coded by entry kind (skip=yellow, abort=red, warning=orange,
+                     #   info=gray). Skip entries render a 3-line format: "Segment N skipped — reason" /
+                     #   "[tag] text" / "matched X of Y words (confidence Z)" — backward compatible with
+                     #   older log entries that lack the tag/match-count fields. Clear-log requires
+                     #   confirmation. Tested in SyncLogPanel.test.tsx; the log-update logic itself
+                     #   (append/cap/persist) is tested separately in services/syncLog.test.ts.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with

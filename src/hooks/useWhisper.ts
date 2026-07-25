@@ -30,7 +30,7 @@ async function alignSegmentsFromCachedTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   durationSecs: number,
-): Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[] }> {
+): Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[]; silences: SilenceInterval[] }> {
   const silences = await fetchAndDetectSilences(audioAsset);
   const alignments = alignScenestoTranscript(segments, tokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
@@ -52,7 +52,7 @@ async function alignSegmentsFromCachedTranscript(
   // by the applyAnchorBasedTiming pass below, which only re-derives
   // startTime/duration from anchors, not match quality.
   const final = applyAnchorBasedTiming(updated, durationSecs);
-  return { segments: final, coverage: alignments };
+  return { segments: final, coverage: alignments, silences };
 }
 
 export interface UseWhisperApi {
@@ -73,13 +73,19 @@ export interface UseWhisperApi {
    * matchedWords/totalWords) alongside the re-timed `segments`, so the caller
    * (App.tsx's handleApplySyncFromFiles) can run the coverage gate before
    * committing.
+   *
+   * The detected `silences` are returned too (middle-gap position-offset fix):
+   * the orchestrator re-snaps the covered-only boundaries after filtering
+   * (`snapCoveredBoundaries`), and that needs the same silence set this call
+   * already detected — re-detecting it at the call site would decode the audio
+   * a second time for identical output.
    */
   alignFromCache: (
     audioAsset: Asset,
     segments: VideoSegment[],
     tokens: TranscriptToken[],
     durationSecs: number,
-  ) => Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[] }>;
+  ) => Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[]; silences: SilenceInterval[] }>;
 }
 
 export function useWhisper(): UseWhisperApi {
