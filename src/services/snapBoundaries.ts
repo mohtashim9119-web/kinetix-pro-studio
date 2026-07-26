@@ -37,16 +37,14 @@
 //
 // The boundary math below is a faithful port of the reference implementation in
 // `alignScenestoTranscript` — same search window, same closest-centre silence
-// pick, same `usedSilences` exclusivity, same monotonic check, same
-// fallback-only R4 clamps —
-// so that on an all-covered project (nothing skipped) this function reproduces
-// the aligner's boundaries exactly. Only the ARRAY it walks is different.
+// pick, same `usedSilences` exclusivity, same monotonic check — so that on an
+// all-covered project (nothing skipped) this function reproduces the aligner's
+// boundaries exactly. Only the ARRAY it walks is different.
 // ---------------------------------------------------------------------------
 
 import type { VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import type { SegmentAlignment } from './whisperService';
-import { SNAP_TOLERANCE_SEC } from './syncConstants';
 
 /** The pipeline's uniform 3-decimal rounding (matches distributeSegmentTimes /
  *  applyAnchorBasedTiming / retileCoveredSegments). */
@@ -71,13 +69,11 @@ const MIN_SEGMENT_DURATION = 0.1;
  *  - `nextSpokenStart` = start of segment i+1's FIRST matched transcript word
  *  - search a window centred on their midpoint for an unused detected silence;
  *    the boundary is the chosen silence's midpoint, or the two spoken edges'
- *    midpoint when no silence overlaps the window
- *  - when NO silence was found, clamp that fallback midpoint into
- *    [lastSpokenEnd - SNAP_TOLERANCE_SEC, nextSpokenStart + SNAP_TOLERANCE_SEC]
- *    (doc §3.6, R4). A boundary that came from a real silence is NOT clamped —
- *    the silence is acoustic ground truth and outranks Whisper's ~300ms-error
- *    word timestamps, which were otherwise dragging boundaries back out of the
- *    silence they were meant to split
+ *    midpoint when no silence overlaps the window. A boundary that came from a
+ *    real silence is never clamped — the silence is acoustic ground truth and
+ *    outranks Whisper's ~300ms-error word timestamps; the no-silence fallback
+ *    is simply the token midpoint, which inherently lies within the spoken-word
+ *    range and needs no clamp post-processing
  *  - write it to both sides: `kept[i].duration` ends there, `kept[i+1].startTime`
  *    and `anchorStart` begin there
  *
@@ -171,25 +167,8 @@ export function snapCoveredBoundaries(
       boundary = (lastSpokenEnd + nextSpokenStart) / 2;
     }
 
-    // R4 clamps (doc §3.6) — FALLBACK CASE ONLY, mirroring the reference
-    // implementation in `alignScenestoTranscript`. A detected silence is
-    // acoustic ground truth and outranks Whisper's ~300ms-error word
-    // timestamps, so its centre is never clamped against them; clamping it was
-    // pulling boundaries back out of the very silence they were meant to split
-    // (measured: silence 6.56-7.12, centre 6.84, clamped to 6.55 — before the
-    // silence starts). The clamps still bound the no-silence token-midpoint
-    // estimate: backward first, then forward; if the two tolerance windows
-    // don't overlap (segments too close for a clean boundary), the honest
-    // answer is their midpoint.
-    if (!gap) {
-      const backwardBound = lastSpokenEnd - SNAP_TOLERANCE_SEC;
-      const forwardBound = nextSpokenStart + SNAP_TOLERANCE_SEC;
-      boundary = Math.max(boundary, backwardBound);
-      boundary = Math.min(boundary, forwardBound);
-      if (backwardBound > forwardBound) {
-        boundary = (backwardBound + forwardBound) / 2;
-      }
-    }
+    // No-silence fallback: boundary = token midpoint. The midpoint inherently
+    // lies within the spoken-word range; no clamp post-processing needed.
 
     const snapped = round3(boundary);
     curr.duration = round3(Math.max(MIN_SEGMENT_DURATION, snapped - curr.startTime));

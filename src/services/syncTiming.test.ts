@@ -21,7 +21,7 @@ import {
   FULL_MISMATCH_MESSAGE,
 } from '../App';
 import { snapCoveredBoundaries } from './snapBoundaries';
-import { LOW_CONFIDENCE_RATIO, SNAP_TOLERANCE_SEC } from './syncConstants';
+import { LOW_CONFIDENCE_RATIO } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -1734,7 +1734,7 @@ describe('WS1b — empty-input hard aborts', () => {
 // the silence they were meant to split, handing the whole silence to one side
 // instead of sharing it 50/50.
 // ===========================================================================
-describe('WS1b — silence-snap clamps (fallback only; SNAP_TOLERANCE_SEC = 0.150)', () => {
+describe('WS1b — silence-snap boundaries (silence found = ground truth, no-silence = token midpoint)', () => {
   it('a silence centre beyond nextSpokenStart + tolerance is NOT clamped (silence wins)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
@@ -1794,16 +1794,15 @@ describe('WS1b — silence-snap clamps (fallback only; SNAP_TOLERANCE_SEC = 0.15
     expect(results[1]!.t0).toBeCloseTo(3.0, 5);
   });
 
-  it('conflicting clamps (backward bound > forward bound) resolve to their midpoint on the no-silence fallback', () => {
+  it('no-silence fallback with inverted bounds (lastSpokenEnd > nextSpokenStart) still lands at the plain midpoint', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
     ];
-    // lastSpokenEnd (bravo) = 2.0 -> backwardBound = 1.85.
-    // nextSpokenStart (charlie) = 1.6 -> forwardBound = 1.75.
-    // backwardBound (1.85) > forwardBound (1.75): the tolerance windows don't
-    // overlap (segments' spoken words sit too close together) — the fallback
-    // boundary lands at the midpoint of the two clamp bounds, 1.80.
+    // lastSpokenEnd (bravo) = 2.0; nextSpokenStart (charlie) = 1.6 — the
+    // segments' spoken words overlap/sit too close together (a degenerate
+    // Whisper timing case). There are no clamps to resolve this anymore — the
+    // honest answer is just the midpoint of the two spoken edges, 1.80.
     const tokens: TranscriptToken[] = [
       { text: 'alpha', startSec: 0.0, endSec: 1.0 },
       { text: 'bravo', startSec: 1.0, endSec: 2.0 },
@@ -1815,13 +1814,13 @@ describe('WS1b — silence-snap clamps (fallback only; SNAP_TOLERANCE_SEC = 0.15
     expect(results[1]!.t0).toBeCloseTo(1.8, 5);
   });
 
-  it('the same conflicting-bounds fixture keeps the silence centre when a silence IS found', () => {
+  it('the same inverted-bounds fixture keeps the silence centre when a silence IS found', () => {
     // Same tokens as above, but a real silence now overlaps the search window
     // ([0.8, 3.0] here, capped at next's last spoken end). Its centre (2.7) is
-    // outside BOTH tolerance bounds and is kept: the clamps no longer apply to
-    // a silence-derived boundary. This is the deliberate precedence rule, not
-    // an oversight — the search window already bounds the silence to the pair's
-    // own spoken extent.
+    // far from either spoken edge and is kept: a silence-derived boundary is
+    // never clamped. This is the deliberate precedence rule, not an oversight —
+    // the search window already bounds the silence to the pair's own spoken
+    // extent.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
@@ -1838,27 +1837,27 @@ describe('WS1b — silence-snap clamps (fallback only; SNAP_TOLERANCE_SEC = 0.15
     expect(results[1]!.t0).toBeCloseTo(2.7, 5);
   });
 
-  it('the no-silence fallback always lands inside the R4 tolerance window', () => {
-    // The fallback boundary is the spoken-word midpoint, which is inside
-    // [lastSpokenEnd - tol, nextSpokenStart + tol] by construction whenever the
-    // two edges are in order — and collapses to that same midpoint via the
-    // conflicting-bounds branch when they are not. The clamps therefore cannot
-    // move a fallback boundary; they remain as an explicit guard on the one
-    // branch where an unbounded estimate would otherwise be possible.
-    const inOrder: VideoSegment[] = [
+  it('no-silence fallback boundary = token midpoint, no clamps applied', () => {
+    // The fallback boundary is always exactly the spoken-word midpoint, even
+    // when that value would have sat outside the old ±0.150s tolerance
+    // window — there is no clamp post-processing on this branch anymore.
+    const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
     ];
-    const inOrderTokens: TranscriptToken[] = [
+    // lastSpokenEnd (bravo) = 2.0; nextSpokenStart (charlie) = 4.0. The old
+    // tolerance window would have been [1.85, 4.15] — the midpoint (3.0) sits
+    // well outside a ±0.150s clamp of either edge, yet is exactly what the
+    // fallback produces.
+    const tokens: TranscriptToken[] = [
       { text: 'alpha', startSec: 0.0, endSec: 1.0 },
       { text: 'bravo', startSec: 1.0, endSec: 2.0 },
       { text: 'charlie', startSec: 4.0, endSec: 4.5 },
       { text: 'delta', startSec: 4.5, endSec: 5.0 },
     ];
-    const r1 = alignScenestoTranscript(inOrder, inOrderTokens, []);
-    expect(r1[0]!.t1).toBeGreaterThanOrEqual(2.0 - SNAP_TOLERANCE_SEC);
-    expect(r1[0]!.t1).toBeLessThanOrEqual(4.0 + SNAP_TOLERANCE_SEC);
-    expect(r1[0]!.t1).toBeCloseTo(3.0, 5);
+    const results = alignScenestoTranscript(segments, tokens, []);
+    expect(results[0]!.t1).toBeCloseTo((2.0 + 4.0) / 2, 5);
+    expect(results[1]!.t0).toBeCloseTo((2.0 + 4.0) / 2, 5);
   });
 });
 
@@ -1945,54 +1944,70 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(out[1]!.duration).toBeCloseTo(3.5, 6);
   });
 
-  it('does NOT clamp a silence midpoint that sits beyond SNAP_TOLERANCE_SEC of the spoken edges (both directions)', () => {
-    // Silence-sharing fix: the R4 clamps are the no-silence fallback's guard,
-    // not the silence path's. A detected silence is acoustic ground truth and
-    // outranks Whisper's word timestamps in both directions.
-    // Forward: a silence centred at 2.6, past nextSpokenStart (2.0) + tolerance.
+  it('does NOT clamp a silence midpoint that sits beyond ±0.15s of the spoken edges (both directions)', () => {
+    // Silence-sharing fix: a detected silence is acoustic ground truth and
+    // outranks Whisper's word timestamps in both directions — there is no
+    // clamp on this branch at all (the old fallback-only clamps are gone).
+    // Forward: a silence centred at 2.6, well past nextSpokenStart (2.0).
     {
       const { segments, tokens, alignments } = twoCoveredSegments();
       const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 2.3, endSec: 2.9 }], 5);
       expect(out[1]!.startTime).toBeCloseTo(2.6, 6);           // NOT 2.15
-      expect(out[1]!.startTime).toBeGreaterThan(2.0 + SNAP_TOLERANCE_SEC);
+      expect(out[1]!.startTime).toBeGreaterThan(2.0 + 0.15);
     }
-    // Backward: a silence centred at 0.45, before lastSpokenEnd (1.0) - tolerance.
+    // Backward: a silence centred at 0.45, well before lastSpokenEnd (1.0).
     {
       const { segments, tokens, alignments } = twoCoveredSegments();
       const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 0.2, endSec: 0.7 }], 5);
       expect(out[1]!.startTime).toBeCloseTo(0.45, 6);          // NOT 0.85
-      expect(out[1]!.startTime).toBeLessThan(1.0 - SNAP_TOLERANCE_SEC);
+      expect(out[1]!.startTime).toBeLessThan(1.0 - 0.15);
     }
   });
 
-  it('leaves a silence centre that already sits inside the tolerance window untouched (no regression)', () => {
-    // The pre-fix behaviour for an in-window silence was already "use the
-    // silence centre" — this asserts the fix changed nothing for that case.
+  it('leaves a silence centre that already sits near the spoken edges untouched (no regression)', () => {
+    // The pre-fix behaviour for a near-edge silence was already "use the
+    // silence centre" — this asserts the removal changed nothing for that case.
     const { segments, tokens, alignments } = twoCoveredSegments();
     const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.4, endSec: 1.7 }], 5);
     const boundary = out[1]!.startTime;
     expect(boundary).toBeCloseTo(1.55, 6);
-    expect(boundary).toBeGreaterThanOrEqual(1.0 - SNAP_TOLERANCE_SEC);
-    expect(boundary).toBeLessThanOrEqual(2.0 + SNAP_TOLERANCE_SEC);
   });
 
-  it('still clamps the NO-SILENCE fallback into the R4 tolerance window', () => {
+  it('no-silence fallback boundary = token midpoint, no clamps applied', () => {
+    // Fallback = the spoken-word midpoint (1.5) exactly, with no clamp
+    // post-processing — the old clamp block no longer exists.
     const { segments, tokens, alignments } = twoCoveredSegments();
     const out = snapCoveredBoundaries(segments, alignments, tokens, [], 5);
-    // Fallback = the spoken-word midpoint (1.5), which the clamps bound into
-    // [1.0 - 0.15, 2.0 + 0.15]. The clamp branch runs on this path and only
-    // this path.
-    expect(out[1]!.startTime).toBeGreaterThanOrEqual(1.0 - SNAP_TOLERANCE_SEC);
-    expect(out[1]!.startTime).toBeLessThanOrEqual(2.0 + SNAP_TOLERANCE_SEC);
-    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);
+    expect(out[1]!.startTime).toBeCloseTo((1.0 + 2.0) / 2, 6);
+  });
+
+  it('no-silence fallback with inverted bounds (lastSpokenEnd > nextSpokenStart) still lands at the plain midpoint', () => {
+    // Degenerate case: the two segments' spoken words sit too close together
+    // (or overlap) for a clean boundary. There are no clamps to resolve this
+    // anymore — the honest answer is just the midpoint of the two spoken edges.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 1.6, duration: 1.4, anchorStart: 1.6, anchorSource: 'whisper' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 1.0 },
+      { text: 'bravo', startSec: 1.0, endSec: 2.0 },   // lastSpokenEnd = 2.0
+      { text: 'charlie', startSec: 1.6, endSec: 2.4 }, // nextSpokenStart = 1.6 (< lastSpokenEnd)
+      { text: 'delta', startSec: 2.4, endSec: 3.0 },
+    ];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 3);
+    expect(out[1]!.startTime).toBeCloseTo((2.0 + 1.6) / 2, 6);
   });
 
   it('reproduces the 14-segment regression: silence 6.56-7.12 vs nextSpokenStart 6.40 keeps the 6.84 centre', () => {
     // The exact shape of pair i=2 on the reported 14-segment project. Before the
-    // fix the forward clamp (6.40 + 0.150 = 6.55) pulled the boundary to BEFORE
-    // the silence even started (6.56), handing the whole 0.56s silence to the
-    // next segment. The boundary must be the silence centre, 6.84, so the two
-    // segments share the silence evenly.
+    // silence-sharing fix a forward clamp would have pulled the boundary to
+    // BEFORE the silence even started (6.55), handing the whole 0.56s silence
+    // to the next segment. The boundary must be the silence centre, 6.84, so
+    // the two segments share the silence evenly.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 5.3, duration: 1.1, anchorStart: 5.3, anchorSource: 'whisper' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 6.4, duration: 1.6, anchorStart: 6.4, anchorSource: 'whisper' }),
@@ -2009,7 +2024,7 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 6.56, endSec: 7.12 }], 8);
 
     expect(out[1]!.startTime).toBeCloseTo(6.84, 6);
-    expect(out[1]!.startTime).not.toBeCloseTo(6.4 + SNAP_TOLERANCE_SEC, 6); // the old 6.55
+    expect(out[1]!.startTime).not.toBeCloseTo(6.4 + 0.15, 6); // the old 6.55
     // The silence really is shared 50/50 either side of the boundary.
     expect(out[1]!.startTime - 6.56).toBeCloseTo(7.12 - out[1]!.startTime, 6);
     // …and the aligner's own snap agrees, so preview and the covered re-snap

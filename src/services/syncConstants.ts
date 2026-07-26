@@ -43,12 +43,6 @@ export const MIN_COVERED_RUN_LENGTH = 2;
 // even when a technically-contiguous run exists (matched-on-noise).
 export const NOISE_FLOOR_COVERAGE = 0.1;
 
-// --- Silence-snap tolerance (doc §3.6, R4) ----------------------------------
-// Consumed by whisperService.ts's silence-snap clamps. This is the architecture
-// doc's naming; do not introduce a second constant under a different name for
-// the same tolerance.
-export const SNAP_TOLERANCE_SEC = 0.15;
-
 // --- Deleted by the Round 4 skip-unmatched ruling (doc §10) ------------------
 // MAX_INTERPOLABLE_GAP (R12) is gone with the middle-gap abort: an uncovered
 // segment is SKIPPED from the timeline regardless of how many of them are
