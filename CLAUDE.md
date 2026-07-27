@@ -156,12 +156,10 @@ src/
                      #   whisper-cli sidecar; canonicalizeForAlignment/normalize/textMateriallyChanged
                      #   symmetric token canonicalization (D16). No heading-timing logic — the old
                      #   applyHeadingTiming() was deleted in Path B Phase 7 (2026-07-09).
-                     #   R4 snap clamps (SNAP_TOLERANCE_SEC) are conditional on no silence being found
-                     #   for a boundary (silence-sharing fix, 2026-07-25): when a real silence IS found,
-                     #   its center is used directly as the boundary, NOT clamped — the silence is
-                     #   trusted as acoustic ground truth over Whisper's own ~300ms-inaccurate word
-                     #   timestamps. Clamps still apply on the no-silence fallback (token-midpoint)
-                     #   branch. See docs/sync-system-rewrite-architecture.md Section 3.6(f).
+                     #   Silence-snap: silence found → silence center; no silence → token
+                     #   midpoint. Monotonic safety check only. No clamps (R4 clamps removed as
+                     #   dead code in 5952ea7). See docs/sync-system-rewrite-architecture.md
+                     #   Section 3.6(f).
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
