@@ -76,6 +76,10 @@ See the "Quick Bugs to Fix" section (after Section 10) for the 3 bugs surfaced d
 
 **Snap-clamp dead-code removal (2026-07-26): COMPLETE and verified on macOS Intel x86_64.** `SNAP_TOLERANCE_SEC` clamps removed entirely from `whisperService.ts` and `snapBoundaries.ts` — once the silence-sharing fix made them conditional on `!silenceFound`, the no-silence branch's token midpoint could never actually be moved by them (it is inherently inside the tolerance window), so the clamps were dead code. `SNAP_TOLERANCE_SEC` constant removed from `syncConstants.ts`. Net behavior: silence-found → silence center (no clamp); no-silence → token midpoint (no clamp); monotonic check applies in both cases. See §3.6. 885/885 tests pass. **Verification:** macOS Intel x86_64 only (manual: 14-segment silence-sharing unchanged, 294-segment no regression).
 
+**Token-stealing bug-class fix (2026-07-29, commit `86ffc5a`): DONE.** Per-segment temporal-bounding rescue layered on top of the unchanged global Hirschberg aligner — see §3.16 for the full design. Three-part fix: (1) per-segment temporal bounding (a rescue window around each zero-match segment's own `anchorStart`), (2) a temporal-proximity scoring bonus that breaks ties toward the temporally-correct occurrence of a repeated word, (3) a three-pass rescue (windowed Hirschberg + exact-text scan, then a global unclaimed-token exact-text scan for drifted anchors, then a sliding-window sub-word concatenation scan for Whisper's phoneme-split tokens). Every pass is `globallyClaimed`-exclusive — it can only add a match a segment is missing, never take one another segment's global pass legitimately has. 18 new tests (1025 → 1043); all pre-existing tests pass unchanged. `tsc --noEmit` clean. Manually verified by the user: the scene 152/153 repro is fixed (3/3 matched via the CONCAT fallback pass). Temporary `[s135-diag]`/`[rescue-trace]` production instrumentation fully removed (`grep -rn "s135-diag\|rescue-trace" src` returns zero); the permanent, DEV-gated `[align-recover]` log remains.
+
+**WS6 (2026-07-29): DONE.** Sync rewrite closed. All workstreams WS1a through WS5 complete, plus the token-stealing fix (`86ffc5a`). Regression tag `sync-known-good-2026-07-29` marks the known-good baseline. No open sync items remain tracked (deferred items cleaned per user decision 2026-07-29; multi-language moved to Deferred Polish Features in `project-state.md`). This pass is docs-only — final consistency sweep across `project-state.md`, this file, `CLAUDE.md`, and `docs/history.md`; no source code changed.
+
 ---
 
 ## 2. Current State (the problem)
@@ -369,7 +373,7 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 ### 3.8 Stage-direction / speaker-label stripping + parser fix (S19, R5, N4)
 
-> **Status (2026-07-29, WS5): ALIGNMENT SIDE FULLY IMPLEMENTED — decision 13a + its item-A extension. PARSER FIX (R5/N4) INVESTIGATED AND DELIBERATELY NOT MADE.**
+> **Status (2026-07-29, WS5): ALIGNMENT SIDE FULLY IMPLEMENTED — decision 13a + its item-A extension. PARSER FIX (R5/N4): ACCEPTED AS-IS — user decision 2026-07-29 to stop tracking as open. Regression tests remain as historical locks.**
 >
 > **Landed (WS4, 2026-07-28):** the alignment-side strip, with one deliberate grammar change from (b) below: a `[...]` group **at line start is preserved**, and only bracketed **ALL-CAPS** groups elsewhere in the line are stripped — because the parser fix did not land, line-start brackets are still scene anchors and must survive. Scene-header/transition lines (`INT.`/`EXT.`/`FADE IN:`/`CUT TO:`/`DISSOLVE TO:`) are stripped whole-line, which (b) did not specify. The empty-result fallback in (b)'s final bullet IS implemented.
 >
@@ -399,7 +403,7 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 ### 3.9 Language handling — dual-model detect-then-transcribe (S14, R6)
 
-> **Status (2026-07-28, WS4): NOT IMPLEMENTED — decision 9a, blocked on model provisioning.** Verified empirically against the bundled binary: with only `ggml-base.en.bin` present, whisper-cli answers `-l auto` / `--detect-language` with `main: WARNING: model is not multilingual, ignoring language and translation options` and emits no detected language at all. Step 1 of (b) — bundling `ggml-base.bin` (~148MB on disk) — is therefore a hard prerequisite, not an optimization. Deferred by explicit user decision rather than shipped as code that can never run. `-l en` remains hardcoded; no `lang-warn` log entry kind exists.
+> **Status (2026-07-29): DEFERRED POLISH FEATURE — see `project-state.md` Deferred Polish Features.** Verified empirically against the bundled binary: with only `ggml-base.en.bin` present, whisper-cli answers `-l auto` / `--detect-language` with `main: WARNING: model is not multilingual, ignoring language and translation options` and emits no detected language at all. Step 1 of (b) — bundling `ggml-base.bin` (~148MB on disk) — is therefore a hard prerequisite, not an optimization. Deferred by explicit user decision rather than shipped as code that can never run. `-l en` remains hardcoded; no `lang-warn` log entry kind exists.
 
 **(a) Today.** `-l en` hardcoded (`whisper.rs:249`) against the bundled English-only model `ggml-base.en.bin` (`whisper.rs:54,78,89`; gitignored per `.gitignore:17-18`, provisioning docs in `src-tauri/models/README.md`); non-English audio is force-transcribed as English garbage.
 
@@ -522,7 +526,7 @@ This is a **structural** failure, not merely a scoring one: reproducing it does 
 
 **(e) Files.** `src/services/whisperService.ts` (`extractSegmentAlignments`'s rescue block; `pairScore`/`nwForwardRow`/`nwForwardRowFreeLead`/`nwBackwardRowToFixedEnd`/`hirschbergGlobal`/`alignQueryToSubject` widened to thread an optional per-subject-position bonus, all-zero when omitted; new `temporalBonus`/`findExactSequentialMatches`/`clamp` helpers). `src/services/syncConstants.ts` (`TEMPORAL_TOLERANCE_RATIO/MIN_SEC/MAX_SEC`, `TEMPORAL_BONUS_MAX/CENTRAL_FRACTION`; `MONOTONIC_CARRY_FORWARD_GAP_SEC` is defined but not wired in — see (c)(3)). `src/services/syncTiming.test.ts` ("WS6 — per-segment temporal-bounding rescue", 10 new tests).
 
-**(f) Deferred.** wav2vec2 forced alignment (the WhisperX approach) would lift word-timing precision from Whisper's own ~85% to ~93% by using a dedicated alignment model instead of Whisper's own predicted timestamps, but requires bundling a second ~148MB model. Out of scope for this fix, which addresses the *alignment algorithm's* blind spot, not the underlying timestamp precision.
+**(f) NOT TRACKED — removed from deferred list 2026-07-29 per user decision.** wav2vec2 forced alignment (the WhisperX approach) would lift word-timing precision from Whisper's own ~85% to ~93% by using a dedicated alignment model instead of Whisper's own predicted timestamps, but requires bundling a second ~148MB model. Out of scope for this fix, which addresses the *alignment algorithm's* blind spot, not the underlying timestamp precision. Historical note only — not tracked as an open or deferred item going forward.
 
 ---
 

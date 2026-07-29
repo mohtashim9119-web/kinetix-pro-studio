@@ -20,8 +20,10 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 
 ```
 src/
-  App.tsx            # ~3,588 lines — top-level state, orchestration, playback, export.
-                     #   KNOWN DEFECT, deliberately unfixed (R5/N4, reviewed 2026-07-29):
+  App.tsx            # ~4,229 lines — top-level state, orchestration, playback, export.
+                     #   R5/N4 mid-line bracket split: accepted as-is per user decision
+                     #   2026-07-29. Regression tests in sceneTagParsing.test.ts remain as
+                     #   historical locks.
                      #   parseProjectData's TAG_REGEX (/(?=\[[^\]]*\])/, ~line 292) splits the
                      #   scene doc before EVERY bracket anywhere in the text, not just at a line
                      #   start. So a mid-line non-speech annotation — "Line one [laughs]
@@ -244,27 +246,37 @@ src/
                      #   (decision 9a) is deliberately absent: the bundled model is English-only
                      #   (ggml-base.en.bin), and whisper-cli ignores -l auto/--detect-language on
                      #   an .en model — it needs the multilingual ggml-base.bin bundled first.
-                     #   Per-segment temporal-bounding RESCUE (WS6, token-stealing fix, 2026-07-29,
-                     #   docs/sync-system-rewrite-architecture.md §3.16) — extractSegmentAlignments'
-                     #   single global Hirschberg pass is UNCHANGED (every pre-WS6 test depends on
-                     #   its whole-document optimality); a targeted rescue runs after it for any
-                     #   segment left at zero true matches: bounds a search to a window around its
-                     #   own anchorStart (tolerance = clamp(0.1*slotDuration, 1.5, 5.0)s,
-                     #   syncConstants.ts), scores candidates with a temporal-proximity bonus
-                     #   (+0.3 max at the window center, decaying to 0 at the edge of the central
-                     #   50%, added only to a true textual match — pairScore/nwForwardRow/etc now
-                     #   thread an optional per-subject-position bonus array, all-zero when
+                     #   Per-segment temporal-bounding RESCUE (token-stealing fix, 2026-07-29,
+                     #   commit 86ffc5a, docs/sync-system-rewrite-architecture.md §3.16) —
+                     #   extractSegmentAlignments' single global Hirschberg pass is UNCHANGED
+                     #   (every pre-fix test depends on its whole-document optimality); a targeted
+                     #   THREE-PASS rescue runs after it for any segment left at zero true matches,
+                     #   gated on the segment having a real anchorStart (no anchor -> no
+                     #   trustworthy window -> untouched). Every pass may claim ONLY tokens no
+                     #   other segment's global pass already truly matched (globallyClaimed) — a
+                     #   DEVIATION from the spec's literal monotonic-carry-forward default (a time
+                     #   floor off the previous segment's own t1): that floor was tried and
+                     #   rejected because the overflowing segment's own real trailing match is
+                     #   definitionally AFTER the stolen tokens, so it re-excludes the very words
+                     #   the rescue exists to recover. Pass 1 bounds the search to a window around
+                     #   the segment's own anchorStart (tolerance = clamp(0.1*slotDuration, 1.5,
+                     #   5.0)s, syncConstants.ts): bounded Hirschberg with a temporal-proximity
+                     #   bonus (+0.3 max at the window center, decaying to 0 at the edge of the
+                     #   central 50%, added only to a true textual match — pairScore/nwForwardRow/
+                     #   etc now thread an optional per-subject-position bonus array, all-zero when
                      #   omitted so alignQueryToSubject's existing callers/tests are byte-identical),
-                     #   then falls back to a plain exact-text scan of the same window. Fires ONLY
-                     #   when the segment has a real anchorStart (no anchor -> no trustworthy
-                     #   window -> untouched) and may claim ONLY tokens no other segment's global
-                     #   pass already truly matched (globallyClaimed) — this is a DEVIATE from the
-                     #   spec's literal monotonic-carry-forward default (a time floor off the
-                     #   previous segment's own t1): that floor was tried and rejected because the
-                     #   overflowing segment's own real trailing match is definitionally AFTER the
-                     #   stolen tokens, so it re-excludes the very words the rescue exists to
-                     #   recover. Logs `[align-recover] seg=<i> recovered <n>/<total> via fallback`
-                     #   (DEV-gated, permanent) on success.
+                     #   falling back to a plain exact-text scan of the same window. Pass 2 fires
+                     #   only when Pass 1 found nothing (empty window, or a drifted anchorStart —
+                     #   verified live at 7.6s off — placing the segment's real words outside it
+                     #   entirely): an exact-text scan over EVERY unclaimed token, document order,
+                     #   no time bound. Pass 3 fires only when Pass 2 also found nothing: Whisper
+                     #   sometimes splits one word across touching-timestamp sub-word tokens
+                     #   ("linen" -> "lin"+"en"), so it concatenates up to MAX_CONCAT_TOKENS (3)
+                     #   consecutive unclaimed tokens (gap <= MAX_CONCAT_GAP_SEC, 0.3s,
+                     #   syncConstants.ts) to try to form each query word exactly — same
+                     #   unclaimed-only, document-order guarantee as Pass 2, just multi-token.
+                     #   Logs `[align-recover] seg=<i> recovered <n>/<total> via <pass>`
+                     #   (DEV-gated, permanent) on any successful recovery.
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
