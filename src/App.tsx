@@ -785,6 +785,7 @@ export function filterToCoveredSegments(
       confidence: cov?.confidence,
     });
   }
+
   return { kept, skipped, keptAlignments };
 }
 

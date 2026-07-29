@@ -100,6 +100,43 @@ export const NOISE_FLOOR_COVERAGE = 0.1;
 export const MAX_LOG_ENTRIES = 500;
 export const MAX_SYNC_RUN_SUMMARIES = 10;
 
+// --- Per-segment temporal bounding (token-stealing fix, WS6, 2026-07-29) ----
+// Root cause: pure global Hirschberg alignment has no temporal awareness — a
+// segment whose narration overflows its expected slot can consume the NEXT
+// segment's transcript words as substitution candidates, starving it of
+// matches (verified via temporary production instrumentation, scene 152/153 repro).
+// The fix bounds each segment's alignment search to a time window around its
+// own expected slot (extractSegmentAlignments in whisperService.ts) instead
+// of letting every segment compete for the entire transcript.
+//
+// Window = [expectedStart - tolerance, expectedEnd + tolerance], where
+// expectedStart/expectedEnd are the segment's own anchor and the next
+// segment's anchor (or audio end for the last segment).
+export const TEMPORAL_TOLERANCE_RATIO = 0.1;
+export const TEMPORAL_TOLERANCE_MIN_SEC = 1.5;
+export const TEMPORAL_TOLERANCE_MAX_SEC = 5.0;
+// Monotonic carry-forward gap (spec default, kept for interface completeness
+// — NOT used by the current rescue implementation). The original design used
+// this to push a segment's window past the previous segment's own committed
+// t1 (`prevAnchor + this gap`). That was tried and REJECTED: in exactly the
+// overflow scenario the rescue targets, the previous (overflowing) segment's
+// own true trailing match can itself land AFTER the tokens the rescue needs
+// to recover (that IS the bug — see whisperService.ts's `extractSegmentAlignments`
+// doc comment) — a t1-based floor would re-exclude the very words it exists
+// to rescue. The rescue instead gets the same "never double-claim a token"
+// guarantee, at the exact token level rather than a coarser time cutoff, from
+// `globallyClaimed` (every transcript word ANY segment truly matched in the
+// unchanged global pass) — see whisperService.ts. Left here in case a future
+// revision wants a hybrid floor; not wired in today.
+export const MONOTONIC_CARRY_FORWARD_GAP_SEC = 0.1;
+// Temporal-proximity scoring bonus: within a segment's window, a token whose
+// timestamp falls in the CENTRAL 50% gets an additive bonus (max at dead
+// center, linear decay to 0 at the 50% mark), added ONLY to a true textual
+// match — it can never turn a wrong word into a match, only rank competing
+// correct-word matches (breaks ties toward the temporally-correct one).
+export const TEMPORAL_BONUS_MAX = 0.3;
+export const TEMPORAL_BONUS_CENTRAL_FRACTION = 0.5;
+
 // --- Malformed-token filter (WS4 Feature 4, decision 14a) -------------------
 // A whisper token whose end lands past the end of the audio is malformed — but
 // "past the end" needs slack: the container's reported duration and the decoded
@@ -108,6 +145,18 @@ export const MAX_SYNC_RUN_SUMMARIES = 10;
 // error besides. This tolerance is what keeps a legitimate final word from
 // being discarded for ending a few milliseconds "after" the file does.
 export const MALFORMED_TOKEN_DURATION_TOLERANCE_SEC = 0.5;
+
+// --- Sub-word concatenation rescue (Pass 3, token-stealing fix follow-up,
+// 2026-07-29) ---------------------------------------------------------------
+// Whisper occasionally splits a single word across multiple sub-word tokens
+// on a phoneme boundary ("linen" -> "lin"+"en", "flax" -> "fl"+"ax"). Pass
+// 2's single-token exact match can never find these — no individual token
+// equals the full word — so Pass 3 tries concatenating up to
+// MAX_CONCAT_TOKENS consecutive, still-unclaimed tokens whose timestamps
+// touch within MAX_CONCAT_GAP_SEC of each other. D1/D2, verified via the
+// scene 153 repro ("linen"/"flax" both split into exactly 2 fragments).
+export const MAX_CONCAT_TOKENS = 3;
+export const MAX_CONCAT_GAP_SEC = 0.3;
 
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).

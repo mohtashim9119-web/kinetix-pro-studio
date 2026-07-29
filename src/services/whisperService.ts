@@ -5,6 +5,9 @@ import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
 import {
   ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE,
   LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
+  TEMPORAL_TOLERANCE_RATIO, TEMPORAL_TOLERANCE_MIN_SEC, TEMPORAL_TOLERANCE_MAX_SEC,
+  TEMPORAL_BONUS_MAX, TEMPORAL_BONUS_CENTRAL_FRACTION,
+  MAX_CONCAT_TOKENS, MAX_CONCAT_GAP_SEC,
 } from './syncConstants';
 
 export type { TranscriptToken };
@@ -159,28 +162,43 @@ export interface TokenAlignment {
   score: number;                   // optimal semi-global alignment score
 }
 
-function pairScore(a: string, b: string): number {
-  return a === b ? ALIGN_MATCH_SCORE : ALIGN_MISMATCH_SCORE;
+// Temporal-proximity scoring bonus (Part 2, token-stealing fix, WS6): an
+// additive per-subject-position bonus, applied ONLY when the pair is a true
+// textual match — a mismatch/substitution score is always exactly
+// ALIGN_MISMATCH_SCORE, so the bonus can never turn a wrong word into a
+// match, only rank competing correct-word matches (see computeTemporalBonus
+// below). Every existing caller passes an all-zero bonus array (the default
+// in alignQueryToSubject), so this is a pure extension — behavior is
+// byte-identical to the pre-WS6 scorer whenever no bonus is supplied.
+function pairScore(a: string, b: string, bonus: number): number {
+  return a === b ? ALIGN_MATCH_SCORE + bonus : ALIGN_MISMATCH_SCORE;
 }
 
 function reversedSlice(arr: string[]): string[] {
   return arr.slice().reverse();
 }
 
+function reversedFloats(arr: Float64Array): Float64Array {
+  return arr.slice().reverse();
+}
+
 /**
  * Forward Needleman-Wunsch scoring — returns the LAST ROW of the global
  * alignment DP (charged gaps on both sides). O(m) space. Length m+1.
+ * `sBonus` runs parallel to `s` (per-subject-position temporal bonus, see
+ * `pairScore`) — Float64Array, not Int32Array, since a bonus is fractional
+ * (max +0.3) and would otherwise be truncated to 0 on every non-integer value.
  */
-function nwForwardRow(q: string[], s: string[]): Int32Array {
+function nwForwardRow(q: string[], s: string[], sBonus: Float64Array): Float64Array {
   const m = s.length;
-  let prev = new Int32Array(m + 1);
+  let prev = new Float64Array(m + 1);
   for (let j = 1; j <= m; j++) prev[j] = j * ALIGN_GAP_SCORE;
-  let curr = new Int32Array(m + 1);
+  let curr = new Float64Array(m + 1);
   for (let i = 1; i <= q.length; i++) {
     curr[0] = i * ALIGN_GAP_SCORE;
     const qi = q[i - 1]!;
     for (let j = 1; j <= m; j++) {
-      const diag = prev[j - 1]! + pairScore(qi, s[j - 1]!);
+      const diag = prev[j - 1]! + pairScore(qi, s[j - 1]!, sBonus[j - 1]!);
       const del = prev[j]! + ALIGN_GAP_SCORE;   // query word consumed, subject gap
       const ins = curr[j - 1]! + ALIGN_GAP_SCORE; // subject word consumed, query gap
       curr[j] = Math.max(diag, del, ins);
@@ -196,15 +214,15 @@ function nwForwardRow(q: string[], s: string[]): Int32Array {
  * argmax column is the optimal semi-global END column (free trailing subject
  * gap), and its max value is the optimal semi-global score. O(m) space.
  */
-function nwForwardRowFreeLead(q: string[], s: string[]): Int32Array {
+function nwForwardRowFreeLead(q: string[], s: string[], sBonus: Float64Array): Float64Array {
   const m = s.length;
-  let prev = new Int32Array(m + 1); // row 0 = all zeros: free leading subject gap
-  let curr = new Int32Array(m + 1);
+  let prev = new Float64Array(m + 1); // row 0 = all zeros: free leading subject gap
+  let curr = new Float64Array(m + 1);
   for (let i = 1; i <= q.length; i++) {
     curr[0] = i * ALIGN_GAP_SCORE;  // query deletions are always charged
     const qi = q[i - 1]!;
     for (let j = 1; j <= m; j++) {
-      const diag = prev[j - 1]! + pairScore(qi, s[j - 1]!);
+      const diag = prev[j - 1]! + pairScore(qi, s[j - 1]!, sBonus[j - 1]!);
       const del = prev[j]! + ALIGN_GAP_SCORE;
       const ins = curr[j - 1]! + ALIGN_GAP_SCORE;
       curr[j] = Math.max(diag, del, ins);
@@ -220,16 +238,16 @@ function nwForwardRowFreeLead(q: string[], s: string[]): Int32Array {
  * G[0][*] over columns 0..b; its argmax is the optimal START column a for the
  * fixed end b. O(b) space.
  */
-function nwBackwardRowToFixedEnd(q: string[], s: string[], b: number): Int32Array {
+function nwBackwardRowToFixedEnd(q: string[], s: string[], b: number, sBonus: Float64Array): Float64Array {
   const n = q.length;
-  let next = new Int32Array(b + 1); // row i = n
+  let next = new Float64Array(b + 1); // row i = n
   for (let j = 0; j <= b; j++) next[j] = (b - j) * ALIGN_GAP_SCORE;
-  let curr = new Int32Array(b + 1);
+  let curr = new Float64Array(b + 1);
   for (let i = n - 1; i >= 0; i--) {
     curr[b] = (n - i) * ALIGN_GAP_SCORE;
     const qi = q[i]!;
     for (let j = b - 1; j >= 0; j--) {
-      const diag = next[j + 1]! + pairScore(qi, s[j]!);
+      const diag = next[j + 1]! + pairScore(qi, s[j]!, sBonus[j]!);
       const del = next[j]! + ALIGN_GAP_SCORE;
       const ins = curr[j + 1]! + ALIGN_GAP_SCORE;
       curr[j] = Math.max(diag, del, ins);
@@ -244,11 +262,12 @@ function nwBackwardRowToFixedEnd(q: string[], s: string[], b: number): Int32Arra
  * subject infix, absolute offset sOff). Recursive divide-and-conquer in O(n+m)
  * space; produces the same optimal alignment as full-matrix NW. Records true
  * matches into `matchedSubjectOf` (absolute subject indices) and appends one op
- * per query word to `ops`.
+ * per query word to `ops`. `sBonus` runs parallel to `s`, sliced identically at
+ * every recursive step.
  */
 function hirschbergGlobal(
   q: string[], qOff: number,
-  s: string[], sOff: number,
+  s: string[], sBonus: Float64Array, sOff: number,
   matchedSubjectOf: Int32Array,
   ops: TokenAlignmentOp[],
 ): void {
@@ -262,12 +281,14 @@ function hirschbergGlobal(
   if (n === 1) {
     // One query word against a non-empty subject span: aligning always beats
     // deleting (align − delete = bestScore + 2 ≥ 1 for these scores), so pick
-    // the best subject position (leftmost on ties, for determinism).
+    // the best subject position (leftmost on ties, for determinism — the
+    // temporal bonus, when present, breaks a real tie toward the temporally
+    // closer occurrence instead of leaving it to array order).
     const x = q[0]!;
     let bestJ = 0;
-    let bestSc = pairScore(x, s[0]!);
+    let bestSc = pairScore(x, s[0]!, sBonus[0]!);
     for (let j = 1; j < m; j++) {
-      const sc = pairScore(x, s[j]!);
+      const sc = pairScore(x, s[j]!, sBonus[j]!);
       if (sc > bestSc) { bestSc = sc; bestJ = j; }
     }
     if (x === s[bestJ]) {
@@ -281,16 +302,16 @@ function hirschbergGlobal(
   const qMid = n >> 1;
   const qL = q.slice(0, qMid);
   const qR = q.slice(qMid);
-  const scoreL = nwForwardRow(qL, s);
-  const scoreR = nwForwardRow(reversedSlice(qR), reversedSlice(s));
+  const scoreL = nwForwardRow(qL, s, sBonus);
+  const scoreR = nwForwardRow(reversedSlice(qR), reversedSlice(s), reversedFloats(sBonus));
   let sMid = 0;
   let best = -Infinity;
   for (let j = 0; j <= m; j++) {
     const v = scoreL[j]! + scoreR[m - j]!;
     if (v > best) { best = v; sMid = j; }
   }
-  hirschbergGlobal(qL, qOff, s.slice(0, sMid), sOff, matchedSubjectOf, ops);
-  hirschbergGlobal(qR, qOff + qMid, s.slice(sMid), sOff + sMid, matchedSubjectOf, ops);
+  hirschbergGlobal(qL, qOff, s.slice(0, sMid), sBonus.slice(0, sMid), sOff, matchedSubjectOf, ops);
+  hirschbergGlobal(qR, qOff + qMid, s.slice(sMid), sBonus.slice(sMid), sOff + sMid, matchedSubjectOf, ops);
 }
 
 /**
@@ -301,8 +322,18 @@ function hirschbergGlobal(
  * fixed end fixes the start a — then runs a standard global Hirschberg over
  * q × subject[a:b). The free leading/trailing subject gaps (skipped prefix/
  * suffix) cost nothing, exactly modelling the partial-coverage design.
+ *
+ * `subjectBonus`, if supplied, is a per-subject-position additive score bonus
+ * (Part 2, token-stealing fix, WS6) — same length as `subject`, applied only
+ * to true textual matches (see `pairScore`). Omitted ⇒ an all-zero bonus, so
+ * every pre-WS6 caller (and this function's own property/unit tests) gets the
+ * exact original scores back.
  */
-export function alignQueryToSubject(query: string[], subject: string[]): TokenAlignment {
+export function alignQueryToSubject(
+  query: string[],
+  subject: string[],
+  subjectBonus?: ArrayLike<number>,
+): TokenAlignment {
   // __ALIGN_INSTRUMENT__ (doc §3.1 note): time the Hirschberg pass and log the
   // sequence lengths + optimal score, so the linear-space / O(n·m) time claims
   // can be verified on the 294-segment fixture without a separate profiling pass.
@@ -320,8 +351,10 @@ export function alignQueryToSubject(query: string[], subject: string[]): TokenAl
     return { ops, matchedSubjectOf, score: n * ALIGN_GAP_SCORE };
   }
 
+  const sBonus = subjectBonus ? Float64Array.from(subjectBonus) : new Float64Array(m);
+
   // End column b + optimal semi-global score (free leading subject gap).
-  const lastRow = nwForwardRowFreeLead(query, subject);
+  const lastRow = nwForwardRowFreeLead(query, subject, sBonus);
   let b = 0;
   let score = lastRow[0]!;
   for (let j = 1; j <= m; j++) {
@@ -331,14 +364,14 @@ export function alignQueryToSubject(query: string[], subject: string[]): TokenAl
   // Start column a (best start for the fixed end b). b === 0 ⇒ empty infix.
   let a = 0;
   if (b > 0) {
-    const g0 = nwBackwardRowToFixedEnd(query, subject, b);
+    const g0 = nwBackwardRowToFixedEnd(query, subject, b, sBonus);
     let bestStart = g0[0]!;
     for (let j = 1; j <= b; j++) {
       if (g0[j]! > bestStart) { bestStart = g0[j]!; a = j; }
     }
   }
 
-  hirschbergGlobal(query, 0, subject.slice(a, b), a, matchedSubjectOf, ops);
+  hirschbergGlobal(query, 0, subject.slice(a, b), sBonus.slice(a, b), a, matchedSubjectOf, ops);
   // Recursion appends in increasing-qi order already; sort defensively.
   ops.sort((x, y) => x.qi - y.qi);
 
@@ -381,12 +414,176 @@ export interface AlignResult {
  */
 export type SegmentAlignment = AlignResult;
 
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * Temporal-proximity scoring bonus (Part 2, token-stealing fix, WS6): additive
+ * bonus for a token at `tokenStartSec`, peaking at `TEMPORAL_BONUS_MAX` dead
+ * center of the window and decaying linearly to 0 at the edge of the central
+ * `TEMPORAL_BONUS_CENTRAL_FRACTION` band (0 beyond it). Applied only to a true
+ * textual match by `pairScore` — this function has no notion of word identity,
+ * so it can never turn a wrong word into a match.
+ */
+function temporalBonus(tokenStartSec: number, expectedCenter: number, halfWindow: number): number {
+  if (halfWindow <= 0) return 0;
+  const normalizedDistance = Math.abs(tokenStartSec - expectedCenter) / halfWindow;
+  return Math.max(0, TEMPORAL_BONUS_MAX * (1 - normalizedDistance / TEMPORAL_BONUS_CENTRAL_FRACTION));
+}
+
+/**
+ * Part 3 fallback: greedy, order-preserving EXACT-text matching of `queryWords`
+ * against `windowed` (a segment's own bounded, temporally-scoped token-word
+ * list). For each query word in order, takes the first not-yet-consumed
+ * windowed word with identical text — a strict subsequence match, so it can
+ * only ever find words that are genuinely, verbatim present in the window; it
+ * cannot introduce a false positive the way a fuzzy/substitution match could.
+ */
+function findExactSequentialMatches(
+  queryWords: string[],
+  windowed: Array<{ word: string; globalIdx: number }>,
+): Array<{ queryIdx: number; globalIdx: number }> {
+  const out: Array<{ queryIdx: number; globalIdx: number }> = [];
+  let cursor = 0;
+  for (let qi = 0; qi < queryWords.length; qi++) {
+    const word = queryWords[qi]!;
+    for (let j = cursor; j < windowed.length; j++) {
+      if (windowed[j]!.word === word) {
+        out.push({ queryIdx: qi, globalIdx: windowed[j]!.globalIdx });
+        cursor = j + 1;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Sliding-window concatenation match (Pass 3 fallback, sub-word merge). For
+ * each query word in order, walks the (already unclaimed) token-word list and
+ * tries concatenating 1..`maxConcatTokens` consecutive entries — touching
+ * within `maxConcatGapSec` of each other — to form the query word exactly.
+ * Recovers Whisper's sub-word phoneme splits ("linen" -> "lin"+"en") that
+ * `findExactSequentialMatches` structurally cannot: no single token equals
+ * the full word, so a single-token exact match always fails on these.
+ *
+ * `unclaimed` must be in ascending `globalIdx` order (an index into the
+ * caller's `tokenWords` array); `tokenWords`/`tokens` are only used to look
+ * up each candidate's start/end timestamps for the touching-tolerance check.
+ * Concatenation is exact-match only (lowercased, no separator — sub-word
+ * fragments have no inter-word space) and only ever consumes tokens the
+ * caller has already excluded as claimed — same "can only add, never steal"
+ * guarantee as Pass 1/2. Returns matches in query order; a query word with no
+ * match is simply omitted (partial recovery is acceptable).
+ */
+export function findConcatenatingMatches(
+  queryWords: string[],
+  unclaimed: Array<{ word: string; globalIdx: number }>,
+  tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }>,
+  tokens: TranscriptToken[],
+  options: { maxConcatTokens: number; maxConcatGapSec: number },
+): Array<{ queryIdx: number; tokenStartIdx: number; tokenEndIdx: number }> {
+  const { maxConcatTokens, maxConcatGapSec } = options;
+  const out: Array<{ queryIdx: number; tokenStartIdx: number; tokenEndIdx: number }> = [];
+  const used = new Set<number>();
+  let searchFrom = 0;
+
+  for (let qi = 0; qi < queryWords.length; qi++) {
+    const queryWord = queryWords[qi]!.toLowerCase();
+    let matchedHere = false;
+
+    for (let start = searchFrom; start < unclaimed.length && !matchedHere; start++) {
+      if (used.has(unclaimed[start]!.globalIdx)) continue;
+
+      for (let span = 1; span <= maxConcatTokens && start + span - 1 < unclaimed.length; span++) {
+        let ok = true;
+        for (let k = 0; k < span; k++) {
+          if (used.has(unclaimed[start + k]!.globalIdx)) { ok = false; break; }
+        }
+        if (!ok) break; // a claimed token blocks this AND every larger span from `start`
+
+        for (let k = 1; k < span; k++) {
+          const prevWord = tokenWords[unclaimed[start + k - 1]!.globalIdx]!;
+          const currWord = tokenWords[unclaimed[start + k]!.globalIdx]!;
+          const prevEnd = tokens[prevWord.tokenIdx]?.endSec ?? prevWord.startSec;
+          const currStart = currWord.startSec;
+          if (currStart - prevEnd > maxConcatGapSec) { ok = false; break; }
+        }
+        if (!ok) break; // gap too large — a larger span only widens the gap further
+
+        const concatenated = unclaimed
+          .slice(start, start + span)
+          .map(u => u.word.toLowerCase())
+          .join('');
+        if (concatenated === queryWord) {
+          out.push({
+            queryIdx: qi,
+            tokenStartIdx: unclaimed[start]!.globalIdx,
+            tokenEndIdx: unclaimed[start + span - 1]!.globalIdx,
+          });
+          for (let k = 0; k < span; k++) used.add(unclaimed[start + k]!.globalIdx);
+          searchFrom = start + span;
+          matchedHere = true;
+          break;
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
 /**
  * Builds the scene-doc query, aligns it to the transcript with the Hirschberg
  * semi-global aligner, and reads per-segment results off the single global
  * alignment (doc §3.1.1). Exported as the seam WS1b threads coverage through;
  * `alignScenestoTranscript` consumes these AlignResults, then runs the unchanged
  * Step-2/silence/clamp stages and narrows the return to `{ t0, t1 }` for now.
+ *
+ * --- Per-segment temporal-bounding rescue (Parts 1-3, token-stealing fix, WS6) ---
+ * Root cause (verified via production instrumentation, since removed): pure
+ * global Hirschberg alignment has no temporal awareness, so a segment whose
+ * narration overflows its expected slot can consume the NEXT segment's real
+ * transcript words as SUBSTITUTION candidates. A substitution never enters
+ * `matchedSubjectOf` (only a true equal-word match does), so it costs the
+ * overflowing segment nothing and never touches its own confidence — but it
+ * can still force the DP's monotonic path such that the wronged neighbor ends
+ * up with zero true matches of its own, even though its words are genuinely
+ * present in the audio.
+ *
+ * The global alignment above is left completely unchanged — it is what every
+ * pre-WS6 test locks in, including cases (repeated phrases disambiguated by
+ * unique surrounding context, a shared word correctly resolved to the segment
+ * that fully explains it) that a from-scratch per-segment independent aligner
+ * cannot reproduce without perfect anchor data, because it has no equivalent
+ * of the global DP's whole-document optimality. Per-segment bounding is
+ * instead layered on top as a narrowly-scoped RESCUE:
+ *   - it only ever runs for a segment the global pass gave ZERO true matches
+ *     (`matchedCount === 0`, the exact symptom of the bug);
+ *   - only when the segment has a real timing anchor (`anchorStart`) — with no
+ *     anchor there is no trustworthy window to bound against, so the segment's
+ *     global (unchanged) classification stands;
+ *   - and it is only ever allowed to claim a transcript word no OTHER segment
+ *     already truly matched in the global pass (`globallyClaimed` below) — it
+ *     can add a match a segment is missing, never take one another segment
+ *     legitimately has. This is what makes the rescue safe to layer on: it can
+ *     only improve a zero-confidence outcome, never regress a working one.
+ * Full write-up: docs/sync-system-rewrite-architecture.md, "Per-Segment
+ * Temporal Bounding".
+ *
+ * The exact-text fallback (Part 3) is itself two passes: Pass 1 scans only
+ * `windowed` (tokens inside the anchor-bounded window) — fast, and correct
+ * whenever `anchorStart` is accurate. Pass 2 fires only when Pass 1 found
+ * nothing (empty window, or a window that simply missed the real words) and
+ * scans EVERY unclaimed transcript token, in document order, with no time
+ * bound at all — needed because a drifted `anchorStart` can place a
+ * segment's real audio position well outside its own rescue window (verified
+ * live: a segment's anchor was 7.6s off, landing its real words past the far
+ * edge of the window built around that anchor). Pass 2 is still
+ * exact-text-only and still restricted to `globallyClaimed`-free tokens, so
+ * it carries the same "can only add, never steal" guarantee as Pass 1 — it
+ * just isn't temporally bounded.
  */
 export function extractSegmentAlignments(
   segments: VideoSegment[],
@@ -401,11 +598,15 @@ export function extractSegmentAlignments(
 
   // Expand each token into all its words — Whisper tokens may contain multiple
   // words (e.g. " hello world") and every word must be individually matchable.
-  const tokenWords: Array<{ word: string; tokenIdx: number }> = [];
+  // `startSec` is the OWNING TOKEN's start (a token's internal words have no
+  // individually finer timestamp) — good enough for the rescue window check,
+  // which only needs to place a word within a multi-second slot, not sub-token
+  // precision.
+  const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> = [];
   for (let i = 0; i < tokens.length; i++) {
     const words = normalize(tokens[i]!.text);
     for (const word of words) {
-      if (word.length > 0) tokenWords.push({ word, tokenIdx: i });
+      if (word.length > 0) tokenWords.push({ word, tokenIdx: i, startSec: tokens[i]!.startSec });
     }
   }
 
@@ -427,6 +628,16 @@ export function extractSegmentAlignments(
 
   const subjectWords = tokenWords.map(t => t.word);
   const matchedSubjectOf = alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
+
+  // Every transcript-word index any segment TRULY matched, system-wide — the
+  // rescue below must never touch these (see the function-level doc comment).
+  const globallyClaimed = new Set<number>();
+  for (let qi = 0; qi < matchedSubjectOf.length; qi++) {
+    const sj = matchedSubjectOf[qi]!;
+    if (sj >= 0) globallyClaimed.add(sj);
+  }
+
+  const audioDuration = tokens[tokens.length - 1]?.endSec ?? 0;
 
   // Per-segment extraction from the single global alignment (doc §3.1.1, R11):
   //   t0 = startSec of the FIRST matched transcript word in the segment's range
@@ -457,6 +668,129 @@ export function extractSegmentAlignments(
         matchedCount++;
         if (firstSub < 0) firstSub = sj;
         lastSub = sj;
+      }
+    }
+
+    // --- Token-stealing rescue (Parts 1-3, WS6) --------------------------
+    const seg = segments[si]!;
+    if (matchedCount === 0 && seg.anchorStart !== undefined) {
+      const expectedStart = seg.anchorStart;
+      const expectedEnd = segments[si + 1]?.anchorStart ?? audioDuration;
+      const rawDuration = Math.max(0, expectedEnd - expectedStart);
+      const tolerance = clamp(TEMPORAL_TOLERANCE_RATIO * rawDuration, TEMPORAL_TOLERANCE_MIN_SEC, TEMPORAL_TOLERANCE_MAX_SEC);
+      const windowStart = expectedStart - tolerance;
+      const windowEnd = expectedEnd + tolerance;
+
+      // Monotonic exclusivity (C3's intent, satisfied more precisely than a
+      // time-based floor): the rescue must never re-consume a token another
+      // segment's GLOBAL pass genuinely matched — `globallyClaimed`, checked
+      // below — rather than a floor derived from the previous segment's own
+      // committed t1. A literal `prevAnchor + gap` floor was tried and
+      // rejected: in exactly the overflow scenario this rescue targets, the
+      // previous (overflowing) segment's own true trailing match can itself
+      // land AFTER the stolen tokens (that IS the bug), so a t1-based floor
+      // re-excludes the very words rescue exists to recover. `globallyClaimed`
+      // gives the same "don't double-claim" guarantee at the exact token
+      // level instead of a coarser time cutoff, without that failure mode.
+      const windowed: Array<{ word: string; globalIdx: number; startSec: number }> = [];
+      for (let gi = 0; gi < tokenWords.length; gi++) {
+        if (globallyClaimed.has(gi)) continue; // never take another segment's real match
+        const tw = tokenWords[gi]!;
+        if (tw.startSec >= windowStart && tw.startSec < windowEnd) {
+          windowed.push({ word: tw.word, globalIdx: gi, startSec: tw.startSec });
+        }
+      }
+
+      const segQueryWords = queryWords.slice(range.start, range.end);
+      let localMatches: Array<{ queryIdx: number; globalIdx: number }> = [];
+      let recoveredVia: 'windowed' | 'global' | 'concat' | null = null;
+
+      // Pass 1 — bounded to the segment's expected time window (fast, and
+      // correct whenever anchorStart is accurate): Hirschberg with a
+      // temporal-proximity bonus, then a plain exact-text scan of the same
+      // window if that finds nothing.
+      if (windowed.length > 0) {
+        const expectedCenter = (expectedStart + expectedEnd) / 2;
+        const halfWindow = (windowEnd - windowStart) / 2;
+        const subjectBonus = new Float64Array(windowed.length);
+        for (let j = 0; j < windowed.length; j++) {
+          subjectBonus[j] = temporalBonus(windowed[j]!.startSec, expectedCenter, halfWindow);
+        }
+
+        const localAlign = alignQueryToSubject(segQueryWords, windowed.map(w => w.word), subjectBonus);
+        for (let lq = 0; lq < segQueryWords.length; lq++) {
+          const lj = localAlign.matchedSubjectOf[lq]!;
+          if (lj >= 0) localMatches.push({ queryIdx: lq, globalIdx: windowed[lj]!.globalIdx });
+        }
+
+        // Part 3 — bounded Hirschberg still found nothing (e.g. the window's
+        // free words don't line up well enough to win any DP cell); fall back
+        // to a plain exact-text scan of the same (already-filtered) window.
+        if (localMatches.length === 0) {
+          localMatches = findExactSequentialMatches(segQueryWords, windowed);
+        }
+
+        if (localMatches.length > 0) recoveredVia = 'windowed';
+      }
+
+      // Pass 2 (NEW) — the windowed pass found nothing, either because the
+      // window itself was empty or because anchorStart has drifted far
+      // enough that the segment's real words fall outside it entirely
+      // (verified live: a segment's anchorStart was 7.6s off its actual
+      // audio position, landing its real words well outside the rescue
+      // window). Search EVERY unclaimed transcript token, in document order,
+      // exact-text only — no temporal bound, no fuzzy matching — so it can
+      // still only ever recover words genuinely present and not already
+      // claimed by another segment's true match.
+      if (localMatches.length === 0) {
+        const allUnclaimed: Array<{ word: string; globalIdx: number }> = [];
+        for (let gi = 0; gi < tokenWords.length; gi++) {
+          if (globallyClaimed.has(gi)) continue; // never take another segment's real match
+          allUnclaimed.push({ word: tokenWords[gi]!.word, globalIdx: gi });
+        }
+        localMatches = findExactSequentialMatches(segQueryWords, allUnclaimed);
+        if (localMatches.length > 0) recoveredVia = 'global';
+      }
+
+      // Pass 3 (NEW) — Pass 2's single-token exact match still found nothing.
+      // Whisper sometimes splits one word across multiple touching-timestamp
+      // sub-word tokens ("linen" -> "lin"+"en", "flax" -> "fl"+"ax"); no
+      // individual unclaimed token equals the full word, so Pass 3 tries
+      // concatenating up to MAX_CONCAT_TOKENS consecutive unclaimed tokens
+      // (touching within MAX_CONCAT_GAP_SEC) to form each query word exactly.
+      // Same document-order, unclaimed-only, exact-text scan as Pass 2 — just
+      // with multi-token candidates — so it carries the same "can only add,
+      // never steal" guarantee.
+      let concatMatches: Array<{ queryIdx: number; tokenStartIdx: number; tokenEndIdx: number }> = [];
+      if (localMatches.length === 0) {
+        const allUnclaimed: Array<{ word: string; globalIdx: number }> = [];
+        for (let gi = 0; gi < tokenWords.length; gi++) {
+          if (globallyClaimed.has(gi)) continue; // never take another segment's real match
+          allUnclaimed.push({ word: tokenWords[gi]!.word, globalIdx: gi });
+        }
+        concatMatches = findConcatenatingMatches(
+          segQueryWords, allUnclaimed, tokenWords, tokens,
+          { maxConcatTokens: MAX_CONCAT_TOKENS, maxConcatGapSec: MAX_CONCAT_GAP_SEC },
+        );
+        if (concatMatches.length > 0) recoveredVia = 'concat';
+      }
+
+      if (localMatches.length > 0) {
+        localMatches.sort((a, b) => a.globalIdx - b.globalIdx);
+        matchedCount = localMatches.length;
+        firstSub = localMatches[0]!.globalIdx;
+        lastSub = localMatches[localMatches.length - 1]!.globalIdx;
+        if (import.meta.env.DEV) {
+          const label = recoveredVia === 'global' ? 'GLOBAL fallback (outside window)' : 'fallback';
+          console.log(`[align-recover] seg=${si} recovered ${matchedCount}/${totalWords} via ${label}`);
+        }
+      } else if (concatMatches.length > 0) {
+        matchedCount = concatMatches.length;
+        firstSub = concatMatches[0]!.tokenStartIdx;
+        lastSub = concatMatches[concatMatches.length - 1]!.tokenEndIdx;
+        if (import.meta.env.DEV) {
+          console.log(`[align-recover] seg=${si} recovered ${matchedCount}/${totalWords} via CONCAT fallback (sub-word merge)`);
+        }
       }
     }
 

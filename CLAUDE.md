@@ -244,6 +244,27 @@ src/
                      #   (decision 9a) is deliberately absent: the bundled model is English-only
                      #   (ggml-base.en.bin), and whisper-cli ignores -l auto/--detect-language on
                      #   an .en model — it needs the multilingual ggml-base.bin bundled first.
+                     #   Per-segment temporal-bounding RESCUE (WS6, token-stealing fix, 2026-07-29,
+                     #   docs/sync-system-rewrite-architecture.md §3.16) — extractSegmentAlignments'
+                     #   single global Hirschberg pass is UNCHANGED (every pre-WS6 test depends on
+                     #   its whole-document optimality); a targeted rescue runs after it for any
+                     #   segment left at zero true matches: bounds a search to a window around its
+                     #   own anchorStart (tolerance = clamp(0.1*slotDuration, 1.5, 5.0)s,
+                     #   syncConstants.ts), scores candidates with a temporal-proximity bonus
+                     #   (+0.3 max at the window center, decaying to 0 at the edge of the central
+                     #   50%, added only to a true textual match — pairScore/nwForwardRow/etc now
+                     #   thread an optional per-subject-position bonus array, all-zero when
+                     #   omitted so alignQueryToSubject's existing callers/tests are byte-identical),
+                     #   then falls back to a plain exact-text scan of the same window. Fires ONLY
+                     #   when the segment has a real anchorStart (no anchor -> no trustworthy
+                     #   window -> untouched) and may claim ONLY tokens no other segment's global
+                     #   pass already truly matched (globallyClaimed) — this is a DEVIATE from the
+                     #   spec's literal monotonic-carry-forward default (a time floor off the
+                     #   previous segment's own t1): that floor was tried and rejected because the
+                     #   overflowing segment's own real trailing match is definitionally AFTER the
+                     #   stolen tokens, so it re-excludes the very words the rescue exists to
+                     #   recover. Logs `[align-recover] seg=<i> recovered <n>/<total> via fallback`
+                     #   (DEV-gated, permanent) on success.
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments

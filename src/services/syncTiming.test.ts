@@ -10,6 +10,7 @@ import {
   computeCoverageSummary,
   countTranscriptWords,
   filterMalformedTokens,
+  findConcatenatingMatches,
 } from './whisperService';
 import {
   evaluateCoverageGate,
@@ -27,6 +28,10 @@ import {
   MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
   MIN_COVERED_RUN_LENGTH,
   NOISE_FLOOR_COVERAGE,
+  TEMPORAL_TOLERANCE_MIN_SEC,
+  TEMPORAL_TOLERANCE_MAX_SEC,
+  MAX_CONCAT_TOKENS,
+  MAX_CONCAT_GAP_SEC,
 } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
@@ -2831,5 +2836,526 @@ describe('WS5 — speaker-label stripping through the aligner', () => {
     ];
     const segs = [makeSegment({ id: 'x', order: 0, text: 'narrator hello' })];
     expect(extractSegmentAlignments(segs, tokens)[0]!.confidence).toBe(1);
+  });
+});
+
+// ===========================================================================
+// WS6 — Per-segment temporal-bounding rescue (token-stealing fix, 2026-07-29)
+// ===========================================================================
+// Root cause (doc: "Per-Segment Temporal Bounding"): pure global Hirschberg
+// alignment has no temporal awareness. A segment whose narration overflows
+// its expected slot can have its own trailing words genuinely match transcript
+// tokens positioned AFTER a neighbor's real content — monotonicity then
+// structurally blocks that neighbor from reaching backward to its own words,
+// even though nobody ever truly claims them (they end up as insertions/
+// substitutions, never entering `matchedSubjectOf`). `extractSegmentAlignments`
+// now runs a targeted RESCUE, after the unchanged global pass, for any segment
+// left at zero true matches: bound a search to a window around its own
+// anchorStart, score candidates with a temporal-proximity bonus, and fall back
+// to a plain exact-text scan — but ONLY ever using transcript words no other
+// segment's global pass already truly matched (`globallyClaimed`), and only
+// when the segment has a real anchorStart to bound against.
+describe('WS6 — per-segment temporal-bounding rescue', () => {
+  // Shared repro shape across most of this block: a preceding segment (P)
+  // whose OWN real trailing match is genuinely spoken AFTER a target segment's
+  // (T) real words, monotonically blocking the global pass from ever giving T
+  // its true match — the actual mechanism reproduced from the reported bug
+  // (verified via now-removed temporary production instrumentation), not a hand-waved
+  // stand-in for it.
+
+  it('1) token-stealing repro: an overflowing neighbor traps a segment at 0/3; rescue recovers 3/3, not a fuzzy/partial match', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's151', order: 0, text: 'wool comes from sheep', anchorStart: 0 }),
+      // s152 "overflows": its script continues past the disputed words with
+      // its OWN real trailing content ("denim is durable"), genuinely spoken
+      // AFTER "linen from flax" — which is s153's content, not s152's.
+      makeSegment({ id: 's152', order: 1, text: 'garbled overflow xyzzy plugh mumble denim is durable', anchorStart: 3 }),
+      makeSegment({ id: 's153', order: 2, text: 'linen from flax', anchorStart: 6 }),
+      makeSegment({ id: 's154', order: 3, text: 'silk is smooth too', anchorStart: 9 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('wool comes from sheep', 0.0, 0.4),
+      ...wordTokens('linen from flax', 6.0, 0.4),   // s153's real, single utterance
+      ...wordTokens('denim is durable', 7.5, 0.4),  // s152's own real trailing content, spoken AFTER
+      ...wordTokens('silk is smooth too', 9.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // Sanity: the trap is real under the unchanged global pass — s152 only
+    // truly matches its own trailing "denim is durable" (3 of 8 words); the
+    // disputed "linen from flax" never enters ANYONE's true-match set.
+    expect(results[1]!.matchedWords).toBe(3);
+    expect(results[1]!.totalWords).toBe(8);
+
+    // The fix: s153 is recovered to a full, exact 3/3 — not a partial or
+    // fuzzy recovery.
+    expect(results[2]!.matched).toBe(true);
+    expect(results[2]!.matchedWords).toBe(3);
+    expect(results[2]!.totalWords).toBe(3);
+    expect(results[2]!.confidence).toBe(1);
+    // Recovered from its real audio position (6.0s), not some other anchor.
+    expect(results[2]!.t0).toBeCloseTo(6.0, 3);
+    expect(results[2]!.t1).toBeCloseTo(7.2, 3);
+
+    // Neighbors are undisturbed.
+    expect(results[0]!.confidence).toBe(1);
+    expect(results[3]!.confidence).toBe(1);
+  });
+
+  it('2) bounding prevents overflow: a zero-matched segment does not reach into a temporally distant neighbor\'s real content', () => {
+    // A has 5 genuinely unmatched words (nothing in the transcript resembles
+    // them) and a real anchor; B's true content is spoken WELL past both A's
+    // window and a naive expectation, but still inside B's OWN generous window.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'a', order: 0, text: 'zeta yotta wobble plink quorx', anchorStart: 0 }),
+      makeSegment({ id: 'b', order: 1, text: 'hello world today', anchorStart: 10 }),
+      makeSegment({ id: 'c', order: 2, text: 'closing remarks now', anchorStart: 30 }),
+    ];
+    // A's rescue window: [0-1.5, 10+1.5] = [-1.5, 11.5] (tolerance floors at
+    // 1.5s for a 10s slot). B's real "hello world today" is spoken at 18s —
+    // 8s past B's own anchor, and well outside A's window.
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('hello world today', 18.0, 0.4),
+      ...wordTokens('closing remarks now', 30.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // A finds nothing — its window never reaches B's real content.
+    expect(results[0]!.matched).toBe(false);
+    expect(results[0]!.matchedWords).toBe(0);
+
+    // B recovers its own words fully, from its own (wider) window.
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(3);
+    expect(results[1]!.t0).toBeCloseTo(18.0, 3);
+
+    expect(results[2]!.confidence).toBe(1);
+  });
+
+  it('3) monotonic exclusivity: a segment cannot recover a word another segment genuinely, globally matched', () => {
+    // Only one "linen" is ever spoken, immediately followed by "shoe". C's
+    // isolated "linen" and D's contiguous "linen shoe" tie in the unchanged
+    // global pass, and the tie resolves entirely to D (a stronger, contiguous
+    // 2-word claim) — C is left genuinely zero-matched. C's own rescue window
+    // ([12-1.5, 15+1.5] = [10.5, 16.5]) temporally overlaps D's real "linen"
+    // token (t=15), so this is a real test of the exclusion, not a no-op.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'c', order: 0, text: 'linen', anchorStart: 12 }),
+      makeSegment({ id: 'd', order: 1, text: 'linen shoe', anchorStart: 15 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('linen shoe', 15.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // Sanity: the tie really did resolve entirely to D under the unchanged
+    // global pass, leaving C at zero — the precondition for this test.
+    expect(results[0]!.matched).toBe(false);
+    expect(results[0]!.matchedWords).toBe(0);
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(2);
+
+    // C's rescue must NOT poach D's real "linen" even though it falls inside
+    // C's own window — C stays uncovered rather than stealing it back.
+    expect(results[0]!.matched).toBe(false);
+    expect(results[0]!.matchedWords).toBe(0);
+  });
+
+  it('4) temporal bonus breaks ties: a free (unclaimed) word occurring twice in the window resolves to the temporally central occurrence', () => {
+    // P's own real trailing match ("gamma delta") is spoken after BOTH
+    // "linen" occurrences, monotonically blocking the global pass from
+    // giving C either one — exactly the trap from case (1), but engineered
+    // so TWO free candidates exist in C's window: one near the window edge
+    // (t=11), one dead center (t=15, matching C's expectedCenter exactly).
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'alpha bravo gamma delta', anchorStart: 0 }),
+      makeSegment({ id: 'c', order: 1, text: 'linen', anchorStart: 12 }),
+      makeSegment({ id: 'next', order: 2, text: 'zulu yankee', anchorStart: 18 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo', 0.0, 0.4),   // P's real leading match
+      ...wordTokens('linen', 11.0, 0.4),        // edge candidate (outside central 50%)
+      ...wordTokens('linen', 15.0, 0.4),        // center candidate (= C's expectedCenter)
+      ...wordTokens('gamma delta', 21.0, 0.4),  // P's real trailing match, AFTER both linens
+      ...wordTokens('zulu yankee', 23.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // C's window is [12-1.5, 18+1.5] = [10.5, 19.5] (tolerance floors at
+    // 1.5s for a 6s slot) — both linens qualify. expectedCenter = 15, exactly
+    // the second occurrence's timestamp; the first is 4s off in a 4.5s
+    // half-window (outside the central 50% band, bonus 0). The rescue must
+    // pick the t=15 occurrence, not merely the first one found.
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(1);
+    expect(results[1]!.t0).toBeCloseTo(15.0, 3);
+  });
+
+  it('5) fallback recovery: a zero-matched segment\'s words, genuinely present in its window, are recovered', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker torque plexus quiver zircon', anchorStart: 0 }),
+      makeSegment({ id: 'c', order: 1, text: 'echo foxtrot golf', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('able baker', 0.0, 0.4),
+      ...wordTokens('echo foxtrot golf', 6.4, 0.4),        // C's real words, genuinely present
+      ...wordTokens('torque plexus quiver zircon', 9.0, 0.4), // P's real trailing match (4 words,
+      // outweighing C's 3 so the global tie resolves decisively toward P — see
+      // case (1)'s comment on why a same-count trailing match is a fragile tie),
+      // spoken AFTER C's words
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(3);
+    expect(results[1]!.totalWords).toBe(3);
+    expect(results[1]!.confidence).toBe(1);
+  });
+
+  it('6) no false positives: recovery does not fire when a zero-matched segment\'s words are genuinely absent from its window', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker charlie delta', anchorStart: 0 }),
+      makeSegment({ id: 'd', order: 1, text: 'nonexistent phantom words', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    // D's words never occur anywhere in the transcript, at any time.
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('able baker charlie delta', 0.0, 0.4),
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    expect(results[1]!.matched).toBe(false);
+    expect(results[1]!.matchedWords).toBe(0);
+    expect(results[1]!.confidence).toBe(0);
+  });
+
+  it('7) regression: a cleanly-anchored, correctly-aligning multi-segment project is unaffected by bounding', () => {
+    // 12 segments, each with an accurate anchorStart and real, matching
+    // audio — no overflow, no ambiguity. Bounding must not cost any of them
+    // a match they'd have gotten from the (unchanged) global pass alone.
+    const words = [
+      'one', 'two', 'three', 'four', 'five', 'six',
+      'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve',
+    ];
+    const segments: VideoSegment[] = words.map((w, i) =>
+      makeSegment({ id: `w${i}`, order: i, text: `segment number ${w}`, anchorStart: i * 2 }),
+    );
+    const tokens: TranscriptToken[] = words.flatMap((w, i) =>
+      wordTokens(`segment number ${w}`, i * 2, 0.4),
+    );
+
+    const results = extractSegmentAlignments(segments, tokens);
+    expect(results.every(r => r.matched)).toBe(true);
+    expect(results.every(r => r.confidence === 1)).toBe(true);
+    expect(results.map(r => r.matchedWords)).toEqual(words.map(() => 3));
+  });
+
+  it('8) tolerance scaling: a long segment caps at 5s, a short segment floors at 1.5s (Pass 1\'s window boundary — Pass 2 still recovers past it via the unbounded global fallback)', () => {
+    // Long segment: a 60s slot (anchorStart 0 -> next anchorStart 60) caps
+    // Pass 1's window tolerance at TEMPORAL_TOLERANCE_MAX_SEC (5s), not
+    // 0.1*60=6s. A word at expectedEnd + 4.5s (inside the cap) recovers via
+    // Pass 1 (windowed). A word at expectedEnd + 5.5s (outside the cap) no
+    // longer goes unrecovered as it once did — Pass 2's unbounded global
+    // fallback still finds it, since it's genuinely present and unclaimed.
+    // The tolerance cap now decides WHICH pass recovers a word, not whether
+    // it's recovered at all — asserted here via the [align-recover] log's
+    // "via fallback" (Pass 1) vs "via ... GLOBAL fallback" (Pass 2) label.
+    // Uses the same "P blocks C" trap as case (1) — P's own trailing content
+    // ("torque plexus"), spoken after "linen", is what forces C to zero
+    // matches in the first place; without it C would just match "linen"
+    // directly from the unchanged global pass and never reach the rescue's
+    // window logic at all.
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const longSlot = (offsetSec: number)=> {
+      const linenAt = 65 + offsetSec;
+      const segments: VideoSegment[] = [
+        makeSegment({ id: 'p', order: 0, text: 'alpha bravo torque plexus', anchorStart: 0 }),
+        makeSegment({ id: 'c', order: 1, text: 'linen', anchorStart: 5 }),
+        makeSegment({ id: 'next', order: 2, text: 'zulu yankee', anchorStart: 65 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        ...wordTokens('alpha bravo', 0.0, 0.4),
+        ...wordTokens('linen', linenAt, 0.4),
+        ...wordTokens('torque plexus', linenAt + 5, 0.4), // P's real trailing match, after linen
+        ...wordTokens('zulu yankee', linenAt + 10, 0.4),
+      ];
+      return extractSegmentAlignments(segments, tokens)[1]!;
+    };
+    // next.anchorStart=65 -> tolerance = clamp(0.1*60, 1.5, 5) = 5 (capped).
+    // window = [5-5, 65+5] = [0, 70).
+    logSpy.mockClear();
+    expect(longSlot(4.5).matched).toBe(true);   // linen at 69.5 < 70: inside Pass 1's window
+    expect(logSpy.mock.calls.some(a => String(a[0]).includes('via fallback'))).toBe(true);
+    expect(logSpy.mock.calls.some(a => String(a[0]).includes('GLOBAL'))).toBe(false);
+
+    logSpy.mockClear();
+    expect(longSlot(5.5).matched).toBe(true);   // linen at 70.5 >= 70: outside the capped window,
+    // but still genuinely present and unclaimed — recovered by Pass 2 instead.
+    expect(logSpy.mock.calls.some(a => String(a[0]).includes('GLOBAL fallback'))).toBe(true);
+
+    // Short segment: a 10s slot floors tolerance at 1.5s, not 0.1*10=1.0s.
+    // Same P-blocks-C trap as above.
+    const shortSlot = (offsetSec: number)=> {
+      const linenAt = 15 + offsetSec;
+      const segments: VideoSegment[] = [
+        makeSegment({ id: 'p', order: 0, text: 'alpha bravo torque plexus', anchorStart: 0 }),
+        makeSegment({ id: 'c', order: 1, text: 'linen', anchorStart: 5 }),
+        makeSegment({ id: 'next', order: 2, text: 'zulu yankee', anchorStart: 15 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        ...wordTokens('alpha bravo', 0.0, 0.4),
+        ...wordTokens('linen', linenAt, 0.4),
+        ...wordTokens('torque plexus', linenAt + 5, 0.4),
+        ...wordTokens('zulu yankee', linenAt + 10, 0.4),
+      ];
+      return extractSegmentAlignments(segments, tokens)[1]!;
+    };
+    // next.anchorStart=15 -> tolerance = clamp(0.1*10, 1.5, 5) = 1.5 (floored).
+    // window = [5-1.5, 15+1.5] = [3.5, 16.5).
+    logSpy.mockClear();
+    expect(shortSlot(1.2).matched).toBe(true);   // 16.2 < 16.5: inside (only the 1.5s floor allows this)
+    expect(logSpy.mock.calls.some(a => String(a[0]).includes('GLOBAL'))).toBe(false);
+
+    logSpy.mockClear();
+    expect(shortSlot(1.8).matched).toBe(true);   // 16.8 >= 16.5: outside even the floored window,
+    // recovered by Pass 2 instead.
+    expect(logSpy.mock.calls.some(a => String(a[0]).includes('GLOBAL fallback'))).toBe(true);
+
+    logSpy.mockRestore();
+  });
+
+  it('9) last-segment window: with no successor, the window extends to audio end + tolerance', () => {
+    // Same P-blocks-C trap: P's own trailing ("torque plexus") is spoken
+    // after "omega", so the unchanged global pass gives it to P instead,
+    // leaving the last segment genuinely zero-matched and dependent on the
+    // rescue reaching all the way to audioDuration + tolerance.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'alpha bravo torque plexus', anchorStart: 0 }),
+      makeSegment({ id: 'last', order: 1, text: 'omega', anchorStart: 5 }),
+    ];
+    // Audio actually ends at ~10.8s (the last real token's endSec, "plexus").
+    // "omega" is spoken at 7.9s — past the nominal anchor but within the
+    // floored 1.5s tolerance added past the (now later) audio end.
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo', 0.0, 0.4),
+      ...wordTokens('omega', 7.9, 0.5),        // last segment's real word
+      ...wordTokens('torque plexus', 10.0, 0.4), // P's real trailing match, after omega
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(1);
+    expect(results[1]!.t0).toBeCloseTo(7.9, 3);
+  });
+
+  it('10) global fallback: a drifted anchorStart places the real words entirely outside the windowed pass, recovered by the unbounded second pass', () => {
+    // Mirrors case (1)'s trap exactly (same text, same order-inversion that
+    // gives s153 zero true matches in the global pass) but with anchorStart
+    // left at its original (now-wrong) estimate while the REAL audio has
+    // drifted far away from it — reproducing the live bug: s153's
+    // anchorStart (6) implies a rescue window of roughly [4.5, 10.5], but its
+    // real "linen from flax" audio is actually spoken at 50s, ~40s past the
+    // window's far edge. The windowed pass (Pass 1) must find nothing; the
+    // new unbounded global pass (Pass 2) must still recover it, since the
+    // words are genuinely present and unclaimed by any other segment.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's151', order: 0, text: 'wool comes from sheep', anchorStart: 0 }),
+      makeSegment({ id: 's152', order: 1, text: 'garbled overflow xyzzy plugh mumble denim is durable', anchorStart: 3 }),
+      makeSegment({ id: 's153', order: 2, text: 'linen from flax', anchorStart: 6 }),
+      makeSegment({ id: 's154', order: 3, text: 'silk is smooth too', anchorStart: 9 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('wool comes from sheep', 0.0, 0.4),
+      ...wordTokens('linen from flax', 50.0, 0.4),    // s153's real content, ~44s past its anchor
+      ...wordTokens('denim is durable', 52.0, 0.4),   // s152's real trailing content, after linen
+      ...wordTokens('silk is smooth too', 54.0, 0.4),
+    ];
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // Sanity: the trap is real — s153 gets zero true matches from the
+    // unchanged global pass (same mechanism as case 1), regardless of the
+    // absolute timestamps used (the global pass is text/order-based, not
+    // time-based).
+    expect(results[1]!.matchedWords).toBe(3); // s152 keeps its own trailing match
+
+    // The windowed rescue (Pass 1) cannot reach t=50 from a window built
+    // around anchorStart=6 — it must come up empty, forcing Pass 2.
+    // Pass 2 (global, unbounded) recovers the full, exact 3/3.
+    expect(results[2]!.matched).toBe(true);
+    expect(results[2]!.matchedWords).toBe(3);
+    expect(results[2]!.totalWords).toBe(3);
+    expect(results[2]!.confidence).toBe(1);
+    expect(results[2]!.t0).toBeCloseTo(50.0, 3);
+
+    const recoverLogs = logSpy.mock.calls
+      .map(args => String(args[0]))
+      .filter(msg => msg.startsWith('[align-recover]') && msg.includes('seg=2'));
+    expect(recoverLogs.length).toBe(1);
+    expect(recoverLogs[0]).toContain('GLOBAL fallback');
+
+    logSpy.mockRestore();
+  });
+
+  it('[align-recover] log fires only on a genuine 0-match-with-words-present recovery, never on a true 0-match', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    // Recovered case (mirrors test 5).
+    const recoveredSegments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker torque plexus quiver zircon', anchorStart: 0 }),
+      makeSegment({ id: 'c', order: 1, text: 'echo foxtrot golf', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    const recoveredTokens: TranscriptToken[] = [
+      ...wordTokens('able baker', 0.0, 0.4),
+      ...wordTokens('echo foxtrot golf', 6.4, 0.4),
+      ...wordTokens('torque plexus quiver zircon', 9.0, 0.4),
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+    extractSegmentAlignments(recoveredSegments, recoveredTokens);
+    const recoverLogs = logSpy.mock.calls.filter(args => String(args[0]).startsWith('[align-recover]'));
+    expect(recoverLogs.length).toBe(1);
+    expect(String(recoverLogs[0]![0])).toContain('seg=1 recovered 3/3');
+
+    logSpy.mockClear();
+
+    // True 0-match case (mirrors test 6) — no recovery, no log.
+    const trueZeroSegments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker charlie delta', anchorStart: 0 }),
+      makeSegment({ id: 'd', order: 1, text: 'nonexistent phantom words', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    const trueZeroTokens: TranscriptToken[] = [
+      ...wordTokens('able baker charlie delta', 0.0, 0.4),
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+    extractSegmentAlignments(trueZeroSegments, trueZeroTokens);
+    expect(logSpy.mock.calls.filter(args => String(args[0]).startsWith('[align-recover]')).length).toBe(0);
+
+    logSpy.mockRestore();
+  });
+});
+
+// Builds the three structures `findConcatenatingMatches` needs directly, one
+// token per word (no multi-word tokens) — enough to unit-test D1/D2 without
+// going through the whole rescue pipeline (whose Pass 2 exact-single-token
+// scan would swallow any word simple enough to also satisfy a span-1 concat
+// match before Pass 3 ever runs).
+function buildConcatFixture(entries: Array<{ text: string; start: number; end: number }>) {
+  const tokens: TranscriptToken[] = entries.map(e => ({ text: e.text, startSec: e.start, endSec: e.end }));
+  const tokenWords = entries.map((e, i) => ({ word: e.text.toLowerCase(), tokenIdx: i, startSec: e.start }));
+  const unclaimed = tokenWords.map((tw, idx) => ({ word: tw.word, globalIdx: idx }));
+  return { tokens, tokenWords, unclaimed };
+}
+
+describe('Pass 3 — sliding-window concatenation match (sub-word merge)', () => {
+  const options = { maxConcatTokens: MAX_CONCAT_TOKENS, maxConcatGapSec: MAX_CONCAT_GAP_SEC };
+
+  it('1) direct repro (integration): "linen"/"flax" recovered via concat, "from" stays genuinely missing', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker', anchorStart: 0 }),
+      makeSegment({ id: 'c', order: 1, text: 'linen from flax', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('able baker', 0.0, 0.4),
+      ...wordTokens('lin en', 6.0, 0.2),   // "linen" split, touching (0.2s each, 0 gap)
+      ...wordTokens('fl ax', 6.6, 0.2),    // "flax" split, touching — "from" never appears anywhere
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(2);
+    expect(results[1]!.totalWords).toBe(3);
+    expect(results[1]!.confidence).toBeCloseTo(2 / 3, 5);
+    expect(results[1]!.t0).toBeCloseTo(6.0, 3);
+
+    const recoverLogs = logSpy.mock.calls
+      .map(args => String(args[0]))
+      .filter(msg => msg.startsWith('[align-recover]') && msg.includes('seg=1'));
+    expect(recoverLogs.length).toBe(1);
+    expect(recoverLogs[0]).toContain('CONCAT');
+
+    logSpy.mockRestore();
+  });
+
+  it('2) single-token word still matches (spanSize=1 preserved)', () => {
+    const { tokens, tokenWords, unclaimed } = buildConcatFixture([
+      { text: 'hello', start: 0, end: 0.4 },
+    ]);
+    const matches = findConcatenatingMatches(['hello'], unclaimed, tokenWords, tokens, options);
+    expect(matches.length).toBe(1);
+    expect(matches[0]).toEqual({ queryIdx: 0, tokenStartIdx: 0, tokenEndIdx: 0 });
+  });
+
+  it('3) touching tolerance enforced: a 10s gap between fragments blocks concatenation', () => {
+    const { tokens, tokenWords, unclaimed } = buildConcatFixture([
+      { text: 'lin', start: 10, end: 10.3 },
+      { text: 'en', start: 20, end: 20.3 },
+    ]);
+    const matches = findConcatenatingMatches(['linen'], unclaimed, tokenWords, tokens, options);
+    expect(matches.length).toBe(0);
+  });
+
+  it('4) max concat tokens enforced: a 5-fragment word exceeds MAX_CONCAT_TOKENS=3 and is not recovered', () => {
+    const { tokens, tokenWords, unclaimed } = buildConcatFixture([
+      { text: 'ab', start: 0.0, end: 0.2 },
+      { text: 'cd', start: 0.2, end: 0.4 },
+      { text: 'ef', start: 0.4, end: 0.6 },
+      { text: 'gh', start: 0.6, end: 0.8 },
+      { text: 'ij', start: 0.8, end: 1.0 },
+    ]);
+    const matches = findConcatenatingMatches(['abcdefghij'], unclaimed, tokenWords, tokens, options);
+    expect(matches.length).toBe(0);
+  });
+
+  it('5) claimed tokens excluded: "lin" already claimed leaves "linen" unrecoverable', () => {
+    const { tokens, tokenWords, unclaimed } = buildConcatFixture([
+      { text: 'lin', start: 0.0, end: 0.2 },
+      { text: 'en', start: 0.2, end: 0.4 },
+    ]);
+    // Simulate exclusion the same way the caller does: filter the claimed
+    // token (globalIdx 0) out of `unclaimed` before calling.
+    const unclaimedMinusLin = unclaimed.filter(u => u.globalIdx !== 0);
+    const matches = findConcatenatingMatches(['linen'], unclaimedMinusLin, tokenWords, tokens, options);
+    expect(matches.length).toBe(0);
+  });
+
+  it('6) sub-word fragments do not merge across query words: "linen" then "en" each resolve to their own tokens', () => {
+    const { tokens, tokenWords, unclaimed } = buildConcatFixture([
+      { text: 'lin', start: 0.0, end: 0.2 },
+      { text: 'en', start: 0.2, end: 0.4 },
+      { text: 'en', start: 0.4, end: 0.6 },
+    ]);
+    const matches = findConcatenatingMatches(['linen', 'en'], unclaimed, tokenWords, tokens, options);
+    expect(matches.length).toBe(2);
+    expect(matches[0]).toEqual({ queryIdx: 0, tokenStartIdx: 0, tokenEndIdx: 1 });
+    expect(matches[1]).toEqual({ queryIdx: 1, tokenStartIdx: 2, tokenEndIdx: 2 });
+  });
+
+  it('7) no regression: an ordinary fully-token-matched project is unaffected (existing Pass 1/2 behavior unchanged)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'a', order: 0, text: 'the quick brown fox', anchorStart: 0 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('the quick brown fox', 0.0, 0.4),
+    ];
+    const results = extractSegmentAlignments(segments, tokens);
+    expect(results[0]!.matched).toBe(true);
+    expect(results[0]!.matchedWords).toBe(4);
+    expect(results[0]!.confidence).toBe(1);
   });
 });
