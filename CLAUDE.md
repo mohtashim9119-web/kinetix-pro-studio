@@ -160,6 +160,26 @@ src/
                      #   midpoint. Monotonic safety check only. No clamps (R4 clamps removed as
                      #   dead code in 5952ea7). See docs/sync-system-rewrite-architecture.md
                      #   Section 3.6(f).
+                     #   normalizeSceneDoc (WS4 Feature 1, decision 13a, 2026-07-28) — the
+                     #   SCENE-DOC-side word normalizer: textNormalize.ts's stripStageDirections
+                     #   then the standard canonicalize. Called from extractSegmentAlignments'
+                     #   query build ONLY — the transcript (subject) side keeps plain normalize(),
+                     #   since Whisper transcribes speech and can never emit a stage direction.
+                     #   Never mutates seg.text; only the alignment VIEW of it is stripped, so the
+                     #   editor still shows what the author wrote. Falls back to the unstripped
+                     #   text if stripping would empty a segment (a fully-parenthesized scene must
+                     #   not silently become a zero-word "neutral" one).
+                     #   filterMalformedTokens (WS4 Feature 4, decision 14a) — runs ONCE before
+                     #   alignment; drops tokens with non-finite timestamps, t0 < 0, t0 >= t1,
+                     #   t1 past audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC (0.5s,
+                     #   syncConstants.ts), or text that normalizes to nothing, and reports
+                     #   { skippedCount, totalTokens }. The FILTERED array is what every downstream
+                     #   stage must use — AlignResult's firstTokenIdx/lastTokenIdx index into it,
+                     #   so App.tsx's snapCoveredBoundaries call reads useWhisper's returned
+                     #   `aligned.tokens`, NOT project.transcriptTokens. Language detection
+                     #   (decision 9a) is deliberately absent: the bundled model is English-only
+                     #   (ggml-base.en.bin), and whisper-cli ignores -l auto/--detect-language on
+                     #   an .en model — it needs the multilingual ggml-base.bin bundled first.
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
@@ -167,8 +187,18 @@ src/
                      #   2026-07-25). Replaces retileCoveredSegments on the primary sync path;
                      #   retileCoveredSegments (App.tsx) is kept as the fallback when tokens/silences
                      #   are unavailable to snap against.
-    silenceDetector.ts # detectSilences(audioUrl) — Web Audio API silence scan used by Whisper gap-fill;
+    silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
+                     #   Returns a STRUCTURED SilenceDetectResult discriminated union since WS4
+                     #   Feature 3 (decision 11a, 2026-07-28): { status:'ok', silences } |
+                     #   { status:'error', errorMessage }. NEVER throws — every failure (unreadable
+                     #   blob, unavailable AudioContext, decode failure) comes back as an error
+                     #   status, so callers cannot confuse "the scan failed" with "this audio has
+                     #   no silence in it"; those two have OPPOSITE consequences for boundary
+                     #   placement (silence centers vs. token midpoints) and the old bare
+                     #   `catch { return []; }` in useWhisper.ts made them identical. A failure now
+                     #   surfaces as a 'silence-error' SyncLogEntry (red, SyncLogPanel.tsx) plus
+                     #   SyncRunSummary.silenceErrorCount; sync CONTINUES on midpoints, never aborts.
     waveformPeaks.ts # Pure peak-extraction + canvas-drawing primitives for the timeline voiceover
                      #   waveform (docs/history.md, "Waveform Rewrite — Implementation Record", archived).
                      #   PEAKS_PER_SECOND (100/sec — a

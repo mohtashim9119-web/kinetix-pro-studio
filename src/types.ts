@@ -339,7 +339,25 @@ export interface Project {
 // is saved as a unit) — there is deliberately no separate store.
 // ---------------------------------------------------------------------------
 
-export type SyncLogEntryType = 'skip' | 'abort' | 'warning' | 'info';
+/**
+ * The log line's kind. This IS the discriminator — WS4's new entry kinds are
+ * added here rather than as a second `kind` field, so there is exactly one
+ * thing to switch on and SyncLogPanel's TYPE_STYLES table stays exhaustive
+ * (a new kind is a compile error there, not an unstyled badge at runtime).
+ *
+ *  - 'silence-error'   WS4 Feature 3 — silence detection failed; sync continued
+ *                      on token-midpoint boundaries. Red: a real degradation.
+ *  - 'malformed-token' WS4 Feature 4 — whisper tokens with unusable timestamps
+ *                      were filtered out before alignment. Info, not error:
+ *                      they were handled, and sync proceeded normally.
+ */
+export type SyncLogEntryType =
+  | 'skip'
+  | 'abort'
+  | 'warning'
+  | 'info'
+  | 'silence-error'
+  | 'malformed-token';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
@@ -371,6 +389,15 @@ export interface SyncLogEntry {
   /** Skip entries only: matchedWords / totalWords at sync time. Undefined on
    *  older entries. */
   confidence?: number;
+  /** 'silence-error' entries only (WS4 Feature 3): what the silence detector
+   *  reported. Undefined on every other kind. */
+  errorMessage?: string;
+  /** 'malformed-token' entries only (WS4 Feature 4): how many transcript
+   *  tokens were dropped before alignment. */
+  skippedTokenCount?: number;
+  /** 'malformed-token' entries only: the pre-filter token count — the
+   *  denominator for skippedTokenCount. */
+  totalTokenCount?: number;
 }
 
 /** One Apply Sync run, rolled up. Written alongside that run's entries. */
@@ -382,6 +409,11 @@ export interface SyncRunSummary {
   skippedSegments: number;
   aborted: boolean;
   abortReason?: string;
+  /** WS4 Feature 3 — how many silence-detection failures this run hit (0 or 1
+   *  today: silence is detected once per run). Optional because summaries
+   *  persisted before WS4 genuinely do not have it — treat undefined as 0,
+   *  same convention as SyncLogEntry's later-added fields above. */
+  silenceErrorCount?: number;
 }
 
 export interface ProjectMeta {

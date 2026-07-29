@@ -12,6 +12,10 @@
 // hygiene primitives so they can never drift on that layer again:
 //
 //   - canonicalize(text)          -> string[]  — the full alignment tokenizer
+//   - canonicalizeSceneDoc(text)  -> string[]  — canonicalize, preceded by the
+//                                    WS4 stage-direction strip; the SCENE-DOC
+//                                    side of the aligner only (see below)
+//   - stripStageDirections(text)  -> string    — that strip on its own (pure)
 //   - canonicalizeForFilename(text)-> string   — filename comparison (no
 //                                    lowercasing, no contraction expansion, no
 //                                    digit reading; behavior identical to the
@@ -253,6 +257,125 @@ export function canonicalize(text: string): string[] {
     }
   }
   return out;
+}
+
+// --- Stage-direction stripping (WS4 Feature 1, decision 13a) ----------------
+//
+// Screenplay/scene directions are WRITTEN but never SPOKEN, so every one of them
+// is a scene-doc word with no transcript counterpart — a penalized deletion in
+// the Hirschberg aligner that drags a segment's confidence down toward the
+// LOW_CONFIDENCE_RATIO skip threshold for no reason. Stripping them is applied
+// to the SCENE-DOC SIDE ONLY (see canonicalizeSceneDoc below): the transcript
+// side never contains them, so stripping there would be a no-op at best and an
+// asymmetry at worst.
+//
+// Conservative by construction — every rule below is line-anchored, case-
+// sensitive (screenplay convention is ALL CAPS), or both, so ordinary prose can
+// never trip it:
+//
+//   STRIP  (whispering), (to camera)        parentheticals, anywhere
+//   STRIP  line [CUT TO: KITCHEN] here      bracketed ALL-CAPS, NOT at line start
+//   STRIP  INT. KITCHEN - DAY               scene-header line (whole line)
+//   STRIP  FADE IN: / CUT TO: / DISSOLVE TO:  transition line (whole line)
+//   STRIP  a residual colons-only fragment  (whole line)
+//   KEEP   [tag] at line start              scene anchors — the parser's own tags
+//   KEEP   [scene 1] anywhere               has lowercase ⇒ not a directive
+//   KEEP   *emphasis*                       spoken text, not a direction
+//   KEEP   hyphens / smart quotes / abbrevs already handled above
+
+/** A `[...]` group. No nesting — brackets don't nest in practice, and a greedy
+ *  match would swallow the text between two separate groups. */
+const BRACKET_GROUP_RE = /\[[^\]]*\]/g;
+
+/** An innermost `(...)` group. Applied repeatedly so nested parentheticals
+ *  ("(to camera (aside))") collapse from the inside out. */
+const INNER_PAREN_RE = /\([^()]*\)/g;
+
+/** Slugline: `INT.` / `EXT.` (and the combined forms) followed by content.
+ *  Case-SENSITIVE — "Int." in prose is not a slugline. */
+const SCENE_HEADER_RE = /^(?:INT|EXT|INT\.\/EXT|EXT\.\/INT|I\/E)\.\s*\S/;
+
+/** Transition line: `FADE IN:`, `CUT TO:`, `DISSOLVE TO:` … Requires either a
+ *  colon or end-of-line, so a spoken sentence that merely begins with one of
+ *  these words (in caps) is not eaten. Case-SENSITIVE, same reason. */
+const TRANSITION_LINE_RE =
+  /^(?:FADE\s+(?:IN|OUT)|FADE\s+TO\s+BLACK|CUT\s+TO|CUT\s+BACK\s+TO|SMASH\s+CUT\s+TO|MATCH\s+CUT\s+TO|DISSOLVE\s+TO)\s*(?::|$)/;
+
+/** A line left holding nothing but colons/whitespace after the strips above. */
+const COLONS_ONLY_RE = /^[\s:]+$/;
+
+/**
+ * True for bracketed content that reads as a directive rather than a tag:
+ * at least two consecutive capitals and NO lowercase at all. "[CUT TO: KITCHEN]"
+ * and "[CLOSE UP]" qualify; "[scene 1]" and "[Hero shot]" deliberately do not.
+ */
+function isAllCapsDirective(inner: string): boolean {
+  return /[A-Z]{2}/.test(inner) && !/[a-z]/.test(inner);
+}
+
+/**
+ * Removes screenplay/scene directions from text destined for the aligner.
+ *
+ * Line-oriented: "at line start" is only meaningful per line, and whole-line
+ * rules (sluglines, transitions) must not eat their neighbours. Emptied lines
+ * are dropped rather than left as blanks — the output feeds a whitespace
+ * tokenizer, so blank lines carry no information.
+ *
+ * NFC-normalizes first (the same step 1 `canonicalize` performs), so the
+ * pattern matching sees composed characters; `canonicalize`'s own NFC pass is
+ * idempotent on this output.
+ *
+ * PURE and non-mutating with respect to the caller's segment: `seg.text` keeps
+ * the author's original wording — only the ALIGNMENT VIEW of it is stripped.
+ */
+export function stripStageDirections(text: string): string {
+  const kept: string[] = [];
+
+  for (const rawLine of text.normalize('NFC').split('\n')) {
+    const trimmedStart = rawLine.trimStart();
+    // Whole-line rules first, on the untouched line.
+    if (SCENE_HEADER_RE.test(trimmedStart) || TRANSITION_LINE_RE.test(trimmedStart)) {
+      continue;
+    }
+
+    // Bracketed directives. "At line start" is decided against the ORIGINAL
+    // line's first non-whitespace offset, so an earlier strip on the same line
+    // can never promote a mid-line bracket into an anchor position.
+    const firstNonWs = rawLine.search(/\S/);
+    let line = rawLine.replace(BRACKET_GROUP_RE, (match, offset: number) => {
+      if (offset === firstNonWs) return match;              // [tag] anchor — preserved
+      return isAllCapsDirective(match.slice(1, -1)) ? ' ' : match;
+    });
+
+    // Parentheticals, inside-out until stable. An unbalanced "(" is left alone.
+    let previous: string;
+    do {
+      previous = line;
+      line = line.replace(INNER_PAREN_RE, ' ');
+    } while (line !== previous);
+
+    if (COLONS_ONLY_RE.test(line)) continue;
+
+    // Replacing a strip with ' ' preserves word adjacency ("a[CUT]b" -> "a b");
+    // collapse the runs it leaves behind.
+    const collapsed = line.replace(/\s+/g, ' ').trim();
+    if (collapsed.length > 0) kept.push(collapsed);
+  }
+
+  return kept.join('\n');
+}
+
+/**
+ * The SCENE-DOC side of the alignment tokenizer: stage directions stripped,
+ * then the standard `canonicalize` pipeline. Composed rather than folded into
+ * `canonicalize` itself, because the transcript (subject) side must NOT be
+ * stripped — Whisper transcribes speech, so a direction can only ever appear on
+ * the scene-doc side, and running the strip on both would buy nothing while
+ * risking an asymmetry. `canonicalize` and `canonicalizeForFilename` keep their
+ * exact prior semantics.
+ */
+export function canonicalizeSceneDoc(text: string): string[] {
+  return canonicalize(stripStageDirections(text));
 }
 
 /**

@@ -1,10 +1,10 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { canonicalize } from './textNormalize';
+import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
 import {
   ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE,
-  LOW_CONFIDENCE_RATIO,
+  LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
 } from './syncConstants';
 
 export type { TranscriptToken };
@@ -73,6 +73,24 @@ export function canonicalizeForAlignment(s: string): string[] {
  */
 export function normalize(s: string): string[] {
   return canonicalizeForAlignment(s);
+}
+
+/**
+ * Scene-doc-side word normalizer (WS4 Feature 1, decision 13a). Identical to
+ * `normalize` except that stage directions are stripped first — see
+ * textNormalize.ts's `stripStageDirections` for the grammar and for why this is
+ * deliberately NOT applied to the transcript side.
+ *
+ * Empty-result guard: if stripping removes EVERYTHING, the original text is
+ * used instead. A fully-parenthesized scene is far more likely to be a
+ * legitimate spoken aside than an empty scene, and silently emptying it would
+ * turn a normal segment into a zero-word "neutral" one — changing its
+ * classification rather than just cleaning up its words (architecture doc
+ * §3.8(b), final bullet).
+ */
+export function normalizeSceneDoc(s: string): string[] {
+  const stripped = canonicalizeSceneDoc(s);
+  return stripped.length > 0 ? stripped : normalize(s);
 }
 
 /**
@@ -399,7 +417,10 @@ export function extractSegmentAlignments(
   const segRanges: Array<{ start: number; end: number }> = [];
   for (const seg of segments) {
     const start = queryWords.length;
-    const words = seg?.text && seg.text.trim() ? normalize(seg.text) : [];
+    // WS4 Feature 1 — the scene-doc side is stripped of stage directions before
+    // tokenizing (normalizeSceneDoc). `seg.text` itself is untouched: only this
+    // ALIGNMENT VIEW of it changes, so the editor still shows what the author wrote.
+    const words = seg?.text && seg.text.trim() ? normalizeSceneDoc(seg.text) : [];
     for (const w of words) if (w.length > 0) queryWords.push(w);
     segRanges.push({ start, end: queryWords.length });
   }
@@ -467,6 +488,81 @@ export function extractSegmentAlignments(
   }
 
   return results;
+}
+
+// ---------------------------------------------------------------------------
+// Malformed-token filter (WS4 Feature 4, decision 14a)
+// ---------------------------------------------------------------------------
+//
+// whisper.cpp occasionally emits a token whose timestamps are unusable — a
+// negative start, an end past the end of the audio, a zero/inverted span, or a
+// NaN from an unparseable timestamp string (whisper.rs's parse_timestamp
+// returns 0.0 on a malformed field, but the JS-side parse and the IPC boundary
+// can both still produce non-finite values). Every one of those propagates
+// straight into a boundary: `t0`/`t1` come from `tokens[idx].startSec/endSec`,
+// and the silence-snap search window is built from them. One bad token can
+// therefore place a segment boundary at a nonsense time, or NaN a whole run.
+//
+// Filtering happens ONCE, BEFORE alignment, and the filtered array is what every
+// downstream stage uses — the aligner, the snap, and App.tsx's own
+// `snapCoveredBoundaries` call. That is load-bearing: `AlignResult`'s
+// `firstTokenIdx`/`lastTokenIdx` are indices INTO this array, so handing a
+// different (unfiltered) array to a later stage would silently read the wrong
+// token. useWhisper's `alignFromCache` returns the filtered array for exactly
+// this reason.
+
+/** What `filterMalformedTokens` produced — the surviving tokens plus the counts
+ *  the sync log reports. `tokens` is the array every later stage must use. */
+export interface MalformedTokenFilterResult {
+  tokens: TranscriptToken[];
+  /** How many tokens were dropped. 0 ⇒ nothing was wrong, no log entry. */
+  skippedCount: number;
+  /** Pre-filter token count — the denominator the log entry shows. */
+  totalTokens: number;
+}
+
+/**
+ * Drops tokens whose timestamps or text make them unusable for alignment. Any
+ * ONE of these disqualifies a token (doc decision 14a):
+ *
+ *   - `startSec` or `endSec` is NaN or Infinite
+ *   - `startSec < 0`
+ *   - `endSec > audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC`
+ *   - `startSec >= endSec` (zero or negative duration)
+ *   - the text is empty / whitespace-only once normalized
+ *
+ * The end-of-audio check is skipped entirely when `audioDuration` is not a
+ * usable positive finite number — an unknown duration must not cause every
+ * token to be discarded.
+ *
+ * Pure: returns a new array, never mutates the input.
+ */
+export function filterMalformedTokens(
+  tokens: TranscriptToken[],
+  audioDuration: number,
+): MalformedTokenFilterResult {
+  const checkAgainstEnd = Number.isFinite(audioDuration) && audioDuration > 0;
+  const maxEnd = audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC;
+
+  const kept = tokens.filter(t => {
+    const t0 = t?.startSec;
+    const t1 = t?.endSec;
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
+    if (t0 < 0) return false;
+    if (t0 >= t1) return false;
+    if (checkAgainstEnd && t1 > maxEnd) return false;
+    // Text that normalizes to nothing (punctuation-only, whitespace-only) can
+    // never match a scene-doc word, but its timestamps can still be picked as a
+    // segment edge. Drop it here rather than letting it anchor a boundary.
+    if (normalize(t?.text ?? '').length === 0) return false;
+    return true;
+  });
+
+  return {
+    tokens: kept,
+    skippedCount: tokens.length - kept.length,
+    totalTokens: tokens.length,
+  };
 }
 
 export function alignScenestoTranscript(

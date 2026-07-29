@@ -3,21 +3,57 @@ import {
   transcribeWithProgress,
   alignScenestoTranscript,
   distributeSegmentTimes,
+  filterMalformedTokens,
   type SegmentAlignment,
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
-import type { SilenceInterval } from '../services/silenceDetector';
+import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken } from '../types';
 
-async function fetchAndDetectSilences(asset: Asset): Promise<SilenceInterval[]> {
+/**
+ * Fetches the voiceover blob and scans it for silence.
+ *
+ * WS4 Feature 3 (decision 11a): the old bare `catch { return []; }` is gone.
+ * A fetch failure is now reported as a structured error, exactly like a decode
+ * failure, so the caller can tell "no silence found" apart from "the scan never
+ * ran" — the two produce very different boundary placement.
+ */
+async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetectResult> {
+  let blob: Blob;
   try {
     const resp = await fetch(asset.url);
-    const blob = await resp.blob();
-    return await detectSilences(blob);
-  } catch {
-    return [];
+    if (!resp.ok) {
+      return { status: 'error', errorMessage: `voiceover fetch failed: ${resp.status} ${resp.statusText}` };
+    }
+    blob = await resp.blob();
+  } catch (err) {
+    const message = err instanceof Error ? err.message || err.name : String(err);
+    return { status: 'error', errorMessage: `voiceover fetch failed: ${message}` };
   }
+  return detectSilences(blob);
+}
+
+/** What `alignFromCache` hands back to the orchestrator (App.tsx). */
+export interface AlignFromCacheResult {
+  segments: VideoSegment[];
+  coverage: SegmentAlignment[];
+  silences: SilenceInterval[];
+  /**
+   * WS4 Feature 4 — the MALFORMED-FILTERED token array. Callers that do their
+   * own token lookups (App.tsx's `snapCoveredBoundaries`) MUST use this array
+   * and not `project.transcriptTokens`: `coverage[i].firstTokenIdx` /
+   * `lastTokenIdx` are indices into this one, so reading the unfiltered array
+   * with them would resolve to the wrong tokens.
+   */
+  tokens: TranscriptToken[];
+  /** WS4 Feature 3 — set only when silence detection failed. Boundaries fell
+   *  back to token midpoints; sync still completed. */
+  silenceError?: string;
+  /** WS4 Feature 4 — how many tokens the malformed filter dropped, and out of
+   *  how many. `skippedCount === 0` on a clean transcript. */
+  malformedTokenCount: number;
+  totalTokenCount: number;
 }
 
 /**
@@ -30,9 +66,29 @@ async function alignSegmentsFromCachedTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   durationSecs: number,
-): Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[]; silences: SilenceInterval[] }> {
-  const silences = await fetchAndDetectSilences(audioAsset);
-  const alignments = alignScenestoTranscript(segments, tokens, silences);
+): Promise<AlignFromCacheResult> {
+  const silenceResult = await fetchAndDetectSilences(audioAsset);
+  // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
+  // placement to token midpoints (the documented fallback) and is reported
+  // upward, rather than aborting a sync that can still produce a timeline.
+  const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
+  const silenceError = silenceResult.status === 'error' ? silenceResult.errorMessage : undefined;
+  if (silenceError) {
+    console.warn('[sync] silence detection failed — boundaries fall back to token midpoints:', silenceError);
+  }
+
+  // WS4 Feature 4 — filter BEFORE alignment, once. Everything downstream (the
+  // aligner here, and App.tsx's own snap) uses `usableTokens`; see
+  // AlignFromCacheResult.tokens for why that consistency is load-bearing.
+  const filtered = filterMalformedTokens(tokens, durationSecs);
+  const usableTokens = filtered.tokens;
+  if (filtered.skippedCount > 0) {
+    console.warn(
+      `[sync] filtered ${filtered.skippedCount} of ${filtered.totalTokens} malformed transcript token(s) before alignment`,
+    );
+  }
+
+  const alignments = alignScenestoTranscript(segments, usableTokens, silences);
   const updated = distributeSegmentTimes(segments, alignments, durationSecs);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
@@ -52,7 +108,15 @@ async function alignSegmentsFromCachedTranscript(
   // by the applyAnchorBasedTiming pass below, which only re-derives
   // startTime/duration from anchors, not match quality.
   const final = applyAnchorBasedTiming(updated, durationSecs);
-  return { segments: final, coverage: alignments, silences };
+  return {
+    segments: final,
+    coverage: alignments,
+    silences,
+    tokens: usableTokens,
+    silenceError,
+    malformedTokenCount: filtered.skippedCount,
+    totalTokenCount: filtered.totalTokens,
+  };
 }
 
 export interface UseWhisperApi {
@@ -79,13 +143,17 @@ export interface UseWhisperApi {
    * (`snapCoveredBoundaries`), and that needs the same silence set this call
    * already detected — re-detecting it at the call site would decode the audio
    * a second time for identical output.
+   *
+   * WS4: the result also carries `silenceError` (Feature 3), the malformed-token
+   * counts (Feature 4), and the FILTERED `tokens` array those counts describe.
+   * See AlignFromCacheResult.
    */
   alignFromCache: (
     audioAsset: Asset,
     segments: VideoSegment[],
     tokens: TranscriptToken[],
     durationSecs: number,
-  ) => Promise<{ segments: VideoSegment[]; coverage: SegmentAlignment[]; silences: SilenceInterval[] }>;
+  ) => Promise<AlignFromCacheResult>;
 }
 
 export function useWhisper(): UseWhisperApi {
@@ -191,10 +259,30 @@ export function useWhisper(): UseWhisperApi {
           return;
         }
 
-        const silences = await fetchAndDetectSilences(audioAsset);
+        const silenceResult = await fetchAndDetectSilences(audioAsset);
         if (generationRef.current !== generation) return;
 
-        const alignments = alignScenestoTranscript(segments, tokens, silences);
+        // WS4 Features 3 + 4 on the fresh-transcription path. This path has no
+        // syncRunId — it is the STAGING-time transcription, not an Apply Sync
+        // run — so there is no run to attach a SyncLogEntry to; the failures are
+        // surfaced on the console here, and the Apply Sync that follows runs
+        // through alignFromCache, which does emit log entries for both. The
+        // degradation behaviour is identical on both paths.
+        const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
+        if (silenceResult.status === 'error') {
+          console.warn(
+            '[whisper] silence detection failed — boundaries fall back to token midpoints:',
+            silenceResult.errorMessage,
+          );
+        }
+        const filtered = filterMalformedTokens(tokens, durationSecs);
+        if (filtered.skippedCount > 0) {
+          console.warn(
+            `[whisper] filtered ${filtered.skippedCount} of ${filtered.totalTokens} malformed transcript token(s) before alignment`,
+          );
+        }
+
+        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences);
         const finalSegments = distributeSegmentTimes(segments, alignments, durationSecs);
 
         // Store transcript tokens before the segment gate — the transcript is valid

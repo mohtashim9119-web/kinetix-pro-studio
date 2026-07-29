@@ -47,6 +47,18 @@ See the "Quick Bugs to Fix" section (after Section 10) for the 3 bugs surfaced d
 - **Bugs fixed:** WS-logs info-entry-missing (Bug 1), matched-but-low-confidence skip regression (Bug 2), middle-gap position offset, silence-sharing regression.
 - **Verification:** macOS Intel x86_64 only. macOS arm64 + Windows/WebView2 unverified.
 
+**WS4 (partial) — stage-direction stripping (13a) + silence fail-loud (11a) + malformed-token skip (14a): COMPLETE. Language handling (9a) BLOCKED, not implemented.**
+
+- **What landed (2026-07-28, commit `<pending>`):**
+  - **Decision 13a — stage-direction stripping (§3.8, alignment side only).** New `stripStageDirections` + `canonicalizeSceneDoc` in `src/services/textNormalize.ts`; `normalizeSceneDoc` wrapper in `whisperService.ts`, called from `extractSegmentAlignments`'s query build. Strips parentheticals anywhere, bracketed ALL-CAPS directives **not** at line start, `INT.`/`EXT.` sluglines and `FADE IN:`/`CUT TO:`/`DISSOLVE TO:` transition lines (whole line), and residual colons-only lines. Preserves line-start `[tag]` anchors, lowercase brackets, `*emphasis*`, hyphens and smart punctuation. Applied to the **scene-doc side only** — the transcript side never contains directions. `seg.text` is never mutated; only the alignment view is stripped. Empty-result fallback per §3.8(b): if stripping empties a segment, its original text is used.
+  - **Decision 11a — silence fail-loud (§3.10).** `detectSilences` now returns a `SilenceDetectResult` discriminated union (`{status:'ok', silences}` | `{status:'error', errorMessage}`) and never throws; `useWhisper.ts`'s `fetchAndDetectSilences` lost its bare `catch { return []; }`. A failure surfaces as a `'silence-error'` `SyncLogEntry` (red) and increments `SyncRunSummary.silenceErrorCount`; sync **continues** on token-midpoint boundaries rather than aborting.
+  - **Decision 14a — malformed-token skip (§3.12).** New `filterMalformedTokens` in `whisperService.ts`, run once before alignment. Drops tokens with non-finite timestamps, `t0 < 0`, `t0 >= t1`, `t1 > audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC` (0.5s, new in `syncConstants.ts`), or text that normalizes to nothing. Emits a `'malformed-token'` entry (info/blue) when the count is non-zero. The **filtered** array is threaded back through `alignFromCache` and used by `App.tsx`'s `snapCoveredBoundaries` call — `AlignResult`'s token indices point into it, so using the raw array there would resolve to the wrong tokens.
+- **Decision 9a — language detection: BLOCKED, deliberately not implemented.** §3.9's design requires the multilingual `ggml-base.bin`; only `ggml-base.en.bin` is provisioned, and whisper-cli confirms empirically (`main: WARNING: model is not multilingual, ignoring language and translation options`) that `-l auto` / `--detect-language` produce **no** detection output on an `.en` model. Implementing detection therefore needs the ~148MB second model bundled first (§3.9(b) item 1, the "+74MB accepted" cost). Deferred by explicit user decision on 2026-07-28 rather than shipped as unreachable code. `-l en` remains hardcoded at `whisper.rs:249`; no `lang-warn` entry kind exists yet.
+- **Bugs fixed:** S19 (alignment-side portion), S16, S10.
+- **Not in scope of this pass:** §3.8's **parser fix** (R5/N4 — anchoring `TAG_REGEX` to line start) was not requested and was not made; mid-line `[...]` still splits scene blocks at parse time. The alignment-side strip preserves line-start brackets specifically so it composes correctly with that parser change when it lands. §3.8's speaker-label rule (`NARRATOR:`) also not implemented.
+- **Static checks:** `tsc --noEmit` clean, `vitest` **957/957** (was 885 — 72 new tests across `textNormalize.test.ts` (new file, 28), `silenceDetector.test.ts` (new file, 11), `syncTiming.test.ts` (+18), `syncLog.test.ts` (+10), `SyncLogPanel.test.tsx` (+5)).
+- **Verification:** automated only. No manual run against the 294-segment / middle-gap / special-chars projects was performed in this pass — those fixtures are user project data, not in the repo, and require the Tauri desktop shell.
+
 **Snap-clamp dead-code removal (2026-07-26): COMPLETE and verified on macOS Intel x86_64.** `SNAP_TOLERANCE_SEC` clamps removed entirely from `whisperService.ts` and `snapBoundaries.ts` — once the silence-sharing fix made them conditional on `!silenceFound`, the no-silence branch's token midpoint could never actually be moved by them (it is inherently inside the tolerance window), so the clamps were dead code. `SNAP_TOLERANCE_SEC` constant removed from `syncConstants.ts`. Net behavior: silence-found → silence center (no clamp); no-silence → token midpoint (no clamp); monotonic check applies in both cases. See §3.6. 885/885 tests pass. **Verification:** macOS Intel x86_64 only (manual: 14-segment silence-sharing unchanged, 294-segment no regression).
 
 ---
@@ -340,6 +352,8 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 ### 3.8 Stage-direction / speaker-label stripping + parser fix (S19, R5, N4)
 
+> **Status (2026-07-28, WS4): PARTIALLY IMPLEMENTED — decision 13a.** The **alignment-side strip** landed, with one deliberate grammar change from (b) below: a `[...]` group **at line start is preserved**, and only bracketed **ALL-CAPS** groups elsewhere in the line are stripped. That is because the **parser fix (R5/N4) did NOT land** — `TAG_REGEX` still splits on any `[...]`, so line-start brackets are still scene anchors and must survive. Scene-header/transition lines (`INT.`/`EXT.`/`FADE IN:`/`CUT TO:`/`DISSOLVE TO:`) are stripped whole-line, which (b) did not specify. The **speaker-label rule (`NARRATOR:`) is NOT implemented.** The empty-result fallback in (b)'s final bullet IS implemented. Code: `textNormalize.ts`'s `stripStageDirections`/`canonicalizeSceneDoc`, `whisperService.ts`'s `normalizeSceneDoc`, called from `extractSegmentAlignments`.
+
 **(a) Today.** `(pause)`, `[laughs]`, `NARRATOR:` in a scene description become alignment target words (`App.tsx:312` feeds description text through; `whisperService.ts:179` tokenizes them like any word). Worse — and this is why the parser change is in scope — `TAG_REGEX` (`App.tsx:279`, also used by the backup pass at `:294`) splits scene blocks on **any** `[...]` occurrence via the lookahead `(?=\[[^\]]*\])`, so `[laughs]` mid-description creates a bogus new scene at parse time, *before* the aligner ever sees it. Aligner-side stripping alone cannot fix that.
 
 **(b) After — two coordinated changes.**
@@ -360,6 +374,8 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 ### 3.9 Language handling — dual-model detect-then-transcribe (S14, R6)
 
+> **Status (2026-07-28, WS4): NOT IMPLEMENTED — decision 9a, blocked on model provisioning.** Verified empirically against the bundled binary: with only `ggml-base.en.bin` present, whisper-cli answers `-l auto` / `--detect-language` with `main: WARNING: model is not multilingual, ignoring language and translation options` and emits no detected language at all. Step 1 of (b) — bundling `ggml-base.bin` (~148MB on disk) — is therefore a hard prerequisite, not an optimization. Deferred by explicit user decision rather than shipped as code that can never run. `-l en` remains hardcoded; no `lang-warn` log entry kind exists.
+
 **(a) Today.** `-l en` hardcoded (`whisper.rs:249`) against the bundled English-only model `ggml-base.en.bin` (`whisper.rs:54,78,89`; gitignored per `.gitignore:17-18`, provisioning docs in `src-tauri/models/README.md`); non-English audio is force-transcribed as English garbage.
 
 **(b) After — the full flow (R6, final):**
@@ -376,6 +392,8 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 
 ### 3.10 Silence-detection fail-loud (S16, R10)
 
+> **Status (2026-07-28, WS4): IMPLEMENTED — decision 11a.** `detectSilences` returns a `SilenceDetectResult` discriminated union and never throws; `fetchAndDetectSilences`'s bare catch is gone. Deviation from (b): the failure is surfaced as a persistent `'silence-error'` `SyncLogEntry` (rendered red in `SyncLogPanel.tsx`) plus `SyncRunSummary.silenceErrorCount`, **not** through the `SyncWarning` dispatcher — that unified surface (R10) does not exist yet, and the sync log is the surface that does. Sync continues on token-midpoint boundaries; it never aborts.
+
 **(a) Today.** `fetchAndDetectSilences` (`useWhisper.ts:12-20`) catches everything and returns `[]`; a decode failure silently degrades every boundary to token-midpoint placement.
 
 **(b) After.** The catch logs the real error and emits a `SyncWarning` (R10); additionally, a `[]` result for non-trivial audio (> ~30s — real narration always has pauses) emits the same warning (Decision 11). Message: `"Couldn't analyze pauses in the audio — segment boundaries may be slightly off."` Sync proceeds (quality degradation, not a correctness failure).
@@ -391,6 +409,10 @@ Note on the staging path: `startTranscription` is invoked at staging time with `
 **(d) Files.** `App.tsx:1786-1793` (scene-doc case), gate location per 3.4 (transcript case), `useWhisper.ts` (dispatcher).
 
 ### 3.12 Malformed-token skip (S10)
+
+> **Status (2026-07-28, WS4): IMPLEMENTED on the TS side — decision 14a.** `filterMalformedTokens` (`whisperService.ts`) runs once before alignment and drops tokens with non-finite timestamps, `t0 < 0`, `t0 >= t1`, `t1` past `audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC` (0.5s), or text that normalizes to nothing; the count is reported as a `'malformed-token'` log entry. The **Rust-side hardening in (b) did NOT land** — `parse_timestamp` still returns `0.0` on an unparseable field, so a malformed line still produces a t=0 token; the TS filter now catches it downstream (`t0 >= t1` or the text check) instead of it reaching the aligner. Hardening `whisper.rs` remains worth doing, but is no longer load-bearing.
+>
+> **Filter verified accurate on real 294-segment project:** 114 of 855 tokens filtered, all punctuation-only (no actual words dropped); whisper.cpp emits punctuation as separate tokens which textNormalize strips to empty strings, triggering the empty_text rule; a subset hit zero_or_neg_dur from whisper's touching-partition t0==t1 on punctuation marks. Behavior is correct and intentional.
 
 **(a) Today.** `parse_timestamp` (`whisper.rs:405-415`) returns `0.0` for anything that doesn't parse — a malformed line yields a token at t=0, breaking monotonicity for every consumer.
 

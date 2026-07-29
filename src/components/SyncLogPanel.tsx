@@ -21,6 +21,11 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   abort: { label: 'ABORT', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
   warning: { label: 'WARN', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
   info: { label: 'INFO', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
+  // WS4 Feature 3 — red: a real degradation of every boundary in the run.
+  'silence-error': { label: 'SILENCE', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
+  // WS4 Feature 4 — blue/info: the bad tokens were caught and removed, and the
+  // sync proceeded normally. Deliberately NOT an error colour.
+  'malformed-token': { label: 'TOKENS', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be
@@ -48,6 +53,24 @@ function formatMatchLine(
     return 'matched 0 of 0 words (no content to match)';
   }
   return `matched ${matchedWords} of ${totalWords} words (confidence ${confidence.toFixed(2)})`;
+}
+
+/** The optional second line for WS4's run-level entries. Every field access is
+ *  defensive: an entry persisted before WS4 carries none of them, and must
+ *  render as a plain message line rather than crashing or printing
+ *  "undefined". Returns undefined when there is nothing extra to say. */
+function formatDetailLine(entry: SyncLogEntry): string | undefined {
+  if (entry.type === 'silence-error') {
+    const reason = entry.errorMessage?.trim();
+    return reason ? `reason: ${reason}` : undefined;
+  }
+  if (entry.type === 'malformed-token') {
+    const skipped = entry.skippedTokenCount;
+    const total = entry.totalTokenCount;
+    if (skipped === undefined || total === undefined) return undefined;
+    return `${skipped} of ${total} tokens had invalid timestamps`;
+  }
+  return undefined;
 }
 
 export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement {
@@ -111,6 +134,9 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
               const matchLine = isSkip
                 ? formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence)
                 : undefined;
+              // WS4 — run-level entries (silence-error / malformed-token) use
+              // the generic branch below plus one optional detail line.
+              const detailLine = isSkip ? undefined : formatDetailLine(entry);
               return (
                 <div
                   key={entry.id}
@@ -150,6 +176,11 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
                       <p className="text-[10px] text-gray-300 mt-1 leading-snug break-words">
                         {entry.message}
                       </p>
+                      {detailLine && (
+                        <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
+                          {detailLine}
+                        </p>
+                      )}
                       {entry.segmentText && (
                         <p className="text-[9px] text-gray-600 mt-1 italic leading-snug break-words">
                           {entry.segmentIndex !== undefined && (

@@ -874,6 +874,7 @@ export function makeSyncLogEntry(
   extra?: Pick<
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
+    | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -949,6 +950,50 @@ export function buildSyncInfoEntry(
     'info',
     buildSyncInfoMessage(totalSegments, matchedSegments, skippedSegments),
     undefined,
+    timestamp,
+  );
+}
+
+/**
+ * WS4 Feature 3 (decision 11a) — the 'silence-error' entry.
+ *
+ * Silence detection failing is a real degradation, not a cosmetic one: every
+ * boundary in the run falls back to the token midpoint instead of landing in an
+ * acoustic gap. It is NOT an abort — a timeline built on midpoints is still a
+ * usable timeline — so it is logged loudly and the sync continues.
+ */
+export function buildSilenceErrorEntry(
+  syncRunId: string,
+  errorMessage: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'silence-error',
+    'Silence detection failed — segment boundaries fall back to spoken-word midpoints instead of audio gaps.',
+    { errorMessage },
+    timestamp,
+  );
+}
+
+/**
+ * WS4 Feature 4 (decision 14a) — the 'malformed-token' entry.
+ *
+ * Informational by design: the bad tokens were caught and removed before they
+ * could place a boundary, so the sync that follows is CLEANER for it. Only
+ * emitted when at least one token was actually dropped.
+ */
+export function buildMalformedTokenEntry(
+  syncRunId: string,
+  skippedCount: number,
+  totalTokens: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'malformed-token',
+    `Filtered ${skippedCount} of ${totalTokens} transcript token(s) with unusable timestamps before alignment.`,
+    { skippedTokenCount: skippedCount, totalTokenCount: totalTokens },
     timestamp,
   );
 }
@@ -2312,7 +2357,19 @@ export default function App() {
       // info). Staged into locals here and folded onto the project inside the
       // one atomic setProject below, so the log commits with the segments it
       // describes rather than in a second render.
+      //
+      // WS4 — two more entry kinds ride along on the same staging. Both describe
+      // the RUN (not a scene), and both are emitted only when they actually
+      // happened, so a clean sync's log is unchanged:
+      //   'silence-error'   (Feature 3) silence detection failed; boundaries
+      //                     degraded to token midpoints, sync continued
+      //   'malformed-token' (Feature 4) tokens with unusable timestamps were
+      //                     dropped before alignment
       pendingLogEntries = [
+        ...(aligned.silenceError ? [buildSilenceErrorEntry(syncRunId, aligned.silenceError, syncRunAt)] : []),
+        ...(aligned.malformedTokenCount > 0
+          ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
+          : []),
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
@@ -2323,6 +2380,7 @@ export default function App() {
         coveredSegments: kept.length,
         skippedSegments: skipped.length,
         aborted: false,
+        silenceErrorCount: aligned.silenceError ? 1 : 0,
       };
 
       // Covered-only boundary re-snap (middle-gap position-offset fix).
@@ -2340,7 +2398,12 @@ export default function App() {
       // The plain arithmetic re-tile stays as the fallback for the degenerate
       // case where there is nothing to snap against (no tokens): closing the
       // skip gaps is still better than leaving them.
-      const transcriptTokens = projectRef.current.transcriptTokens!;
+      // WS4 Feature 4 — snap against `aligned.tokens`, the MALFORMED-FILTERED
+      // array the aligner actually used, not `projectRef.current.transcriptTokens`.
+      // keptAlignments' firstTokenIdx/lastTokenIdx are indices into the filtered
+      // array; reading the raw one with them would resolve to the wrong tokens
+      // whenever anything was filtered.
+      const transcriptTokens = aligned.tokens;
       finalTimedSegments = transcriptTokens.length > 0
         ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
         : retileCoveredSegments(kept, audioDuration);
@@ -2379,6 +2442,8 @@ export default function App() {
         coveredSegments: finalTimedSegments.length,
         skippedSegments: 0,
         aborted: false,
+        // No audio was analysed on this branch, so silence detection never ran.
+        silenceErrorCount: 0,
       };
     }
     syncMark('align+timing:done');

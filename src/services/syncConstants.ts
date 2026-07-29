@@ -62,6 +62,15 @@ export const NOISE_FLOOR_COVERAGE = 0.1;
 export const MAX_LOG_ENTRIES = 500;
 export const MAX_SYNC_RUN_SUMMARIES = 10;
 
+// --- Malformed-token filter (WS4 Feature 4, decision 14a) -------------------
+// A whisper token whose end lands past the end of the audio is malformed — but
+// "past the end" needs slack: the container's reported duration and the decoded
+// sample count routinely disagree by a frame or two of codec padding (AAC/MP3
+// encoder delay), and whisper's own word-boundary timestamps carry ~300ms of
+// error besides. This tolerance is what keeps a legitimate final word from
+// being discarded for ending a few milliseconds "after" the file does.
+export const MALFORMED_TOKEN_DURATION_TOLERANCE_SEC = 0.5;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

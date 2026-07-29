@@ -85,3 +85,86 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
     expect(html).toContain('Sync completed: 8 of 8 segments matched.');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS4 — the two new run-level entry kinds render, and old entries still do.
+// ---------------------------------------------------------------------------
+
+function renderPanel(entries: SyncLogEntry[]): string {
+  return renderToStaticMarkup(<SyncLogPanel syncLog={entries} onClearLog={() => {}} />);
+}
+
+describe('SyncLogPanel — WS4 entry kinds', () => {
+  it('renders a silence-error entry with its badge, message and reason', () => {
+    const html = renderPanel([{
+      id: 'e-sil',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'silence-error',
+      message: 'Silence detection failed — segment boundaries fall back to spoken-word midpoints instead of audio gaps.',
+      errorMessage: 'Unable to decode audio data',
+    }]);
+
+    expect(html).toContain('SILENCE');
+    expect(html).toContain('Silence detection failed');
+    expect(html).toContain('reason: Unable to decode audio data');
+    expect(html).toContain('text-red-400');
+  });
+
+  it('renders a malformed-token entry with its badge, message and counts', () => {
+    const html = renderPanel([{
+      id: 'e-tok',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'malformed-token',
+      message: 'Filtered 3 of 420 transcript token(s) with unusable timestamps before alignment.',
+      skippedTokenCount: 3,
+      totalTokenCount: 420,
+    }]);
+
+    expect(html).toContain('TOKENS');
+    expect(html).toContain('Filtered 3 of 420');
+    expect(html).toContain('3 of 420 tokens had invalid timestamps');
+    expect(html).toContain('text-blue-400');
+  });
+
+  it('renders a silence-error entry that has no errorMessage without crashing', () => {
+    const html = renderPanel([{
+      id: 'e-sil2',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'silence-error',
+      message: 'Silence detection failed.',
+    }]);
+
+    expect(html).toContain('SILENCE');
+    expect(html).not.toContain('reason:');
+    expect(html).not.toContain('undefined');
+  });
+
+  it('renders a malformed-token entry missing its counts without printing undefined', () => {
+    const html = renderPanel([{
+      id: 'e-tok2',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'malformed-token',
+      message: 'Filtered some tokens.',
+    }]);
+
+    expect(html).toContain('TOKENS');
+    expect(html).toContain('Filtered some tokens.');
+    expect(html).not.toContain('undefined');
+  });
+
+  it('still renders pre-WS4 entry kinds unchanged', () => {
+    const html = renderPanel([
+      { id: 'a', timestamp: AT, syncRunId: 'run-1', type: 'info', message: 'Sync completed: 8 of 8 segments matched.' },
+      { id: 'b', timestamp: AT, syncRunId: 'run-1', type: 'abort', message: 'Inputs do not correspond.' },
+    ]);
+
+    expect(html).toContain('INFO');
+    expect(html).toContain('ABORT');
+    expect(html).toContain('Sync completed: 8 of 8 segments matched.');
+    expect(html).not.toContain('undefined');
+  });
+});

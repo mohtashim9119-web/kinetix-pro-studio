@@ -9,6 +9,8 @@ import {
   clearSyncLog,
   buildSkipLogEntries,
   buildSyncAbortEntry,
+  buildSilenceErrorEntry,
+  buildMalformedTokenEntry,
   buildSyncInfoEntry,
   buildSyncInfoMessage,
   makeSyncLogEntry,
@@ -384,5 +386,94 @@ describe('makeSyncLogEntry', () => {
   it('mints unique ids across calls', () => {
     const ids = Array.from({ length: 50 }, () => makeSyncLogEntry(RUN_ID, 'info', 'x').id);
     expect(new Set(ids).size).toBe(50);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS4 — the two new run-level entry kinds (Features 3 and 4)
+// ---------------------------------------------------------------------------
+
+describe('buildSilenceErrorEntry (WS4 Feature 3)', () => {
+  it('builds a silence-error entry carrying the detector message', () => {
+    const entry = buildSilenceErrorEntry(RUN_ID, 'Unable to decode audio data', AT);
+
+    expect(entry.type).toBe('silence-error');
+    expect(entry.syncRunId).toBe(RUN_ID);
+    expect(entry.timestamp).toBe(AT);
+    expect(entry.errorMessage).toBe('Unable to decode audio data');
+    expect(entry.message).toContain('Silence detection failed');
+  });
+
+  it('says in plain language that sync continued on midpoints', () => {
+    const entry = buildSilenceErrorEntry(RUN_ID, 'boom', AT);
+    expect(entry.message).toMatch(/midpoint/i);
+  });
+
+  it('carries no segment fields — it describes the run, not a scene', () => {
+    const entry = buildSilenceErrorEntry(RUN_ID, 'boom', AT);
+    expect(entry.segmentIndex).toBeUndefined();
+    expect(entry.segmentText).toBeUndefined();
+  });
+});
+
+describe('buildMalformedTokenEntry (WS4 Feature 4)', () => {
+  it('builds a malformed-token entry with both counts', () => {
+    const entry = buildMalformedTokenEntry(RUN_ID, 3, 420, AT);
+
+    expect(entry.type).toBe('malformed-token');
+    expect(entry.skippedTokenCount).toBe(3);
+    expect(entry.totalTokenCount).toBe(420);
+    expect(entry.message).toContain('3 of 420');
+  });
+
+  it('is informational, not an error — the tokens were handled', () => {
+    const entry = buildMalformedTokenEntry(RUN_ID, 1, 10, AT);
+    expect(entry.type).not.toBe('abort');
+    expect(entry.type).not.toBe('silence-error');
+  });
+});
+
+describe('SyncRunSummary.silenceErrorCount (WS4 Feature 3)', () => {
+  it('folds a summary carrying the counter onto the project', () => {
+    const project = makeProject();
+    const summary = makeSummary({ silenceErrorCount: 1 });
+
+    const next = appendSyncLogEntries(project, [], summary);
+    expect(next.syncRunSummaries).toHaveLength(1);
+    expect(next.syncRunSummaries![0]!.silenceErrorCount).toBe(1);
+  });
+
+  it('records zero on a run where silence detection succeeded', () => {
+    const next = appendSyncLogEntries(makeProject(), [], makeSummary({ silenceErrorCount: 0 }));
+    expect(next.syncRunSummaries![0]!.silenceErrorCount).toBe(0);
+  });
+
+  it('treats a pre-WS4 summary with no counter as undefined, not a crash', () => {
+    const legacy: SyncRunSummary = makeSummary();
+    delete (legacy as { silenceErrorCount?: number }).silenceErrorCount;
+
+    const next = appendSyncLogEntries(makeProject(), [], legacy);
+    expect(next.syncRunSummaries![0]!.silenceErrorCount).toBeUndefined();
+  });
+});
+
+describe('WS4 entries fold onto the project like any other', () => {
+  it('appends both new kinds alongside skip/info entries in order', () => {
+    const entries = [
+      buildSilenceErrorEntry(RUN_ID, 'decode failed', AT),
+      buildMalformedTokenEntry(RUN_ID, 2, 50, AT),
+      buildSyncInfoEntry(RUN_ID, 8, 8, 0, AT),
+    ];
+
+    const next = appendSyncLogEntries(makeProject(), entries, makeSummary({ silenceErrorCount: 1 }));
+    expect(next.syncLog!.map(e => e.type)).toEqual(['silence-error', 'malformed-token', 'info']);
+  });
+
+  it('prunes the new kinds under MAX_LOG_ENTRIES like every other entry', () => {
+    const project = makeProject({ syncLog: makeEntries(MAX_LOG_ENTRIES) });
+    const next = appendSyncLogEntries(project, [buildSilenceErrorEntry(RUN_ID, 'boom', AT)]);
+
+    expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
+    expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('silence-error');
   });
 });

@@ -9,6 +9,7 @@ import {
   classifyCoverage,
   computeCoverageSummary,
   countTranscriptWords,
+  filterMalformedTokens,
 } from './whisperService';
 import {
   evaluateCoverageGate,
@@ -21,7 +22,7 @@ import {
   FULL_MISMATCH_MESSAGE,
 } from '../App';
 import { snapCoveredBoundaries } from './snapBoundaries';
-import { LOW_CONFIDENCE_RATIO } from './syncConstants';
+import { LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -2242,5 +2243,212 @@ describe('middle-gap position offset — unmatched neighbours no longer shift co
 
     expect(snapped.map(s => s.startTime)).toEqual(anchored.map(s => s.startTime));
     expect(snapped.map(s => s.duration)).toEqual(anchored.map(s => s.duration));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS4 Feature 4 (decision 14a) — malformed-token filter
+// ---------------------------------------------------------------------------
+//
+// These tokens reach the aligner straight from whisper.cpp's stdout, and their
+// timestamps become segment boundaries verbatim. A single bad one can place a
+// boundary at a nonsense time or NaN an entire run, so the filter runs once,
+// before alignment, and reports what it dropped.
+
+describe('filterMalformedTokens (WS4 Feature 4)', () => {
+  const AUDIO_LEN = 10;
+
+  function tok(startSec: number, endSec: number, text = 'word'): TranscriptToken {
+    return { startSec, endSec, text };
+  }
+
+  it('keeps a well-formed token', () => {
+    const result = filterMalformedTokens([tok(1, 2)], AUDIO_LEN);
+    expect(result.tokens).toHaveLength(1);
+    expect(result.skippedCount).toBe(0);
+    expect(result.totalTokens).toBe(1);
+  });
+
+  it('filters a token starting before zero', () => {
+    const result = filterMalformedTokens([tok(-0.5, 1)], AUDIO_LEN);
+    expect(result.tokens).toEqual([]);
+    expect(result.skippedCount).toBe(1);
+  });
+
+  it('filters a token ending past audioDuration + tolerance', () => {
+    const result = filterMalformedTokens([tok(9, AUDIO_LEN + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC + 0.01)], AUDIO_LEN);
+    expect(result.tokens).toEqual([]);
+    expect(result.skippedCount).toBe(1);
+  });
+
+  it('keeps a token ending within the codec-padding tolerance', () => {
+    // Container duration and decoded sample count routinely disagree by a few
+    // ms — the last word must not be discarded for that.
+    const result = filterMalformedTokens([tok(9, AUDIO_LEN + 0.2)], AUDIO_LEN);
+    expect(result.tokens).toHaveLength(1);
+    expect(result.skippedCount).toBe(0);
+  });
+
+  it('filters a zero-duration token', () => {
+    expect(filterMalformedTokens([tok(3, 3)], AUDIO_LEN).skippedCount).toBe(1);
+  });
+
+  it('filters an inverted token (start after end)', () => {
+    expect(filterMalformedTokens([tok(4, 3)], AUDIO_LEN).skippedCount).toBe(1);
+  });
+
+  it('filters NaN and Infinity timestamps', () => {
+    const result = filterMalformedTokens(
+      [tok(NaN, 2), tok(1, NaN), tok(1, Infinity), tok(-Infinity, 2)],
+      AUDIO_LEN,
+    );
+    expect(result.tokens).toEqual([]);
+    expect(result.skippedCount).toBe(4);
+    expect(result.totalTokens).toBe(4);
+  });
+
+  it('filters tokens whose text is empty or normalizes away', () => {
+    const result = filterMalformedTokens(
+      [tok(1, 2, ''), tok(2, 3, '   '), tok(3, 4, '...'), tok(4, 5, 'real')],
+      AUDIO_LEN,
+    );
+    expect(result.tokens.map(t => t.text)).toEqual(['real']);
+    expect(result.skippedCount).toBe(3);
+  });
+
+  it('keeps valid tokens and counts only the invalid ones, preserving order', () => {
+    const result = filterMalformedTokens(
+      [tok(0, 1, 'one'), tok(-1, 2, 'bad'), tok(1, 2, 'two'), tok(5, 5, 'bad'), tok(2, 3, 'three')],
+      AUDIO_LEN,
+    );
+    expect(result.tokens.map(t => t.text)).toEqual(['one', 'two', 'three']);
+    expect(result.skippedCount).toBe(2);
+    expect(result.totalTokens).toBe(5);
+  });
+
+  it('skips the end-of-audio check when audioDuration is unusable', () => {
+    // An unknown duration must not discard the entire transcript.
+    for (const bad of [0, -1, NaN, Infinity]) {
+      const result = filterMalformedTokens([tok(1, 2), tok(500, 600)], bad);
+      expect(result.tokens).toHaveLength(2);
+      expect(result.skippedCount).toBe(0);
+    }
+  });
+
+  it('does not mutate the input array', () => {
+    const input = [tok(1, 2), tok(-1, 0.5)];
+    const copy = input.map(t => ({ ...t }));
+    filterMalformedTokens(input, AUDIO_LEN);
+    expect(input).toEqual(copy);
+  });
+
+  it('returns an empty result for an empty transcript', () => {
+    expect(filterMalformedTokens([], AUDIO_LEN)).toEqual({
+      tokens: [], skippedCount: 0, totalTokens: 0,
+    });
+  });
+
+  it('leaves alignment unchanged when the filter drops the bad tokens first', () => {
+    // The point of filtering BEFORE alignment: a malformed token injected into
+    // a clean transcript must not move any boundary once filtered out.
+    const segments = [
+      makeSegment({ id: 's1', text: 'hello world', order: 0 }),
+      makeSegment({ id: 's2', text: 'goodbye now', order: 1 }),
+    ];
+    const clean: TranscriptToken[] = [
+      { startSec: 0.0, endSec: 0.5, text: 'hello' },
+      { startSec: 0.5, endSec: 1.0, text: 'world' },
+      { startSec: 2.0, endSec: 2.5, text: 'goodbye' },
+      { startSec: 2.5, endSec: 3.0, text: 'now' },
+    ];
+    const polluted: TranscriptToken[] = [
+      clean[0]!,
+      { startSec: -5, endSec: -1, text: 'garbage' },
+      clean[1]!,
+      { startSec: 900, endSec: 901, text: 'garbage' },
+      clean[2]!,
+      clean[3]!,
+    ];
+
+    const filtered = filterMalformedTokens(polluted, 3);
+    expect(filtered.skippedCount).toBe(2);
+    expect(filtered.tokens).toEqual(clean);
+
+    const fromClean = alignScenestoTranscript(segments, clean, []);
+    const fromFiltered = alignScenestoTranscript(segments, filtered.tokens, []);
+    expect(fromFiltered.map(a => [a.t0, a.t1])).toEqual(fromClean.map(a => [a.t0, a.t1]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS4 Feature 1 (decision 13a) — stage directions at the PIPELINE level
+// ---------------------------------------------------------------------------
+//
+// textNormalize.test.ts covers the strip grammar in isolation. What matters
+// here is the consequence: written-but-unspoken words are penalized deletions
+// in the Hirschberg aligner, so they drag a segment's confidence toward the
+// skip threshold. After the strip, a scene document containing directions must
+// align exactly like the same document without them.
+
+describe('stage-direction stripping through the aligner (WS4 Feature 1)', () => {
+  const spokenTokens: TranscriptToken[] = [
+    { startSec: 0.0, endSec: 0.4, text: 'the' },
+    { startSec: 0.4, endSec: 0.8, text: 'kettle' },
+    { startSec: 0.8, endSec: 1.2, text: 'is' },
+    { startSec: 1.2, endSec: 1.6, text: 'boiling' },
+    { startSec: 2.0, endSec: 2.4, text: 'she' },
+    { startSec: 2.4, endSec: 2.8, text: 'pours' },
+    { startSec: 2.8, endSec: 3.2, text: 'the' },
+    { startSec: 3.2, endSec: 3.6, text: 'tea' },
+  ];
+
+  const cleanDoc = [
+    makeSegment({ id: 'a', text: 'The kettle is boiling', order: 0 }),
+    makeSegment({ id: 'b', text: 'She pours the tea', order: 1 }),
+  ];
+  const directedDoc = [
+    makeSegment({ id: 'a', text: 'INT. KITCHEN - DAY\nThe kettle is boiling (steam rising)', order: 0 }),
+    makeSegment({ id: 'b', text: 'She pours the tea [CLOSE UP: HANDS]', order: 1 }),
+  ];
+
+  it('gives a directed document the same confidence as a clean one', () => {
+    const clean = extractSegmentAlignments(cleanDoc, spokenTokens);
+    const directed = extractSegmentAlignments(directedDoc, spokenTokens);
+
+    expect(clean.map(a => a.confidence)).toEqual([1, 1]);
+    expect(directed.map(a => a.confidence)).toEqual(clean.map(a => a.confidence));
+    expect(directed.map(a => a.totalWords)).toEqual(clean.map(a => a.totalWords));
+  });
+
+  it('gives a directed document the same boundaries as a clean one', () => {
+    const clean = alignScenestoTranscript(cleanDoc, spokenTokens, []);
+    const directed = alignScenestoTranscript(directedDoc, spokenTokens, []);
+
+    expect(directed.map(a => [a.t0, a.t1])).toEqual(clean.map(a => [a.t0, a.t1]));
+  });
+
+  it('keeps both scenes covered where the unstripped directions would have hurt confidence', () => {
+    const directed = extractSegmentAlignments(directedDoc, spokenTokens);
+    expect(classifyCoverage(directed).map(c => c.covered)).toEqual([true, true]);
+  });
+
+  it('falls back to the original text when stripping would empty a segment', () => {
+    // A fully-parenthesized scene keeps its words rather than collapsing to a
+    // zero-word "neutral" segment, which would change its classification.
+    const parenOnly = [makeSegment({ id: 'p', text: '(the kettle is boiling)', order: 0 })];
+    const result = extractSegmentAlignments(parenOnly, spokenTokens);
+
+    expect(result[0]!.totalWords).toBe(4);
+    expect(result[0]!.matchedWords).toBe(4);
+  });
+
+  it('does not strip the transcript side — spoken parentheses still match', () => {
+    // The subject sequence is built with `normalize`, not `normalizeSceneDoc`.
+    const tokens: TranscriptToken[] = [
+      { startSec: 0, endSec: 0.5, text: '(hello' },
+      { startSec: 0.5, endSec: 1.0, text: 'there)' },
+    ];
+    const segs = [makeSegment({ id: 'x', text: 'hello there', order: 0 })];
+    expect(extractSegmentAlignments(segs, tokens)[0]!.confidence).toBe(1);
   });
 });
