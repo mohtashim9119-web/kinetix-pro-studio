@@ -21,6 +21,26 @@ Desktop video slideshow compositor (Tauri v2 wrapper around a React/Vite fronten
 ```
 src/
   App.tsx            # ~3,588 lines — top-level state, orchestration, playback, export.
+                     #   KNOWN DEFECT, deliberately unfixed (R5/N4, reviewed 2026-07-29):
+                     #   parseProjectData's TAG_REGEX (/(?=\[[^\]]*\])/, ~line 292) splits the
+                     #   scene doc before EVERY bracket anywhere in the text, not just at a line
+                     #   start. So a mid-line non-speech annotation — "Line one [laughs]
+                     #   continues here" — is promoted to a scene anchor: it starts a segment,
+                     #   takes the rest of the sentence as that segment's text, and is matched
+                     #   against the staged assets like any real tag (it can genuinely steal
+                     #   laughs_take2.jpg). The obvious fix (anchor the split to line start) is
+                     #   NOT viable as-is: it breaks the multi-tag one-paragraph format locked in
+                     #   by sceneTagParsing.test.ts's "full repro scene doc" test, where six tags
+                     #   share one line and must all anchor. "… segment 2 [team] Our team …"
+                     #   (must split) and "Line one [laughs] continues here" (must not) are
+                     #   structurally identical, so no positional rule separates them — a fix
+                     #   needs an annotation vocabulary or a product ruling on the authoritative
+                     #   input format. Current behavior is pinned by regression tests carrying
+                     #   explicit // DEFECT: markers, so any fix must change them visibly. The
+                     #   ALIGNMENT side is already correct — textNormalize.ts's
+                     #   stripStageDirections turns "Hello [CUT TO: KITCHEN] world" into "Hello
+                     #   world" — so the eventual fix is parser-only. Full analysis:
+                     #   docs/sync-system-rewrite-architecture.md §3.8 status block.
                      #   The window keydown effect's Space branch guards on isTextEntryElement()
                      #   (not a generic tagName check) so a focused range slider no longer traps
                      #   spacebar play/pause; a global pointerup listener blurs any focused
@@ -143,6 +163,44 @@ src/
                      #   resolutionConfig.test.ts assert all 6 (ratio, tier) -> dimension pairs,
                      #   aspectRatioToCss for all 3 ratios, and both defaults.
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
+    textNormalize.ts # The unified text normalizer (sync rewrite R1, closes G4) — ONE pipeline
+                     #   shared by the alignment path and the filename path so they can never
+                     #   drift on Unicode hygiene again. Public surface: canonicalize (the full
+                     #   13-step alignment tokenizer — NFC, lowercase, apostrophe fold,
+                     #   contractions, thousands separators, decimals, currency/symbols,
+                     #   zero-width JOIN removal, dash/quote folds, the R1 hyphen carve-out via
+                     #   NUMBER_WORDS, digit-run expansion), canonicalizeForFilename (ONLY the
+                     #   shared Unicode primitives — no lowercasing/contractions/digit reading,
+                     #   behavior identical to the former normalizeForMatch),
+                     #   stripStageDirections, and canonicalizeSceneDoc (= strip then
+                     #   canonicalize). The strip is applied to the SCENE-DOC SIDE ONLY —
+                     #   Whisper transcribes speech, so a direction or a speaker label can only
+                     #   ever appear on that side, and stripping both sides would buy nothing
+                     #   while risking an asymmetry. It never mutates seg.text; only the
+                     #   ALIGNMENT VIEW is stripped, so the editor still shows what the author
+                     #   wrote. Two line-oriented grammars, both deliberately conservative:
+                     #     - Stage directions (WS4, decision 13a) — parentheticals anywhere
+                     #       (nested, inside-out), bracketed ALL-CAPS directives NOT at line
+                     #       start, INT./EXT. sluglines and FADE IN:/CUT TO:/DISSOLVE TO:
+                     #       transition lines (whole line), residual colons-only lines. A
+                     #       line-start [tag] is PRESERVED — it is a scene anchor the parser
+                     #       still depends on (see the R5/N4 note in App.tsx's entry below).
+                     #     - Speaker labels (WS5, 13a extension item A) — SPEAKER_LABEL_RE drops
+                     #       NARRATOR:/VOICE 2:/SPEAKER: at line head. Uppercase-ONLY and
+                     #       case-sensitive, which is the entire safety argument: lowercase
+                     #       prose ("note:", "hint:", "narrator:") and mixed case ("Narrator:")
+                     #       never match. Its group 1 carries through leading whitespace AND an
+                     #       optional line-start [tag], so "[scene 1] NARRATOR: hi" keeps its
+                     #       anchor. ORDER IS LOAD-BEARING: whole-line transition rules run
+                     #       first (so "CUT TO:" is a transition, not a label), then the bracket
+                     #       pass, then this, then the parenthetical pass (so "NARRATOR:
+                     #       (whispering) hello" -> "hello"). Accepted limit, documented at the
+                     #       constant: a spoken ALL-CAPS clause ending in a colon ("THE ANSWER
+                     #       IS: forty two") matches and loses its lead-in words.
+                     #   Callers reach the strip through whisperService.ts's normalizeSceneDoc
+                     #   wrapper, which adds the empty-result fallback (a fully-parenthesized
+                     #   scene keeps its original words rather than collapsing to a zero-word
+                     #   "neutral" segment, which would change its classification).
     syncEngine.ts    # Content-only matching + timing helpers (no heading logic — headings
                      #   moved to a separate overlay layer in Path B Phase 7, 2026-07-09):
                      #   isFuzzyMatch(), findAssetByContext(), applyAnchorBasedTiming(),

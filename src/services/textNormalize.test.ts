@@ -118,6 +118,92 @@ describe('stripStageDirections — multi-line', () => {
   });
 });
 
+// ===========================================================================
+// WS5 Feature 2 (decision 13a extension, item A) — speaker-label stripping.
+//
+// Same conservative philosophy as the stage-direction grammar above: the
+// uppercase-only rule is the whole safety argument, so the "preserved" cases
+// carry as much weight as the "stripped" ones.
+// ===========================================================================
+describe('stripStageDirections — speaker labels are stripped', () => {
+  it('strips a simple NARRATOR: label and keeps the dialogue', () => {
+    expect(stripStageDirections('NARRATOR: hello world')).toBe('hello world');
+  });
+
+  it('strips a numbered VOICE 2: label', () => {
+    expect(stripStageDirections('VOICE 2: I disagree')).toBe('I disagree');
+  });
+
+  it('strips a SPEAKER: label', () => {
+    expect(stripStageDirections('SPEAKER: welcome')).toBe('welcome');
+  });
+
+  it('strips a multi-word label', () => {
+    expect(stripStageDirections('OFF SCREEN VOICE: over here')).toBe('over here');
+  });
+
+  it('strips a label that is alone on its line', () => {
+    expect(stripStageDirections('NARRATOR:')).toBe('');
+  });
+
+  it('tolerates a space before the colon', () => {
+    expect(stripStageDirections('NARRATOR : hello')).toBe('hello');
+  });
+
+  it('composes with the parenthetical strip (label first, then parenthetical)', () => {
+    expect(stripStageDirections('NARRATOR: (whispering) hello')).toBe('hello');
+  });
+
+  it('preserves a line-start [tag] anchor while stripping the label after it', () => {
+    expect(stripStageDirections('[scene 1] NARRATOR: hello')).toBe('[scene 1] hello');
+  });
+
+  it('strips a label on each line independently', () => {
+    expect(stripStageDirections('NARRATOR: first\nVOICE 2: second'))
+      .toBe('first\nsecond');
+  });
+});
+
+describe('stripStageDirections — speaker-label lookalikes are preserved', () => {
+  it('does not strip a lowercase prose lead-in', () => {
+    expect(stripStageDirections('narrator: hello')).toBe('narrator: hello');
+  });
+
+  it('does not strip lowercase "note:" / "hint:" prose', () => {
+    expect(stripStageDirections('note: remember this')).toBe('note: remember this');
+    expect(stripStageDirections('hint: look closer')).toBe('hint: look closer');
+  });
+
+  it('does not strip a mixed-case lead-in', () => {
+    expect(stripStageDirections('Narrator: hello')).toBe('Narrator: hello');
+  });
+
+  it('leaves an uppercase line with no colon alone', () => {
+    expect(stripStageDirections('NARRATOR SPEAKS NOW')).toBe('NARRATOR SPEAKS NOW');
+  });
+
+  it('leaves a colon that is not at the head of the line alone', () => {
+    expect(stripStageDirections('he said THIS: out loud')).toBe('he said THIS: out loud');
+  });
+
+  it('does not strip a single-letter label (needs 2+ characters)', () => {
+    expect(stripStageDirections('A: hello')).toBe('A: hello');
+  });
+
+  it('regression: INT. scene headers still strip (label rule did not shadow them)', () => {
+    expect(stripStageDirections('INT. KITCHEN - DAY')).toBe('');
+  });
+
+  it('regression: CUT TO: is still a transition line, not a speaker label', () => {
+    expect(stripStageDirections('CUT TO:')).toBe('');
+    expect(stripStageDirections('CUT TO: KITCHEN')).toBe('');
+  });
+
+  it('regression: a line-start ALL-CAPS bracket anchor is still preserved', () => {
+    expect(stripStageDirections('[CLOSE UP] hello')).toBe('[CLOSE UP] hello');
+  });
+});
+
 describe('canonicalizeSceneDoc', () => {
   it('strips directions and then tokenizes normally', () => {
     expect(canonicalizeSceneDoc('(whispering) the price is $5'))
@@ -131,6 +217,16 @@ describe('canonicalizeSceneDoc', () => {
   it('agrees with canonicalize on text containing no directions', () => {
     const text = 'thirty-seven co-operate 2024 don’t';
     expect(canonicalizeSceneDoc(text)).toEqual(canonicalize(text));
+  });
+
+  it('drops a speaker label before tokenizing (WS5)', () => {
+    expect(canonicalizeSceneDoc('NARRATOR: the price is $5'))
+      .toEqual(['the', 'price', 'is', 'five', 'dollars']);
+  });
+
+  it('drops a label and a parenthetical together (WS5)', () => {
+    expect(canonicalizeSceneDoc('VOICE 2: (whispering) hello there'))
+      .toEqual(['hello', 'there']);
   });
 });
 

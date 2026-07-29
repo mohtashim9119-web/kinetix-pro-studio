@@ -277,10 +277,12 @@ export function canonicalize(text: string): string[] {
 //   STRIP  line [CUT TO: KITCHEN] here      bracketed ALL-CAPS, NOT at line start
 //   STRIP  INT. KITCHEN - DAY               scene-header line (whole line)
 //   STRIP  FADE IN: / CUT TO: / DISSOLVE TO:  transition line (whole line)
+//   STRIP  NARRATOR: / VOICE 2:             speaker label at line start (WS5)
 //   STRIP  a residual colons-only fragment  (whole line)
 //   KEEP   [tag] at line start              scene anchors — the parser's own tags
 //   KEEP   [scene 1] anywhere               has lowercase ⇒ not a directive
 //   KEEP   *emphasis*                       spoken text, not a direction
+//   KEEP   narrator: / note: / hint:        lowercase ⇒ prose, not a label
 //   KEEP   hyphens / smart quotes / abbrevs already handled above
 
 /** A `[...]` group. No nesting — brackets don't nest in practice, and a greedy
@@ -303,6 +305,30 @@ const TRANSITION_LINE_RE =
 
 /** A line left holding nothing but colons/whitespace after the strips above. */
 const COLONS_ONLY_RE = /^[\s:]+$/;
+
+/**
+ * Speaker label at the head of a line (WS5, decision 13a extension item A):
+ * `NARRATOR:`, `VOICE 2:`, `SPEAKER:`. Like a stage direction, a speaker label
+ * is WRITTEN but never SPOKEN — the voice artist reads the dialogue, not the
+ * name of who says it — so every label is an unmatchable scene-doc word that
+ * drags its segment's confidence down for no reason.
+ *
+ * Group 1 is everything preserved ahead of the label: leading whitespace, plus
+ * an OPTIONAL line-start `[tag]` anchor, so "[scene 1] NARRATOR: hello" keeps
+ * its anchor and becomes "[scene 1] hello". Group 2 (the label) is dropped.
+ *
+ * Case-SENSITIVE and uppercase-ONLY, which is what keeps ordinary prose safe:
+ * "note:", "hint:", "narrator:" are lowercase and never match. The `+` after
+ * the first character means a label is at least two characters before its
+ * colon, so a bare "A:" is left alone.
+ *
+ * KNOWN, ACCEPTED LIMIT: a genuinely spoken ALL-CAPS clause ending in a colon
+ * ("THE ANSWER IS: forty two") matches this pattern and loses its lead-in
+ * words. ALL-CAPS spoken prose is rare, screenplay convention reserves caps at
+ * line-head-plus-colon for labels, and the failure is a few dropped words on
+ * the ALIGNMENT VIEW only — `seg.text` is untouched either way.
+ */
+const SPEAKER_LABEL_RE = /^(\s*(?:\[[^\]]*\]\s*)?)[A-Z][A-Z0-9 ]+:[ \t]*/;
 
 /**
  * True for bracketed content that reads as a directive rather than a tag:
@@ -346,6 +372,14 @@ export function stripStageDirections(text: string): string {
       if (offset === firstNonWs) return match;              // [tag] anchor — preserved
       return isAllCapsDirective(match.slice(1, -1)) ? ' ' : match;
     });
+
+    // Speaker label (WS5). Runs AFTER the bracket pass so a line-start [tag]
+    // anchor is already settled and can simply be carried through by group 1,
+    // and BEFORE the parenthetical pass so "NARRATOR: (whispering) hello"
+    // composes: the label goes here, then "(whispering)" goes below, leaving
+    // "hello". Whole-line transition rules ran earlier still, so "CUT TO:" was
+    // already dropped as a transition and never reaches this pattern.
+    line = line.replace(SPEAKER_LABEL_RE, '$1');
 
     // Parentheticals, inside-out until stable. An unbalanced "(" is left alone.
     let previous: string;

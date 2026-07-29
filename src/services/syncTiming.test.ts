@@ -22,7 +22,12 @@ import {
   FULL_MISMATCH_MESSAGE,
 } from '../App';
 import { snapCoveredBoundaries } from './snapBoundaries';
-import { LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC } from './syncConstants';
+import {
+  LOW_CONFIDENCE_RATIO,
+  MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
+  MIN_COVERED_RUN_LENGTH,
+  NOISE_FLOOR_COVERAGE,
+} from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -2449,6 +2454,382 @@ describe('stage-direction stripping through the aligner (WS4 Feature 1)', () => 
       { startSec: 0.5, endSec: 1.0, text: 'there)' },
     ];
     const segs = [makeSegment({ id: 'x', text: 'hello there', order: 0 })];
+    expect(extractSegmentAlignments(segs, tokens)[0]!.confidence).toBe(1);
+  });
+});
+
+// ===========================================================================
+// WS5 Feature 1 (audit finding S3) — repeated phrases + inflected forms.
+//
+// VERIFICATION, not new behavior. S3 asked whether the WS1a Hirschberg aligner
+// needs a stemming layer to survive ordinary English morphology and repeated
+// wording. These fixtures answer it with numbers, and they exist to FAIL if a
+// future change regresses either property.
+//
+// Outcome (see the WS5 entry in project-state.md): no stemming was added. The
+// worst case constructed below — a two-word segment with one inflected word —
+// lands at confidence 0.5, still above LOW_CONFIDENCE_RATIO, and a realistic
+// sentence lands at 0.71-0.75. Inflection alone cannot push a segment under the
+// coverage threshold, and it can never cause a SKIP (skipping is decided by
+// `matched`, not by confidence — see filterToCoveredSegments).
+// ===========================================================================
+describe('WS5/S3 — repeated phrases resolve by position, not by first occurrence', () => {
+  it('scene doc says a phrase twice, audio says it once: the audio-consistent instance wins', () => {
+    // The transcript order is [alpha bravo charlie delta] THEN [the cat sat...],
+    // so the ONLY monotonic reading is that s2 owns the spoken phrase. A naive
+    // first-occurrence matcher would have given it to s0 and dragged the whole
+    // rest of the timeline backwards.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the cat sat on the mat' }),
+      makeSegment({ id: 's1', order: 1, text: 'alpha bravo charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'the cat sat on the mat' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta the cat sat on the mat', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[2]!.confidence).toBe(1);   // the second instance took the audio
+    expect(cov[0]!.confidence).toBe(0);   // the first is genuinely unspoken
+    expect(cov[1]!.confidence).toBe(1);
+
+    // s2's audio region is the tail of the transcript, after s1's — monotonic.
+    expect(cov[2]!.t0).toBeGreaterThanOrEqual(cov[1]!.t1);
+  });
+
+  it('the duplicated-but-unspoken instance is skipped, not mistimed', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the cat sat on the mat' }),
+      makeSegment({ id: 's1', order: 1, text: 'alpha bravo charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'the cat sat on the mat' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta the cat sat on the mat', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+
+    expect(kept.map(s => s.id)).toEqual(['s1', 's2']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([0]);
+  });
+
+  it('audio says a phrase twice, scene doc says it once: one instance is consumed, order holds', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the cat sat on the mat' }),
+      makeSegment({ id: 's1', order: 1, text: 'zulu yankee' }),
+    ];
+    const tokens = wordTokens('the cat sat on the mat the cat sat on the mat zulu yankee', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[0]!.confidence).toBe(1);
+    expect(cov[1]!.confidence).toBe(1);
+    // s0 must end before s1's spoken words begin — the extra transcript copy
+    // does not let s0 straddle s1.
+    expect(cov[0]!.t1).toBeLessThanOrEqual(cov[1]!.t0);
+  });
+
+  it('the surplus spoken copy shows up as reduced transcript coverage, not as an abort', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the cat sat on the mat' }),
+      makeSegment({ id: 's1', order: 1, text: 'zulu yankee' }),
+    ];
+    const tokens = wordTokens('the cat sat on the mat the cat sat on the mat zulu yankee', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+
+    expect(summary.sceneDocCoverage).toBe(1);          // every written word was said
+    expect(summary.transcriptCoverage).toBeLessThan(1); // but the audio said more
+    expect(evaluateCoverageGate(segments, cov, countTranscriptWords(tokens)).aborted).toBe(false);
+  });
+});
+
+describe('WS5/S3 — inflected forms stay above the coverage threshold without stemming', () => {
+  it('"running fast" vs spoken "runs fast": confidence 0.5, still covered', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'running fast' }),
+      makeSegment({ id: 's1', order: 1, text: 'alpha bravo' }),
+    ];
+    const tokens = wordTokens('runs fast alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[0]!.confidence).toBe(0.5);
+    expect(cov[0]!.confidence).toBeGreaterThanOrEqual(LOW_CONFIDENCE_RATIO);
+    expect(classifyCoverage(cov)[0]!.covered).toBe(true);
+  });
+
+  it('"bigger than" vs spoken "big than": confidence 0.5, still covered', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'bigger than' }),
+      makeSegment({ id: 's1', order: 1, text: 'alpha bravo' }),
+    ];
+    const tokens = wordTokens('big than alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[0]!.confidence).toBe(0.5);
+    expect(cov[0]!.confidence).toBeGreaterThanOrEqual(LOW_CONFIDENCE_RATIO);
+    expect(classifyCoverage(cov)[0]!.covered).toBe(true);
+  });
+
+  it('a realistic sentence with two inflected words stays well above the threshold', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'the runner was running fast down the road' }),
+      makeSegment({ id: 's1', order: 1, text: 'she walked slowly toward the bigger house' }),
+    ];
+    const tokens = wordTokens(
+      'the runner runs fast down the road she walks slowly toward the big house', 0, 0.5,
+    );
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[0]!.confidence).toBeCloseTo(0.75, 5);
+    expect(cov[1]!.confidence).toBeCloseTo(5 / 7, 5);
+    expect(classifyCoverage(cov).map(c => c.covered)).toEqual([true, true]);
+  });
+
+  it('an all-inflected segment is still MATCHED, so it is never skipped', () => {
+    // The pathological case for a no-stemming aligner: every content word
+    // inflected. Confidence drops below LOW_CONFIDENCE_RATIO, so it stops
+    // counting as "covered" — but `matched` is what decides the timeline, and
+    // the shared function words keep it true.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      makeSegment({ id: 's1', order: 1, text: 'echo foxtrot golf hotel' }),
+      makeSegment({ id: 's2', order: 2, text: 'the walking running jumping climbing' }),
+    ];
+    const tokens = wordTokens(
+      'alpha bravo charlie delta echo foxtrot golf hotel the walks runs jumps climbs', 0, 0.5,
+    );
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[2]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
+    expect(cov[2]!.matched).toBe(true);
+    expect(filterToCoveredSegments(segments, cov).kept.map(s => s.id))
+      .toEqual(['s0', 's1', 's2']);
+  });
+});
+
+// ===========================================================================
+// WS5 Feature 4 — threshold boundary locks.
+//
+// These pin the EXACT comparison semantics of the two sync thresholds so a
+// future refactor cannot quietly turn `>=` into `>` (or move a value) without a
+// red test. Each fixture is constructed to land ON the boundary, not near it.
+//
+// NOTE on naming: there is no `R13_ABORT_THRESHOLD` constant in this codebase.
+// The 0.4 value is LOW_CONFIDENCE_RATIO (per-segment coverage classification).
+// The R13 abort gate is a different, two-signal mechanism entirely —
+// MIN_COVERED_RUN_LENGTH (a run LENGTH, not a ratio) and NOISE_FLOOR_COVERAGE
+// (0.1). Both are locked below. See the WS5 entry in project-state.md.
+// ===========================================================================
+describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
+  // s2 is built so exactly 2 of its 5 words are spoken -> confidence 0.4 exactly.
+  // s3 has exactly 1 of 5 -> 0.2, comfortably under.
+  const segments: VideoSegment[] = [
+    makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta echo' }),
+    makeSegment({ id: 's1', order: 1, text: 'foxtrot golf hotel india juliet' }),
+    makeSegment({ id: 's2', order: 2, text: 'kilo lima zulu yankee xray' }),
+    makeSegment({ id: 's3', order: 3, text: 'mike november quebec romeo sierra' }),
+  ];
+  const tokens = wordTokens(
+    'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike', 0, 0.5,
+  );
+
+  it('the fixture really does sit exactly on the threshold', () => {
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[2]!.confidence).toBe(LOW_CONFIDENCE_RATIO); // 0.4 exactly
+    expect(cov[2]!.matchedWords).toBe(2);
+    expect(cov[2]!.totalWords).toBe(5);
+  });
+
+  it('confidence EXACTLY at LOW_CONFIDENCE_RATIO classifies as covered (>=, not >)', () => {
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(classifyCoverage(cov)[2]!.covered).toBe(true);
+  });
+
+  it('confidence just below LOW_CONFIDENCE_RATIO classifies as uncovered', () => {
+    const cov = extractSegmentAlignments(segments, tokens);
+    expect(cov[3]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
+    expect(classifyCoverage(cov)[3]!.covered).toBe(false);
+  });
+
+  it('an uncovered-but-matched segment is still KEPT on the timeline (skip is `matched`, not `covered`)', () => {
+    const cov = extractSegmentAlignments(segments, tokens);
+    const { kept, skipped } = filterToCoveredSegments(segments, cov);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2', 's3']);
+    expect(skipped).toEqual([]);
+  });
+
+  it('the same threshold governs the covered-run scan inside computeCoverageSummary', () => {
+    const cov = extractSegmentAlignments(segments, tokens);
+    // s0,s1,s2 are covered (0.4 clears the bar), s3 is not -> longest run 3.
+    expect(computeCoverageSummary(cov, countTranscriptWords(tokens)).longestCoveredRun).toBe(3);
+  });
+});
+
+describe('WS5 — R13 gate Signal 1 boundary (MIN_COVERED_RUN_LENGTH)', () => {
+  it('a covered run one short of MIN_COVERED_RUN_LENGTH aborts', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('alpha bravo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+
+    expect(summary.longestCoveredRun).toBe(MIN_COVERED_RUN_LENGTH - 1);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+
+  it('a covered run exactly AT MIN_COVERED_RUN_LENGTH passes (>=, not >)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: 'echo foxtrot' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+
+    expect(summary.longestCoveredRun).toBe(MIN_COVERED_RUN_LENGTH);
+    expect(evaluateCoverageGate(segments, cov, countTranscriptWords(tokens)).aborted).toBe(false);
+  });
+});
+
+describe('WS5 — R13 gate Signal 2 boundary (NOISE_FLOOR_COVERAGE)', () => {
+  // Both fixtures hold the covered run at 2 (Signal 1 passes) and vary ONLY the
+  // volume of unspoken scene-doc text, so the bidirectional coverage straddles
+  // the noise floor and nothing else changes.
+  // Pure-alphabetic noise words on purpose: a digit in the word would be
+  // expanded to its spoken form by `canonicalize` ("noise12" -> two words), so
+  // the scene-doc word count would no longer equal the noise-word count and the
+  // fixture would miss the boundary it is aiming at.
+  function noiseWords(count: number): string {
+    return Array.from({ length: count }, (_, i) =>
+      `noise${String.fromCharCode(97 + Math.floor(i / 26))}${String.fromCharCode(97 + (i % 26))}`,
+    ).join(' ');
+  }
+
+  function fixture(noiseWordCount: number) {
+    const noise = noiseWords(noiseWordCount);
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
+      makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
+      makeSegment({ id: 's2', order: 2, text: noise }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    return { segments, cov, totalTranscriptWords: countTranscriptWords(tokens) };
+  }
+
+  it('bidirectional coverage EXACTLY at NOISE_FLOOR_COVERAGE passes (abort is <, not <=)', () => {
+    // 4 matched / 40 total scene-doc words = 0.1 exactly.
+    const { segments, cov, totalTranscriptWords } = fixture(36);
+    const summary = computeCoverageSummary(cov, totalTranscriptWords);
+
+    expect(summary.longestCoveredRun).toBeGreaterThanOrEqual(MIN_COVERED_RUN_LENGTH);
+    expect(summary.bidirectionalCoverage).toBeCloseTo(NOISE_FLOOR_COVERAGE, 10);
+    expect(evaluateCoverageGate(segments, cov, totalTranscriptWords).aborted).toBe(false);
+  });
+
+  it('bidirectional coverage just below NOISE_FLOOR_COVERAGE aborts', () => {
+    // 4 matched / 41 total scene-doc words = 0.0976 — one word over the line.
+    const { segments, cov, totalTranscriptWords } = fixture(37);
+    const summary = computeCoverageSummary(cov, totalTranscriptWords);
+
+    expect(summary.longestCoveredRun).toBeGreaterThanOrEqual(MIN_COVERED_RUN_LENGTH);
+    expect(summary.bidirectionalCoverage).toBeLessThan(NOISE_FLOOR_COVERAGE);
+    const gate = evaluateCoverageGate(segments, cov, totalTranscriptWords);
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+});
+
+describe('WS5 — full-mismatch and perfect-match end points', () => {
+  it('0% overlap aborts with the full-mismatch message', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie' }),
+      makeSegment({ id: 's1', order: 1, text: 'delta echo foxtrot' }),
+      makeSegment({ id: 's2', order: 2, text: 'golf hotel india' }),
+    ];
+    const tokens = wordTokens('zulu yankee xray whiskey victor uniform tango sierra romeo', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+
+    expect(summary.sceneDocCoverage).toBe(0);
+    expect(summary.bidirectionalCoverage).toBe(0);
+    expect(summary.longestCoveredRun).toBe(0);
+    const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
+    expect(gate.aborted).toBe(true);
+    if (gate.aborted) expect(gate.message).toBe(FULL_MISMATCH_MESSAGE);
+  });
+
+  it('100% overlap covers every segment, skips nothing, and does not abort', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie' }),
+      makeSegment({ id: 's1', order: 1, text: 'delta echo foxtrot' }),
+      makeSegment({ id: 's2', order: 2, text: 'golf hotel india' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta echo foxtrot golf hotel india', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+
+    expect(summary.sceneDocCoverage).toBe(1);
+    expect(summary.transcriptCoverage).toBe(1);
+    expect(summary.bidirectionalCoverage).toBe(1);
+    expect(summary.longestCoveredRun).toBe(3);
+    expect(classifyCoverage(cov).map(c => c.covered)).toEqual([true, true, true]);
+    expect(evaluateCoverageGate(segments, cov, countTranscriptWords(tokens)).aborted).toBe(false);
+    expect(filterToCoveredSegments(segments, cov).skipped).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// WS5 Feature 2 — speaker labels through the aligner.
+// The unit-level grammar lives in textNormalize.test.ts; this is the end-to-end
+// proof that a labelled scene doc aligns identically to an unlabelled one.
+// ===========================================================================
+describe('WS5 — speaker-label stripping through the aligner', () => {
+  const spoken = wordTokens('the kettle is boiling she pours the tea', 0, 0.4);
+
+  const cleanDoc = [
+    makeSegment({ id: 'a', order: 0, text: 'the kettle is boiling' }),
+    makeSegment({ id: 'b', order: 1, text: 'she pours the tea' }),
+  ];
+  const labelledDoc = [
+    makeSegment({ id: 'a', order: 0, text: 'NARRATOR: the kettle is boiling' }),
+    makeSegment({ id: 'b', order: 1, text: 'VOICE 2: (softly) she pours the tea' }),
+  ];
+
+  it('a labelled document aligns with the same confidence and word counts', () => {
+    const clean = extractSegmentAlignments(cleanDoc, spoken);
+    const labelled = extractSegmentAlignments(labelledDoc, spoken);
+
+    expect(clean.map(a => a.confidence)).toEqual([1, 1]);
+    expect(labelled.map(a => a.confidence)).toEqual(clean.map(a => a.confidence));
+    expect(labelled.map(a => a.totalWords)).toEqual(clean.map(a => a.totalWords));
+  });
+
+  it('a labelled document produces the same boundaries', () => {
+    const clean = alignScenestoTranscript(cleanDoc, spoken, []);
+    const labelled = alignScenestoTranscript(labelledDoc, spoken, []);
+    expect(labelled.map(a => [a.t0, a.t1])).toEqual(clean.map(a => [a.t0, a.t1]));
+  });
+
+  it('an unstripped label would have cost confidence — proving the strip does work', () => {
+    // Same doc, but lowercase so the label rule deliberately does NOT fire.
+    const lowercaseLabel = [
+      makeSegment({ id: 'a', order: 0, text: 'narrator: the kettle is boiling' }),
+      makeSegment({ id: 'b', order: 1, text: 'she pours the tea' }),
+    ];
+    const cov = extractSegmentAlignments(lowercaseLabel, spoken);
+    expect(cov[0]!.totalWords).toBe(5);       // "narrator" counted as a word
+    expect(cov[0]!.confidence).toBeLessThan(1);
+  });
+
+  it('does not strip the transcript side — a spoken uppercase colon phrase still matches', () => {
+    const tokens: TranscriptToken[] = [
+      { startSec: 0, endSec: 0.5, text: 'NARRATOR:' },
+      { startSec: 0.5, endSec: 1.0, text: 'hello' },
+    ];
+    const segs = [makeSegment({ id: 'x', order: 0, text: 'narrator hello' })];
     expect(extractSegmentAlignments(segs, tokens)[0]!.confidence).toBe(1);
   });
 });

@@ -3,6 +3,7 @@ import { parseProjectData, evaluateCoverageGate, filterToCoveredSegments } from 
 import { normalizeForMatch, isExactFilenameMatch, contiguousWordMatch, stripMediaExtension, cleanTagName, autoMatchSegments } from './syncEngine';
 import { extractSegmentAlignments, countTranscriptWords } from './whisperService';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
+import { stripStageDirections } from './textNormalize';
 import { TransitionType, AnimationType } from '../types';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 
@@ -738,5 +739,105 @@ describe('R4-1 end-to-end — parsed missing1/missing2 segments are SKIPPED, not
       'This is a test missing segment.',
       'This is a test missing segment 2',
     ]);
+  });
+});
+
+// ===========================================================================
+// WS5 Feature 3 — R5/N4 investigation: mid-line brackets and block splitting.
+//
+// FINDING: NOT fixed by WS1b. WS1b's parser work was about extracting a tag's
+// description when it sits INLINE after the tag on the same line; it never
+// touched where blocks are SPLIT. The splitter is still
+// `TAG_REGEX = /(?=\[[^\]]*\])/` (App.tsx), a lookahead that splits before
+// EVERY bracket anywhere in the document. So a mid-line non-speech annotation
+// like "[laughs]" is promoted to a scene anchor: it starts a new segment,
+// claims an asset slot, and takes the rest of the sentence as its text.
+//
+// STATUS: KNOWN DEFECT, DELIBERATELY NOT FIXED IN WS5 (user decision,
+// 2026-07-29). The obvious fix — only treat a LINE-START bracket as a scene
+// boundary — is not viable as-is, because it contradicts the multi-tag
+// one-paragraph case locked in by the "full repro scene doc" test above, where
+// six tags share a single line and must all anchor. The two cases are
+// structurally identical ("... segment 2 [team] Our team ..." must split;
+// "Line one [laughs] continues here" must not), so no purely positional rule
+// separates them; distinguishing them needs either a non-speech-annotation
+// vocabulary or a product ruling on which input format is authoritative.
+//
+// The tests below LOCK THE CURRENT (defective) BEHAVIOR so that whenever the
+// fix does land, it lands as a visible, deliberate change to these assertions
+// rather than as a silent behavioral drift. Read every `// DEFECT:` line as
+// "this is what happens today", NOT as "this is what should happen".
+// ===========================================================================
+describe('R5/N4 — mid-line brackets split blocks (known defect, locked)', () => {
+  it('DEFECT: a mid-line [laughs] annotation starts a new segment', async () => {
+    const segments = await parseProjectData('', '[scene 1] Line one [laughs] continues here', [], 10);
+
+    // DESIRED (when fixed): one segment, text "Line one [laughs] continues here"
+    // (the annotation then being dropped pre-alignment by stripStageDirections
+    // only if it is ALL-CAPS; a lowercase one is kept as spoken text).
+    // ACTUAL today:
+    expect(segments).toHaveLength(2);
+    expect(segments.map(s => ({ tag: s.tag, text: s.text }))).toEqual([
+      { tag: 'scene 1', text: 'Line one' },
+      { tag: 'laughs', text: 'continues here' },
+    ]);
+  });
+
+  it('DEFECT: a mid-line ALL-CAPS [CUT TO: ...] direction starts a new segment', async () => {
+    const segments = await parseProjectData('', '[scene 1] Hello [CUT TO: KITCHEN] world', [], 10);
+
+    // DESIRED (when fixed): one segment whose text is "Hello [CUT TO: KITCHEN]
+    // world", which stripStageDirections ALREADY reduces to "Hello world" on the
+    // alignment side — see the assertion in the next test. The split is the only
+    // thing standing between today's behavior and the correct one.
+    expect(segments).toHaveLength(2);
+    expect(segments.map(s => ({ tag: s.tag, text: s.text }))).toEqual([
+      { tag: 'scene 1', text: 'Hello' },
+      { tag: 'CUT TO: KITCHEN', text: 'world' },
+    ]);
+  });
+
+  it('the pre-alignment strip already handles the annotation correctly — only the SPLIT is wrong', () => {
+    // Proof that the defect is localized to the parser's block splitting: given
+    // the un-split text, the WS4 stage-direction layer does the right thing with
+    // no further work. This is what makes the fix a parser-only change.
+    expect(stripStageDirections('Hello [CUT TO: KITCHEN] world')).toBe('Hello world');
+    expect(stripStageDirections('Line one [laughs] continues here'))
+      .toBe('Line one [laughs] continues here'); // lowercase ⇒ treated as spoken
+  });
+
+  it('DEFECT: the phantom segment consumes a real asset slot', async () => {
+    // The practical damage: "[laughs]" is matched against the staged assets like
+    // any other tag. Here it word-matches laughs_take2.jpg and steals it, so a
+    // stray annotation silently changes which media appears on the timeline.
+    const assets = [makeAsset({ id: 'a1', name: 'laughs_take2.jpg' })];
+    const segments = await parseProjectData('', '[scene 1] Line one [laughs] continues here', assets, 10);
+
+    expect(segments).toHaveLength(2);
+    expect(segments[1]?.assetId).toBe('a1');
+  });
+});
+
+describe('R5/N4 — scene-anchor behavior that must NOT regress when the defect is fixed', () => {
+  it('a single line-start tag with inline text parses to one segment', async () => {
+    const segments = await parseProjectData('', '[scene 1] Hello world', [], 10);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]?.tag).toBe('scene 1');
+    expect(segments[0]?.text).toBe('Hello world');
+  });
+
+  it('two tags on separate lines parse to two segments', async () => {
+    const segments = await parseProjectData('', '[scene 1] Hello\n[scene 2] World', [], 10);
+    expect(segments).toHaveLength(2);
+    expect(segments.map(s => ({ tag: s.tag, text: s.text }))).toEqual([
+      { tag: 'scene 1', text: 'Hello' },
+      { tag: 'scene 2', text: 'World' },
+    ]);
+  });
+
+  it('two tags on the SAME line still parse to two segments (the constraint that blocks the line-start fix)', async () => {
+    const segments = await parseProjectData('', '[scene 1] Hello there. [scene 2] World again.', [], 10);
+    expect(segments).toHaveLength(2);
+    expect(segments.map(s => s.text)).toEqual(['Hello there.', 'World again.']);
   });
 });
