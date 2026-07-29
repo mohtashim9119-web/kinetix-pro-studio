@@ -141,6 +141,12 @@ src/
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
                      #   dropdowns/randomize-pools — Effects Tab Rebuild Step 2) + NONE sentinels.
+  assets/
+    export-complete-chime.wav # Export-complete notification chime (export UX features, 2026-07-29)
+                     #   — original two-tone WAV, ~0.5s, generated for this project (no third-party
+                     #   license to track). Imported via Vite's built-in *.wav asset handling
+                     #   (declared in vite/client.d.ts, no extra type declaration needed) and played
+                     #   by services/notificationSound.ts.
   services/
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
@@ -522,6 +528,19 @@ src/
                      #   valid after the round-trip; same-id save is a no-op (returns the existing record,
                      #   no duplicate row). Deliberately separate from the legacy presetService.ts
                      #   (single-category StylePreset) — combined-look needs 3 slugs + 2 durations at once.
+    notificationSound.ts # playExportCompleteChime() (export UX features, 2026-07-29) — plays
+                     #   src/assets/export-complete-chime.wav (an original two-tone WAV, ~0.5s,
+                     #   generated for this project — no third-party license to track) via Web
+                     #   Audio API decode, NEVER a runtime-synthesized OscillatorNode tone. A
+                     #   singleton AudioContext + decoded-AudioBuffer cache are reused across
+                     #   repeated exports in the same session rather than re-creating either per
+                     #   call. Always calls ctx.resume() before playing (idempotent if already
+                     #   running) to cover the autoplay-suspended case; the whole function is
+                     #   wrapped in try/catch and NEVER THROWS — a missing AudioContext (non-
+                     #   browser runtime), a resume() rejection (blocked autoplay), or a fetch/
+                     #   decode failure all fail silently so a sound glitch can never break the
+                     #   completion toast it accompanies. Called fire-and-forget from
+                     #   useExport.ts's runExport on the success path only.
     uiStateStore.ts  # readUiState()/patchUiState() — centralized kinetix:ui:v1 read-merge-write;
                      #   single source for UI-state persistence (D6 fix). Generic key/value store —
                      #   keys currently include currentTime, selectedSegmentId, leftPanelCollapsed,
@@ -662,6 +681,30 @@ src/
                              #   resolveDimensions(snap.aspectRatio ?? DEFAULT_ASPECT_RATIO,
                              #   resolution) instead of a hardcoded ternary — the only place export
                              #   pixel dimensions are decided.
+                             #   Live export timer + completion chime (export UX features, 2026-07-29).
+                             #   UseExportState.elapsedSec ticks once/sec (a single setInterval per hook
+                             #   instance, elapsedTimerRef) while isExporting; the tick's own setState
+                             #   guards on prev.isExporting so a stray tick can never resurrect the
+                             #   counter after a stop already committed. Starts at the top of runExport
+                             #   (reset to 0, same moment isExporting flips true — before ffmpeg session
+                             #   creation), frozen (interval cleared, value preserved) on every exit path
+                             #   — success, ffmpeg_load failure, encode/mux failure, save failure, and
+                             #   cancelExport — then reset to 0 again only on the NEXT runExport call.
+                             #   lastExportElapsedSec is a separate field capturing prev.elapsedSec at
+                             #   the instant of success (elapsedSec itself resets to 0 via the IDLE_STATE
+                             #   spread in that same setState) — the completion toast and the live timer
+                             #   read from this one hook, never computing elapsed time twice.
+                             #   formatElapsed(sec) — "MM:SS", "HH:MM:SS" past one hour, zero-padded — is
+                             #   the live-timer display format; formatElapsedLong(sec) — "45s"/"5m 23s"/
+                             #   "1h 5m 23s" — is the toast's prose format. Both pure, both exported, both
+                             #   unit-tested directly (useExport.test.ts) since the hook's own start/tick/
+                             #   stop/reset behavior needs an actual render to exercise and this repo has
+                             #   no jsdom/testing-library/react-test-renderer (same gap usePlayback.test.ts
+                             #   and useGlPreview.test.ts already document) — verified manually instead.
+                             #   On success, runExport also fires-and-forgets
+                             #   services/notificationSound.ts's playExportCompleteChime() — never on
+                             #   cancel or error, and never awaited (a sound failure can't delay or break
+                             #   the success state transition).
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.

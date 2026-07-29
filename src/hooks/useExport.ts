@@ -16,6 +16,7 @@ import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend
 import { isWebGL2Supported } from '../services/gl/glContext';
 import { readUiState, patchUiState } from '../services/uiStateStore';
 import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
+import { playExportCompleteChime } from '../services/notificationSound';
 
 /** Export quality tier — the same closed set as the project's own native
  *  resolutionTier (services/resolutionConfig.ts); dimensions are always
@@ -102,6 +103,17 @@ export interface UseExportState {
   error: ExportError | null;
   showExportSuccess?: boolean;
   lastExportPath?: string;
+  /** Live elapsed export time in seconds — ticks once per second while
+   *  isExporting, frozen (interval cleared) the instant export stops for
+   *  any reason. Reset to 0 at the start of every new runExport call. */
+  elapsedSec: number;
+  /** The frozen elapsedSec value at the moment the MOST RECENT export
+   *  completed successfully — captured separately from elapsedSec because
+   *  the success transition also resets elapsedSec back to 0 via
+   *  IDLE_STATE. This is what the completion toast's "completed in Xm Ys"
+   *  text reads, so the toast and the live timer can never compute elapsed
+   *  time from two different sources. */
+  lastExportElapsedSec?: number;
 }
 
 export interface UseExportApi {
@@ -125,7 +137,36 @@ const IDLE_STATE: UseExportState = {
   progress: 0,
   stageLabel: '',
   error: null,
+  elapsedSec: 0,
 };
+
+/**
+ * Formats a duration for the LIVE timer display: "MM:SS", or "HH:MM:SS"
+ * once the export runs an hour or longer. All segments zero-padded.
+ */
+export function formatElapsed(totalSec: number): string {
+  const sec = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  const pad = (n: number): string => n.toString().padStart(2, '0');
+  return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
+/**
+ * Formats a duration for the completion toast's prose form: "45s",
+ * "5m 23s", or "1h 5m 23s" — whichever units are non-zero at the top,
+ * omitting smaller-than-a-second precision entirely.
+ */
+export function formatElapsedLong(totalSec: number): string {
+  const sec = Math.max(0, Math.floor(totalSec));
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return `${h}h ${m}m ${s}s`;
+  if (m > 0) return `${m}m ${s}s`;
+  return `${s}s`;
+}
 
 /**
  * Returns the parent directory of a file path, or null if the path has no
@@ -184,6 +225,27 @@ export function useExport(
   // cancelExport reads this to pick the matching cancel sequence (plan §9.1).
   const activePathRef = useRef<'legacy' | 'webcodecs'>('legacy');
 
+  // Live elapsed-time timer — one shared interval per hook instance, ticking
+  // state.elapsedSec once a second while an export is in flight. Guarding on
+  // prev.isExporting inside the tick means a tick that fires in the same
+  // macrotask as a stop (cancel/error/success) can't resurrect elapsedSec
+  // after the state that turns off the display has already committed.
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopElapsedTimer = useCallback((): void => {
+    if (elapsedTimerRef.current !== null) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
+  }, []);
+
+  const startElapsedTimer = useCallback((): void => {
+    stopElapsedTimer();
+    elapsedTimerRef.current = setInterval(() => {
+      setState(prev => (prev.isExporting ? { ...prev, elapsedSec: prev.elapsedSec + 1 } : prev));
+    }, 1000);
+  }, [stopElapsedTimer]);
+
   // Tear down the active backend and null the ref.
   // Async because session cleanup (dispose) awaits an IPC call.
   const teardown = useCallback(async (): Promise<void> => {
@@ -194,7 +256,12 @@ export function useExport(
   }, []);
 
   // Clean up on unmount — fire-and-forget since useEffect cleanup must be sync.
-  useEffect(() => () => { void teardown(); }, [teardown]);
+  useEffect(() => {
+    return () => {
+      stopElapsedTimer();
+      void teardown();
+    };
+  }, [teardown, stopElapsedTimer]);
 
   const runExport = useCallback(async (snapshot: ExportSnapshot): Promise<void> => {
     const gen = ++generationRef.current;
@@ -205,7 +272,9 @@ export function useExport(
       progress: 0,
       stageLabel: 'Loading ffmpeg…',
       error: null,
+      elapsedSec: 0,
     });
+    startElapsedTimer();
 
     // -------------------------------------------------------------------------
     // Backend acquisition — Tauri native path only (wasm removed in Phase 6.4).
@@ -214,8 +283,9 @@ export function useExport(
       tauriBackendRef.current = await createTauriBackend();
     } catch (err) {
       if (generationRef.current !== gen) return;
+      stopElapsedTimer();
       await teardown();
-      setState({
+      setState(prev => ({
         isExporting: false,
         stage: null,
         progress: 0,
@@ -225,7 +295,10 @@ export function useExport(
           message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
           cause: err instanceof Error ? err.message : String(err),
         },
-      });
+        // Frozen at the failure moment, same as a cancel — reset happens on
+        // the next startExport, not here.
+        elapsedSec: prev.elapsedSec,
+      }));
       return;
     }
 
@@ -277,6 +350,7 @@ export function useExport(
     if (generationRef.current !== gen) return;
 
     if (!result.ok) {
+      stopElapsedTimer();
       await teardown();
       setState(prev => ({
         ...prev,
@@ -298,6 +372,7 @@ export function useExport(
       if (!backend) throw new Error('export backend was torn down before save');
       await backend.saveOutputToDisk(result.outputFile, savedPath);
     } catch (err) {
+      stopElapsedTimer();
       await teardown();
       if (generationRef.current !== gen) return;
       setState(prev => ({
@@ -312,15 +387,20 @@ export function useExport(
       return;
     }
 
+    stopElapsedTimer();
     await teardown();
     if (generationRef.current !== gen) return;
 
-    setState({
+    setState(prev => ({
       ...IDLE_STATE,
       lastExportPath: savedPath,
       showExportSuccess: true,
-    });
-  }, [teardown]);
+      lastExportElapsedSec: prev.elapsedSec,
+    }));
+    // Best-effort completion sound — never awaited, never allowed to affect
+    // the export flow or the toast if it fails (see notificationSound.ts).
+    void playExportCompleteChime();
+  }, [teardown, startElapsedTimer, stopElapsedTimer]);
 
   const startExport = useCallback((): void => {
     if (!isTauri()) {
@@ -358,9 +438,13 @@ export function useExport(
   const cancelExport = useCallback((): void => {
     if (tauriBackendRef.current === null) {
       // No active export — just dismiss the error/cancelled modal.
+      stopElapsedTimer();
       setState(IDLE_STATE);
       return;
     }
+    // Freeze the live timer at the cancel moment — reset happens on the next
+    // startExport, not here (same "freeze, don't reset" behavior as an error).
+    stopElapsedTimer();
     // Invalidate all in-flight onProgress callbacks from the current generation.
     generationRef.current++;
     // D13 fix — kill the in-flight ffmpeg subprocess before tearing down the
@@ -387,14 +471,15 @@ export function useExport(
       // doc comment: safe to call more than once) — never a second live kill.
       await teardown();
     })();
-    setState({
+    setState(prev => ({
       isExporting: false,
       stage: null,
       progress: 0,
       stageLabel: '',
       error: { kind: 'cancelled', message: 'Export cancelled.' },
-    });
-  }, [teardown]);
+      elapsedSec: prev.elapsedSec,
+    }));
+  }, [teardown, stopElapsedTimer]);
 
   const retryExport = useCallback((): void => {
     const snapshot = lastSnapshotRef.current;

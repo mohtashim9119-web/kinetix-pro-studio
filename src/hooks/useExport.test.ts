@@ -6,7 +6,80 @@ import {
   isWebCodecsExportToggleOn,
   setWebCodecsExportToggle,
   isWebCodecsExportGateOpen,
+  formatElapsed,
+  formatElapsedLong,
 } from './useExport';
+
+/**
+ * formatElapsed / formatElapsedLong — the live-timer and completion-toast
+ * duration formatters (export UX timer + toast feature). Both are pure
+ * functions with no React/DOM dependency, so — unlike the hook's own
+ * start/tick/stop/reset timer behavior, which needs an actual render to
+ * exercise (this repo has no jsdom/@testing-library/react/react-test-renderer
+ * — confirmed absent from node_modules, same limitation documented in
+ * usePlayback.test.ts's and useGlPreview.test.ts's own headers) — they can be
+ * fully unit-tested here. The timer's live start/tick/stop/reset behavior and
+ * the chime/toast integration are verified manually per the feature's own
+ * validation checklist instead.
+ */
+describe('formatElapsed', () => {
+  it('formats 0 seconds as 00:00', () => {
+    expect(formatElapsed(0)).toBe('00:00');
+  });
+
+  it('formats 65 seconds as 01:05', () => {
+    expect(formatElapsed(65)).toBe('01:05');
+  });
+
+  it('formats 3661 seconds (over an hour) as 01:01:01', () => {
+    expect(formatElapsed(3661)).toBe('01:01:01');
+  });
+
+  it('zero-pads single-digit minutes and seconds under an hour', () => {
+    expect(formatElapsed(5)).toBe('00:05');
+    expect(formatElapsed(60)).toBe('01:00');
+  });
+
+  it('stays in MM:SS form up to (but not including) one hour', () => {
+    expect(formatElapsed(3599)).toBe('59:59');
+  });
+
+  it('switches to HH:MM:SS at exactly one hour', () => {
+    expect(formatElapsed(3600)).toBe('01:00:00');
+  });
+
+  it('floors fractional seconds and clamps negative input to zero', () => {
+    expect(formatElapsed(65.9)).toBe('01:05');
+    expect(formatElapsed(-5)).toBe('00:00');
+  });
+});
+
+describe('formatElapsedLong', () => {
+  it('formats 45 seconds as "45s"', () => {
+    expect(formatElapsedLong(45)).toBe('45s');
+  });
+
+  it('formats 65 seconds as "1m 5s"', () => {
+    expect(formatElapsedLong(65)).toBe('1m 5s');
+  });
+
+  it('formats 3661 seconds as "1h 1m 1s"', () => {
+    expect(formatElapsedLong(3661)).toBe('1h 1m 1s');
+  });
+
+  it('omits the minutes unit entirely under a minute', () => {
+    expect(formatElapsedLong(0)).toBe('0s');
+  });
+
+  it('omits the hours unit entirely under an hour', () => {
+    expect(formatElapsedLong(125)).toBe('2m 5s');
+  });
+
+  it('still shows 0m/0s components once a larger unit is present', () => {
+    expect(formatElapsedLong(3600)).toBe('1h 0m 0s');
+    expect(formatElapsedLong(60)).toBe('1m 0s');
+  });
+});
 
 describe('parentDir', () => {
   it('returns the parent directory of a macOS/POSIX path', () => {

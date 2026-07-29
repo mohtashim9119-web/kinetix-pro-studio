@@ -117,7 +117,7 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
-import { useExport, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
+import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -275,6 +275,7 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — minimum timeline slot width
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
+const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
 // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
 const MIN_PLAYBACK_SPEED = 0.5;
 const MAX_PLAYBACK_SPEED = 2.0;
@@ -2818,10 +2819,10 @@ export default function App() {
     isExporting: exportState.isExporting,
   });
 
-  // --- Export success toast: auto-dismiss after 10 s ---
+  // --- Export success toast: auto-dismiss after EXPORT_SUCCESS_TOAST_DURATION_MS ---
   useEffect(() => {
     if (!exportState.showExportSuccess) return;
-    const t = setTimeout(() => dismissSuccess(), 10000);
+    const t = setTimeout(() => dismissSuccess(), EXPORT_SUCCESS_TOAST_DURATION_MS);
     return () => clearTimeout(t);
   }, [exportState.showExportSuccess, dismissSuccess]);
 
@@ -3806,6 +3807,7 @@ export default function App() {
                 <div>
                   <h2 className="text-2xl font-bold tracking-tight text-white mb-2">Rendering Master MP4</h2>
                   <p aria-live="polite" aria-atomic="true" className="text-[#F27D26] text-sm font-semibold min-h-[1.25rem]">{exportState.stageLabel}</p>
+                  <p aria-live="polite" className="text-gray-300 text-lg font-mono font-bold tabular-nums mt-2">{formatElapsed(exportState.elapsedSec)}</p>
                   <p className="text-gray-500 text-xs mt-1">Please do not close this tab.</p>
                 </div>
 
@@ -4154,7 +4156,7 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Export success toast — bottom-right, auto-dismisses after 10 s */}
+      {/* Export success toast — bottom-right, auto-dismisses after EXPORT_SUCCESS_TOAST_DURATION_MS */}
       <AnimatePresence>
         {exportState.showExportSuccess && exportState.lastExportPath && (
           <motion.div
@@ -4166,7 +4168,7 @@ export default function App() {
           >
             <div className="flex items-center gap-2 text-green-400 font-semibold text-sm">
               <CheckCircle size={18} />
-              Export complete
+              Export completed in {formatElapsedLong(exportState.lastExportElapsedSec ?? 0)}
             </div>
             <p className="text-zinc-400 text-xs truncate max-w-56">
               {exportState.lastExportPath.split('/').pop()?.split('\\').pop()}
