@@ -5,9 +5,12 @@ import {
   headingCacheKey,
   filterVisibleTextLayers,
   resolveBodyCaptionConfig,
+  computeHeadingScale,
+  computeHeadingAtlasPlan,
   type TextRenderGlobalConfig,
 } from './textRenderer';
 import { getActiveHeadingAt } from '../headingLayer';
+import { HEADING_SUPERSAMPLE_FACTOR } from '../headingRenderConstants';
 import { TransitionType, AnimationType } from '../../types';
 import type { HeadingOverlay, TextOverlay, VideoSegment } from '../../types';
 
@@ -136,6 +139,56 @@ describe('headingCacheKey', () => {
   it('differs when frame size changes (wrap width / vertical centering depend on it)', () => {
     const h = makeHeading({ id: 'h1', time: 0, duration: 1 });
     expect(headingCacheKey(h, 1920, 1080)).not.toBe(headingCacheKey(h, 1280, 720));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Heading text quality fix (1080-reference scale + supersampled
+// rasterization) — computeHeadingScale/computeHeadingAtlasPlan are the pure
+// size/position math extracted out of buildHeadingTextAtlas specifically so
+// they're unit-testable. The actual OffscreenCanvas rasterization inside
+// buildHeadingTextAtlas (the Canvas2D quality settings —
+// imageSmoothingEnabled/imageSmoothingQuality/textRendering — actually being
+// applied, and the resulting bitmap being correct) falls under this file's
+// existing "GL rendering itself is not unit-testable without a real GL
+// context" scope note above: this Node/vitest environment has no
+// OffscreenCanvas global, so that half is manual/code-inspection-verified
+// only, same as every other atlas builder in this file (buildOverlayAtlas,
+// buildBodyCaptionAtlas — neither has ever had a rasterization-level test).
+// ---------------------------------------------------------------------------
+
+describe('computeHeadingScale (1080-reference scale, heading text quality fix)', () => {
+  it('is 1.0 at the 1080p reference height — no change to existing 1080p exports', () => {
+    expect(computeHeadingScale(1080)).toBe(1);
+  });
+
+  it('is ~0.667 at 720p — proportionally smaller, matching resolveBodyCaptionConfig\'s refScale convention', () => {
+    expect(computeHeadingScale(720)).toBeCloseTo(720 / 1080, 10);
+  });
+
+  it('scales linearly with frame height generally', () => {
+    expect(computeHeadingScale(540)).toBeCloseTo(0.5);
+    expect(computeHeadingScale(2160)).toBeCloseTo(2);
+  });
+});
+
+describe('computeHeadingAtlasPlan (supersampled atlas sizing, heading text quality fix)', () => {
+  it('supersamples the atlas canvas to HEADING_SUPERSAMPLE_FACTOR x frame size', () => {
+    const h = makeHeading({ id: 'h1', time: 0, duration: 1 });
+    const plan = computeHeadingAtlasPlan(h, 1920, 1080);
+    expect(plan.ssW).toBe(1920 * HEADING_SUPERSAMPLE_FACTOR);
+    expect(plan.ssH).toBe(1080 * HEADING_SUPERSAMPLE_FACTOR);
+  });
+
+  it('effective font size = heading.fontSize x headingScale x supersample factor', () => {
+    const h = makeHeading({ id: 'h1', time: 0, duration: 1, fontSize: 48 });
+    const plan1080 = computeHeadingAtlasPlan(h, 1920, 1080);
+    expect(plan1080.headingScale).toBe(1);
+    expect(plan1080.fontSizePx).toBe(48 * 1 * HEADING_SUPERSAMPLE_FACTOR);
+
+    const plan720 = computeHeadingAtlasPlan(h, 1280, 720);
+    expect(plan720.headingScale).toBeCloseTo(720 / 1080, 10);
+    expect(plan720.fontSizePx).toBeCloseTo(48 * (720 / 1080) * HEADING_SUPERSAMPLE_FACTOR, 10);
   });
 });
 

@@ -10,6 +10,7 @@ import { SpeedBadge } from './SpeedBadge';
 import { VideoSegment, Asset, TransitionType, AnimationType, TextOverlay, HeadingOverlay, type SegmentGrade } from '../types';
 import { getFilterStyle, getMotionProps } from '../constants';
 import { getActiveHeadingAt } from '../services/headingLayer';
+import { HEADING_REFERENCE_HEIGHT } from '../services/headingRenderConstants';
 import { waitForVideoFrame } from '../services/waitForVideoFrame';
 import { oscillate, interpKeyframes, easeInOutSine, easeOutQuad, springApprox } from '../services/canvasAnimations';
 import { blendWrapperProps } from '../services/animBlend';
@@ -1077,6 +1078,15 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   // Mirrors frameRenderer's refScale = h / 1080. Defaults to 1 (unscaled)
   // until the ResizeObserver fires after first mount.
   const captionScale = stageHeight > 0 ? stageHeight / 1080 : 1;
+  // Path B heading layer's own 1080-reference scale (heading text quality
+  // fix) — same convention as captionScale above, applied to the heading
+  // overlay's fontSize so it occupies the same proportion of the frame in
+  // this live-measured stage panel as it does in the exported frame (see
+  // headingRenderConstants.ts's HEADING_REFERENCE_HEIGHT doc comment).
+  // Previously headings used their raw fontSize as literal CSS pixels here,
+  // which is why a heading looked proportionally larger in the (usually
+  // much smaller than 1080px) editor panel than in the actual export.
+  const headingScale = stageHeight > 0 ? stageHeight / HEADING_REFERENCE_HEIGHT : 1;
 
   return (
     <div className="w-full h-full">
@@ -1493,7 +1503,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                 maxWidth: '90%',
                 color: activeLayerHeading.color,
                 fontFamily: activeLayerHeading.fontFamily,
-                fontSize: `${activeLayerHeading.fontSize}px`,
+                fontSize: `${activeLayerHeading.fontSize * headingScale}px`,
                 fontWeight: activeLayerHeading.fontWeight,
                 lineHeight: 1.2,
                 whiteSpace: 'pre-wrap',

@@ -3,6 +3,7 @@ import { getFilterStyle } from '../constants';
 import { applySegmentAnimation } from './canvasAnimations';
 import { TRANSITION_NONE } from '../effectsOptions';
 import { getActiveHeadingAt } from './headingLayer';
+import { HEADING_REFERENCE_HEIGHT, HEADING_SUPERSAMPLE_FACTOR } from './headingRenderConstants';
 import { waitForVideoFrame } from './waitForVideoFrame';
 
 export interface FrameGlobalConfig {
@@ -359,6 +360,26 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
   ctx.restore();
 }
 
+// ---------------------------------------------------------------------------
+// Heading text scratch canvas (heading text quality fix) — reused across
+// calls the same way getGlitchScratchCanvases below reuses its pair, so a
+// long export's per-frame heading redraw doesn't allocate a fresh canvas
+// every frame. Sized to the SUPERSAMPLED dimensions (HEADING_SUPERSAMPLE_FACTOR
+// x the frame's own w/h) — see drawHeadingLayerOverlay's own doc comment.
+// ---------------------------------------------------------------------------
+let headingScratchCanvas: HTMLCanvasElement | null = null;
+
+function getHeadingScratchCanvas(ssW: number, ssH: number): { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D } | null {
+  if (!headingScratchCanvas) headingScratchCanvas = document.createElement('canvas');
+  if (headingScratchCanvas.width !== ssW || headingScratchCanvas.height !== ssH) {
+    headingScratchCanvas.width = ssW;
+    headingScratchCanvas.height = ssH;
+  }
+  const ctx = headingScratchCanvas.getContext('2d');
+  if (!ctx) return null;
+  return { canvas: headingScratchCanvas, ctx };
+}
+
 /**
  * Path B heading layer (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Decision 4):
  * composites a HeadingOverlay on top of whatever has already been drawn to
@@ -366,6 +387,19 @@ function drawExtraOverlay(ctx: CanvasRenderingContext2D, overlay: TextOverlay, w
  * with the text positioned at (x%, y%) inside it, matching the visual weight
  * of the old in-array heading system. The compositing order (drawn last, on
  * top of content) is what implements Decision 4 — not the shape of the fill.
+ *
+ * Heading text quality fix: `heading.fontSize` is corrected by the
+ * 1080-reference scale (`h / HEADING_REFERENCE_HEIGHT` — same convention as
+ * this function's own `refScale` sibling for body captions, and
+ * `webcodecsExport/textRenderer.ts`'s `computeHeadingScale`) so text occupies
+ * the correct proportion of frame at any export resolution tier, and the
+ * text itself is rasterized at `HEADING_SUPERSAMPLE_FACTOR`x resolution onto
+ * a reused scratch canvas, then downscale-drawn onto `ctx` at 1x — the same
+ * supersample-then-downsample technique `textRenderer.ts`'s GL atlas path
+ * uses (there via LINEAR texture sampling; here via `drawImage`'s own
+ * high-quality resampling), so this legacy canvas path produces visually
+ * consistent heading text with the WebCodecs export path instead of the
+ * blockier native 1:1 Canvas2D rasterization it used before.
  */
 function drawHeadingLayerOverlay(ctx: CanvasRenderingContext2D, heading: HeadingOverlay, w: number, h: number): void {
   if (heading.backgroundColor && heading.backgroundColor !== 'transparent') {
@@ -375,23 +409,41 @@ function drawHeadingLayerOverlay(ctx: CanvasRenderingContext2D, heading: Heading
     ctx.restore();
   }
 
-  const x = (heading.x / 100) * w;
-  const y = (heading.y / 100) * h;
+  const headingScale = h / HEADING_REFERENCE_HEIGHT;
+  const ssW = w * HEADING_SUPERSAMPLE_FACTOR;
+  const ssH = h * HEADING_SUPERSAMPLE_FACTOR;
+  const fontSizePx = heading.fontSize * headingScale * HEADING_SUPERSAMPLE_FACTOR;
 
-  ctx.save();
-  ctx.font = `${heading.fontWeight} ${heading.fontSize}px "${heading.fontFamily}"`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
+  const scratch = getHeadingScratchCanvas(ssW, ssH);
+  if (!scratch) return; // unreachable on any real canvas-capable runtime, defensive only
+  const { canvas: ssCanvas, ctx: ssCtx } = scratch;
 
-  const maxWidth = w * 0.9;
-  const lines = wrapText(ctx, heading.text, maxWidth);
-  const lineHeight = heading.fontSize * 1.2;
+  ssCtx.clearRect(0, 0, ssW, ssH);
+  ssCtx.imageSmoothingEnabled = true;
+  ssCtx.imageSmoothingQuality = 'high';
+  ssCtx.textRendering = 'geometricPrecision';
+
+  const x = (heading.x / 100) * ssW;
+  const y = (heading.y / 100) * ssH;
+
+  ssCtx.font = `${heading.fontWeight} ${fontSizePx}px "${heading.fontFamily}"`;
+  ssCtx.textAlign = 'center';
+  ssCtx.textBaseline = 'middle';
+
+  const maxWidth = ssW * 0.9;
+  const lines = wrapText(ssCtx, heading.text, maxWidth);
+  const lineHeight = fontSizePx * 1.2;
   const totalHeight = lines.length * lineHeight;
 
-  ctx.fillStyle = heading.color;
+  ssCtx.fillStyle = heading.color;
   lines.forEach((line, i) => {
-    ctx.fillText(line, x, y - totalHeight / 2 + lineHeight / 2 + i * lineHeight);
+    ssCtx.fillText(line, x, y - totalHeight / 2 + lineHeight / 2 + i * lineHeight);
   });
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(ssCanvas, 0, 0, ssW, ssH, 0, 0, w, h);
   ctx.restore();
 }
 

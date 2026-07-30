@@ -376,6 +376,24 @@ src/
                      #   shared <video> between the outgoing and incoming seek targets every frame.
                      #   releaseBlendVideo(url) detaches and drops a blend-cache entry; called by
                      #   segmentEncoder.ts once a segment's transition window finishes encoding.
+                     #   drawHeadingLayerOverlay (heading text quality fix) — heading.fontSize is now
+                     #   corrected by the 1080-reference scale (headingRenderConstants.ts's
+                     #   HEADING_REFERENCE_HEIGHT; h / 1080, same convention as this file's own
+                     #   body-caption refScale) instead of being used as literal canvas pixels, and
+                     #   is rasterized at HEADING_SUPERSAMPLE_FACTOR (2x) resolution onto a reused
+                     #   module-level scratch <canvas> (getHeadingScratchCanvas, same reuse pattern
+                     #   as the glitch-transition scratch canvases below) then drawImage-downscaled
+                     #   onto the real frame ctx at 1x — antialiases glyph edges instead of leaving
+                     #   Canvas2D's native 1:1 rasterization, matching the WebCodecs export path's
+                     #   own supersample technique (textRenderer.ts's buildHeadingTextAtlas).
+    headingRenderConstants.ts # HEADING_REFERENCE_HEIGHT (1080) + HEADING_SUPERSAMPLE_FACTOR (2) —
+                     #   heading text quality fix. The single shared home for the two numbers that
+                     #   keep heading rendering consistent across all three call sites: PreviewStage.tsx
+                     #   (DOM overlay), frameRenderer.ts (legacy canvas export), and
+                     #   webcodecsExport/textRenderer.ts (GL atlas export) — none may inline these as
+                     #   literals. See the constant's own doc comments for the root-cause rationale
+                     #   (headings previously had no 1080-reference scale on either preview or export,
+                     #   unlike body captions' pre-existing captionScale/refScale convention).
     canvasAnimations.ts # Canvas 2D animation transforms keyed by AnimationType (Fidelity Polish Item 1).
                      #   applySegmentAnimation() — ctx.save/restore wrapper, easing helpers, dev-only assert guard.
                      #   ZOOM_IN/ZOOM_OUT cases compute scale via zoomScale.ts's computeZoomScale
@@ -524,6 +542,26 @@ src/
                      #   text animation today (TEXT_ANIMATIONS is preview-DOM-only) — so this is
                      #   parity, not a scope gap. Worker-safe (OffscreenCanvas + self.fonts, both
                      #   confirmed available in the real WKWebView worker by Step 0).
+                     #   buildHeadingTextAtlas (heading text quality fix) — heading.fontSize is now
+                     #   corrected by the 1080-reference scale (computeHeadingScale, ../
+                     #   headingRenderConstants.ts's HEADING_REFERENCE_HEIGHT — same convention
+                     #   resolveBodyCaptionConfig's refScale already used for body captions) instead
+                     #   of being literal canvas pixels against frameH, AND the atlas canvas itself
+                     #   is rasterized at HEADING_SUPERSAMPLE_FACTOR (2x) the frame's own pixel
+                     #   dimensions (computeHeadingAtlasPlan — both pure, exported, unit-tested in
+                     #   textRenderer.test.ts without touching OffscreenCanvas). The returned
+                     #   AtlasBuild.width/height stay at the ORIGINAL frameW/frameH — only the
+                     #   underlying canvas is supersampled — so AtlasCache's existing LINEAR
+                     #   TEXTURE_MIN/MAG_FILTER downsamples the 2x rasterization into the
+                     #   still-1x-frame-sized quad at draw time, antialiasing glyph edges instead of
+                     #   leaving Canvas2D's native 1:1 rasterization looking flatter/blockier than
+                     #   the preview's OS-hinted DOM text. Root-cause note: headings previously had
+                     #   NO 1080-reference scale on either the preview (PreviewStage.tsx's DOM
+                     #   overlay) or export side — a heading's fontSize was literal CSS px against
+                     #   the live (usually much-smaller-than-1080) editor panel height in preview,
+                     #   vs. literal canvas px against the full export frame height, so the same
+                     #   authored value produced very different on-screen proportions between the
+                     #   two; both sides now divide by the same HEADING_REFERENCE_HEIGHT constant.
       fontResolver.ts # resolveFontBytes(usedFamilies) — parses the SAME Google Fonts CSS
                      #   @import src/index.css:1 loads into document.fonts (byte-identical URL,
                      #   fetched here instead), then fetches the actual font BYTES on the MAIN
@@ -874,6 +912,20 @@ src/
                      #   so their canvas backing buffer re-measures on fullscreen transitions even
                      #   while paused (fixes a stretched-preview bug on paused fullscreen entry).
                      #   New props: onTogglePlay, onSpeedCycle.
+                     #   Path B heading DOM overlay's fontSize is now multiplied by headingScale =
+                     #   stageHeight / HEADING_REFERENCE_HEIGHT (heading text quality fix,
+                     #   services/headingRenderConstants.ts) — the same 1080-reference convention
+                     #   captionScale already applies to body captions just above it. Previously the
+                     #   heading div used its raw fontSize as literal CSS px against stageHeight
+                     #   (the live, ResizeObserver-measured editor-panel height, virtually always
+                     #   smaller than the export's native frame height), while both export paths
+                     #   used the same raw value as literal canvas px against the full export frame
+                     #   height — so a heading looked proportionally larger in the editor than in
+                     #   the exported video. BEHAVIORAL CHANGE: headings now render SMALLER in the
+                     #   preview panel than before this fix (matching export proportions correctly)
+                     #   — existing projects' heading fontSize may need bumping to restore their
+                     #   prior visual prominence, same tradeoff body captions' captionScale already
+                     #   made. Body caption / extraOverlays / global text-layer sizing is unchanged.
     ProjectDashboard.tsx  # Full-screen project picker/grid (opened when no project is confirmed,
                      #   or via a "Projects" entry point). Bulk Select + Delete Projects
                      #   (2026-07-22, self-contained — no App.tsx or service changes): per-card

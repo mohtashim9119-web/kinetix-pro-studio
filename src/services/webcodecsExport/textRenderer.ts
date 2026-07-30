@@ -38,6 +38,7 @@
 
 import type { HeadingOverlay, TextOverlay, VideoSegment } from '../../types';
 import { getActiveHeadingAt } from '../headingLayer';
+import { HEADING_REFERENCE_HEIGHT, HEADING_SUPERSAMPLE_FACTOR } from '../headingRenderConstants';
 
 // ---------------------------------------------------------------------------
 // Config threading (plan §8's text-relevant fields, minus `hideAllText`
@@ -322,6 +323,45 @@ function buildBodyCaptionAtlas(p: BodyCaptionParams): AtlasBuild {
 }
 
 /**
+ * 1080-reference scale for a heading's authored `fontSize` — the same
+ * convention `resolveBodyCaptionConfig`'s `refScale` (below) already
+ * applies to body captions, now extended to headings (heading text quality
+ * fix). Previously a heading's `fontSize` was used as literal canvas
+ * pixels against whatever `frameH` happened to be, with no normalization —
+ * fine only by coincidence at exactly 1080p, and silently wrong (too large
+ * relative to frame) at 720p. Exported as its own pure function so it's
+ * unit-testable without an `OffscreenCanvas`/GL context (see this file's
+ * own testing-philosophy note in textRenderer.test.ts).
+ */
+export function computeHeadingScale(frameH: number): number {
+  return frameH / HEADING_REFERENCE_HEIGHT;
+}
+
+/** Pure size/position math for `buildHeadingTextAtlas`'s supersampled
+ *  rasterization — split out so the numbers (supersampled canvas
+ *  dimensions, the effective in-canvas font size) are unit-testable without
+ *  touching `OffscreenCanvas`. `fontSizePx` already folds in BOTH the
+ *  1080-reference scale (`computeHeadingScale`) and the supersample factor
+ *  (`HEADING_SUPERSAMPLE_FACTOR`) — it is the literal `ctx.font` pixel size
+ *  to use when drawing into the `ssW`x`ssH` canvas. */
+export interface HeadingAtlasPlan {
+  ssW: number;
+  ssH: number;
+  headingScale: number;
+  fontSizePx: number;
+}
+
+export function computeHeadingAtlasPlan(heading: HeadingOverlay, frameW: number, frameH: number): HeadingAtlasPlan {
+  const headingScale = computeHeadingScale(frameH);
+  return {
+    ssW: frameW * HEADING_SUPERSAMPLE_FACTOR,
+    ssH: frameH * HEADING_SUPERSAMPLE_FACTOR,
+    headingScale,
+    fontSizePx: heading.fontSize * headingScale * HEADING_SUPERSAMPLE_FACTOR,
+  };
+}
+
+/**
  * frameRenderer.ts:370 drawHeadingLayerOverlay, ported — TEXT ONLY. The
  * full-frame `backgroundColor` fill that function draws first is
  * deliberately NOT reproduced here (see the file header: it is a separate
@@ -332,20 +372,41 @@ function buildBodyCaptionAtlas(p: BodyCaptionParams): AtlasBuild {
  * width) and the vertical centering both key off the full frame, exactly
  * like the original — reproducing that math in a smaller local canvas would
  * require re-deriving frame-relative wrap/position math a second time for
- * no benefit (a heading is at most one visible instance at a time). */
+ * no benefit (a heading is at most one visible instance at a time).
+ *
+ * Heading text quality fix: the canvas is rasterized at
+ * `HEADING_SUPERSAMPLE_FACTOR`x the frame's own pixel dimensions
+ * (`computeHeadingAtlasPlan`'s `ssW`/`ssH`), with `heading.fontSize`
+ * additionally corrected by the 1080-reference scale
+ * (`computeHeadingScale`) so the text occupies the correct proportion of
+ * the frame regardless of export resolution tier. The returned
+ * `AtlasBuild.width`/`.height` stay at the ORIGINAL `frameW`/`frameH` —
+ * only the underlying `canvas`'s pixel dimensions are supersampled — so
+ * `AtlasCache.set`'s `texImage2D` uploads the high-resolution bitmap while
+ * `drawTexturedQuad` still draws it at exactly 1x frame size on screen;
+ * `TEXTURE_MIN_FILTER`/`MAG_FILTER` LINEAR (see `AtlasCache.set`) then
+ * downsamples the 2x rasterization into the quad, antialiasing glyph edges
+ * the same way supersampled/Retina-class text rendering does, instead of
+ * Canvas2D's blockier native 1:1 rasterization. */
 function buildHeadingTextAtlas(heading: HeadingOverlay, frameW: number, frameH: number): AtlasBuild {
-  const canvas = new OffscreenCanvas(frameW, frameH);
-  const ctx = canvas.getContext('2d')!;
-  const x = (heading.x / 100) * frameW;
-  const y = (heading.y / 100) * frameH;
+  const { ssW, ssH, fontSizePx } = computeHeadingAtlasPlan(heading, frameW, frameH);
 
-  ctx.font = `${heading.fontWeight} ${heading.fontSize}px "${heading.fontFamily}"`;
+  const canvas = new OffscreenCanvas(ssW, ssH);
+  const ctx = canvas.getContext('2d')!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.textRendering = 'geometricPrecision';
+
+  const x = (heading.x / 100) * ssW;
+  const y = (heading.y / 100) * ssH;
+
+  ctx.font = `${heading.fontWeight} ${fontSizePx}px "${heading.fontFamily}"`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
-  const maxWidth = frameW * 0.9;
+  const maxWidth = ssW * 0.9;
   const lines = wrapText(ctx, heading.text, maxWidth);
-  const lineHeight = heading.fontSize * 1.2;
+  const lineHeight = fontSizePx * 1.2;
   const totalHeight = lines.length * lineHeight;
 
   ctx.fillStyle = heading.color;
