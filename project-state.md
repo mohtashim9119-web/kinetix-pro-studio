@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-29 |
-| Current HEAD | **`1fd9036`** ("Fix heading text quality in export — scale correction + supersampling") on branch `webgl2-effects-engine` — **16 commits ahead of `origin/webgl2-effects-engine`, 0 behind, not yet pushed**. `tsc --noEmit` clean, `vitest` **1048/1048**. |
+| Last updated | 2026-07-30 |
+| Current HEAD | **`2757614`** ("Deep segment search, no-asset sync log summary, contention-aware silence claiming (snap starvation-cascade fix)") on branch `webgl2-effects-engine` — **pushed, up to date with `origin/webgl2-effects-engine`**. `tsc --noEmit` clean, `vitest` **1083/1083**. |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -39,6 +39,8 @@ Found via real-app manual testing in the Tauri app (WebGL2 preview toggle ON), 2
 - **General preview playback lag/smoothness — root cause never confirmed across two reports.** First observed 2026-07-06 during post-Phase-A manual testing of the (since-replaced) CSS/Canvas2D preview path ("general preview playback lag/smoothness unrelated to segment boundaries — root cause unconfirmed, needs runtime profiling"). Re-reported 2026-07-13 alongside Bug 2 as "combined lag" under the WebGL2 preview path, with no further repro detail captured. Whether the WebGL2 rebuild resolved, carried forward, or replaced the original finding was never determined — the rendering path changed entirely between the two reports. Needs a dedicated repro session to confirm whether this is the same class of WKWebView `texImage2D` slow path Phase 3 Step 2 already fixed once, or a new distinct bottleneck, before it can be scoped. `src/hooks/useGlPreview.ts`, `src/services/gl/glCompositor.ts`. Deferred — not scheduled, not closed.
 
 - **Regression — timeline segment edge-drag no longer tracks mouse movement:** unrelated to the lag entry above (Bugs 1, 2, and 4 are already fixed and no longer listed here). Dragging a segment from its edge does not follow mouse movement proportionally — instead it jumps directly to a fixed length and locks that segment plus its neighbor. Unlocking both afterward snaps them back to their originally-synced position automatically, discarding the manual adjustment entirely. This differs from the previously-working drag behavior documented in CLAUDE.md's `App.tsx` file-map entry (`isResizingRef`, live-width-via-tagged-DOM-refs, single `applyDurationChange` commit on mouseup) and the D12 ghost-click fix history (`docs/history.md`, commit `be45b07`) — suspected regression, not a pre-existing bug. Root cause not yet audited; first step should be bisecting whether this appeared alongside the WebGL2 preview integration (Phase 3, commit `5a40cc6`) or is unrelated to it. `src/App.tsx`, `src/components/Timeline.tsx`. Deferred for proper audit + fix — not scheduled, not closed.
+
+- **`snapCoveredBoundaries`'s monotonic fallback doesn't re-check its own substitution:** the fallback that fires when a chosen silence-derived boundary would move backwards past `prevBoundary` substitutes a token-midpoint boundary *without re-checking that substituted value against `prevBoundary` either* — so a backwards boundary can in principle still be written silently (and get floored to `MIN_SEGMENT_DURATION`, 0.1s). Found during the 2026-07-30 snap-cascade audit (see `docs/history.md` → "Deep Segment Search + No-Asset Sync Summary + Contention-Aware Silence Claiming"); never observed in production logs; deliberately not fixed as part of that session's contention-aware claiming change, which was scoped to the claiming-order defect only. Also: no test fixture currently exercises the monotonic-fallback branch on a silence-derived proposal — the only fixture that did was updated when contention-aware claiming resolved its contention (see the same history.md entry); a replacement fixture (needing two genuinely non-shared, inverted-order silences, each visible only to its own pair) is owed. `src/services/snapBoundaries.ts`.
 
 ---
 
@@ -78,8 +80,8 @@ No open questions.
 
 | Metric | Value |
 |---|---|
-| `src/App.tsx` LOC | 4,229 (measured via `wc -l`) |
-| Branch status | `webgl2-effects-engine` @ `1fd9036`, **16 ahead / 0 behind** `origin/webgl2-effects-engine`, not yet pushed |
+| `src/App.tsx` LOC | 4,265 (measured via `wc -l`) |
+| Branch status | `webgl2-effects-engine` @ `2757614`, pushed, **0 ahead / 0 behind** `origin/webgl2-effects-engine` |
 | Project persistence | Per-project scoped: `kinetix:project:{id}:v1` + registry `kinetix:projects:v1` in localStorage (legacy single-project key `kinetix:project:v1` retained for one-time migration only) |
 | IndexedDB | `kinetix-assets` DB v2, store `assets-v2`, compound keyPath `['projectId','id']` (legacy v1 store retained for migration) |
 | Total dependencies | 6 prod + 12 dev |
@@ -87,7 +89,7 @@ No open questions.
 | Export engine | Two gated paths as of 2026-07-22 (`useExport.ts`'s `isWebCodecsExportGateOpen()`): **default** — WebCodecs+WebGL2 worker path (`VideoDecoder`→GL composite→`VideoEncoder`, native ffmpeg sidecar for mux-only), toggle ON on every platform; **fallback** — legacy native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) full per-frame canvas pipeline via Tauri `tauri-plugin-shell`, used when the capability probe fails or the user toggles off. See `docs/history.md` → *WebCodecs + WebGL2 Worker Export — Implementation Record*. |
 | Export speed — WebCodecs path (default) | Step 8 synthetic effects-heavy benchmark: 194s → 6.8s (**~28×**). Real projects: **~2.3×** — the honest number, not the synthetic one (GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView narrows the real-world win). Verified macOS Intel x86_64 only; macOS arm64/Windows unverified. Tier 1/C segments (plain, or not GL-expressible) run at legacy speed regardless. |
 | Export speed — legacy path (fallback) | **Stale — pending re-measurement.** Figures predate the 2026-07-09 worker-pool PNG encode + raw-binary IPC write speedup (commit `cd7ea2b`); no post-fix benchmark has been run yet. macOS Intel (x86_64): ~10× realtime (120s for 12s of output) as of the base64-IPC-only pipeline; Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
-| Test count (`vitest`) | 1048 — up from 754 via the sync rewrite + export UX + heading fix; see `docs/history.md` for the per-commit breakdown |
+| Test count (`vitest`) | 1083 — up from 1048 via deep segment search + no-asset sync summary + the contention-aware silence-claiming fix (1048 → 1082 → 1083); see `docs/history.md` for the per-commit breakdown |
 | Frontend bundle size | 505.86 kB / 152.74 kB gzip main bundle (measured 2026-06-22; no wasm in bundle — ffmpeg is a sidecar binary) |
 | Lazy chunks | StockSearchModal 8.79 kB · jszip 95.87 kB |
 | ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |

@@ -2132,3 +2132,59 @@ The sync system rewrite is closed. Full technical detail for every workstream pr
 ### Pointer
 
 Full architectural detail — problem statement, the Hirschberg/coverage-metric/abort-gate design, section-by-section rationale (§3.1–§3.16), the full Decisions Log, and the Round 2–4 rulings — was in `docs/sync-system-rewrite-architecture.md`, deleted 2026-07-30 as part of this documentation cleanup. That detail, and the day-by-day Decisions Log entries this section summarizes, are preserved in git history: commits `a3494d4` through `1fd9036` on `webgl2-effects-engine`.
+
+---
+
+## Deep Segment Search + No-Asset Sync Summary + Contention-Aware Silence Claiming (2026-07-30)
+
+Two additive features and one confirmed-production-bug fix, landed together in one session.
+
+### 1. Deep segment search
+
+The Segments-tab search box (`DropZonePanel.tsx`) previously substring-matched only `seg.text`. It now matches across the row's computed display title, its description text, and its matched asset's filename (all case-insensitive), OR'd with three exact-pattern matchers:
+
+- a bare integer against the row's 1-based segment number ("12" / "08" / "008"),
+- a decimal with an optional trailing "s" against the segment's displayed 1-decimal duration ("4.5" / "4.5s"),
+- an MM:SS string against the segment's formatted start or end time ("00:12", minutes zero-pad tolerant).
+
+Two small pure modules were extracted out of `DropZonePanel.tsx` to make this possible without duplicating logic the row display itself depends on: `src/services/timeFormat.ts` (`formatTime`, moved verbatim) and `src/services/segmentSearch.ts` (`matchesSegmentQuery` + `computeSegmentDisplayTitle`, also moved verbatim from the former inline `humanTitle`). Both the row's on-screen title and the search predicate's title-substring check now come from the same `computeSegmentDisplayTitle` call, and both the row's on-screen time codes and the search predicate's time-code matcher come from the same `formatTime` call — so neither matcher can silently drift from what the user is actually looking at. `DropZonePanel.tsx` also gained a memoized `assetsById` Map (keyed off `assets`), replacing a per-row `assets.find()` lookup that ran once per visible segment per render.
+
+### 2. No-asset sync summary
+
+Apply Sync now appends one summary `SyncLogEntry` per run when any committed segment ends up with no matched `assetId` — previously this state was silently visible only by scanning the Segments tab. New pieces:
+
+- `SyncLogEntryType` gains `'no-asset'` (`types.ts`), rendered as an orange "NO ASSET" badge in `SyncLogPanel.tsx`'s `TYPE_STYLES`, alongside the existing skip/abort/warning/info/silence-error/malformed-token kinds.
+- `App.tsx`'s `buildNoAssetSummaryEntry(syncRunId, noAssetSegmentNumbers, totalSegments, timestamp)` builds the entry at the `committedSegments` choke point (success paths only — the existing abort path returns before this point and owes no such entry), formatting a message like `"No asset matched for 33 of 294 segments: 7–18, 23, 78–97."`. Returns `undefined` when every segment has an asset, so the caller never appends a zero-count entry.
+- `src/services/rangeCompact.ts` (new) — `compactRanges(numbers)` turns a list of 1-based positions into human-readable ranges: runs of 3 or more collapse to an en-dash range (`"7–18"`); runs of exactly 2 render as two singles (`"7, 8"`), not a 2-element range, since a range notation for two numbers reads worse than just listing them. Sorts and dedupes defensively regardless of input order.
+- `SyncRunSummary` gains `noAssetCount?: number` (`types.ts`), same "optional because older persisted summaries genuinely lack it, treat undefined as 0" convention as the existing `silenceErrorCount?`.
+
+### 3. Contention-aware silence claiming (`snapCoveredBoundaries` starvation-cascade fix)
+
+**The bug.** `snapCoveredBoundaries` (`snapBoundaries.ts`) resolved adjacent-pair boundaries left-to-right, and each pair's silence candidates were filtered by a per-call `usedSilences` set — first pair to reach a silence claimed it, unconditionally, even when that silence sat far from its own search window's center and would have been a much better fit for the *next* pair. When an earlier pair's window was wide enough to reach into what was really a later pair's own trailing pause (the fixed 1.0s search radius used whenever two segments have touching/zero-gap tokens makes this easy), the later pair was left with zero unused candidates and fell back to the token-midpoint boundary — which, if the earlier pair's stolen silence happened to sit close to that midpoint, produced a segment duration at or near the `MIN_SEGMENT_DURATION` floor (0.1s). In other words: **greedy left-to-right claiming → a stolen silence starves a downstream pair → that pair collapses to the 0.1s floor**, even though every token was attributed correctly on both sides — this was a pure claiming-order defect, not an alignment bug.
+
+**Confirmed trigger.** Reproduced live (via temporary `[diag-align]`/`[diag-snap]` console instrumentation, since removed) on a real 294-segment project: pair 248 claimed the pause that pair 249 needed, pair 249 in turn took pair 250's, and pair 250 — left with nothing — collapsed to the floor. The affected segments (249–251) were two short back-to-back lines ("It did." / "It always would.") immediately following a long segment.
+
+**The fix — three passes, assignment instead of first-come-first-served:**
+1. **Pass 1** computes every pair's search window up front, from a pristine pre-mutation snapshot of the `kept` array (never from the array being progressively written) — a prerequisite for Pass 2 to compare windows fairly, since the original single-pass loop's `??` fallbacks read `curr`/`next` fields that earlier iterations in the same call had already mutated.
+2. **Pass 2** assigns each silence overlapped by more than one pair's window to whichever pair's own spoken midpoint (`spokenMid`) it sits closest to — not to whichever pair happens to run first. Exact ties go to the later pair (deterministic `<=` comparison). A silence overlapped by no window, or by exactly one, resolves the same as before.
+3. **Pass 3** resolves boundaries left-to-right exactly as the original code did — closest-centre pick, token-midpoint fallback, monotonic safety-net check — except each pair now reads only its own Pass-2-assigned candidates instead of a shared mutable `usedSilences` set, which is deleted entirely.
+
+Window math, the closest-centre selection rule, the no-silence token-midpoint fallback, and the monotonic check are all otherwise byte-identical to the pre-fix code.
+
+**Test-count chain: 1048 → 1082 → 1083.** The two features above account for 34 new tests (7 in new `rangeCompact.test.ts`, 20 in new `segmentSearch.test.ts`, 2 in new `timeFormat.test.ts`, 5 for `buildNoAssetSummaryEntry` added to `syncLog.test.ts`), bringing the suite to 1082. The fix then adds one new regression test — `"contention-aware silence claiming (no starvation cascade)"` in `syncTiming.test.ts` — reproducing the confirmed real geometry (a long segment then two short segments then a normal one, only 2 real silences across 3 pairs, exactly the scarcity that lets an earlier wide window reach past its own best fit) with synthetic placeholder text, not the project's actual transcript. It asserts no segment collapses below 0.2s and that each boundary lands on the silence that genuinely borders it, bringing the suite to **1083**.
+
+**One pre-existing test updated, not deleted.** `syncTiming.test.ts`'s `snapCoveredBoundaries` suite had a test (formerly titled "applies the monotonic check to a silence-derived boundary too") built on a fixture where one silence was contested between two pairs; under the *old* greedy claiming, pair 0 won it, pair 1 was starved onto a worse silence, and the monotonic fallback fired to resolve the resulting non-monotonicity. Under contention-aware assignment, that same contested silence is now assigned directly to pair 1 (the pair it's actually closer to) — pair 0 gets no assigned silence and honestly reports its own token midpoint, pair 1 lands on its closer silence with no fallback needed, and the monotonic-fallback branch this test existed to exercise never fires for this fixture anymore. The test was renamed to `"contention-aware assignment gives a contested silence to its better-fitting pair, needing no monotonic fallback here"`, its assertions updated to the new (strictly better — pair 1 gets its genuinely-closer silence instead of an unclamped fallback) outcome, with inline commentary explaining the before/after.
+
+**Known coverage gap, disclosed rather than silently left.** The renamed test above was the *only* fixture in the suite exercising `snapCoveredBoundaries`'s monotonic-fallback branch on a silence-derived (not token-midpoint) proposal, and contention-aware assignment removes that fixture's ability to trigger it. No replacement fixture exists yet — one would need two genuinely non-shared, inverted-order silences (each visible only to its own pair), not a single contested one. Tracked in `project-state.md`'s Deferred Known Bugs.
+
+**Separately surfaced, deliberately not fixed here.** The same audit found that the monotonic fallback substitutes a token-midpoint boundary *without re-checking that substituted value against `prevBoundary`* — so in principle a backwards boundary could still be written silently (and floored to 0.1s) if the token-midpoint fallback itself lands before the previous boundary. Never observed in production logs, and out of scope for a claiming-order fix; also tracked in `project-state.md`'s Deferred Known Bugs.
+
+**Verification.** `tsc --noEmit` clean, `vitest` 1083/1083. Verification of the fix's real-world effect was manual only, on a macOS Intel dev build, against the same 294-segment project that surfaced the bug.
+
+### Also in this pass: two stale `CLAUDE.md` file-map corrections
+
+Unrelated to the three items above, found and fixed while touching nearby documentation: `CLAUDE.md`'s `SyncLogPanel.tsx` entry referenced a `services/syncLog.ts` module that has never existed — the entry-builder/append/cap logic it was describing lives in `App.tsx` (`makeSyncLogEntry`/`buildSkipLogEntries`/`appendSyncLogEntries` and siblings, ~lines 848–1043); only the *test* file lives under `services/` (`services/syncLog.test.ts`). And a standalone `SegmentEditorPanel.tsx` file-map entry described a file that doesn't exist — the Segments tab (list, search, lock/select/review) has always lived in `DropZonePanel.tsx`; the entry was removed and its content folded into `DropZonePanel.tsx`'s own entry, which now also documents the deep-search predicate and the `assetsById` Map from item 1 above.
+
+### Test count
+
+754 → 1048 across the sync rewrite window (see above) → **1083** after this session (1048 → 1082 via the two features, → 1083 via the fix's regression test — see the breakdown above).

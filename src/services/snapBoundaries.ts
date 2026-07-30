@@ -37,9 +37,35 @@
 //
 // The boundary math below is a faithful port of the reference implementation in
 // `alignScenestoTranscript` — same search window, same closest-centre silence
-// pick, same `usedSilences` exclusivity, same monotonic check — so that on an
+// pick among a pair's own candidates, same monotonic check — so that on an
 // all-covered project (nothing skipped) this function reproduces the aligner's
-// boundaries exactly. Only the ARRAY it walks is different.
+// boundaries exactly whenever there is no cross-pair silence contention. Only
+// the ARRAY it walks is different.
+//
+// SILENCE CLAIMING RULE (contention-aware assignment, 2026-07-30 fix): a
+// silence is ASSIGNED, not claimed first-come-first-served. `alignScenestoTranscript`'s
+// walk (and this function's own pre-fix version) resolved each boundary
+// left-to-right, letting an EARLIER pair's search window claim any silence it
+// could see — including one that overlapped only by reaching through the tail
+// of its own window, past a short next segment, into what was really the
+// FOLLOWING pair's own trailing pause. That pair, left with zero unused
+// candidates, fell back to the token midpoint — which, if the earlier pair's
+// stolen silence sat close enough to it, produced a duration at or near the
+// MIN_SEGMENT_DURATION floor. Confirmed on a real 294-segment project via live
+// [diag-align]/[diag-snap] instrumentation: token attribution was correct
+// throughout — this was purely a claiming-order defect.
+//
+// The fix computes every pair's search window FIRST (Pass 1, from a snapshot
+// of the original segment positions — the original per-pair loop read
+// `curr.startTime`/`curr.duration` as `??` fallbacks while earlier iterations
+// had already mutated them, which is only safe if every window is derived
+// before any boundary is written), then assigns every silence to exactly the
+// ONE pair whose spoken midpoint it sits closest to, among every pair whose
+// window overlaps it (Pass 2). A silence overlapped by no window is unused,
+// same as before. Only then does the left-to-right walk (Pass 3) run, reusing
+// each pair's already-decided candidate list — the closest-centre pick among
+// a pair's own candidates, the token-midpoint fallback when a pair has none,
+// and the monotonic safety-net check are otherwise unchanged.
 // ---------------------------------------------------------------------------
 
 import type { VideoSegment, TranscriptToken } from '../types';
@@ -98,11 +124,25 @@ export function snapCoveredBoundaries(
 
   const out: VideoSegment[] = kept.map(s => ({ ...s }));
 
-  // Silence exclusivity is per-call: a silence claimed by one boundary can't be
-  // claimed by another. Reset on every call (never module state).
-  const usedSilences = new Set<SilenceInterval>();
-  let prevBoundary: number | undefined;
+  // --- Pass 1 — compute every pair's search window up front ----------------
+  // From `kept` (the pristine, pre-mutation snapshot the caller passed in),
+  // never from `out` — an earlier pair's boundary write must not leak into a
+  // later pair's own window math. `null` marks a pair this function has never
+  // moved (locked on either side, or missing alignment data) — it carries no
+  // window and is never a candidate for any silence in Pass 2.
+  interface PairPlan {
+    lastSpokenEnd: number;
+    nextSpokenStart: number;
+    spokenMid: number;
+    spokenGapWidth: number;
+    searchStart: number;
+    searchEnd: number;
+    /** Every silence overlapping this pair's window, unfiltered — assignment
+     *  (Pass 2) decides which pair actually gets to use each one. */
+    overlapping: SilenceInterval[];
+  }
 
+  const plans: Array<PairPlan | null> = [];
   for (let i = 0; i < out.length - 1; i++) {
     const curr = out[i]!;
     const next = out[i + 1]!;
@@ -110,23 +150,29 @@ export function snapCoveredBoundaries(
     const nextAlign = keptAlignments[i + 1];
 
     // Locked segments never move or shrink — leave this boundary untouched.
-    if (curr.locked || next.locked) continue;
-    // Defensive: a caller that passes mismatched array lengths gets a no-op for
-    // the affected pair rather than a boundary derived from `undefined`.
-    if (!currAlign || !nextAlign) continue;
+    // Defensive: a caller that passes mismatched array lengths gets a no-op
+    // for the affected pair rather than a boundary derived from `undefined`.
+    if (curr.locked || next.locked || !currAlign || !nextAlign) {
+      plans.push(null);
+      continue;
+    }
+
+    // The pristine snapshot for this pair's fallback reads.
+    const currOrig = kept[i]!;
+    const nextOrig = kept[i + 1]!;
 
     // Every segment here is MATCHED, so these token lookups resolve to real
     // spoken-word edges. The `??` fallbacks exist only so a malformed token
-    // index can't produce NaN — they are not the -1-sentinel path this function
-    // was written to eliminate.
-    const lastSpokenEnd = tokens[currAlign.lastTokenIdx]?.endSec ?? (curr.startTime + curr.duration);
-    const nextSpokenStart = tokens[nextAlign.firstTokenIdx]?.startSec ?? next.startTime;
+    // index can't produce NaN — they are not the -1-sentinel path this
+    // function was written to eliminate.
+    const lastSpokenEnd = tokens[currAlign.lastTokenIdx]?.endSec ?? (currOrig.startTime + currOrig.duration);
+    const nextSpokenStart = tokens[nextAlign.firstTokenIdx]?.startSec ?? nextOrig.startTime;
     // Outer bounds this boundary may never cross — curr's own first spoken word
     // and next's own last spoken word. Without them, the wide radius used for a
     // near-zero spoken gap can reach past a short next segment entirely and
     // steal the silence belonging to the FOLLOWING boundary.
-    const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec ?? curr.startTime;
-    const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec ?? (next.startTime + next.duration);
+    const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec ?? currOrig.startTime;
+    const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec ?? (nextOrig.startTime + nextOrig.duration);
 
     const spokenMid = (lastSpokenEnd + nextSpokenStart) / 2;
     const spokenGapWidth = nextSpokenStart - lastSpokenEnd;
@@ -140,9 +186,50 @@ export function snapCoveredBoundaries(
     const searchStart = Math.max(spokenMid - searchRadius, currFirstSpokenStart);
     const searchEnd = Math.min(spokenMid + searchRadius, nextLastSpokenEnd);
 
-    const candidates = silences.filter(
-      s => s.endSec > searchStart && s.startSec < searchEnd && !usedSilences.has(s),
-    );
+    const overlapping = silences.filter(s => s.endSec > searchStart && s.startSec < searchEnd);
+
+    plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, overlapping });
+  }
+
+  // --- Pass 2 — assign each contested silence to exactly one pair ----------
+  // A silence overlapped by no pair's window is simply unused, same as
+  // before. A silence overlapped by exactly one pair goes to it, same as
+  // before. A silence overlapped by MORE THAN ONE pair's window — the actual
+  // starvation scenario — goes to whichever pair's spoken midpoint it sits
+  // closest to, not to whichever pair happens to run first. Exact ties go to
+  // the later pair (deterministic — `<=` lets a later, equally-close pair
+  // overwrite an earlier one).
+  const assignment: SilenceInterval[][] = plans.map(() => []);
+  for (const s of silences) {
+    const sCenter = (s.startSec + s.endSec) / 2;
+    let bestPairIdx = -1;
+    let bestDist = Infinity;
+    for (let i = 0; i < plans.length; i++) {
+      const plan = plans[i];
+      if (!plan) continue;
+      if (!(s.endSec > plan.searchStart && s.startSec < plan.searchEnd)) continue;
+      const dist = Math.abs(sCenter - plan.spokenMid);
+      if (dist <= bestDist) {
+        bestDist = dist;
+        bestPairIdx = i;
+      }
+    }
+    if (bestPairIdx >= 0) assignment[bestPairIdx]!.push(s);
+  }
+
+  // --- Pass 3 — resolve boundaries left-to-right ----------------------------
+  // Unchanged from before except for where the candidate list comes from:
+  // closest-centre pick among THIS pair's assigned silences, token-midpoint
+  // fallback when it has none, and the monotonic safety-net check.
+  let prevBoundary: number | undefined;
+  for (let i = 0; i < out.length - 1; i++) {
+    const curr = out[i]!;
+    const next = out[i + 1]!;
+    const plan = plans[i];
+    if (!plan) continue;
+
+    const { lastSpokenEnd, nextSpokenStart, spokenMid } = plan;
+    const candidates = assignment[i]!;
 
     let gap: SilenceInterval | undefined;
     if (candidates.length > 0) {
@@ -152,8 +239,6 @@ export function snapCoveredBoundaries(
         return Math.abs(sCenter - spokenMid) < Math.abs(bestCenter - spokenMid) ? s : best;
       });
     }
-
-    if (gap) usedSilences.add(gap);
 
     let boundary = gap
       ? (gap.startSec + gap.endSec) / 2

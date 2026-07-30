@@ -674,6 +674,7 @@ export function extractSegmentAlignments(
     // --- Token-stealing rescue (Parts 1-3, WS6) --------------------------
     const seg = segments[si]!;
     if (matchedCount === 0 && seg.anchorStart !== undefined) {
+      let recoveredVia: 'windowed' | 'global' | 'concat' | null = null;
       const expectedStart = seg.anchorStart;
       const expectedEnd = segments[si + 1]?.anchorStart ?? audioDuration;
       const rawDuration = Math.max(0, expectedEnd - expectedStart);
@@ -703,7 +704,6 @@ export function extractSegmentAlignments(
 
       const segQueryWords = queryWords.slice(range.start, range.end);
       let localMatches: Array<{ queryIdx: number; globalIdx: number }> = [];
-      let recoveredVia: 'windowed' | 'global' | 'concat' | null = null;
 
       // Pass 1 — bounded to the segment's expected time window (fast, and
       // correct whenever anchorStart is accurate): Hirschberg with a

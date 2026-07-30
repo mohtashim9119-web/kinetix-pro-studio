@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Lock,
   LockOpen,
@@ -34,6 +34,8 @@ import { stripRtfIfNeeded, detectTextFileRole } from '../services/textUtils';
 import { isAudioFile } from '../services/audioFormats';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
+import { formatTime } from '../services/timeFormat';
+import { matchesSegmentQuery, computeSegmentDisplayTitle } from '../services/segmentSearch';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -66,37 +68,11 @@ type ExpandKey = 'script' | 'scene' | 'voiceover' | 'assets' | null;
 // Helpers
 // ---------------------------------------------------------------------------
 
-const formatTime = (seconds: number) => {
-  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
-};
-
 const formatFileDate = (ms: number) =>
   new Date(ms).toLocaleString('en-US', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   });
-
-/**
- * Human-readable segment title for the Segments tab row. Falls back through
- * the asset filename (cleaned of leading index codes / trailing timestamps /
- * extension) to a positional "Scene N" label. VideoSegment has no
- * filename/sceneLine field of its own — the filename lives on the looked-up
- * Asset.
- */
-const humanTitle = (seg: VideoSegment, asset: Asset | undefined): string => {
-  if (asset?.name) {
-    const cleaned = asset.name
-      .replace(/\.[a-zA-Z0-9]+$/, '')      // extension
-      .replace(/^\d{2,4}[_-]/, '')          // leading index code
-      .replace(/[_-]\d{8,}$/, '')           // trailing timestamp
-      .replace(/[_-]+/g, ' ')
-      .trim();
-    if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
-  }
-  return `Scene ${seg.order + 1}`;
-};
 
 /**
  * Resolves a pointer's vertical position to a gap index (0..rows.length) among
@@ -516,6 +492,7 @@ export function DropZonePanel({
   const [nameDraft, setNameDraft] = useState(projectName);
   const nameInputRef = useRef<HTMLInputElement>(null);
   const [segmentSearch, setSegmentSearch] = useState('');
+  const assetsById = useMemo(() => new Map(assets.map(a => [a.id, a])), [assets]);
 
   const totalDuration = segments.reduce((sum, s) => sum + s.duration, 0);
   const maxSegmentDuration = Math.max(1, ...segments.map((s) => s.duration));
@@ -1447,12 +1424,20 @@ export function DropZonePanel({
 
               const seg = row.segment;
               const segIdx = row.index;
-              if (segmentSearch && !seg.text?.toLowerCase().includes(segmentSearch.toLowerCase())) return null;
-              const asset = assets.find(a => a.id === seg.assetId);
+              const asset = seg.assetId ? assetsById.get(seg.assetId) : undefined;
+              const title = computeSegmentDisplayTitle(seg, asset);
+              if (segmentSearch && !matchesSegmentQuery(segmentSearch, {
+                displayTitle: title,
+                description: seg.text ?? '',
+                assetFilename: asset?.name,
+                segmentNumber: segIdx + 1,
+                startTime: seg.startTime,
+                endTime: seg.startTime + seg.duration,
+                duration: seg.duration,
+              })) return null;
               const isSelected = seg.id === selectedSegmentId;
               const isActive = seg.id === currentSegmentId;
               const isChecked = selectedSegmentIds.has(seg.id);
-              const title = humanTitle(seg, asset);
               return (
                 <div
                   key={seg.id}

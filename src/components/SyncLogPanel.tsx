@@ -26,6 +26,7 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // WS4 Feature 4 — blue/info: the bad tokens were caught and removed, and the
   // sync proceeded normally. Deliberately NOT an error colour.
   'malformed-token': { label: 'TOKENS', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' },
+  'no-asset': { label: 'NO ASSET', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

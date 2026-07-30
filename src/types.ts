@@ -357,7 +357,8 @@ export type SyncLogEntryType =
   | 'warning'
   | 'info'
   | 'silence-error'
-  | 'malformed-token';
+  | 'malformed-token'
+  | 'no-asset';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
@@ -414,6 +415,10 @@ export interface SyncRunSummary {
    *  persisted before WS4 genuinely do not have it — treat undefined as 0,
    *  same convention as SyncLogEntry's later-added fields above. */
   silenceErrorCount?: number;
+  /** How many committed segments in this run have no matched asset. Optional
+   *  because summaries persisted before this feature genuinely do not have
+   *  it — treat undefined as 0, same convention as silenceErrorCount above. */
+  noAssetCount?: number;
 }
 
 export interface ProjectMeta {

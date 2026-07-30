@@ -123,6 +123,7 @@ import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
 import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
 import { readUiState, patchUiState } from './services/uiStateStore';
+import { compactRanges } from './services/rangeCompact';
 import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
@@ -1008,6 +1009,28 @@ export function buildSyncAbortEntry(
   timestamp: number = Date.now(),
 ): SyncLogEntry {
   return makeSyncLogEntry(syncRunId, 'abort', message, undefined, timestamp);
+}
+
+/**
+ * One summary entry for a successful run's committed segments with no
+ * matched asset (1-based positions, compacted into ranges via
+ * compactRanges). Returns undefined when every segment has an asset — the
+ * caller never appends a zero entry.
+ */
+export function buildNoAssetSummaryEntry(
+  syncRunId: string,
+  noAssetSegmentNumbers: number[],
+  totalSegments: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry | undefined {
+  if (noAssetSegmentNumbers.length === 0) return undefined;
+  return makeSyncLogEntry(
+    syncRunId,
+    'no-asset',
+    `No asset matched for ${noAssetSegmentNumbers.length} of ${totalSegments} segments: ${compactRanges(noAssetSegmentNumbers)}.`,
+    undefined,
+    timestamp,
+  );
 }
 
 /**
@@ -2455,6 +2478,19 @@ export default function App() {
       previousSegments,
     );
     syncMark('autoMatch+preserveEffectFields:done');
+
+    // WS-logs — one summary entry for committed segments with no matched
+    // asset (success paths only; the abort path above returns before this
+    // point and owes no such entry). Segment numbers are 1-based positions
+    // in committedSegments, matching the Segments-tab row numbering.
+    const noAssetNumbers = committedSegments
+      .map((s, i) => (s.assetId ? null : i + 1))
+      .filter((n): n is number => n !== null);
+    if (noAssetNumbers.length > 0) {
+      const noAssetEntry = buildNoAssetSummaryEntry(syncRunId, noAssetNumbers, committedSegments.length, syncRunAt);
+      if (noAssetEntry) pendingLogEntries = [...pendingLogEntries, noAssetEntry];
+      if (pendingLogSummary) pendingLogSummary = { ...pendingLogSummary, noAssetCount: noAssetNumbers.length };
+    }
 
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only

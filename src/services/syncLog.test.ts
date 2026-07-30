@@ -11,6 +11,7 @@ import {
   buildSyncAbortEntry,
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
+  buildNoAssetSummaryEntry,
   buildSyncInfoEntry,
   buildSyncInfoMessage,
   makeSyncLogEntry,
@@ -475,5 +476,49 @@ describe('WS4 entries fold onto the project like any other', () => {
 
     expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
     expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('silence-error');
+  });
+});
+
+describe('buildNoAssetSummaryEntry', () => {
+  it('returns undefined for an empty no-asset list — caller never appends a zero entry', () => {
+    expect(buildNoAssetSummaryEntry(RUN_ID, [], 294, AT)).toBeUndefined();
+  });
+
+  it('builds the exact message format, including en-dash ranges and 2-run singles', () => {
+    const numbers = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97];
+    const entry = buildNoAssetSummaryEntry(RUN_ID, numbers, 294, AT);
+
+    // 33 numbers total (12 + 1 + 20) — the spec's illustrative message uses "47"
+    // as a stand-in count, not derived from this exact example list.
+    expect(entry!.message).toBe('No asset matched for 33 of 294 segments: 7–18, 23, 78–97.');
+  });
+
+  it('renders a 2-run as two singles within the message (compactRanges integration)', () => {
+    const entry = buildNoAssetSummaryEntry(RUN_ID, [7, 8], 20, AT);
+    expect(entry!.message).toBe('No asset matched for 2 of 20 segments: 7, 8.');
+  });
+
+  it('carries type "no-asset", the given syncRunId, and timestamp', () => {
+    const entry = buildNoAssetSummaryEntry(RUN_ID, [3], 10, AT)!;
+    expect(entry.type).toBe('no-asset');
+    expect(entry.syncRunId).toBe(RUN_ID);
+    expect(entry.timestamp).toBe(AT);
+  });
+
+  it('folds alongside skip entries without disturbing the MAX_LOG_ENTRIES prune', () => {
+    const project = makeProject({ syncLog: makeEntries(MAX_LOG_ENTRIES) });
+    const noAssetEntry = buildNoAssetSummaryEntry(RUN_ID, [1, 2], 10, AT)!;
+    const skipRecord: SkippedSegmentRecord = {
+      segmentIndex: 0,
+      segmentText: 'unmatched scene',
+      reason: 'no audio match',
+    };
+    const next = appendSyncLogEntries(
+      project,
+      [...buildSkipLogEntries(RUN_ID, [skipRecord], AT), noAssetEntry],
+    );
+
+    expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
+    expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('no-asset');
   });
 });

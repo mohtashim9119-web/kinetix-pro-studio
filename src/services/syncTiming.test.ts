@@ -2044,13 +2044,39 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(viaAligner[1]!.t0).toBeCloseTo(6.84, 6);
   });
 
-  it('applies the monotonic check to a silence-derived boundary too', () => {
-    // Three covered segments. Pair 0 claims silence A (centre 2.6, well past
-    // its own search window's right edge — legal, the window only requires
-    // OVERLAP). Pair 1's only remaining candidate is silence B (centre 2.35),
-    // which would move the boundary BACKWARDS past pair 0's — so the monotonic
-    // safety net fires and the pair falls back to its spoken-word midpoint
-    // (2.2 + 2.3) / 2 = 2.25, unclamped.
+  it('contention-aware assignment gives a contested silence to its better-fitting pair, needing no monotonic fallback here', () => {
+    // Three covered segments; same fixture as the pre-contention-aware-fix
+    // version of this test. Silence A [2.10, 3.10] (centre 2.60) actually
+    // overlaps BOTH pair 0's window [0.6, 2.2] and pair 1's window [2.0, 2.75]
+    // (the two windows overlap each other in [2.0, 2.2]) — the old greedy
+    // left-to-right walk let pair 0 claim it first simply because pair 0 ran
+    // first, even though A is a much worse fit for pair 0 (|2.60-1.5|=1.10)
+    // than for pair 1 (|2.60-2.25|=0.35). That forced pair 1 into its
+    // second-best silence B (centre 2.35), which is LESS than pair 0's
+    // already-committed 2.6 — tripping the monotonic safety net down to an
+    // unclamped 2.25 fallback.
+    //
+    // Updated for contention-aware silence claiming (2026-07-30): A is now
+    // assigned to whichever pair's own spoken midpoint it's actually closer
+    // to — pair 1 — leaving pair 0 with no assigned silence at all (honest
+    // token-midpoint fallback, 1.5) and pair 1 with BOTH A and B as
+    // candidates, of which B (0.10 from pair 1's own midpoint) is still the
+    // closer pick. Pair 1 lands on 2.35 directly and monotonically; the
+    // safety net this test used to exercise never needs to fire for this
+    // fixture, because contention-aware assignment resolves the
+    // non-monotonicity before the safety net would even see it. This is a
+    // strictly better outcome, not merely a different one: pair 1 gets its
+    // genuinely-closer silence instead of an unclamped fallback, and pair 0 —
+    // left with nothing — honestly reports its own token midpoint instead of
+    // overshooting onto a silence that was never really its own.
+    //
+    // COVERAGE NOTE: this was the only fixture in this suite that exercised
+    // snapCoveredBoundaries's monotonic-fallback branch on a silence-derived
+    // (not token-midpoint) proposal. This change removes its ability to
+    // trigger that branch. A replacement fixture would need two genuinely
+    // NON-shared, inverted-order silences (each exclusively visible to its
+    // own pair) rather than one contested one — not constructed here; see the
+    // audit report for this gap.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2, anchorStart: 0 }),
       makeSegment({ id: 's1', order: 1, text: 'charlie', startTime: 2, duration: 0.3, anchorStart: 2 }),
@@ -2067,13 +2093,13 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(alignments.every(a => a.matched)).toBe(true);
 
     const silences: SilenceInterval[] = [
-      { startSec: 2.10, endSec: 3.10 }, // A — centre 2.60, claimed by pair 0
+      { startSec: 2.10, endSec: 3.10 }, // A — centre 2.60, contested by pair 0 AND pair 1; assigned to pair 1 (closer fit)
       { startSec: 2.25, endSec: 2.45 }, // B — centre 2.35, only pair 1 can see it
     ];
     const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
 
-    expect(out[1]!.startTime).toBeCloseTo(2.6, 6);  // pair 0 → silence A's centre
-    expect(out[2]!.startTime).toBeCloseTo(2.25, 6); // pair 1 → monotonic fallback, not 2.35
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);  // pair 0 → no assigned silence, token-midpoint fallback
+    expect(out[2]!.startTime).toBeCloseTo(2.35, 6); // pair 1 → silence B (closer than the reassigned A), no fallback needed
   });
 
   it('extends the last kept segment to audioDuration', () => {
@@ -2121,6 +2147,67 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.6, endSec: 1.9 }], 5);
 
     expect(segments).toEqual(before);
+  });
+});
+
+// ===========================================================================
+// Contention-aware silence claiming (silence-claiming starvation cascade fix,
+// 2026-07-30) — confirmed via live [diag-align]/[diag-snap] instrumentation on
+// a real 294-segment project: pair 248 claimed the pause belonging to pair
+// 249, pair 249 then took pair 250's, and pair 250 — left with zero unused
+// candidates — collapsed to the MIN_SEGMENT_DURATION floor. Token attribution
+// was correct throughout (verified live); this was purely a first-come-
+// first-served silence-claiming defect in snapCoveredBoundaries's left-to-
+// right walk, not an alignment bug.
+// ===========================================================================
+describe('contention-aware silence claiming (no starvation cascade)', () => {
+  it('a long segment then two short segments then a normal one: no boundary starves its rightful successor', () => {
+    // Mirrors the confirmed real geometry: touching tokens at every pair
+    // (spokenGapWidth 0, forcing the fixed 1.0s search radius at each
+    // boundary — see the "Whisper compresses adjacent words..." branch), a
+    // long segment with no silence of its own right at its end, then two
+    // short segments (~0.5s and ~1.2s of real speech) each with its own
+    // genuine trailing silence — but only 2 real silences across 3 pairs,
+    // exactly the scarcity that lets an earlier, wide window reach past its
+    // own best fit and starve a later pair of its rightful silence.
+    const tokens: TranscriptToken[] = [
+      { text: 'elephant', startSec: 1070.00, endSec: 1077.95 },
+      { text: 'cat',      startSec: 1077.95, endSec: 1078.45 }, // ~0.5s of speech
+      { text: 'dog',      startSec: 1078.45, endSec: 1079.65 }, // ~1.2s of speech
+      { text: 'bird',     startSec: 1079.65, endSec: 1080.15 },
+    ];
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'L',  order: 0, text: 'elephant', startTime: 1070.00, duration: 7.95, anchorStart: 1070.00 }),
+      makeSegment({ id: 'S1', order: 1, text: 'cat',      startTime: 1077.95, duration: 0.50, anchorStart: 1077.95 }),
+      makeSegment({ id: 'S2', order: 2, text: 'dog',      startTime: 1078.45, duration: 1.20, anchorStart: 1078.45 }),
+      makeSegment({ id: 'N',  order: 3, text: 'bird',     startTime: 1079.65, duration: 0.50, anchorStart: 1079.65 }),
+    ];
+    // A sits just after S1's real speech, B just after S2's — the two pairs'
+    // own genuine trailing pauses (close to the confirmed real values). No
+    // silence of its own exists right at L's end — its window is wide enough
+    // to reach A anyway, which is the trap.
+    const silences: SilenceInterval[] = [
+      { startSec: 1078.16, endSec: 1078.58 }, // A — centre 1078.37, "belongs" to the S1|S2 boundary
+      { startSec: 1079.30, endSec: 1079.90 }, // B — centre 1079.60, "belongs" to the S2|N boundary
+    ];
+
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 1085);
+
+    // No segment collapses toward the MIN_SEGMENT_DURATION floor.
+    for (const seg of out) {
+      expect(seg.duration).toBeGreaterThan(0.2);
+    }
+    // S1's real speech is ~0.5s — it must retain most of it, not be reduced
+    // to a sliver by an earlier boundary reaching past it.
+    expect(out[1]!.duration).toBeGreaterThan(0.3);
+    // S2's real speech is ~1.2s — the reported bug reduced this to 0.1s.
+    expect(out[2]!.duration).toBeGreaterThanOrEqual(1.0);
+    // Each boundary lands on the silence that genuinely borders it.
+    expect(out[2]!.startTime).toBeCloseTo(1078.37, 2); // S1|S2 boundary -> silence A's centre
+    expect(out[3]!.startTime).toBeCloseTo(1079.60, 2); // S2|N  boundary -> silence B's centre
   });
 });
 

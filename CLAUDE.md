@@ -140,6 +140,11 @@ src/
                      #   DEFAULT_RESOLUTION_TIER (services/resolutionConfig.ts). The Project NEVER
                      #   stores width/height directly — pixel dimensions are always derived from
                      #   (aspectRatio, resolutionTier) via resolutionConfig.ts's resolveDimensions.
+                     #   SyncLogEntryType gains 'no-asset' (2026-07-30) — a run-summary entry for
+                     #   committed segments with no matched asset, built by App.tsx's
+                     #   buildNoAssetSummaryEntry. SyncRunSummary gains noAssetCount? to match —
+                     #   optional for the same reason silenceErrorCount? is: summaries persisted
+                     #   before this feature genuinely lack it, treat undefined as 0.
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
@@ -286,6 +291,24 @@ src/
                      #   2026-07-25). Replaces retileCoveredSegments on the primary sync path;
                      #   retileCoveredSegments (App.tsx) is kept as the fallback when tokens/silences
                      #   are unavailable to snap against.
+                     #   Contention-aware silence claiming (2026-07-30 fix) — a silence is now
+                     #   ASSIGNED, not claimed first-come-first-served. The old left-to-right walk let
+                     #   an earlier pair's search window claim any silence it could see, including one
+                     #   that really belonged to a later pair's own trailing pause; that later pair,
+                     #   left with zero candidates, fell back to the token midpoint and could collapse
+                     #   toward MIN_SEGMENT_DURATION. Confirmed on a real 294-segment project
+                     #   (segments 249-251). Fixed with three passes: Pass 1 computes every pair's
+                     #   search window from a pre-mutation snapshot of `kept` (never from the array
+                     #   being written); Pass 2 assigns each silence overlapped by more than one
+                     #   pair's window to whichever pair's spoken midpoint it sits closest to (ties →
+                     #   later pair); Pass 3 resolves boundaries left-to-right exactly as before, but
+                     #   reading only each pair's own assigned candidates. The `usedSilences` set is
+                     #   gone — assignment (Pass 2) is what used to be its job. Window math,
+                     #   closest-centre selection, the token-midpoint fallback, and the monotonic
+                     #   safety-net check are all otherwise unchanged; the monotonic fallback itself
+                     #   still does not re-check its own substituted value against prevBoundary (a
+                     #   separately-surfaced, deliberately-unfixed gap — see project-state.md's
+                     #   Deferred Known Bugs).
     silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
                      #   Returns a STRUCTURED SilenceDetectResult discriminated union since WS4
@@ -594,6 +617,24 @@ src/
                      #   error), so the tag has to land here, mirroring segmentEncoder.ts's own
                      #   libx264 bt709 tagging on the legacy path; without it, preview-vs-export
                      #   color match was measured at 0.2%.
+    timeFormat.ts    # formatTime(seconds) -> "MM:SS" (deep segment search, 2026-07-30) — moved out
+                     #   of DropZonePanel.tsx so segmentSearch.ts's time-code matcher can share the
+                     #   exact same formatter the Segments-tab row displays; must stay identical or a
+                     #   time-code search query would silently stop matching the row it's meant to find.
+    segmentSearch.ts # Deep segment-search predicate (2026-07-30): matchesSegmentQuery(query, ctx)
+                     #   substring-matches display title/description/asset filename (case-
+                     #   insensitive), OR'd with exact-pattern matchers — matchesSegmentNumber (bare
+                     #   integer -> 1-based segment number), matchesDuration (decimal, optional
+                     #   trailing "s", against duration.toFixed(1)), matchesTimeCode (MM:SS, via
+                     #   timeFormat.ts's formatTime, against start or end time). Also hosts
+                     #   computeSegmentDisplayTitle (moved out of DropZonePanel.tsx alongside
+                     #   formatTime) — the asset-filename-cleaning/"Scene N" fallback title logic the
+                     #   search predicate matches against, so both come from one function and can't drift.
+    rangeCompact.ts  # compactRanges(numbers) — 1-based positions into human-readable ranges, e.g.
+                     #   [7,8,9,10,23,78,79] -> "7–10, 23, 78–79" (en dash). Runs of exactly 2 render
+                     #   as two singles ("7, 8"), not a range. Sorts/dedupes defensively. Used by
+                     #   App.tsx's buildNoAssetSummaryEntry (no-asset sync log summary, 2026-07-30) to
+                     #   compact the list of segment numbers with no matched asset.
     lookPresetService.ts # Combined-look effect presets (Effects Tab Rebuild Step 7): localStorage
                      #   key kinetix:lookPresets:v1, global across projects, cap MAX_LOOK_PRESETS=20.
                      #   loadLookPresets/saveLookPreset/deleteLookPreset. saveLookPreset persists the
@@ -804,6 +845,20 @@ src/
                      #   and ExportSettingsModal.tsx (see those files' entries below). Nothing in
                      #   this file reads or writes `webcodecsExportEnabled`/`exportResolution`/
                      #   `exportFps`/`onSetAllOverlay` anymore.
+                     #   The Segments tab (row list, lock/select/review controls) also lives
+                     #   entirely in this file — there is no separate SegmentEditorPanel.tsx (a
+                     #   stale file-map entry under that name was corrected 2026-07-30; the
+                     #   Component Decomposition target structure's own `EditorTab.tsx` is an
+                     #   unrelated, not-yet-extracted planned target). Deep segment search
+                     #   (2026-07-30) — the row filter substring-matches the computed display
+                     #   title, description text, and asset filename (case-insensitive, via
+                     #   services/segmentSearch.ts's matchesSegmentQuery/
+                     #   computeSegmentDisplayTitle, both moved out of this file along with
+                     #   services/timeFormat.ts's formatTime), OR'd with exact-pattern matches: a
+                     #   bare integer against the 1-based segment number, a decimal (optional
+                     #   trailing "s") against the displayed 1-decimal duration, or MM:SS against
+                     #   the formatted start/end time. A memoized `assetsById` Map (keyed off
+                     #   `assets`) replaces the old per-row `assets.find()` lookup.
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
                      #   selected/all, randomize-from-checked-pool, combined-look presets section,
                      #   GRADE section).
@@ -958,7 +1013,6 @@ src/
                      #   draftOverlayOn) committed atomically on Save via onResolutionTierChange/
                      #   setWebCodecsExportToggle/onSetAllOverlay; Cancel/Escape discard everything
                      #   (no backdrop-click-to-close, matching NewProjectModal's precedent).
-    SegmentEditorPanel.tsx # Segment list + per-segment controls
     TimelineWaveform.tsx   # useTimelineWaveform hook — the TILED voiceover waveform (replaced the
                      #   earlier single-canvas approach, which collapsed the whole voiceover into one
                      #   canvas capped at 16384px — on long audio at high zoom that averaged many
@@ -992,8 +1046,16 @@ src/
                      #   info=gray). Skip entries render a 3-line format: "Segment N skipped — reason" /
                      #   "[tag] text" / "matched X of Y words (confidence Z)" — backward compatible with
                      #   older log entries that lack the tag/match-count fields. Clear-log requires
-                     #   confirmation. Tested in SyncLogPanel.test.tsx; the log-update logic itself
-                     #   (append/cap/persist) is tested separately in services/syncLog.test.ts.
+                     #   confirmation. Tested in SyncLogPanel.test.tsx; the entry builders/append/cap
+                     #   logic itself lives in App.tsx (~lines 848-1043, makeSyncLogEntry/
+                     #   buildSkipLogEntries/appendSyncLogEntries and siblings), not a
+                     #   services/syncLog.ts module — that file was never extracted, only its TEST
+                     #   file lives under services/ (services/syncLog.test.ts). A stale reference to
+                     #   a non-existent services/syncLog.ts was corrected 2026-07-30.
+                     #   No-asset summary (2026-07-30) — a new 'no-asset' entry type (orange "NO ASSET"
+                     #   badge in TYPE_STYLES) renders alongside the existing kinds; App.tsx's
+                     #   buildNoAssetSummaryEntry appends one per Apply Sync run when any committed
+                     #   segment has no matched assetId.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with
