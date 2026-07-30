@@ -42,7 +42,8 @@ src/
                      #   ALIGNMENT side is already correct — textNormalize.ts's
                      #   stripStageDirections turns "Hello [CUT TO: KITCHEN] world" into "Hello
                      #   world" — so the eventual fix is parser-only. Full analysis:
-                     #   docs/sync-system-rewrite-architecture.md §3.8 status block.
+                     #   docs/history.md -> "Sync System Rewrite (2026-07-24 to 2026-07-29) —
+                     #   Archived".
                      #   The window keydown effect's Space branch guards on isTextEntryElement()
                      #   (not a generic tagName check) so a focused range slider no longer traps
                      #   spacebar play/pause; a global pointerup listener blurs any focused
@@ -224,8 +225,8 @@ src/
                      #   applyHeadingTiming() was deleted in Path B Phase 7 (2026-07-09).
                      #   Silence-snap: silence found → silence center; no silence → token
                      #   midpoint. Monotonic safety check only. No clamps (R4 clamps removed as
-                     #   dead code in 5952ea7). See docs/sync-system-rewrite-architecture.md
-                     #   Section 3.6(f).
+                     #   dead code in 5952ea7). See docs/history.md -> "Sync System Rewrite
+                     #   (2026-07-24 to 2026-07-29) — Archived".
                      #   normalizeSceneDoc (WS4 Feature 1, decision 13a, 2026-07-28) — the
                      #   SCENE-DOC-side word normalizer: textNormalize.ts's stripStageDirections
                      #   then the standard canonicalize. Called from extractSegmentAlignments'
@@ -247,7 +248,8 @@ src/
                      #   (ggml-base.en.bin), and whisper-cli ignores -l auto/--detect-language on
                      #   an .en model — it needs the multilingual ggml-base.bin bundled first.
                      #   Per-segment temporal-bounding RESCUE (token-stealing fix, 2026-07-29,
-                     #   commit 86ffc5a, docs/sync-system-rewrite-architecture.md §3.16) —
+                     #   commit 86ffc5a, docs/history.md -> "Sync System Rewrite (2026-07-24 to
+                     #   2026-07-29) — Archived") —
                      #   extractSegmentAlignments' single global Hirschberg pass is UNCHANGED
                      #   (every pre-fix test depends on its whole-document optimality); a targeted
                      #   THREE-PASS rescue runs after it for any segment left at zero true matches,
