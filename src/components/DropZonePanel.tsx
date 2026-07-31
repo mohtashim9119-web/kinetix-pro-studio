@@ -36,6 +36,7 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
 import { formatTime } from '../services/timeFormat';
 import { matchesSegmentQuery, computeSegmentDisplayTitle } from '../services/segmentSearch';
+import { computeDurationBarHeightPx, resolveDropGapIndex } from '../services/timelineLayout';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -79,14 +80,16 @@ const formatFileDate = (ms: number) =>
  * the given row elements — the first row whose vertical midpoint sits below
  * the pointer wins; falls through to rows.length if the pointer is below all
  * of them. Rows with no measured element (not yet mounted) are skipped.
+ * The DOM read (getBoundingClientRect) stays here; the pure index math lives
+ * in services/timelineLayout.ts's resolveDropGapIndex.
  */
 const computeDropGapIndex = (rows: (HTMLDivElement | null)[], pointerY: number): number => {
-  for (let i = 0; i < rows.length; i++) {
-    const rect = rows[i]?.getBoundingClientRect();
-    if (!rect) continue;
-    if (pointerY < rect.top + rect.height / 2) return i;
-  }
-  return rows.length;
+  const rects = rows.map((row) => {
+    if (!row) return null;
+    const rect = row.getBoundingClientRect();
+    return { top: rect.top, height: rect.height };
+  });
+  return resolveDropGapIndex(rects, pointerY);
 };
 
 // ---------------------------------------------------------------------------
@@ -1487,7 +1490,7 @@ export function DropZonePanel({
                       <span className={`font-mono text-[10px] ${isActive ? 'text-[var(--kx-accent-2)]' : isSelected ? 'text-[var(--kx-accent-2)]' : 'text-[var(--kx-faint)]'}`}>{String(segIdx + 1).padStart(2, '0')}</span>
                       <span
                         className={`w-1 rounded-[2px] ${isActive || isSelected || isChecked ? 'bg-[var(--kx-accent)]' : 'bg-[rgba(255,255,255,.13)]'}`}
-                        style={{ height: Math.max(10, Math.min(32, (seg.duration / maxSegmentDuration) * 32)) }}
+                        style={{ height: computeDurationBarHeightPx(seg.duration, maxSegmentDuration) }}
                       />
                       <span className="font-mono text-[9px] text-[var(--kx-faint)]">{formatTime(seg.startTime)}</span>
                     </div>

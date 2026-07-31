@@ -13,6 +13,14 @@ import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
+import {
+  computeZoomPixelsPerSecond,
+  computeBoundaryMarkerPositions,
+  computeSegmentLayout,
+  computeHeadingLayout,
+  computeSeekTimeFromClientX,
+  computeTrimDrag,
+} from '../services/timelineLayout';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
@@ -20,7 +28,7 @@ const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 // actual rightmost segment edge, not just the sum of durations — the two
 // only coincide when segments are gapless/contiguous. Falls back to the
 // duration sum (still gapless-safe) when there are no segments at all.
-function computeTotalDuration(segments: VideoSegment[]): number {
+export function computeTotalDuration(segments: VideoSegment[]): number {
   if (segments.length === 0) return 1;
   const maxEnd = segments.reduce((acc, s) => Math.max(acc, s.startTime + s.duration), 0);
   return maxEnd || segments.reduce((acc, s) => acc + s.duration, 0) || 1;
@@ -109,14 +117,10 @@ export function Timeline({
   // Single source of truth for zoom: exponential interpolation between ppsMin
   // (fit-to-width) and ppsMax (100). When ppsMin >= ppsMax the project is short
   // enough to fit, so the slider is a no-op pinned at 100.
-  const pixelsPerSecond = useMemo(() => {
-    const totalDur = computeTotalDuration(segments);
-    const width = containerWidth || 800;
-    const ppsMin = Math.min((width * 0.95) / totalDur, 100);
-    const ppsMax = 100;
-    if (ppsMin >= ppsMax) return ppsMax;
-    return ppsMin * Math.pow(ppsMax / ppsMin, sliderT);
-  }, [sliderT, containerWidth, segments]);
+  const pixelsPerSecond = useMemo(
+    () => computeZoomPixelsPerSecond(totalDuration, containerWidth, sliderT),
+    [sliderT, containerWidth, totalDuration],
+  );
 
   // Keep App's pixelsPerSecond ref in sync for its non-rendering consumer sites.
   useEffect(() => {
@@ -297,12 +301,12 @@ export function Timeline({
           const rect = e.currentTarget.getBoundingClientRect();
           const scrollLeft = e.currentTarget.scrollLeft;
           const x = e.clientX - rect.left + scrollLeft;
-          const newTime = Math.max(0, Math.min(totalDuration, x / pixelsPerSecond));
+          const newTime = computeSeekTimeFromClientX(x, pixelsPerSecond, totalDuration);
           onSeek(newTime);
 
           const handleMouseMove = (moveEvent: MouseEvent) => {
             const moveX = moveEvent.clientX - rect.left + scrollLeft - 24;
-            onSeek(Math.max(0, Math.min(totalDuration, moveX / pixelsPerSecond)));
+            onSeek(computeSeekTimeFromClientX(moveX, pixelsPerSecond, totalDuration));
           };
           const handleMouseUp = () => {
             window.removeEventListener('mousemove', handleMouseMove);
@@ -363,11 +367,11 @@ export function Timeline({
               paints on top) while still clearing the heading badges (z-30).
               pointer-events-none so it never intercepts clicks/drags on the
               lanes underneath. */}
-          {isSynced && segments.slice(1).map((s) => (
+          {isSynced && computeBoundaryMarkerPositions(segments, pixelsPerSecond).map((m) => (
             <div
-              key={`boundary-${s.id}`}
+              key={`boundary-${m.id}`}
               className="absolute top-0 bottom-0 w-px bg-[rgba(242,156,95,0.2)] z-40 pointer-events-none"
-              style={{ left: `${s.startTime * pixelsPerSecond}px` }}
+              style={{ left: `${m.left}px` }}
             />
           ))}
 
@@ -407,12 +411,14 @@ export function Timeline({
                   assumed this same full-content coordinate space, so they were
                   never affected — only the border overlay, which relied on
                   the parent's own box size via `inset-0`, was. */}
-              {headings.map((h) => (
+              {headings.map((h) => {
+                const headingLayout = computeHeadingLayout(h, pixelsPerSecond);
+                return (
                 <div
                   key={h.id}
                   data-heading-id={h.id}
                   className="absolute top-0 bottom-0 z-30 bg-[#F27D26]/10 border-2 border-[#F27D26]/70 rounded-lg pointer-events-none flex items-center justify-center overflow-hidden"
-                  style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
+                  style={{ left: `${headingLayout.left}px`, width: `${headingLayout.width}px` }}
                 >
                   <div className="flex items-center gap-1 px-1 max-w-full">
                     <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
@@ -437,7 +443,8 @@ export function Timeline({
                     onMouseDown={(e) => handleHeadingResizeStart(e, h, 'end')}
                   />
                 </div>
-              ))}
+                );
+              })}
               {/* z-40 — must out-rank the heading badges' z-30 (explicit z-index
                   always paints above a z-index:auto sibling regardless of DOM
                   order), or each badge's opaque body covers this border
@@ -480,6 +487,7 @@ export function Timeline({
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
                 const isMissing = !asset && !!s.text;
+                const segLayout = computeSegmentLayout(s, pixelsPerSecond);
 
                 return (
                   <div
@@ -495,9 +503,8 @@ export function Timeline({
 
                         const handleMouseMove = (moveEvent: MouseEvent) => {
                           const deltaX = moveEvent.clientX - startX;
-                          const deltaTime = deltaX / pixelsPerSecond;
                           const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
-                          const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
+                          const newTrim = computeTrimDrag(deltaX, pixelsPerSecond, startTrim, maxTrim);
                           onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
                         };
                         const handleMouseUp = () => {
@@ -514,8 +521,8 @@ export function Timeline({
                     }}
                     style={{
                       position: 'absolute',
-                      left: `${s.startTime * pixelsPerSecond}px`,
-                      width: `${s.duration * pixelsPerSecond}px`,
+                      left: `${segLayout.left}px`,
+                      width: `${segLayout.width}px`,
                       height: '80px',
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
                       filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
@@ -653,17 +660,20 @@ export function Timeline({
                   />
                 )}
                 <div className="relative h-full w-max">
-                  {segments.map((s, i) => (
+                  {segments.map((s, i) => {
+                    const voLayout = computeSegmentLayout(s, pixelsPerSecond);
+                    return (
                     <div
                       key={`vo-new-${s.id}`}
-                      style={{ position: 'absolute', left: `${s.startTime * pixelsPerSecond}px`, width: `${s.duration * pixelsPerSecond}px` }}
+                      style={{ position: 'absolute', left: `${voLayout.left}px`, width: `${voLayout.width}px` }}
                       className={`h-full relative flex items-center flex-shrink-0 border-r border-[rgba(255,255,255,0.05)] ${i % 2 === 1 ? 'bg-white/[0.015]' : ''}`}
                     >
                       {currentSegmentId === s.id && (
                         <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>

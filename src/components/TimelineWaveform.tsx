@@ -7,9 +7,9 @@ import { useEffect, useRef, useState } from 'react';
 import {
   drawWaveformRange,
   WaveformSource,
-  LANE_HEIGHT_PX,
   WAVEFORM_DPR_CAP,
 } from '../services/waveformPeaks';
+import { computeWaveformTileSpecs } from '../services/timelineLayout';
 
 /**
  * Tiled timeline waveform (replaces the earlier single-canvas approach, which
@@ -114,30 +114,12 @@ export function useTimelineWaveform(
 
     const timer = setTimeout(() => {
       const dpr = resolveDpr();
-      // CSS-pixel width budget per tile so canvasWidth (tileWidthCss * dpr)
-      // never exceeds the browser's backing-store cap.
-      const maxTileCssWidth = Math.max(1, Math.floor(MAX_CANVAS_WIDTH / dpr));
-      const desiredWidth = totalDuration * currentPixelsPerSecond;
-      const tileCount = Math.max(1, Math.ceil(desiredWidth / maxTileCssWidth));
-
-      const specs: Array<{
-        tileStartTime: number;
-        tileEndTime: number;
-        tileWidthCss: number;
-        canvasWidth: number;
-        canvasHeight: number;
-      }> = [];
-      for (let i = 0; i < tileCount; i++) {
-        const tileStartTime = (i * maxTileCssWidth) / currentPixelsPerSecond;
-        const tileEndTime = Math.min(
-          totalDuration,
-          ((i + 1) * maxTileCssWidth) / currentPixelsPerSecond,
-        );
-        const tileWidthCss = Math.max(1, (tileEndTime - tileStartTime) * currentPixelsPerSecond);
-        const canvasWidth = Math.min(MAX_CANVAS_WIDTH, Math.max(1, Math.round(tileWidthCss * dpr)));
-        const canvasHeight = Math.max(1, Math.round(LANE_HEIGHT_PX * dpr));
-        specs.push({ tileStartTime, tileEndTime, tileWidthCss, canvasWidth, canvasHeight });
-      }
+      const specs = computeWaveformTileSpecs(
+        totalDuration,
+        currentPixelsPerSecond,
+        dpr,
+        MAX_CANVAS_WIDTH,
+      );
 
       Promise.all(
         specs.map((spec) => {
