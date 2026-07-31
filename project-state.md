@@ -22,7 +22,7 @@ Sync system rewrite closed (WS1a→WS6 + token-stealing fix); see `docs/history.
 
 ## Active Tasks
 
-No active tasks.
+- **Pipeline Contract Program** — plan committed (commit `1758c4b`), Pair 1 audit next
 
 ## Deferred Polish Features
 
