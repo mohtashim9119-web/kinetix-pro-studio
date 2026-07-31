@@ -2310,3 +2310,43 @@ Row spacing (the "+ Add Heading" button, heading rows, segment rows) now comes f
 ### Test count
 
 1133 → **1163** (`4fcf676`) → **1165** this session.
+
+---
+
+## Pipeline Contract Program §6.0 — Timeline Smoke Tests (2026-08-01, commit `7e6309f`)
+
+R3 in `docs/sync-pipeline-contract-plan.md`'s risk register flagged `Timeline.tsx` as the freshest,
+least-covered code in the pipeline — absolute positioning, lane redesign, cross-lane boundary
+markers, and the border-as-overlay WebKit workaround all landed 2026-07-31 with zero automated
+coverage. Rather than wait for contract pair 6→7 (last in pipeline order), §6.0 pulled the
+test-debt half forward as an immediate, decoupled prerequisite: it needed tests, not a contract.
+
+**What shipped.** Pure layout math extracted out of `Timeline.tsx`, `TimelineWaveform.tsx`, and
+`DropZonePanel.tsx` into a new `src/services/timelineLayout.ts` — segment/heading/marker position
+formulas, zoom-to-pixels-per-second conversion, seek-time-from-click math, trim-drag geometry,
+waveform tile specs, the duration-bar clamp, and drop-gap resolution — plus `computeTotalDuration`
+(already module-level and pure; re-exported from its original location rather than moved, so
+existing importers are unaffected). Two new test files pin it: `timelineLayout.test.ts` (34 tests,
+pure geometry — segment/marker positions at known zoom levels, the max-right-edge vs.
+duration-sum divergence for a deliberately non-contiguous array, boundary-marker index-0 skip) and
+`timeline.render.test.tsx` (static markup render checks against the extracted functions).
+
+**Zero behavior change.** No production logic moved beyond straight extraction — verified manually
+in the dev app: segment positions, zoom, seek, trim drag, boundary markers, waveform tiling, and
+segments-panel layout all identical to pre-refactor.
+
+**Accepted limitation — honest about what the tests do NOT cover.** The render test only exercises
+static markup against the 800px zoom fallback; it does not drive the `ResizeObserver`-measured-width
+path (this repo has no jsdom/testing-library, the same gap `usePlayback.test.ts` and
+`useGlPreview.test.ts` already document, so there is no DOM harness to measure a real width
+against). WebKit compositing/stacking behavior (the border-as-overlay workaround's actual reason
+for existing), hover transitions, and drag feel all remain manual-only — no automated test can
+observe them without a real WKWebView.
+
+**Scope boundary.** This closes only the test-debt half of R3. The contract half — the "every
+meaningful failure produced a log entry" assumption, and `retileCoveredSegments`'s missing
+contiguity guarantee (`App.tsx:836-849`, the fallback path used when tokens/silences are
+unavailable to snap against) — stays open, deferred to Pair 6 as originally planned. It does not
+unblock or shorten the contract program; Pair 1 audit is next.
+
+**Verification.** `tsc --noEmit` clean. `vitest` **1165 → 1199** (34 new tests, this commit).

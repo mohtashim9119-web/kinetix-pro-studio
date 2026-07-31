@@ -876,6 +876,13 @@ src/
                      #   computeSegmentDisplayTitle (moved out of DropZonePanel.tsx alongside
                      #   formatTime) — the asset-filename-cleaning/"Scene N" fallback title logic the
                      #   search predicate matches against, so both come from one function and can't drift.
+    timelineLayout.ts # Pure timeline layout geometry (§6.0 smoke tests, 2026-08-01) — segment/
+                     #   heading/marker positions, zoom pps, seek time, trim drag, waveform tile
+                     #   specs, duration-bar clamp, drop-gap resolution, plus computeTotalDuration
+                     #   (re-exported in place). Consumed by Timeline.tsx, TimelineWaveform.tsx,
+                     #   DropZonePanel.tsx — extracted so the pure math could be pinned with unit
+                     #   tests (timelineLayout.test.ts) without a DOM harness, same precedent
+                     #   computeTotalDuration already set.
     rangeCompact.ts  # compactRanges(numbers) — 1-based positions into human-readable ranges, e.g.
                      #   [7,8,9,10,23,78,79] -> "7–10, 23, 78–79" (en dash). Runs of exactly 2 render
                      #   as two singles ("7, 8"), not a range. Sorts/dedupes defensively. Used by

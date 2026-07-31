@@ -5,7 +5,7 @@
 > handoffs between its stages (plus one input annex, contract 0→2), and the program for hardening
 > each one.
 >
-> **Verified-against-HEAD: `8d83358`** (tag `clean-baseline-2026-07-31`). Every `file:line`
+> **Verified-against-HEAD: `7e6309f`** (tag `clean-baseline-2026-07-31`). Every `file:line`
 > citation in this document was read at this commit. **Re-stamp this field at every pair
 > completion.** Governance rule: any change that touches a pipeline stage (any file named in a
 > §1.3 table) must re-verify the affected §2 assumption rows and re-stamp this field before
@@ -897,7 +897,7 @@ being correct*, not in the description being accurate.
 |---|---|---|---|---|---|
 | **R1** | 1→2 | **Token-drop clustering unknown.** A production run dropped 169/1973 tokens (~8.6%). The *count* is logged; the *distribution* is not. 169 drops spread evenly is noise; 169 drops inside one 20-second stretch is a corrupted region that will produce a wrong boundary and an unexplained skip. Nothing distinguishes the two. | `USER-REPORTED` count; `buildMalformedTokenEntry` verified to log count only; the five drop reasons in `filterMalformedTokens` are not individually counted | **Low** | Count only |
 | **R2** | 5→6 | **Floor clamps fire silently.** Five sites: `snapBoundaries.ts:699`, `:717`, `whisperService.ts:1612`, `syncEngine.ts:239`, `:246`. A clamped duration is the *symptom* of a degenerate boundary — the 2026-07-30 starvation cascade produced exactly this and was found only because a user saw a collapsed segment. No warning, no counter, no entry. | Verified by reading all five sites | **Low** | None |
-| **R3** | 6→7 | **Presentation is freshly rebuilt with shallow mileage.** Absolute positioning, lane redesign, cross-lane boundary markers, and the border-as-overlay WebKit workaround all landed 2026-07-31. `Timeline.tsx` has **no test file**. Its correctness now depends on Key Invariant (f), which the fallback `retileCoveredSegments` path does not enforce. **Split for scheduling:** the *test-debt* half (geometry smoke tests) is pulled forward to §6.0 as immediate prerequisite work, decoupled from the contract program — it needs tests, not a contract. The *contract* half (the false "every failure is logged" assumption; the retile path's missing contiguity guarantee) stays in Pair 6. | Verified: no `Timeline.test.tsx` in `src/components/`; `retileCoveredSegments` (`App.tsx:836-849`) has no contiguity write | **Low** | Visual only |
+| **R3** | 6→7 | **Presentation is freshly rebuilt with shallow mileage.** Absolute positioning, lane redesign, cross-lane boundary markers, and the border-as-overlay WebKit workaround all landed 2026-07-31. `Timeline.tsx` has **no test file**. Its correctness now depends on Key Invariant (f), which the fallback `retileCoveredSegments` path does not enforce. **Split for scheduling: test-debt half CLOSED (`7e6309f`); contract half (log-truthfulness / `retileCoveredSegments` contiguity write) remains open — deferred to Pair 6 as planned.** | Verified: `timelineLayout.ts`/`timelineLayout.test.ts`/`timeline.render.test.tsx` land in `7e6309f`; `retileCoveredSegments` (`App.tsx:836-849`) still has no contiguity write | **Low** | Visual only |
 | **R4** | 5→6 | **Two `MIN_SEGMENT_DURATION` constants.** `0.1` in `snapBoundaries.ts:230`, `0.3` in `App.tsx:278`. Same name, different values, different purposes (pipeline floor vs. timeline slot width), no cross-reference. A future edit to one will look like it fixed both. | Verified by reading both | **Medium** (both are individually correct today) | None |
 | **R5** | 1→2 | **Token ordering never asserted.** `fillsTokenGapWithinSpan` walks `j → j+1` assuming ascending time; `earliestClaimStartSec` exists precisely because list order ≠ time order elsewhere. Nothing checks that the filtered array is ascending. | Verified | **Medium** | None |
 | **R6** | 3→4 | **Forward-ordering bound is vacuous when no later segment has a true global match.** `computeForwardBoundStartSec` returns `undefined` and every claim is accepted. A project ending in a long tail of zero-match segments has no bound on any of their rescues. | Verified at `whisperService.ts:905-911`; the legitimate last-segment case is tested, the tail case is not | **Medium** | None |
@@ -941,6 +941,19 @@ being correct*, not in the description being accurate.
 ## 6. Execution Order + Exit Criteria
 
 ### 6.0 Prerequisite (NOT a contract pair) — Timeline smoke tests
+
+**DONE (`7e6309f`, 2026-08-01).** 1165 → 1199 tests (34 new). Extracted pure layout math into
+`src/services/timelineLayout.ts` — segment/heading/marker positions, zoom pps, seek time, trim
+drag, waveform tile specs, duration-bar clamp, drop-gap resolution, plus `computeTotalDuration`
+(re-exported in place). Pinned with `timelineLayout.test.ts` (pure geometry) and
+`timeline.render.test.tsx` (static markup). Zero behavior change — manually verified in the dev
+app: segment positions, zoom, seek, trim drag, boundary markers, waveform tiling, and
+segments-panel layout all identical to pre-refactor.
+
+Accepted limitation: the render test only exercises the static-markup / 800px zoom-fallback path
+— it does not drive the `ResizeObserver`-measured-width path, and it does not cover WebKit
+compositing/stacking, hover transitions, or drag feel. Those stay manual-only; see §6.0 audit note
+below.
 
 **Do this first, before Pair 1, and do not couple it to the contract program.**
 

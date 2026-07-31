@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-07-31 |
-| Current HEAD | This commit ("Docs: sync CLAUDE.md/history.md/project-state.md; close bugs B/D/E; clean task lists"), immediately following `abb642c` ("UI: timeline absolute positioning...") on branch `webgl2-effects-engine` — **committed, not pushed**. Tagged `clean-baseline-2026-07-31` — resolve that tag for this commit's own hash (a commit's file content cannot quote its own resulting hash — same self-reference gap this file has always had; the tag is the permanent resolution). `tsc --noEmit` clean, `vitest` **1165/1165**. |
+| Last updated | 2026-08-01 |
+| Current HEAD | `7e6309f` ("test(timeline): §6.0 smoke tests — extract layout geometry to timelineLayout.ts, pin position math with 34 tests") on branch `webgl2-effects-engine` — **committed, not pushed**. `tsc --noEmit` clean, `vitest` **1199/1199**. |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -22,7 +22,7 @@ Sync system rewrite closed (WS1a→WS6 + token-stealing fix); see `docs/history.
 
 ## Active Tasks
 
-- **Pipeline Contract Program** — plan committed (commit `1758c4b`), Pair 1 audit next
+- **Pipeline Contract Program** — plan committed (commit `1758c4b`); §6.0 Timeline smoke tests completed (`7e6309f`, 1199 tests); Pair 1 (Contract 1→2) audit next
 
 ## Deferred Polish Features
 
@@ -84,7 +84,7 @@ No open questions.
 | Export engine | Two gated paths as of 2026-07-22 (`useExport.ts`'s `isWebCodecsExportGateOpen()`): **default** — WebCodecs+WebGL2 worker path (`VideoDecoder`→GL composite→`VideoEncoder`, native ffmpeg sidecar for mux-only), toggle ON on every platform; **fallback** — legacy native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) full per-frame canvas pipeline via Tauri `tauri-plugin-shell`, used when the capability probe fails or the user toggles off. See `docs/history.md` → *WebCodecs + WebGL2 Worker Export — Implementation Record*. |
 | Export speed — WebCodecs path (default) | Step 8 synthetic effects-heavy benchmark: 194s → 6.8s (**~28×**). Real projects: **~2.3×** — the honest number, not the synthetic one (GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView narrows the real-world win). Verified macOS Intel x86_64 only; macOS arm64/Windows unverified. Tier 1/C segments (plain, or not GL-expressible) run at legacy speed regardless. |
 | Export speed — legacy path (fallback) | **Stale — pending re-measurement.** Figures predate the 2026-07-09 worker-pool PNG encode + raw-binary IPC write speedup (commit `cd7ea2b`); no post-fix benchmark has been run yet. macOS Intel (x86_64): ~10× realtime (120s for 12s of output) as of the base64-IPC-only pipeline; Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
-| Test count (`vitest`) | 1165 — up from 1133 via the Bug C run-survival-gates regression coverage (commit `4fcf676`, 1133 → 1163) and 4 new `headExtendFirstSegment` tests this session (1163 → 1165); see `docs/history.md` for the per-item breakdown |
+| Test count (`vitest`) | 1199 — up from 1165 via §6.0 Timeline smoke tests (commit `7e6309f`, 34 new tests: `timelineLayout.test.ts` + `timeline.render.test.tsx`); see `docs/history.md` for the per-item breakdown |
 | Frontend bundle size | 505.86 kB / 152.74 kB gzip main bundle (measured 2026-06-22; no wasm in bundle — ffmpeg is a sidecar binary) |
 | Lazy chunks | StockSearchModal 8.79 kB · jszip 95.87 kB |
 | ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |
