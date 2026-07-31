@@ -27,6 +27,10 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // sync proceeded normally. Deliberately NOT an error colour.
   'malformed-token': { label: 'TOKENS', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' },
   'no-asset': { label: 'NO ASSET', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
+  // Rescue observability (false-positive rescue fix, 2026-07-31) — gray/info:
+  // this is the same rescue mechanism (WS6) that has always existed, now
+  // surfaced to the user, not a new error or degradation.
+  rescue: { label: 'RESCUE', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

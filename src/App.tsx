@@ -124,6 +124,7 @@ import { TranscriptionBar } from './components/TranscriptionBar';
 import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
+import { formatTime } from './services/timeFormat';
 import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
@@ -1031,6 +1032,61 @@ export function buildNoAssetSummaryEntry(
     undefined,
     timestamp,
   );
+}
+
+/**
+ * Rescue observability (false-positive rescue fix, 2026-07-31). One
+ * `RescuedSegmentRecord` per segment the per-segment temporal-bounding rescue
+ * (whisperService.ts's extractSegmentAlignments) recovered — i.e. every
+ * coverage entry carrying `recoveredVia` (present only when the global pass
+ * gave the segment zero matches AND the rescue's claim survived the
+ * forward-ordering bound; see AlignResult's doc comment). `segmentIndex` is
+ * 0-based into the PRE-filter (aligned) segments array, matching
+ * `SkippedSegmentRecord`'s convention.
+ */
+export interface RescuedSegmentRecord {
+  segmentIndex: number;
+  recoveredVia: 'windowed' | 'global' | 'concat';
+  recoveredRegion: { startSec: number; endSec: number };
+  /** The segment's anchor estimate at sync time, for the message's "anchor
+   *  estimate" clause. Omitted (clause dropped) for a segment with no
+   *  anchorStart — the rescue itself never runs without one, so this is
+   *  defensive rather than a real case. */
+  anchorStart?: number;
+}
+
+const RESCUE_PASS_LABEL: Record<RescuedSegmentRecord['recoveredVia'], string> = {
+  windowed: 'windowed fallback',
+  global: 'global fallback',
+  concat: 'sub-word concat fallback',
+};
+
+/**
+ * One 'rescue' entry per recovered segment (1-based display number, matching
+ * `buildSkipLogEntries`'s convention). Informational — this is the SAME
+ * rescue mechanism that has always existed (WS6), surfaced to the user for
+ * the first time, not a new failure mode. Returns [] when nothing was
+ * rescued this run — the caller never appends zero entries.
+ */
+export function buildRescueLogEntries(
+  syncRunId: string,
+  rescued: RescuedSegmentRecord[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return rescued.map(record => {
+    const passLabel = RESCUE_PASS_LABEL[record.recoveredVia];
+    const rangeLabel = `${formatTime(record.recoveredRegion.startSec)}–${formatTime(record.recoveredRegion.endSec)}`;
+    const anchorClause = record.anchorStart !== undefined
+      ? ` (anchor estimate ${formatTime(record.anchorStart)})`
+      : '';
+    return makeSyncLogEntry(
+      syncRunId,
+      'rescue',
+      `Segment ${record.segmentIndex + 1} recovered via ${passLabel} — matched audio at ${rangeLabel}${anchorClause}.`,
+      { segmentIndex: record.segmentIndex },
+      timestamp,
+    );
+  });
 }
 
 /**
@@ -2375,6 +2431,29 @@ export default function App() {
         );
       }
 
+      // Rescue observability (false-positive rescue fix, 2026-07-31) — every
+      // coverage entry the per-segment temporal-bounding rescue recovered
+      // (`recoveredVia` set only for an ACCEPTED claim — see AlignResult's
+      // doc comment; a rejected claim leaves the segment genuinely
+      // zero-matched, and shows up in `skipped` above instead) gets one
+      // 'rescue' log entry below. Built from `aligned.coverage`/
+      // `aligned.segments` — the PRE-filter arrays, same indexing
+      // `buildSkipLogEntries` uses — since a rescued segment is by
+      // definition `matched: true` and therefore always in `kept`, but the
+      // PRE-filter index is what the message displays (1-based).
+      const rescued: RescuedSegmentRecord[] = [];
+      for (let i = 0; i < aligned.coverage.length; i++) {
+        const cov = aligned.coverage[i];
+        if (cov?.recoveredVia && cov.recoveredRegion) {
+          rescued.push({
+            segmentIndex: i,
+            recoveredVia: cov.recoveredVia,
+            recoveredRegion: cov.recoveredRegion,
+            anchorStart: aligned.segments[i]?.anchorStart,
+          });
+        }
+      }
+
       // WS-logs (R4-4) — the skip records are no longer DEV-console-only: one
       // 'skip' entry per dropped scene. Bug 1 fix: a summary 'info' entry is now
       // emitted on EVERY successful run — alongside the skip entries, not
@@ -2396,6 +2475,7 @@ export default function App() {
           ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
           : []),
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
+        ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
       pendingLogSummary = {
@@ -2406,6 +2486,7 @@ export default function App() {
         skippedSegments: skipped.length,
         aborted: false,
         silenceErrorCount: aligned.silenceError ? 1 : 0,
+        rescueCount: rescued.length,
       };
 
       // Covered-only boundary re-snap (middle-gap position-offset fix).

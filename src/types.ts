@@ -350,6 +350,15 @@ export interface Project {
  *  - 'malformed-token' WS4 Feature 4 — whisper tokens with unusable timestamps
  *                      were filtered out before alignment. Info, not error:
  *                      they were handled, and sync proceeded normally.
+ *  - 'rescue'          Rescue observability (false-positive rescue fix,
+ *                      2026-07-31) — a segment's per-segment temporal-bounding
+ *                      rescue (whisperService.ts) recovered it after the
+ *                      global pass gave it zero matches. Informational, not
+ *                      error: this is the SAME rescue mechanism that has
+ *                      always existed (WS6) surfaced for the first time,
+ *                      not a new failure mode — it lets a user distinguish a
+ *                      legitimate anchor-drift recovery from one that landed
+ *                      far from the segment's expected position.
  */
 export type SyncLogEntryType =
   | 'skip'
@@ -358,7 +367,8 @@ export type SyncLogEntryType =
   | 'info'
   | 'silence-error'
   | 'malformed-token'
-  | 'no-asset';
+  | 'no-asset'
+  | 'rescue';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
@@ -419,6 +429,11 @@ export interface SyncRunSummary {
    *  because summaries persisted before this feature genuinely do not have
    *  it — treat undefined as 0, same convention as silenceErrorCount above. */
   noAssetCount?: number;
+  /** Rescue observability (false-positive rescue fix, 2026-07-31) — how many
+   *  segments this run recovered via the per-segment temporal-bounding
+   *  rescue (whisperService.ts). Optional for the same reason as
+   *  silenceErrorCount/noAssetCount above — treat undefined as 0. */
+  rescueCount?: number;
 }
 
 export interface ProjectMeta {

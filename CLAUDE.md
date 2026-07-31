@@ -120,6 +120,16 @@ src/
                      #   the resolution/fps readout, wired to useExport.ts's cancelExport — no
                      #   local state, purely additive (docs/history.md -> "WebCodecs + WebGL2
                      #   Worker Export — Implementation Record").
+                     #   Rescue observability (false-positive rescue fix, 2026-07-31) — a new
+                     #   'rescue' SyncLogEntry (types.ts, SyncLogPanel.tsx) per segment the
+                     #   per-segment temporal-bounding rescue (whisperService.ts) recovered this run.
+                     #   buildRescueLogEntries(syncRunId, rescued, timestamp) builds one entry per
+                     #   RescuedSegmentRecord — collected from `aligned.coverage`'s recoveredVia/
+                     #   recoveredRegion fields (present only for an ACCEPTED rescue claim) alongside
+                     #   the matching pre-filter segment's anchorStart — and folds in next to the
+                     #   existing skip/no-asset entries; SyncRunSummary gains rescueCount to match.
+                     #   Purely additive — this is the same rescue mechanism that has always existed
+                     #   (WS6), surfaced to the user for the first time.
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
                      #   SegmentGrade { brightness, contrast, saturation, temperature } — each
                      #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
@@ -145,6 +155,16 @@ src/
                      #   buildNoAssetSummaryEntry. SyncRunSummary gains noAssetCount? to match —
                      #   optional for the same reason silenceErrorCount? is: summaries persisted
                      #   before this feature genuinely lack it, treat undefined as 0.
+                     #   SyncLogEntryType gains 'rescue' (2026-08-02, false-positive rescue fix) —
+                     #   an informational entry (gray RESCUE badge, SyncLogPanel.tsx) for a segment
+                     #   the per-segment temporal-bounding rescue (whisperService.ts's
+                     #   extractSegmentAlignments) recovered after the global pass gave it zero
+                     #   matches — built by App.tsx's buildRescueLogEntries from AlignResult's
+                     #   recoveredVia/recoveredRegion fields (whisperService.ts), present only on an
+                     #   ACCEPTED rescue claim. This is the SAME rescue mechanism that has existed
+                     #   since WS6, surfaced to the user for the first time, not a new failure mode.
+                     #   SyncRunSummary gains rescueCount? to match — optional for the same reason
+                     #   as noAssetCount?/silenceErrorCount? above.
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
@@ -284,6 +304,71 @@ src/
                      #   unclaimed-only, document-order guarantee as Pass 2, just multi-token.
                      #   Logs `[align-recover] seg=<i> recovered <n>/<total> via <pass>`
                      #   (DEV-gated, permanent) on any successful recovery.
+                     #   Rescue forward-ordering bound (false-positive rescue fix, 2026-07-31) —
+                     #   Passes 2/3 above scan every unclaimed token with no relation to the
+                     #   segment's own position, so a segment whose text never occurs in the audio
+                     #   (e.g. a heading — passes the rescue's gate since matchedCount===0 &&
+                     #   anchorStart is defined for every parsed segment) could claim a LATER
+                     #   segment's genuine substitution material, flip `matched` to true, and hand
+                     #   the far-away token indices into distributeSegmentTimes/
+                     #   snapCoveredBoundaries as a real boundary. Confirmed in production: a
+                     #   no-audio heading rescued from ~412s away produced a ~206s phantom first
+                     #   segment ((412+0.5)/2) that collapsed its real successor to near-zero. Fix:
+                     #   a rescue claim's EARLIEST token must sit strictly before the first token
+                     #   any LATER segment truly matched in the (unchanged) global pass — order, not
+                     #   distance, is the signal (WS6 test 10 legitimately recovers a word 44s from
+                     #   a 3s slot, so no distance cap can exclude the false positive without also
+                     #   excluding that case). Computed once via firstGlobalMatchSubjectOf/
+                     #   computeForwardBoundStartSec, before any rescue runs, so every segment's
+                     #   bound is order-independent. AlignResult gains recoveredVia?/
+                     #   recoveredRegion? — provenance for an ACCEPTED rescue claim only (undefined
+                     #   both for a direct global-pass match and for a rejected claim), consumed by
+                     #   App.tsx's buildRescueLogEntries for the 'rescue' sync-log entry (types.ts,
+                     #   SyncLogPanel.tsx).
+                     #   alignScenestoTranscript's own gap-fill — ported candidacy + contention-aware
+                     #   assignment (2026-08-02) — this loop used to test only bare window overlap
+                     #   and claim silences first-come-first-served (usedSilences). It now imports
+                     #   fillsTokenGapWithinSpan/isBreathSilence/isBoundarySilenceCandidate from
+                     #   snapBoundaries.ts (that file remains their canonical home) and runs the SAME
+                     #   3-pass structure snapCoveredBoundaries uses: Pass 1 computes every pair's
+                     #   window + candidate silences (token-gap and breath rejection first,
+                     #   short-circuiting; window/span/tolerance last), Pass 2 assigns each contested
+                     #   silence to whichever pair's spoken midpoint it's actually closer to (ties ->
+                     #   later pair), Pass 3 resolves left-to-right exactly as before. Both new
+                     #   predicates already guard on the -1 sentinel (`firstTokenIdx < 0`), which
+                     #   this full-array pass — unlike snapBoundaries.ts, which only ever sees
+                     #   covered/matched segments — can hand them directly for an unmatched/
+                     #   heading-only side; they simply no-op to false. The parity claim between this
+                     #   gap-fill and snapCoveredBoundaries (previously caveated "whenever there is
+                     #   no cross-pair silence contention") now holds under contention too — pinned
+                     #   by a dedicated "parity" test in syncTiming.test.ts.
+    syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
+                     #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
+                     #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-
+                     #   window constants, MAX_CONCAT_TOKENS/MAX_CONCAT_GAP_SEC. New in the breath-
+                     #   discrimination + intra-segment silence rejection work (2026-08-01/02):
+                     #   BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC (0.3s) — how far a candidate
+                     #   silence may intrude into either segment's own speech (relaxed for Whisper's
+                     #   ~±0.3s word-edge error) before isBoundarySilenceCandidate rejects it as
+                     #   intra-segment rather than a boundary pause. TOKEN_GAP_EPSILON_SEC (0.02s) —
+                     #   quantization slop for fillsTokenGapWithinSpan's token-gap fit test;
+                     #   deliberately NOT a tolerance (every fixture fires at exact equality) and
+                     #   held far below silenceDetector.ts's 0.25s minDurationSec so it can never
+                     #   misfire on Whisper's occasional overlapping tokens.
+                     #   BREATH_MAX_SPEECH_COVERAGE_RATIO (0.3) / BREATH_TOKEN_OVERLAP_FLOOR_SEC
+                     #   (0.09s) — the two constants behind isBreathSilence's coverage-composite
+                     #   predicate (iteration 3 of the breath-discrimination arc): a silence at or
+                     #   under the coverage ratio is predominantly true silence; one at high coverage
+                     #   (>=0.9) with 2+ INTERIOR span tokens (not the two edge tokens) each
+                     #   overlapped by at least the floor is multiple sandwiched speech fragments —
+                     #   the interior-only restriction is what keeps a short two-token span
+                     #   structurally immune to the override, not the floor's exact value. The floor
+                     #   is calibrated to admit pair-4's confirmed production overlaps (0.09s, 0.14s)
+                     #   while excluding a sub-floor artifact (0.05s) — a stated, honest 0.04s margin,
+                     #   not padded (see project-state.md's Deferred Known Bugs watch item). Full
+                     #   derivation, including the two rejected prior formulations (bare coverage
+                     #   ratio; counting all span tokens instead of interior-only), documented at
+                     #   each constant.
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
@@ -303,12 +388,43 @@ src/
                      #   pair's window to whichever pair's spoken midpoint it sits closest to (ties →
                      #   later pair); Pass 3 resolves boundaries left-to-right exactly as before, but
                      #   reading only each pair's own assigned candidates. The `usedSilences` set is
-                     #   gone — assignment (Pass 2) is what used to be its job. Window math,
-                     #   closest-centre selection, the token-midpoint fallback, and the monotonic
-                     #   safety-net check are all otherwise unchanged; the monotonic fallback itself
-                     #   still does not re-check its own substituted value against prevBoundary (a
-                     #   separately-surfaced, deliberately-unfixed gap — see project-state.md's
-                     #   Deferred Known Bugs).
+                     #   gone — assignment (Pass 2) is what used to be its job.
+                     #   Candidacy predicate chain (breath/intra-segment discrimination, 2026-08-01/02
+                     #   — full derivation in this file's own header and syncConstants.ts): a silence
+                     #   overlapping a pair's search window is a boundary CANDIDATE only if it also
+                     #   survives, in order: (1) fillsTokenGapWithinSpan — token-gap alignment
+                     #   evidence, short-circuiting — a silence filling a gap between two consecutive
+                     #   tokens of EITHER segment's own matched span is that segment's own breath,
+                     #   rejected however shallow its intrusion; (2) isBreathSilence —
+                     #   coverage-composite alignment-adjacent evidence for the shapes (1) structurally
+                     #   cannot see (several micro-tokens, or edge-stretched tokens, filling a breath);
+                     #   (3) isBoundarySilenceCandidate — the original window + span/tolerance test,
+                     #   now also rejecting a silence that sits well inside either segment's own speech
+                     #   (relaxed by BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC for Whisper's word-edge
+                     #   error). Production case fixed: a mid-sentence breath ("They're [breath] the
+                     #   worst") no longer wins the closest-centre pick and steals "the worst" into the
+                     #   next segment. All three predicates are pure, exported, and unit-tested directly
+                     #   with hand-written numbers; they are composed in exactly ONE place (Pass 1's
+                     #   filter), so Pass 2's assignment can never disagree with Pass 1's candidacy.
+                     #   Degenerate-pair guard (rescue false-positive fix, defense-in-depth) — a pair
+                     #   whose spoken edges are inverted by more than
+                     #   DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC (= TEMPORAL_TOLERANCE_MAX_SEC, 5.0s —
+                     #   this codebase's designated ceiling on plausible legitimate timing slop) writes
+                     #   no boundary at all for that pair, leaving upstream's already-repaired timing
+                     #   untouched, rather than forcing a midpoint from corrupted indices — exactly the
+                     #   shape a false-positive rescue claim (whisperService.ts) produces, and exactly
+                     #   what turned one into a multi-minute phantom duration in production before this
+                     #   guard existed. A MILD inversion (Whisper words spoken close together) is normal
+                     #   and still falls through to the existing plain-midpoint fallback unchanged.
+                     #   Window math, closest-centre selection, and the token-midpoint fallback are
+                     #   otherwise unchanged; the monotonic safety-net check now RE-CHECKS its own
+                     #   substituted midpoint against prevBoundary too (2026-08-02 fix, closes the
+                     #   previously-deferred gap) — a still-backwards substitution clamps to
+                     #   prevBoundary (DEV-gated warn) instead of being committed silently.
+                     #   `fillsTokenGapWithinSpan`/`isBreathSilence`/`isBoundarySilenceCandidate` are
+                     #   also imported by whisperService.ts's `alignScenestoTranscript` (2026-08-02
+                     #   port) — this file remains their canonical home; see that file's entry for what
+                     #   changed on the aligner's side.
     silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill;
                      #   overlap-based lookup, usedSilences set, monotonic boundary check.
                      #   Returns a STRUCTURED SilenceDetectResult discriminated union since WS4
@@ -1056,6 +1172,10 @@ src/
                      #   badge in TYPE_STYLES) renders alongside the existing kinds; App.tsx's
                      #   buildNoAssetSummaryEntry appends one per Apply Sync run when any committed
                      #   segment has no matched assetId.
+                     #   Rescue observability (2026-07-31) — a new 'rescue' entry type (gray RESCUE
+                     #   badge in TYPE_STYLES) renders alongside the existing kinds; informational,
+                     #   not an error or degradation colour — the same rescue mechanism (WS6) that
+                     #   has always existed, now surfaced to the user.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with

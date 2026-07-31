@@ -12,11 +12,13 @@ import {
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
   buildNoAssetSummaryEntry,
+  buildRescueLogEntries,
   buildSyncInfoEntry,
   buildSyncInfoMessage,
   makeSyncLogEntry,
   SYNC_LOG_TEXT_PREVIEW_CHARS,
   type SkippedSegmentRecord,
+  type RescuedSegmentRecord,
 } from '../App';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
@@ -520,5 +522,74 @@ describe('buildNoAssetSummaryEntry', () => {
 
     expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
     expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('no-asset');
+  });
+});
+
+describe('buildRescueLogEntries (rescue observability, false-positive rescue fix)', () => {
+  it('returns [] for an empty rescued list — caller never appends zero entries', () => {
+    expect(buildRescueLogEntries(RUN_ID, [], AT)).toEqual([]);
+  });
+
+  it('builds the exact message format for a global-fallback recovery, including the anchor clause', () => {
+    const record: RescuedSegmentRecord = {
+      segmentIndex: 152, // 0-based -> "Segment 153"
+      recoveredVia: 'global',
+      recoveredRegion: { startSec: 50, endSec: 52 },
+      anchorStart: 6,
+    };
+    const [entry] = buildRescueLogEntries(RUN_ID, [record], AT);
+    expect(entry!.message).toBe(
+      'Segment 153 recovered via global fallback — matched audio at 00:50–00:52 (anchor estimate 00:06).',
+    );
+  });
+
+  it('omits the anchor clause when anchorStart is undefined', () => {
+    const record: RescuedSegmentRecord = {
+      segmentIndex: 0,
+      recoveredVia: 'windowed',
+      recoveredRegion: { startSec: 5, endSec: 6 },
+    };
+    const [entry] = buildRescueLogEntries(RUN_ID, [record], AT);
+    expect(entry!.message).toBe('Segment 1 recovered via windowed fallback — matched audio at 00:05–00:06.');
+  });
+
+  it('labels each recoveredVia pass distinctly', () => {
+    const records: RescuedSegmentRecord[] = [
+      { segmentIndex: 0, recoveredVia: 'windowed', recoveredRegion: { startSec: 1, endSec: 2 } },
+      { segmentIndex: 1, recoveredVia: 'global', recoveredRegion: { startSec: 3, endSec: 4 } },
+      { segmentIndex: 2, recoveredVia: 'concat', recoveredRegion: { startSec: 5, endSec: 6 } },
+    ];
+    const entries = buildRescueLogEntries(RUN_ID, records, AT);
+    expect(entries.map(e => e.message)).toEqual([
+      'Segment 1 recovered via windowed fallback — matched audio at 00:01–00:02.',
+      'Segment 2 recovered via global fallback — matched audio at 00:03–00:04.',
+      'Segment 3 recovered via sub-word concat fallback — matched audio at 00:05–00:06.',
+    ]);
+  });
+
+  it('carries type "rescue", the given syncRunId, timestamp, and segmentIndex', () => {
+    const record: RescuedSegmentRecord = {
+      segmentIndex: 4,
+      recoveredVia: 'global',
+      recoveredRegion: { startSec: 10, endSec: 11 },
+    };
+    const [entry] = buildRescueLogEntries(RUN_ID, [record], AT);
+    expect(entry!.type).toBe('rescue');
+    expect(entry!.syncRunId).toBe(RUN_ID);
+    expect(entry!.timestamp).toBe(AT);
+    expect(entry!.segmentIndex).toBe(4);
+  });
+
+  it('folds alongside skip/no-asset entries without disturbing the MAX_LOG_ENTRIES prune', () => {
+    const project = makeProject({ syncLog: makeEntries(MAX_LOG_ENTRIES) });
+    const rescueEntries = buildRescueLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 0, recoveredVia: 'global', recoveredRegion: { startSec: 1, endSec: 2 } }],
+      AT,
+    );
+    const next = appendSyncLogEntries(project, rescueEntries);
+
+    expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
+    expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('rescue');
   });
 });

@@ -146,6 +146,135 @@ export const TEMPORAL_BONUS_CENTRAL_FRACTION = 0.5;
 // being discarded for ending a few milliseconds "after" the file does.
 export const MALFORMED_TOKEN_DURATION_TOLERANCE_SEC = 0.5;
 
+// --- Boundary-silence intrusion tolerance (intra-segment silence rejection,
+// 2026-08-01) ---------------------------------------------------------------
+// snapBoundaries.ts rejects a detected silence as a boundary candidate when it
+// sits INSIDE one of the pair's segments' own speech rather than spanning the
+// gap between them — a mid-sentence breath is not a boundary pause, and
+// choosing one cuts a segment off before it finished speaking (confirmed in
+// production: a pair with lastSpokenEnd 18.87 chose the silence [18.32, 18.70]
+// and handed its trailing phrase to the next segment).
+//
+// But "inside the speech" cannot be decided against Whisper's word edges
+// exactly, because those edges are the very thing the silence snap exists to
+// correct — Whisper's word-boundary timestamps carry roughly ±0.3s of error
+// (the same figure MALFORMED_TOKEN_DURATION_TOLERANCE_SEC above cites), and it
+// routinely stretches a word's span across the pause that follows it. A strict
+// test therefore misclassifies a genuine boundary pause whenever the adjacent
+// token was stretched over it: measured on the pinned 14-segment fixture, the
+// real silence [6.56, 7.12] begins 0.16s after the next segment's first word
+// nominally starts, and a strict test drops the boundary from 6.84 to the
+// token midpoint 6.35 — while the aligner, unchanged, still snaps to 6.84.
+//
+// So the test allows this much intrusion into either segment's speech before
+// calling a silence intra-segment: below it, a mis-timed boundary pause and a
+// real breath are genuinely indistinguishable, and the silence — acoustic
+// ground truth — wins; deeper than it, the separating speech is far larger
+// than Whisper's error and the silence is a breath, so it is rejected.
+export const BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC = 0.3;
+
+// --- Token-gap epsilon (token-gap silence discrimination, 2026-08-01) -------
+// The tolerance above is a TIMESTAMP heuristic — it corrects Whisper's
+// timestamp error using Whisper's own timestamps, so inside its 0.30s band it
+// genuinely cannot tell a mid-sentence breath from a boundary pause that a
+// stretched token smeared over. snapBoundaries.ts's `fillsTokenGapWithinSpan`
+// supplies a second, INDEPENDENT evidence source: the Hirschberg text
+// alignment, which decides word ownership without consulting a timestamp at
+// all. A silence that fits between two consecutive tokens of ONE segment's
+// matched span is that segment's own breath — rejected as a boundary
+// candidate however shallow its intrusion.
+//
+// This epsilon absorbs quantization on that fit test, nothing more. It is
+// tied to silenceDetector.ts's frameSizeMs (20ms): silence edges are computed
+// per analysis frame, so a reported edge is only known to ±1 frame. Whisper's
+// own token times are quantized more finely, so 20ms dominates.
+//
+// It is deliberately NOT a tolerance. Every fixture in syncTiming.test.ts
+// fires this rule at EXACT equality between a token edge and a silence edge —
+// ε = 0 would pass all of them — and the nearest non-firing fixture misses by
+// 0.5s+. Widening this constant does not buy sensitivity; it only risks the
+// one structural guarantee below.
+//
+// THE GUARANTEE: ε must stay far below silenceDetector.ts's minDurationSec
+// (0.25s). Whisper sometimes emits overlapping tokens (endSec > the next
+// token's startSec). For such a negative gap the fit test can only succeed on
+// a silence shorter than 2ε, so at 0.02s no real detected silence — floored at
+// 0.25s, a 12x margin — can ever misfire on overlapping tokens. Raising ε past
+// ~0.12s would erode that margin and make the rule reachable by duplicate-token
+// noise.
+export const TOKEN_GAP_EPSILON_SEC = 0.02;
+
+// --- Coverage-composite breath discrimination (2026-08-01, iteration 3) -----
+// TOKEN_GAP_EPSILON_SEC above (iteration 1, containment) is a faithful,
+// still-correct predicate for the ONE shape it targets — but real Whisper
+// output routinely produces a shape it structurally cannot see: a breath
+// filled with several MICRO-tokens, or flanked by tokens stretched across its
+// edges, so no clean two-token gap exists for it to fit. isBreathSilence
+// below (snapBoundaries.ts) is the second, independent evidence source that
+// covers that gap.
+//
+// The first formulation tried was a bare coverage ratio (covered speech time
+// inside the silence, divided by the silence's own duration) with no other
+// signal. It is provably insufficient on its own: this file's "stretched
+// word" fixture (a silence sitting entirely inside one long token) computes
+// to ratio 1.0 and MUST accept; the real pair-4 breath (the same silence
+// width, now spanning three touching micro-tokens) also computes to ratio
+// 1.0 and MUST reject. No single ratio cutoff can separate two fixtures that
+// land on the exact same ratio.
+//
+// The discriminator that does separate them is WHICH tokens the silence
+// touches, not how much of them it touches: a breath sits between two or
+// more of a segment's own words, so it always straddles at least one
+// INTERIOR token of the matched span — a token with real matched speech on
+// BOTH sides of it, inside the same span. A stretched-word silence lies
+// inside a single token with nothing else of the span touching it, so it can
+// never manufacture an interior token. And a short, two-token span (a
+// two-word segment's own full text — the shape of this file's "does NOT
+// clamp" fixture) has NO interior token at all: its first and last token
+// are the same two tokens, so it cannot manufacture the "multiple sandwiched
+// fragments" signal a breath requires, no matter how much of the silence
+// those two edge tokens individually cover.
+//
+// This interior-only restriction is itself a correction, not the first
+// draft: counting every span token (edges included) against
+// BREATH_TOKEN_OVERLAP_FLOOR_SEC below gives the "does NOT clamp" fixture's
+// two-token span a significant-count of 2 — both of ITS tokens clear the
+// floor by a wide margin (0.3-0.5s each, against a 0.09s floor) — which trips
+// the multi-fragment override and incorrectly rejects a boundary this suite
+// has pinned as ACCEPTED since before this feature existed. Because that
+// fixture's overlaps are already larger than pair-4's, no floor value could
+// exclude one without excluding the other; only restricting the count to
+// INTERIOR tokens closes the gap, and it does so structurally — a two-token
+// span can never have an interior token, so it is immune to the override by
+// construction, independent of the floor's exact value.
+//
+// BREATH_MAX_SPEECH_COVERAGE_RATIO is the other, independent branch: a
+// silence whose span-token coverage sits at or under this ratio is
+// predominantly true silence, not speech with a pause carved out of it — a
+// breath, regardless of the interior-token signal. This is what closes the
+// merged-interval case `fillsTokenGapWithinSpan` deliberately leaves open
+// (see that predicate's own doc comment): that fixture's silence computes to
+// a 0.293 coverage ratio, just under this 0.3 threshold, so isBreathSilence
+// rejects it on this branch alone — even though the silence still fails
+// fillsTokenGapWithinSpan's own containment test (it still runs past the
+// span's last token). That limitation of that ONE function is unchanged and
+// still directly unit-tested; what changes is that the composed Pass 1
+// filter no longer depends on it alone to catch this shape.
+export const BREATH_MAX_SPEECH_COVERAGE_RATIO = 0.3;
+// A token counts toward the interior multi-fragment override only once its
+// overlap with the silence reaches this floor. Calibrated to admit pair-4's
+// own confirmed production interior overlaps (0.09s and 0.14s) — the smaller
+// landing EXACTLY on the floor, deliberately, not approximately (see
+// isBreathSilence's own doc comment) — while excluding a plausible sub-floor
+// artifact overlap (0.05s, exercised directly by isBreathSilence's "sigCount
+// floor edge" unit test): a 0.04s margin, stated honestly rather than
+// padded, on the one side of this floor an actual fixture exercises. The
+// interior-only restriction above is what does the real work of protecting
+// short spans regardless of this value — this floor's job is narrower: only
+// separating a genuine interior speech fragment from a sub-floor artifact
+// WITHIN a span that already has interior tokens to weigh.
+export const BREATH_TOKEN_OVERLAP_FLOOR_SEC = 0.09;
+
 // --- Sub-word concatenation rescue (Pass 3, token-stealing fix follow-up,
 // 2026-07-29) ---------------------------------------------------------------
 // Whisper occasionally splits a single word across multiple sub-word tokens

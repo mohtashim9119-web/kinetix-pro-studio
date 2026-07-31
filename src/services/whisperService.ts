@@ -9,6 +9,12 @@ import {
   TEMPORAL_BONUS_MAX, TEMPORAL_BONUS_CENTRAL_FRACTION,
   MAX_CONCAT_TOKENS, MAX_CONCAT_GAP_SEC,
 } from './syncConstants';
+// Gap-fill candidacy predicates (2026-08-02 port) — snapBoundaries.ts remains
+// their canonical home (see that file's header for the full derivation of
+// each). Type-only the other direction (snapBoundaries.ts imports
+// `SegmentAlignment` from this file as `import type`), so this is not a
+// runtime circular dependency.
+import { fillsTokenGapWithinSpan, isBreathSilence, isBoundarySilenceCandidate } from './snapBoundaries';
 
 export type { TranscriptToken };
 
@@ -402,6 +408,21 @@ export interface AlignResult {
   matchedWords: number;           // WS1b: numerator for confidence + the bidirectional coverage metric (§3.3)
   totalWords: number;             // WS1b: 0 for a zero-token (classification-neutral) segment (§3.1.1 point 4)
   audioRegion?: { startSec: number; endSec: number }; // matched transcript time range, present iff matched
+  /** Rescue observability (false-positive rescue fix, 2026-07-31) — which
+   *  pass (Parts 1-3, WS6) recovered this segment, present iff the rescue ran
+   *  AND its claim was accepted (survived the forward-ordering bound above).
+   *  Undefined for a segment matched directly by the global pass (no rescue
+   *  needed) AND for a segment whose rescue claim was rejected (the segment
+   *  stays genuinely zero-matched in that case — see the bound's doc
+   *  comment). Lets a caller (App.tsx's sync log) show a user which segments
+   *  were recovered and by which mechanism, distinct from a normal match. */
+  recoveredVia?: 'windowed' | 'global' | 'concat';
+  /** Rescue observability — the recovered claim's own time range (the same
+   *  values `audioRegion` would carry), present under the exact same
+   *  condition as `recoveredVia`. Kept as a separate field rather than
+   *  reusing `audioRegion` so a caller can tell "recovered" and "matched
+   *  directly" apart without also checking `recoveredVia`. */
+  recoveredRegion?: { startSec: number; endSec: number };
 }
 
 /**
@@ -637,6 +658,76 @@ export function extractSegmentAlignments(
     if (sj >= 0) globallyClaimed.add(sj);
   }
 
+  // --- Rescue forward-ordering bound (false-positive rescue fix) -----------
+  // Root cause of the production incident this closes: a segment whose text
+  // never occurs in the audio (e.g. a heading) still passes the rescue's gate
+  // (matchedCount===0 && anchorStart defined — true of every parsed segment,
+  // since applyAnchorBasedTiming forces the first segment's anchor to 0).
+  // Passes 2/3 below scan every unclaimed token with NO relation to the
+  // segment's own position, so they can claim a later segment's genuine words
+  // (left unclaimed because that segment's own true match consumed a
+  // different, textually-equal occurrence, or because the word only ever
+  // appears as a substitution/gap). That flips `matched` to true, defeats the
+  // skip-unmatched classification, and the far-away token indices then flow
+  // into distributeSegmentTimes/snapCoveredBoundaries as a real boundary —
+  // confirmed in production as a ~206s phantom first segment that collapsed
+  // its real successor. See docs/history.md for the full incident writeup.
+  //
+  // The fix: a rescue claim's EARLIEST token must sit strictly before the
+  // first token any LATER segment truly matched in the (unchanged) global
+  // pass — skipping over intervening segments with no true match of their
+  // own, since those contribute no ordering information. This is exactly the
+  // axis that separates the legitimate rescue uses (an anchor drifted, but
+  // the claim still precedes the next segment's real speech — the "verified
+  // live at 7.6s off" case and the 44s-drift WS6 test 10) from the false
+  // positive (a claim landing AFTER a later segment's real speech, meaning it
+  // almost certainly belongs to that later segment, not this one). Order, not
+  // distance, is the correct signal — a distance/tolerance cap was considered
+  // and rejected: WS6 test 10 legitimately recovers a word 44s from a 3s
+  // slot, so no fixed or slot-scaled distance threshold could exclude the
+  // false positive (which can be arbitrarily far) without also excluding that
+  // legitimate case.
+  //
+  // Uses GLOBAL-pass true matches only (`firstGlobalMatchSubjectOf`, computed
+  // once here, before any rescue runs) — not other segments' own rescue
+  // outcomes. Rescues are resolved in segment order within the loop below, so
+  // consulting a later segment's (not-yet-computed) rescue result would be
+  // order-dependent and non-deterministic; the unchanged global pass is fixed
+  // before any rescue runs and gives every segment's bound the same answer
+  // regardless of processing order.
+  const firstGlobalMatchSubjectOf: number[] = segRanges.map(range => {
+    for (let qi = range.start; qi < range.end; qi++) {
+      const sj = matchedSubjectOf[qi]!;
+      if (sj >= 0) return sj;
+    }
+    return -1;
+  });
+
+  /** The startSec a rescue claim for segment `si` must stay strictly before —
+   *  the first token the nearest LATER segment with a true global match
+   *  actually matched. `undefined` when no later segment has one (nothing to
+   *  be inconsistent with — e.g. the last segment in the project). */
+  function computeForwardBoundStartSec(si: number): number | undefined {
+    for (let sj = si + 1; sj < segRanges.length; sj++) {
+      const subjectIdx = firstGlobalMatchSubjectOf[sj]!;
+      if (subjectIdx >= 0) return tokenWords[subjectIdx]!.startSec;
+    }
+    return undefined;
+  }
+
+  /** Earliest (smallest) startSec among a set of claimed `tokenWords`
+   *  indices — "the claimed matches' first token", read as first in TIME, not
+   *  first in list order (Pass 1's Hirschberg output and Pass 2/3's document-
+   *  order scans don't guarantee those coincide). */
+  function earliestClaimStartSec(globalIdxs: readonly number[]): number {
+    let min = Infinity;
+    for (const idx of globalIdxs) {
+      const s = tokenWords[idx]!.startSec;
+      if (s < min) min = s;
+    }
+    return min;
+  }
+
   const audioDuration = tokens[tokens.length - 1]?.endSec ?? 0;
 
   // Per-segment extraction from the single global alignment (doc §3.1.1, R11):
@@ -662,6 +753,12 @@ export function extractSegmentAlignments(
     let matchedCount = 0;
     let firstSub = -1;
     let lastSub = -1;
+    // Rescue observability (false-positive rescue fix, 2026-07-31) — hoisted
+    // above the rescue block so it survives to the final `results.push`
+    // below; stays null for a segment matched directly by the global pass
+    // (no rescue needed) and for a rejected rescue claim (see AlignResult's
+    // doc comment).
+    let recoveredVia: 'windowed' | 'global' | 'concat' | null = null;
     for (let qi = range.start; qi < range.end; qi++) {
       const sj = matchedSubjectOf[qi]!;
       if (sj >= 0) {
@@ -674,7 +771,12 @@ export function extractSegmentAlignments(
     // --- Token-stealing rescue (Parts 1-3, WS6) --------------------------
     const seg = segments[si]!;
     if (matchedCount === 0 && seg.anchorStart !== undefined) {
-      let recoveredVia: 'windowed' | 'global' | 'concat' | null = null;
+      // Forward-ordering bound (false-positive rescue fix) — see the
+      // module-level comment by `computeForwardBoundStartSec` above.
+      // `undefined` when no later segment has a true global match of its own.
+      const forwardBoundStartSec = computeForwardBoundStartSec(si);
+      const exceedsForwardBound = (globalIdxs: readonly number[]): boolean =>
+        forwardBoundStartSec !== undefined && earliestClaimStartSec(globalIdxs) >= forwardBoundStartSec;
       const expectedStart = seg.anchorStart;
       const expectedEnd = segments[si + 1]?.anchorStart ?? audioDuration;
       const rawDuration = Math.max(0, expectedEnd - expectedStart);
@@ -730,6 +832,17 @@ export function extractSegmentAlignments(
           localMatches = findExactSequentialMatches(segQueryWords, windowed);
         }
 
+        // Forward-ordering bound: Pass 1's window is anchored on THIS
+        // segment's own (possibly stale) anchorStart/expectedEnd, not on any
+        // later segment's real position, so it is not immune to the same
+        // inversion Pass 2/3 exist to guard against — a wide tolerance window
+        // (capped at 5s, but built from an already-drifted expectedEnd) can
+        // still reach past a later segment's true match. Reject exactly like
+        // Pass 2/3 rather than leaving Pass 1 unchecked.
+        if (localMatches.length > 0 && exceedsForwardBound(localMatches.map(m => m.globalIdx))) {
+          localMatches = [];
+        }
+
         if (localMatches.length > 0) recoveredVia = 'windowed';
       }
 
@@ -748,8 +861,16 @@ export function extractSegmentAlignments(
           if (globallyClaimed.has(gi)) continue; // never take another segment's real match
           allUnclaimed.push({ word: tokenWords[gi]!.word, globalIdx: gi });
         }
-        localMatches = findExactSequentialMatches(segQueryWords, allUnclaimed);
-        if (localMatches.length > 0) recoveredVia = 'global';
+        const pass2Matches = findExactSequentialMatches(segQueryWords, allUnclaimed);
+        // Forward-ordering bound (false-positive rescue fix): reject a claim
+        // whose earliest token sits at/after the next true-matching segment's
+        // own first word — see computeForwardBoundStartSec's doc comment
+        // above. Pass 2 is the unbounded scan, so this is where the false
+        // positive this fix targets is actually caught.
+        if (pass2Matches.length > 0 && !exceedsForwardBound(pass2Matches.map(m => m.globalIdx))) {
+          localMatches = pass2Matches;
+          recoveredVia = 'global';
+        }
       }
 
       // Pass 3 (NEW) — Pass 2's single-token exact match still found nothing.
@@ -768,11 +889,17 @@ export function extractSegmentAlignments(
           if (globallyClaimed.has(gi)) continue; // never take another segment's real match
           allUnclaimed.push({ word: tokenWords[gi]!.word, globalIdx: gi });
         }
-        concatMatches = findConcatenatingMatches(
+        const pass3Matches = findConcatenatingMatches(
           segQueryWords, allUnclaimed, tokenWords, tokens,
           { maxConcatTokens: MAX_CONCAT_TOKENS, maxConcatGapSec: MAX_CONCAT_GAP_SEC },
         );
-        if (concatMatches.length > 0) recoveredVia = 'concat';
+        // Forward-ordering bound, same rule as Pass 2 — a concatenated span's
+        // start index is itself a tokenWords globalIdx, so the same helper
+        // applies unchanged.
+        if (pass3Matches.length > 0 && !exceedsForwardBound(pass3Matches.map(m => m.tokenStartIdx))) {
+          concatMatches = pass3Matches;
+          recoveredVia = 'concat';
+        }
       }
 
       if (localMatches.length > 0) {
@@ -780,17 +907,10 @@ export function extractSegmentAlignments(
         matchedCount = localMatches.length;
         firstSub = localMatches[0]!.globalIdx;
         lastSub = localMatches[localMatches.length - 1]!.globalIdx;
-        if (import.meta.env.DEV) {
-          const label = recoveredVia === 'global' ? 'GLOBAL fallback (outside window)' : 'fallback';
-          console.log(`[align-recover] seg=${si} recovered ${matchedCount}/${totalWords} via ${label}`);
-        }
       } else if (concatMatches.length > 0) {
         matchedCount = concatMatches.length;
         firstSub = concatMatches[0]!.tokenStartIdx;
         lastSub = concatMatches[concatMatches.length - 1]!.tokenEndIdx;
-        if (import.meta.env.DEV) {
-          console.log(`[align-recover] seg=${si} recovered ${matchedCount}/${totalWords} via CONCAT fallback (sub-word merge)`);
-        }
       }
     }
 
@@ -814,10 +934,30 @@ export function extractSegmentAlignments(
     const rawT1 = tokens[lastTokenIdx]?.endSec ?? t0 + 0.1;
     const t1 = Math.max(t0 + 0.05, rawT1);
 
+    // Rescue observability (false-positive rescue fix, 2026-07-31) — logged
+    // (DEV-gated, permanent, same convention as the rest of this file) only
+    // for a segment the rescue actually recovered, now that t0/rawT1 are
+    // available: the recovered time range and its distance from the
+    // segment's own anchor estimate, so a legitimate small drift (a few
+    // seconds) reads differently from a large one at a glance.
+    if (recoveredVia !== null && import.meta.env.DEV) {
+      const label = recoveredVia === 'global' ? 'GLOBAL fallback (outside window)'
+        : recoveredVia === 'concat' ? 'CONCAT fallback (sub-word merge)'
+        : 'fallback';
+      const distance = t0 - (seg.anchorStart ?? t0);
+      console.log(
+        `[align-recover] seg=${si} recovered ${matchedCount}/${totalWords} via ${label} ` +
+        `range=[${t0.toFixed(2)},${rawT1.toFixed(2)}] anchor=${(seg.anchorStart ?? 0).toFixed(2)} distance=${distance.toFixed(2)}s`,
+      );
+    }
+
     results.push({
       t0, t1, firstTokenIdx, lastTokenIdx, confidence, matched,
       matchedWords: matchedCount, totalWords,
       audioRegion: { startSec: t0, endSec: rawT1 },
+      ...(recoveredVia !== null
+        ? { recoveredVia, recoveredRegion: { startSec: t0, endSec: rawT1 } }
+        : {}),
     });
   }
 
@@ -932,10 +1072,44 @@ export function alignScenestoTranscript(
   // Reads actual Whisper token timestamps to find the midpoint of the silence gap
   // between adjacent segments and moves both boundaries to that midpoint.
   // Pairs where either side is locked are skipped entirely.
-  // usedSilences prevents the same silence interval from being claimed by two boundaries.
-  const usedSilences = new Set<SilenceInterval>();
+  //
+  // CANDIDACY + CLAIMING (2026-08-02 port from snapBoundaries.ts): this loop
+  // used to test only bare window overlap and claim silences first-come-
+  // first-served (usedSilences). snapBoundaries.ts's covered-only re-snap has
+  // since grown two fixes this full-array pass lacked: intra-segment/breath
+  // rejection (fillsTokenGapWithinSpan + isBreathSilence, composed with the
+  // existing window/tolerance test isBoundarySilenceCandidate) and
+  // contention-aware assignment (a silence overlapped by more than one pair's
+  // window goes to whichever pair's spoken midpoint it's actually closer to,
+  // not to whichever pair runs first). Both are ported below verbatim;
+  // snapBoundaries.ts remains their canonical home — see that file's header
+  // for the full derivation of each predicate. EVERYTHING ELSE below (window
+  // math, closest-centre selection, the token-midpoint fallback, the
+  // monotonic check, and the t0/t1 writes) is UNCHANGED.
+  //
+  // SENTINEL (-1) SEGMENTS: unlike snapBoundaries.ts, which only ever sees
+  // covered (matched) segments, this pass runs on the FULL segment array and
+  // can hand an unmatched/heading-only segment's -1 firstTokenIdx/lastTokenIdx
+  // straight to the two new predicates. Both already guard on it
+  // (`firstTokenIdx < 0`) and simply return false — a sentinel side can never
+  // be flagged as its own breath, so a pair with one falls straight through to
+  // the (also ported) window/tolerance candidacy test, using the same `??`
+  // fallback values (curr.t1/next.t0/etc.) this loop already relied on for a
+  // sentinel side before this port.
+  interface GapFillPairPlan {
+    lastSpokenEnd: number;
+    nextSpokenStart: number;
+    spokenMid: number;
+    overlapping: SilenceInterval[];
+  }
+
+  // --- Pass 1 — compute every pair's search window + candidate silences ----
+  const gapFillPlans: Array<GapFillPairPlan | null> = [];
   for (let i = 0; i < results.length - 1; i++) {
-    if (segments[i]?.locked || segments[i + 1]?.locked) continue;
+    if (segments[i]?.locked || segments[i + 1]?.locked) {
+      gapFillPlans.push(null);
+      continue;
+    }
     const curr = results[i]!;
     const next = results[i + 1]!;
 
@@ -964,10 +1138,56 @@ export function alignScenestoTranscript(
     const searchStart = Math.max(spokenMid - searchRadius, currFirstSpokenStart);
     const searchEnd   = Math.min(spokenMid + searchRadius, nextLastSpokenEnd);
 
-    const candidates = silences.filter(
-      s => s.endSec > searchStart && s.startSec < searchEnd && !usedSilences.has(s),
+    // Candidacy: token-gap + breath discrimination FIRST (alignment evidence,
+    // short-circuiting), the window/span/tolerance test LAST — same order and
+    // same predicates as snapBoundaries.ts's Pass 1.
+    const overlapping = silences.filter(s =>
+      !fillsTokenGapWithinSpan(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx) &&
+      !fillsTokenGapWithinSpan(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
+      !isBreathSilence(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx) &&
+      !isBreathSilence(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
+      isBoundarySilenceCandidate(s, searchStart, searchEnd, lastSpokenEnd, nextSpokenStart),
     );
 
+    gapFillPlans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, overlapping });
+  }
+
+  // --- Pass 2 — assign each contested silence to exactly one pair ----------
+  // A silence overlapped by more than one pair's window goes to whichever
+  // pair's spoken midpoint it sits closest to (ties -> later pair), not to
+  // whichever pair happens to run first — same rule as snapBoundaries.ts's
+  // Pass 2. A silence overlapped by no pair, or by exactly one, resolves the
+  // same as the old usedSilences scheme.
+  const bestPairForSilence = new Map<SilenceInterval, { pairIdx: number; dist: number }>();
+  for (let i = 0; i < gapFillPlans.length; i++) {
+    const plan = gapFillPlans[i];
+    if (!plan) continue;
+    for (const s of plan.overlapping) {
+      const dist = Math.abs((s.startSec + s.endSec) / 2 - plan.spokenMid);
+      const best = bestPairForSilence.get(s);
+      if (best === undefined || dist <= best.dist) {
+        bestPairForSilence.set(s, { pairIdx: i, dist });
+      }
+    }
+  }
+  const gapFillAssignment: SilenceInterval[][] = gapFillPlans.map(() => []);
+  for (const s of silences) {
+    const best = bestPairForSilence.get(s);
+    if (best !== undefined) gapFillAssignment[best.pairIdx]!.push(s);
+  }
+
+  // --- Pass 3 — resolve boundaries left-to-right ----------------------------
+  // Unchanged from before except for where the candidate list comes from:
+  // closest-centre pick among THIS pair's assigned silences, token-midpoint
+  // fallback when it has none, and the monotonic safety-net check.
+  for (let i = 0; i < results.length - 1; i++) {
+    if (segments[i]?.locked || segments[i + 1]?.locked) continue;
+    const curr = results[i]!;
+    const next = results[i + 1]!;
+    const plan = gapFillPlans[i]!;
+    const { lastSpokenEnd, nextSpokenStart, spokenMid } = plan;
+
+    const candidates = gapFillAssignment[i]!;
     let gap: SilenceInterval | undefined;
     if (candidates.length > 0) {
       gap = candidates.reduce((best, s) => {
@@ -976,9 +1196,6 @@ export function alignScenestoTranscript(
         return Math.abs(sCenter - spokenMid) < Math.abs(bestCenter - spokenMid) ? s : best;
       });
     }
-
-    // Mark the chosen silence as used so later boundaries cannot claim it.
-    if (gap) usedSilences.add(gap);
 
     // Split the silence 50/50: if a real gap was detected, use its midpoint;
     // otherwise fall back to the midpoint of the token-boundary estimate.
