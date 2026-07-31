@@ -106,12 +106,22 @@
 // `nextSpokenStart` is separated from it by the next segment's — both are
 // intra-segment pauses, not boundary pauses, and neither is a candidate at all.
 //
-// Both spoken edges are relaxed by BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC
-// (syncConstants.ts) before that comparison, because they are Whisper word
-// timestamps and carry ~±0.3s of error — testing against them exactly rejects
-// genuine boundary pauses that merely overlap a stretched neighbouring token.
-// Shallow intrusion = edge blur, silence wins; deep intrusion = a real breath,
-// silence rejected. See `isBoundarySilenceCandidate` below.
+// Both spoken edges were originally relaxed by BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC
+// (syncConstants.ts) before that comparison, on the theory that Whisper word
+// timestamps carry only ~±0.3s of error. REGRESSION FIX (2026-08-03): a real
+// 173/174-segment production project, bisected against the pre-regression
+// build (commit 0c83a06, which had no SPAN test at all — pure window
+// overlap), showed trailing-word timestamps routinely blur into the
+// following pause by considerably more than 0.3s — so this timestamp-distance
+// test was rejecting genuine boundary silences wholesale (every such pair fell
+// back to the token midpoint, clamped against the blurred spoken edge). The
+// SPAN/tolerance condition has been REMOVED from `isBoundarySilenceCandidate`
+// (see that function's own doc comment) rather than re-tuned, because no
+// fixed tolerance can both forgive ordinary blur and still catch a genuine
+// breath from edge-distance alone. The reliable breath rejection below —
+// `fillsTokenGapWithinSpan` / `isBreathSilence`, ALIGNMENT evidence, not a
+// timestamp guess — is unaffected by this removal and still runs ahead of the
+// (now pure-window) candidacy test.
 //
 // TOKEN-GAP DISCRIMINATION (2026-08-01 fix): the tolerance above is a
 // TIMESTAMP heuristic — it corrects Whisper's timestamp error using Whisper's
@@ -137,8 +147,9 @@
 // each segment owns its full spoken text, breaths included — a pause BETWEEN
 // two of a segment's own words is that segment's property, never a boundary.
 // So case (a) is rejected outright, however shallow its intrusion, while case
-// (b) has no gap to fill (the silence is token-INTERIOR), the rule stays
-// silent, and the tolerance decides as before.
+// (b) has no gap to fill (the silence is token-INTERIOR) and this rule stays
+// silent on it — `isBoundarySilenceCandidate`'s window test (no longer a
+// tolerance test — see the REGRESSION FIX note above) simply accepts it.
 //
 // COVERAGE-COMPOSITE BREATH DISCRIMINATION (2026-08-01, iteration 3): the
 // token-gap test above is a faithful predicate for the ONE shape it targets —
@@ -163,9 +174,9 @@
 // merged-interval residual the token-gap test leaves open (see below).
 //
 // ORDER IS DELIBERATE: the token-gap test runs FIRST and short-circuits (an
-// alignment fact must not be forgivable by a timestamp tolerance), the
+// alignment fact must not be forgivable by a timestamp guess), the
 // coverage-composite test SECOND (independent alignment-adjacent evidence
-// for the shapes token-gap cannot see), and the timestamp-tolerance test
+// for the shapes token-gap cannot see), and the plain window-overlap test
 // (`isBoundarySilenceCandidate`) LAST.
 //
 // The three predicates are separate functions on purpose — they draw on
@@ -203,7 +214,6 @@ import type { SilenceInterval } from './silenceDetector';
 import type { SegmentAlignment } from './whisperService';
 import {
   TEMPORAL_TOLERANCE_MAX_SEC,
-  BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC,
   TOKEN_GAP_EPSILON_SEC,
   BREATH_MAX_SPEECH_COVERAGE_RATIO,
   BREATH_TOKEN_OVERLAP_FLOOR_SEC,
@@ -240,41 +250,44 @@ const MIN_SEGMENT_DURATION = 0.1;
 const DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC = TEMPORAL_TOLERANCE_MAX_SEC;
 
 /**
- * Is `silence` eligible to BE the boundary between a pair whose spoken edges
- * are `lastSpokenEnd` (curr's last matched word ends) and `nextSpokenStart`
- * (next's first matched word starts)?
+ * Is `silence` eligible to BE the boundary for a pair, i.e. does it overlap
+ * the pair's search window (close enough to the pair's spoken midpoint to be
+ * considered at all)?
  *
- * Two independent conditions, both required:
+ * REGRESSION FIX (2026-08-03): this predicate used to ALSO require the
+ * silence to span the gap between the two segments' own speech — an "edge
+ * beyond `lastSpokenEnd`/`nextSpokenStart` by more than
+ * `BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC` (0.3s) is a same-segment breath,
+ * reject" test, on the theory that Whisper's word-boundary timestamps carry
+ * only ~±0.3s of error. Verified against a real 173/174-segment production
+ * project (bisected against the pre-regression build, commit 0c83a06): real
+ * trailing-word timestamps routinely blur INTO the following pause by
+ * considerably more than 0.3s — comfortably past this tolerance — so this
+ * condition was rejecting genuine inter-segment silences wholesale, and every
+ * such boundary fell back to the token midpoint (clamped hard against the
+ * blurred spoken edge, i.e. "clamps to speech end"). 0c83a06, which had no
+ * SPAN condition at all — pure window overlap — produced clean, correct
+ * boundaries on the same project and audio.
  *
- *  1. WINDOW — the silence overlaps the pair's search window, i.e. it is close
- *     enough to the pair's spoken midpoint to be considered at all. Unchanged
- *     from the original predicate.
+ * The SPAN condition is deleted rather than re-tuned: this predicate is a
+ * TIMESTAMP heuristic, and no fixed tolerance here can both (a) forgive
+ * ordinary trailing-word blur and (b) still catch a genuine breath purely
+ * from how close it sits to a spoken edge — the two are not reliably
+ * separable on timestamp distance alone (see the file header's TOKEN-GAP
+ * DISCRIMINATION section). The actual, reliable breath rejection is
+ * `fillsTokenGapWithinSpan` / `isBreathSilence` below — ALIGNMENT evidence,
+ * not a timestamp guess — and both are composed ahead of this predicate in
+ * Pass 1's filter regardless of this change; removing this predicate's own
+ * SPAN test does not weaken that defense (the pair-4 word-theft regression
+ * fixture, boundary ~18.87s, is rejected by `fillsTokenGapWithinSpan` alone —
+ * confirmed by inspection: its silence fits exactly between two of the
+ * segment's own tokens, independent of any distance-from-edge test here).
  *
- *  2. SPAN (intra-segment rejection, 2026-08-01) — the silence is not walled
- *     off from the boundary by either segment's own speech. A silence ending
- *     well before `lastSpokenEnd` sits inside the CURRENT segment's speech (a
- *     mid-sentence breath); one starting well after `nextSpokenStart` sits
- *     inside the NEXT segment's. Choosing either places the boundary in the
- *     middle of a sentence and moves that sentence's words to the wrong
- *     segment. A real boundary pause spans the gap BETWEEN the two segments'
- *     speech.
- *
- *     "Well before/after" and not "at or before/after": both spoken edges come
- *     from Whisper word timestamps, which carry ~±0.3s of error and routinely
- *     stretch a word's span across the pause following it — the very
- *     imprecision the silence snap exists to correct. Testing against them
- *     exactly would reject genuine boundary pauses that merely overlap a
- *     stretched neighbouring token (measured: the pinned 14-segment fixture's
- *     real silence begins 0.16s after the next word nominally starts). So each
- *     edge is relaxed by BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC: intrusion
- *     shallower than that is treated as edge blur and the silence — acoustic
- *     ground truth — wins; deeper intrusion is separating speech far larger
- *     than Whisper's error, i.e. a real breath, and is rejected.
- *
- * This is the single home for the WINDOW/SPAN predicate. It is called from
- * Pass 1 only, composed with `fillsTokenGapWithinSpan` below; Pass 2 assigns
- * out of Pass 1's stored result rather than re-deriving overlap itself, so the
- * two can never disagree about what a candidate is.
+ * This is now the single home for the WINDOW predicate alone. It is called
+ * from Pass 1 only, composed with `fillsTokenGapWithinSpan` and
+ * `isBreathSilence` below; Pass 2 assigns out of Pass 1's stored result
+ * rather than re-deriving overlap itself, so the three can never disagree
+ * about what a candidate is.
  *
  * Pure; exported for direct unit testing.
  */
@@ -282,18 +295,8 @@ export function isBoundarySilenceCandidate(
   silence: SilenceInterval,
   searchStart: number,
   searchEnd: number,
-  lastSpokenEnd: number,
-  nextSpokenStart: number,
 ): boolean {
-  return (
-    // (1) within the pair's search window
-    silence.endSec > searchStart &&
-    silence.startSec < searchEnd &&
-    // (2) spans the gap rather than sitting inside either segment's speech,
-    //     with each spoken edge relaxed by the intrusion tolerance
-    silence.endSec > lastSpokenEnd - BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC &&
-    silence.startSec < nextSpokenStart + BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC
-  );
+  return silence.endSec > searchStart && silence.startSec < searchEnd;
 }
 
 /**
@@ -306,7 +309,7 @@ export function isBoundarySilenceCandidate(
  * match decided which segment owns each word without consulting a timestamp;
  * when it says two consecutive words are both one segment's, a pause between
  * them is that segment's too. A breath, never a boundary — so this outranks
- * `isBoundarySilenceCandidate`'s intrusion tolerance rather than being
+ * `isBoundarySilenceCandidate`'s plain window test rather than being
  * moderated by it, and it is tested first.
  *
  * The span is an index RANGE, not a set of matched indices: tokens strictly
@@ -557,7 +560,7 @@ export function snapCoveredBoundaries(
       !fillsTokenGapWithinSpan(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) &&
       !isBreathSilence(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx) &&
       !isBreathSilence(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) &&
-      isBoundarySilenceCandidate(s, searchStart, searchEnd, lastSpokenEnd, nextSpokenStart),
+      isBoundarySilenceCandidate(s, searchStart, searchEnd),
     );
 
     plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, overlapping });
@@ -692,9 +695,18 @@ export function snapCoveredBoundaries(
     // lies within the spoken-word range; no clamp post-processing needed.
 
     const snapped = round3(boundary);
+
     curr.duration = round3(Math.max(MIN_SEGMENT_DURATION, snapped - curr.startTime));
     next.startTime = snapped;
     next.anchorStart = snapped;
+
+    // Maintain contiguity: if the floor extended curr past snapped, push next's start
+    // so startTime[i] + duration[i] === startTime[i+1] always holds.
+    const contiguousStart = round3(curr.startTime + curr.duration);
+    if (contiguousStart > next.startTime) {
+      next.startTime = contiguousStart;
+      next.anchorStart = contiguousStart;
+    }
     prevBoundary = boundary;
   }
 

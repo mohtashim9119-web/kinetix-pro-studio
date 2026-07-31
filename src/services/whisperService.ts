@@ -1414,7 +1414,7 @@ export function alignScenestoTranscript(
       !fillsTokenGapWithinSpan(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
       !isBreathSilence(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx) &&
       !isBreathSilence(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
-      isBoundarySilenceCandidate(s, searchStart, searchEnd, lastSpokenEnd, nextSpokenStart),
+      isBoundarySilenceCandidate(s, searchStart, searchEnd),
     );
 
     gapFillPlans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, overlapping });

@@ -55,7 +55,7 @@ import {
   type SyncRunSummary,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import { computeCoverageSummary, countTranscriptWords, type SegmentAlignment } from './services/whisperService';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
@@ -2530,6 +2530,12 @@ export default function App() {
       finalTimedSegments = transcriptTokens.length > 0
         ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
         : retileCoveredSegments(kept, audioDuration);
+      // Head/tail symmetry (syncEngine.ts's headExtendFirstSegment): the last
+      // segment already runs to audioDuration (both branches above); the
+      // first segment's own startTime is untouched by either (it's still
+      // wherever the aligner's matched span put it — the first spoken word,
+      // not necessarily 0). Stretch it back to 0 the same way.
+      finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface

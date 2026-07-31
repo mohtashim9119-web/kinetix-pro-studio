@@ -17,6 +17,15 @@
 // fixture evidence that a real project is misclassified, and update those tests
 // in the same change — they are deliberately constructed to sit ON the
 // boundaries, so any move makes them fail loudly.
+//
+// KNOWN DIVERGENCE (not consolidated here, timeline visual-drift fix,
+// 2026-07-31): `MIN_SEGMENT_DURATION` exists as TWO separate, unsynchronized
+// local constants — snapBoundaries.ts's copy (0.1s), a real engine floor on
+// computed segment duration, and App.tsx/Timeline.tsx's copy (0.3s), a
+// display-only floor for resize-drag UX. They are NOT merged into one
+// exported constant here because doing so risks changing engine behavior
+// (snapBoundaries.ts's floor) as a side effect of a UI-only constant tweak,
+// or vice versa — deliberately left as a documented gap, not an oversight.
 // ---------------------------------------------------------------------------
 
 // --- Hirschberg diff-aligner scoring (doc §3.1(c), WS1a) --------------------
@@ -173,33 +182,6 @@ export const TEMPORAL_BONUS_CENTRAL_FRACTION = 0.5;
 // error besides. This tolerance is what keeps a legitimate final word from
 // being discarded for ending a few milliseconds "after" the file does.
 export const MALFORMED_TOKEN_DURATION_TOLERANCE_SEC = 0.5;
-
-// --- Boundary-silence intrusion tolerance (intra-segment silence rejection,
-// 2026-08-01) ---------------------------------------------------------------
-// snapBoundaries.ts rejects a detected silence as a boundary candidate when it
-// sits INSIDE one of the pair's segments' own speech rather than spanning the
-// gap between them — a mid-sentence breath is not a boundary pause, and
-// choosing one cuts a segment off before it finished speaking (confirmed in
-// production: a pair with lastSpokenEnd 18.87 chose the silence [18.32, 18.70]
-// and handed its trailing phrase to the next segment).
-//
-// But "inside the speech" cannot be decided against Whisper's word edges
-// exactly, because those edges are the very thing the silence snap exists to
-// correct — Whisper's word-boundary timestamps carry roughly ±0.3s of error
-// (the same figure MALFORMED_TOKEN_DURATION_TOLERANCE_SEC above cites), and it
-// routinely stretches a word's span across the pause that follows it. A strict
-// test therefore misclassifies a genuine boundary pause whenever the adjacent
-// token was stretched over it: measured on the pinned 14-segment fixture, the
-// real silence [6.56, 7.12] begins 0.16s after the next segment's first word
-// nominally starts, and a strict test drops the boundary from 6.84 to the
-// token midpoint 6.35 — while the aligner, unchanged, still snaps to 6.84.
-//
-// So the test allows this much intrusion into either segment's speech before
-// calling a silence intra-segment: below it, a mis-timed boundary pause and a
-// real breath are genuinely indistinguishable, and the silence — acoustic
-// ground truth — wins; deeper than it, the separating speech is far larger
-// than Whisper's error and the silence is a breath, so it is rejected.
-export const BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC = 0.3;
 
 // --- Token-gap epsilon (token-gap silence discrimination, 2026-08-01) -------
 // The tolerance above is a TIMESTAMP heuristic — it corrects Whisper's

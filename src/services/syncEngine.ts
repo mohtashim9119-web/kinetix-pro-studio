@@ -260,6 +260,54 @@ export function getFileIdentity(file: File): string {
   return `${file.name}|${file.size}|${file.lastModified}`;
 }
 
+/**
+ * Head/tail symmetry for the finalized timeline (post-snap): the LAST
+ * segment already runs all the way to `audioDuration` (snapCoveredBoundaries'
+ * own tail extension, and applyAnchorBasedTiming's PASS 3) — the audio is the
+ * source of truth for total length, not the last matched word. The FIRST
+ * segment gets no equivalent treatment from `snapCoveredBoundaries`: that
+ * function only ever writes `next.startTime` in its pair loop, so
+ * `segments[0].startTime` passes through untouched, still sitting wherever
+ * the aligner's own matched span put it — the first spoken WORD, which can
+ * be a few tenths of a second after true t=0 (real lead-in silence before
+ * narration starts).
+ *
+ * This is a thin, standalone post-pass rather than logic inside
+ * `snapCoveredBoundaries` itself: that function is pair-boundary logic with
+ * no notion of "is this really the timeline's first segment" — it's
+ * exercised in tests on synthetic slices representing arbitrary MIDDLE pairs
+ * of a larger project, where index 0 of the slice is not the timeline's true
+ * first segment and must keep its own startTime. Only a caller holding the
+ * full, ordered, post-snap array can safely make that call — so it belongs
+ * here, applied once by App.tsx right after `snapCoveredBoundaries` /
+ * `retileCoveredSegments`. Not needed after `applyAnchorBasedTiming` (the
+ * no-transcript fallback branch) — that function already forces its own
+ * first anchor to 0 in its PASS 1, so this would always be a no-op there.
+ *
+ * Stretches `segments[0]` back to start at 0 by growing its duration to
+ * absorb the lead-in, so it covers the full head exactly as the last segment
+ * covers the full tail. The segment's END (startTime + duration) is
+ * unchanged, so this can never ripple into segment 2's startTime — no
+ * contiguity check is needed beyond that invariant. Audio/exports are
+ * unaffected: narration still physically begins at the original startTime
+ * inside the (now longer) first segment. A locked first segment is
+ * authoritative and is left untouched, matching every other lock exemption
+ * in this pipeline. Pure; no-op (returns the same array reference) when
+ * there's nothing to do.
+ */
+export function headExtendFirstSegment(segments: VideoSegment[]): VideoSegment[] {
+  const first = segments[0];
+  if (!first || first.locked || first.startTime <= 0) return segments;
+
+  const stretched: VideoSegment = {
+    ...first,
+    startTime: 0,
+    duration: Number((first.duration + first.startTime).toFixed(3)),
+    anchorStart: 0,
+  };
+  return [stretched, ...segments.slice(1)];
+}
+
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {
     if (s.assetId) return s;
