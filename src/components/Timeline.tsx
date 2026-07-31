@@ -16,6 +16,16 @@ import { useTimelineWaveform } from './TimelineWaveform';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 
+// Timeline content width (and lane widths derived from it) must span the
+// actual rightmost segment edge, not just the sum of durations — the two
+// only coincide when segments are gapless/contiguous. Falls back to the
+// duration sum (still gapless-safe) when there are no segments at all.
+function computeTotalDuration(segments: VideoSegment[]): number {
+  if (segments.length === 0) return 1;
+  const maxEnd = segments.reduce((acc, s) => Math.max(acc, s.startTime + s.duration), 0);
+  return maxEnd || segments.reduce((acc, s) => acc + s.duration, 0) || 1;
+}
+
 interface Props {
   segments: VideoSegment[];
   assets: Asset[];
@@ -79,10 +89,7 @@ export function Timeline({
   onHeadingResizeCommit,
   initialScrollLeft,
 }: Props) {
-  const totalDuration = useMemo(
-    () => segments.reduce((acc, s) => acc + s.duration, 0) || 1,
-    [segments],
-  );
+  const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -103,7 +110,7 @@ export function Timeline({
   // (fit-to-width) and ppsMax (100). When ppsMin >= ppsMax the project is short
   // enough to fit, so the slider is a no-op pinned at 100.
   const pixelsPerSecond = useMemo(() => {
-    const totalDur = segments.reduce((acc, s) => acc + s.duration, 0) || 1;
+    const totalDur = computeTotalDuration(segments);
     const width = containerWidth || 800;
     const ppsMin = Math.min((width * 0.95) / totalDur, 100);
     const ppsMax = 100;
@@ -209,9 +216,7 @@ export function Timeline({
     if (!container || !currentSegmentId) return;
     const seg = segments.find(s => s.id === currentSegmentId);
     if (!seg) return;
-    const segStart = segments
-      .slice(0, segments.indexOf(seg))
-      .reduce((acc, s) => acc + s.duration, 0);
+    const segStart = seg.startTime;
     const segCenterX = (segStart + seg.duration / 2) * pixelsPerSecond;
     const targetScrollLeft = segCenterX - container.clientWidth / 2;
     // Clamp to the timeline CONTENT width (segments), not container.scrollWidth —
@@ -338,12 +343,70 @@ export function Timeline({
             <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
           </motion.div>
 
+          {/* Segment-boundary markers — thin vertical lines spanning every lane
+              (heading/segment/waveform) at once, so a boundary can be tracked
+              across lanes the way it could before the lane redesign. Lives at
+              this same lanes-wrapper level as the playhead above (one continuous
+              overlay column per boundary, not per-lane borders that could drift
+              out of alignment) and reads the identical startTime*pixelsPerSecond
+              math every lane already uses — no re-derived positions. Only
+              INTERIOR boundaries are drawn (segments[1..]'s own startTime): the
+              very first boundary (time 0) and the final end are already marked
+              by the lanes' own left/right border, so a line there would just
+              double it. Same 1px width as the lane borders (w-px, matching the
+              borders' own default 1px), and a LIGHTER alpha than them
+              (#F29C5F @ 0.2 vs. the borders' rgba(242,125,38,0.3)) — visible
+              through both the dark thumbnails and the #141414 waveform panel
+              without reading as thicker/darker than the border line it's meant
+              to echo, and without being mistaken for the solid #F27D26
+              playhead. z-40 keeps it under the playhead (z-50 — playhead always
+              paints on top) while still clearing the heading badges (z-30).
+              pointer-events-none so it never intercepts clicks/drags on the
+              lanes underneath. */}
+          {isSynced && segments.slice(1).map((s) => (
+            <div
+              key={`boundary-${s.id}`}
+              className="absolute top-0 bottom-0 w-px bg-[rgba(242,156,95,0.2)] z-40 pointer-events-none"
+              style={{ left: `${s.startTime * pixelsPerSecond}px` }}
+            />
+          ))}
+
           {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
               lane; never overlaps the segment track below. pointer-events-none
               on each band so clicks pass through; only the edge handles (and,
               going forward, any lane-level interactions) are interactive. */}
           {isSynced && headings.length > 0 && (
-            <div className="relative h-20 flex-shrink-0 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
+            <div
+              className="relative h-20 flex-shrink-0 bg-[#0A0A0A] rounded-lg"
+              style={{ width: `${totalDuration * pixelsPerSecond}px` }}
+            >
+              {/* Border is a separate pointer-events-none overlay painted AFTER
+                  the heading badges (last child, so it stacks on top) rather
+                  than a border on this div directly — the badges use top-0
+                  bottom-0 and, combined with overflow-hidden + rounded-lg, an
+                  actual border on this element was invisible in the real
+                  Tauri/WKWebView shell (confirmed visually, 2026-07-31
+                  follow-up): WebKit has a known compositing bug where
+                  overflow:hidden + border-radius on a parent can hide
+                  descendant content once a child uses `transform` (the
+                  segment lane's <video>/motion.img elements below hit the
+                  same bug more severely — this lane's badges don't animate,
+                  but the fix is kept consistent across both lanes). This
+                  overlay never uses overflow-hidden, so it can't trigger it.
+                  The lane div itself is now given an explicit
+                  totalDuration*pixelsPerSecond width (matching the waveform
+                  lane's pattern below) rather than left to stretch to the
+                  scroll container's viewport width — as a flex item with the
+                  default `align-items: stretch` in the flex-column scroll
+                  container, it previously sized to the VIEWPORT, not the
+                  scrollable content, so this inset-0 border overlay only
+                  matched the full strip when zoomed out enough that content
+                  ≈ viewport; at any deeper zoom the overlay stopped short of
+                  the actual (wider) content and appeared to vanish while
+                  scrolling. The badges' `left`/`width` inline styles already
+                  assumed this same full-content coordinate space, so they were
+                  never affected — only the border overlay, which relied on
+                  the parent's own box size via `inset-0`, was. */}
               {headings.map((h) => (
                 <div
                   key={h.id}
@@ -375,19 +438,44 @@ export function Timeline({
                   />
                 </div>
               ))}
+              {/* z-40 — must out-rank the heading badges' z-30 (explicit z-index
+                  always paints above a z-index:auto sibling regardless of DOM
+                  order), or each badge's opaque body covers this border
+                  wherever it sits, leaving only the gaps between badges
+                  showing it — a dashed-looking line instead of a solid one. */}
+              <div className="absolute inset-0 z-40 border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
             </div>
           )}
 
           {/* Segment track (unchanged internals — segment thumbnails; playhead
               now lives at the lanes-wrapper level above, spanning all lanes).
               Bounded-lane border/background matches the heading lane and
-              waveform track for visual consistency across all three. */}
-          <div className="flex-shrink-0 flex gap-2 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
+              waveform track for visual consistency across all three. Border
+              is a separate pointer-events-none overlay painted AFTER the
+              segment cards (last child) rather than a border on this div
+              directly — same WebKit overflow:hidden + border-radius +
+              transform compositing bug as the heading lane above, worse here
+              since these cards contain <video>/motion.img elements that use
+              `transform` (scale on hover/active), which is exactly the
+              trigger; confirmed visually in the real Tauri/WKWebView shell
+              (2026-07-31 follow-up) — overflow-hidden made this whole lane
+              render black. This overlay never uses overflow-hidden.
+              Explicit totalDuration*pixelsPerSecond width on this lane div
+              (matching the heading lane fix above and the waveform lane's
+              existing pattern below) — without it, this flex item stretches
+              to the scroll container's viewport width instead of the
+              scrollable content width, so the inset-0 border below only
+              spanned the full segment strip when zoomed out to
+              content ≈ viewport. */}
+          <div
+            className="relative flex-shrink-0 h-20 flex gap-2 bg-[#0A0A0A] rounded-lg"
+            style={{ width: `${totalDuration * pixelsPerSecond}px` }}
+          >
           {/* Visual Track */}
           {!isSynced ? (
             <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
           ) : (
-            <div className="flex h-full items-stretch">
+            <div className="relative flex h-full items-stretch">
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
@@ -425,6 +513,8 @@ export function Timeline({
                       }
                     }}
                     style={{
+                      position: 'absolute',
+                      left: `${s.startTime * pixelsPerSecond}px`,
                       width: `${s.duration * pixelsPerSecond}px`,
                       height: '80px',
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
@@ -500,6 +590,14 @@ export function Timeline({
               })}
             </div>
           )}
+          {/* z-[60] — must out-rank every segment card's inline zIndex (1 /
+              10 / 50, the trim-active card being the highest); explicit
+              z-index always paints above a z-index:auto sibling regardless
+              of DOM order, so without this the cards' opaque bodies cover
+              the border wherever they sit, leaving only the seams between
+              adjacent cards showing it — a dashed-looking line instead of a
+              solid one. */}
+          <div className="absolute inset-0 z-[60] border border-[rgba(242,125,38,0.3)] rounded-lg pointer-events-none" />
           </div>
 
           {/* Audio waveform lane — TILED waveform (useTimelineWaveform). The
@@ -513,15 +611,32 @@ export function Timeline({
                 backgroundImage    comma-separated url()s, one per tile
                 backgroundPosition each tile offset by its own startTime * pps
                 backgroundSize     each tile's own CSS width at the current zoom
-              Segment cells render on top (their own borders/highlight only, no
-              background image of their own) and this shared layer has NO
-              data-seg-id (so App.tsx's resize-drag querySelectorAll never
-              touches it) and NO resize handles — purely visual,
-              pointer-events-none. */}
+              Segment cells render on top (active-segment tint + a subtle
+              divider so segment extents stay readable through the waveform)
+              and this shared layer has NO data-seg-id (so App.tsx's
+              resize-drag querySelectorAll never touches it) and NO resize
+              handles — purely visual, pointer-events-none.
+              The inset-panel treatment (bg + hairline border + radius) lives
+              on the FULL-WIDTH tile container just below (the div with the
+              explicit `width: totalDuration * pixelsPerSecond` inline style),
+              NOT on this outer flex-stretch wrapper — that's the fix for the
+              old moving-border bug: a border on the viewport-width wrapper
+              only ever painted the first screen and appeared to scroll away
+              with the content. The tile container genuinely spans the full
+              scrollable timeline, so its border/background are visible at
+              both the start AND the end of the timeline at any zoom level.
+              This outer div is layout-only (height/overflow/centering), no
+              bg or border of its own.
+              Panel colors (2026-07-31 follow-up): a semi-transparent black
+              fill read as near-identical to the app's own near-black bg
+              (#030303/#050505/#0A0A0A) — solid mid-grey #1C1C1C is used
+              instead so the lane genuinely reads as its own surface, with a
+              thin orange-tinted border (accent-family, low opacity) rather
+              than a plain white hairline. */}
           {voiceoverName && (
-            <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
+            <div className="h-20 relative overflow-visible flex items-center">
               <div
-                className="relative h-full"
+                className="relative h-full flex-shrink-0 bg-[#141414] border border-[rgba(242,125,38,0.3)] rounded-lg overflow-hidden"
                 style={{ width: `${totalDuration * pixelsPerSecond}px` }}
               >
                 {waveformTiles.length > 0 && (
@@ -537,12 +652,12 @@ export function Timeline({
                     }}
                   />
                 )}
-                <div className="relative flex h-full w-max">
-                  {segments.map((s) => (
+                <div className="relative h-full w-max">
+                  {segments.map((s, i) => (
                     <div
                       key={`vo-new-${s.id}`}
-                      style={{ width: `${s.duration * pixelsPerSecond}px` }}
-                      className="h-full border-r border-[#2A2A2A] relative flex items-center flex-shrink-0"
+                      style={{ position: 'absolute', left: `${s.startTime * pixelsPerSecond}px`, width: `${s.duration * pixelsPerSecond}px` }}
+                      className={`h-full relative flex items-center flex-shrink-0 border-r border-[rgba(255,255,255,0.05)] ${i % 2 === 1 ? 'bg-white/[0.015]' : ''}`}
                     >
                       {currentSegmentId === s.id && (
                         <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />

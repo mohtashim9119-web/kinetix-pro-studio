@@ -82,10 +82,12 @@ export const MAX_CANVAS_BACKING_WIDTH = 8192;
  */
 export const AMP_SHAPE_EXP = 0.65;
 
-// Fill / stroke colors — accent #F27D26 = rgb(242,125,38) (§5.4).
-const FILL_EDGE = 'rgba(242,125,38,0.15)'; // faint at vertical extremes
-const FILL_CENTER = 'rgba(242,125,38,0.75)'; // strongest at the center line
-const CENTER_LINE_COLOR = 'rgba(242,125,38,0.9)'; // thin, brighter center line
+// Fill / stroke colors — accent #F27D26 = rgb(242,125,38) (§5.4). Bumped
+// toward full opacity (waveform visual redesign) so bars read clearly
+// against the lane's own darker inset-panel background.
+const FILL_EDGE = 'rgba(242,125,38,0.25)'; // faint at vertical extremes
+const FILL_CENTER = 'rgba(242,125,38,0.95)'; // strongest at the center line
+const CENTER_LINE_COLOR = 'rgba(242,125,38,1)'; // thin, brighter center line
 
 // ---------------------------------------------------------------------------
 // Data pipeline (§4.2)

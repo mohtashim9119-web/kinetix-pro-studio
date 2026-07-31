@@ -1297,11 +1297,20 @@ export function DropZonePanel({
           </div>
 
           {/* Segment list */}
-          <div id="segment-list-scroll" className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2">
-            {/* Permanent "+ Add Heading" at the top */}
+          <div id="segment-list-scroll" className="flex-1 overflow-y-auto custom-scrollbar px-3 py-2 flex flex-col gap-1.5">
+            {/* Permanent "+ Add Heading" at the top. Vertical spacing between
+                this button and every row below — including the row-to-row
+                gaps, notably the one right after a heading row — comes ONLY
+                from this container's own `gap-1.5`, not from a per-item
+                `mb-1.5` (removed here and on both row types below). A
+                per-item bottom margin measured visually uneven around the
+                heading row in the real WKWebView shell despite identical
+                classes on both row types; centralizing spacing into one flex
+                `gap` removes any such per-item margin-collapse quirk by
+                construction — there is exactly one place gap size is decided. */}
             <button
               onClick={() => onInsertHeading(-1)}
-              className="w-full h-[42px] mb-1.5 flex items-center justify-center gap-2 rounded-[11px]
+              className="w-full h-[42px] flex-shrink-0 flex items-center justify-center gap-2 rounded-[11px]
                          border border-dashed border-[var(--kx-line-2)] text-[12.5px] font-medium
                          text-[var(--kx-muted)] hover:text-[var(--kx-accent-2)] hover:border-[var(--kx-accent-line)]
                          hover:bg-[var(--kx-accent-soft)] transition-all"
@@ -1318,14 +1327,14 @@ export function DropZonePanel({
                   <div
                     key={h.id}
                     ref={(el) => { rowRefs.current[i] = el; }}
-                    className="relative group/gap"
+                    className="relative group/gap flex-shrink-0"
                   >
                     {draggingHeadingId && dropTargetIdx === i && (
                       <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--kx-accent)] rounded-full z-20 pointer-events-none" />
                     )}
                     <div
                       onClick={() => onHeadingClick?.(h.id)}
-                      className={`group relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
+                      className={`group relative flex items-stretch mx-0.5 rounded-[13px] border overflow-hidden
                                   cursor-pointer transition-colors select-none
                                   ${isHeadingSelected
                                     ? 'border-[var(--kx-accent-line)] bg-[var(--kx-accent-soft)]'
@@ -1418,6 +1427,13 @@ export function DropZonePanel({
                         </div>
                       )}
                     </div>
+
+                    {/* Spacer matching the segment row's hover-reveal "+ heading" gap-button
+                        row height (h-3) — without it, the gap below a heading row is only the
+                        container's gap-1.5, smaller than the gap between two segment rows
+                        (which is gap-1.5 PLUS this h-3 spacer). Purely a spacing match, no
+                        interactive content. */}
+                    <div className="h-3" />
                   </div>
                 );
               }
@@ -1442,14 +1458,14 @@ export function DropZonePanel({
                 <div
                   key={seg.id}
                   ref={(el) => { rowRefs.current[i] = el; }}
-                  className="relative group/gap"
+                  className="relative group/gap flex-shrink-0"
                 >
                   {draggingHeadingId && dropTargetIdx === i && (
                     <div className="absolute -top-0.5 left-0 right-0 h-0.5 bg-[var(--kx-accent)] rounded-full z-20 pointer-events-none" />
                   )}
                   <div
                     onClick={() => onSegmentClick(seg.id)}
-                    className={`group relative flex items-stretch mx-0.5 mb-1.5 rounded-[13px] border overflow-hidden
+                    className={`group relative flex items-stretch mx-0.5 rounded-[13px] border overflow-hidden
                                 cursor-pointer transition-colors
                                 ${isActive
                                   ? 'border-[var(--kx-accent-line)]'
@@ -1539,9 +1555,15 @@ export function DropZonePanel({
                     </div>
                   </div>
 
-                  {/* Hover-reveal "+ heading" gap button — appears after each segment */}
+                  {/* Hover-reveal "+ heading" gap button — appears after each segment.
+                      Sized to the FULL visual gap (this row's own h-3 PLUS the list
+                      container's gap-1.5 that follows it: 0.75rem + 0.375rem = 1.125rem),
+                      with a matching -mb-1.5 so the extra height doesn't add to the real
+                      on-screen spacing. items-center then centers the line/button at the
+                      true gap midpoint (50%) instead of only the midpoint of the old h-3
+                      sliver — which sat 3px above where the full gap actually centers. */}
                   <div
-                    className="relative h-3 flex items-center justify-center"
+                    className="relative h-[1.125rem] -mb-1.5 flex items-center justify-center"
                     onMouseEnter={() => setHoveredGapIdx(segIdx)}
                     onMouseLeave={() => setHoveredGapIdx(null)}
                   >
