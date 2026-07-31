@@ -130,6 +130,19 @@ src/
                      #   existing skip/no-asset entries; SyncRunSummary gains rescueCount to match.
                      #   Purely additive — this is the same rescue mechanism that has always existed
                      #   (WS6), surfaced to the user for the first time.
+                     #   Segment-1 head-extension (2026-07-31) — right after the
+                     #   snapCoveredBoundaries/retileCoveredSegments branch that produces
+                     #   finalTimedSegments, a single extra call —
+                     #   `finalTimedSegments = headExtendFirstSegment(finalTimedSegments)`
+                     #   (syncEngine.ts) — stretches segment 1 back to startTime 0 the same way the
+                     #   last segment already extends to audioDuration; see syncEngine.ts's entry for
+                     #   the full mechanism.
+                     #   Run-survival gates (Bug C, 2026-07-31) — SkippedSegmentRecord gains an
+                     #   optional `longestRun` field (from whisperService.ts's AlignResult.longestRun,
+                     #   threaded through the same `cov?.longestRun` spot the existing confidence/
+                     #   matchedWords fields come from), carried into the skip-reason SyncLogEntry so
+                     #   SyncLogPanel.tsx's per-segment display can show it. See whisperService.ts's
+                     #   entry for the run-survival mechanism itself.
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
                      #   SegmentGrade { brightness, contrast, saturation, temperature } — each
                      #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
@@ -165,6 +178,13 @@ src/
                      #   since WS6, surfaced to the user for the first time, not a new failure mode.
                      #   SyncRunSummary gains rescueCount? to match — optional for the same reason
                      #   as noAssetCount?/silenceErrorCount? above.
+                     #   SyncLogEntry gains longestRun? (Bug C run-survival gates, 2026-07-31) — the
+                     #   longest qualifying contiguous-match run length computed for a skip candidate
+                     #   (whisperService.ts's AlignResult.longestRun), carried through App.tsx's
+                     #   SkippedSegmentRecord into the skip entry so SyncLogPanel.tsx's per-segment
+                     #   display can append ", longest run N". Undefined on entries built before this
+                     #   fix — omit the suffix, same optional-field convention as noAssetCount?/
+                     #   rescueCount? above.
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
                      #   getFilterStyle, getMotionProps + dev-only console.assert guards
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
@@ -243,6 +263,20 @@ src/
                      #   parseProjectData() still in App.tsx. PASS 2 (character-weight anchor
                      #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
                      #   back to a segment's own startTime for any missing anchor (3d-1).
+                     #   headExtendFirstSegment(segments) (segment-1 head-extension, 2026-07-31)
+                     #   — the tail already runs to audioDuration (snapCoveredBoundaries's own
+                     #   extension / applyAnchorBasedTiming PASS 3), but nothing gave the HEAD the
+                     #   same treatment: segment 1's startTime passes through snapCoveredBoundaries
+                     #   untouched, still sitting at the aligner's first matched word rather than
+                     #   true t=0 (real lead-in silence before narration starts). Stretches
+                     #   segments[0] back to startTime 0 by growing its duration to absorb the
+                     #   lead-in — the segment's END is unchanged, so no contiguity ripple past
+                     #   segment 2. No-op on a locked first segment or one that already starts at 0.
+                     #   Called once by App.tsx right after snapCoveredBoundaries/
+                     #   retileCoveredSegments — deliberately NOT folded into
+                     #   snapCoveredBoundaries itself, which is pair-boundary logic exercised in
+                     #   tests on synthetic MIDDLE slices where index 0 isn't the timeline's real
+                     #   first segment.
     whisperService.ts # alignScenestoTranscript() sliding-window text matcher; distributeSegmentTimes()
                      #   applies aligned windows (lock-aware); transcribeWithProgress() runs the
                      #   whisper-cli sidecar; canonicalizeForAlignment/normalize/textMateriallyChanged
@@ -332,9 +366,11 @@ src/
                      #   snapBoundaries.ts (that file remains their canonical home) and runs the SAME
                      #   3-pass structure snapCoveredBoundaries uses: Pass 1 computes every pair's
                      #   window + candidate silences (token-gap and breath rejection first,
-                     #   short-circuiting; window/span/tolerance last), Pass 2 assigns each contested
-                     #   silence to whichever pair's spoken midpoint it's actually closer to (ties ->
-                     #   later pair), Pass 3 resolves left-to-right exactly as before. Both new
+                     #   short-circuiting; plain window-overlap last — see
+                     #   isBoundarySilenceCandidate's REGRESSION FIX note, snapBoundaries.ts entry
+                     #   below), Pass 2 assigns each contested silence to whichever pair's spoken
+                     #   midpoint it's actually closer to (ties -> later pair), Pass 3 resolves
+                     #   left-to-right exactly as before. Both new
                      #   predicates already guard on the -1 sentinel (`firstTokenIdx < 0`), which
                      #   this full-array pass — unlike snapBoundaries.ts, which only ever sees
                      #   covered/matched segments — can hand them directly for an unmatched/
@@ -342,15 +378,47 @@ src/
                      #   gap-fill and snapCoveredBoundaries (previously caveated "whenever there is
                      #   no cross-pair silence contention") now holds under contention too — pinned
                      #   by a dedicated "parity" test in syncTiming.test.ts.
+                     #   Consecutive-run survival gates (Bug C, 2026-07-31, recovered from stash
+                     #   ad38fc5 after being dropped during a detached-HEAD bisect and branch
+                     #   checkout sequence — found via `git reflog show --all`) — a defense-in-depth
+                     #   layer UNDER the existing skip-unmatched gate (R4-1): the Hirschberg global
+                     #   pass can accept a segment (matchedCount > 0, confidence above
+                     #   LOW_CONFIDENCE_RATIO) whose true matches are scattered, common-word
+                     #   collisions rather than one real contiguous run of the segment's own text —
+                     #   confirmed on a real 174-segment production project. computeLongestRunWithHoles
+                     #   finds the longest run of consecutive true matches tolerating up to
+                     #   RUN_SURVIVAL_MAX_HOLE (2) non-matched/hole positions inside it, PROVIDED the
+                     #   transcript-side token indices stay contiguous across the hole (a genuine
+                     #   paraphrase/deletion, not two unrelated matches bridged by accounting); a run
+                     #   can never start or end on a hole. requiredRunLength bands the minimum
+                     #   qualifying run by segment word count — flat, length-independent minimums
+                     #   (RUN_SURVIVAL_MIN_RUN_SHORT=2 for 4-10 words, RUN_SURVIVAL_MIN_RUN_LONG=4 for
+                     #   11+, and a 1-3 word segment needs only a run of 1) — REPLACING an earlier
+                     #   ratio-scaled formulation (RUN_SURVIVAL_RATIO_SHORT/LONG, now deleted, do not
+                     #   reintroduce) that miscalibrated against the same production project: 15 of 16
+                     #   segments it skipped were genuinely spoken, just fragmented by an ASR
+                     #   vocabulary gap on an uncommon word. A segment that fails the run requirement
+                     #   gets one more chance — isLocallyClustered (the density fallback): survives
+                     #   anyway when its OVERALL match confidence clears
+                     #   RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE (0.5) AND its matched words are tightly
+                     #   grouped (median transcript-token gap between consecutive matches at or under
+                     #   RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP, 4) rather than scattered end-to-end — the
+                     #   shape a flat run minimum alone still misses (a 21-word segment, 17 matched in
+                     #   clusters, longest run only 7). A genuine no-audio false positive (a heading
+                     #   whose text never occurs in the audio) fails BOTH gates outright and is
+                     #   unaffected. `AlignResult.longestRun` threads through both alignment call sites
+                     #   (extractSegmentAlignments, alignScenestoTranscript) into
+                     #   App.tsx's `SkippedSegmentRecord.longestRun` and SyncLogPanel.tsx's per-segment
+                     #   skip-reason display (`, longest run N`) — visible, not silent, per the
+                     #   accepted trade-off on the new tiny band (see syncConstants.ts's own
+                     #   derivation for the full calibration story and the accepted phantom-match risk
+                     #   it documents).
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-
-                     #   window constants, MAX_CONCAT_TOKENS/MAX_CONCAT_GAP_SEC. New in the breath-
+                     #   window constants, MAX_CONCAT_TOKENS/MAX_CONCAT_GAP_SEC. From the breath-
                      #   discrimination + intra-segment silence rejection work (2026-08-01/02):
-                     #   BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC (0.3s) — how far a candidate
-                     #   silence may intrude into either segment's own speech (relaxed for Whisper's
-                     #   ~±0.3s word-edge error) before isBoundarySilenceCandidate rejects it as
-                     #   intra-segment rather than a boundary pause. TOKEN_GAP_EPSILON_SEC (0.02s) —
+                     #   TOKEN_GAP_EPSILON_SEC (0.02s) —
                      #   quantization slop for fillsTokenGapWithinSpan's token-gap fit test;
                      #   deliberately NOT a tolerance (every fixture fires at exact equality) and
                      #   held far below silenceDetector.ts's 0.25s minDurationSec so it can never
@@ -365,10 +433,31 @@ src/
                      #   structurally immune to the override, not the floor's exact value. The floor
                      #   is calibrated to admit pair-4's confirmed production overlaps (0.09s, 0.14s)
                      #   while excluding a sub-floor artifact (0.05s) — a stated, honest 0.04s margin,
-                     #   not padded (see project-state.md's Deferred Known Bugs watch item). Full
-                     #   derivation, including the two rejected prior formulations (bare coverage
-                     #   ratio; counting all span tokens instead of interior-only), documented at
-                     #   each constant.
+                     #   not padded. Full derivation, including the two rejected prior formulations
+                     #   (bare coverage ratio; counting all span tokens instead of interior-only),
+                     #   documented at each constant.
+                     #   REMOVED (window-overlap regression fix, 2026-07-31):
+                     #   BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC — used to gate
+                     #   isBoundarySilenceCandidate's now-deleted SPAN condition (reject a silence
+                     #   whose edge sat more than 0.3s from either spoken edge). Bisected against a
+                     #   real 173/174-segment production project, that fixed timestamp tolerance was
+                     #   found to reject genuine boundary silences wholesale — real Whisper
+                     #   trailing-word blur routinely exceeds 0.3s — clamping the boundary to the
+                     #   blurred speech end instead of the real gap. Deleted rather than re-tuned (no
+                     #   fixed tolerance can both forgive ordinary blur and still catch a genuine
+                     #   breath from edge-distance alone); the reliable breath rejection
+                     #   (fillsTokenGapWithinSpan / isBreathSilence, ALIGNMENT evidence) is
+                     #   unaffected and still runs ahead of isBoundarySilenceCandidate, which is now
+                     #   pure window-overlap. Do not reintroduce a timestamp-distance tolerance here.
+                     #   Consecutive-run survival gates (Bug C, 2026-07-31) — RUN_SURVIVAL_MAX_HOLE
+                     #   (2, max tolerated non-matched positions inside a run, never at either end),
+                     #   RUN_SURVIVAL_MIN_RUN_SHORT/LONG (2 for 4-10 word segments, 4 for 11+, flat
+                     #   length-independent minimums that replaced an earlier ratio-scaled
+                     #   formulation which miscalibrated against a real 174-segment project),
+                     #   RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE/MAX_MEDIAN_GAP (0.5 / 4 — the density
+                     #   fallback for a fragmented-but-mostly-matched segment). See
+                     #   whisperService.ts's entry above for the full mechanism and calibration
+                     #   story.
     snapBoundaries.ts # Pure snap-boundary refinement for the covered-only array (post-filter). Runs
                      #   AFTER filterToCoveredSegments, so every snap pair is two matched segments with
                      #   real spoken-word ends — fixes a ~0.13s position-offset drift on covered segments
@@ -398,11 +487,10 @@ src/
                      #   rejected however shallow its intrusion; (2) isBreathSilence —
                      #   coverage-composite alignment-adjacent evidence for the shapes (1) structurally
                      #   cannot see (several micro-tokens, or edge-stretched tokens, filling a breath);
-                     #   (3) isBoundarySilenceCandidate — the original window + span/tolerance test,
-                     #   now also rejecting a silence that sits well inside either segment's own speech
-                     #   (relaxed by BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC for Whisper's word-edge
-                     #   error). Production case fixed: a mid-sentence breath ("They're [breath] the
-                     #   worst") no longer wins the closest-centre pick and steals "the worst" into the
+                     #   (3) isBoundarySilenceCandidate — plain window-overlap (see the REGRESSION FIX
+                     #   note below; NOT a span/tolerance test as of 2026-07-31). Production case fixed
+                     #   by (1)/(2) above: a mid-sentence breath ("They're [breath] the worst") no
+                     #   longer wins the closest-centre pick and steals "the worst" into the
                      #   next segment. All three predicates are pure, exported, and unit-tested directly
                      #   with hand-written numbers; they are composed in exactly ONE place (Pass 1's
                      #   filter), so Pass 2's assignment can never disagree with Pass 1's candidacy.
@@ -425,8 +513,46 @@ src/
                      #   also imported by whisperService.ts's `alignScenestoTranscript` (2026-08-02
                      #   port) — this file remains their canonical home; see that file's entry for what
                      #   changed on the aligner's side.
-    silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill;
-                     #   overlap-based lookup, usedSilences set, monotonic boundary check.
+                     #   REGRESSION FIX — window-overlap silence candidacy (2026-07-31): a real
+                     #   173/174-segment production project, bisected against the pre-regression build
+                     #   (commit 0c83a06, pure window overlap, no SPAN test at all), showed real
+                     #   Whisper trailing-word timestamps routinely blur into the following pause by
+                     #   MORE than BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC's old 0.3s budget — so that
+                     #   fixed-tolerance SPAN condition was rejecting genuine boundary silences
+                     #   wholesale, clamping every such boundary to the blurred speech end instead of
+                     #   the real gap. Deleted from isBoundarySilenceCandidate rather than re-tuned (no
+                     #   fixed tolerance can both forgive ordinary blur and still catch a genuine
+                     #   breath from edge-distance alone — see syncConstants.ts's REMOVED note); the
+                     #   predicate is now pure window-overlap, matching pre-regression behavior. The
+                     #   breath rejection job it used to share is fully covered by
+                     #   `fillsTokenGapWithinSpan`/`isBreathSilence` above (ALIGNMENT evidence, not a
+                     #   timestamp guess), composed ahead of it in Pass 1's filter and unaffected by
+                     #   this deletion — confirmed the pair-4 word-theft regression fixture still
+                     #   rejects on `fillsTokenGapWithinSpan` alone. `whisperService.ts`'s
+                     #   `alignScenestoTranscript` gap-fill calls the same (now pure-window)
+                     #   `isBoundarySilenceCandidate`, so both snap paths stay in parity.
+                     #   Contiguity invariant (same fix) — snapCoveredBoundaries only ever wrote
+                     #   `next.startTime = snapped`, but `curr.duration` is floored at
+                     #   MIN_SEGMENT_DURATION (0.1s): when a floored `curr` extends past the just-
+                     #   written `snapped` boundary, `startTime[i] + duration[i] === startTime[i+1]`
+                     #   could break — a visible overlap between adjacent segment cards once Timeline.tsx
+                     #   switched to absolute positioning (see Timeline.tsx's entry below), previously
+                     #   invisible under flexbox's own implicit reflow. Fixed with one check appended
+                     #   after every boundary write: if `curr.startTime + curr.duration > next.startTime`,
+                     #   advance `next.startTime`/`next.anchorStart` to match. This invariant —
+                     #   `startTime[i] + duration[i] === startTime[i+1]` for every adjacent covered pair
+                     #   — now holds unconditionally on this function's output; App.tsx's
+                     #   `headExtendFirstSegment` (syncEngine.ts) post-pass and Timeline.tsx's absolute-
+                     #   positioned lanes both depend on it.
+    silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill
+                     #   and snapBoundaries.ts's boundary snap. Frame-by-frame RMS/dB scan against
+                     #   thresholdDb/minDurationSec/frameSizeMs (all overridable, defaults -45dB/
+                     #   0.25s/20ms); consumers (snapBoundaries.ts, whisperService.ts) do the
+                     #   window-overlap candidacy + contention-aware assignment against its output —
+                     #   this file only detects silence, it does not claim or rank it (the older
+                     #   first-come-first-served `usedSilences` set this comment used to describe was
+                     #   removed from the CONSUMER side by the 2026-07-30 contention-aware assignment
+                     #   fix — see snapBoundaries.ts's entry).
                      #   Returns a STRUCTURED SilenceDetectResult discriminated union since WS4
                      #   Feature 3 (decision 11a, 2026-07-28): { status:'ok', silences } |
                      #   { status:'error', errorMessage }. NEVER throws — every failure (unreadable
@@ -452,6 +578,10 @@ src/
                      #   mirrored-fill routine (no longer wired into the timeline; kept for its unit
                      #   tests / pure geometry helpers). No decode — PCM arrives pre-decoded from
                      #   waveformPipeline.ts.
+                     #   Fill/stroke opacities (FILL_EDGE/FILL_CENTER/CENTER_LINE_COLOR) bumped toward
+                     #   full opacity (2026-07-31, Timeline lane redesign) so bars read clearly against
+                     #   the waveform lane's own darker #141414 inset-panel background (Timeline.tsx's
+                     #   entry below) — same accent hue (#F27D26), only the alpha channel moved.
     waveformPipeline.ts # Chunked, yielding twin of waveformPeaks.ts's synchronous builder
                      #   (buildWaveformPipeline/buildSourceChunked) — spreads the ~60M-op peak
                      #   extraction across yields so a 21-min voiceover never blocks the main thread.
@@ -975,6 +1105,24 @@ src/
                      #   trailing "s") against the displayed 1-decimal duration, or MM:SS against
                      #   the formatted start/end time. A memoized `assetsById` Map (keyed off
                      #   `assets`) replaces the old per-row `assets.find()` lookup.
+                     #   Segments-panel spacing/hover-affordance conventions (2026-07-31): vertical
+                     #   spacing between rows (the "+ Add Heading" button, heading rows, segment rows)
+                     #   comes from EXACTLY ONE place — the scroll container's own `flex flex-col
+                     #   gap-1.5` — never a per-row `mb-*`. A per-item bottom margin measured visibly
+                     #   uneven around the heading row in the real Tauri/WKWebView shell despite
+                     #   identical classes on both row types (a margin-collapse quirk); centralizing
+                     #   into one flex `gap` removes the possibility by construction. Each row's
+                     #   `relative group/gap` wrapper is `flex-shrink-0` so the container's `gap`
+                     #   can't compress it. A heading row gets an invisible `h-3` spacer beneath it
+                     #   (matching a segment row's own hover-reveal "+ heading" gap-button height) so
+                     #   the visual gap below a heading matches the gap between two segments — without
+                     #   it, a heading's gap would be only the container's `gap-1.5`, visibly smaller.
+                     #   The hover-reveal "+ heading" gap button after each segment is sized to the
+                     #   FULL visual gap (its own `h-3` PLUS the container's trailing `gap-1.5` =
+                     #   1.125rem, via `h-[1.125rem] -mb-1.5` so the extra height doesn't add real
+                     #   on-screen spacing), with `items-center` centering the button/line at the
+                     #   true gap midpoint instead of the old `h-3` sliver's midpoint (which sat 3px
+                     #   above where the full gap actually centers).
     EffectsPanel.tsx   # Effects tab UI (transitions/animations/overlays dropdowns + Apply to
                      #   selected/all, randomize-from-checked-pool, combined-look presets section,
                      #   GRADE section).
@@ -1176,6 +1324,18 @@ src/
                      #   badge in TYPE_STYLES) renders alongside the existing kinds; informational,
                      #   not an error or degradation colour — the same rescue mechanism (WS6) that
                      #   has always existed, now surfaced to the user.
+                     #   Copy-logs button (2026-07-31, landed alongside the Bug C run-survival gates
+                     #   fix, whisperService.ts's entry above) — a header button (`Copy` icon,
+                     #   lucide-react) that joins every entry (newest-first, same order as the panel)
+                     #   through `formatEntryText` — the SAME per-entry formatter the panel renders on
+                     #   screen, so the copied text can never drift from what's displayed — onto the
+                     #   clipboard via `navigator.clipboard.writeText`, with a `document.execCommand
+                     #   ('copy')` hidden-textarea fallback if the Clipboard API rejects; a transient
+                     #   `copied` state (1.5s) swaps the icon for on-screen confirmation.
+                     #   `formatMatchLine` (skip-entry 3-line format) now also appends
+                     #   `, longest run N` when `entry.longestRun` is defined — backward compatible
+                     #   with older entries built before the run-survival gates existed, which simply
+                     #   omit the field and render the line unchanged.
     Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with
@@ -1201,6 +1361,68 @@ src/
                      #   "0 then scroll" flash. Both auto-scroll effects check didRestoreRef before
                      #   running (fixed in 34206ee, on top of the fb6abbb useLayoutEffect timing fix).
                      #   Receives `globalPlaybackSpeed` prop but does not use it (dead prop, kept for now).
+                     #
+                     #   Absolute positioning + lane redesign + boundary markers (2026-07-31).
+                     #   computeTotalDuration(segments) — a module-level pure helper — replaced a bare
+                     #   duration-sum reduce: it takes the actual rightmost segment edge
+                     #   (max(startTime+duration)), falling back to the duration sum only when there
+                     #   are no segments. The two only coincide when segments are perfectly gapless;
+                     #   they can diverge transiently mid-drag/mid-fix, and lane width, pixelsPerSecond,
+                     #   and every `left`/`width` style below all key off this ONE function so they can
+                     #   never independently disagree about the timeline's total width.
+                     #   Every segment card (both the thumbnail track and the waveform-lane sub-cells)
+                     #   is now `position: absolute; left: startTime*pixelsPerSecond; width:
+                     #   duration*pixelsPerSecond` inside a `position: relative` parent sized to
+                     #   `totalDuration*pixelsPerSecond` — replacing an implicit flexbox flow (each
+                     #   card's left edge simply following the previous card's right edge). Absolute
+                     #   positioning is what makes each card's position a direct, independent function
+                     #   of its OWN startTime instead of an accumulated sum of every prior sibling's
+                     #   width — required once `startTime[i]+duration[i] === startTime[i+1]` became a
+                     #   real, snap-produced invariant (snapBoundaries.ts's entry above) rather than an
+                     #   assumption baked into flexbox's own reflow. The segment-follow auto-scroll
+                     #   effect's `segStart` now reads `seg.startTime` directly instead of
+                     #   `segments.slice(0, i).reduce(...)`, for the same reason.
+                     #   Segment-boundary markers — thin (1px) vertical lines spanning every lane
+                     #   (heading/segment/waveform) at once, one per INTERIOR boundary
+                     #   (`segments.slice(1)`'s own startTime; the timeline start and end are already
+                     #   marked by the lanes' own border, so index 0 is skipped to avoid doubling it).
+                     #   Live at the lanes-wrapper level (same level as the playhead), lighter alpha
+                     #   than the lane borders (`rgba(242,156,95,0.2)` vs. the borders'
+                     #   `rgba(242,125,38,0.3)`) so it reads as a boundary echo, not another border;
+                     #   z-40 (under the playhead's z-50, above the heading badges' z-30);
+                     #   pointer-events-none.
+                     #   Lane border-as-overlay pattern (WebKit compositing-bug workaround) — the
+                     #   heading lane, segment-thumbnail lane, and waveform lane's border is now a
+                     #   separate `inset-0` `pointer-events-none` div painted LAST (after the lane's own
+                     #   content), not a border on the lane container itself. A real Tauri/WKWebView
+                     #   run confirmed a WebKit bug where `overflow:hidden` + `border-radius` on a
+                     #   parent hides descendant content once a child uses `transform` — the segment
+                     #   lane's cards (`scale` on hover/active, and video/motion.img elements) hit this
+                     #   worst (rendered fully black), the heading lane's badges less severely; neither
+                     #   lane uses `overflow-hidden` anymore. Each lane div also now takes an explicit
+                     #   `width: totalDuration*pixelsPerSecond` instead of stretching to the flex
+                     #   container's viewport width (the default `align-items:stretch` behavior) — the
+                     #   border overlay's `inset-0` only matched the true content width when zoomed out
+                     #   to content≈viewport; at deeper zoom it stopped short and appeared to "vanish"
+                     #   while scrolling. `z-40`/`z-[60]` on these overlays deliberately out-rank the
+                     #   heading badges' `z-30` and every segment card's inline `zIndex` (1/10/50) —
+                     #   explicit z-index always paints above a z-index:auto sibling regardless of DOM
+                     #   order, so without it each card's opaque body covers the border wherever it
+                     #   sits, leaving a dashed-looking line instead of a solid one.
+                     #   Waveform lane panel redesign — the inset-panel treatment (bg `#141414` +
+                     #   `rgba(242,125,38,0.3)` hairline border + radius + `overflow-hidden`, safe here
+                     #   since the waveform lane has no `transform`-using children) now lives on the
+                     #   FULL-WIDTH tile container (the div with the explicit
+                     #   `totalDuration*pixelsPerSecond` width), not the outer flex-stretch wrapper —
+                     #   a border on the old viewport-width wrapper only ever painted the first screen
+                     #   and appeared to scroll away with the content. A semi-transparent black fill
+                     #   was tried first and rejected — it read as near-identical to the app's own
+                     #   near-black backgrounds (#030303/#050505/#0A0A0A) — so this lane uses a solid
+                     #   mid-grey instead, to genuinely read as its own surface. Waveform sub-cells
+                     #   gained a subtle alternating tint (`bg-white/[0.015]` on odd segments) plus a
+                     #   faint right border so segment extents stay readable through the waveform bars
+                     #   (waveformPeaks.ts's own opacity bump, see that file's entry, is the other half
+                     #   of this same legibility pass).
   index.css          # Tailwind base + custom scrollbar
   main.tsx           # React entry point.
 index.html           # Title: "Kinetix Pro Studio"
