@@ -36,22 +36,50 @@ export const ALIGN_GAP_SCORE = -1;
 // which feed the two-signal gate below.
 //
 // IMPORTANT — what this does NOT control: a segment is dropped from the
-// timeline on `matched === false` (no transcript word matched at all), NOT on
-// falling under this ratio. See filterToCoveredSegments in App.tsx and its Bug 2
-// note. So lowering or raising this value changes ABORT sensitivity (via the
-// covered-run scan), never which segments get skipped.
+// timeline on `matched === false`, NOT on falling under this ratio. See
+// filterToCoveredSegments in App.tsx and its Bug 2 note. So lowering or
+// raising this value changes ABORT sensitivity (via the covered-run scan),
+// never which segments get skipped BY THIS RATIO — but as of the Bug C fix
+// (2026-08-02), `matched` itself is no longer just `matchedCount > 0`; see
+// RUN_SURVIVAL_* below. A segment can now fail to be `matched` — and so get
+// skipped — for a reason entirely independent of this ratio.
 //
 // WS5 justification for 0.4 — verified, not assumed:
 //   - Clean 294-segment project: 294/294 covered at this value.
 //   - Middle-gap project: correctly covers 8 of 10, the 2 genuinely-unspoken
 //     scenes falling out as unmatched.
 //   - Cross-script mismatch (0% overlap): correctly aborts.
-//   - Ordinary English inflection cannot push a segment under it. The worst
-//     constructed case — a two-word segment with one word inflected
+//   - Ordinary English inflection cannot push a segment's RATIO under it. The
+//     worst constructed case — a two-word segment with one word inflected
 //     ("running fast" vs. spoken "runs fast") — lands at exactly 0.5; a
 //     realistic sentence with two inflected words lands at 0.71-0.75. This is
 //     why audit finding S3 closed WITHOUT adding a stemming layer; the
 //     fixtures proving it are the "WS5/S3" describes in syncTiming.test.ts.
+//
+//     UPDATED CONTRACT (Bug C, 2026-08-02): clearing this ratio is no longer
+//     sufficient for a segment to survive — it must ALSO form a qualifying
+//     contiguous run (RUN_SURVIVAL_* below). The two-word inflected case
+//     above ("running fast") clears 0.5 on THIS ratio and produces a longest
+//     run of exactly 1 (a lone matched anchor can't start-and-end a longer
+//     run by itself).
+//
+//     RECALIBRATED (threshold recalibration, second pass, 2026-08-02): under
+//     the ORIGINAL Bug C bands, a run of 1 fell under RUN_SURVIVAL_MIN_RUN_SHORT's
+//     floor of 2, so this case SKIPPED despite clearing LOW_CONFIDENCE_RATIO —
+//     verified on a real 174-segment project to be miscalibrated (7 short,
+//     genuinely-spoken segments rejected on exactly this shape: 1-2 true
+//     matches out of 2-3 words, an ASR vocabulary gap, not a mismatch). The
+//     bands now give a 1-3-word segment a required run of 1
+//     (`requiredRunLength`, whisperService.ts), so a single true match once
+//     again SURVIVES for a segment this short — the same trade-off a genuine
+//     1-word segment always accepted, just widened to 2-3 words. This is a
+//     deliberate, user-approved reopening of a narrow slice of Bug 2's
+//     permissiveness (see the RUN_SURVIVAL_* header below for the full
+//     accepted-trade-off writeup), not a regression of the S3 finding: a
+//     MULTI-word segment (4+) with an inflected word surrounded by other true
+//     matches (the "realistic sentence" case) still forms a real run through
+//     its other matched words and survives fine regardless of this change —
+//     only the 1-3-word band's required-run value moved.
 export const LOW_CONFIDENCE_RATIO = 0.4;
 
 // --- Two-signal abort gate (doc §3.3, §3.4, R13) — consumed WS1b ------------
@@ -286,6 +314,116 @@ export const BREATH_TOKEN_OVERLAP_FLOOR_SEC = 0.09;
 // scene 153 repro ("linen"/"flax" both split into exactly 2 fragments).
 export const MAX_CONCAT_TOKENS = 3;
 export const MAX_CONCAT_GAP_SEC = 0.3;
+
+// --- Consecutive-run survival requirement (Bug C permanent fix, 2026-08-02) -
+// Root cause: pre-fix, `matched` was `matchedCount > 0` — ANY single true
+// word match, however isolated, kept a segment on the timeline (the Bug 2
+// "any real match keeps it" doctrine). That is too permissive: a 9-word
+// heading whose words are scattered as coincidental single-word matches
+// across an unrelated document (no two of them adjacent in either the query
+// or the transcript) passed `matched` even though nothing about its actual
+// CONTENT was spoken together — confirmed in production as a heading
+// surviving sync on isolated single-word coincidences. The fix requires a
+// segment's matched words to form at least one CONTIGUOUS run — consecutive
+// query positions whose transcript-side token indices are themselves
+// consecutive — of a length scaled to the segment's own word count, not just
+// a bare non-zero count. This supersedes Bug 2's doctrine; see
+// whisperService.ts's `hasQualifyingRun`/`computeLongestRunWithHoles` and
+// their call site in `extractSegmentAlignments`.
+//
+// A run may tolerate up to RUN_SURVIVAL_MAX_HOLE consecutive unmatched query
+// words in its interior (the narrator may have paraphrased a word or two)
+// PROVIDED the transcript-side token indices stay contiguous across the gap
+// — i.e. the words immediately before and after the hole are themselves
+// adjacent in the audio, so the hole is genuinely a paraphrase/deletion
+// inside one continuous utterance, not two unrelated coincidental matches
+// bridged by an accounting trick. A run can never start or end on a hole.
+export const RUN_SURVIVAL_MAX_HOLE = 2;
+
+// ---------------------------------------------------------------------------
+// Threshold recalibration (second pass, 2026-08-02) — the ratio-scaled bands
+// above (RUN_SURVIVAL_RATIO_SHORT/RUN_SURVIVAL_RATIO_LONG, RATIO_SHORT=0.5,
+// RATIO_LONG=0.4, RUN_SURVIVAL_LONG_BAND_MIN_WORDS=11 — all now REMOVED, do
+// not reintroduce) were the FIRST calibration of this fix, chosen from
+// synthetic fixtures alone (the 9-word heading repro, the WS5/S3 inflected-
+// word cases). Verified against a REAL 174-segment production project, they
+// were a calibration failure, not a mechanism failure: 15 of 16 segments the
+// run requirement skipped were genuinely spoken, not false positives —
+//   - 7 short segments (2-6 scene-doc words) where Whisper mis-transcribed an
+//     uncommon word ("las-charge", "rockcrete", "Necron", ...) down to only
+//     1-2 true matches out of the segment's small word count — a vocabulary
+//     gap in the ASR, not evidence the segment wasn't spoken.
+//   - 8 segments with 60-81% of their words genuinely matched, where the SAME
+//     kind of vocabulary miss fragmented what would otherwise be one long run
+//     into several shorter ones (worst case: 21 words, 17 matched, longest
+//     surviving run only 7 — against the OLD ratio-scaled requirement of 9,
+//     ceil(0.4*21)). The ratio's own growth with segment length was the
+//     problem here: a long, mostly-intact segment needs proportionally MORE
+//     contiguous words than a short one under the old formula, exactly
+//     backwards from how ASR errors actually distribute (a handful of missed
+//     words matter less, not more, the longer the surrounding true content is).
+// Only the ONE genuine false positive (a heading whose content never occurs
+// in the audio at all, 0 of 9 words matched) is untouched by anything below —
+// a segment with matchedCount 0 fails RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE
+// outright (confidence 0), so no threshold change here can ever resurrect it.
+//
+// Two changes, both replacing the OLD length-scaling ratios with flat,
+// length-independent minimums:
+//   1. A new tiny band, 1-3 words, requires a run of only 1 — folding what
+//      used to be `hasQualifyingRun`'s separate `totalWords === 1` special
+//      case into the same band formula (a single true match trivially
+//      qualifies a segment this short; see `requiredRunLength`,
+//      whisperService.ts) rather than special-casing exactly one word count.
+//      RUN_SURVIVAL_LONG_BAND_MIN_WORDS's old 11-word split point is gone as
+//      an exported constant — the split is now inline in
+//      `requiredRunLength`'s own band check.
+//   2. A density-based fallback (RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE/
+//      RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP below, whisperService.ts's
+//      `isLocallyClustered`) catches the fragmented-but-mostly-matched shape
+//      a flat run minimum alone still misses: a segment whose true matches
+//      never form ONE run long enough, but are collectively substantial
+//      (most of the segment's words matched) AND tightly grouped (not
+//      smeared end-to-end across the transcript), is accepted as genuinely
+//      spoken even without a single qualifying run.
+//
+// Accepted trade-off (tiny band): a 2- or 3-word segment can now survive on
+// a SINGLE matched word — the same permissiveness Bug 2's "any real match
+// keeps it" doctrine had, narrowed to segments so short that "a run" and "a
+// single match" are nearly the same concept (a 2-word segment's only
+// possible non-trivial run IS both words matching). The theoretical phantom
+// case — a short segment whose sole matched word is a coincidental
+// common-word collision with unrelated audio — is real but bounded to at
+// most 3 words, stays fully visible in the sync log's per-segment
+// confidence/longestRun fields, and the user reviewed and accepted this
+// specific trade-off in exchange for eliminating the 7 false-positive
+// short-segment skips above.
+export const RUN_SURVIVAL_MIN_RUN_SHORT = 2;  // totalWords 4-10
+export const RUN_SURVIVAL_MIN_RUN_LONG = 4;   // totalWords >= 11
+
+// Density fallback: a segment whose matches don't form one qualifying
+// contiguous run (above) can still survive when the matches are BOTH:
+//   (a) collectively substantial — at least this fraction of the segment's
+//       words matched overall. 0.5 mirrors LOW_CONFIDENCE_RATIO's own order
+//       of magnitude ("about half the segment") rather than introducing an
+//       unrelated third calibration point; and
+//   (b) tightly grouped rather than scattered end-to-end across the
+//       transcript — the median gap, in transcript-token positions, between
+//       consecutive matched words stays at or under
+//       RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP (whisperService.ts's
+//       `isLocallyClustered`).
+// Verified against the production project's worst fragmented case (21 words,
+// 17 matched in clusters, longest run 7) and confirmed NOT to reopen the
+// heading false positive: the heading's scattered coincidental matches have
+// confidence well under 0.5 in the real production case (0 of 9 — the
+// content never occurs at all) — signal (a) alone rejects it before
+// clustering is ever evaluated. The FLAGSHIP synthetic fixture in
+// syncTiming.test.ts (2 of 9 matched, confidence 2/9) is rejected the same
+// way; a dedicated fixture with confidence artificially raised ABOVE 0.5 but
+// still scattered (huge median gap) is also pinned, to verify clustering —
+// not just confidence — is doing real work here, not just duplicating
+// LOW_CONFIDENCE_RATIO under a new name.
+export const RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE = 0.5;
+export const RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP = 4;
 
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).

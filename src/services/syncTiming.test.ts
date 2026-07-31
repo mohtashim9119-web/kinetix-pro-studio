@@ -11,8 +11,13 @@ import {
   countTranscriptWords,
   filterMalformedTokens,
   findConcatenatingMatches,
+  computeLongestRunWithHoles,
+  requiredRunLength,
+  hasQualifyingRun,
+  isLocallyClustered,
+  buildOccArrayFromGlobalMatches,
 } from './whisperService';
-import type { SegmentAlignment } from './whisperService';
+import type { SegmentAlignment, OccEntry } from './whisperService';
 import {
   evaluateCoverageGate,
   filterToCoveredSegments,
@@ -42,6 +47,11 @@ import {
   MAX_CONCAT_GAP_SEC,
   BREATH_MAX_SPEECH_COVERAGE_RATIO,
   BREATH_TOKEN_OVERLAP_FLOOR_SEC,
+  RUN_SURVIVAL_MAX_HOLE,
+  RUN_SURVIVAL_MIN_RUN_SHORT,
+  RUN_SURVIVAL_MIN_RUN_LONG,
+  RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE,
+  RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP,
 } from './syncConstants';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
@@ -697,11 +707,32 @@ describe('diff-aligner outcomes + backstop clamp', () => {
       ...wordTokens('foxtrot golf hotel india', 4.5, 0.5),  // idx 7–10
     ];
 
-    // s1 is partially covered (1 of 3 words) — covered, not stranded.
+    // updated 2026-08-02: run-based survival (Bug C fix) — s1's single true
+    // match ("echo") is a lone anchor with no adjacent matched word to form a
+    // run with; longest run = 1. Bug C's ORIGINAL bands required a run of 2
+    // for a 3-word segment, so this FAILED the consecutive-run requirement
+    // and was classified unmatched — superseding the old "any real match
+    // keeps it" (Bug 2) doctrine this test originally pinned.
+    //
+    // RECALIBRATED (threshold recalibration, second pass, 2026-08-02): 1-3
+    // word segments now require only a run of 1 (syncConstants.ts's
+    // RUN_SURVIVAL_* header) — a real production project showed the
+    // 2-required floor rejected too many genuinely-spoken short segments. A
+    // single true match on a 3-word segment qualifies directly again, same
+    // as the pre-Bug-C behavior, just via the run mechanism rather than Bug
+    // 2's bare non-zero count. matchedWords/confidence are unaffected either
+    // way (they were always the real, preserved counts).
     const cov = extractSegmentAlignments(segments, tokens);
     expect(cov[1]!.matched).toBe(true);
     expect(cov[1]!.confidence).toBeCloseTo(1 / 3, 5);
+    expect(cov[1]!.matchedWords).toBe(1);
+    expect(cov[1]!.longestRun).toBe(1);
 
+    // The SPAN-level behavior is unaffected: alignScenestoTranscript's Step 2
+    // still gives s1 a real, non-zero span (from s0's real end to s2's real
+    // start) via the same gap-fill mechanism an already-uncovered middle
+    // segment has always used (see test (b)/(c) below) — no cascade, no
+    // collapse, regardless of whether s1 is "covered" or "matched".
     const spans = alignSpans(segments, tokens);
     expect(spans[1]!.dur).toBeGreaterThan(0.5);
     expect(spans[0]!.t0).toBeLessThanOrEqual(spans[1]!.t0);
@@ -1285,8 +1316,13 @@ describe('R4-1 — middle gaps SKIP instead of aborting', () => {
 
     const { skipped } = filterToCoveredSegments(segments, cov);
     expect(skipped).toHaveLength(1);
-    // A skipped segment is by construction unmatched (matched === false, WS1a),
-    // so matchedWords/confidence are always 0 here — only totalWords varies.
+    // NOTE (updated 2026-08-02, Bug C): a skipped segment is NOT universally
+    // guaranteed matchedWords===0/confidence===0 — the consecutive-run
+    // survival requirement can skip a segment with real matched words that
+    // never form a qualifying run (see syncConstants.ts's RUN_SURVIVAL_*).
+    // THIS fixture's segment genuinely has zero matches ("echo foxtrot golf"
+    // is never spoken at all), so 0/0 is this fixture's own property, not a
+    // universal guarantee of a skip record in general.
     expect(skipped[0]).toMatchObject({
       segmentIndex: 1,
       segmentTag: 'missing1',
@@ -1563,10 +1599,17 @@ describe('R4-2 — filterToCoveredSegments', () => {
   // filter no longer gates on the LOW_CONFIDENCE_RATIO threshold at all. Only
   // `covered` (used by R13's contiguous-run gate, unchanged) still applies the
   // threshold; `filterToCoveredSegments` now keys purely off `matched`.
-  it('keeps a segment that matched below LOW_CONFIDENCE_RATIO instead of skipping it (Bug 2)', () => {
-    // 1 of 6 words spoken → confidence 0.167, under the 0.4 threshold: matched,
-    // but not "covered". Under the old (buggy) behavior this was skipped with
-    // reason 'low confidence'; the fix keeps it on the timeline.
+  //
+  // updated 2026-08-02: run-based survival (Bug C fix) — a SINGLE isolated
+  // match at the tail of a 6-word segment ("echo", the only spoken word) is
+  // exactly the shape Bug 2's blanket "any real match keeps it" doctrine was
+  // too permissive about: longest run = 1 (a lone anchor), required = 3 for a
+  // 6-word segment, so it now correctly SKIPS again — not because of
+  // confidence (still true, unaffected), but because one scattered word
+  // cannot be trusted as "this segment was spoken" on its own. Bug 2's fix
+  // (matched != covered) still stands; this fixture just no longer
+  // demonstrates it, since the segment is not `matched` in the first place.
+  it('a segment with a single, isolated matched word (no run) is skipped despite matchedWords > 0 (Bug 2 -> Bug C)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta' }),
@@ -1574,14 +1617,17 @@ describe('R4-2 — filterToCoveredSegments', () => {
     ];
     const tokens = wordTokens('alpha bravo charlie delta echo', 0, 0.5);
     const cov = extractSegmentAlignments(segments, tokens);
-    expect(cov[2]!.matched).toBe(true);
+    expect(cov[2]!.matched).toBe(false);
+    expect(cov[2]!.matchedWords).toBe(1); // the real match is preserved, not zeroed
     expect(cov[2]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
-    // `covered` (R13 input) is still false — unaffected by the fix.
+    expect(cov[2]!.longestRun).toBe(1);
+    // `covered` (R13 input) is false, same as before — now for TWO independent
+    // reasons (uncovered by ratio AND unmatched by run), not just one.
     expect(classifyCoverage(cov)[2]!.covered).toBe(false);
 
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
-    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2']);
-    expect(skipped).toEqual([]);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
+    expect(skipped).toMatchObject([{ segmentIndex: 2, reason: 'no audio match' }]);
   });
 
   it('a matched=false, confidence=0 segment is still skipped with reason "no audio match" (Bug 2)', () => {
@@ -1605,12 +1651,16 @@ describe('R4-2 — filterToCoveredSegments', () => {
   });
 
   it('never produces a "low confidence" skip reason (Bug 2 regression guard)', () => {
-    // A mix of unmatched and weakly-matched segments — only the fully unmatched
-    // one should appear in `skipped`, and always with 'no audio match'.
+    // updated 2026-08-02: run-based survival (Bug C fix) — s1's one spoken
+    // word ("charlie", isolated, no adjacent match) no longer clears the
+    // consecutive-run requirement (longest run 1, required 3 for 5 words),
+    // so it now ALSO skips — 'no audio match' is still the only reason
+    // used, which is this guard's actual point: regardless of how MANY
+    // segments end up skipped, or WHY (zero matches vs. an insufficient
+    // run), 'low confidence' must never appear as a skip reason.
     const spoken = ['alpha bravo', 'charlie delta echo foxtrot golf'];
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: spoken[0]! }),
-      // 1 of 5 words spoken → weak match, confidence 0.2 — kept, not skipped.
       makeSegment({ id: 's1', order: 1, text: spoken[1]! }),
       makeSegment({ id: 's2', order: 2, text: 'never spoken at all' }),
     ];
@@ -1618,12 +1668,31 @@ describe('R4-2 — filterToCoveredSegments', () => {
     const cov = extractSegmentAlignments(segments, tokens);
 
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
-    expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
-    expect(skipped.map(r => r.reason)).toEqual(['no audio match']);
+    expect(kept.map(s => s.id)).toEqual(['s0']);
+    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
     expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
   });
 
-  it('294-segment-like fixture: a weakly-matched segment (confidence 0.33, mirroring the reported segment 135) is kept while R13 passes on the strongly-covered majority (Bug 2 + regression)', () => {
+  it('294-segment-like fixture: a weakly-matched segment (confidence 0.33, mirroring the reported segment 135) is KEPT again (matched-not-covered) via the recalibrated 1-3-word band, while R13 still passes on the strongly-covered majority', () => {
+    // Layered history — this is the exact "Bug 2 flagship" shape the Bug C
+    // design doc calls out by name: a single isolated matched word
+    // ("weaktwo") in the MIDDLE of a 3-word segment, with no adjacent match
+    // to form a run with (longest run = 1).
+    //   - Bug 2 (original): matched = matchedCount > 0, so this SURVIVED on
+    //     the lone match alone (confidence 0.33 never even considered).
+    //   - Bug C (2026-08-02, first pass): required a run of 2 for a 3-word
+    //     segment; a run of 1 fell short, so this SKIPPED — a deliberate
+    //     policy reversal at the time.
+    //   - Threshold recalibration (second pass, 2026-08-02): verified against
+    //     a real 174-segment project, the run-of-2 floor for short segments
+    //     rejected too many genuinely-spoken ones. 1-3-word segments now
+    //     require only a run of 1, so this SURVIVES again — but via the run
+    //     mechanism (`matched`), not Bug 2's bare non-zero count, and it is
+    //     still NOT `covered` (confidence 0.33 stays under LOW_CONFIDENCE_RATIO
+    //     0.4) — a real, visible distinction Bug 2 never had. R13's gate
+    //     (below) still passes independently, since it never depended on this
+    //     one segment's own classification.
+    //
     // Simulates the reported repro (segment 135, "Navigational charts
     // cross-referenced.", matched=true/confidence=0.3333/words=1/3): many
     // strongly-covered segments surrounding one weakly-matched segment (1 of 3
@@ -1649,19 +1718,24 @@ describe('R4-2 — filterToCoveredSegments', () => {
 
     const weakIdx = before.length;
     expect(cov[weakIdx]!.matched).toBe(true);
-    expect(cov[weakIdx]!.matchedWords).toBe(1);
+    expect(cov[weakIdx]!.matchedWords).toBe(1); // preserved, not zeroed
     expect(cov[weakIdx]!.totalWords).toBe(3);
     expect(cov[weakIdx]!.confidence).toBeCloseTo(1 / 3, 4);
     expect(cov[weakIdx]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
-    // `covered` (R13 input) is false for this segment — unaffected by the fix.
+    expect(cov[weakIdx]!.longestRun).toBe(1);
+    // `covered` (R13 input) is still false — `matched` and `covered` are
+    // independent axes (Bug 2's own point), and confidence 0.33 alone keeps
+    // this uncovered regardless of the run recalibration above.
     expect(classifyCoverage(cov)[weakIdx]!.covered).toBe(false);
 
     // R13 gate: still passes — the strongly-covered runs are long enough, and
-    // overall bidirectional coverage clears the noise floor.
+    // overall bidirectional coverage clears the noise floor. Entirely
+    // independent of weak135's own matched/skip classification.
     const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
     expect(gate.aborted).toBe(false);
 
-    // Bug 2 fix: the weak segment is KEPT (matched === true), not skipped.
+    // Recalibration: the weak segment is now KEPT (matched === true) —
+    // matched-not-covered, not a return to Bug 2's mechanism.
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toContain('weak135');
     expect(kept).toHaveLength(segments.length);
@@ -1679,20 +1753,29 @@ describe('R13 gate is unaffected by the Bug 2 skip-filter change', () => {
     // threshold, so the contiguous-covered-run signal stays at 0 and R13 fires
     // — even though, post-Bug-2-fix, none of these segments would be skipped
     // by the commit-time filter if the gate let the run through.
+    //
+    // updated 2026-08-02: run-based survival (Bug C fix) — each segment's one
+    // matched word ("common", the last of 5, isolated) no longer clears the
+    // consecutive-run requirement either (longest run 1, required 3), so
+    // `matched` now flips to false for every segment too, not just `covered`.
+    // R13's own abort outcome is untouched — it already fired on
+    // longestCoveredRun === 0 regardless of the (now also false) `matched`
+    // flag, so this is the one line that needed updating.
     const segments: VideoSegment[] = Array.from({ length: 6 }, (_, i) =>
       makeSegment({
         id: `s${i}`,
         order: i,
-        // 5 words per segment; only 1 will match → confidence 0.2, matched=true.
+        // 5 words per segment; only 1 will match → confidence 0.2.
         text: `zulu${i} victor${i} whiskey${i} xray${i} common`,
       }),
     );
     const tokens = wordTokens('common common common common common common', 0, 0.5);
     const cov = extractSegmentAlignments(segments, tokens);
 
-    // Every segment is matched (weakly) but none is `covered`.
+    // Every segment is unmatched now (an isolated, non-contiguous word does
+    // not qualify) and, as before, none is `covered`.
     const flags = classifyCoverage(cov);
-    expect(cov.every(a => a.matched)).toBe(true);
+    expect(cov.every(a => !a.matched)).toBe(true);
     expect(flags.every(f => !f.covered)).toBe(true);
 
     const gate = evaluateCoverageGate(segments, cov, countTranscriptWords(tokens));
@@ -2803,9 +2886,9 @@ describe('snapCoveredBoundaries — degenerate-pair guard (no giant boundary fro
       { text: 'f', startSec: 11.5, endSec: 11.9 },   // idx5 — s2.lastTokenIdx
     ];
     const alignments: SegmentAlignment[] = [
-      { t0: 0.3, t1: 412.4, firstTokenIdx: 0, lastTokenIdx: 1, confidence: 1, matched: true, matchedWords: 2, totalWords: 2 },
-      { t0: 0.5, t1: 4.4, firstTokenIdx: 2, lastTokenIdx: 3, confidence: 1, matched: true, matchedWords: 2, totalWords: 2 },
-      { t0: 8.2, t1: 11.9, firstTokenIdx: 4, lastTokenIdx: 5, confidence: 1, matched: true, matchedWords: 2, totalWords: 2 },
+      { t0: 0.3, t1: 412.4, firstTokenIdx: 0, lastTokenIdx: 1, confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2 },
+      { t0: 0.5, t1: 4.4, firstTokenIdx: 2, lastTokenIdx: 3, confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2 },
+      { t0: 8.2, t1: 11.9, firstTokenIdx: 4, lastTokenIdx: 5, confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2 },
     ];
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -2908,9 +2991,9 @@ describe('snapCoveredBoundaries — monotonic fallback re-check (2026-08-02 fix)
     // DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC (5s), so the degenerate-pair
     // guard does not intercept this case before the monotonic check runs.
     const alignments: SegmentAlignment[] = [
-      { t0: 0.0, t1: 9.0, firstTokenIdx: 0, lastTokenIdx: 1, confidence: 1, matched: true, matchedWords: 1, totalWords: 1 },
-      { t0: 10.0, t1: 2.8, firstTokenIdx: 2, lastTokenIdx: 3, confidence: 1, matched: true, matchedWords: 1, totalWords: 1 },
-      { t0: 3.2, t1: 3.6, firstTokenIdx: 4, lastTokenIdx: 5, confidence: 1, matched: true, matchedWords: 1, totalWords: 1 },
+      { t0: 0.0, t1: 9.0, firstTokenIdx: 0, lastTokenIdx: 1, confidence: 1, matched: true, matchedWords: 1, totalWords: 1, longestRun: 1 },
+      { t0: 10.0, t1: 2.8, firstTokenIdx: 2, lastTokenIdx: 3, confidence: 1, matched: true, matchedWords: 1, totalWords: 1, longestRun: 1 },
+      { t0: 3.2, t1: 3.6, firstTokenIdx: 4, lastTokenIdx: 5, confidence: 1, matched: true, matchedWords: 1, totalWords: 1, longestRun: 1 },
     ];
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -3635,7 +3718,22 @@ describe('WS5/S3 — repeated phrases resolve by position, not by first occurren
 });
 
 describe('WS5/S3 — inflected forms stay above the coverage threshold without stemming', () => {
-  it('"running fast" vs spoken "runs fast": confidence 0.5, still covered', () => {
+  // Layered history — a two-word segment with one inflected word produces a
+  // longest run of exactly 1 (the single matched word is a lone anchor; a
+  // run can't start/end on a hole, so it can never be extended).
+  //   - Bug C (2026-08-02, first pass): required a run of 2 for a 2-word
+  //     segment, so a run of 1 fell short — an accepted, stated sacrifice at
+  //     the time (the RATIO (0.5) still cleared LOW_CONFIDENCE_RATIO fine,
+  //     but the independent run requirement decided `matched` first).
+  //   - Threshold recalibration (second pass, 2026-08-02): 1-3-word segments
+  //     now require only a run of 1 (syncConstants.ts's RUN_SURVIVAL_*
+  //     header), so this single matched word qualifies directly again — the
+  //     same outcome the pre-Bug-C doctrine gave this exact shape, just
+  //     reached through the run mechanism rather than a bare non-zero count.
+  // See the "realistic sentence"/"all-inflected" tests below for the
+  // multi-word case, where an inflection surrounded by other true matches
+  // still forms a real run and survives regardless of this band.
+  it('"running fast" vs spoken "runs fast": confidence 0.5, survives via the 1-3-word band (isolated single-word run)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'running fast' }),
       makeSegment({ id: 's1', order: 1, text: 'alpha bravo' }),
@@ -3645,10 +3743,12 @@ describe('WS5/S3 — inflected forms stay above the coverage threshold without s
 
     expect(cov[0]!.confidence).toBe(0.5);
     expect(cov[0]!.confidence).toBeGreaterThanOrEqual(LOW_CONFIDENCE_RATIO);
+    expect(cov[0]!.longestRun).toBe(1);
+    expect(cov[0]!.matched).toBe(true);
     expect(classifyCoverage(cov)[0]!.covered).toBe(true);
   });
 
-  it('"bigger than" vs spoken "big than": confidence 0.5, still covered', () => {
+  it('"bigger than" vs spoken "big than": confidence 0.5, survives via the 1-3-word band (isolated single-word run)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'bigger than' }),
       makeSegment({ id: 's1', order: 1, text: 'alpha bravo' }),
@@ -3658,6 +3758,8 @@ describe('WS5/S3 — inflected forms stay above the coverage threshold without s
 
     expect(cov[0]!.confidence).toBe(0.5);
     expect(cov[0]!.confidence).toBeGreaterThanOrEqual(LOW_CONFIDENCE_RATIO);
+    expect(cov[0]!.longestRun).toBe(1);
+    expect(cov[0]!.matched).toBe(true);
     expect(classifyCoverage(cov)[0]!.covered).toBe(true);
   });
 
@@ -3673,14 +3775,50 @@ describe('WS5/S3 — inflected forms stay above the coverage threshold without s
 
     expect(cov[0]!.confidence).toBeCloseTo(0.75, 5);
     expect(cov[1]!.confidence).toBeCloseTo(5 / 7, 5);
+    // updated 2026-08-02: run-based survival (Bug C fix) — s0 (8 words)
+    // splits into two candidate runs: "the runner" (2, matched consecutively)
+    // and "fast down the road" (4, also matched consecutively, with no holes
+    // inside it — "was"/"running" sit BEFORE it and break the chain from "the
+    // runner", since "running"'s transcript counterpart "runs" occupies a
+    // subject slot the pure-deletion "was" does not, so the two runs cannot
+    // bridge into one). s1 (7 words) has a longest run of 3
+    // ("slowly toward the" — a plain 3-word contiguous run, no holes inside
+    // it either; "she"/"house" are each isolated on one side by a
+    // substitution-blocked gap with nothing to extend into, since a run
+    // can't start or end on a hole).
+    //
+    // RECALIBRATED (threshold recalibration, second pass, 2026-08-02): under
+    // Bug C's ORIGINAL ratio-scaled bands, an 8-word segment required
+    // ceil(0.5*8)=4 (s0's run of 4 just cleared it) and a 7-word segment also
+    // required ceil(0.5*7)=4 (s1's run of 3 fell one short, so s1 used to
+    // SKIP here). The flat recalibrated bands require only
+    // RUN_SURVIVAL_MIN_RUN_SHORT (2) for any 4-10-word segment — both runs
+    // clear it comfortably now, so s1 survives too. Confidence (5/7 ≈ 0.71)
+    // was never the deciding factor either way — it is a completely separate
+    // axis from run contiguity.
+    expect(cov[0]!.longestRun).toBe(4);
+    expect(cov[1]!.longestRun).toBe(3);
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[1]!.matched).toBe(true);
     expect(classifyCoverage(cov).map(c => c.covered)).toEqual([true, true]);
   });
 
-  it('an all-inflected segment is still MATCHED, so it is never skipped', () => {
-    // The pathological case for a no-stemming aligner: every content word
-    // inflected. Confidence drops below LOW_CONFIDENCE_RATIO, so it stops
-    // counting as "covered" — but `matched` is what decides the timeline, and
-    // the shared function words keep it true.
+  it('an all-inflected segment is now SKIPPED — a single isolated function-word match is no longer enough to survive (Bug C)', () => {
+    // updated 2026-08-02: run-based survival (Bug C fix) — this fixture used
+    // to demonstrate the OPPOSITE point ("still MATCHED, so it is never
+    // skipped") under Bug 2's "any real match keeps it" doctrine. Under Bug
+    // C that doctrine is superseded: s2's only true match is "the" (a single
+    // isolated anchor — "walking"/"running"/"jumping"/"climbing" all fail to
+    // match their inflected transcript counterparts), longest run = 1
+    // against a required run of RUN_SURVIVAL_MIN_RUN_SHORT (2, recalibrated
+    // second pass, 2026-08-02 — was 3 under Bug C's original ratio-scaled
+    // band) for this 5-word segment. Confidence (0.2) is also far under the
+    // density fallback's 0.5 floor, so neither survival mechanism rescues it.
+    // The pathological no-stemming case is still real (confidence is still
+    // low, still matched-not-covered in spirit) — but Bug C's judgment is
+    // that ONE shared function word is too weak a signal to trust on its
+    // own, so this segment still correctly skips instead of surviving on a
+    // technicality.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
       makeSegment({ id: 's1', order: 1, text: 'echo foxtrot golf hotel' }),
@@ -3692,9 +3830,11 @@ describe('WS5/S3 — inflected forms stay above the coverage threshold without s
     const cov = extractSegmentAlignments(segments, tokens);
 
     expect(cov[2]!.confidence).toBeLessThan(LOW_CONFIDENCE_RATIO);
-    expect(cov[2]!.matched).toBe(true);
+    expect(cov[2]!.matchedWords).toBe(1); // preserved, not zeroed
+    expect(cov[2]!.longestRun).toBe(1);
+    expect(cov[2]!.matched).toBe(false);
     expect(filterToCoveredSegments(segments, cov).kept.map(s => s.id))
-      .toEqual(['s0', 's1', 's2']);
+      .toEqual(['s0', 's1']);
   });
 });
 
@@ -3714,6 +3854,18 @@ describe('WS5/S3 — inflected forms stay above the coverage threshold without s
 describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
   // s2 is built so exactly 2 of its 5 words are spoken -> confidence 0.4 exactly.
   // s3 has exactly 1 of 5 -> 0.2, comfortably under.
+  //
+  // updated (threshold recalibration, second pass, 2026-08-02): s2's two
+  // spoken words are "kilo" and "xray" — the FIRST and LAST of its 5 query
+  // words, not two adjacent ones — so its longest run stays 1 (the 3
+  // unmatched words between them, "lima zulu yankee", exceed
+  // RUN_SURVIVAL_MAX_HOLE (2), so the gap can never bridge regardless of
+  // transcript contiguity). This is deliberate: with the recalibrated flat
+  // required run of RUN_SURVIVAL_MIN_RUN_SHORT (2) for a 4-10-word segment,
+  // two ADJACENT matches (as the original "kilo","lima" fixture had) would
+  // themselves form a run of 2 and pass the run gate outright — defeating
+  // this section's whole point of isolating the ratio's `>=` boundary from
+  // the (still independent) run/density gate.
   const segments: VideoSegment[] = [
     makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta echo' }),
     makeSegment({ id: 's1', order: 1, text: 'foxtrot golf hotel india juliet' }),
@@ -3721,7 +3873,7 @@ describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
     makeSegment({ id: 's3', order: 3, text: 'mike november quebec romeo sierra' }),
   ];
   const tokens = wordTokens(
-    'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike', 0, 0.5,
+    'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo xray mike', 0, 0.5,
   );
 
   it('the fixture really does sit exactly on the threshold', () => {
@@ -3731,9 +3883,25 @@ describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
     expect(cov[2]!.totalWords).toBe(5);
   });
 
-  it('confidence EXACTLY at LOW_CONFIDENCE_RATIO classifies as covered (>=, not >)', () => {
+  // updated 2026-08-02: run-based survival (Bug C fix), recalibrated
+  // (second pass, 2026-08-02) — this fixture's whole PURPOSE is to isolate
+  // the LOW_CONFIDENCE_RATIO `>=` boundary from any other gate. s2's 2
+  // matched words ("kilo","xray") sit at opposite ends of the 5-word
+  // segment (3 unmatched words between them, over RUN_SURVIVAL_MAX_HOLE),
+  // so the run stays 1 — one short of the recalibrated flat required run of
+  // 2 for a 4-10-word segment. Confidence (0.4) is also under the density
+  // fallback's 0.5 floor, so neither survival mechanism rescues it — s2
+  // fails independently of clearing this ratio exactly. `classifyCoverage`
+  // still ANDs `matched` into `covered`, so once `matched` is false for an
+  // unrelated reason, this fixture can no longer isolate the ratio's `>=`
+  // semantics in isolation — it demonstrates the AND instead. The ratio
+  // comparison itself is unchanged (still `>=`); see syncConstants.ts's
+  // LOW_CONFIDENCE_RATIO comment for the updated contract.
+  it('confidence EXACTLY at LOW_CONFIDENCE_RATIO no longer alone decides `covered` — the run gate can independently fail it', () => {
     const cov = extractSegmentAlignments(segments, tokens);
-    expect(classifyCoverage(cov)[2]!.covered).toBe(true);
+    expect(cov[2]!.longestRun).toBe(1); // "kilo","xray" — each isolated, 3 unmatched words separate them
+    expect(cov[2]!.matched).toBe(false);
+    expect(classifyCoverage(cov)[2]!.covered).toBe(false);
   });
 
   it('confidence just below LOW_CONFIDENCE_RATIO classifies as uncovered', () => {
@@ -3742,17 +3910,26 @@ describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
     expect(classifyCoverage(cov)[3]!.covered).toBe(false);
   });
 
-  it('an uncovered-but-matched segment is still KEPT on the timeline (skip is `matched`, not `covered`)', () => {
+  // updated 2026-08-02: run-based survival (Bug C fix), recalibrated (second
+  // pass, 2026-08-02) — s2 (run 1 < recalibrated required 2, confidence 0.4
+  // under the density floor of 0.5) and s3 (run 1 < required 2, its lone
+  // "mike" match, confidence 0.2 also under the density floor) both fail the
+  // run gate independently of their ratio, so both are skipped. Only s0/s1
+  // (full 5/5 matches, run 5) survive.
+  it('a segment whose real matches are too scattered to form a run is skipped, even if some clear the confidence ratio', () => {
     const cov = extractSegmentAlignments(segments, tokens);
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
-    expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2', 's3']);
-    expect(skipped).toEqual([]);
+    expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
+    expect(skipped.map(r => r.segmentIndex)).toEqual([2, 3]);
+    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
   });
 
   it('the same threshold governs the covered-run scan inside computeCoverageSummary', () => {
     const cov = extractSegmentAlignments(segments, tokens);
-    // s0,s1,s2 are covered (0.4 clears the bar), s3 is not -> longest run 3.
-    expect(computeCoverageSummary(cov, countTranscriptWords(tokens)).longestCoveredRun).toBe(3);
+    // updated 2026-08-02: run-based survival (Bug C fix) — s2 no longer
+    // covered (see above), so the longest covered run is now just s0,s1 -> 2,
+    // not 3.
+    expect(computeCoverageSummary(cov, countTranscriptWords(tokens)).longestCoveredRun).toBe(2);
   });
 });
 
@@ -4460,6 +4637,28 @@ describe('rescue forward-ordering bound (false-positive rejection)', () => {
     expect(results[2]!.recoveredRegion?.startSec).toBeCloseTo(45.0, 3);
     expect(results[2]!.recoveredRegion?.endSec).toBeCloseTo(46.2, 3);
 
+    // updated 2026-08-02: run-based survival (Bug C fix) — discovered via the
+    // full suite run under Bug C's ORIGINAL bands, NOT part of the
+    // originally-identified 13 (this test's own sanity comment above only
+    // ever cared about s1's matchedWords count, never its `matched` flag).
+    // s1's text is 7 words long ("mumbling jumble static noise echo bravo
+    // hotel"); its ONLY real content is the trailing 3-word phrase "echo
+    // bravo hotel" (one clean contiguous run of 3 — the other 4 words are
+    // deliberate trap filler that never occurs in the audio at all). Under
+    // Bug C's original ratio-scaled bands a 7-word segment required
+    // ceil(0.5*7)=4, and a run of 3 fell one short, so s1 itself used to be
+    // classified unmatched and skipped.
+    //
+    // RECALIBRATED (threshold recalibration, second pass, 2026-08-02): the
+    // flat bands require only RUN_SURVIVAL_MIN_RUN_SHORT (2) for any
+    // 4-10-word segment — s1's run of 3 now clears it, so s1 SURVIVES too.
+    // This test's actual point (s2's legitimate rescue survives the
+    // forward-ordering bound) is unaffected — s1's own classification was
+    // never what this test was about, and its recomputed value is folded in
+    // here purely so the full-pipeline assertions below stay accurate.
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.longestRun).toBe(3);
+
     const { kept, skipped } = filterToCoveredSegments(segments, results);
     expect(skipped).toHaveLength(0);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2', 's3']);
@@ -4743,5 +4942,477 @@ describe('Pass 3 — sliding-window concatenation match (sub-word merge)', () =>
     expect(results[0]!.matched).toBe(true);
     expect(results[0]!.matchedWords).toBe(4);
     expect(results[0]!.confidence).toBe(1);
+  });
+});
+
+// ===========================================================================
+// Bug C — contiguous-run survival requirement (2026-08-02)
+//
+// A segment survives sync (matched=true) only when its matched words form at
+// least one qualifying contiguous RUN — consecutive query positions whose
+// transcript-side token indices are themselves consecutive, tolerating up to
+// RUN_SURVIVAL_MAX_HOLE (2) consecutive unmatched query words bridged by
+// transcript contiguity. This supersedes Bug 2's "any real match keeps it"
+// doctrine (see the re-partitioned Bug 2/WS5/diff-aligner tests above, each
+// carrying an "updated 2026-08-02" comment). See syncConstants.ts's
+// RUN_SURVIVAL_* header and whisperService.ts's `hasQualifyingRun`/
+// `computeLongestRunWithHoles` for the full derivation.
+// ===========================================================================
+describe('Bug C — contiguous-run survival requirement', () => {
+  // FLAGSHIP — the confirmed production heading shape: a 9-word segment
+  // whose own content was never spoken at all, but TWO of its individual
+  // (common) words coincidentally occur elsewhere in the transcript as
+  // isolated, non-adjacent single-word coincidences with genuine content for
+  // neighboring segments on either side. Pre-fix (matched = matchedCount >
+  // 0), this segment SURVIVED on two scattered coincidences alone — exactly
+  // the false-positive shape that motivated this fix. Verified to fail
+  // pre-fix (see this session's report for the captured pre-fix output).
+  it('FLAGSHIP: a 9-word segment with two scattered, non-adjacent coincidental word matches is skipped, not kept on two coincidences alone', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({
+        id: 'heading', order: 0,
+        text: 'orbital command station requires immediate tactical tank evacuation now',
+        anchorStart: 0,
+      }),
+      makeSegment({ id: 's1', order: 1, text: 'the crew boarded the vessel and secured every hatch', anchorStart: 1.0 }),
+      makeSegment({ id: 's2', order: 2, text: 'meet me at the harbor before the tide turns', anchorStart: 4.0 }),
+      makeSegment({ id: 's3', order: 3, text: 'the engineers reported the results without delay', anchorStart: 7.0 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      // Two words the heading happens to share with ordinary vocabulary,
+      // spoken here as a standalone aside BEFORE any real segment's content
+      // — genuinely present in the audio, unclaimed by anyone else's own
+      // text, but never as a phrase the heading itself actually explains.
+      ...wordTokens('station now', 0.0, 0.3),
+      ...wordTokens('the crew boarded the vessel and secured every hatch', 1.0, 0.3),
+      ...wordTokens('meet me at the harbor before the tide turns', 4.0, 0.3),
+      ...wordTokens('the engineers reported the results without delay', 7.0, 0.3),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    // Sanity: the two coincidences are real, and the neighbors are fully,
+    // genuinely covered — this is not a cross-script mismatch, just a
+    // heading whose own content was never spoken.
+    expect(results[0]!.matchedWords).toBe(2);
+    expect(results[1]!.confidence).toBe(1);
+    expect(results[2]!.confidence).toBe(1);
+    expect(results[3]!.confidence).toBe(1);
+
+    // The fix: two matches 6 query-positions apart ("station" at position 2,
+    // "now" at position 8) cannot bridge — far more than RUN_SURVIVAL_MAX_HOLE
+    // (2) unmatched words separate them — so each is its own isolated run of 1.
+    expect(results[0]!.longestRun).toBeLessThanOrEqual(1);
+    expect(results[0]!.matched).toBe(false);
+    // matchedWords/confidence are the REAL, preserved counts — never zeroed
+    // just because the segment failed the run requirement (audit Q8).
+    expect(results[0]!.matchedWords).toBe(2);
+    expect(results[0]!.confidence).toBeCloseTo(2 / 9, 5);
+    expect(results[0]!.totalWords).toBe(9);
+
+    const { kept, skipped } = filterToCoveredSegments(segments, results);
+    expect(kept.map(s => s.id)).toEqual(['s1', 's2', 's3']);
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]).toMatchObject({
+      segmentIndex: 0,
+      reason: 'no audio match',
+      matchedWords: 2,
+      totalWords: 9,
+      longestRun: 1,
+    });
+  });
+
+  // linen-from-flax preservation — the EXACT WS6 Pass 3 fixture ("Pass 3 —
+  // sliding-window concatenation match" describe block above, test 1) must
+  // now PASS under the holes rule: "linen" (concat-recovered, spanning
+  // tokens [2,3]) and "flax" (concat-recovered, spanning tokens [4,5]) bridge
+  // the single "from" hole at query position 1, because the concatenated
+  // spans are NUMERICALLY TOUCHING (linen's end=3, flax's start=4) — a
+  // 1-hole run spanning all 3 query positions, comfortably clearing the
+  // required run of 2 for a 3-word segment.
+  it('linen-from-flax preservation: the WS6 Pass 3 flagship now survives via the 1-hole rule, longestRun 3', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'able baker', anchorStart: 0 }),
+      makeSegment({ id: 'c', order: 1, text: 'linen from flax', anchorStart: 6 }),
+      makeSegment({ id: 'next', order: 2, text: 'hotel india', anchorStart: 12 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('able baker', 0.0, 0.4),
+      ...wordTokens('lin en', 6.0, 0.2),   // "linen" split, touching (0.2s each, 0 gap)
+      ...wordTokens('fl ax', 6.6, 0.2),    // "flax" split, touching — "from" never appears anywhere
+      ...wordTokens('hotel india', 12.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(2);
+    expect(results[1]!.totalWords).toBe(3);
+    expect(results[1]!.confidence).toBeCloseTo(2 / 3, 5);
+    expect(results[1]!.longestRun).toBe(3);
+  });
+
+  // ---------------------------------------------------------------------------
+  // computeLongestRunWithHoles — direct unit tests, hand-written occ arrays.
+  // ---------------------------------------------------------------------------
+  describe('computeLongestRunWithHoles', () => {
+    const M = (start: number, end = start): OccEntry => ({ start, end });
+
+    it('a clean run with no holes', () => {
+      const occ: OccEntry[] = [M(0), M(1), M(2)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(3);
+    });
+
+    it('a single-hole run bridged by transcript contiguity (pure deletion — the "quick (brown) fox" shape)', () => {
+      // position1 is a hole (the deleted word); position2's subject index
+      // (1) immediately follows position0's (0), since nothing occupies the
+      // deleted word's slot in the transcript.
+      const occ: OccEntry[] = [M(0), null, M(1)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(3);
+    });
+
+    it('a two-hole run at exactly the cap still bridges', () => {
+      const occ: OccEntry[] = [M(0), null, null, M(1)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(4);
+    });
+
+    it('a three-hole gap exceeds the cap and breaks the run', () => {
+      const occ: OccEntry[] = [M(0), null, null, null, M(1)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(1);
+    });
+
+    it('a leading hole does not count — a run cannot start on a hole', () => {
+      const occ: OccEntry[] = [null, M(0), M(1)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(2);
+    });
+
+    it('a trailing hole does not count — a run cannot end on a hole', () => {
+      const occ: OccEntry[] = [M(0), M(1), null];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(2);
+    });
+
+    it('a hole bridged by query adjacency but broken by a transcript insertion', () => {
+      // position1 is a hole, but position2's subject index (2) does NOT
+      // immediately follow position0's (0) — a real (if wrong) word occupies
+      // subject slot 1, a substitution rather than a pure deletion, so the
+      // "hole" is not transcript-contiguous and the chain breaks.
+      const occ: OccEntry[] = [M(0), null, M(2)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(1);
+    });
+
+    it('two separate qualifying runs — picks the longer one, in either position', () => {
+      const occ: OccEntry[] = [M(0), M(1), null, null, null, M(5), M(6), M(7)];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(3);
+    });
+
+    it('concat-span inputs (start < end) with touching neighbors bridge across a hole', () => {
+      // Mirrors the linen-from-flax shape directly: a 2-token concatenated
+      // span, a hole, then another 2-token concatenated span whose start
+      // numerically touches the first span's end.
+      const occ: OccEntry[] = [{ start: 2, end: 3 }, null, { start: 4, end: 5 }];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(3);
+    });
+
+    it('returns 0 for an all-null occupancy (true zero-match)', () => {
+      const occ: OccEntry[] = [null, null, null];
+      expect(computeLongestRunWithHoles(occ, 2)).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // requiredRunLength / hasQualifyingRun — band boundaries.
+  //
+  // RECALIBRATED (threshold recalibration, second pass, 2026-08-02): the
+  // ratio-scaled bands this section originally pinned (RUN_SURVIVAL_RATIO_SHORT/
+  // LONG, RUN_SURVIVAL_LONG_BAND_MIN_WORDS) are gone — see syncConstants.ts's
+  // RUN_SURVIVAL_* header for the production evidence. Three FLAT bands
+  // replace them: 1-3 words -> 1, 4-10 words -> RUN_SURVIVAL_MIN_RUN_SHORT
+  // (2), 11+ words -> RUN_SURVIVAL_MIN_RUN_LONG (4). The old
+  // `hasQualifyingRun` totalWords===1 special case is gone too — it's now
+  // just the general 1-3-word band's answer of 1.
+  // ---------------------------------------------------------------------------
+  describe('requiredRunLength / hasQualifyingRun band boundaries', () => {
+    it('the 1-3-word band requires only 1 — folds the old totalWords===1 special case into the general formula', () => {
+      expect(requiredRunLength(1)).toBe(1);
+      expect(requiredRunLength(2)).toBe(1);
+      expect(requiredRunLength(3)).toBe(1);
+      expect(hasQualifyingRun(1, 1, [{ start: 0, end: 0 }])).toBe(true);
+      expect(hasQualifyingRun(1, 0, [null])).toBe(false);
+    });
+
+    it('band transition: totalWords 3 (tiny band, required 1) vs totalWords 4 (short band, required 2)', () => {
+      expect(requiredRunLength(3)).toBe(1);
+      expect(requiredRunLength(4)).toBe(RUN_SURVIVAL_MIN_RUN_SHORT);
+      expect(RUN_SURVIVAL_MIN_RUN_SHORT).toBe(2);
+    });
+
+    it('band transition: totalWords 10 (short band) and 11 (long band) are FLAT — no ratio scaling', () => {
+      expect(requiredRunLength(10)).toBe(RUN_SURVIVAL_MIN_RUN_SHORT); // 2, not the old ceil(0.5*10)=5
+      expect(requiredRunLength(11)).toBe(RUN_SURVIVAL_MIN_RUN_LONG);  // 4, not the old ceil(0.4*11)=5
+      // The long band's requirement no longer grows with segment length at
+      // all — a 21-word segment (the production project's worst fragmented
+      // case: 21 words, 17 matched, longest run 7) requires the SAME 4 a
+      // bare 11-word segment does, where the old ratio-scaled band would
+      // have demanded ceil(0.4*21)=9.
+      expect(requiredRunLength(21)).toBe(RUN_SURVIVAL_MIN_RUN_LONG);
+    });
+
+    it('holes counting toward run length at the recalibrated boundary (10-word segment, required 2)', () => {
+      // Two contiguous anchors (positions 0,1, no hole) — span length 2,
+      // meeting the recalibrated required 2 for a 10-word segment exactly.
+      // Confidence is deliberately low (2/10 = 0.2, under
+      // RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE) so this isolates the RUN gate
+      // alone, not the density fallback.
+      const occ: OccEntry[] = [
+        { start: 0, end: 0 }, { start: 1, end: 1 }, null, null, null,
+        null, null, null, null, null,
+      ];
+      expect(computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE)).toBe(2);
+      expect(hasQualifyingRun(10, 2, occ)).toBe(true);
+
+      // A single isolated anchor — span length 1, one short of the required
+      // 2. Confidence (1/10 = 0.1) is also under the density floor, so this
+      // fails BOTH mechanisms, not just the run check.
+      const shortOcc: OccEntry[] = [
+        { start: 0, end: 0 }, null, null, null, null,
+        null, null, null, null, null,
+      ];
+      expect(computeLongestRunWithHoles(shortOcc, RUN_SURVIVAL_MAX_HOLE)).toBe(1);
+      expect(hasQualifyingRun(10, 1, shortOcc)).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Density fallback (threshold recalibration, second pass, 2026-08-02) —
+  // hasQualifyingRun/isLocallyClustered direct unit tests.
+  // ---------------------------------------------------------------------------
+  describe('density fallback — hasQualifyingRun', () => {
+    it('a fragmented-but-mostly-matched segment survives via density when the run check alone fails', () => {
+      // Mirrors the production project's worst fragmented case (21 words, 17
+      // matched, longest run 7, in the long band): a 13-word segment, 9
+      // matched in three clusters of 3, each separated by a 2-word gap.
+      // Within each cluster the transcript indices are consecutive (a real
+      // run of 3), but ACROSS clusters they jump by 10 — non-contiguous, so
+      // the chain breaks there regardless of holeCount being within the cap.
+      // Longest run is therefore only 3, one short of RUN_SURVIVAL_MIN_RUN_LONG
+      // (4) for this 13-word (long-band) segment — but the matched transcript
+      // indices (0,1,2, 10,11,12, 20,21,22) are tightly grouped relative to
+      // RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP, and confidence (9/13 ≈ 0.69) is
+      // well above the 0.5 density floor.
+      const occ: OccEntry[] = [
+        { start: 0, end: 0 }, { start: 1, end: 1 }, { start: 2, end: 2 }, null,
+        null,
+        { start: 10, end: 10 }, { start: 11, end: 11 }, { start: 12, end: 12 }, null,
+        null,
+        { start: 20, end: 20 }, { start: 21, end: 21 }, { start: 22, end: 22 },
+      ];
+      const totalWords = occ.length; // 13
+      const matchedCount = 9;
+      expect(computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE)).toBe(3);
+      expect(requiredRunLength(totalWords)).toBe(RUN_SURVIVAL_MIN_RUN_LONG); // 4 — run of 3 falls short
+      // Matched subject indices: 0,1,2,10,11,12,20,21,22 — gaps (sorted):
+      // 1,1,8,1,1,8,1,1 -> sorted gaps [1,1,1,1,1,1,8,8], median = mean of
+      // the 4th/5th (1-indexed) = mean(1,1) = 1, comfortably at/under
+      // RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP (4).
+      expect(isLocallyClustered([0, 1, 2, 10, 11, 12, 20, 21, 22])).toBe(true);
+      expect(hasQualifyingRun(totalWords, matchedCount, occ)).toBe(true);
+    });
+
+    it('a scattered, low-confidence segment (the heading shape) still fails even with the density fallback active', () => {
+      // A 9-word segment (mirrors the FLAGSHIP heading fixture above) with
+      // only 2 of 9 words matched, at opposite ends — confidence 2/9 ≈ 0.222,
+      // under RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE (0.5). The confidence gate
+      // alone rejects this before clustering is ever evaluated — matching
+      // the real production heading (0 of 9 matched, confidence 0), which
+      // fails the same gate even more trivially.
+      const occ: OccEntry[] = new Array(9).fill(null);
+      occ[1] = { start: 2, end: 2 };
+      occ[7] = { start: 20, end: 20 };
+      expect(computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE)).toBe(1);
+      expect(hasQualifyingRun(9, 2, occ)).toBe(false);
+    });
+
+    it('a scattered segment that clears the confidence floor but NOT the clustering floor still fails — clustering does real work, not just duplicating the confidence check', () => {
+      // 10-word segment, 6 matched (confidence 0.6, ABOVE the 0.5 density
+      // floor) at query positions 0-5, each mapped to a transcript index 20
+      // apart (0,20,40,60,80,100) — every consecutive pair breaks contiguity
+      // (a jump of 20, never +1), so longestRun is 1 regardless of query
+      // adjacency, and the matched indices are far too spread out to cluster.
+      const occ: OccEntry[] = [
+        { start: 0, end: 0 }, { start: 20, end: 20 }, { start: 40, end: 40 },
+        { start: 60, end: 60 }, { start: 80, end: 80 }, { start: 100, end: 100 },
+        null, null, null, null,
+      ];
+      expect(computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE)).toBe(1);
+      expect(isLocallyClustered([0, 20, 40, 60, 80, 100])).toBe(false);
+      expect(hasQualifyingRun(10, 6, occ)).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // isLocallyClustered — direct unit tests.
+  // ---------------------------------------------------------------------------
+  describe('isLocallyClustered', () => {
+    it('a tight cluster (all gaps small) is clustered', () => {
+      expect(isLocallyClustered([10, 11, 13, 14])).toBe(true); // gaps: 1,2,1 -> median 1
+    });
+
+    it('a scattered set (all gaps large) is not clustered', () => {
+      expect(isLocallyClustered([0, 50, 100, 150])).toBe(false); // gaps: 50,50,50 -> median 50
+    });
+
+    it('exactly at the median-gap boundary (RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP) is clustered — inclusive', () => {
+      expect(RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP).toBe(4);
+      expect(isLocallyClustered([0, 4, 8])).toBe(true); // gaps: 4,4 -> median 4, <=4 passes
+    });
+
+    it('one unit past the median-gap boundary is not clustered', () => {
+      expect(isLocallyClustered([0, 5, 10])).toBe(false); // gaps: 5,5 -> median 5, >4 fails
+    });
+
+    it('a single index is trivially clustered — nothing to scatter', () => {
+      expect(isLocallyClustered([42])).toBe(true);
+    });
+
+    it('an empty index list is not clustered — no positive evidence to cluster on', () => {
+      expect(isLocallyClustered([])).toBe(false);
+    });
+
+    it('an even number of gaps takes the mean of the two middle gaps (not the lower of the two)', () => {
+      // 5 indices -> 4 gaps (even count). [0,6,7,8,14]: gaps 6,1,1,6 -> sorted
+      // [1,1,6,6] -> mean of the middle two (1,6) = 3.5, <= 4 passes. Taking
+      // the LOWER-median convention instead would read 1 here (also <=4) —
+      // this case alone can't distinguish the two conventions.
+      expect(isLocallyClustered([0, 6, 7, 8, 14])).toBe(true);
+      // [0,7,8,9,16]: gaps 7,1,1,7 -> sorted [1,1,7,7] -> mean(1,7) = 4,
+      // exactly at the boundary — passes. A lower-median convention would
+      // read 1 here too (still passing), so this still doesn't distinguish
+      // the two conventions on its own.
+      expect(isLocallyClustered([0, 7, 8, 9, 16])).toBe(true);
+      // [0,8,9,10,18]: gaps 8,1,1,8 -> sorted [1,1,8,8] -> mean(1,8) = 4.5,
+      // > 4 — fails under the MEAN convention this function uses. A
+      // lower-median convention would read 1 here (passing) — this is the
+      // case that actually pins the choice: it fails only because the mean,
+      // not the lower value, is what `isLocallyClustered` computes.
+      expect(isLocallyClustered([0, 8, 9, 10, 18])).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // buildOccArrayFromGlobalMatches — direct unit test.
+  // ---------------------------------------------------------------------------
+  describe('buildOccArrayFromGlobalMatches', () => {
+    it('slices matchedSubjectOf into a segment-local occupancy array', () => {
+      // Query positions 0-1 belong to a preceding segment (subject matches
+      // 10, -1); this segment's own range is [2,5).
+      const matchedSubjectOf = Int32Array.from([10, -1, 20, -1, 21]);
+      const occ = buildOccArrayFromGlobalMatches(matchedSubjectOf, 2, 3);
+      expect(occ).toEqual([{ start: 20, end: 20 }, null, { start: 21, end: 21 }]);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Rescue-gate widening (audit Q2b) — the rescue now ALSO fires when the
+  // global pass gave a segment some real matches that fail to form a
+  // qualifying run (not just a literal zero-match), but the rescue's own
+  // result is adopted only if IT forms a qualifying run.
+  // ---------------------------------------------------------------------------
+  describe('rescue-gate widening under Bug C', () => {
+    it('accepts: global pass gives a scattered single match (no run); rescue finds the real contiguous phrase in the anchor window and adopts it', () => {
+      // Same "P blocks C" trap as WS6 test 1: P's own real trailing content
+      // ("denim is durable") is spoken AFTER the disputed "linen from flax",
+      // monotonically blocking the global pass from giving any of "linen
+      // from flax" to c. Unlike WS6 test 1, c's OWN text also contains
+      // "wozzle" — a word that occurs nowhere else, so the global pass
+      // freely (and separately) matches it — giving c matchedCount=1 from
+      // the global pass alone (not the literal 0 the original rescue gate
+      // required), triggering the WIDENED gate.
+      const segments: VideoSegment[] = [
+        makeSegment({ id: 's0', order: 0, text: 'wool comes from sheep', anchorStart: 0 }),
+        makeSegment({ id: 'p', order: 1, text: 'garbled overflow xyzzy plugh mumble denim is durable', anchorStart: 3 }),
+        makeSegment({ id: 'c', order: 2, text: 'linen wozzle from flax', anchorStart: 6 }),
+        makeSegment({ id: 's3', order: 3, text: 'silk is smooth too', anchorStart: 9 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        ...wordTokens('wool comes from sheep', 0.0, 0.4),
+        ...wordTokens('wozzle', 5.5, 0.4),            // c's one free, scattered global match
+        ...wordTokens('linen from flax', 6.0, 0.4),    // c's real, disputed content
+        ...wordTokens('denim is durable', 7.5, 0.4),   // p's real trailing content, spoken AFTER
+        ...wordTokens('silk is smooth too', 9.0, 0.4),
+      ];
+
+      const results = extractSegmentAlignments(segments, tokens);
+
+      // Sanity: p keeps its own trailing match (the trap), same mechanism as
+      // WS6 test 1.
+      expect(results[1]!.matchedWords).toBe(3);
+
+      // The widened rescue recovers "linen"/"from"/"flax" too (all three are
+      // genuinely present, unclaimed, inside c's anchor window) — bridging
+      // "wozzle" is NOT how it qualifies (the rescue's own candidate is
+      // evaluated standalone, replacing the original scattered match
+      // entirely, per the adopt-or-discard design) — "linen from flax" alone
+      // is one clean contiguous run of 3, already well past the required 2.
+      expect(results[2]!.matched).toBe(true);
+      expect(results[2]!.matchedWords).toBe(3);
+      expect(results[2]!.longestRun).toBe(4);
+      expect(results[2]!.recoveredVia).toBe('windowed');
+      expect(results[2]!.t0).toBeCloseTo(6.0, 3);
+    });
+
+    it('discards: global pass gives a scattered single match (no run); rescue finds nothing better, so the ORIGINAL matchedCount/confidence are preserved on the (still unmatched) result', () => {
+      const segments: VideoSegment[] = [
+        makeSegment({ id: 'n0', order: 0, text: 'alpha bravo charlie delta', anchorStart: 0 }),
+        makeSegment({ id: 'c', order: 1, text: 'zephyr wozzle nautical bogus', anchorStart: 4 }),
+        makeSegment({ id: 'n2', order: 2, text: 'echo foxtrot golf hotel', anchorStart: 8 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        ...wordTokens('alpha bravo charlie delta', 0.0, 0.4),
+        ...wordTokens('wozzle', 3.6, 0.4),   // c's ONLY real word — the other 3 never occur anywhere
+        ...wordTokens('echo foxtrot golf hotel', 8.0, 0.4),
+      ];
+
+      const results = extractSegmentAlignments(segments, tokens);
+
+      // The widened gate fires (matchedCount=1, no qualifying run for a
+      // 4-word segment) but the rescue passes find nothing to add — "zephyr"/
+      // "nautical"/"bogus" are genuinely absent from the whole transcript.
+      // The discard path preserves the ORIGINAL global-pass matchedCount/
+      // confidence rather than collapsing them to 0.
+      expect(results[1]!.matched).toBe(false);
+      expect(results[1]!.matchedWords).toBe(1);
+      expect(results[1]!.confidence).toBeCloseTo(0.25, 5);
+      expect(results[1]!.longestRun).toBe(1);
+      expect(results[1]!.recoveredVia).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // R13/coverage interaction (audit Q8) — a segment that fails the run check
+  // still contributes its REAL matchedWords to the coverage numerators.
+  // ---------------------------------------------------------------------------
+  it('a segment failing the run check still contributes its real matchedWords to computeCoverageSummary (audit Q8)', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta' }),
+      // 2 of 5 matched ("kilo","xray" — the first and last word, each
+      // isolated) — recalibrated required run for a 5-word segment is 2
+      // (RUN_SURVIVAL_MIN_RUN_SHORT), but "lima zulu yankee" between them (3
+      // unmatched words) exceeds RUN_SURVIVAL_MAX_HOLE, so the run stays 1
+      // and can't bridge. Confidence (0.4) is also under the density floor
+      // (0.5), so `matched` is false either way — but the 2 real matches
+      // must still count toward coverage.
+      makeSegment({ id: 's1', order: 1, text: 'kilo lima zulu yankee xray' }),
+    ];
+    const tokens = wordTokens('alpha bravo charlie delta kilo filla fillb fillc xray', 0, 0.5);
+    const cov = extractSegmentAlignments(segments, tokens);
+
+    expect(cov[0]!.matched).toBe(true);
+    expect(cov[1]!.matched).toBe(false);
+    expect(cov[1]!.matchedWords).toBe(2);
+
+    const summary = computeCoverageSummary(cov, countTranscriptWords(tokens));
+    // 4 (s0) + 2 (s1, preserved despite matched=false) = 6 matched, out of
+    // 4 + 5 = 9 total scene-doc words.
+    expect(summary.sceneDocCoverage).toBeCloseTo(6 / 9, 5);
   });
 });

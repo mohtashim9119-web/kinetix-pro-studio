@@ -699,9 +699,11 @@ export function evaluateCoverageGate(
 }
 
 /** Why a segment was left off the timeline (doc §3.5(c), R4-4).
- *  Only fully-unmatched segments (no transcript match at all) are skipped;
- *  matched-but-low-confidence segments are KEPT (Bug 2 fix), so 'low
- *  confidence' is no longer a possible skip reason. */
+ *  `matched === false` is the sole gate — a segment with zero true matches,
+ *  OR (Bug C, consecutive-run survival requirement, 2026-08-02) real matched
+ *  words that never form a qualifying contiguous run, is skipped. Either way
+ *  the only possible skip reason remains 'no audio match'; 'low confidence'
+ *  has never been a skip reason since the Bug 2 fix. */
 export type SegmentSkipReason = 'no audio match';
 
 /**
@@ -722,6 +724,11 @@ export interface SkippedSegmentRecord {
   matchedWords?: number;
   totalWords?: number;
   confidence?: number;
+  /** Bug C (consecutive-run survival requirement, 2026-08-02): the longest
+   *  qualifying-shape run found for this segment at sync time — see
+   *  whisperService.ts's AlignResult.longestRun. Undefined on records built
+   *  before this field existed, same convention as the three fields above. */
+  longestRun?: number;
 }
 
 export interface CoveredSegmentFilter {
@@ -745,10 +752,18 @@ export interface CoveredSegmentFilter {
  * matter how weak the confidence — the old app kept every matched segment, and
  * gating on the LOW_CONFIDENCE_RATIO (0.4) threshold here was a regression that
  * dropped legitimately-spoken scenes (e.g. "Navigational charts
- * cross-referenced.", 1/3 words matched → confidence 0.33). Only a fully
- * unmatched segment (confidence 0, `matched === false` — which also covers
- * zero-token/neutral segments by construction) is dropped, and its only
- * possible skip reason is now 'no audio match'.
+ * cross-referenced.", 1/3 words matched → confidence 0.33). A segment with
+ * `matched === false` (which also covers zero-token/neutral segments by
+ * construction) is dropped, and its only possible skip reason is 'no audio
+ * match'.
+ *
+ * Bug C (consecutive-run survival requirement, 2026-08-02) supersedes part of
+ * Bug 2's doctrine: `matched` is no longer simply "at least one word
+ * matched" — a segment's matched words must also form a qualifying
+ * contiguous run (whisperService.ts's `hasQualifyingRun`). A DROPPED segment
+ * can therefore have `matchedWords > 0` and `confidence > 0` — real matches
+ * too scattered to trust — so do not assume a skip record's confidence is
+ * always 0; only `matched === false` is guaranteed.
  *
  * The `covered` flag (matched AND confidence ≥ LOW_CONFIDENCE_RATIO) is
  * deliberately NOT used here anymore — it survives only inside
@@ -785,6 +800,7 @@ export function filterToCoveredSegments(
       matchedWords: cov?.matchedWords,
       totalWords: cov?.totalWords,
       confidence: cov?.confidence,
+      longestRun: cov?.longestRun,
     });
   }
 
@@ -878,7 +894,7 @@ export function makeSyncLogEntry(
   extra?: Pick<
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
-    | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount'
+    | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -916,6 +932,7 @@ export function buildSkipLogEntries(
         matchedWords: record.matchedWords,
         totalWords: record.totalWords,
         confidence: record.confidence,
+        longestRun: record.longestRun,
       },
       timestamp,
     ),

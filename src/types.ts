@@ -400,6 +400,12 @@ export interface SyncLogEntry {
   /** Skip entries only: matchedWords / totalWords at sync time. Undefined on
    *  older entries. */
   confidence?: number;
+  /** Skip entries only (Bug C, consecutive-run survival requirement,
+   *  2026-08-02): the longest qualifying-shape run found for this segment at
+   *  sync time — see whisperService.ts's AlignResult.longestRun. Undefined on
+   *  entries logged before this field existed, same optionality convention as
+   *  matchedWords/totalWords/confidence above. */
+  longestRun?: number;
   /** 'silence-error' entries only (WS4 Feature 3): what the silence detector
    *  reported. Undefined on every other kind. */
   errorMessage?: string;

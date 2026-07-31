@@ -6,7 +6,7 @@
 // holds no log policy and no persistence of its own — the log rides along on
 // the Project blob the existing projectStore already saves.
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Trash2, Copy } from 'lucide-react';
 import type { SyncLogEntry, SyncLogEntryType } from '../types';
 
 interface Props {
@@ -44,20 +44,26 @@ function formatTime(timestamp: number): string {
 
 /** Line 3 of a skip entry — "matched X of Y words (confidence Z.ZZ)", or the
  *  no-content variant when the segment had nothing to match. `undefined` when
- *  any of the three fields is missing (older entries, logged before these
- *  fields existed) — the caller omits the line entirely in that case. */
+ *  any of matchedWords/totalWords/confidence is missing (older entries,
+ *  logged before these fields existed) — the caller omits the line entirely
+ *  in that case. `longestRun` (Bug C, consecutive-run survival requirement,
+ *  2026-08-02) is appended as ", longest run N" when present — display-only,
+ *  no threshold logic here — and simply omitted when absent (older entries),
+ *  same as the other optional fields. */
 function formatMatchLine(
   matchedWords: number | undefined,
   totalWords: number | undefined,
   confidence: number | undefined,
+  longestRun: number | undefined,
 ): string | undefined {
   if (matchedWords === undefined || totalWords === undefined || confidence === undefined) {
     return undefined;
   }
+  const runSuffix = longestRun !== undefined ? `, longest run ${longestRun}` : '';
   if (totalWords === 0) {
-    return 'matched 0 of 0 words (no content to match)';
+    return `matched 0 of 0 words (no content to match)${runSuffix}`;
   }
-  return `matched ${matchedWords} of ${totalWords} words (confidence ${confidence.toFixed(2)})`;
+  return `matched ${matchedWords} of ${totalWords} words (confidence ${confidence.toFixed(2)})${runSuffix}`;
 }
 
 /** The optional second line for WS4's run-level entries. Every field access is
@@ -78,6 +84,34 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
   return undefined;
 }
 
+/** Renders one entry exactly as the panel displays it — reused by the Copy
+ *  button so the copied text can never drift from what's on screen. */
+function formatEntryText(entry: SyncLogEntry): string {
+  const label = (TYPE_STYLES[entry.type] ?? TYPE_STYLES.info).label;
+  const header = `[${formatTime(entry.timestamp)}] [${label}]`;
+  const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
+
+  if (isSkip) {
+    const lines = [`${header} Segment ${entry.segmentIndex! + 1} skipped — ${entry.reason ?? 'no audio match'}`];
+    if (entry.segmentText) {
+      const tag = entry.segmentTag ? `[${entry.segmentTag}] ` : '';
+      lines.push(`${tag}${entry.segmentText}`);
+    }
+    const matchLine = formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence, entry.longestRun);
+    if (matchLine) lines.push(matchLine);
+    return lines.join('\n');
+  }
+
+  const lines = [`${header} ${entry.message}`];
+  const detailLine = formatDetailLine(entry);
+  if (detailLine) lines.push(detailLine);
+  if (entry.segmentText) {
+    const scenePrefix = entry.segmentIndex !== undefined ? `Scene ${entry.segmentIndex + 1}: ` : '';
+    lines.push(`${scenePrefix}"${entry.segmentText}"`);
+  }
+  return lines.join('\n');
+}
+
 export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
@@ -88,10 +122,35 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
   const [manualCollapsed, setManualCollapsed] = useState<boolean | null>(null);
   const collapsed = manualCollapsed ?? syncLog.length === 0;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   // Newest first. `syncLog` is append-ordered (oldest first) on the Project;
   // reverse a COPY so the prop array is never mutated.
   const entries = [...syncLog].reverse();
+
+  const handleCopy = (e: React.MouseEvent): void => {
+    e.stopPropagation();
+    const text = entries.map(formatEntryText).join('\n\n');
+    const onCopied = (): void => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    };
+    navigator.clipboard.writeText(text).then(onCopied).catch(() => {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+        onCopied();
+      } catch (err) {
+        console.warn('Copy sync log failed:', err);
+      }
+    });
+  };
 
   return (
     <div className="border-b border-[#1A1A1A] flex-shrink-0">
@@ -107,6 +166,20 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
         <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 flex-1">
           Sync Log ({syncLog.length})
         </span>
+        {syncLog.length > 0 && (
+          <button
+            onClick={handleCopy}
+            className="p-1 rounded-lg hover:bg-zinc-800 text-gray-600 hover:text-gray-300 transition-colors flex items-center gap-1"
+            title="Copy sync log"
+            aria-label="Copy sync log"
+          >
+            {copied ? (
+              <span className="text-[8px] font-black uppercase tracking-wider">Copied!</span>
+            ) : (
+              <Copy size={12} />
+            )}
+          </button>
+        )}
         {syncLog.length > 0 && (
           <button
             onClick={(e) => { e.stopPropagation(); setShowClearConfirm(true); }}
@@ -137,7 +210,7 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
               // before those fields existed (backward compat).
               const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
               const matchLine = isSkip
-                ? formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence)
+                ? formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence, entry.longestRun)
                 : undefined;
               // WS4 — run-level entries (silence-error / malformed-token) use
               // the generic branch below plus one optional detail line.

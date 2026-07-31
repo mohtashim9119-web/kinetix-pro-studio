@@ -8,6 +8,8 @@ import {
   TEMPORAL_TOLERANCE_RATIO, TEMPORAL_TOLERANCE_MIN_SEC, TEMPORAL_TOLERANCE_MAX_SEC,
   TEMPORAL_BONUS_MAX, TEMPORAL_BONUS_CENTRAL_FRACTION,
   MAX_CONCAT_TOKENS, MAX_CONCAT_GAP_SEC,
+  RUN_SURVIVAL_MAX_HOLE, RUN_SURVIVAL_MIN_RUN_SHORT, RUN_SURVIVAL_MIN_RUN_LONG,
+  RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE, RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP,
 } from './syncConstants';
 // Gap-fill candidacy predicates (2026-08-02 port) — snapBoundaries.ts remains
 // their canonical home (see that file's header for the full derivation of
@@ -404,9 +406,27 @@ export interface AlignResult {
   firstTokenIdx: number;          // token index of the first matched word, -1 if none
   lastTokenIdx: number;           // token index of the last matched word, -1 if none
   confidence: number;             // matched scene-doc words / total scene-doc words (0..1) — R11
-  matched: boolean;               // at least one matched transcript word (confidence > 0)
-  matchedWords: number;           // WS1b: numerator for confidence + the bidirectional coverage metric (§3.3)
+  /** Bug C (consecutive-run survival requirement, 2026-08-02): NO LONGER
+   *  `matchedCount > 0`. A segment must additionally have its matched words
+   *  form at least one qualifying contiguous run — see `hasQualifyingRun`/
+   *  `computeLongestRunWithHoles` and `longestRun` below. A segment can have
+   *  `matchedWords > 0` and STILL be `matched === false` (scattered,
+   *  non-contiguous matches too thin to trust) — this is a real, intended
+   *  outcome, not a bug: see the Bug 2 doctrine reversal in
+   *  syncConstants.ts's RUN_SURVIVAL_* header. */
+  matched: boolean;
+  matchedWords: number;           // WS1b: numerator for confidence + the bidirectional coverage metric (§3.3).
+                                   // Bug C: preserved as the REAL count even when `matched` is false due to
+                                   // an insufficient run — never zeroed, since computeCoverageSummary's
+                                   // coverage numerators read this regardless of `matched` (see audit Q8).
   totalWords: number;             // WS1b: 0 for a zero-token (classification-neutral) segment (§3.1.1 point 4)
+  /** Bug C — the longest qualifying-shape run (matched positions + bridged
+   *  holes, see `computeLongestRunWithHoles`) found for this segment, always
+   *  populated (0 when the segment has no true match at all). Purely
+   *  informational at the type level — `matched` is the derived decision;
+   *  this is what a caller (the sync log) can show the user to explain WHY a
+   *  particular segment survived or was skipped. */
+  longestRun: number;
   audioRegion?: { startSec: number; endSec: number }; // matched transcript time range, present iff matched
   /** Rescue observability (false-positive rescue fix, 2026-07-31) — which
    *  pass (Parts 1-3, WS6) recovered this segment, present iff the rescue ran
@@ -555,6 +575,181 @@ export function findConcatenatingMatches(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Consecutive-run survival requirement (Bug C permanent fix, 2026-08-02)
+// ---------------------------------------------------------------------------
+// See syncConstants.ts's RUN_SURVIVAL_* header comment for the root-cause
+// writeup. Summary: `matched` used to be `matchedCount > 0` — ANY single true
+// word match kept a segment on the timeline, however isolated. A segment now
+// additionally needs its matched words to form at least one qualifying
+// CONTIGUOUS run — see `computeLongestRunWithHoles`/`hasQualifyingRun` below.
+
+/** One query-word position's occupied transcript span, or `null` if that
+ *  position has no true match. `start`/`end` are ABSOLUTE indices into the
+ *  segment-independent `tokenWords` array (the same space `matchedSubjectOf`
+ *  and the rescue passes' `globalIdx`/`tokenStartIdx`/`tokenEndIdx` live in) —
+ *  a single-token match has `start === end`; a Pass-3 concatenated sub-word
+ *  match spans `[tokenStartIdx, tokenEndIdx]`. */
+export type OccEntry = { start: number; end: number } | null;
+
+/**
+ * Builds a segment's occupancy array from whichever source populated its
+ * final match set — the global pass's `matchedSubjectOf` slice (single-token
+ * spans), or a rescue's `localMatches`/`concatMatches` (single-token or
+ * multi-token concatenated spans respectively). Indexed by segment-LOCAL
+ * query position (0-based within the segment, not the global query array).
+ */
+export function buildOccArrayFromGlobalMatches(
+  matchedSubjectOf: Int32Array,
+  rangeStart: number,
+  totalWords: number,
+): OccEntry[] {
+  const occ: OccEntry[] = new Array(totalWords).fill(null);
+  for (let qi = 0; qi < totalWords; qi++) {
+    const sj = matchedSubjectOf[rangeStart + qi]!;
+    if (sj >= 0) occ[qi] = { start: sj, end: sj };
+  }
+  return occ;
+}
+
+/**
+ * Computes the longest run of query-word positions that are either truly
+ * matched or a "hole" (an unmatched position bridged by a run, up to
+ * `maxHole` consecutive holes) — subject to the two structural rules (doc
+ * comment in syncConstants.ts):
+ *   1. A run must begin and end on a MATCHED position — it can never start
+ *      or end on a hole.
+ *   2. Between any two run-adjacent matched anchors (however many holes
+ *      separate them, up to `maxHole`), the transcript-side spans must be
+ *      CONTIGUOUS: the earlier anchor's `end` + 1 must equal the later
+ *      anchor's `start`. This is what actually verifies the hole is a
+ *      genuine paraphrase/deletion inside one continuous utterance — not
+ *      two unrelated coincidental matches an accounting trick bridged. A
+ *      substitution (a wrong word actually spoken in the gap) breaks this,
+ *      because it occupies a transcript slot the pure "hole" arithmetic
+ *      would otherwise skip over.
+ *
+ * Run length = the number of query-word positions spanned (matched
+ * positions + holes inside), NOT the number of matched positions. Returns 0
+ * when `occ` has no matched position at all. Pure; does not read totalWords
+ * bands or thresholds — see `requiredRunLength`/`hasQualifyingRun` for those.
+ */
+export function computeLongestRunWithHoles(occ: OccEntry[], maxHole: number): number {
+  let longest = 0;
+  let runStartPos = -1;    // query position where the current run began
+  let lastAnchorPos = -1;  // query position of the last matched anchor in the current run
+  let lastAnchorEnd = -1;  // that anchor's occ.end (absolute transcript index)
+
+  for (let pos = 0; pos < occ.length; pos++) {
+    const entry = occ[pos];
+    if (!entry) continue; // holes are only ever bridged FROM a matched anchor below
+
+    if (lastAnchorPos < 0) {
+      // First matched anchor seen (or first since the last run broke): starts a new run.
+      runStartPos = pos;
+    } else {
+      const holeCount = pos - lastAnchorPos - 1;
+      const contiguous = lastAnchorEnd + 1 === entry.start;
+      if (holeCount > maxHole || !contiguous) {
+        // Chain breaks here — close out the run ending at the previous anchor,
+        // then start a fresh run at this position.
+        const brokenLength = lastAnchorPos - runStartPos + 1;
+        if (brokenLength > longest) longest = brokenLength;
+        runStartPos = pos;
+      }
+    }
+    lastAnchorPos = pos;
+    lastAnchorEnd = entry.end;
+
+    const currentLength = pos - runStartPos + 1;
+    if (currentLength > longest) longest = currentLength;
+  }
+
+  return longest;
+}
+
+/**
+ * The required longest-run length for a segment of `totalWords` scene-doc
+ * words (syncConstants.ts's RUN_SURVIVAL_* header — threshold recalibration,
+ * second pass, 2026-08-02). Three FLAT, length-independent bands (no ratio
+ * scaling — the original ratio-scaled formula over-demanded on long,
+ * mostly-intact segments; see the header for the production evidence):
+ *   - 1-3 words: 1 (a single true match trivially qualifies a segment this
+ *     short — folds the old `hasQualifyingRun` totalWords===1 special case
+ *     into this same band formula instead of special-casing exactly one
+ *     word count).
+ *   - 4-10 words: RUN_SURVIVAL_MIN_RUN_SHORT (2).
+ *   - 11+ words: RUN_SURVIVAL_MIN_RUN_LONG (4).
+ */
+export function requiredRunLength(totalWords: number): number {
+  if (totalWords <= 3) return 1;
+  if (totalWords <= 10) return RUN_SURVIVAL_MIN_RUN_SHORT;
+  return RUN_SURVIVAL_MIN_RUN_LONG;
+}
+
+/**
+ * Sorts `matchedSubjectIndices`, takes the median of the gaps between
+ * consecutive indices, and reports whether that median sits at or under
+ * RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP — i.e. whether the matches are
+ * tightly grouped rather than scattered across the transcript. Median (not
+ * mean) so that one wildly distant outlier match can't single-handedly
+ * launder an otherwise-scattered set into "clustered", and vice versa.
+ *
+ * For an EVEN number of gaps, this takes the arithmetic MEAN of the two
+ * middle gaps (the standard even-count median), not the lower of the two —
+ * documented here since the spec left the choice open; see this function's
+ * own unit tests for a worked example.
+ *
+ * Degenerate inputs: 0 matched indices has no gaps to measure density from
+ * at all, so it reports NOT clustered (`false`) — there is no positive
+ * evidence to cluster on. Exactly 1 matched index also has no gaps, but a
+ * single point cannot be "scattered" either — it reports clustered (`true`)
+ * trivially. In practice `hasQualifyingRun` only ever calls this after its
+ * own confidence gate has already passed, which requires `matchedCount >= 1`
+ * for any totalWords a real segment can have, so the 0-index case is a
+ * defensive default rather than a path production traffic hits.
+ */
+export function isLocallyClustered(matchedSubjectIndices: readonly number[]): boolean {
+  if (matchedSubjectIndices.length === 0) return false;
+  if (matchedSubjectIndices.length === 1) return true;
+  const sorted = [...matchedSubjectIndices].sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < sorted.length; i++) gaps.push(sorted[i]! - sorted[i - 1]!);
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  const median = gaps.length % 2 === 1 ? gaps[mid]! : (gaps[mid - 1]! + gaps[mid]!) / 2;
+  return median <= RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP;
+}
+
+/**
+ * Whether a segment's match set survives the consecutive-run requirement —
+ * either directly (`computeLongestRunWithHoles` clears `requiredRunLength`),
+ * or via the density fallback (threshold recalibration, second pass,
+ * 2026-08-02): the matches don't form one long-enough run, but are
+ * collectively substantial (confidence at or above
+ * RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE) AND tightly grouped
+ * (`isLocallyClustered`, using each matched position's occupancy `start` as
+ * its transcript-index coordinate). The density check is skipped entirely
+ * (short-circuited by the confidence gate) whenever confidence is too low to
+ * ever pass it, so a zero-match or near-zero-match segment (the heading
+ * shape) never reaches the clustering computation at all.
+ *
+ * Reused unchanged as the widened rescue's own firing gate
+ * (`extractSegmentAlignments`) — a segment already qualifying via density
+ * makes this return `true`, so the rescue block is skipped for it exactly
+ * as it is for a segment that qualifies via a direct run: the rescue only
+ * ever fires for a segment BOTH mechanisms reject.
+ */
+export function hasQualifyingRun(totalWords: number, matchedCount: number, occ: OccEntry[]): boolean {
+  const longestRun = computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE);
+  if (longestRun >= requiredRunLength(totalWords)) return true;
+  const confidence = matchedCount / totalWords;
+  if (confidence < RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE) return false;
+  const matchedSubjectIndices: number[] = [];
+  for (const entry of occ) if (entry !== null) matchedSubjectIndices.push(entry.start);
+  return isLocallyClustered(matchedSubjectIndices);
+}
+
 /**
  * Builds the scene-doc query, aligns it to the transcript with the Hirschberg
  * semi-global aligner, and reads per-segment results off the single global
@@ -613,7 +808,7 @@ export function extractSegmentAlignments(
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({
       t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
-      confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
     }));
   }
 
@@ -745,7 +940,7 @@ export function extractSegmentAlignments(
     if (totalWords === 0) {
       results.push({
         t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1,
-        confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+        confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
       });
       continue;
     }
@@ -767,10 +962,38 @@ export function extractSegmentAlignments(
         lastSub = sj;
       }
     }
+    // Bug C (consecutive-run survival requirement) — the global pass's
+    // occupancy array, built alongside matchedCount/firstSub/lastSub above.
+    // `let`, not `const`: a successfully ADOPTED rescue below replaces it
+    // wholesale with the rescue's own occupancy (see `shouldAdopt`).
+    let occ: OccEntry[] = buildOccArrayFromGlobalMatches(matchedSubjectOf, range.start, totalWords);
 
     // --- Token-stealing rescue (Parts 1-3, WS6) --------------------------
     const seg = segments[si]!;
-    if (matchedCount === 0 && seg.anchorStart !== undefined) {
+    // Bug C rescue-gate widening: the rescue used to fire only on a LITERAL
+    // zero-match (`matchedCount === 0`). It now ALSO fires whenever the
+    // global pass's own matches, however many, fail to form a qualifying
+    // run — e.g. several scattered single-word coincidences with no two
+    // adjacent. `wasZeroMatch` (captured BEFORE the rescue runs) is what
+    // decides the adopt-or-discard rule below: a literal zero-match rescue
+    // is adopted unconditionally (today's behavior, unchanged — it can only
+    // improve from zero); a widened-gate rescue (real matches already
+    // existed) is adopted ONLY if it actually produces a qualifying run,
+    // else the attempt is discarded and the original global-pass match set
+    // stands (see `shouldAdopt` below).
+    //
+    // Density-fallback interaction (threshold recalibration, second pass,
+    // 2026-08-02): `hasQualifyingRun` below is the SAME function used for
+    // `matched` at the end of this loop, so it now returns `true` for a
+    // segment whose global-pass matches qualify via the density fallback
+    // (substantial + clustered) even without one long-enough run. That means
+    // a density-qualifying segment makes this gate's `!hasQualifyingRun(...)`
+    // false, and the rescue block below is skipped entirely for it — exactly
+    // as for a segment that already qualifies via a direct run. The rescue
+    // only ever fires for a segment BOTH mechanisms reject; nothing here had
+    // to change to get that, since the gate and `matched` share one function.
+    const wasZeroMatch = matchedCount === 0;
+    if (!hasQualifyingRun(totalWords, matchedCount, occ) && seg.anchorStart !== undefined) {
       // Forward-ordering bound (false-positive rescue fix) — see the
       // module-level comment by `computeForwardBoundStartSec` above.
       // `undefined` when no later segment has a true global match of its own.
@@ -806,6 +1029,11 @@ export function extractSegmentAlignments(
 
       const segQueryWords = queryWords.slice(range.start, range.end);
       let localMatches: Array<{ queryIdx: number; globalIdx: number }> = [];
+      // Which pass recovered `localMatches`/`concatMatches` below — kept
+      // separate from the outer `recoveredVia` (AlignResult's field) so a
+      // discarded rescue attempt (Bug C's widened-gate "no improvement" case)
+      // never leaks provenance for a claim that was never adopted.
+      let candidateRecoveredVia: 'windowed' | 'global' | 'concat' | null = null;
 
       // Pass 1 — bounded to the segment's expected time window (fast, and
       // correct whenever anchorStart is accurate): Hirschberg with a
@@ -843,7 +1071,7 @@ export function extractSegmentAlignments(
           localMatches = [];
         }
 
-        if (localMatches.length > 0) recoveredVia = 'windowed';
+        if (localMatches.length > 0) candidateRecoveredVia = 'windowed';
       }
 
       // Pass 2 (NEW) — the windowed pass found nothing, either because the
@@ -869,7 +1097,7 @@ export function extractSegmentAlignments(
         // positive this fix targets is actually caught.
         if (pass2Matches.length > 0 && !exceedsForwardBound(pass2Matches.map(m => m.globalIdx))) {
           localMatches = pass2Matches;
-          recoveredVia = 'global';
+          candidateRecoveredVia = 'global';
         }
       }
 
@@ -898,32 +1126,72 @@ export function extractSegmentAlignments(
         // applies unchanged.
         if (pass3Matches.length > 0 && !exceedsForwardBound(pass3Matches.map(m => m.tokenStartIdx))) {
           concatMatches = pass3Matches;
-          recoveredVia = 'concat';
+          candidateRecoveredVia = 'concat';
         }
       }
 
-      if (localMatches.length > 0) {
-        localMatches.sort((a, b) => a.globalIdx - b.globalIdx);
-        matchedCount = localMatches.length;
-        firstSub = localMatches[0]!.globalIdx;
-        lastSub = localMatches[localMatches.length - 1]!.globalIdx;
-      } else if (concatMatches.length > 0) {
-        matchedCount = concatMatches.length;
-        firstSub = concatMatches[0]!.tokenStartIdx;
-        lastSub = concatMatches[concatMatches.length - 1]!.tokenEndIdx;
+      // Adopt-or-discard (Bug C refinement, audit Q2b): build the candidate
+      // occupancy/counts from whichever pass found something, then decide
+      // whether to commit them. A literal zero-match rescue (`wasZeroMatch`)
+      // adopts unconditionally — it can only improve on zero, exactly as
+      // before this fix. A widened-gate rescue (the global pass already had
+      // some real matches, just not a qualifying run) adopts ONLY if the
+      // candidate itself produces a qualifying run — otherwise the rescue
+      // attempt is discarded entirely and the original global-pass
+      // occ/matchedCount/firstSub/lastSub (already sitting in those `let`s,
+      // untouched below) stand as the final result. Forward-bound rejection
+      // composes unchanged here: a rejected claim already left
+      // localMatches/concatMatches empty, so this block never runs for it.
+      if (localMatches.length > 0 || concatMatches.length > 0) {
+        const candidateOcc: OccEntry[] = new Array(totalWords).fill(null);
+        let candidateMatchedCount: number;
+        let candidateFirstSub: number;
+        let candidateLastSub: number;
+        if (localMatches.length > 0) {
+          localMatches.sort((a, b) => a.globalIdx - b.globalIdx);
+          candidateMatchedCount = localMatches.length;
+          candidateFirstSub = localMatches[0]!.globalIdx;
+          candidateLastSub = localMatches[localMatches.length - 1]!.globalIdx;
+          for (const m of localMatches) candidateOcc[m.queryIdx] = { start: m.globalIdx, end: m.globalIdx };
+        } else {
+          candidateMatchedCount = concatMatches.length;
+          candidateFirstSub = concatMatches[0]!.tokenStartIdx;
+          candidateLastSub = concatMatches[concatMatches.length - 1]!.tokenEndIdx;
+          for (const m of concatMatches) candidateOcc[m.queryIdx] = { start: m.tokenStartIdx, end: m.tokenEndIdx };
+        }
+
+        const shouldAdopt = wasZeroMatch || hasQualifyingRun(totalWords, candidateMatchedCount, candidateOcc);
+        if (shouldAdopt) {
+          matchedCount = candidateMatchedCount;
+          firstSub = candidateFirstSub;
+          lastSub = candidateLastSub;
+          occ = candidateOcc;
+          recoveredVia = candidateRecoveredVia;
+        }
       }
     }
 
     const confidence = matchedCount / totalWords;
-    const matched = matchedCount > 0;
+    const longestRun = computeLongestRunWithHoles(occ, RUN_SURVIVAL_MAX_HOLE);
+    // `matched` is `hasQualifyingRun`'s full decision — a direct qualifying
+    // run OR the density fallback (threshold recalibration, second pass,
+    // 2026-08-02; see syncConstants.ts's RUN_SURVIVAL_* header). No
+    // totalWords===1 special case here anymore: `requiredRunLength` folds
+    // that into its own 1-3-word band (required run of 1), so a single true
+    // match on a 1-3-word segment already clears the plain run check.
+    const matched = hasQualifyingRun(totalWords, matchedCount, occ);
 
-    // Uncovered segment (no matched transcript word): no audio region. WS1a does
+    // Uncovered segment (no qualifying matched run): no audio region. WS1a does
     // not gate on this yet (WS1b wires the abort gate) — anchor at the previous
     // boundary as a placeholder so the unchanged downstream stages see no hole.
+    // Bug C: matchedWords/confidence are the REAL counts, never zeroed here —
+    // computeCoverageSummary's coverage numerators read matchedWords regardless
+    // of `matched` (audit Q8), so zeroing it here would silently under-report
+    // coverage for a segment that had real (if insufficiently contiguous) matches.
     if (!matched) {
       results.push({
         t0: prevAnchor, t1: prevAnchor, firstTokenIdx: -1, lastTokenIdx: -1,
-        confidence, matched, matchedWords: 0, totalWords,
+        confidence, matched, matchedWords: matchedCount, totalWords, longestRun,
       });
       continue;
     }
@@ -953,7 +1221,7 @@ export function extractSegmentAlignments(
 
     results.push({
       t0, t1, firstTokenIdx, lastTokenIdx, confidence, matched,
-      matchedWords: matchedCount, totalWords,
+      matchedWords: matchedCount, totalWords, longestRun,
       audioRegion: { startSec: t0, endSec: rawT1 },
       ...(recoveredVia !== null
         ? { recoveredVia, recoveredRegion: { startSec: t0, endSec: rawT1 } }
@@ -1050,7 +1318,7 @@ export function alignScenestoTranscript(
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({
       t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
-      confidence: 0, matched: false, matchedWords: 0, totalWords: 0,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
     }));
   }
 
