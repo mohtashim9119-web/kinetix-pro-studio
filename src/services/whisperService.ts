@@ -794,6 +794,7 @@ export function hasQualifyingRun(totalWords: number, matchedCount: number, occ: 
 export function extractSegmentAlignments(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
+  audioDuration?: number,
 ): AlignResult[] {
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({
@@ -913,7 +914,15 @@ export function extractSegmentAlignments(
     return min;
   }
 
-  const audioDuration = tokens[tokens.length - 1]?.endSec ?? 0;
+  // Row 8a (Contract 1→2, assumption 8): the caller's probed `audioDuration`
+  // is the true audio length; the last token's endSec only approximates it
+  // and misses trailing silence after the last spoken word. Fall back to the
+  // token-derived approximation only when the caller has no probed value to
+  // give (every existing direct caller of this function, incl. the
+  // regression-locked syncTiming.test.ts suite) — this keeps the parameter
+  // additive rather than forcing every one of those call sites to invent a
+  // duration for a synthetic fixture that never had a real probe.
+  const rescueWindowAudioEnd = audioDuration ?? (tokens[tokens.length - 1]?.endSec ?? 0);
 
   // Per-segment extraction from the single global alignment (doc §3.1.1, R11):
   //   t0 = startSec of the FIRST matched transcript word in the segment's range
@@ -991,7 +1000,7 @@ export function extractSegmentAlignments(
       const exceedsForwardBound = (globalIdxs: readonly number[]): boolean =>
         forwardBoundStartSec !== undefined && earliestClaimStartSec(globalIdxs) >= forwardBoundStartSec;
       const expectedStart = seg.anchorStart;
-      const expectedEnd = segments[si + 1]?.anchorStart ?? audioDuration;
+      const expectedEnd = segments[si + 1]?.anchorStart ?? rescueWindowAudioEnd;
       const rawDuration = Math.max(0, expectedEnd - expectedStart);
       const tolerance = clamp(TEMPORAL_TOLERANCE_RATIO * rawDuration, TEMPORAL_TOLERANCE_MIN_SEC, TEMPORAL_TOLERANCE_MAX_SEC);
       const windowStart = expectedStart - tolerance;
@@ -1243,6 +1252,21 @@ export function extractSegmentAlignments(
 // token. useWhisper's `alignFromCache` returns the filtered array for exactly
 // this reason.
 
+/** One dropped token, captured at the point `filterMalformedTokens` rejected
+ *  it — the drop-distribution evidence Contract 1→2's `analyzeDropDistribution`
+ *  validator (R1) buckets by time. `startSec`/`endSec`/`text` are the RAW
+ *  pre-filter values, including whatever garbage (NaN, Infinity, negative)
+ *  triggered the drop — a validator bucketing by time needs the real number,
+ *  not a sanitized stand-in. */
+export interface TokenDrop {
+  /** Position in the RAW pre-filter `tokens` array. */
+  index: number;
+  reason: 'non-finite' | 'negative-start' | 'inverted-or-zero-duration' | 'past-audio-end' | 'empty-text';
+  startSec: number;
+  endSec: number;
+  text: string;
+}
+
 /** What `filterMalformedTokens` produced — the surviving tokens plus the counts
  *  the sync log reports. `tokens` is the array every later stage must use. */
 export interface MalformedTokenFilterResult {
@@ -1251,23 +1275,28 @@ export interface MalformedTokenFilterResult {
   skippedCount: number;
   /** Pre-filter token count — the denominator the log entry shows. */
   totalTokens: number;
+  /** One record per dropped token, in RAW pre-filter order. */
+  drops: TokenDrop[];
 }
 
 /**
  * Drops tokens whose timestamps or text make them unusable for alignment. Any
  * ONE of these disqualifies a token (doc decision 14a):
  *
- *   - `startSec` or `endSec` is NaN or Infinite
- *   - `startSec < 0`
+ *   - `startSec` or `endSec` is NaN or Infinite               → 'non-finite'
+ *   - `startSec < 0`                                          → 'negative-start'
+ *   - `startSec >= endSec` (zero or negative duration)        → 'inverted-or-zero-duration'
  *   - `endSec > audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC`
- *   - `startSec >= endSec` (zero or negative duration)
- *   - the text is empty / whitespace-only once normalized
+ *                                                              → 'past-audio-end'
+ *   - the text is empty / whitespace-only once normalized     → 'empty-text'
  *
  * The end-of-audio check is skipped entirely when `audioDuration` is not a
  * usable positive finite number — an unknown duration must not cause every
  * token to be discarded.
  *
- * Pure: returns a new array, never mutates the input.
+ * Pure: returns a new array, never mutates the input. Single-pass (not
+ * `.filter()`) so each rejection can be captured as a `TokenDrop` at the
+ * point it's decided, in the same order tested above.
  */
 export function filterMalformedTokens(
   tokens: TranscriptToken[],
@@ -1276,24 +1305,50 @@ export function filterMalformedTokens(
   const checkAgainstEnd = Number.isFinite(audioDuration) && audioDuration > 0;
   const maxEnd = audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC;
 
-  const kept = tokens.filter(t => {
+  const kept: TranscriptToken[] = [];
+  const drops: TokenDrop[] = [];
+
+  for (let index = 0; index < tokens.length; index++) {
+    const t = tokens[index]!;
     const t0 = t?.startSec;
     const t1 = t?.endSec;
-    if (!Number.isFinite(t0) || !Number.isFinite(t1)) return false;
-    if (t0 < 0) return false;
-    if (t0 >= t1) return false;
-    if (checkAgainstEnd && t1 > maxEnd) return false;
+    const text = t?.text ?? '';
+    const drop = (reason: TokenDrop['reason']): void => {
+      drops.push({ index, reason, startSec: t0 ?? NaN, endSec: t1 ?? NaN, text });
+    };
+
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) {
+      drop('non-finite');
+      continue;
+    }
+    if (t0 < 0) {
+      drop('negative-start');
+      continue;
+    }
+    if (t0 >= t1) {
+      drop('inverted-or-zero-duration');
+      continue;
+    }
+    if (checkAgainstEnd && t1 > maxEnd) {
+      drop('past-audio-end');
+      continue;
+    }
     // Text that normalizes to nothing (punctuation-only, whitespace-only) can
     // never match a scene-doc word, but its timestamps can still be picked as a
     // segment edge. Drop it here rather than letting it anchor a boundary.
-    if (normalize(t?.text ?? '').length === 0) return false;
-    return true;
-  });
+    if (normalize(text).length === 0) {
+      drop('empty-text');
+      continue;
+    }
+
+    kept.push(t);
+  }
 
   return {
     tokens: kept,
     skippedCount: tokens.length - kept.length,
     totalTokens: tokens.length,
+    drops,
   };
 }
 
@@ -1301,6 +1356,7 @@ export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   silences: SilenceInterval[] = [],
+  audioDuration?: number,
 ): SegmentAlignment[] {
   const _instrOn = alignInstrEnabled();
   const _passT0 = _instrOn ? performance.now() : 0;
@@ -1313,7 +1369,7 @@ export function alignScenestoTranscript(
   }
 
   // Hirschberg semi-global alignment + per-segment extraction (doc §3.1/§3.1.1).
-  const results = extractSegmentAlignments(segments, tokens);
+  const results = extractSegmentAlignments(segments, tokens, audioDuration);
 
   // Step 2 — override t1 from neighbor anchors.
   // Each unlocked segment's right boundary is set to the next segment's t0 anchor

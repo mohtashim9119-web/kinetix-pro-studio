@@ -415,6 +415,16 @@ export interface SyncLogEntry {
   /** 'malformed-token' entries only: the pre-filter token count — the
    *  denominator for skippedTokenCount. */
   totalTokenCount?: number;
+  /** Pipeline Contract Program (docs/sync-pipeline-contract-plan.md §4) —
+   *  additive severity axis, orthogonal to `type`. Undefined on every entry
+   *  logged before this field existed; §4 documents a default-severity
+   *  mapping from `type` for rendering those. Only entries built from a
+   *  contract validator's `ContractViolation` set this today. */
+  severity?: 'info' | 'warning' | 'error';
+  /** Pipeline Contract Program (§4): "every WARNING and every ERROR carries
+   *  a user-facing fix hint" — something the USER can do, not a developer
+   *  pointer. Undefined on entries with no `severity` and on INFO entries. */
+  fixHint?: string;
 }
 
 /** One Apply Sync run, rolled up. Written alongside that run's entries. */

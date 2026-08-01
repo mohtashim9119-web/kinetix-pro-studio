@@ -407,6 +407,32 @@ export const RUN_SURVIVAL_MIN_RUN_LONG = 4;   // totalWords >= 11
 export const RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE = 0.5;
 export const RUN_SURVIVAL_DENSITY_MAX_MEDIAN_GAP = 4;
 
+// --- Drop-clustering validator (Pipeline Contract Program, Pair 1, Risk
+// Register R1 — docs/sync-pipeline-contract-plan.md §5; UNRELATED to this
+// file's own "architecture doc §3.2, R1" hyphen carve-out referenced below,
+// a different numbering scheme from the earlier sync rewrite) -------------
+// Risk R1: a production run dropped 169/1973 (~8.6%) malformed tokens
+// (whisperService.ts's filterMalformedTokens) and the count was logged, but
+// its DISTRIBUTION was not — 169 drops spread evenly across a long transcript
+// is noise; 169 drops inside one 20-second stretch is a corrupted region that
+// will misplace a boundary and produce an unexplained skip nearby. Nothing
+// distinguished the two before this validator (syncContracts.ts's
+// analyzeDropDistribution).
+//
+// These three are the task's own stated starting values, not yet calibrated
+// against a real project's drop distribution the way RUN_SURVIVAL_* above
+// was — stated honestly rather than dressed up as measured. Re-tune only with
+// fixture/production evidence that the rule false-fires or misses a real
+// corrupted stretch (see this file's own WS5 preamble on how the OTHER
+// thresholds here were locked, as the model to follow).
+export const DROP_CLUSTERING_WINDOW_SEC = 10;
+// A window's share of all drops strictly above this ratio is a violation.
+export const DROP_CLUSTERING_RATIO_THRESHOLD = 0.4;
+// Below this many total drops, a single window can cross the ratio threshold
+// on pure small-sample noise (e.g. 2 of 3 drops sharing a window is 67% but
+// tells you nothing) — the check is skipped entirely below this floor.
+export const DROP_CLUSTERING_MIN_DROPS = 5;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

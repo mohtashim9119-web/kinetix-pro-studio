@@ -9,7 +9,9 @@ import {
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
-import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken } from '../types';
+import { validate1to2 } from '../services/syncContracts';
+import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, appendSyncLogEntries } from '../services/syncLog';
+import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
 
 /**
  * Fetches the voiceover blob and scans it for silence.
@@ -88,7 +90,7 @@ async function alignSegmentsFromCachedTranscript(
     );
   }
 
-  const alignments = alignScenestoTranscript(segments, usableTokens, silences);
+  const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs);
   const updated = distributeSegmentTimes(segments, alignments);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
@@ -239,12 +241,19 @@ export function useWhisper(): UseWhisperApi {
         const silenceResult = await fetchAndDetectSilences(audioAsset);
         if (generationRef.current !== generation) return;
 
-        // WS4 Features 3 + 4 on the fresh-transcription path. This path has no
-        // syncRunId — it is the STAGING-time transcription, not an Apply Sync
-        // run — so there is no run to attach a SyncLogEntry to; the failures are
-        // surfaced on the console here, and the Apply Sync that follows runs
-        // through alignFromCache, which does emit log entries for both. The
-        // degradation behaviour is identical on both paths.
+        // WS4 Features 3 + 4 on the fresh-transcription path, plus the R11
+        // staging-run-id mechanism (Pipeline Contract Program, Pair 1, Step 7,
+        // docs/sync-pipeline-contract-plan.md §3): this path now mints its own
+        // log entries by REUSING `jobId` as the syncRunId (no new mint) —
+        // SyncLogPanel already groups entries by syncRunId, so this renders as
+        // its own summary-less run. The Apply Sync that follows still re-emits
+        // the same silence/malformed-token findings via alignFromCache (the
+        // two runs can legitimately see different data if the user re-stages
+        // in between), and the existing console.warn calls below are KEPT for
+        // now — their removal is a later-pair decision (§5 console-only
+        // inventory), not part of this wiring.
+        const syncRunId = jobId;
+        const syncRunAt = Date.now();
         const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
         if (silenceResult.status === 'error') {
           console.warn(
@@ -259,14 +268,33 @@ export function useWhisper(): UseWhisperApi {
           );
         }
 
-        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences);
+        // Contract 1→2 validator (syncContracts.ts) — pure, zero behavior
+        // change; only ever adds log entries below, never alters `filtered`
+        // or anything downstream of it.
+        const violations = validate1to2(filtered.tokens, filtered.drops, filtered.totalTokens, durationSecs);
+        const stagingLogEntries: SyncLogEntry[] = [
+          ...(silenceResult.status === 'error'
+            ? [buildSilenceErrorEntry(syncRunId, silenceResult.errorMessage, syncRunAt)]
+            : []),
+          ...(filtered.skippedCount > 0
+            ? [buildMalformedTokenEntry(syncRunId, filtered.skippedCount, filtered.totalTokens, syncRunAt, filtered.drops)]
+            : []),
+          ...violations.map(v => buildContractViolationEntry(syncRunId, v, syncRunAt)),
+        ];
+
+        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences, durationSecs);
         const finalSegments = distributeSegmentTimes(segments, alignments);
 
         // Store transcript tokens before the segment gate — the transcript is valid
         // for this audio even if alignment is rejected due to a scene structure change.
         // Preserving tokens here enables Option A caching on the next re-sync.
         onProjectUpdated(p => ({
-          ...p,
+          // WS-logs — fold this run's entries in FIRST, same convention
+          // App.tsx's Apply Sync commit uses (appendSyncLogEntries is pure and
+          // only touches syncLog/syncRunSummaries). No summary: this staging
+          // run has no segment-coverage outcome to roll up, only whatever
+          // silence/malformed-token/contract findings it produced.
+          ...appendSyncLogEntries(p, stagingLogEntries, undefined),
           lastTranscribedAssetId: audioAsset.id,
           // Only overwrite when we actually have a File to compute from — the
           // re-sync call site (App.tsx) resolves a committed Asset that may

@@ -3576,7 +3576,7 @@ describe('filterMalformedTokens (WS4 Feature 4)', () => {
 
   it('returns an empty result for an empty transcript', () => {
     expect(filterMalformedTokens([], AUDIO_LEN)).toEqual({
-      tokens: [], skippedCount: 0, totalTokens: 0,
+      tokens: [], skippedCount: 0, totalTokens: 0, drops: [],
     });
   });
 
@@ -3609,6 +3609,56 @@ describe('filterMalformedTokens (WS4 Feature 4)', () => {
     const fromClean = alignScenestoTranscript(segments, clean, []);
     const fromFiltered = alignScenestoTranscript(segments, filtered.tokens, []);
     expect(fromFiltered.map(a => [a.t0, a.t1])).toEqual(fromClean.map(a => [a.t0, a.t1]));
+  });
+
+  // -------------------------------------------------------------------------
+  // Drop-reason capture (Pipeline Contract Program, Pair 1, Step 5) — the
+  // single-pass rewrite must map each rejection condition to exactly one
+  // reason string, at the token's RAW pre-filter index, with the RAW
+  // (unsanitized) startSec/endSec/text — additive to the fields above.
+  // -------------------------------------------------------------------------
+
+  it('captures the correct reason string and raw pre-filter index for each rejection type', () => {
+    const result = filterMalformedTokens(
+      [
+        tok(NaN, 2),                                                          // 0: non-finite
+        tok(-0.5, 1),                                                         // 1: negative-start
+        tok(3, 3),                                                            // 2: inverted-or-zero-duration
+        tok(9, AUDIO_LEN + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC + 0.01),    // 3: past-audio-end
+        tok(1, 2, ''),                                                        // 4: empty-text
+        tok(5, 6, 'good'),                                                    // 5: kept
+      ],
+      AUDIO_LEN,
+    );
+
+    expect(result.tokens.map(t => t.text)).toEqual(['good']);
+    expect(result.drops.map(d => ({ index: d.index, reason: d.reason }))).toEqual([
+      { index: 0, reason: 'non-finite' },
+      { index: 1, reason: 'negative-start' },
+      { index: 2, reason: 'inverted-or-zero-duration' },
+      { index: 3, reason: 'past-audio-end' },
+      { index: 4, reason: 'empty-text' },
+    ]);
+  });
+
+  it('captures RAW startSec/endSec/text on each drop, including non-finite garbage', () => {
+    const result = filterMalformedTokens(
+      [tok(NaN, Infinity, 'garbled'), tok(-3, -1, 'bad')],
+      AUDIO_LEN,
+    );
+    expect(result.drops).toEqual([
+      { index: 0, reason: 'non-finite', startSec: NaN, endSec: Infinity, text: 'garbled' },
+      { index: 1, reason: 'negative-start', startSec: -3, endSec: -1, text: 'bad' },
+    ]);
+  });
+
+  it('drops.length always equals skippedCount, indices pointing at the raw array', () => {
+    const result = filterMalformedTokens(
+      [tok(0, 1, 'one'), tok(-1, 2, 'bad'), tok(1, 2, 'two'), tok(5, 5, 'bad'), tok(2, 3, 'three')],
+      AUDIO_LEN,
+    );
+    expect(result.drops).toHaveLength(result.skippedCount);
+    expect(result.drops.map(d => d.index)).toEqual([1, 3]);
   });
 });
 
@@ -4559,6 +4609,97 @@ describe('WS6 — per-segment temporal-bounding rescue', () => {
     expect(logSpy.mock.calls.filter(args => String(args[0]).startsWith('[align-recover]')).length).toBe(0);
 
     logSpy.mockRestore();
+  });
+});
+
+// ===========================================================================
+// Row 8a (Pipeline Contract Program, Pair 1, Contract 1→2 assumption 8,
+// docs/sync-pipeline-contract-plan.md §2) — the last segment's rescue-window
+// sizing site (extractSegmentAlignments' `expectedEnd = segments[si+1]?.
+// anchorStart ?? audioDuration`) now takes the caller's TRUE probed
+// audioDuration as an explicit (optional) parameter, instead of always
+// falling back to `tokens[tokens.length-1].endSec` — the last WORD's end,
+// which is blind to real trailing silence after it. The formula itself is
+// unchanged; only the input value is corrected when the caller has it.
+// ===========================================================================
+describe('Row 8a — last-segment rescue window sized from the probed audioDuration', () => {
+  it('fails to recover the last segment\'s true words with the token-derived fallback, succeeds once the true probed duration is passed', () => {
+    // P's own trailing content (8 words) traps "last" (4 words) at zero true
+    // matches in the (unchanged) global pass — same "P blocks C" mechanism as
+    // the WS6 cases above. P's trailing tokens are the LAST element of the
+    // `tokens` array (so they decide the token-derived fallback) but are
+    // deliberately given an EARLY startSec (1.0s) — array position drives the
+    // global pass (text-only, time-blind); startSec drives the fallback
+    // formula. This decouples "what the fallback end computes to" from "what
+    // traps the segment", which is what makes this a clean test of the
+    // fallback VALUE rather than of the trap mechanism itself.
+    //
+    // A single decoy "omega" sits at t=4.0s, inside the SMALL fallback
+    // window built from that early trailing content. "last"'s TRUE, full
+    // 4-word run sits far away at t=50s — reachable only once the caller's
+    // real probed audioDuration (60s) is threaded through, widening the
+    // window enough to reach it.
+    const pTrail = 'torque plexus quiver zircon nimbus krypton xenon argon'; // 8 words > last's 4
+    const target = 'omega whiskey xray yankee';
+
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: `alpha bravo ${pTrail}`, anchorStart: 0 }),
+      makeSegment({ id: 'last', order: 1, text: target, anchorStart: 5 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo', 0.0, 0.4),  // P's own leading match
+      ...wordTokens('omega', 4.0, 0.4),         // decoy — inside the SMALL fallback window only
+      ...wordTokens(target, 50.0, 0.4),         // "last"'s TRUE content, reachable only via the fix
+      ...wordTokens(pTrail, 1.0, 0.4),          // P's trailing — array-LAST (drives the fallback
+      // formula) but given an early startSec, so the fallback's
+      // `tokens[tokens.length-1].endSec` computes to ~4.2s, not anywhere
+      // near "last"'s real audio position.
+    ];
+
+    // Token-derived fallback (no audioDuration passed): the window never
+    // reaches "last"'s true words. The rescue still adopts the lone decoy
+    // (wasZeroMatch adopts unconditionally) but one matched word out of four
+    // can't form the qualifying run a 4-word segment requires — matched
+    // stays false.
+    const fallback = extractSegmentAlignments(segments, tokens);
+    expect(fallback[1]!.matched).toBe(false);
+    expect(fallback[1]!.matchedWords).toBe(1);
+    expect(fallback[1]!.longestRun).toBe(1);
+
+    // True probed duration (60s — long enough to cover the real trailing
+    // content at 50-51.6s): the SAME window formula, fed the correct input,
+    // now reaches "last"'s real words. Hirschberg prefers the full 4-word
+    // run over the isolated decoy (strictly higher-scoring), so the rescue
+    // recovers all 4, not just the decoy.
+    const probed = extractSegmentAlignments(segments, tokens, 60);
+    expect(probed[1]!.matched).toBe(true);
+    expect(probed[1]!.matchedWords).toBe(4);
+    expect(probed[1]!.longestRun).toBe(4);
+    expect(probed[1]!.recoveredVia).toBe('windowed');
+    expect(probed[1]!.t0).toBeCloseTo(50.0, 3);
+    expect(probed[1]!.t1).toBeCloseTo(51.6, 3);
+  });
+
+  it('the optional audioDuration parameter does not change output for existing (no-audioDuration) call sites', () => {
+    // Same "last-segment window" shape as WS6 case 9 above — the point here
+    // is narrower: calling extractSegmentAlignments with its ORIGINAL 2-arg
+    // signature must still produce byte-identical results to before this
+    // parameter existed (the additive-parameter, zero-behavior-change
+    // guarantee this whole pair's fixes are held to).
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'p', order: 0, text: 'alpha bravo torque plexus', anchorStart: 0 }),
+      makeSegment({ id: 'last', order: 1, text: 'omega', anchorStart: 5 }),
+    ];
+    const tokens: TranscriptToken[] = [
+      ...wordTokens('alpha bravo', 0.0, 0.4),
+      ...wordTokens('omega', 7.9, 0.5),
+      ...wordTokens('torque plexus', 10.0, 0.4),
+    ];
+
+    const results = extractSegmentAlignments(segments, tokens);
+    expect(results[1]!.matched).toBe(true);
+    expect(results[1]!.matchedWords).toBe(1);
+    expect(results[1]!.t0).toBeCloseTo(7.9, 3);
   });
 });
 
