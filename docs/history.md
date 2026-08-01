@@ -2350,3 +2350,89 @@ unavailable to snap against) — stays open, deferred to Pair 6 as originally pl
 unblock or shorten the contract program; Pair 1 audit is next.
 
 **Verification.** `tsc --noEmit` clean. `vitest` **1165 → 1199** (34 new tests, this commit).
+
+---
+
+## Pipeline Contract Program Pair 1 — Contract 1→2 Shipped (2026-08-01)
+
+Pair 1 (Transcription → Normalization) closed out per `docs/sync-pipeline-contract-plan.md`'s §3
+per-pair workflow. Three code commits, in order, plus this docs commit:
+
+- `684060a` — `refactor(sync): extract log-entry builders from App.tsx into services/syncLog.ts`
+  (pure move, prerequisite — see deviations below)
+- `c7db7cc` — `chore(sync): remove dead code — unreachable alreadyTranscribed branch, dead
+  parseTimestamp, unread _totalDuration param`
+- `e7fb367` — `feat(sync): Contract 1→2 validators — drop-distribution + token-ordering,
+  staging-path log reporting, rescue-window audioDuration fix`
+
+Manually verified in the dev app today: staging-path log entries render with a drop-reason
+breakdown on a real project, Apply Sync output is unchanged, and the new validators produced no
+false positives against real data.
+
+**What shipped.** `filterMalformedTokens` (`whisperService.ts`) now records a `TokenDrop`
+(index/reason/raw values) per rejection instead of only a count. `services/syncContracts.ts` adds
+two Contract 1→2 validators — `analyzeDropDistribution` (Risk R1: flags a WARNING when more than
+`DROP_CLUSTERING_RATIO_THRESHOLD` of a run's drops cluster inside one
+`DROP_CLUSTERING_WINDOW_SEC` window, skipped below `DROP_CLUSTERING_MIN_DROPS` total drops) and
+`validateTokenOrdering` (assumption 5: flags a WARNING on any ascending-time inversion in the
+filtered token array) — combined behind `validate1to2`. The staging-time transcription path
+(`useWhisper.ts`'s `startTranscription`) now mints/reuses its transcription `jobId` as a
+`syncRunId` and appends silence-failure / malformed-token / contract-violation entries to the
+project's sync log via `appendSyncLogEntries`, same as the Apply Sync path already did — closing
+R11 (staging-path findings were previously console-only). `extractSegmentAlignments` accepts an
+optional true probed `audioDuration` and uses it for the last-segment rescue window instead of
+the token-derived approximation (`tokens[tokens.length-1].endSec`, which misses trailing silence
+after the last spoken word) — both production call sites in `useWhisper.ts` now pass it.
+`SyncLogEntry` widens with `severity`/`fixHint` fields (plan §4: every WARNING/ERROR carries a
+user-facing fix hint). Test count: 1199 → 1219.
+
+**Four deviations from the implementation prompt, and why each was correct:**
+
+1. **`audioDuration` made an optional param, not required.** `extractSegmentAlignments` gained
+   `audioDuration?: number` rather than a required parameter, keeping the token-derived fallback
+   for callers that don't supply it. Forcing it would have required inventing a synthetic duration
+   at roughly 105 existing `syncTiming.test.ts` call sites that test this function directly against
+   hand-built fixtures with no real probed duration — churn with no correctness upside, since those
+   fixtures' token-derived approximation is already correct for their own synthetic audio. Both
+   production call sites pass the real value; the fallback is a documented residual, not a silent
+   gap (see the plan's assumption-8 row).
+2. **`jobId` reused as `syncRunId` on the staging path, no fresh mint.** The plan's R11 entry left
+   open whether a fresh UUID or the existing transcription job id should tag staging-path log
+   entries. Reusing `jobId` was chosen because it already uniquely identifies one staging
+   transcription attempt (it drives `TranscriptionStatus.jobId` and the abort/generation-counter
+   machinery) — minting a second id would create two identifiers for the same event with no
+   distinct purpose for either.
+3. **Lowercase `severity` values and a plain `message` field**, per plan §3/§4's own examples,
+   rather than inventing new casing or a differently-named field — `ContractViolation` and the
+   `SyncLogEntry` fields it feeds were built to match the plan's stated shape exactly, not a
+   reinterpretation of it.
+4. **Row 8a (rescue-window `audioDuration`) tests use hand-built fixtures, not a captured
+   production trace.** The plan's evidence for assumption 8 was a code-reading argument (token end
+   ≠ probed duration), not a production repro with recorded numbers — so `syncTiming.test.ts`'s new
+   Row 8a tests construct a minimal synthetic case (a last segment whose expected window only makes
+   sense against the true audio length) rather than replaying an unavailable real trace.
+
+**Plan-doc corrections applied in this commit** (full detail in
+`docs/sync-pipeline-contract-plan.md` itself, not restated here): the §2 assumption table for
+Contract 1→2 (rows 5–8) updated to the audit's verified verdicts; R1 marked INSTRUMENTED, not yet
+production-calibrated; R11 marked RESOLVED WITH CORRECTIONS — the plan's own "Option A branch
+needs a fresh UUID" text was wrong (that branch was proven dead and deleted, not wired), its claim
+that `SyncLogPanel` groups by `syncRunId` was wrong (it's a flat reverse-chronological list, zero
+references to the field), and the `syncLog.ts` extraction it never mentioned turned out to be a
+hard prerequisite (`useWhisper.ts` cannot import from `App.tsx` without a circular dependency); the
+dead-`parseTimestamp` citation was corrected (it was cited as live JS code but had zero references
+— the Rust `parse_timestamp` in `whisper.rs` is the actual live parser); Row 7 (silence ordering)
+recorded as confirmed-in-practice by reading every producer call site, with the runtime assertion
+itself deferred to Pair 6; the `Verified-against-HEAD` stamp bumped to `e7fb367`.
+
+**Observed production evidence.** Re-running the drop capture against the real project that
+originally surfaced Risk R1 (169 of 1973 tokens dropped, ~8.6%) broke the count down for the first
+time: **139 `empty-text` + 30 `inverted-or-zero-duration`**, zero `non-finite`/`negative-start`/
+`past-audio-end` drops. Neither new validator fired against this project's real data — no
+clustering above the 40% threshold, no token-ordering inversions — a clean pass that reflects this
+particular project's drops not being concentrated in one corrupted stretch, not an absence of
+checking. The `DROP_CLUSTERING_*` constants remain the plan's stated starting values, unvalidated
+against a genuinely clustered case.
+
+**Next.** A user-reported regression (long-pause voiceover audio producing incorrect sync) outranks
+Pair 2 and is queued as an immediate audit before Contract 2→3 work begins — see `project-state.md`.

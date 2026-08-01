@@ -413,6 +413,27 @@ src/
                      #   accepted trade-off on the new tiny band (see syncConstants.ts's own
                      #   derivation for the full calibration story and the accepted phantom-match risk
                      #   it documents).
+    syncLog.ts       # Sync-log entry builders (Pipeline Contract Program, Pair 1, Step 1, 2026-08-01)
+                     #   — makeSyncLogEntry, appendSyncLogEntries, buildSilenceErrorEntry,
+                     #   buildMalformedTokenEntry, buildContractViolationEntry, + the mintSyncLogId
+                     #   helper. Pure move out of App.tsx (zero behavior change) — useWhisper.ts's
+                     #   staging-time transcription path needs these and cannot import from App.tsx
+                     #   without a circular dependency. App.tsx's other log builders
+                     #   (buildSkipLogEntries, buildSyncAbortEntry, buildNoAssetSummaryEntry,
+                     #   buildRescueLogEntries, clearSyncLog) stay in App.tsx and import
+                     #   makeSyncLogEntry from here.
+    syncContracts.ts # Pipeline Contract Program (docs/sync-pipeline-contract-plan.md) validators —
+                     #   one pure ContractViolation-returning function per contract pair, zero
+                     #   behavior change (deleting every call site leaves sync output byte-identical;
+                     #   additional log entries are the only sanctioned delta). Contract 1→2
+                     #   (Transcription → Normalization) shipped first: analyzeDropDistribution
+                     #   (Risk R1 — flags a WARNING when more than DROP_CLUSTERING_RATIO_THRESHOLD of
+                     #   a run's malformed-token drops cluster inside one DROP_CLUSTERING_WINDOW_SEC
+                     #   window, skipped below DROP_CLUSTERING_MIN_DROPS total drops) and
+                     #   validateTokenOrdering (assumption 5 — flags a WARNING on any ascending-time
+                     #   inversion in the filtered token array). validate1to2 runs both and is wired
+                     #   into both the Apply Sync path and useWhisper.ts's staging-transcription path.
+                     #   Later pairs add their own validateNtoM alongside these.
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-
@@ -1317,12 +1338,12 @@ src/
                      #   info=gray). Skip entries render a 3-line format: "Segment N skipped — reason" /
                      #   "[tag] text" / "matched X of Y words (confidence Z)" — backward compatible with
                      #   older log entries that lack the tag/match-count fields. Clear-log requires
-                     #   confirmation. Tested in SyncLogPanel.test.tsx; the entry builders/append/cap
-                     #   logic itself lives in App.tsx (~lines 848-1043, makeSyncLogEntry/
-                     #   buildSkipLogEntries/appendSyncLogEntries and siblings), not a
-                     #   services/syncLog.ts module — that file was never extracted, only its TEST
-                     #   file lives under services/ (services/syncLog.test.ts). A stale reference to
-                     #   a non-existent services/syncLog.ts was corrected 2026-07-30.
+                     #   confirmation. Tested in SyncLogPanel.test.tsx. The entry builders/append/cap
+                     #   logic now lives in services/syncLog.ts (Pipeline Contract Program, Pair 1,
+                     #   Step 1, 2026-08-01 — see that file's own entry below) — extracted out of
+                     #   App.tsx as a pure move so useWhisper.ts's staging-time transcription path
+                     #   could reach them without a circular import; the resolved sibling builders
+                     #   (buildSkipLogEntries and friends) stay in App.tsx and import from that module.
                      #   No-asset summary (2026-07-30) — a new 'no-asset' entry type (orange "NO ASSET"
                      #   badge in TYPE_STYLES) renders alongside the existing kinds; App.tsx's
                      #   buildNoAssetSummaryEntry appends one per Apply Sync run when any committed

@@ -5,7 +5,7 @@
 > handoffs between its stages (plus one input annex, contract 0→2), and the program for hardening
 > each one.
 >
-> **Verified-against-HEAD: `7e6309f`** (tag `clean-baseline-2026-07-31`). Every `file:line`
+> **Verified-against-HEAD: `e7fb367`** (Pair 1, Contract 1→2, shipped). Every `file:line`
 > citation in this document was read at this commit. **Re-stamp this field at every pair
 > completion.** Governance rule: any change that touches a pipeline stage (any file named in a
 > §1.3 table) must re-verify the affected §2 assumption rows and re-stamp this field before
@@ -169,9 +169,12 @@ validator must state which of the two passes it is validating.
 
 **Invariants it does NOT guarantee** — verified absent:
 
-- Token timestamps are **not** validated here. `parseTimestamp` (`whisperService.ts:42`) returns
-  `0` on an unparseable field; negative, inverted, non-finite, and past-end timestamps all reach
-  stage ②.
+- Token timestamps are **not** validated here. **Correction (Pair 1 audit):** the timestamp
+  parser this row originally cited, JS `parseTimestamp` (`whisperService.ts:42`), had zero
+  references anywhere in the codebase and was dead code — deleted in Pair 1 (commit `c7db7cc`).
+  The live parser is Rust `parse_timestamp` (`whisper.rs`), which this document had not
+  previously cited; negative, inverted, non-finite, and past-end timestamps all still reach
+  stage ② from it, unvalidated.
 - Tokens are **not** guaranteed monotonic or non-overlapping. `fillsTokenGapWithinSpan`'s
   `TOKEN_GAP_EPSILON_SEC` doc comment explicitly exists to survive overlapping tokens.
 - A token's `text` may contain multiple words, or normalize to nothing.
@@ -446,10 +449,10 @@ silent; the two intake warnings (5, 6) are console-only. Assumption 1 stays defe
 | 2 | Everything downstream uses the **filtered** array | ✅ by construction (`AlignFromCacheResult.tokens`); tested indirectly |
 | 3 | `audioDuration` may be unusable | ✅ `checkAgainstEnd` guard |
 | 4 | A token's `text` may hold multiple words | ✅ `tokenWords` expansion, `whisperService.ts:821-827` |
-| 5 | **Tokens are in ascending time order after filtering** | ⚠️ `UNVALIDATED` — nothing checks it. `fillsTokenGapWithinSpan` walks `j → j+1` assuming ascending; `earliestClaimStartSec` exists *specifically because* list order and time order are not guaranteed to coincide |
-| 6 | **The drop set is unbiased w.r.t. position** | ⚠️ `UNVALIDATED` — see Risk R1 |
-| 7 | Silences are ascending and disjoint | ⚠️ `UNVALIDATED` at the consumer — true by construction of the producer, but nothing re-checks, and `snapCoveredBoundaries` assigns by identity (`Map<SilenceInterval,…>`) which would misbehave on duplicate object references |
-| 8 | `tokens[tokens.length-1].endSec` is the audio end (`whisperService.ts:926`, `audioEnd` at 1333) | ⚠️ `UNVALIDATED` — this uses **token** end, not the probed `audioDuration`, and they are different numbers. Trailing silence after the last word is invisible to it |
+| 5 | **Tokens are in ascending time order after filtering** | ✅ asserted — `validateTokenOrdering` (`syncContracts.ts`) walks the filtered array and reports every inversion as a WARNING; wired into both the Apply Sync and staging-transcription paths (Pair 1, Step 3) |
+| 6 | **The drop set is unbiased w.r.t. position** | ✅ instrumented — `filterMalformedTokens` now records a `TokenDrop` (index/reason/raw values) per rejection, and `analyzeDropDistribution` (`syncContracts.ts`, Risk R1) flags a WARNING when more than `DROP_CLUSTERING_RATIO_THRESHOLD` of drops cluster inside one `DROP_CLUSTERING_WINDOW_SEC` window. The three thresholds are the task's stated starting values, not yet calibrated against production drop distributions |
+| 7 | Silences are ascending and disjoint | ⚠️ `UNVALIDATED` at the consumer, **confirmed-in-practice by identity trace** (Pair 1 audit: every producer call site was read and the invariant holds by construction today) — no runtime assertion exists yet; adding one is deferred to Pair 6, which already owns the `Map<SilenceInterval,…>` identity-coupling risk (R8) this assumption feeds |
+| 8 | `tokens[tokens.length-1].endSec` is the audio end (`whisperService.ts:926`, `audioEnd` at 1333) | ⚠️ **VIOLATED, partially fixed** — `extractSegmentAlignments` now accepts an optional true probed `audioDuration` and uses it for the last-segment rescue window (`rescueWindowAudioEnd`) when a caller supplies it; both production call sites (`useWhisper.ts`) now pass it. The token-derived fallback remains for callers that don't (documented residual, ~105 existing test call sites kept byte-identical). `alignScenestoTranscript`'s own separate `audioEnd` local (`whisperService.ts:1333`) is UNCHANGED and still token-derived — listed here as the remaining gap, not yet corrected |
 
 **Known evidence:**
 
@@ -466,9 +469,18 @@ silent; the two intake warnings (5, 6) are console-only. Assumption 1 stays defe
   *which* of the five drop reasons fired, *where* in the timeline the drops clustered, and — on
   the **staging-time** fresh-transcription path (`useWhisper.ts:278-283`) — anything at all
   beyond a `console.warn`, because that path has no `syncRunId` to attach an entry to.
+- **Pair 1 follow-up (this run, re-analyzed with the new `TokenDrop` capture):** the same
+  production run's 169 drops break down as **139 `empty-text` + 30
+  `inverted-or-zero-duration`** — zero `non-finite`, `negative-start`, or `past-audio-end` drops.
+  Neither `analyzeDropDistribution` nor `validateTokenOrdering` fired against this project's real
+  data (no clustering above the 40% threshold, no ordering inversions) — a clean pass, not an
+  absence of checking.
 
-**Gap summary for this pair:** assumptions 5, 6, 7, 8 unvalidated; drop *distribution* invisible;
-staging-path drops console-only.
+**Gap summary for this pair:** assumptions 5 and 6 now enforced (`validateTokenOrdering`,
+`analyzeDropDistribution`); assumption 7 confirmed-in-practice, runtime assertion deferred to
+Pair 6; assumption 8 partially fixed (rescue-window site corrected, `alignScenestoTranscript`'s
+own `audioEnd` local remains token-derived). Staging-path drops/silence-failures/violations now
+reach the log (R11, resolved with corrections — see §5).
 
 ---
 
@@ -895,7 +907,7 @@ being correct*, not in the description being accurate.
 
 | ID | Pair | Risk | Evidence | Confidence | Detection today |
 |---|---|---|---|---|---|
-| **R1** | 1→2 | **Token-drop clustering unknown.** A production run dropped 169/1973 tokens (~8.6%). The *count* is logged; the *distribution* is not. 169 drops spread evenly is noise; 169 drops inside one 20-second stretch is a corrupted region that will produce a wrong boundary and an unexplained skip. Nothing distinguishes the two. | `USER-REPORTED` count; `buildMalformedTokenEntry` verified to log count only; the five drop reasons in `filterMalformedTokens` are not individually counted | **Low** | Count only |
+| **R1** | 1→2 | **INSTRUMENTED (was: token-drop clustering unknown).** `filterMalformedTokens` now records a `TokenDrop` per rejection (index/reason/raw values) and `analyzeDropDistribution` (`syncContracts.ts`) flags a WARNING when drops cluster inside one `DROP_CLUSTERING_WINDOW_SEC` window above `DROP_CLUSTERING_RATIO_THRESHOLD`. Re-run against the original 169/1973-drop production project: breakdown is 139 `empty-text` + 30 `inverted-or-zero-duration`, zero clustering violation fired (drops were not concentrated in one stretch on this project). The three constants are the task's stated starting values — **not yet calibrated** against a real corrupted-stretch case, since this project's own drops happened not to cluster. | `USER-REPORTED` count; drop-reason breakdown now captured directly; `analyzeDropDistribution`/`validateTokenOrdering` unit-tested in `syncContracts.test.ts` | **Low** (mechanism); **calibration unverified** | Distribution + reason breakdown, both logged |
 | **R2** | 5→6 | **Floor clamps fire silently.** Five sites: `snapBoundaries.ts:699`, `:717`, `whisperService.ts:1612`, `syncEngine.ts:239`, `:246`. A clamped duration is the *symptom* of a degenerate boundary — the 2026-07-30 starvation cascade produced exactly this and was found only because a user saw a collapsed segment. No warning, no counter, no entry. | Verified by reading all five sites | **Low** | None |
 | **R3** | 6→7 | **Presentation is freshly rebuilt with shallow mileage.** Absolute positioning, lane redesign, cross-lane boundary markers, and the border-as-overlay WebKit workaround all landed 2026-07-31. `Timeline.tsx` has **no test file**. Its correctness now depends on Key Invariant (f), which the fallback `retileCoveredSegments` path does not enforce. **Split for scheduling: test-debt half CLOSED (`7e6309f`); contract half (log-truthfulness / `retileCoveredSegments` contiguity write) remains open — deferred to Pair 6 as planned.** | Verified: `timelineLayout.ts`/`timelineLayout.test.ts`/`timeline.render.test.tsx` land in `7e6309f`; `retileCoveredSegments` (`App.tsx:836-849`) still has no contiguity write | **Low** | Visual only |
 | **R4** | 5→6 | **Two `MIN_SEGMENT_DURATION` constants.** `0.1` in `snapBoundaries.ts:230`, `0.3` in `App.tsx:278`. Same name, different values, different purposes (pipeline floor vs. timeline slot width), no cross-reference. A future edit to one will look like it fixed both. | Verified by reading both | **Medium** (both are individually correct today) | None |
@@ -905,7 +917,7 @@ being correct*, not in the description being accurate.
 | **R8** | 4→5 | **Silence-array identity coupling.** `snapCoveredBoundaries` and the ported gap-fill both key a `Map` on `SilenceInterval` **object identity**. Any `.map()` copy upstream silently breaks contention assignment (every silence becomes its own key). | Verified at `snapBoundaries.ts:582-601` | **Medium** | None |
 | **R9** | 5→6 | **Degenerate-pair skip and monotonic clamp are DEV-gated console warnings.** Both fire on exactly the corrupted-data shape that caused the 2026-07-31 phantom-segment incident. In a production build they are invisible. | Verified: `import.meta.env.DEV` guards at `snapBoundaries.ts:638` and `:684` | **Low** | None in production |
 | **R10** | 3→4 | **Run-survival thresholds calibrated against two projects.** `RUN_SURVIVAL_*` were recalibrated once already after the first (ratio-scaled) formulation miscalibrated on a real 174-segment project. `syncConstants.ts` itself documents an accepted phantom-match risk on the new 1–3-word band. | Verified in `syncConstants.ts`'s own header | **Medium** | Skip entries show `longest run N` (good), but nothing aggregates across runs |
-| **R11** | 1→2 | **Staging-path failures never reach the log.** The fresh-transcription path (`useWhisper.ts:262-283`) has no `syncRunId`, so its silence-scan failure and malformed-token drops are console-only by design. The subsequent Apply Sync re-emits them via `alignFromCache` — *unless* the user never runs Apply Sync, or the two runs see different data. **Mechanism decided (§3, Step 3 wiring): staging mints its own run id** (reuse the transcription `jobId`; fresh UUID on the Option A branch) and appends summary-less entries via the already-available `onProjectUpdated` + `appendSyncLogEntries` — the buffered-until-next-Apply-Sync alternative was rejected for its cross-run staleness surface. Closes in Pair 1. | Verified, and explicitly acknowledged in the code comment at `useWhisper.ts:265-270`; `appendSyncLogEntries`' optional `summary` verified at `App.tsx:1118` | **Medium** | Console only |
+| **R11** | 1→2 | **RESOLVED WITH CORRECTIONS (was: staging-path failures never reach the log).** The fresh-transcription path (`useWhisper.ts`) now mints/reuses `jobId` as its `syncRunId` and appends summary-less silence/malformed-token/contract-violation entries via `appendSyncLogEntries` (`services/syncLog.ts`) on the live path. **Corrections to this row's original plan:** (1) the "Option A branch" mentioned as needing a fresh UUID was proven statically unreachable and was DELETED, not wired — there is no second branch to mint an id for; (2) `SyncLogPanel.tsx` does **not** group entries by `syncRunId` — it renders a flat, reverse-chronological list with zero references to that field, so this fix's practical effect is that staging-path findings now appear in that list at all, not that they render in a grouped view; (3) the `syncLog.ts` extraction (moving `makeSyncLogEntry`/`appendSyncLogEntries`/etc. out of `App.tsx`) was a **prerequisite** this row's original plan didn't mention — `useWhisper.ts` cannot import from `App.tsx` without a circular dependency. | Verified at `useWhisper.ts`'s staging path and `services/syncLog.ts`; `SyncLogPanel.tsx` read end-to-end, confirmed no `syncRunId` reference | **Medium → Low** | Full log entries (severity + fix hint), same as the Apply Sync path |
 | **R12** | 2→3 | **No cost bound on the `O(n·m)` DP.** `__ALIGN_INSTRUMENT__` exists but is dormant. A pathological scene doc has no guard and no warning; the UI shows the blocking `SyncLoadingOverlay` with no indication anything is wrong. | Verified | **Medium** | None |
 | **R13** | 4→5 | **`kept` ordering unasserted in `snapCoveredBoundaries`.** `retileCoveredSegments` sorts defensively; `snapCoveredBoundaries` does not. Out-of-order input would make the monotonic check fire on every pair, silently collapsing the timeline to floors. | Verified | **Medium** | None (would present as R2) |
 | **R14** | 6→7 | **Discarded stale alignments are silent no-ops.** `segmentSetStillValid` fails → `console.warn` + `return` (`useWhisper.ts:203`, `:304`). The user sees a sync that appears to have done nothing. | Verified | **Medium** | Console only |

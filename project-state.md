@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Last updated | 2026-08-01 |
-| Current HEAD | `7e6309f` ("test(timeline): §6.0 smoke tests — extract layout geometry to timelineLayout.ts, pin position math with 34 tests") on branch `webgl2-effects-engine` — **committed, not pushed**. `tsc --noEmit` clean, `vitest` **1199/1199**. |
+| Current HEAD | `e7fb367` ("feat(sync): Contract 1→2 validators — drop-distribution + token-ordering, staging-path log reporting, rescue-window audioDuration fix") on branch `webgl2-effects-engine` — **committed, not pushed**. `tsc --noEmit` clean, `vitest` **1219/1219**. |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -22,7 +22,8 @@ Sync system rewrite closed (WS1a→WS6 + token-stealing fix); see `docs/history.
 
 ## Active Tasks
 
-- **Pipeline Contract Program** — plan committed (commit `1758c4b`); §6.0 Timeline smoke tests completed (`7e6309f`, 1199 tests); Pair 1 (Contract 1→2) audit next
+- **REGRESSION AUDIT — long-pause-voice sync issue (user-reported)** — outranks Pair 2, do next. A user reported voiceover audio with long pauses producing incorrect sync. Not yet root-caused.
+- **Pipeline Contract Program** — plan committed (commit `1758c4b`); §6.0 Timeline smoke tests completed (`7e6309f`, 1199 tests); **Pair 1 (Contract 1→2) shipped** (`684060a`, `c7db7cc`, `e7fb367`) — gap fixes + validators (drop-distribution clustering, token-ordering, rescue-window `audioDuration` fix) landed and manually verified in the dev app, 1219 tests. Pair 2 next, after the regression audit above.
 
 ## Deferred Polish Features
 
