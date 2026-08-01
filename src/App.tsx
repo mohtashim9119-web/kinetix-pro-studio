@@ -2114,7 +2114,6 @@ export default function App() {
         asset,
         duration,
         [],
-        projectRef.current,
         () => {},
         (updater) => {
           // Commit-time ownership guard: only write back if `asset` (the file

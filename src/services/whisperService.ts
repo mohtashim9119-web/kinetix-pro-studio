@@ -39,16 +39,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-function parseTimestamp(ts: string): number {
-  const normalized = ts.trim().replace(',', '.');
-  const parts = normalized.split(':');
-  if (parts.length !== 3) return 0;
-  const h = parseFloat(parts[0] ?? '0');
-  const m = parseFloat(parts[1] ?? '0');
-  const s = parseFloat(parts[2] ?? '0');
-  return h * 3600 + m * 60 + s;
-}
-
 // ---------------------------------------------------------------------------
 // Alignment tokenizer (architecture doc §3.2, R1)
 // ---------------------------------------------------------------------------
@@ -1603,7 +1593,6 @@ export function computeCoverageSummary(
 export function distributeSegmentTimes(
   segments: VideoSegment[],
   alignments: Array<{ t0: number; t1: number }>,
-  _totalDuration: number,
 ): VideoSegment[] {
   const updated = segments.map((seg, i) => {
     if (seg.locked) return seg;

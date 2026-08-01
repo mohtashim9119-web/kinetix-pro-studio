@@ -89,7 +89,7 @@ async function alignSegmentsFromCachedTranscript(
   }
 
   const alignments = alignScenestoTranscript(segments, usableTokens, silences);
-  const updated = distributeSegmentTimes(segments, alignments, durationSecs);
+  const updated = distributeSegmentTimes(segments, alignments);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
   // alignFromCache even runs. Click 1 otherwise commits the plain aligner's
@@ -125,7 +125,6 @@ export interface UseWhisperApi {
     audioAsset: Asset,
     durationSecs: number,
     segments: VideoSegment[],
-    project: Project,
     onSegmentsUpdated: (segments: VideoSegment[]) => void,
     onProjectUpdated: (updater: (p: Project) => Project) => void,
   ) => Promise<void>;
@@ -170,7 +169,6 @@ export function useWhisper(): UseWhisperApi {
       audioAsset: Asset,
       durationSecs: number,
       segments: VideoSegment[],
-      project: Project,
       onSegmentsUpdated: (segments: VideoSegment[]) => void,
       onProjectUpdated: (updater: (p: Project) => Project) => void,
     ) => {
@@ -186,27 +184,6 @@ export function useWhisper(): UseWhisperApi {
         }
         return true;
       };
-
-      // Option A: skip Whisper if audio hasn't changed
-      const alreadyTranscribed =
-        project.lastTranscribedAssetId === audioAsset.id &&
-        project.transcriptTokens &&
-        project.transcriptTokens.length > 0;
-
-      if (alreadyTranscribed) {
-        const tokens = project.transcriptTokens!;
-        // Staging-time call, always paired with a no-op onSegmentsUpdated
-        // (the only call site, App.tsx handleVoiceoverStaged) — coverage is
-        // discarded here; nothing commits from this path (WS1b's gate lives
-        // in the orchestrator's direct alignFromCache call instead).
-        const { segments: finalSegments } = await alignSegmentsFromCachedTranscript(audioAsset, segments, tokens, durationSecs);
-        if (!segmentSetStillValid(finalSegments)) {
-          console.warn('[whisper] Discarding Option A alignment — segment set no longer matches');
-          return;
-        }
-        onSegmentsUpdated(finalSegments);
-        return;
-      }
 
       // Cancel any job already running.
       abortRef.current?.abort();
@@ -283,7 +260,7 @@ export function useWhisper(): UseWhisperApi {
         }
 
         const alignments = alignScenestoTranscript(segments, filtered.tokens, silences);
-        const finalSegments = distributeSegmentTimes(segments, alignments, durationSecs);
+        const finalSegments = distributeSegmentTimes(segments, alignments);
 
         // Store transcript tokens before the segment gate — the transcript is valid
         // for this audio even if alignment is rejected due to a scene structure change.

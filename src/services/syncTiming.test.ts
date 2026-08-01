@@ -111,7 +111,7 @@ describe('cached-token sync pipeline (Apply Sync, Option C)', () => {
 
     const anchorTimed = applyAnchorBasedTiming(segments, AUDIO_DURATION);
     const alignments = alignScenestoTranscript(anchorTimed, tokens, silences);
-    const distributed = distributeSegmentTimes(anchorTimed, alignments, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(anchorTimed, alignments);
     const final = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
 
     // Segment 0's raw Whisper t0 (0.4s lead-in silence) must be clamped to
@@ -203,7 +203,7 @@ describe('clean-slate re-sync (real 11→14 scene repro)', () => {
         console.log(`  [${i}] t0=${a.t0} t1=${a.t1}`);
       }
     }
-    const distributed = distributeSegmentTimes(anchorTimed, alignments, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(anchorTimed, alignments);
     if (debug) {
       console.log('AFTER distributeSegmentTimes:');
       for (const s of distributed) {
@@ -343,7 +343,7 @@ describe('clean-slate prevents the stale-anchor-meets-fresh-estimate squeeze (sy
     const seeded = newScenes.map((s, i) => ({ ...s, anchorStart: i * 3, anchorSource: 'estimate' as const }));
     const anchorTimed = applyAnchorBasedTiming(seeded, AUDIO_DURATION);
     const alignments = alignScenestoTranscript(anchorTimed, tokens, []);
-    const distributed = distributeSegmentTimes(anchorTimed, alignments, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(anchorTimed, alignments);
     const final = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
 
     const d = final.find(s => s.assetId === 'D')!;
@@ -1510,7 +1510,7 @@ describe('R4-1 — retileCoveredSegments', () => {
 
     // Mirror the real pipeline: alignment windows land on the segments (startTime
     // = t0) BEFORE filtering, so the survivors carry real Whisper-anchored starts.
-    const timed = distributeSegmentTimes(segments, cov, AUDIO_DURATION);
+    const timed = distributeSegmentTimes(segments, cov);
     const { kept, skipped } = filterToCoveredSegments(timed, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's2', 's6', 's7', 's8', 's9']);
     expect(skipped.map(r => r.segmentIndex)).toEqual([3, 4, 5]);
@@ -3193,7 +3193,7 @@ describe('middle-gap position offset — unmatched neighbours no longer shift co
    *  + useWhisper.ts alignSegmentsFromCachedTranscript). */
   function runPipeline(segments: VideoSegment[]) {
     const alignments = alignScenestoTranscript(segments, TOKENS, SILENCES);
-    const distributed = distributeSegmentTimes(segments, alignments, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(segments, alignments);
     const anchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
     const { kept, keptAlignments, skipped } = filterToCoveredSegments(anchored, alignments);
     const snapped = snapCoveredBoundaries(kept, keptAlignments, TOKENS, SILENCES, AUDIO_DURATION);
@@ -3297,7 +3297,7 @@ describe('middle-gap position offset — unmatched neighbours no longer shift co
     // overwhelmingly common case. Same window, same silence pick, same clamps.
     const docA = coveredScenes();
     const alignments = alignScenestoTranscript(docA, TOKENS, SILENCES);
-    const distributed = distributeSegmentTimes(docA, alignments, AUDIO_DURATION);
+    const distributed = distributeSegmentTimes(docA, alignments);
     const anchored = applyAnchorBasedTiming(distributed, AUDIO_DURATION);
     const { kept, keptAlignments } = filterToCoveredSegments(anchored, alignments);
 
