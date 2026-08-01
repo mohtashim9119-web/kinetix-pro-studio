@@ -299,6 +299,92 @@ export function isBoundarySilenceCandidate(
   return silence.endSec > searchStart && silence.startSec < searchEnd;
 }
 
+/** `computeBoundarySearchWindow`'s return shape — the derived midpoint/gap
+ *  plus the search bounds a pair's boundary silence must overlap. */
+export interface BoundarySearchWindow {
+  spokenMid: number;
+  spokenGapWidth: number;
+  searchStart: number;
+  searchEnd: number;
+}
+
+/**
+ * Derives a pair's boundary search window from its four spoken-word edges.
+ * Pure extraction (boundary-quality checker, waveform-watcher program Phase
+ * 1) of the arithmetic `snapCoveredBoundaries`'s Pass 1 has always used
+ * inline — the two call sites (this function's caller here, and
+ * `validateBoundaryQuality` in syncContracts.ts, which recomputes the same
+ * window post-hoc to check what silence candidates a fallback boundary had
+ * available) must derive an IDENTICAL window from the same four inputs, so
+ * the arithmetic lives in exactly one place.
+ *
+ * `lastSpokenEnd`/`nextSpokenStart` are the pair's own adjacent spoken edges
+ * (curr's last matched word end, next's first matched word start).
+ * `currFirstSpokenStart`/`nextLastSpokenEnd` are the outer bounds the window
+ * may never cross — curr's own first spoken word and next's own last spoken
+ * word — without them a near-zero spoken gap's widened radius could reach
+ * past a short neighbour and steal a silence belonging to a different pair.
+ *
+ * Pure; exported for direct unit testing.
+ */
+export function computeBoundarySearchWindow(
+  lastSpokenEnd: number,
+  nextSpokenStart: number,
+  currFirstSpokenStart: number,
+  nextLastSpokenEnd: number,
+): BoundarySearchWindow {
+  const spokenMid = (lastSpokenEnd + nextSpokenStart) / 2;
+  const spokenGapWidth = nextSpokenStart - lastSpokenEnd;
+  // Whisper compresses adjacent words to the same timestamp sometimes
+  // (spokenGap near 0); its boundary timestamp is then unreliable, so widen
+  // the search — but only to 1.0s, or neighbouring boundaries lose their
+  // silences.
+  const searchRadius = spokenGapWidth < 0.1
+    ? 1.0
+    : Math.max(0.5, spokenGapWidth / 2 + 0.4);
+  const searchStart = Math.max(spokenMid - searchRadius, currFirstSpokenStart);
+  const searchEnd = Math.min(spokenMid + searchRadius, nextLastSpokenEnd);
+  return { spokenMid, spokenGapWidth, searchStart, searchEnd };
+}
+
+/**
+ * Re-runs the EXISTING candidacy predicates (`fillsTokenGapWithinSpan`,
+ * `isBreathSilence`, `isBoundarySilenceCandidate`) against a pair's search
+ * window to answer one question: did this pair have ANY assignable silence
+ * candidate, or was `snapCoveredBoundaries` always going to fall back to the
+ * plain spoken-edge midpoint for it?
+ *
+ * This is a boundary-quality DIAGNOSTIC (waveform-watcher program Phase 1),
+ * not a re-implementation of `snapCoveredBoundaries`'s own decision — it
+ * deliberately stops at Pass 1's candidacy filter and does not replay Pass
+ * 2's contention-aware assignment. A pair with one candidate that Pass 2
+ * ultimately hands to a *different*, better-fitting neighbour will read here
+ * as "did not use the fallback" even though its actual committed boundary
+ * came from the plain midpoint. That is an accepted precision trade-off for
+ * a measurement-only pass; it never touches `snapCoveredBoundaries` itself,
+ * whose signature and return type this file does not change.
+ *
+ * Pure; exported for direct unit testing.
+ */
+export function boundaryUsedFallback(
+  tokens: TranscriptToken[],
+  silences: SilenceInterval[],
+  window: Pick<BoundarySearchWindow, 'searchStart' | 'searchEnd'>,
+  currFirstTokenIdx: number,
+  currLastTokenIdx: number,
+  nextFirstTokenIdx: number,
+  nextLastTokenIdx: number,
+): boolean {
+  const hasCandidate = silences.some(s =>
+    !fillsTokenGapWithinSpan(s, tokens, currFirstTokenIdx, currLastTokenIdx) &&
+    !fillsTokenGapWithinSpan(s, tokens, nextFirstTokenIdx, nextLastTokenIdx) &&
+    !isBreathSilence(s, tokens, currFirstTokenIdx, currLastTokenIdx) &&
+    !isBreathSilence(s, tokens, nextFirstTokenIdx, nextLastTokenIdx) &&
+    isBoundarySilenceCandidate(s, window.searchStart, window.searchEnd),
+  );
+  return !hasCandidate;
+}
+
 /**
  * Does `silence` fit entirely inside the gap between two CONSECUTIVE tokens of
  * ONE segment's matched span — i.e. is it a within-speech breath rather than a
@@ -535,17 +621,9 @@ export function snapCoveredBoundaries(
     const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec ?? currOrig.startTime;
     const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec ?? (nextOrig.startTime + nextOrig.duration);
 
-    const spokenMid = (lastSpokenEnd + nextSpokenStart) / 2;
-    const spokenGapWidth = nextSpokenStart - lastSpokenEnd;
-    // Whisper compresses adjacent words to the same timestamp sometimes
-    // (spokenGap near 0); its boundary timestamp is then unreliable, so widen
-    // the search — but only to 1.0s, or neighbouring boundaries lose their
-    // silences.
-    const searchRadius = spokenGapWidth < 0.1
-      ? 1.0
-      : Math.max(0.5, spokenGapWidth / 2 + 0.4);
-    const searchStart = Math.max(spokenMid - searchRadius, currFirstSpokenStart);
-    const searchEnd = Math.min(spokenMid + searchRadius, nextLastSpokenEnd);
+    const { spokenMid, spokenGapWidth, searchStart, searchEnd } = computeBoundarySearchWindow(
+      lastSpokenEnd, nextSpokenStart, currFirstSpokenStart, nextLastSpokenEnd,
+    );
 
     // Token-gap (alignment evidence) FIRST and short-circuiting, then
     // coverage-composite (independent alignment-adjacent evidence for the

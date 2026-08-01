@@ -53,15 +53,29 @@ import {
   type SyncLogEntry,
   type SyncLogEntryType,
   type SyncRunSummary,
+  type TranscriptToken,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
-import { computeCoverageSummary, countTranscriptWords, type SegmentAlignment } from './services/whisperService';
+import {
+  computeCoverageSummary,
+  countTranscriptWords,
+  filterMalformedTokens,
+  extractSegmentAlignments,
+  type SegmentAlignment,
+} from './services/whisperService';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
+import { detectSilences } from './services/silenceDetector';
+import type { SilenceInterval } from './services/silenceDetector';
+import { validateBoundaryQuality, type BoundaryQualityMeasurement } from './services/syncContracts';
 import {
   MIN_COVERED_RUN_LENGTH,
   NOISE_FLOOR_COVERAGE,
+  BOUNDARY_QUALITY_LOUDNESS_RATIO_K,
+  BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
+  BOUNDARY_QUALITY_K_SWEEP,
+  BOUNDARY_QUALITY_WINDOW_SWEEP,
 } from './services/syncConstants';
 import {
   makeSyncLogEntry,
@@ -1191,24 +1205,31 @@ export default function App() {
   // short-circuit the apply-sync/reload-effect double-fire on the same asset.
   const waveformResidentRef = useRef<{ assetId: string; blobSize: number } | null>(null);
 
+  // Mirrors the latest value handed to setWaveformSource — boundary-quality
+  // checker (waveform-watcher program, Phase 1). React state updates are not
+  // visible synchronously to the caller of an async function that scheduled
+  // them, so handleApplySyncFromFiles's post-hoc pass (needs the resolved
+  // WaveformSource the instant buildVoiceoverWaveform's own await settles)
+  // cannot read `waveformSource` itself here — it would be the closure's
+  // stale value. This ref is updated at the exact same moment as every
+  // setWaveformSource call below and returned by buildVoiceoverWaveform
+  // instead.
+  const waveformSourceRef = useRef<WaveformSource | null>(null);
+  const commitWaveformSource = useCallback((source: WaveformSource | null) => {
+    waveformSourceRef.current = source;
+    setWaveformSource(source);
+  }, []);
+
   const buildVoiceoverWaveform = useCallback(async (
     asset: Asset | undefined | null,
-  ): Promise<void> => {
+  ): Promise<WaveformSource | null> => {
     const incomingAssetId = asset?.id ?? null;
     const incomingBlobSize = asset?.file?.size ?? null;
 
-    // --- Cheap in-flight/just-committed dedupe (reorder fix, gen-3/gen-4 bug) -
-    // waveformBuiltForRef is set synchronously at the START of a cold build (no
-    // await in between), so this catches the apply-sync + reload-effect back-to-
-    // back double-fire for the SAME asset even while the first call's build is
-    // still in flight — the resident ref only updates once setWaveformSource
-    // actually commits, which is a tick too late to catch this case.
-    if (incomingAssetId !== null && waveformBuiltForRef.current === incomingAssetId) {
-      return;
-    }
-
     // --- Pre-build identity gate --------------------------------------------
-    // Two synchronous arms:
+    // Two synchronous arms, checked BEFORE the in-flight dedupe below (Phase 1
+    // wiring fix, 2026-08-02 — see the dedupe check's own comment for why the
+    // ORDER here is load-bearing, not cosmetic):
     //   'resident' — waveformResidentRef already reflects this exact
     //     asset+blobSize: waveformSource in React state right now IS this
     //     content (no intervening project switch).
@@ -1219,7 +1240,7 @@ export default function App() {
     //     a fresh File object on every rehydration ([App.tsx] rehydratedFile),
     //     even when content is byte-identical, but the mirror answers
     //     synchronously without an IndexedDB round-trip.
-    // Falls through to the cold path ('cold-miss') otherwise.
+    // Falls through to the in-flight dedupe / cold path ('cold-miss') otherwise.
     let gateArm: 'resident' | 'mirror' | 'cold-miss' | 'no-asset' = 'no-asset';
     let mirroredSource: WaveformSource | undefined;
     if (incomingAssetId !== null && incomingBlobSize !== null) {
@@ -1234,21 +1255,53 @@ export default function App() {
 
     if (gateArm === 'resident') {
       // waveformSource already IS this asset+blobSize — nothing to do.
-      return;
+      return waveformSourceRef.current;
     }
     if (gateArm === 'mirror' && mirroredSource && incomingAssetId !== null && incomingBlobSize !== null) {
       waveformBuiltForRef.current = incomingAssetId;
       waveformResidentRef.current = { assetId: incomingAssetId, blobSize: incomingBlobSize };
-      setWaveformSource(mirroredSource);
+      commitWaveformSource(mirroredSource);
       syncMark('waveform:committed-from-mirror');
-      return;
+      return mirroredSource;
+    }
+
+    // --- Cheap in-flight dedupe (reorder fix, gen-3/gen-4 bug; re-ordered
+    // again in the Phase 1 wiring fix above, 2026-08-02) ---------------------
+    // waveformBuiltForRef is set synchronously at the START of a cold build
+    // (no await in between) and is NEVER reset back to null on success — only
+    // on a failed build (below) does it clear, to allow a retry. That means a
+    // call for an asset whose build already completed successfully earlier
+    // this session would ALSO match this ref, indistinguishable from a
+    // still-in-flight duplicate call for the same key, unless the resident/
+    // mirror gates above are checked FIRST: they catch the "already done"
+    // case and return the real source before this check ever runs. Reaching
+    // this line therefore means resident/mirror both missed, so a match here
+    // can only mean a genuinely in-flight, not-yet-committed build for this
+    // key (the apply-sync + reload-effect back-to-back double-fire this
+    // check exists for) — the resident ref only updates once
+    // setWaveformSource actually commits, which is a tick too late to catch
+    // that double-fire itself.
+    //
+    // Bug fixed here (Phase 1 wiring fix): before this reorder, a re-sync on
+    // an unchanged voiceover — whose waveform had already been built and
+    // committed by an earlier Apply Sync or the reload effect — hit THIS
+    // check first and returned null unconditionally, even though real peaks
+    // existed and were resident. The post-sync boundary-quality checker
+    // (below) then logged "Waveform unavailable" every time instead of
+    // running its real measurement.
+    //
+    // No resolved source to return here — the OTHER in-flight call owns this
+    // build; returning null tells a boundary-quality caller "not verified
+    // this run" rather than guessing at a value that isn't committed yet.
+    if (incomingAssetId !== null && waveformBuiltForRef.current === incomingAssetId) {
+      return null;
     }
 
     if (!asset?.url) {
       waveformBuiltForRef.current = null;
       waveformResidentRef.current = null;
-      setWaveformSource(null);
-      return;
+      commitWaveformSource(null);
+      return null;
     }
     const key = asset.id;
     // waveformBuiltForRef already confirmed !== key by the dedupe check above.
@@ -1265,11 +1318,11 @@ export default function App() {
       try {
         const cached = await getPersistedWaveform(projectIdRef.current, asset.id, blobSize);
         if (cached) {
-          if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-lookup
+          if (waveformBuiltForRef.current !== key) return null; // voiceover changed mid-lookup
           waveformResidentRef.current = { assetId: key, blobSize };
-          setWaveformSource(cached);
+          commitWaveformSource(cached);
           syncMark('waveform:committed-from-cache');
-          return;
+          return cached;
         }
       } catch (err) {
         console.error('[waveform] persisted-peaks read failed, rebuilding:', err);
@@ -1278,23 +1331,25 @@ export default function App() {
 
     try {
       const { source } = await buildWaveformPipeline({ file: asset.file, url: asset.url });
-      if (waveformBuiltForRef.current !== key) return; // voiceover changed mid-build
+      if (waveformBuiltForRef.current !== key) return null; // voiceover changed mid-build
       waveformResidentRef.current = blobSize !== undefined ? { assetId: key, blobSize } : null;
-      setWaveformSource(source);
+      commitWaveformSource(source);
       syncMark('waveform:committed');
       if (blobSize !== undefined && source) {
         void putPersistedWaveform(projectIdRef.current, asset.id, source, blobSize)
           .catch(err => console.error('[waveform] failed to persist peaks:', err));
       }
+      return source;
     } catch (err) {
       console.error('[waveform] build failed:', err);
       if (waveformBuiltForRef.current === key) {
         waveformBuiltForRef.current = null; // allow a later retry
         waveformResidentRef.current = null;
-        setWaveformSource(null);
+        commitWaveformSource(null);
       }
+      return null;
     }
-  }, []);
+  }, [commitWaveformSource]);
 
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(() => {
     try { return (readUiState().selectedSegmentId as string | null) ?? null; }
@@ -2305,6 +2360,19 @@ export default function App() {
     }
 
     let finalTimedSegments: VideoSegment[];
+    // Boundary-quality checker (waveform-watcher program, Phase 1) — captured
+    // only on the cachedTokensReady/Whisper-snapped branch below, since only
+    // that branch has real per-segment token alignments to check a fallback
+    // boundary against. Consumed by the post-hoc pass after
+    // buildVoiceoverWaveform resolves, further down this function — index-
+    // parallel with finalTimedSegments/committedSegments the whole way
+    // (autoMatchSegments/preserveEffectFields/headExtendFirstSegment all
+    // preserve segment order and count).
+    let pendingBoundaryCheckInput: {
+      alignments: SegmentAlignment[];
+      tokens: TranscriptToken[];
+      silences: SilenceInterval[];
+    } | null = null;
     // WS-logs — staged by whichever timing branch runs, committed by the single
     // setProject below. Every branch that reaches the commit sets both, so a
     // committed run always leaves exactly one summary behind.
@@ -2433,6 +2501,13 @@ export default function App() {
       finalTimedSegments = transcriptTokens.length > 0
         ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
         : retileCoveredSegments(kept, audioDuration);
+      // Boundary-quality checker input (waveform-watcher program, Phase 1) —
+      // only meaningful when snapCoveredBoundaries actually ran against real
+      // tokens above; the retileCoveredSegments fallback has no per-pair
+      // alignment data to check a fallback boundary against.
+      if (transcriptTokens.length > 0) {
+        pendingBoundaryCheckInput = { alignments: keptAlignments, tokens: transcriptTokens, silences: aligned.silences };
+      }
       // Head/tail symmetry (syncEngine.ts's headExtendFirstSegment): the last
       // segment already runs to audioDuration (both branches above); the
       // first segment's own startTime is untouched by either (it's still
@@ -2535,10 +2610,183 @@ export default function App() {
     // on a 21-min file; isProcessing stays true until it finishes so the UI reflects
     // "still working" (and gives the Step 5 loading screen a clean hook). The reload
     // effect dedupes against the same key, so it won't rebuild what this just built.
-    await buildVoiceoverWaveform(voiceoverAsset);
+    const resolvedWaveform = await buildVoiceoverWaveform(voiceoverAsset);
+
+    // Boundary-quality checker (waveform-watcher program, Phase 1) — a
+    // post-hoc, READ-ONLY measurement pass (architecture B: runs strictly
+    // AFTER the peaks above are built; nothing about the sync steps or the
+    // segment commit above is reordered or altered). Own follow-up
+    // setProject, reusing this run's syncRunId with no summary (the R11
+    // staging-path pattern, services/syncLog.ts — this pass has no
+    // segment-coverage outcome of its own to roll up, only whatever
+    // boundary-quality findings it produced).
+    //
+    // Severity: 'info', not 'warning', even though the dual-gate thresholds
+    // (BOUNDARY_QUALITY_LOUDNESS_RATIO_K / _SUSTAINED_WINDOW_SEC / _ABSOLUTE_
+    // AMPLITUDE_FLOOR / _MIN_DISTANCE_SEC, syncConstants.ts) are now
+    // calibrated against production data (see that constant's own doc
+    // comment). Phase 1 ships this as observability only — a WARNING is
+    // always-visible, amber, and implies the user should act on it (severity
+    // taxonomy, docs/sync-pipeline-contract-plan.md §4); that promotion is
+    // Phase 2's watcher/auto-fix work, not this checker's. `validateBoundary
+    // Quality` itself still returns 'warning'-typed ContractViolations (it is
+    // a correctly-typed Contract 5→6 validator, ready for Phase 2 to promote
+    // as-is) — the downgrade to 'info' happens here, at this wiring, not in
+    // the validator.
+    if (pendingBoundaryCheckInput) {
+      const boundaryViolations = resolvedWaveform
+        ? validateBoundaryQuality(
+            committedSegments,
+            pendingBoundaryCheckInput.alignments,
+            pendingBoundaryCheckInput.tokens,
+            pendingBoundaryCheckInput.silences,
+            resolvedWaveform,
+            BOUNDARY_QUALITY_LOUDNESS_RATIO_K,
+            BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
+          )
+        : [];
+      const boundaryLogEntries: SyncLogEntry[] = resolvedWaveform
+        ? boundaryViolations.map(v => makeSyncLogEntry(syncRunId, 'info', v.message, { fixHint: v.fixHint }, syncRunAt))
+        : [makeSyncLogEntry(
+            syncRunId,
+            'info',
+            `Waveform unavailable — ${Math.max(0, committedSegments.length - 1)} boundary(ies) not waveform-verified.`,
+            undefined,
+            syncRunAt,
+          )];
+      if (boundaryLogEntries.length > 0) {
+        setProject(prev => appendSyncLogEntries(prev, boundaryLogEntries, undefined));
+      }
+    }
 
     setIsProcessing(false);
   };
+
+  // Boundary-quality calibration harness (waveform-watcher program, Phase 1,
+  // Step 6) — DEV-only, never bundled into a production build (dead-code
+  // eliminated behind `import.meta.env.DEV`, same convention the Ctrl/Cmd+
+  // Shift+D dev panel above uses). Not wired to any UI: run it from the
+  // browser/WKWebView devtools console as `await __calibrateBoundaryQuality()`
+  // against a project that already has a Whisper-synced voiceover (Apply
+  // Sync must have run at least once so persisted transcript tokens + peaks
+  // exist). Default mode (no argument, or `{ detail: false }`) re-derives
+  // fresh alignments/silences from the CURRENT project state (never touches
+  // it) and sweeps BOUNDARY_QUALITY_K_SWEEP x BOUNDARY_QUALITY_WINDOW_SWEEP
+  // (syncConstants.ts), printing one line per combination: how many fallback
+  // boundaries existed, how many the threshold would flag, and which ones.
+  // This is how Phase 2 picks real BOUNDARY_QUALITY_LOUDNESS_RATIO_K /
+  // BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC values instead of the interim
+  // starting points wired in above.
+  //
+  // Detail mode (`await __calibrateBoundaryQuality({ detail: true })`,
+  // added alongside the Phase 1 wiring fix, 2026-08-02) — the sweep table
+  // above answers "how many pairs would K/window flag," but calibrating a
+  // DUAL gate (relative K-ratio + an absolute-amplitude floor) needs the
+  // actual per-pair amplitude numbers, not just flagged counts. Runs the
+  // checker ONCE, at the currently-wired production K/window
+  // (BOUNDARY_QUALITY_LOUDNESS_RATIO_K / BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC
+  // — a sweep grid of raw amplitudes would be redundant noise, since the
+  // amplitudes themselves don't depend on K/window, only which pairs get
+  // flagged does), in `'report-all'` mode so EVERY fallback pair prints —
+  // flagged or not — sorted by `boundaryAmplitude` descending (loudest
+  // fallback boundaries first, since those are the ones most likely to be
+  // genuinely bad). Does not also run the sweep — it's a different
+  // diagnostic question, not an additive one.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const calibrate = async (options?: { detail?: boolean }): Promise<void> => {
+      const project = projectRef.current;
+      const segments = project.segments;
+      const rawTokens = project.transcriptTokens ?? [];
+      const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
+
+      if (!voiceoverAsset) {
+        console.warn('[calibrate] no voiceover asset on the current project.');
+        return;
+      }
+      if (rawTokens.length === 0) {
+        console.warn('[calibrate] no persisted transcript tokens on the current project — run Apply Sync first.');
+        return;
+      }
+
+      const blobSize = voiceoverAsset.file?.size;
+      let waveformSource: WaveformSource | null = blobSize !== undefined
+        ? peekWaveform(voiceoverAsset.id, blobSize) ?? null
+        : null;
+      if (!waveformSource && blobSize !== undefined) {
+        waveformSource = await getPersistedWaveform(project.id, voiceoverAsset.id, blobSize);
+      }
+      if (!waveformSource) {
+        console.warn('[calibrate] no persisted waveform peaks for the current voiceover — run Apply Sync first.');
+        return;
+      }
+
+      const filtered = filterMalformedTokens(rawTokens, waveformSource.totalDuration);
+      const alignments = extractSegmentAlignments(segments, filtered.tokens);
+
+      let silences: SilenceInterval[] = [];
+      try {
+        const resp = await fetch(voiceoverAsset.url);
+        const blob = await resp.blob();
+        const silenceResult = await detectSilences(blob);
+        if (silenceResult.status === 'ok') silences = silenceResult.silences;
+        else console.warn('[calibrate] silence detection failed, sweeping with zero silences:', silenceResult.errorMessage);
+      } catch (err) {
+        console.warn('[calibrate] voiceover fetch/silence-scan failed, sweeping with zero silences:', err);
+      }
+
+      console.log(
+        `[calibrate] ${segments.length} segments, ${filtered.tokens.length} tokens (${filtered.skippedCount} dropped), ${silences.length} silences`,
+      );
+
+      if (options?.detail) {
+        const measurements = validateBoundaryQuality(
+          segments, alignments, filtered.tokens, silences, waveformSource,
+          BOUNDARY_QUALITY_LOUDNESS_RATIO_K, BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC, 'report-all',
+        );
+        const sorted = [...measurements].sort((a, b) => b.boundaryAmplitude - a.boundaryAmplitude);
+        console.log(
+          `[calibrate] detail — K=${BOUNDARY_QUALITY_LOUDNESS_RATIO_K} window=${BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC}s — ` +
+          `${sorted.length} fallback pair(s), sorted by boundaryAmplitude desc:`,
+        );
+        for (const m of sorted) {
+          const distance = m.quietestAmplitude !== undefined
+            ? Math.abs(m.boundaryAmplitude - m.quietestAmplitude)
+            : undefined;
+          console.log(
+            `[calibrate]   segmentIndex=${m.segmentIndex} boundaryTime=${m.boundaryTime.toFixed(2)}s ` +
+            `boundaryAmplitude=${m.boundaryAmplitude.toFixed(3)} ` +
+            `quietestTime=${m.quietestTime !== undefined ? m.quietestTime.toFixed(2) + 's' : 'n/a'} ` +
+            `quietestAmplitude=${m.quietestAmplitude !== undefined ? m.quietestAmplitude.toFixed(3) : 'n/a'} ` +
+            `|distance|=${distance !== undefined ? distance.toFixed(3) : 'n/a'}` +
+            (m.flagged ? ' [FLAGGED]' : ''),
+          );
+        }
+        return;
+      }
+
+      for (const k of BOUNDARY_QUALITY_K_SWEEP) {
+        for (const win of BOUNDARY_QUALITY_WINDOW_SWEEP) {
+          const measurements: BoundaryQualityMeasurement[] = validateBoundaryQuality(
+            segments, alignments, filtered.tokens, silences, waveformSource, k, win, 'report-all',
+          );
+          const flagged = measurements.filter(m => m.flagged);
+          console.log(
+            `[calibrate] K=${k} window=${win}s — fallback pairs: ${measurements.length}, flagged: ${flagged.length}` +
+            (flagged.length > 0 ? ` — segments: ${flagged.map(m => m.segmentIndex + 1).join(', ')}` : ''),
+          );
+        }
+      }
+    };
+
+    (window as unknown as {
+      __calibrateBoundaryQuality: (options?: { detail?: boolean }) => Promise<void>;
+    }).__calibrateBoundaryQuality = calibrate;
+    return () => {
+      delete (window as unknown as { __calibrateBoundaryQuality?: (options?: { detail?: boolean }) => Promise<void> }).__calibrateBoundaryQuality;
+    };
+  }, []);
 
   // WS-logs — empties both log fields. The setProject alone persists it (the
   // debounced usePersistProject save writes the whole Project).

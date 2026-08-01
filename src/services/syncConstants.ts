@@ -433,6 +433,42 @@ export const DROP_CLUSTERING_RATIO_THRESHOLD = 0.4;
 // tells you nothing) — the check is skipped entirely below this floor.
 export const DROP_CLUSTERING_MIN_DROPS = 5;
 
+// --- Boundary-quality checker (waveform-watcher program, Phase 1,
+// Contract 5→6, rule 'loud-fallback-boundary') — calibrated 2026-08-02 -----
+// `validateBoundaryQuality` (syncContracts.ts) flags a fallback boundary
+// (one `snapCoveredBoundaries` placed at the plain spoken-edge midpoint
+// because no silence was assignable in its search window) whose actual
+// waveform amplitude at the committed boundary time is more than
+// `BOUNDARY_QUALITY_LOUDNESS_RATIO_K` times louder than the quietest
+// `BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC`-wide span anywhere in that same
+// search window — i.e. a real, quieter gap existed nearby and the fallback
+// landed in the middle of ongoing speech instead.
+//
+// Dual gate, calibrated 2026-08-02 against 447-seg long-pause project (29
+// true positives incl. all 5 diagnostic-proven boundaries) and 174-seg older
+// project (0 false positives). A violation requires ALL THREE: the
+// boundary's own amplitude clears `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR`
+// (below this floor the "loud" boundary is itself near-silent — a ratio
+// computed off near-zero noise floor amplitudes is meaningless and fires on
+// pure sample noise), the quietest point sits at least
+// `BOUNDARY_QUALITY_MIN_DISTANCE_SEC` away (a quiet point immediately
+// adjacent to the boundary is the same mid-sentence dip, not a real
+// alternative placement — this is what discriminates a genuine missed
+// silence from a mid-word amplitude wobble, per the user's listening-check
+// false-positive class), and the loudness ratio clears
+// `BOUNDARY_QUALITY_LOUDNESS_RATIO_K`.
+export const BOUNDARY_QUALITY_LOUDNESS_RATIO_K = 2;
+export const BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC = 0.15;
+// Below this amplitude the boundary itself is already near-silent — no
+// violation regardless of ratio. Calibrated 2026-08-02 (see file header).
+export const BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR = 0.05;
+// The quietest region found must sit at least this far from the boundary to
+// count as a genuinely different placement, not the same dip. Calibrated
+// 2026-08-02 (see file header).
+export const BOUNDARY_QUALITY_MIN_DISTANCE_SEC = 0.10;
+export const BOUNDARY_QUALITY_K_SWEEP = [1.5, 2, 3] as const;
+export const BOUNDARY_QUALITY_WINDOW_SWEEP = [0.10, 0.15, 0.20, 0.25] as const;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

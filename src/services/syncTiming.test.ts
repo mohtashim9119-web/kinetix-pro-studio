@@ -33,6 +33,8 @@ import {
   isBoundarySilenceCandidate,
   fillsTokenGapWithinSpan,
   isBreathSilence,
+  computeBoundarySearchWindow,
+  boundaryUsedFallback,
 } from './snapBoundaries';
 import {
   TOKEN_GAP_EPSILON_SEC,
@@ -72,6 +74,24 @@ function wordTokens(text: string, startAt: number, wordDurationSec: number): Tra
     startSec: Number((startAt + i * wordDurationSec).toFixed(3)),
     endSec: Number((startAt + (i + 1) * wordDurationSec).toFixed(3)),
   }));
+}
+
+// Module-level twin of the 'snapCoveredBoundaries — covered-only boundary
+// snap' describe block's own (function-scoped) `twoCoveredSegments` fixture
+// above — same shape ('alpha bravo' spoken 0.0-1.0, 'charlie delta' spoken
+// 2.0-3.0), needed at module scope by the computeBoundarySearchWindow /
+// boundaryUsedFallback describe blocks below (boundary-quality checker,
+// Phase 1) so their parity tests can compare directly against
+// snapCoveredBoundaries' real output.
+function twoCoveredSegmentsForParity() {
+  const segments: VideoSegment[] = [
+    makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2, anchorStart: 0, anchorSource: 'whisper' }),
+    makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 3, anchorStart: 2, anchorSource: 'whisper' }),
+  ];
+  const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 2.0, 0.5)];
+  const alignments = extractSegmentAlignments(segments, tokens);
+  expect(alignments.every(a => a.matched)).toBe(true);
+  return { segments, tokens, alignments };
 }
 
 // Mirrors the exact composition used on the cached-token path (App.tsx
@@ -2888,6 +2908,128 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
   it('sentinel (-1) span returns false — safe to call on an unmatched segment\'s indices', () => {
     const tokens: TranscriptToken[] = [{ text: 'alpha', startSec: 0.0, endSec: 1.0 }];
     expect(isBreathSilence({ startSec: 0.1, endSec: 0.9 }, tokens, -1, -1)).toBe(false);
+  });
+});
+
+describe('computeBoundarySearchWindow — pure extraction (boundary-quality checker, Phase 1)', () => {
+  it('matches snapCoveredBoundaries\' own arithmetic for a normal spoken gap', () => {
+    // lastSpokenEnd=1.0, nextSpokenStart=2.0 -> spokenMid 1.5, gapWidth 1.0,
+    // radius max(0.5, 1.0/2+0.4)=0.9 -> [0.6, 2.4].
+    const w = computeBoundarySearchWindow(1.0, 2.0, 0.0, 3.0);
+    expect(w.spokenMid).toBeCloseTo(1.5, 6);
+    expect(w.spokenGapWidth).toBeCloseTo(1.0, 6);
+    expect(w.searchStart).toBeCloseTo(0.6, 6);
+    expect(w.searchEnd).toBeCloseTo(2.4, 6);
+  });
+
+  it('widens to the 1.0s radius when the spoken gap is near zero', () => {
+    // spokenGapWidth 0.05 < 0.1 -> radius forced to 1.0 (not the ordinary
+    // max(0.5, gap/2+0.4) formula). spokenMid 1.025, unclamped by the wide
+    // [0.0, 5.0] outer bounds.
+    const w = computeBoundarySearchWindow(1.0, 1.05, 0.0, 5.0);
+    expect(w.spokenMid).toBeCloseTo(1.025, 6);
+    expect(w.searchStart).toBeCloseTo(0.025, 6);
+    expect(w.searchEnd).toBeCloseTo(2.025, 6);
+  });
+
+  it('clamps the window to the outer spoken-word bounds so it can never reach past a short neighbour', () => {
+    // Outer bounds (currFirstSpokenStart=1.2, nextLastSpokenEnd=1.9) sit
+    // INSIDE the unclamped ±0.9s window around spokenMid 1.5 — the clamp
+    // must win.
+    const w = computeBoundarySearchWindow(1.0, 2.0, 1.2, 1.9);
+    expect(w.searchStart).toBe(1.2);
+    expect(w.searchEnd).toBe(1.9);
+  });
+
+  it('reproduces snapCoveredBoundaries\' own acceptance boundary exactly (parity: pre/post extraction, byte-identical output)', () => {
+    // twoCoveredSegmentsForParity's fixture is exactly this function's
+    // "matches snapCoveredBoundaries' own arithmetic" test above: window
+    // [0.6, 2.4]. A silence placed just INSIDE that computed window must
+    // still be accepted by the real snapCoveredBoundaries pipeline (proving
+    // this extracted helper's searchEnd is not narrower than what
+    // snapCoveredBoundaries actually uses internally); one placed just
+    // OUTSIDE must still fall back to the plain midpoint (proving it is not
+    // wider, either). Either direction of drift would flip one of the two
+    // assertions below.
+    const w = computeBoundarySearchWindow(1.0, 2.0, 0.0, 3.0);
+    expect(w.searchEnd).toBeCloseTo(2.4, 6);
+
+    {
+      const { segments, tokens, alignments } = twoCoveredSegmentsForParity();
+      const justInside: SilenceInterval = { startSec: 2.30, endSec: 2.38 };
+      const out = snapCoveredBoundaries(segments, alignments, tokens, [justInside], 5);
+      expect(out[1]!.startTime).toBeCloseTo((justInside.startSec + justInside.endSec) / 2, 6);
+    }
+    {
+      const { segments, tokens, alignments } = twoCoveredSegmentsForParity();
+      const justOutside: SilenceInterval = { startSec: 2.45, endSec: 2.55 };
+      const out = snapCoveredBoundaries(segments, alignments, tokens, [justOutside], 5);
+      expect(out[1]!.startTime).toBeCloseTo(1.5, 6); // plain spoken-edge midpoint fallback
+    }
+  });
+});
+
+describe('boundaryUsedFallback — recomputed candidacy (boundary-quality checker, Phase 1)', () => {
+  // Two-token spans per side, mirroring snapCoveredBoundaries' own pair
+  // shape: curr = tokens[0,1] ('alpha bravo', 0.0-1.0), next = tokens[2,3]
+  // ('charlie delta', 2.0-3.0). Window (computeBoundarySearchWindow):
+  // [0.6, 2.4].
+  const tokens: TranscriptToken[] = [
+    { text: 'alpha', startSec: 0.0, endSec: 0.5 },
+    { text: 'bravo', startSec: 0.5, endSec: 1.0 },
+    { text: 'charlie', startSec: 2.0, endSec: 2.5 },
+    { text: 'delta', startSec: 2.5, endSec: 3.0 },
+  ];
+  const window = computeBoundarySearchWindow(1.0, 2.0, 0.0, 3.0);
+
+  it('returns true (fallback) when no silence overlaps the window at all', () => {
+    expect(boundaryUsedFallback(tokens, [], window, 0, 1, 2, 3)).toBe(true);
+  });
+
+  it('returns false when a real boundary silence is assignable in the window', () => {
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
+    expect(boundaryUsedFallback(tokens, silences, window, 0, 1, 2, 3)).toBe(false);
+  });
+
+  it('returns true (fallback) when the only silence in range is a within-speech breath, not a boundary pause', () => {
+    // A real internal gap inside curr's own span this time (alpha 0.0-0.5,
+    // bravo 0.9-1.0, gap [0.5, 0.9]) with a silence [0.7, 0.9] fitting inside
+    // it — it overlaps the search window (isBoundarySilenceCandidate alone
+    // would accept it) but fillsTokenGapWithinSpan rejects it as curr's own
+    // breath, so the composed result must still be "fallback".
+    const breathyTokens: TranscriptToken[] = [
+      { text: 'alpha', startSec: 0.0, endSec: 0.5 },
+      { text: 'bravo', startSec: 0.9, endSec: 1.0 },
+      { text: 'charlie', startSec: 2.0, endSec: 2.5 },
+      { text: 'delta', startSec: 2.5, endSec: 3.0 },
+    ];
+    const breath: SilenceInterval[] = [{ startSec: 0.7, endSec: 0.9 }];
+
+    // Sanity check: the plain window-overlap predicate alone WOULD accept
+    // this silence — proving the fallback result below comes from
+    // fillsTokenGapWithinSpan's rejection, not from the silence being
+    // out-of-window to begin with.
+    expect(isBoundarySilenceCandidate(breath[0]!, window.searchStart, window.searchEnd)).toBe(true);
+    expect(fillsTokenGapWithinSpan(breath[0]!, breathyTokens, 0, 1)).toBe(true);
+
+    expect(boundaryUsedFallback(breathyTokens, breath, window, 0, 1, 2, 3)).toBe(true);
+  });
+
+  it('agrees with snapCoveredBoundaries: a pair that snapped to a silence center is NOT reported as fallback', () => {
+    const { segments, tokens: t, alignments } = twoCoveredSegmentsForParity();
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
+    const out = snapCoveredBoundaries(segments, alignments, t, silences, 5);
+    // The boundary actually moved to the silence centre (1.75), not the
+    // plain midpoint (1.5) — confirms a real silence was used.
+    expect(out[1]!.startTime).toBeCloseTo(1.75, 6);
+    expect(boundaryUsedFallback(t, silences, window, 0, 1, 2, 3)).toBe(false);
+  });
+
+  it('agrees with snapCoveredBoundaries: a pair with no assignable silence IS reported as fallback', () => {
+    const { segments, tokens: t, alignments } = twoCoveredSegmentsForParity();
+    const out = snapCoveredBoundaries(segments, alignments, t, [], 5);
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6); // plain spoken-edge midpoint
+    expect(boundaryUsedFallback(t, [], window, 0, 1, 2, 3)).toBe(true);
   });
 });
 

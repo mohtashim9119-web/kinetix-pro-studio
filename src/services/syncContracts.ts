@@ -11,12 +11,18 @@
 // byte-identical; additional log entries are the one sanctioned behavioral
 // delta). This file starts with Contract 1→2 (Transcription → Normalization);
 // later pairs add their own validateNtoM alongside it.
-import type { TranscriptToken } from '../types';
-import type { TokenDrop } from './whisperService';
+import type { TranscriptToken, VideoSegment } from '../types';
+import type { TokenDrop, SegmentAlignment } from './whisperService';
+import type { SilenceInterval } from './silenceDetector';
+import type { WaveformSource } from './waveformPeaks';
+import { computeBoundarySearchWindow, boundaryUsedFallback } from './snapBoundaries';
+import { findQuietestRegion } from './boundaryQuality';
 import {
   DROP_CLUSTERING_WINDOW_SEC,
   DROP_CLUSTERING_RATIO_THRESHOLD,
   DROP_CLUSTERING_MIN_DROPS,
+  BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR,
+  BOUNDARY_QUALITY_MIN_DISTANCE_SEC,
 } from './syncConstants';
 
 /** One contract violation — shared shape across every pair's validator (§3
@@ -178,4 +184,187 @@ export function validate1to2(
     ...analyzeDropDistribution(drops, totalTokens, audioDuration),
     ...validateTokenOrdering(keptTokens),
   ];
+}
+
+// ---------------------------------------------------------------------------
+// Contract 5→6 (Boundary Snapping → Finalization) — boundary-quality checker
+// (waveform-watcher program, Phase 1). Read-only measurement: nothing here
+// ever moves a boundary or touches `snapCoveredBoundaries`'s output. It asks
+// one question per adjacent covered pair — "did this boundary fall back to
+// the plain spoken-edge midpoint, and if so, does the ACTUAL audio at that
+// moment look like a real quiet gap or like ongoing speech?" — using the
+// waveform peaks already built for the timeline's own display.
+// ---------------------------------------------------------------------------
+
+/** One pair's boundary-quality measurement — the full data set, whether or
+ *  not it crossed the flagging ratio. `'report-all'` mode returns these
+ *  directly (calibration); the default mode filters to `flagged` ones and
+ *  maps them to `ContractViolation[]`. */
+export interface BoundaryQualityMeasurement {
+  /** Index into `segments` of the pair's FIRST (earlier) segment — the
+   *  boundary sits between `segments[segmentIndex]` and
+   *  `segments[segmentIndex + 1]`. */
+  segmentIndex: number;
+  boundaryTime: number;
+  boundaryAmplitude: number;
+  quietestTime: number | undefined;
+  quietestAmplitude: number | undefined;
+  windowStart: number;
+  windowEnd: number;
+  flagged: boolean;
+}
+
+function clampIndex(v: number, lo: number, hi: number): number {
+  if (v < lo) return lo;
+  if (v > hi) return hi;
+  return v;
+}
+
+/**
+ * Boundary-quality checker. `segments`/`alignments` are index-parallel — the
+ * SAME contract `snapCoveredBoundaries` depends on (Contract 4→5, assumption
+ * 3) — and `tokens`/`silences` must be the exact arrays that produced
+ * `segments`' committed boundaries (the malformed-filtered token array and
+ * the detected silences), or the recomputed search windows will not match
+ * what `snapCoveredBoundaries` actually saw.
+ *
+ * Per adjacent pair (i, i+1), mirroring `snapCoveredBoundaries`'s own guard:
+ * a pair with either segment locked, or missing/sentinel (`-1`) alignment
+ * data, is skipped outright — there is no meaningful "fallback vs. silence"
+ * question for a boundary that function never moved either.
+ *
+ * Only FALLBACK boundaries (`boundaryUsedFallback` — `snapBoundaries.ts`)
+ * are measured: a boundary that landed in a real detected silence is
+ * already acoustic ground truth and is not this checker's concern. For each
+ * fallback pair, `findQuietestRegion` (`boundaryQuality.ts`) locates the
+ * quietest `sustainedWindowSec`-wide span anywhere in the pair's own search
+ * window; the committed boundary is flagged when its own waveform amplitude
+ * exceeds that quietest span's mean amplitude by more than `k`×.
+ *
+ * Returns `[]` immediately when `waveformSource` is `null` — there is no
+ * amplitude data to measure against, in either mode.
+ *
+ * `mode: 'report-all'` (calibration use — the dev console harness in
+ * App.tsx) returns a `BoundaryQualityMeasurement` for EVERY fallback pair,
+ * flagged or not, instead of filtering to violations, so a calibration
+ * sweep can see the whole distribution.
+ *
+ * Pure; exported for direct unit testing.
+ */
+export function validateBoundaryQuality(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+  tokens: TranscriptToken[],
+  silences: SilenceInterval[],
+  waveformSource: WaveformSource | null,
+  k: number,
+  sustainedWindowSec: number,
+  mode?: 'violations',
+): ContractViolation[];
+export function validateBoundaryQuality(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+  tokens: TranscriptToken[],
+  silences: SilenceInterval[],
+  waveformSource: WaveformSource | null,
+  k: number,
+  sustainedWindowSec: number,
+  mode: 'report-all',
+): BoundaryQualityMeasurement[];
+export function validateBoundaryQuality(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+  tokens: TranscriptToken[],
+  silences: SilenceInterval[],
+  waveformSource: WaveformSource | null,
+  k: number,
+  sustainedWindowSec: number,
+  mode: 'violations' | 'report-all' = 'violations',
+): ContractViolation[] | BoundaryQualityMeasurement[] {
+  if (!waveformSource) return [];
+
+  const measurements: BoundaryQualityMeasurement[] = [];
+
+  for (let i = 0; i < segments.length - 1; i++) {
+    const curr = segments[i];
+    const next = segments[i + 1];
+    const currAlign = alignments[i];
+    const nextAlign = alignments[i + 1];
+    if (!curr || !next || curr.locked || next.locked || !currAlign || !nextAlign) continue;
+    if (currAlign.firstTokenIdx < 0 || currAlign.lastTokenIdx < 0) continue;
+    if (nextAlign.firstTokenIdx < 0 || nextAlign.lastTokenIdx < 0) continue;
+
+    const lastSpokenEnd = tokens[currAlign.lastTokenIdx]?.endSec;
+    const nextSpokenStart = tokens[nextAlign.firstTokenIdx]?.startSec;
+    const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec;
+    const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec;
+    if (
+      lastSpokenEnd === undefined || nextSpokenStart === undefined ||
+      currFirstSpokenStart === undefined || nextLastSpokenEnd === undefined
+    ) continue;
+
+    const window = computeBoundarySearchWindow(
+      lastSpokenEnd, nextSpokenStart, currFirstSpokenStart, nextLastSpokenEnd,
+    );
+
+    const usedFallback = boundaryUsedFallback(
+      tokens, silences, window,
+      currAlign.firstTokenIdx, currAlign.lastTokenIdx,
+      nextAlign.firstTokenIdx, nextAlign.lastTokenIdx,
+    );
+    if (!usedFallback) continue;
+
+    // The pair's actual committed boundary — contiguity (Contract 5→6
+    // guarantee 3) means next.startTime IS curr.startTime + curr.duration.
+    const boundaryTime = next.startTime;
+    const boundaryCol = clampIndex(
+      Math.round(boundaryTime * waveformSource.peaksPerSecond), 0, waveformSource.peaks.length - 1,
+    );
+    const boundaryAmplitude = waveformSource.peaks[boundaryCol] ?? 0;
+
+    const quietest = findQuietestRegion(
+      waveformSource.peaks, waveformSource.peaksPerSecond,
+      window.searchStart, window.searchEnd, sustainedWindowSec,
+    );
+
+    const distance = quietest.found && quietest.time !== undefined
+      ? Math.abs(boundaryTime - quietest.time)
+      : undefined;
+
+    const flagged = quietest.found && quietest.meanAmplitude !== undefined && distance !== undefined
+      ? boundaryAmplitude >= BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR &&
+        distance >= BOUNDARY_QUALITY_MIN_DISTANCE_SEC &&
+        boundaryAmplitude > k * quietest.meanAmplitude
+      : false;
+
+    measurements.push({
+      segmentIndex: i,
+      boundaryTime,
+      boundaryAmplitude,
+      quietestTime: quietest.time,
+      quietestAmplitude: quietest.meanAmplitude,
+      windowStart: window.searchStart,
+      windowEnd: window.searchEnd,
+      flagged,
+    });
+  }
+
+  if (mode === 'report-all') return measurements;
+
+  return measurements.filter(m => m.flagged).map((m): ContractViolation => ({
+    contract: '5->6',
+    rule: 'loud-fallback-boundary',
+    severity: 'warning',
+    message: `The cut between segment ${m.segmentIndex + 1} and segment ${m.segmentIndex + 2} landed on audio that's still playing, not in a quiet gap.`,
+    fixHint: `Check the cut between segment ${m.segmentIndex + 1} and segment ${m.segmentIndex + 2} on the timeline — nudge it toward the quieter moment nearby if it looks or sounds off.`,
+    detail: {
+      segmentIndex: m.segmentIndex,
+      boundaryTime: m.boundaryTime,
+      boundaryAmplitude: m.boundaryAmplitude,
+      quietestTime: m.quietestTime,
+      quietestAmplitude: m.quietestAmplitude,
+      windowStart: m.windowStart,
+      windowEnd: m.windowEnd,
+    },
+  }));
 }
