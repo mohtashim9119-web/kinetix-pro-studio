@@ -5,7 +5,8 @@
 > handoffs between its stages (plus one input annex, contract 0→2), and the program for hardening
 > each one.
 >
-> **Verified-against-HEAD: `e7fb367`** (Pair 1, Contract 1→2, shipped). Every `file:line`
+> **Verified-against-HEAD: `458224c`** (Pair 1, Contract 1→2, shipped; boundary-quality checker,
+> Contract 5→6, shipped out-of-order — see that section's 2026-08-02 addendum). Every `file:line`
 > citation in this document was read at this commit. **Re-stamp this field at every pair
 > completion.** Governance rule: any change that touches a pipeline stage (any file named in a
 > §1.3 table) must re-verify the affected §2 assumption rows and re-stamp this field before
@@ -666,6 +667,18 @@ is convention-only; silence-array identity coupling undocumented at the type lev
 
 **Gap summary for this pair:** five silent floor sites; two same-named constants with different
 values; the degenerate retile branch is silent; the anchor-order warning never reaches the user.
+
+**2026-08-02 addendum — boundary-quality checker shipped out-of-pair-order:** the R2-adjacent
+"floored/fallback boundary is silent" gap (row 4 above) has a Phase 1 fix
+(`validateBoundaryQuality`, `syncContracts.ts`, rule `loud-fallback-boundary`) landed ahead of this
+pair's formal turn — justified by the user-reported long-pause-voice regression, not a change of
+audit order. It is observability only (`info` severity): flags a fallback boundary whose waveform
+amplitude is loud relative to a real, farther-away quiet region, via a calibrated dual gate
+(absolute floor + min distance + K-ratio; see `syncConstants.ts`). Per §3 Step 2, a Phase 2 that
+would *move* the boundary (not just report on it) is scope creep for a hardening pass — "changing
+what the alignment or snapping math computes is out of scope... a real math defect is written up
+and scheduled separately, not folded into the hardening pass." That watcher is tracked as its own
+queued item (`project-state.md` Active Tasks), not folded into this pair's Step 3 validator work.
 
 ---
 

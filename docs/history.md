@@ -2436,3 +2436,101 @@ against a genuinely clustered case.
 
 **Next.** A user-reported regression (long-pause voiceover audio producing incorrect sync) outranks
 Pair 2 and is queued as an immediate audit before Contract 2→3 work begins — see `project-state.md`.
+
+---
+
+## Long-Pause-Voice Regression — Root Cause + Boundary-Quality Checker Phase 1 (2026-08-02)
+
+**The report.** A user with a voiceover containing unusually long pauses (multi-second silences
+between spoken phrases) found several segment boundaries landing in the wrong place — visibly mid-
+sentence rather than in the gap. Not reproducible on a "normal" voiceover with typical breath-length
+pauses; only surfaced on long-pause audio.
+
+**Root cause — three factors compounding, not one bug:**
+
+1. **Whisper timestamp under-run on long silences.** Whisper's own word timestamps tend to
+   under-run (report a word ending earlier than it actually did) more aggressively across a long
+   silent stretch than across a short one — the model has less acoustic context to anchor the
+   boundary. This shifts `lastSpokenEnd`/`nextSpokenStart` inward from where the audio actually
+   changes.
+2. **A narrow search window.** `computeBoundarySearchWindow` (`snapBoundaries.ts`) bounds its
+   candidate search to a window derived from the spoken-edge midpoint and gap width. On a long
+   pause, the true quiet gap is wide, but the under-run from (1) can still leave the real silence
+   sitting outside — or at the very edge of — that window, so `boundaryUsedFallback` correctly
+   detects no assignable silence and the pipeline falls back to the plain spoken-edge midpoint,
+   which on a long pause can be seconds away from where the audio is actually quiet.
+3. **A removed distance guard.** The 2026-07-31 window-overlap regression fix (see this file's own
+   entry, "Window-Overlap Silence Regression Fix...") deliberately deleted
+   `BOUNDARY_SILENCE_INTRUSION_TOLERANCE_SEC` — a fixed-tolerance edge-distance check — because it
+   was rejecting genuine boundary silences wholesale on ordinary Whisper blur. That fix was correct
+   for the case it targeted (normal-length pauses), but it also removed the only mechanism that
+   would have caught a fallback boundary landing implausibly far from either spoken edge on a long
+   pause. No replacement guard was added at the time — the checker below is that replacement,
+   observability-first rather than a distance re-tolerance (a fixed tolerance was already proven
+   unworkable by the 2026-07-31 fix).
+
+None of these three is individually wrong: Whisper's under-run is a model property, the search
+window is deliberately bounded (an unbounded search would risk stealing a neighboring pair's real
+silence), and the 07-31 deletion fixed a real, worse regression. The combination on long-pause audio
+specifically is what produced visibly bad boundaries with nothing in the pipeline flagging them.
+
+**Phase 1 checker — what shipped (commit `458224c`).** Rather than re-introduce a fixed-tolerance
+guard (rejected per the 07-31 lesson) or change the alignment/snapping math itself (out of scope
+for a hardening pass per `docs/sync-pipeline-contract-plan.md` §3 Step 2 — "changing what the
+alignment or snapping math computes... is written up and scheduled separately"), Phase 1 adds a
+**post-hoc, read-only measurement pass** (architecture B: runs strictly after the voiceover
+waveform's peaks are built, never reordering or altering any existing sync step):
+
+- `boundaryQuality.ts`'s `findQuietestRegion` — an O(n) sliding-window amplitude minimum over the
+  waveform peaks already built for the timeline display, answering "where, inside this pair's own
+  search window, is the audio actually quietest?"
+- `snapBoundaries.ts` exports `computeBoundarySearchWindow` (pure move, no behavior change) and a
+  new `boundaryUsedFallback`, which re-derives — from the exact same candidacy predicates
+  `snapCoveredBoundaries` already uses — whether a given pair's committed boundary was placed by
+  the plain-midpoint fallback rather than a real assigned silence.
+- `syncContracts.ts`'s `validateBoundaryQuality` (Contract 5→6, rule `loud-fallback-boundary`) flags
+  a fallback boundary whose own waveform amplitude is loud relative to a real, farther-away quiet
+  region — see the constants' own calibration story below for the exact gate.
+- Wired in `App.tsx` right after `buildVoiceoverWaveform`, at `'info'` severity (not `'warning'`) —
+  Phase 1 is observability only; nothing acts on a flagged boundary yet.
+- A found-and-fixed bug along the way: `buildVoiceoverWaveform`'s own completed-build dedup check
+  had a gate-order bug that mis-deduped already-completed builds, spuriously returning `null` for
+  peaks that already existed — fixed as part of this same commit (see `snapBoundaries.ts`'s diff).
+
+**Calibration.** The dev-only harness `window.__calibrateBoundaryQuality({ detail })` (`App.tsx`)
+re-derives fresh alignments/silences from the current project (never mutates it) and either sweeps
+`BOUNDARY_QUALITY_K_SWEEP × BOUNDARY_QUALITY_WINDOW_SWEEP` (how many pairs each K/window
+combination would flag) or, in detail mode, runs the checker once in `'report-all'` mode to print
+every fallback pair's actual amplitude numbers, sorted loudest-first.
+
+Run against two real projects:
+
+- **447-segment long-pause project** (the one that surfaced the report) — the checker's flagged set
+  included all 5 boundaries independently confirmed bad by manual listening/diagnostic inspection,
+  plus 24 additional true positives (29 total) the initial K/window-only sweep would have missed or
+  over-fired on.
+- **174-segment older project** (no known long-pause issue, used as a specificity check) — **zero**
+  false positives at the same calibrated gate.
+
+**Why a dual gate, not just the K-ratio.** The initial K/window-only sweep produced a false-positive
+class the user identified by ear: a boundary sitting in a genuine but brief mid-sentence dip (a
+speaker's natural micro-pause inside a sentence, not the real inter-sentence gap) would pass a pure
+loudness-ratio test if that dip happened to be quiet enough, even though it sits right next to the
+boundary rather than meaningfully "elsewhere." **Distance, not just loudness, is the discriminating
+feature** — a quiet point immediately adjacent to the boundary is the same dip the boundary already
+landed near; a quiet point meaningfully far away is a genuinely different, better placement the
+fallback missed. This is why the calibrated rule (`syncConstants.ts`) requires ALL of: an absolute
+amplitude floor (`BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR = 0.05` — below this the boundary is
+already near-silent, any ratio computed off near-zero values is noise), a minimum distance
+(`BOUNDARY_QUALITY_MIN_DISTANCE_SEC = 0.10` — filters exactly the mid-sentence-dip class above), and
+the loudness ratio (`BOUNDARY_QUALITY_LOUDNESS_RATIO_K = 2`).
+
+**What's next.** Phase 2 (the watcher that would actually *move* a flagged boundary to the quiet
+point) is explicitly deferred, not folded into this commit — per §3 Step 2's rule that a real math-
+behavior change is "written up and scheduled separately, not folded into the hardening pass." It is
+queued in `project-state.md` Active Tasks, gated on the same calibrated rule, and requires end-to-
+end verification of the fresh-voiceover (peaks-absent) first-sync flow before it can land, since
+that's a code path this Phase 1 pass didn't need to exercise (a first sync's peaks aren't built yet
+when the pass would want to run). Also newly recorded as a working rule: audit/investigation reports
+must be persisted into `docs/`, not left to live only in chat transcripts — this investigation's
+findings above are the first case of that rule being followed.

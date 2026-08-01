@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Last updated | 2026-08-01 |
-| Current HEAD | `e7fb367` ("feat(sync): Contract 1→2 validators — drop-distribution + token-ordering, staging-path log reporting, rescue-window audioDuration fix") on branch `webgl2-effects-engine` — **committed, not pushed**. `tsc --noEmit` clean, `vitest` **1219/1219**. |
+| Last updated | 2026-08-02 |
+| Current HEAD | `458224c` ("feat(sync): boundary-quality checker — waveform-verified fallback-boundary warnings with calibrated dual gate") on branch `webgl2-effects-engine` — **committed, not pushed**. `tsc --noEmit` clean, `vitest` **1245/1245**. |
 | App status | Shipping desktop app — Tauri DMG/installer, native ffmpeg sidecar export. No server, no web hosting. |
 | Target users | YouTube creators — initial internal use across 5–10 channels |
 | Repo | TBD |
@@ -22,8 +22,12 @@ Sync system rewrite closed (WS1a→WS6 + token-stealing fix); see `docs/history.
 
 ## Active Tasks
 
-- **REGRESSION AUDIT — long-pause-voice sync issue (user-reported)** — outranks Pair 2, do next. A user reported voiceover audio with long pauses producing incorrect sync. Not yet root-caused.
-- **Pipeline Contract Program** — plan committed (commit `1758c4b`); §6.0 Timeline smoke tests completed (`7e6309f`, 1199 tests); **Pair 1 (Contract 1→2) shipped** (`684060a`, `c7db7cc`, `e7fb367`) — gap fixes + validators (drop-distribution clustering, token-ordering, rescue-window `audioDuration` fix) landed and manually verified in the dev app, 1219 tests. Pair 2 next, after the regression audit above.
+- **REGRESSION AUDIT — long-pause-voice sync issue (user-reported)** — root-caused (Whisper timestamp under-run + narrow search window + a removed distance guard, see `docs/history.md`). **Boundary-quality checker Phase 1 shipped** (`458224c`) — waveform-verified `info`-severity warnings for fallback boundaries that landed on loud audio with a real quiet region nearby; dual gate (absolute floor 0.05, min distance 0.10s, ratio K=2) calibrated against the 447-seg long-pause project (29 TP incl. all 5 diagnostic-proven boundaries) and the 174-seg older project (0 FP). Manually verified in the dev app on both fixture projects. Queued next, in order:
+  - **(a) Phase 2 watcher** — auto-moves a flagged boundary to the quiet point. Gated by the same calibrated rule; a post-hoc pass; must preserve paired-write contiguity (Key Invariant (f)) and the locked-pair guard; runs after `headExtendFirstSegment`. Requires fresh-voiceover end-to-end verification (the peaks-absent first-sync flow) before landing.
+  - **(b) Stage 2 adaptive per-voice silence thresholds** — noise-floor estimation, falling back to the current fixed -45dB when estimation is unreliable.
+  - **(c) Sync loading screen redesign** — live 0–100% progress (currently a static "Preparing your project…" message, `SyncLoadingOverlay.tsx`).
+  - **(d) Pipeline Contract Program Pair 2** — resumes after the watcher ships.
+- **Working rule (new):** audit/investigation reports must be persisted into `docs/` (not left to live only in chat transcripts) — implementation work must never depend on recalling a prior conversation.
 
 ## Deferred Polish Features
 
@@ -77,7 +81,7 @@ No open questions.
 | Metric | Value |
 |---|---|
 | `src/App.tsx` LOC | 4,369 (measured via `wc -l`) |
-| Branch status | `webgl2-effects-engine` @ this commit (tag `clean-baseline-2026-07-31`, immediately after `abb642c`), **committed, not pushed** — 5 ahead of `origin/webgl2-effects-engine` |
+| Branch status | `webgl2-effects-engine` @ this commit (tag `clean-baseline-2026-07-31`, immediately after `abb642c`), **committed, not pushed** — ahead of `origin/webgl2-effects-engine` |
 | Project persistence | Per-project scoped: `kinetix:project:{id}:v1` + registry `kinetix:projects:v1` in localStorage (legacy single-project key `kinetix:project:v1` retained for one-time migration only) |
 | IndexedDB | `kinetix-assets` DB v2, store `assets-v2`, compound keyPath `['projectId','id']` (legacy v1 store retained for migration) |
 | Total dependencies | 6 prod + 12 dev |
@@ -85,7 +89,7 @@ No open questions.
 | Export engine | Two gated paths as of 2026-07-22 (`useExport.ts`'s `isWebCodecsExportGateOpen()`): **default** — WebCodecs+WebGL2 worker path (`VideoDecoder`→GL composite→`VideoEncoder`, native ffmpeg sidecar for mux-only), toggle ON on every platform; **fallback** — legacy native ffmpeg sidecar (evermeet.cx 8.1.1 static build, GPL) full per-frame canvas pipeline via Tauri `tauri-plugin-shell`, used when the capability probe fails or the user toggles off. See `docs/history.md` → *WebCodecs + WebGL2 Worker Export — Implementation Record*. |
 | Export speed — WebCodecs path (default) | Step 8 synthetic effects-heavy benchmark: 194s → 6.8s (**~28×**). Real projects: **~2.3×** — the honest number, not the synthetic one (GPU upload/readback cost in the Worker+OffscreenCanvas regime on WKWebView narrows the real-world win). Verified macOS Intel x86_64 only; macOS arm64/Windows unverified. Tier 1/C segments (plain, or not GL-expressible) run at legacy speed regardless. |
 | Export speed — legacy path (fallback) | **Stale — pending re-measurement.** Figures predate the 2026-07-09 worker-pool PNG encode + raw-binary IPC write speedup (commit `cd7ea2b`); no post-fix benchmark has been run yet. macOS Intel (x86_64): ~10× realtime (120s for 12s of output) as of the base64-IPC-only pipeline; Windows: ~6× realtime (6 min per 1 min of video, measured on brother's PC); macOS arm64: pending measurement |
-| Test count (`vitest`) | 1199 — up from 1165 via §6.0 Timeline smoke tests (commit `7e6309f`, 34 new tests: `timelineLayout.test.ts` + `timeline.render.test.tsx`); see `docs/history.md` for the per-item breakdown |
+| Test count (`vitest`) | 1245 — up from 1219 via the boundary-quality checker (commit `458224c`: `boundaryQuality.ts`/`boundaryQuality.test.ts` + `syncContracts.test.ts`/`syncTiming.test.ts` additions); see `docs/history.md` for the per-item breakdown |
 | Frontend bundle size | 505.86 kB / 152.74 kB gzip main bundle (measured 2026-06-22; no wasm in bundle — ffmpeg is a sidecar binary) |
 | Lazy chunks | StockSearchModal 8.79 kB · jszip 95.87 kB |
 | ffmpeg sidecar binaries | 76 MB (x86_64-apple-darwin), 48 MB (aarch64-apple-darwin), 97 MB (x86_64-pc-windows-msvc) — all gitignored; see `src-tauri/binaries/README.md` |

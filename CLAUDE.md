@@ -434,6 +434,26 @@ src/
                      #   inversion in the filtered token array). validate1to2 runs both and is wired
                      #   into both the Apply Sync path and useWhisper.ts's staging-transcription path.
                      #   Later pairs add their own validateNtoM alongside these.
+                     #   validateBoundaryQuality (Contract 5→6, rule 'loud-fallback-boundary',
+                     #   boundary-quality checker Phase 1, 2026-08-02, shipped ahead of this pair's
+                     #   formal turn — see docs/sync-pipeline-contract-plan.md's 5→6 section addendum)
+                     #   — flags a FALLBACK boundary (boundaryUsedFallback, snapBoundaries.ts; one
+                     #   that landed at the plain spoken-edge midpoint, no silence assignable) whose
+                     #   waveform amplitude is loud relative to a real, farther-away quiet region
+                     #   (findQuietestRegion, boundaryQuality.ts). Calibrated dual gate (syncConstants.ts):
+                     #   BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR (0.05) + BOUNDARY_QUALITY_MIN_DISTANCE_SEC
+                     #   (0.10s) + BOUNDARY_QUALITY_LOUDNESS_RATIO_K (2) all required to fire. Wired
+                     #   post-hoc in App.tsx after buildVoiceoverWaveform (architecture B — no reordering
+                     #   of existing sync steps), logged at 'info' severity (Phase 2's watcher, not yet
+                     #   built, is what acts on these). `mode: 'report-all'` backs the DEV-only
+                     #   `window.__calibrateBoundaryQuality` harness (App.tsx).
+    boundaryQuality.ts # findQuietestRegion(peaks, peaksPerSecond, windowStartSec, windowEndSec,
+                     #   sustainedWindowSec) — O(n) sliding-window minimum-amplitude search over
+                     #   waveform peaks (running-sum, not O(n*sustainedCols)); the one piece of new
+                     #   signal the boundary-quality checker needs beyond what waveformPeaks.ts
+                     #   (drawing/extraction) or snapBoundaries.ts (boundary computation) already
+                     #   have. Pure, DOM/React-free. Consumed by syncContracts.ts's
+                     #   validateBoundaryQuality — see that file's entry above.
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-
@@ -565,6 +585,13 @@ src/
                      #   — now holds unconditionally on this function's output; App.tsx's
                      #   `headExtendFirstSegment` (syncEngine.ts) post-pass and Timeline.tsx's absolute-
                      #   positioned lanes both depend on it.
+                     #   `computeBoundarySearchWindow` (search-window midpoint/gap math) and
+                     #   `boundaryUsedFallback` (re-derives, from the same candidacy predicates above,
+                     #   whether a given pair's committed boundary was placed by the plain spoken-edge
+                     #   fallback rather than a real silence) are exported — boundary-quality checker
+                     #   Phase 1, 2026-08-02 — for `syncContracts.ts`'s `validateBoundaryQuality` to
+                     #   reuse without duplicating this file's own candidacy logic. Pure moves/reads;
+                     #   `snapCoveredBoundaries`'s own signature and behavior are unchanged.
     silenceDetector.ts # detectSilences(blob) — Web Audio API silence scan used by Whisper gap-fill
                      #   and snapBoundaries.ts's boundary snap. Frame-by-frame RMS/dB scan against
                      #   thresholdDb/minDurationSec/frameSizeMs (all overridable, defaults -45dB/
