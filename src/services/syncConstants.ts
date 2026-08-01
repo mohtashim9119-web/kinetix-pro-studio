@@ -133,7 +133,7 @@ export const NOISE_FLOOR_COVERAGE = 0.1;
 // persisted by the existing localStorage serializer, so it shares that store's
 // quota with the rest of the project. These caps keep an old, heavily re-synced
 // project from growing the blob without bound; pruning always drops the OLDEST
-// entries (appendSyncLogEntries in App.tsx keeps the tail).
+// entries (appendSyncLogEntries, services/syncLog.ts, keeps the tail).
 export const MAX_LOG_ENTRIES = 500;
 export const MAX_SYNC_RUN_SUMMARIES = 10;
 

@@ -2,9 +2,9 @@
 // WS-logs — the persistent sync-log panel (right panel, App.tsx).
 //
 // Pure presentation: it renders Project.syncLog and calls back to clear it. All
-// writes happen in App.tsx (appendSyncLogEntries / clearSyncLog), so this file
-// holds no log policy and no persistence of its own — the log rides along on
-// the Project blob the existing projectStore already saves.
+// writes go through appendSyncLogEntries (services/syncLog.ts) / clearSyncLog
+// (App.tsx), so this file holds no log policy and no persistence of its own —
+// the log rides along on the Project blob the existing projectStore already saves.
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Copy } from 'lucide-react';
 import type { SyncLogEntry, SyncLogEntryType } from '../types';

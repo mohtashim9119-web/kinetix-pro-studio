@@ -5,21 +5,23 @@
 // rendering, and is verified manually.
 import { describe, it, expect } from 'vitest';
 import {
-  appendSyncLogEntries,
   clearSyncLog,
   buildSkipLogEntries,
   buildSyncAbortEntry,
-  buildSilenceErrorEntry,
-  buildMalformedTokenEntry,
   buildNoAssetSummaryEntry,
   buildRescueLogEntries,
   buildSyncInfoEntry,
   buildSyncInfoMessage,
-  makeSyncLogEntry,
   SYNC_LOG_TEXT_PREVIEW_CHARS,
   type SkippedSegmentRecord,
   type RescuedSegmentRecord,
 } from '../App';
+import {
+  appendSyncLogEntries,
+  buildSilenceErrorEntry,
+  buildMalformedTokenEntry,
+  makeSyncLogEntry,
+} from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
 import type { Project, SyncLogEntry, SyncRunSummary } from '../types';

@@ -62,9 +62,14 @@ import { snapCoveredBoundaries } from './services/snapBoundaries';
 import {
   MIN_COVERED_RUN_LENGTH,
   NOISE_FLOOR_COVERAGE,
-  MAX_LOG_ENTRIES,
-  MAX_SYNC_RUN_SUMMARIES,
 } from './services/syncConstants';
+import {
+  makeSyncLogEntry,
+  appendSyncLogEntries,
+  buildSilenceErrorEntry,
+  buildMalformedTokenEntry,
+  mintSyncLogId,
+} from './services/syncLog';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -853,12 +858,18 @@ export function retileCoveredSegments(kept: VideoSegment[], audioDuration: numbe
 // us exactly which scenes were left off the timeline and why; until now that
 // was a DEV-only console.warn that died with the tab. These pure builders turn
 // a run's outcome into SyncLogEntry/SyncRunSummary records, and
-// appendSyncLogEntries folds them onto the Project — which the existing
-// projectStore serializer persists as a unit, so no separate store is involved.
+// appendSyncLogEntries (services/syncLog.ts) folds them onto the Project —
+// which the existing projectStore serializer persists as a unit, so no
+// separate store is involved.
 //
 // Every function here is pure and module-level (same testability precedent as
 // the WS1b gate functions above): the orchestrator decides WHEN a run aborted
-// or skipped, these decide WHAT the log says about it.
+// or skipped, these decide WHAT the log says about it. makeSyncLogEntry,
+// appendSyncLogEntries, buildSilenceErrorEntry, and buildMalformedTokenEntry
+// moved to services/syncLog.ts (Pipeline Contract Program, Pair 1, Step 1) —
+// the staging-time transcription path (useWhisper.ts) needs them and cannot
+// import from this file without a cycle. The rest of this builder family
+// stays here and imports makeSyncLogEntry from that module.
 // ---------------------------------------------------------------------------
 
 /** Skip entries store a preview, not the whole scene — the log is a scannable
@@ -870,42 +881,6 @@ function previewSegmentText(text: string): string {
   return trimmed.length > SYNC_LOG_TEXT_PREVIEW_CHARS
     ? `${trimmed.slice(0, SYNC_LOG_TEXT_PREVIEW_CHARS)}…`
     : trimmed;
-}
-
-/** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
- *  WKWebView/WebView2, and Vite dev over localhost — a secure context). The
- *  counter fallback exists only so a non-secure-context or jsdom environment
- *  can't throw mid-sync; ids are never persisted across runs as keys. */
-let syncLogIdCounter = 0;
-function mintSyncLogId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  syncLogIdCounter += 1;
-  return `synclog-${Date.now()}-${syncLogIdCounter}`;
-}
-
-/** Builds one entry. `timestamp` is injectable so a whole run's entries can
- *  share a single Date.now() reading (and so tests are deterministic). */
-export function makeSyncLogEntry(
-  syncRunId: string,
-  type: SyncLogEntryType,
-  message: string,
-  extra?: Pick<
-    SyncLogEntry,
-    'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
-    | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount'
-  >,
-  timestamp: number = Date.now(),
-): SyncLogEntry {
-  return {
-    id: mintSyncLogId(),
-    timestamp,
-    syncRunId,
-    type,
-    message,
-    ...extra,
-  };
 }
 
 /**
@@ -971,50 +946,6 @@ export function buildSyncInfoEntry(
     'info',
     buildSyncInfoMessage(totalSegments, matchedSegments, skippedSegments),
     undefined,
-    timestamp,
-  );
-}
-
-/**
- * WS4 Feature 3 (decision 11a) — the 'silence-error' entry.
- *
- * Silence detection failing is a real degradation, not a cosmetic one: every
- * boundary in the run falls back to the token midpoint instead of landing in an
- * acoustic gap. It is NOT an abort — a timeline built on midpoints is still a
- * usable timeline — so it is logged loudly and the sync continues.
- */
-export function buildSilenceErrorEntry(
-  syncRunId: string,
-  errorMessage: string,
-  timestamp: number = Date.now(),
-): SyncLogEntry {
-  return makeSyncLogEntry(
-    syncRunId,
-    'silence-error',
-    'Silence detection failed — segment boundaries fall back to spoken-word midpoints instead of audio gaps.',
-    { errorMessage },
-    timestamp,
-  );
-}
-
-/**
- * WS4 Feature 4 (decision 14a) — the 'malformed-token' entry.
- *
- * Informational by design: the bad tokens were caught and removed before they
- * could place a boundary, so the sync that follows is CLEANER for it. Only
- * emitted when at least one token was actually dropped.
- */
-export function buildMalformedTokenEntry(
-  syncRunId: string,
-  skippedCount: number,
-  totalTokens: number,
-  timestamp: number = Date.now(),
-): SyncLogEntry {
-  return makeSyncLogEntry(
-    syncRunId,
-    'malformed-token',
-    `Filtered ${skippedCount} of ${totalTokens} transcript token(s) with unusable timestamps before alignment.`,
-    { skippedTokenCount: skippedCount, totalTokenCount: totalTokens },
     timestamp,
   );
 }
@@ -1104,33 +1035,6 @@ export function buildRescueLogEntries(
       timestamp,
     );
   });
-}
-
-/**
- * Folds a run's entries + summary onto the project. Pure — returns a new
- * Project, never mutates. Both fields are treated as [] when absent, which is
- * what makes a pre-WS-logs project (syncLog: undefined) work unchanged.
- *
- * Pruning keeps the MOST RECENT records: entries are appended at the end, so
- * an over-cap array is sliced from the END. `summary` is optional so a future
- * caller can log a standalone warning without inventing a run rollup for it.
- */
-export function appendSyncLogEntries(
-  project: Project,
-  entries: SyncLogEntry[],
-  summary?: SyncRunSummary,
-): Project {
-  const nextLog = [...(project.syncLog ?? []), ...entries];
-  const nextSummaries = summary
-    ? [...(project.syncRunSummaries ?? []), summary]
-    : [...(project.syncRunSummaries ?? [])];
-  return {
-    ...project,
-    syncLog: nextLog.length > MAX_LOG_ENTRIES ? nextLog.slice(-MAX_LOG_ENTRIES) : nextLog,
-    syncRunSummaries: nextSummaries.length > MAX_SYNC_RUN_SUMMARIES
-      ? nextSummaries.slice(-MAX_SYNC_RUN_SUMMARIES)
-      : nextSummaries,
-  };
 }
 
 /** Empties both log fields. Pure; backs the panel's "Clear log" button. */
