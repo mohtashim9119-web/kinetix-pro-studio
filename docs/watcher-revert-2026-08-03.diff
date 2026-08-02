@@ -1,0 +1,2381 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index 2a55f3b..c7e5296 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -68,7 +68,8 @@ import {
+ import { snapCoveredBoundaries } from './services/snapBoundaries';
+ import { detectSilences } from './services/silenceDetector';
+ import type { SilenceInterval } from './services/silenceDetector';
+-import { validateBoundaryQuality, type BoundaryQualityMeasurement } from './services/syncContracts';
++import { validateBoundaryQuality, boundaryMeasurementToViolation, boundaryUnplaceableToViolation, type BoundaryQualityMeasurement } from './services/syncContracts';
++import { applyBoundaryWatcher, verifyCommittedBoundaries, findSilenceRegionCenter, type BoundaryCorrection } from './services/boundaryQuality';
+ import {
+   MIN_COVERED_RUN_LENGTH,
+   NOISE_FLOOR_COVERAGE,
+@@ -76,12 +77,15 @@ import {
+   BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
+   BOUNDARY_QUALITY_K_SWEEP,
+   BOUNDARY_QUALITY_WINDOW_SWEEP,
++  BOUNDARY_QUALITY_REGION_RATIO_SWEEP,
++  BOUNDARY_QUALITY_REGION_DELTA_SWEEP,
+ } from './services/syncConstants';
+ import {
+   makeSyncLogEntry,
+   appendSyncLogEntries,
+   buildSilenceErrorEntry,
+   buildMalformedTokenEntry,
++  buildContractViolationEntry,
+   mintSyncLogId,
+ } from './services/syncLog';
+ import { buildWaveformPipeline } from './services/waveformPipeline';
+@@ -2612,50 +2616,107 @@ export default function App() {
+     // effect dedupes against the same key, so it won't rebuild what this just built.
+     const resolvedWaveform = await buildVoiceoverWaveform(voiceoverAsset);
+ 
+-    // Boundary-quality checker (waveform-watcher program, Phase 1) — a
+-    // post-hoc, READ-ONLY measurement pass (architecture B: runs strictly
+-    // AFTER the peaks above are built; nothing about the sync steps or the
+-    // segment commit above is reordered or altered). Own follow-up
++    // Boundary watcher + verifier (waveform-watcher program, Phase 2 +
++    // Watcher follow-up Defect A) — a post-hoc pass (architecture B: runs
++    // strictly AFTER the peaks above are built; nothing about the sync steps
++    // or the segment commit above is reordered or altered). Own follow-up
+     // setProject, reusing this run's syncRunId with no summary (the R11
+     // staging-path pattern, services/syncLog.ts — this pass has no
+     // segment-coverage outcome of its own to roll up, only whatever
+-    // boundary-quality findings it produced).
++    // boundary-quality findings/corrections it produced).
+     //
+-    // Severity: 'info', not 'warning', even though the dual-gate thresholds
+-    // (BOUNDARY_QUALITY_LOUDNESS_RATIO_K / _SUSTAINED_WINDOW_SEC / _ABSOLUTE_
+-    // AMPLITUDE_FLOOR / _MIN_DISTANCE_SEC, syncConstants.ts) are now
+-    // calibrated against production data (see that constant's own doc
+-    // comment). Phase 1 ships this as observability only — a WARNING is
+-    // always-visible, amber, and implies the user should act on it (severity
+-    // taxonomy, docs/sync-pipeline-contract-plan.md §4); that promotion is
+-    // Phase 2's watcher/auto-fix work, not this checker's. `validateBoundary
+-    // Quality` itself still returns 'warning'-typed ContractViolations (it is
+-    // a correctly-typed Contract 5→6 validator, ready for Phase 2 to promote
+-    // as-is) — the downgrade to 'info' happens here, at this wiring, not in
+-    // the validator.
++    // Order: applyBoundaryWatcher (Phase 2 — auto-corrects flagged FALLBACK
++    // boundaries) runs first, then verifyCommittedBoundaries (Defect A) runs
++    // on the result — it re-measures EVERY pair (both kinds) and additionally
++    // corrects a SILENCE-placed boundary that still measures loud. Both
++    // passes resolve a target via the containment-fallback three-tier order
++    // (boundaryQuality.ts's resolveCorrectionCandidate): the region center
++    // when it lands strictly inside the pair's own real token gap, else that
++    // center clamped into the gap, else the plain gap midpoint — a flagged
++    // boundary never stays skipped on the proven-bad loud placement; only a
++    // resulting non-positive segment duration still blocks a correction.
++    // watcherResult.corrections is threaded into verifyCommittedBoundaries so
++    // it can exclude, BY PAIR-INDEX IDENTITY, any fallback pair the watcher
++    // already corrected — re-measuring a just-corrected pair can legitimately
++    // still come back flagged (the dual gate compares against the WIDE
++    // window's global quietest point, which a real-gap-clamped correction
++    // may never reach), and that is not a second failure to report. The two
++    // passes' corrections are merged into ONE atomic setProject + ONE
++    // appendSyncLogEntries batch below — there is no separate pre-watcher
++    // checker entry anymore: a corrected pair produces NO warning; only
++    // pairs STILL flagged after both passes (and not excluded by identity)
++    // produce one, with their REAL severity/fixHint from the
++    // ContractViolation (boundaryMeasurementToViolation, syncContracts.ts) —
++    // not hardcoded to 'info'.
+     if (pendingBoundaryCheckInput) {
+-      const boundaryViolations = resolvedWaveform
+-        ? validateBoundaryQuality(
++      const watcherResult = resolvedWaveform
++        ? applyBoundaryWatcher(
+             committedSegments,
+             pendingBoundaryCheckInput.alignments,
+             pendingBoundaryCheckInput.tokens,
+             pendingBoundaryCheckInput.silences,
+             resolvedWaveform,
+-            BOUNDARY_QUALITY_LOUDNESS_RATIO_K,
+-            BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
+           )
+-        : [];
+-      const boundaryLogEntries: SyncLogEntry[] = resolvedWaveform
+-        ? boundaryViolations.map(v => makeSyncLogEntry(syncRunId, 'info', v.message, { fixHint: v.fixHint }, syncRunAt))
+-        : [makeSyncLogEntry(
++        : { segments: committedSegments, corrections: [] as BoundaryCorrection[] };
++
++      const verifyResult = resolvedWaveform
++        ? verifyCommittedBoundaries(
++            watcherResult.segments,
++            pendingBoundaryCheckInput.alignments,
++            pendingBoundaryCheckInput.tokens,
++            pendingBoundaryCheckInput.silences,
++            resolvedWaveform,
++            watcherResult.corrections,
++          )
++        : { segments: watcherResult.segments, corrections: [] as BoundaryCorrection[], stillFlagged: [] as BoundaryQualityMeasurement[] };
++
++      const allCorrections = [...watcherResult.corrections, ...verifyResult.corrections];
++      const approximateCount = allCorrections.filter(c => c.approximate).length;
++      const boundaryLogEntries: SyncLogEntry[] = !resolvedWaveform
++        ? [makeSyncLogEntry(
+             syncRunId,
+             'info',
+             `Waveform unavailable — ${Math.max(0, committedSegments.length - 1)} boundary(ies) not waveform-verified.`,
+             undefined,
+             syncRunAt,
+-          )];
++          )]
++        : [
++            // Correction placement semantics fix (2026-08-02) — tier 3
++            // (resolveCorrectionCandidate returned null, no quiet region
++            // found at all) gets its own message/fixHint
++            // (boundaryUnplaceableToViolation) instead of the generic
++            // "nudge toward the quieter moment nearby" one, since there is
++            // no nearby quieter moment to point at.
++            ...verifyResult.stillFlagged.map(m => buildContractViolationEntry(
++              syncRunId,
++              m.center === undefined ? boundaryUnplaceableToViolation(m) : boundaryMeasurementToViolation(m),
++              syncRunAt,
++            )),
++            ...(allCorrections.length > 0
++              ? [makeSyncLogEntry(
++                  syncRunId,
++                  'info',
++                  `Auto-adjusted ${allCorrections.length} cut${allCorrections.length === 1 ? '' : 's'} into quiet gap${allCorrections.length === 1 ? '' : 's'}` +
++                    (approximateCount > 0
++                      ? ` (${approximateCount} approximate — placed at measured silence outside the script's expected gap).`
++                      : ' (waveform-verified).'),
++                  { corrections: allCorrections },
++                  syncRunAt,
++                )]
++              : []),
++          ];
++
++      // boundaryLogEntries is empty ONLY when resolvedWaveform is truthy AND
++      // neither pass found anything to report (no correction, no still-
++      // flagged pair) — applyBoundaryWatcher/verifyCommittedBoundaries both
++      // always return a FRESH shallow copy regardless (their own purity
++      // contract), so a reference-inequality check here would fire on every
++      // run even when nothing changed; content is what decides this commit.
+       if (boundaryLogEntries.length > 0) {
+-        setProject(prev => appendSyncLogEntries(prev, boundaryLogEntries, undefined));
++        setProject(prev => ({
++          ...appendSyncLogEntries(prev, boundaryLogEntries, undefined),
++          segments: verifyResult.segments,
++        }));
+       }
+     }
+ 
+@@ -2692,10 +2753,29 @@ export default function App() {
+   // fallback boundaries first, since those are the ones most likely to be
+   // genuinely bad). Does not also run the sweep — it's a different
+   // diagnostic question, not an additive one.
++  //
++  // Centering mode (`await __calibrateBoundaryQuality({ centering: true })`,
++  // Watcher follow-up Step 1) — a DIFFERENT open question from either mode
++  // above: not "would this pair be flagged" but "if it WERE corrected, where
++  // exactly would `findSilenceRegionCenter` (Defect C) place it, under each
++  // candidate `regionEndThreshold` formula?" Runs the checker once (same
++  // production K/window as detail mode — the region search itself doesn't
++  // depend on K/window) to get every fallback pair's seed
++  // (`quietestTime`/`quietestAmplitude`) and its own real token gap
++  // (`lastSpokenEnd`/`nextSpokenStart`), then for EACH pair sweeps every
++  // candidate threshold in `BOUNDARY_QUALITY_REGION_RATIO_SWEEP` (relative
++  // multipliers of the pair's own `quietestAmplitude`) and
++  // `BOUNDARY_QUALITY_REGION_DELTA_SWEEP` (small absolute deltas added to
++  // it), printing `regionStart`/`regionEnd`/`center`/`width` for each —
++  // exactly what the user needs to eyeball against the real audio before
++  // freezing a formula (Step 5). The production call site
++  // (`measureBoundaryQuality`, boundaryQuality.ts) currently hardcodes the
++  // interim `quietestAmplitude * 2` default; this sweep is how that gets
++  // replaced with a confirmed value, not a guess.
+   useEffect(() => {
+     if (!import.meta.env.DEV) return;
+ 
+-    const calibrate = async (options?: { detail?: boolean }): Promise<void> => {
++    const calibrate = async (options?: { detail?: boolean; centering?: boolean }): Promise<void> => {
+       const project = projectRef.current;
+       const segments = project.segments;
+       const rawTokens = project.transcriptTokens ?? [];
+@@ -2766,6 +2846,57 @@ export default function App() {
+         return;
+       }
+ 
++      if (options?.centering) {
++        const measurements = validateBoundaryQuality(
++          segments, alignments, filtered.tokens, silences, waveformSource,
++          BOUNDARY_QUALITY_LOUDNESS_RATIO_K, BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC, 'report-all',
++        );
++        console.log(
++          `[calibrate] centering — ${measurements.length} fallback pair(s); sweeping ` +
++          `${BOUNDARY_QUALITY_REGION_RATIO_SWEEP.length} ratio + ${BOUNDARY_QUALITY_REGION_DELTA_SWEEP.length} ` +
++          'absolute-delta candidate threshold(s) per pair (PENDING-CALIBRATION — see syncConstants.ts):',
++        );
++        for (const m of measurements) {
++          if (m.quietestTime === undefined || m.quietestAmplitude === undefined) {
++            console.log(`[calibrate]   segmentIndex=${m.segmentIndex} — no quiet region found, skipped.`);
++            continue;
++          }
++          const quietestTime = m.quietestTime;
++          const quietestAmplitude = m.quietestAmplitude;
++          console.log(
++            `[calibrate]   segmentIndex=${m.segmentIndex} boundaryTime=${m.boundaryTime.toFixed(2)}s ` +
++            `quietestTime=${quietestTime.toFixed(2)}s quietestAmplitude=${quietestAmplitude.toFixed(3)} ` +
++            `gap=[${m.lastSpokenEnd.toFixed(2)}s,${m.nextSpokenStart.toFixed(2)}s]` +
++            (m.flagged ? ' [FLAGGED]' : ''),
++          );
++          for (const ratio of BOUNDARY_QUALITY_REGION_RATIO_SWEEP) {
++            const threshold = quietestAmplitude * ratio;
++            const region = findSilenceRegionCenter(
++              waveformSource.peaks, waveformSource.peaksPerSecond,
++              quietestTime, threshold, m.lastSpokenEnd, m.nextSpokenStart,
++            );
++            console.log(
++              `[calibrate]     ratio=x${ratio} threshold=${threshold.toFixed(3)} — ` +
++              `region=[${region.regionStart.toFixed(3)}s,${region.regionEnd.toFixed(3)}s] ` +
++              `center=${region.center.toFixed(3)}s width=${(region.regionEnd - region.regionStart).toFixed(3)}s`,
++            );
++          }
++          for (const delta of BOUNDARY_QUALITY_REGION_DELTA_SWEEP) {
++            const threshold = quietestAmplitude + delta;
++            const region = findSilenceRegionCenter(
++              waveformSource.peaks, waveformSource.peaksPerSecond,
++              quietestTime, threshold, m.lastSpokenEnd, m.nextSpokenStart,
++            );
++            console.log(
++              `[calibrate]     delta=+${delta} threshold=${threshold.toFixed(3)} — ` +
++              `region=[${region.regionStart.toFixed(3)}s,${region.regionEnd.toFixed(3)}s] ` +
++              `center=${region.center.toFixed(3)}s width=${(region.regionEnd - region.regionStart).toFixed(3)}s`,
++            );
++          }
++        }
++        return;
++      }
++
+       for (const k of BOUNDARY_QUALITY_K_SWEEP) {
+         for (const win of BOUNDARY_QUALITY_WINDOW_SWEEP) {
+           const measurements: BoundaryQualityMeasurement[] = validateBoundaryQuality(
+@@ -2781,10 +2912,12 @@ export default function App() {
+     };
+ 
+     (window as unknown as {
+-      __calibrateBoundaryQuality: (options?: { detail?: boolean }) => Promise<void>;
++      __calibrateBoundaryQuality: (options?: { detail?: boolean; centering?: boolean }) => Promise<void>;
+     }).__calibrateBoundaryQuality = calibrate;
+     return () => {
+-      delete (window as unknown as { __calibrateBoundaryQuality?: (options?: { detail?: boolean }) => Promise<void> }).__calibrateBoundaryQuality;
++      delete (window as unknown as {
++        __calibrateBoundaryQuality?: (options?: { detail?: boolean; centering?: boolean }) => Promise<void>;
++      }).__calibrateBoundaryQuality;
+     };
+   }, []);
+ 
+diff --git a/src/components/SyncLogPanel.tsx b/src/components/SyncLogPanel.tsx
+index 0c6e396..c77b7ac 100644
+--- a/src/components/SyncLogPanel.tsx
++++ b/src/components/SyncLogPanel.tsx
+@@ -81,6 +81,15 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
+     if (skipped === undefined || total === undefined) return undefined;
+     return `${skipped} of ${total} tokens had invalid timestamps`;
+   }
++  // Boundary watcher (waveform-watcher program, Phase 2) — the auto-
++  // correction summary entry (type 'info') carries one detail per boundary it
++  // moved. Checked by field presence, not `entry.type`, since 'info' is
++  // shared with plenty of other entries that never set this field.
++  if (entry.corrections && entry.corrections.length > 0) {
++    return entry.corrections
++      .map(c => `seg ${c.pairIndex + 1}→${c.pairIndex + 2}: ${c.oldBoundary.toFixed(2)}s→${c.newBoundary.toFixed(2)}s${c.approximate ? ' (approx)' : ''}`)
++      .join('; ');
++  }
+   return undefined;
+ }
+ 
+diff --git a/src/components/Timeline.tsx b/src/components/Timeline.tsx
+index 1edd614..602743b 100644
+--- a/src/components/Timeline.tsx
++++ b/src/components/Timeline.tsx
+@@ -530,7 +530,18 @@ export function Timeline({
+                       boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
+                       zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
+                     }}
+-                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
++                    // No `overflow-hidden` here (filmstrip-overlap fix, Watcher
++                    // follow-up Defect B) — this OUTER div is the one that gets
++                    // its OWN `transform` (the trim-drag `scale(1.02)` above),
++                    // and a WebKit `overflow:hidden` + `border-radius` element
++                    // that is ITSELF transformed hits the same documented
++                    // compositing bug as the lane containers (CLAUDE.md's
++                    // Timeline.tsx entry, "Lane border-as-overlay pattern") —
++                    // descendant content (the media below) can render fully
++                    // black. `rounded-lg`/`border`/`ring`/`boxShadow` still
++                    // live here for the visual shape; only the CLIPPING moved
++                    // to the inner div below, which never transforms itself.
++                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
+                   >
+                     {isAdjustingTrim && trimmingSegmentId === s.id && (
+                       <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
+@@ -547,7 +558,15 @@ export function Timeline({
+                       onClick={(e) => e.stopPropagation()}
+                     />
+ 
+-                    <div className="flex-1 relative bg-black/50">
++                    {/* INNER div — carries the `overflow-hidden rounded-lg`
++                        clipping the outer div used to have; it never
++                        transforms itself, so it never combines with a
++                        self-transform the way the outer div would (the exact
++                        shape of the WebKit bug documented above). Wraps only
++                        media + badges, matching the lane-level precedent
++                        (Timeline.tsx, the border-overlay div a few lines
++                        below this card's own closing tag). */}
++                    <div className="flex-1 relative bg-black/50 overflow-hidden rounded-lg">
+                       {asset?.url ? (
+                         asset.type === 'video' ? (
+                           <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
+diff --git a/src/components/timeline.render.test.tsx b/src/components/timeline.render.test.tsx
+index b49fcc7..db31f38 100644
+--- a/src/components/timeline.render.test.tsx
++++ b/src/components/timeline.render.test.tsx
+@@ -82,6 +82,28 @@ describe('Timeline static markup — segment cards (Test 6)', () => {
+     expect(html).toContain('width:500px'); // segment 1: duration 5 * 100
+     expect(html).toContain('left:500px'); // segment 2: startTime 5 * 100
+   });
++
++  // Filmstrip-overlap fix (Watcher follow-up, Defect B) — the segment card's
++  // own transform (trim-drag scale) and its overflow-hidden clipping must
++  // live on two SEPARATE divs (a WebKit compositing bug: overflow:hidden +
++  // border-radius on an element that is ITSELF transformed can render
++  // descendant content fully black — CLAUDE.md's Timeline.tsx entry has the
++  // full mechanism). The outer, absolutely-positioned card div (identified by
++  // its `data-seg-id` attribute) must never carry `overflow-hidden`; a nested
++  // inner div must carry it instead.
++  it('the outer segment-card div has no overflow-hidden; an inner div carries it', () => {
++    const segments = [makeSeg('s1', 0, 5)];
++    const html = renderToStaticMarkup(
++      <Timeline {...makeTimelineProps({ segments, sliderT: 1 })} />,
++    );
++
++    const outerMatch = html.match(/data-seg-id="s1"[^>]*class="([^"]*)"/);
++    expect(outerMatch).not.toBeNull();
++    expect(outerMatch![1]).not.toMatch(/\boverflow-hidden\b/);
++
++    const innerMatches = [...html.matchAll(/class="([^"]*\boverflow-hidden\b[^"]*)"/g)];
++    expect(innerMatches.length).toBeGreaterThan(0);
++  });
+ });
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/src/services/boundaryQuality.test.ts b/src/services/boundaryQuality.test.ts
+index eaef681..ebb5771 100644
+--- a/src/services/boundaryQuality.test.ts
++++ b/src/services/boundaryQuality.test.ts
+@@ -1,8 +1,23 @@
+ // Boundary-quality checker — Phase 1 of the waveform-watcher program.
+ // Unit tests for findQuietestRegion: synthetic peaks arrays with
+ // hand-computed expected minima, no fixtures.
+-import { describe, it, expect } from 'vitest';
+-import { findQuietestRegion } from './boundaryQuality';
++import { describe, it, expect, vi } from 'vitest';
++import {
++  findQuietestRegion,
++  findSilenceRegionCenter,
++  measureBoundaryQuality,
++  measureFallbackBoundary,
++  resolveCorrectionCandidate,
++  applyBoundaryWatcher,
++  verifyCommittedBoundaries,
++} from './boundaryQuality';
++import type { BoundaryQualityMeasurement } from './boundaryQuality';
++import { BOUNDARY_QUALITY_REGION_END_DELTA } from './syncConstants';
++import type { SegmentAlignment } from './whisperService';
++import type { SilenceInterval } from './silenceDetector';
++import type { WaveformSource } from './waveformPeaks';
++import type { TranscriptToken, VideoSegment } from '../types';
++import { TransitionType, AnimationType } from '../types';
+ 
+ describe('findQuietestRegion — sliding-window quietest-span search', () => {
+   it('finds a displaced quiet region inside an otherwise loud window', () => {
+@@ -80,3 +95,724 @@ describe('findQuietestRegion — sliding-window quietest-span search', () => {
+     expect(Number.isFinite(result.meanAmplitude)).toBe(true);
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// findSilenceRegionCenter — Watcher follow-up, Defect C (centered placement).
++// Direct unit tests with hand-computed columns, no fixtures — the same
++// convention findQuietestRegion's own suite above uses. All examples use
++// 10 peaks/sec unless noted; column i's time SPAN is [i/pps, (i+1)/pps),
++// matching findQuietestRegion's own centerCol convention (a column is a
++// span, not a point) — so a region covering columns [a,b] represents time
++// [a/pps, (b+1)/pps).
++// ---------------------------------------------------------------------------
++describe('findSilenceRegionCenter (Watcher follow-up, Defect C — centered placement)', () => {
++  it('a symmetric quiet band centers exactly on the seed', () => {
++    // 20 columns (2.0s @ 10pps). Quiet band cols [8,11] (t=[0.8,1.2)), loud
++    // (0.5) elsewhere. Seed at col 10 (t=1.0) expands 2 left / 1 right to
++    // exactly fill the band — the gap bounds are wide enough not to clamp.
++    const peaks = new Float32Array(20).fill(0.5);
++    peaks[8] = 0.02; peaks[9] = 0.02; peaks[10] = 0.02; peaks[11] = 0.02;
++
++    const result = findSilenceRegionCenter(peaks, 10, 1.0, 0.05, 0.5, 1.5);
++
++    expect(result.regionStart).toBeCloseTo(0.8, 6);
++    expect(result.regionEnd).toBeCloseTo(1.2, 6);
++    expect(result.center).toBeCloseTo(1.0, 6);
++  });
++
++  it('an edge-clamped asymmetric region centers on the CLAMPED region, never falling back to the bare seed', () => {
++    // Quiet cols [4,15] (t=[0.4,1.6)) would naturally expand well past the
++    // real token gap on the left; lastSpokenEnd=0.8 (col 8) clamps that side.
++    // The right side stops naturally at the loud column 16, well short of
++    // nextSpokenStart=1.8 — a genuinely ASYMMETRIC clamp (one side clamped,
++    // one side not).
++    const peaks = new Float32Array(20).fill(0.5);
++    for (let i = 4; i <= 15; i++) peaks[i] = 0.02;
++
++    const result = findSilenceRegionCenter(peaks, 10, 1.0, 0.05, 0.8, 1.8);
++
++    expect(result.regionStart).toBeCloseTo(0.8, 6); // clamped up from the natural 0.4
++    expect(result.regionEnd).toBeCloseTo(1.6, 6); // unclamped — the loud col 16 stops it first
++    expect(result.center).toBeCloseTo(1.2, 6); // center of the CLAMPED region [0.8,1.6), not of [0.4,1.6)
++  });
++
++  it('two separate quiet dips: only the one containing the seed is used (single global-minimum seed)', () => {
++    // Dips at cols [2,3] (t=0.2-0.4) and cols [10,11] (t=1.0-1.2), separated
++    // by loud columns. Seed at col 10 sits in the SECOND dip; expansion must
++    // stop at the loud column 9 rather than "jumping" the gap to merge with
++    // the earlier, unrelated dip.
++    const peaks = new Float32Array(20).fill(0.5);
++    peaks[2] = 0.02; peaks[3] = 0.02;
++    peaks[10] = 0.02; peaks[11] = 0.02;
++
++    const result = findSilenceRegionCenter(peaks, 10, 1.0, 0.05, 0.0, 2.0);
++
++    expect(result.regionStart).toBeCloseTo(1.0, 6);
++    expect(result.regionEnd).toBeCloseTo(1.2, 6);
++    expect(result.center).toBeCloseTo(1.1, 6);
++  });
++
++  it('a uniformly quiet region wider than the token gap is hard-clamped on BOTH sides', () => {
++    // Every column is quiet — the naive expansion would run the full array;
++    // the pair's own real gap [0.9,1.1] (narrower than the quiet stretch)
++    // must bound it on both sides. Finer 100 peaks/sec keeps the inherent
++    // one-column (1/peaksPerSecond) span-end quantization slop small.
++    const peaks = new Float32Array(200).fill(0.02);
++
++    const result = findSilenceRegionCenter(peaks, 100, 1.0, 0.05, 0.9, 1.1);
++
++    expect(result.regionStart).toBeCloseTo(0.9, 6); // clamped exactly to lastSpokenEnd
++    // regionEnd carries the expected +1-column span-end slop (1/100s) from
++    // treating each column as [col/pps,(col+1)/pps) — same convention
++    // findQuietestRegion itself uses; bounded and expected, not a bug.
++    expect(result.regionEnd).toBeCloseTo(1.11, 6);
++    expect(result.center).toBeCloseTo(1.005, 6);
++  });
++
++  // Fix follow-up — absolute-delta threshold formula (V6 centering sweep,
++  // 2026-08-02): a RATIO threshold (meanAmplitude * K) collapses to a
++  // single-column fake region whenever the quietest span's own amplitude is
++  // near-zero (genuine digital-silence pauses aren't perfectly flat — small
++  // in-pause fluctuations can exceed a tight ratio band even though every
++  // sample is still near-silent compared to real speech). The frozen
++  // absolute-delta formula (BOUNDARY_QUALITY_REGION_END_DELTA, +0.05) has no
++  // such degenerate case.
++  it('a near-zero quietest amplitude yields a WIDE, multi-column region under the absolute-delta threshold — not a single-column collapse', () => {
++    // A long near-digital-silence pause, cols [10,29] (t=1.0-3.0), mostly
++    // 0.002 with two brief slightly-louder blips at cols 15 and 24 (0.01) —
++    // still near-silent, but enough variance to expose a tight ratio's
++    // collapse. Loud (0.5) elsewhere. Seed at col 12 (t=1.2), inside the
++    // pause's first stretch.
++    const peaks = new Float32Array(40).fill(0.5);
++    for (let i = 10; i <= 29; i++) peaks[i] = 0.002;
++    peaks[15] = 0.01;
++    peaks[24] = 0.01;
++    const seedTimeSec = 1.2;
++    const quietestMeanAmplitude = 0.002;
++
++    const deltaThreshold = quietestMeanAmplitude + BOUNDARY_QUALITY_REGION_END_DELTA; // 0.052
++    const deltaResult = findSilenceRegionCenter(peaks, 10, seedTimeSec, deltaThreshold, 0.5, 3.5);
++    // The whole pause qualifies — both 0.01 blips stay under 0.052 — so the
++    // region spans close to the full 2.0s pause, centered near its middle.
++    expect(deltaResult.regionStart).toBeCloseTo(1.0, 6);
++    expect(deltaResult.regionEnd).toBeCloseTo(3.0, 6);
++    expect(deltaResult.regionEnd - deltaResult.regionStart).toBeGreaterThan(1.0);
++
++    // The REJECTED ratio formula (meanAmplitude * 2 = 0.004) is kept here
++    // only as a comparison reference, not production code — it excludes the
++    // 0.01 blips, so expansion stops dead at the FIRST one encountered.
++    const ratioThreshold = quietestMeanAmplitude * 2; // 0.004
++    const ratioResult = findSilenceRegionCenter(peaks, 10, seedTimeSec, ratioThreshold, 0.5, 3.5);
++    expect(ratioResult.regionStart).toBeCloseTo(1.0, 6);
++    expect(ratioResult.regionEnd).toBeCloseTo(1.5, 6); // stops at col 15's blip
++    expect(ratioResult.regionEnd - ratioResult.regionStart).toBeLessThan(0.6);
++
++    // The core claim: the frozen absolute-delta formula yields a genuinely
++    // wider region than the rejected ratio formula for the identical seed.
++    expect(deltaResult.regionEnd - deltaResult.regionStart)
++      .toBeGreaterThan(ratioResult.regionEnd - ratioResult.regionStart);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// resolveCorrectionCandidate — Correction placement semantics fix
++// (2026-08-02). Direct unit tests on hand-built measurements (bypassing the
++// full measurement pipeline) so each tier can be pinned exactly.
++// ---------------------------------------------------------------------------
++describe('resolveCorrectionCandidate (correction placement semantics fix, 2026-08-02)', () => {
++  function measurementFixture(overrides: Partial<BoundaryQualityMeasurement> = {}): BoundaryQualityMeasurement {
++    return {
++      segmentIndex: 0,
++      boundaryTime: 2.0,
++      boundaryAmplitude: 0.9,
++      quietestTime: 1.5,
++      quietestAmplitude: 0.05,
++      windowStart: 0.0,
++      windowEnd: 3.0,
++      flagged: true,
++      usedFallback: true,
++      lastSpokenEnd: 1.0,
++      nextSpokenStart: 2.0,
++      regionStart: undefined,
++      regionEnd: undefined,
++      center: undefined,
++      ...overrides,
++    };
++  }
++
++  it('tier 1 — uses the region CENTER, exact, when it lands strictly inside the gap', () => {
++    const m = measurementFixture({ regionStart: 1.4, regionEnd: 1.6, center: 1.5 });
++    const result = resolveCorrectionCandidate(m);
++    expect(result!.source).toBe('center');
++    expect(result!.target).toBeCloseTo(1.5, 6);
++    expect(result!.approximate).toBe(false);
++  });
++
++  it('tier 2 — uses the region center AS-IS (never clamped, never midpointed) when it lands outside the gap', () => {
++    // Region [1.2,1.8], center 1.5 — genuinely outside the narrow gap
++    // [1.0,1.3]. A prior revision of this function clamped this down to
++    // 1.3 (nextSpokenStart); the fix uses the real measured center as-is.
++    const m = measurementFixture({
++      lastSpokenEnd: 1.0, nextSpokenStart: 1.3,
++      regionStart: 1.2, regionEnd: 1.8, center: 1.5,
++    });
++    const result = resolveCorrectionCandidate(m);
++    expect(result!.source).toBe('region-center-approximate');
++    expect(result!.target).toBeCloseTo(1.5, 6); // the real center, NOT clamped to 1.3
++    expect(result!.approximate).toBe(true);
++  });
++
++  it('tier 2 — uses the region center as-is even when it does not overlap the gap at all (a prior revision would have used the plain gap MIDPOINT here)', () => {
++    const m = measurementFixture({
++      lastSpokenEnd: 1.0, nextSpokenStart: 2.0,
++      regionStart: 3.0, regionEnd: 3.5, center: 3.25, // entirely past the gap
++    });
++    const result = resolveCorrectionCandidate(m);
++    expect(result!.source).toBe('region-center-approximate');
++    expect(result!.target).toBeCloseTo(3.25, 6); // NOT (1.0+2.0)/2 = 1.5
++    expect(result!.approximate).toBe(true);
++  });
++
++  it('tier 2 — a region touching the gap at only a single boundary point (zero-measure overlap) is still placed at its real center, approximate', () => {
++    // regionStart === nextSpokenStart exactly — the strict "<" test that
++    // decides tier 1 vs. tier 2 fails, so this is tier 2, not tier 1 — but
++    // it is NOT midpointed away from the real measurement either.
++    const m = measurementFixture({
++      lastSpokenEnd: 1.0, nextSpokenStart: 1.1,
++      regionStart: 1.1, regionEnd: 1.2, center: 1.15,
++    });
++    const result = resolveCorrectionCandidate(m);
++    expect(result!.source).toBe('region-center-approximate');
++    expect(result!.target).toBeCloseTo(1.15, 6);
++    expect(result!.approximate).toBe(true);
++  });
++
++  it('regression fixture — production pair (5,6): transcribed gap [20.36s,20.64s], real quiet ~20.95s → targets ~20.95s, approximate, NOT the ~20.50s gap midpoint', () => {
++    const m = measurementFixture({
++      segmentIndex: 5,
++      lastSpokenEnd: 20.36, nextSpokenStart: 20.64,
++      regionStart: 20.90, regionEnd: 21.00, center: 20.95,
++    });
++    const result = resolveCorrectionCandidate(m);
++    expect(result!.source).toBe('region-center-approximate');
++    expect(result!.target).toBeCloseTo(20.95, 6);
++    expect(result!.approximate).toBe(true);
++    // The old (wrong) behavior would have clamped/midpointed to ~20.50 —
++    // pin that this is nowhere near the result.
++    expect(Math.abs(result!.target - 20.50)).toBeGreaterThan(0.4);
++  });
++
++  it('tier 3 — returns null (no placement) when no region was found at all (quietest never located anything)', () => {
++    const m = measurementFixture({
++      lastSpokenEnd: 1.0, nextSpokenStart: 2.0,
++      regionStart: undefined, regionEnd: undefined, center: undefined,
++    });
++    expect(resolveCorrectionCandidate(m)).toBeNull();
++  });
++
++  it('never returns undefined/NaN target for a defined center, tier 1 or tier 2', () => {
++    const cases: Partial<BoundaryQualityMeasurement>[] = [
++      { regionStart: 1.4, regionEnd: 1.6, center: 1.5 },
++      { regionStart: 1.2, regionEnd: 1.8, center: 1.5, nextSpokenStart: 1.3 },
++      { regionStart: 3.0, regionEnd: 3.5, center: 3.25 },
++    ];
++    for (const overrides of cases) {
++      const m = measurementFixture(overrides);
++      const result = resolveCorrectionCandidate(m);
++      expect(result).not.toBeNull();
++      expect(Number.isFinite(result!.target)).toBe(true);
++      expect(result!.target).toBeCloseTo(m.center!, 6);
++    }
++  });
++});
++
++// ---------------------------------------------------------------------------
++// measureBoundaryQuality — Watcher follow-up, Defect A foundation.
++// `measureFallbackBoundary` (unchanged behavior) is the fallback-only filter;
++// `measureBoundaryQuality` is the shared underlying measurement that also
++// reports silence-placed pairs instead of returning null for them.
++// ---------------------------------------------------------------------------
++describe('measureBoundaryQuality (Watcher follow-up, Defect A foundation)', () => {
++  function tok(startSec: number, endSec: number, text = 'word'): TranscriptToken {
++    return { startSec, endSec, text };
++  }
++  function seg(partial: Partial<VideoSegment> & { id: string; text: string; order: number }): VideoSegment {
++    return {
++      startTime: 0,
++      duration: 1,
++      transition: TransitionType.NONE,
++      animation: AnimationType.NONE,
++      ...partial,
++    };
++  }
++  function align(firstTokenIdx: number, lastTokenIdx: number): SegmentAlignment {
++    return {
++      t0: 0, t1: 0, firstTokenIdx, lastTokenIdx,
++      confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2,
++    };
++  }
++
++  // Same shared shape as syncContracts.test.ts's validateBoundaryQuality
++  // suite: 'alpha bravo' spoken 0.0-1.0 (curr), 'charlie delta' spoken
++  // 2.0-3.0 (next); a real candidate silence at [1.6,1.9] inside the search
++  // window makes boundaryUsedFallback false for this pair.
++  const tokens: TranscriptToken[] = [
++    tok(0.0, 0.5, 'alpha'),
++    tok(0.5, 1.0, 'bravo'),
++    tok(2.0, 2.5, 'charlie'),
++    tok(2.5, 3.0, 'delta'),
++  ];
++  const alignments: SegmentAlignment[] = [align(0, 1), align(2, 3)];
++  const segments: VideoSegment[] = [
++    seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2 }),
++    seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 3 }),
++  ];
++  const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
++
++  it('returns a NON-NULL measurement with usedFallback=false for a silence-placed boundary, where measureFallbackBoundary returns null', () => {
++    const peaks = new Float32Array(30).fill(0.5);
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++
++    const fallbackResult = measureFallbackBoundary(
++      0, segments[0]!, segments[1]!, alignments[0]!, alignments[1]!, tokens, silences, waveform, 2, 0.15,
++    );
++    expect(fallbackResult).toBeNull();
++
++    const fullResult = measureBoundaryQuality(
++      0, segments[0]!, segments[1]!, alignments[0]!, alignments[1]!, tokens, silences, waveform, 2, 0.15,
++    );
++    expect(fullResult).not.toBeNull();
++    expect(fullResult!.usedFallback).toBe(false);
++    expect(fullResult!.lastSpokenEnd).toBeCloseTo(1.0, 6);
++    expect(fullResult!.nextSpokenStart).toBeCloseTo(2.0, 6);
++  });
++
++  it('measureFallbackBoundary is a one-line filter — identical output to measureBoundaryQuality whenever usedFallback is true', () => {
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[8] = 0.05; peaks[9] = 0.05; peaks[20] = 0.9;
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++
++    const full = measureBoundaryQuality(
++      0, segments[0]!, segments[1]!, alignments[0]!, alignments[1]!, tokens, [], waveform, 2, 0.15,
++    );
++    const filtered = measureFallbackBoundary(
++      0, segments[0]!, segments[1]!, alignments[0]!, alignments[1]!, tokens, [], waveform, 2, 0.15,
++    );
++    expect(full!.usedFallback).toBe(true);
++    expect(filtered).toEqual(full);
++  });
++});
++
++// ---------------------------------------------------------------------------
++// applyBoundaryWatcher — Phase 2 of the waveform-watcher program (boundary
++// auto-correction). Uses the REAL, frozen calibrated constants
++// (BOUNDARY_QUALITY_LOUDNESS_RATIO_K / _SUSTAINED_WINDOW_SEC from
++// syncConstants.ts) — applyBoundaryWatcher does not take them as parameters,
++// unlike validateBoundaryQuality's calibration-sweep-friendly signature.
++// Fixture conventions mirror syncContracts.test.ts's own
++// `validateBoundaryQuality` suite (same tok/seg/align helpers, same two-
++// segment shape) so the two suites stay easy to compare.
++// ---------------------------------------------------------------------------
++describe('applyBoundaryWatcher (waveform-watcher program, Phase 2)', () => {
++  function tok(startSec: number, endSec: number, text = 'word'): TranscriptToken {
++    return { startSec, endSec, text };
++  }
++
++  function seg(partial: Partial<VideoSegment> & { id: string; text: string; order: number }): VideoSegment {
++    return {
++      startTime: 0,
++      duration: 1,
++      transition: TransitionType.NONE,
++      animation: AnimationType.NONE,
++      ...partial,
++    };
++  }
++
++  function align(firstTokenIdx: number, lastTokenIdx: number): SegmentAlignment {
++    return {
++      t0: 0, t1: 0, firstTokenIdx, lastTokenIdx,
++      confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2,
++    };
++  }
++
++  // Same shape as syncContracts.test.ts's shared fixture: 'alpha bravo'
++  // spoken 0.0-1.0 (curr), 'charlie delta' spoken 2.0-3.0 (next). Search
++  // window (computeBoundarySearchWindow): spokenMid 1.5, radius 0.9 ->
++  // [0.6, 2.4].
++  const tokens: TranscriptToken[] = [
++    tok(0.0, 0.5, 'alpha'),
++    tok(0.5, 1.0, 'bravo'),
++    tok(2.0, 2.5, 'charlie'),
++    tok(2.5, 3.0, 'delta'),
++  ];
++  const alignments: SegmentAlignment[] = [align(0, 1), align(2, 3)];
++
++  function twoSegments(overrides: Partial<VideoSegment> = {}): VideoSegment[] {
++    return [
++      seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2 }),
++      seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 3, ...overrides }),
++    ];
++  }
++
++  // 30 columns at 10 peaks/sec = 3.0s. Loud everywhere (0.5) except a quiet
++  // dip at t=[0.8,1.0) (cols 8-9, 0.05 — a 2-column span, matching
++  // BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC=0.15 * 10 peaks/sec rounded to 2
++  // columns) and a loud spike exactly at the committed boundary, t=2.0 (col
++  // 20, 0.9). With the real frozen constants (K=2), this fixture flags:
++  // boundaryAmplitude 0.9 >= floor 0.05; distance |2.0-0.9|=1.1 >= 0.10;
++  // 0.9 > 2*0.05=0.1.
++  function makeWaveform(): WaveformSource {
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[8] = 0.05;
++    peaks[9] = 0.05;
++    peaks[20] = 0.9;
++    return { peaks, peaksPerSecond: 10, totalDuration: 3 };
++  }
++
++  it('moves an eligible fallback boundary to the CENTER of the quiet region (Defect C), preserving contiguity exactly, and records accurate correction details', () => {
++    // The raw sliding-window seed (findQuietestRegion) sits at t=0.9 (center
++    // of the 2-column dip at cols 8-9). Correction placement semantics fix
++    // (2026-08-02): findSilenceRegionCenter now clamps to this pair's own
++    // WIDE search window ([0.6,2.4], computeBoundarySearchWindow), not the
++    // narrower real token gap [lastSpokenEnd=1.0, nextSpokenStart=2.0] — so
++    // the seed's own dip is fully visible: col 8 is quiet (<=threshold 0.1),
++    // col 7 is loud, so the region is exactly [0.8, 1.0), center 0.9. That
++    // center sits BEFORE lastSpokenEnd (1.0), outside the real gap, so this
++    // is tier 2 (region-center-approximate) — the real measurement is used
++    // as-is, not clamped up to 1.0/1.05 the way a prior revision did.
++    const segments = twoSegments();
++    const waveform = makeWaveform();
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toHaveLength(1);
++    const c = result.corrections[0]!;
++    expect(c.pairIndex).toBe(0);
++    expect(c.oldBoundary).toBeCloseTo(2.0, 6);
++    expect(c.newBoundary).toBeCloseTo(0.9, 2);
++    expect(c.oldAmplitude).toBeCloseTo(0.9, 6);
++    expect(c.newAmplitude).toBeCloseTo(0.05, 6);
++    expect(c.approximate).toBe(true);
++
++    const [curr, next] = result.segments;
++    expect(curr!.startTime).toBe(0);
++    expect(curr!.duration).toBeGreaterThan(0);
++    expect(next!.duration).toBe(3); // untouched — paired write never touches next.duration
++    // Contiguity invariant holds EXACTLY, not approximately.
++    expect(Number((curr!.startTime + curr!.duration).toFixed(3))).toBe(next!.startTime);
++    expect(next!.startTime).toBeCloseTo(0.9, 2);
++    expect(next!.anchorStart).toBe(next!.startTime);
++
++    // Original inputs are untouched (pure function).
++    expect(segments[0]!.startTime).toBe(0);
++    expect(segments[0]!.duration).toBe(2);
++    expect(segments[1]!.startTime).toBe(2);
++  });
++
++  it('never moves a silence-placed boundary, however loud it is', () => {
++    const segments = twoSegments();
++    const waveform = makeWaveform();
++    // A real silence spanning the pair's spoken gap — boundaryUsedFallback
++    // is false, so the pair is never even measured (mirrors
++    // syncContracts.test.ts's identical fixture for validateBoundaryQuality).
++    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, silences, waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.segments).toEqual(segments);
++  });
++
++  it('does not move a boundary below the calibrated amplitude floor, even with a far quiet point', () => {
++    const segments = twoSegments();
++    const peaks = new Float32Array(300).fill(0.5);
++    peaks[200] = 0.04; // boundary (t=2.0) — below the 0.05 floor
++    for (let i = 80; i <= 84; i++) peaks[i] = 0.01; // quiet region, far away
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 100, totalDuration: 3 };
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.segments).toEqual(segments);
++  });
++
++  it('skips a pair with either segment locked, mirroring snapCoveredBoundaries\' own guard', () => {
++    const segments = twoSegments({ locked: true });
++    const waveform = makeWaveform();
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.segments).toEqual(segments);
++  });
++
++  it('returns segments BY IDENTITY (no copy) when waveformSource is null', () => {
++    const segments = twoSegments();
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], null);
++
++    expect(result.segments).toBe(segments);
++    expect(result.corrections).toEqual([]);
++  });
++
++  it('rejects (never clamps) a correction that would produce a non-positive duration', () => {
++    // curr.startTime pushed artificially past the quiet point (0.9s) so
++    // newCurrDuration = quietTime - curr.startTime <= 0.
++    const segments = twoSegments();
++    segments[0]!.startTime = 5;
++    const waveform = makeWaveform();
++    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.segments).toEqual(segments);
++    expect(warnSpy).toHaveBeenCalled();
++    warnSpy.mockRestore();
++  });
++
++  it('corrects two adjacent eligible pairs with no interference — measurement is order-independent, the write chains left to right', () => {
++    const threeSegments: VideoSegment[] = [
++      seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2 }),
++      seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 2 }),
++      seg({ id: 's2', order: 2, text: 'echo foxtrot', startTime: 4, duration: 3 }),
++    ];
++    const threeTokens: TranscriptToken[] = [
++      tok(0.0, 0.5, 'alpha'),
++      tok(0.5, 1.0, 'bravo'),
++      tok(2.0, 2.5, 'charlie'),
++      tok(2.5, 3.0, 'delta'),
++      tok(4.0, 4.5, 'echo'),
++      tok(4.5, 5.0, 'foxtrot'),
++    ];
++    const threeAlignments: SegmentAlignment[] = [align(0, 1), align(2, 3), align(4, 5)];
++
++    // Pair(0,1) window [0.6,2.4] — quiet dip at cols 8-9 (t=0.8-1.0), loud
++    // spike at col 20 (t=2.0, the committed boundary). Pair(1,2) window
++    // [2.6,4.4] (spokenMid 3.5, radius 0.9) — quiet dip at cols 30-31
++    // (t=3.0-3.2), loud spike at col 40 (t=4.0, the committed boundary).
++    const peaks = new Float32Array(50).fill(0.5);
++    peaks[8] = 0.05; peaks[9] = 0.05; peaks[20] = 0.9;
++    peaks[30] = 0.05; peaks[31] = 0.05; peaks[40] = 0.9;
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 5 };
++
++    const result = applyBoundaryWatcher(threeSegments, threeAlignments, threeTokens, [], waveform);
++
++    expect(result.corrections).toHaveLength(2);
++    expect(result.corrections[0]!.pairIndex).toBe(0);
++    expect(result.corrections[1]!.pairIndex).toBe(1);
++
++    const [s0, s1, s2] = result.segments;
++    // Pair 0's measurement/quiet point is unaffected by anything — same
++    // result as the standalone two-segment test above: the seed's own dip
++    // (0.9s) is now fully visible within pair 0's WIDE search window, so the
++    // region center lands at 0.9 (approximate — outside the real gap
++    // [1.0,2.0]).
++    expect(s0!.startTime).toBe(0);
++    expect(s1!.startTime).toBeCloseTo(0.9, 2);
++    // Pair 1's WRITE chains off pair 0's just-corrected s1.startTime, not
++    // off the ORIGINAL 2.0 — this is the "no interference in measurement,
++    // but contiguous in the write" guarantee. Pair 1's own dip (cols 30-31)
++    // sits flush with its gap's own start (col 30 = lastSpokenEnd = 3.0), so
++    // its center is 3.1, unaffected by the wider clamp (nothing quieter sits
++    // further out within its own window either).
++    expect(s2!.startTime).toBeCloseTo(3.1, 2);
++
++    // Contiguity holds exactly for BOTH corrected pairs.
++    expect(Number((s0!.startTime + s0!.duration).toFixed(3))).toBe(s1!.startTime);
++    expect(Number((s1!.startTime + s1!.duration).toFixed(3))).toBe(s2!.startTime);
++    // s2's own duration (the NEXT pair's own end) is untouched by either
++    // correction.
++    expect(s2!.duration).toBe(3);
++  });
++
++  it('rejects (never commits) a correction that would move at-or-past the NEIGHBORING pair\'s own boundary — "i+2\'s start" sanity', () => {
++    // Correction placement semantics fix (2026-08-02): tier 2 is no longer
++    // clamped into this pair's own real token gap, so an aggressive quiet
++    // region could in principle reach far enough to threaten the boundary
++    // with the segment AFTER next. next spans [2,2.3] here (duration
++    // shrunk to 0.3s) — its own real end (2.3) is the sanity bound. The
++    // quiet dip at cols[22,23] (t=[2.2,2.4)) resolves to region center 2.3,
++    // exactly at that bound — the resulting "next duration" would be
++    // exactly zero, which is non-positive and must be rejected.
++    const segments = twoSegments({ duration: 0.3 }); // next: startTime=2, duration=0.3 -> real end 2.3
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[20] = 0.9; // committed boundary (t=2.0) — loud
++    peaks[22] = 0.05; peaks[23] = 0.05; // quiet dip reaching next's own real end (2.3)
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++
++    const result = applyBoundaryWatcher(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.segments).toEqual(segments);
++    expect(warnSpy).toHaveBeenCalled();
++    warnSpy.mockRestore();
++  });
++});
++
++// ---------------------------------------------------------------------------
++// verifyCommittedBoundaries — Watcher follow-up, Defect A. Runs the same
++// dual gate as applyBoundaryWatcher, but over EVERY pair (silence-placed
++// included), conditionally correcting a silence-placed pair via
++// resolveCorrectionCandidate's tier 1 (exact, inside the gap) or tier 2
++// (approximate, the real measured center used as-is outside the gap) —
++// correction placement semantics fix, 2026-08-02.
++// ---------------------------------------------------------------------------
++describe('verifyCommittedBoundaries (Watcher follow-up, Defect A)', () => {
++  function tok(startSec: number, endSec: number, text = 'word'): TranscriptToken {
++    return { startSec, endSec, text };
++  }
++  function seg(partial: Partial<VideoSegment> & { id: string; text: string; order: number }): VideoSegment {
++    return {
++      startTime: 0,
++      duration: 1,
++      transition: TransitionType.NONE,
++      animation: AnimationType.NONE,
++      ...partial,
++    };
++  }
++  function align(firstTokenIdx: number, lastTokenIdx: number): SegmentAlignment {
++    return {
++      t0: 0, t1: 0, firstTokenIdx, lastTokenIdx,
++      confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2,
++    };
++  }
++
++  // Shared wide-gap fixture: 'alpha bravo' spoken 0.0-1.0 (curr), 'charlie
++  // delta' spoken 2.0-3.0 (next) — real token gap [1.0,2.0], search window
++  // [0.6,2.4]. A candidate silence at [1.6,1.9] makes boundaryUsedFallback
++  // false for every test below (a silence-placed pair — the fixture point).
++  const tokens: TranscriptToken[] = [
++    tok(0.0, 0.5, 'alpha'),
++    tok(0.5, 1.0, 'bravo'),
++    tok(2.0, 2.5, 'charlie'),
++    tok(2.5, 3.0, 'delta'),
++  ];
++  const alignments: SegmentAlignment[] = [align(0, 1), align(2, 3)];
++  const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
++
++  function twoSegments(overrides: Partial<VideoSegment> = {}): VideoSegment[] {
++    return [
++      seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 1.5 }),
++      seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 1.5, duration: 1.5, ...overrides }),
++    ];
++  }
++
++  it('corrects a silence-placed pair whose alternative quiet CENTER stays strictly inside the real token gap', () => {
++    // Committed boundary at 1.5 (col 15) is loud (0.9); a genuine 2-column
++    // quiet dip at cols [17,18] (t=1.7-1.9) sits well inside the [1.0,2.0]
++    // gap. quietest.time=1.8, meanAmplitude=0.05 -> region clamps to
++    // exactly [17,18] (loud neighbors on both sides) -> center=1.8, strictly
++    // inside (1.0, 2.0).
++    const segments = twoSegments();
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[15] = 0.9; // committed boundary — loud
++    peaks[17] = 0.05; peaks[18] = 0.05; // quiet alternative, inside the gap
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++
++    const result = verifyCommittedBoundaries(segments, alignments, tokens, silences, waveform);
++
++    expect(result.stillFlagged).toEqual([]);
++    expect(result.corrections).toHaveLength(1);
++    const c = result.corrections[0]!;
++    expect(c.pairIndex).toBe(0);
++    expect(c.oldBoundary).toBeCloseTo(1.5, 6);
++    expect(c.newBoundary).toBeCloseTo(1.8, 6);
++
++    const [curr, next] = result.segments;
++    expect(next!.startTime).toBeCloseTo(1.8, 6);
++    expect(Number((curr!.startTime + curr!.duration).toFixed(3))).toBe(next!.startTime);
++    expect(next!.duration).toBe(1.5); // untouched — paired write never touches next.duration
++
++    // Original inputs untouched (pure function).
++    expect(segments[1]!.startTime).toBe(1.5);
++  });
++
++  it('corrects via the real region center, APPROXIMATE (not a warning, not midpointed) when the region sits outside a tight real gap', () => {
++    // Correction placement semantics fix (2026-08-02) — a prior revision of
++    // this suite asserted this exact fixture landed on the plain gap
++    // MIDPOINT (1.05); midpointing away from a real measurement was found to
++    // just re-commit the boundary onto ordinary speech. A tight real gap
++    // [1.0,1.1] (curr ends 1.0, next starts 1.1) — the acoustically quiet
++    // spot the checker finds (t=1.4, inside next's OWN reported word span, a
++    // plausible Whisper-timing-slop case) is now used AS-IS: region [1.3,1.5),
++    // center 1.4, outside the gap, so tier 2 (approximate) fires and commits
++    // 1.4 directly.
++    const tightTokens: TranscriptToken[] = [
++      tok(0.0, 0.5, 'alpha'),
++      tok(0.5, 1.0, 'bravo'),
++      tok(1.1, 1.6, 'charlie'),
++      tok(1.6, 2.1, 'delta'),
++    ];
++    const tightAlignments: SegmentAlignment[] = [align(0, 1), align(2, 3)];
++    const segments: VideoSegment[] = [
++      seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 1.1 }),
++      seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 1.1, duration: 1.0 }),
++    ];
++    // A real candidate silence overlapping the (narrow-gap-widened) search
++    // window [0.55,1.55] — makes this pair silence-placed, not fallback.
++    const tightSilences: SilenceInterval[] = [{ startSec: 1.5, endSec: 1.6 }];
++    const peaks = new Float32Array(20).fill(0.5);
++    peaks[11] = 0.9; // committed boundary (t=1.1) — loud
++    peaks[13] = 0.05; peaks[14] = 0.05; // quiet dip, but OUTSIDE the real gap
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 2 };
++
++    const result = verifyCommittedBoundaries(segments, tightAlignments, tightTokens, tightSilences, waveform);
++
++    expect(result.stillFlagged).toEqual([]); // no warning — it was corrected
++    expect(result.corrections).toHaveLength(1);
++    const c = result.corrections[0]!;
++    expect(c.pairIndex).toBe(0);
++    expect(c.oldBoundary).toBeCloseTo(1.1, 6);
++    expect(c.newBoundary).toBeCloseTo(1.4, 6); // NOT the gap midpoint (1.05)
++    expect(c.approximate).toBe(true);
++
++    const [curr, next] = result.segments;
++    expect(next!.startTime).toBeCloseTo(1.4, 6);
++    expect(Number((curr!.startTime + curr!.duration).toFixed(3))).toBe(next!.startTime);
++  });
++
++  it('surfaces a still-loud FALLBACK pair as stillFlagged without re-attempting its own correction', () => {
++    // No silences at all — boundaryUsedFallback is true. verifyCommittedBoundaries
++    // never corrects a fallback pair itself (that's applyBoundaryWatcher's
++    // job); calling it standalone (as if the watcher's own correction had
++    // been rejected) must surface the measurement, not silently correct it.
++    const segments = twoSegments();
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[15] = 0.9;
++    peaks[17] = 0.05; peaks[18] = 0.05;
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++
++    const result = verifyCommittedBoundaries(segments, alignments, tokens, [], waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.stillFlagged).toHaveLength(1);
++    expect(result.stillFlagged[0]!.usedFallback).toBe(true);
++    expect(result.segments).toEqual(segments);
++  });
++
++  it('skips a pair with either segment locked, mirroring applyBoundaryWatcher\'s own guard', () => {
++    const segments = twoSegments({ locked: true });
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[15] = 0.9;
++    peaks[17] = 0.05; peaks[18] = 0.05;
++    const waveform: WaveformSource = { peaks, peaksPerSecond: 10, totalDuration: 3 };
++
++    const result = verifyCommittedBoundaries(segments, alignments, tokens, silences, waveform);
++
++    expect(result.corrections).toEqual([]);
++    expect(result.stillFlagged).toEqual([]);
++    expect(result.segments).toEqual(segments);
++  });
++
++  it('returns segments BY IDENTITY (no copy), zero corrections/stillFlagged, when waveformSource is null', () => {
++    const segments = twoSegments();
++
++    const result = verifyCommittedBoundaries(segments, alignments, tokens, silences, null);
++
++    expect(result.segments).toBe(segments);
++    expect(result.corrections).toEqual([]);
++    expect(result.stillFlagged).toEqual([]);
++  });
++});
+diff --git a/src/services/boundaryQuality.ts b/src/services/boundaryQuality.ts
+index 7b47eb1..3261aef 100644
+--- a/src/services/boundaryQuality.ts
++++ b/src/services/boundaryQuality.ts
+@@ -16,8 +16,32 @@
+ // against. `syncContracts.ts`'s `validateBoundaryQuality` is the consumer;
+ // this module stays pure and DOM/React-free, matching every other service
+ // in this pipeline.
++//
++// Phase 2 (the boundary watcher, below `applyBoundaryWatcher`) reuses the
++// exact same per-pair measurement `validateBoundaryQuality` depends on —
++// `measureFallbackBoundary`, moved here so both callers share one
++// implementation instead of two copies drifting apart. This file sits BELOW
++// `syncContracts.ts` in the import graph (`syncContracts.ts` already imports
++// `findQuietestRegion` from here), so `measureFallbackBoundary` importing
++// `computeBoundarySearchWindow`/`boundaryUsedFallback` from
++// `snapBoundaries.ts` — which `syncContracts.ts` already does directly —
++// introduces no cycle: `snapBoundaries.ts` -> `boundaryQuality.ts` ->
++// `syncContracts.ts`.
+ // ---------------------------------------------------------------------------
+ 
++import type { TranscriptToken, VideoSegment } from '../types';
++import type { SegmentAlignment } from './whisperService';
++import type { SilenceInterval } from './silenceDetector';
++import type { WaveformSource } from './waveformPeaks';
++import { computeBoundarySearchWindow, boundaryUsedFallback } from './snapBoundaries';
++import {
++  BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR,
++  BOUNDARY_QUALITY_MIN_DISTANCE_SEC,
++  BOUNDARY_QUALITY_LOUDNESS_RATIO_K,
++  BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
++  BOUNDARY_QUALITY_REGION_END_DELTA,
++} from './syncConstants';
++
+ /** Result of `findQuietestRegion` — `found: false` means the window held too
+  *  little data to evaluate even one `sustainedWindowSec`-wide span (never
+  *  that the window "has no quiet part"; a uniformly loud window still has a
+@@ -89,3 +113,791 @@ export function findQuietestRegion(
+   const time = centerCol / peaksPerSecond;
+   return { found: true, time, meanAmplitude };
+ }
++
++/** The pipeline's uniform 3-decimal rounding (matches
++ *  `snapBoundaries.ts`/`distributeSegmentTimes`/`applyAnchorBasedTiming`). */
++function round3(v: number): number {
++  return Number(v.toFixed(3));
++}
++
++function clampIndex(v: number, lo: number, hi: number): number {
++  if (v < lo) return lo;
++  if (v > hi) return hi;
++  return v;
++}
++
++/** `findSilenceRegionCenter`'s return shape. */
++export interface SilenceRegionCenter {
++  regionStart: number;
++  regionEnd: number;
++  center: number;
++}
++
++/**
++ * Watcher follow-up, Defect C (centered placement) — `findQuietestRegion`
++ * above answers "where is the single quietest `sustainedWindowSec`-wide
++ * span", which is an artifact of the sliding-window search size, not
++ * necessarily the true CENTER of the actual quiet gap (a real pause is
++ * usually wider than one `sustainedWindowSec` span, and the found window can
++ * sit off-center inside it). This expands outward from that seed — column by
++ * column, left and right — for as long as the waveform stays at or under
++ * `regionEndThreshold`, and returns the center of whatever region resulted.
++ *
++ * Clamped to `[clampLow, clampHigh]` — CALLER-CHOSEN bounds, not a fixed
++ * concept this function owns. `measureBoundaryQuality` (below) passes the
++ * pair's own WIDE search window (`computeBoundarySearchWindow`'s
++ * `searchStart`/`searchEnd`) — the same window `findQuietestRegion` already
++ * searched to find `seedTimeSec` in the first place — not the narrow real
++ * token gap. Correction placement semantics fix (2026-08-02): an earlier
++ * revision of this function hard-clamped to the pair's own real token gap
++ * (`lastSpokenEnd`/`nextSpokenStart`) on the theory that a corrected boundary
++ * landing past either spoken edge would cut into that segment's own words.
++ * In practice that clamp threw away the very seed it was supposed to center
++ * around whenever the real quiet audio sat outside the transcribed gap
++ * (Whisper word-timestamp imprecision routinely puts it there — see a
++ * production pair with a transcribed gap of [20.36s,20.64s] whose actual
++ * quiet moment was ~20.95s), silently substituting the gap's own midpoint or
++ * a token-gap-clamped edge — a placement `resolveCorrectionCandidate` (below)
++ * now recognizes as WORSE than trusting the real measurement: re-committing a
++ * boundary onto ordinary speech is the exact failure this whole checker
++ * exists to catch. `resolveCorrectionCandidate` is what decides whether the
++ * resulting center counts as an exact (`approximate: false`) or approximate
++ * (`approximate: true`) placement, and `applyBoundaryWatcher`/
++ * `verifyCommittedBoundaries` are what enforce the actual hard safety bounds
++ * (never a non-positive duration, never past the neighboring pair's own
++ * boundary) — this function itself has no opinion on "safe," only on
++ * "quiet," within whatever bounds its caller hands it.
++ *
++ * A clamp on one or both sides still returns the center of the CLAMPED
++ * region, never falling back to the bare seed point — an asymmetric quiet
++ * region (one edge clamped, the other not) still has a well-defined center
++ * of what's actually there.
++ *
++ * Only ever expands around the ONE seed passed in (`findQuietestRegion`'s
++ * single global-minimum window) — a second, unrelated quiet dip elsewhere in
++ * the gap is never merged in; the expansion loop simply stops the moment it
++ * hits a column above `regionEndThreshold`, so a second dip separated from
++ * the seed by even one loud column is naturally excluded.
++ *
++ * `regionEndThreshold` is a PLAIN ABSOLUTE amplitude value, not a fraction —
++ * this function does not decide the formula (the caller's choice, see
++ * `measureBoundaryQuality`'s own call site and `BOUNDARY_QUALITY_REGION_END_
++ * DELTA`'s comment, syncConstants.ts, for why an absolute delta was frozen
++ * over a ratio), so this stays a pure geometry function callers/tests can
++ * drive directly with any candidate threshold.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function findSilenceRegionCenter(
++  peaks: Float32Array,
++  peaksPerSecond: number,
++  seedTimeSec: number,
++  regionEndThreshold: number,
++  clampLow: number,
++  clampHigh: number,
++): SilenceRegionCenter {
++  const rawLowCol = Math.ceil(clampLow * peaksPerSecond);
++  const rawHighCol = Math.floor(clampHigh * peaksPerSecond);
++  const lowClampCol = clampIndex(Math.min(rawLowCol, rawHighCol), 0, peaks.length - 1);
++  const highClampCol = clampIndex(Math.max(rawLowCol, rawHighCol), 0, peaks.length - 1);
++  const seedCol = clampIndex(Math.round(seedTimeSec * peaksPerSecond), lowClampCol, highClampCol);
++
++  let startCol = seedCol;
++  while (startCol - 1 >= lowClampCol && (peaks[startCol - 1] ?? Infinity) <= regionEndThreshold) {
++    startCol--;
++  }
++  let endCol = seedCol;
++  while (endCol + 1 <= highClampCol && (peaks[endCol + 1] ?? Infinity) <= regionEndThreshold) {
++    endCol++;
++  }
++
++  const regionStart = startCol / peaksPerSecond;
++  const regionEnd = (endCol + 1) / peaksPerSecond;
++  const center = (regionStart + regionEnd) / 2;
++  return { regionStart, regionEnd, center };
++}
++
++/** One adjacent pair's boundary-quality measurement — the full data set,
++ *  whether or not it crossed the flagging ratio. Shared shape between
++ *  `validateBoundaryQuality`'s `'report-all'` mode (calibration) and the
++ *  filtered `ContractViolation[]` it maps flagged measurements into. */
++export interface BoundaryQualityMeasurement {
++  /** Index into `segments` of the pair's FIRST (earlier) segment — the
++   *  boundary sits between `segments[segmentIndex]` and
++   *  `segments[segmentIndex + 1]`. */
++  segmentIndex: number;
++  boundaryTime: number;
++  boundaryAmplitude: number;
++  quietestTime: number | undefined;
++  quietestAmplitude: number | undefined;
++  windowStart: number;
++  windowEnd: number;
++  flagged: boolean;
++  /** Watcher follow-up, Defect A — `true` when `snapCoveredBoundaries`
++   *  placed this boundary via the plain spoken-edge-midpoint fallback
++   *  (`boundaryUsedFallback`); `false` when it landed inside a REAL detected
++   *  silence interval instead. `measureFallbackBoundary` (below) is the
++   *  fallback-only filter every existing caller still gets; this field lets
++   *  a caller that wants BOTH kinds (`verifyCommittedBoundaries`) tell them
++   *  apart without re-deriving `boundaryUsedFallback` itself. */
++  usedFallback: boolean;
++  /** The pair's own real spoken-word edges — curr's last matched word end /
++   *  next's first matched word start (the "script's expected gap"). NOT a
++   *  clamp bound on `center` below (correction placement semantics fix,
++   *  2026-08-02 — see `findSilenceRegionCenter`'s own doc comment) — used
++   *  only to CLASSIFY a resolved target as exact vs. approximate
++   *  (`resolveCorrectionCandidate`'s tier 1 vs. tier 2). */
++  lastSpokenEnd: number;
++  nextSpokenStart: number;
++  /** Watcher follow-up, Defect C — `findSilenceRegionCenter`'s result, wired
++   *  in HERE (not separately by each caller) so the checker/watcher/verifier
++   *  all resolve the exact same center from the exact same seed, using the
++   *  FROZEN `BOUNDARY_QUALITY_REGION_END_DELTA` threshold (syncConstants.ts).
++   *  `undefined` when `quietestTime` itself is (no quiet region was found at
++   *  all — see `findQuietestRegion`'s own `found: false` case; this is
++   *  `resolveCorrectionCandidate`'s tier 3, "no placement possible"). Clamped
++   *  to the pair's own WIDE search window (`windowStart`/`windowEnd` above),
++   *  NOT to `lastSpokenEnd`/`nextSpokenStart` — correction placement
++   *  semantics fix, 2026-08-02, see `findSilenceRegionCenter`'s own doc
++   *  comment — so `center` can legitimately fall outside the real token gap;
++   *  `flagged` above is still computed from `quietestTime` (the raw seed),
++   *  unchanged — whether the flagging GATE itself should move to a
++   *  center-based distance remains a separate, open question, not decided by
++   *  this change. */
++  regionStart: number | undefined;
++  regionEnd: number | undefined;
++  center: number | undefined;
++}
++
++/**
++ * Measures ONE adjacent pair (`segments[segmentIndex]`,
++ * `segments[segmentIndex + 1]`) against the calibrated dual gate, or returns
++ * `null` when the pair is out of scope entirely: either segment locked or
++ * missing alignment data (mirrors `snapCoveredBoundaries`' own guard), a
++ * sentinel (`-1`) token index on either side, or a missing token lookup.
++ * Unlike `measureFallbackBoundary` (the thin wrapper below), this does NOT
++ * stop at a boundary that landed inside a real detected silence — it
++ * measures EVERY eligible pair, fallback-placed or silence-placed alike, and
++ * reports which kind via `usedFallback` — so a caller that needs to verify a
++ * silence-placed boundary too (`verifyCommittedBoundaries`, Watcher
++ * follow-up Defect A) can reuse this exact same gate instead of
++ * re-implementing it.
++ *
++ * This is the ONE shared implementation `validateBoundaryQuality`
++ * (`syncContracts.ts`, Phase 1's read-only checker), `applyBoundaryWatcher`
++ * (below, Phase 2's auto-corrector), and `verifyCommittedBoundaries` (below,
++ * the Watcher follow-up's post-correction verifier) all call — via
++ * `measureFallbackBoundary` for the first two — factored out so none of them
++ * can independently drift on what counts as a fallback boundary or how its
++ * quality is scored. `k`/`sustainedWindowSec` stay explicit parameters
++ * (rather than reading `BOUNDARY_QUALITY_LOUDNESS_RATIO_K`/
++ * `BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC` directly) so `validateBoundaryQuality`'s
++ * existing DEV calibration harness (`App.tsx`'s `__calibrateBoundaryQuality`)
++ * can keep sweeping `BOUNDARY_QUALITY_K_SWEEP`/`BOUNDARY_QUALITY_WINDOW_SWEEP`
++ * unchanged; `applyBoundaryWatcher`/`verifyCommittedBoundaries` themselves
++ * always call this with the frozen, calibrated constants (no sweeping —
++ * neither phase re-tunes the dual-gate thresholds).
++ *
++ * Reads `next.startTime` as "the pair's actual committed boundary" — safe
++ * because Contract 5→6's contiguity guarantee means `next.startTime` IS
++ * `curr.startTime + curr.duration`. Does NOT read `curr.startTime`/
++ * `curr.duration`/`next.duration` anywhere else, which is what lets a caller
++ * chain corrections left-to-right (`applyBoundaryWatcher`,
++ * `verifyCommittedBoundaries`) without any pair's MEASUREMENT (eligibility,
++ * window, or quiet point) depending on whether an earlier pair's boundary
++ * was just moved — only the final WRITE of a correction reads
++ * `curr.startTime`, deliberately, to stay contiguous with whatever the
++ * previous pair just committed.
++ *
++ * `flagged` is computed from `quietestTime` (the raw sliding-window seed),
++ * UNCHANGED from before this region-centering addition — Phase 1/2 behavior
++ * (which pairs get flagged) stays byte-identical. `regionStart`/`regionEnd`/
++ * `center` (Defect C, centered placement) are ADDITIVE: a separate
++ * `findSilenceRegionCenter` call, wired in exactly once here so every
++ * caller resolves an identical center, used only for WHERE a correction
++ * should land, never for WHETHER one fires. Whether the flagging gate itself
++ * should move to a center-based distance is an open, PENDING-CALIBRATION
++ * question (see the Step 5 checkpoint in the watcher follow-up plan) — not
++ * decided by this change.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function measureBoundaryQuality(
++  segmentIndex: number,
++  curr: VideoSegment,
++  next: VideoSegment,
++  currAlign: SegmentAlignment,
++  nextAlign: SegmentAlignment,
++  tokens: TranscriptToken[],
++  silences: SilenceInterval[],
++  waveformSource: WaveformSource,
++  k: number,
++  sustainedWindowSec: number,
++): BoundaryQualityMeasurement | null {
++  if (curr.locked || next.locked) return null;
++  if (currAlign.firstTokenIdx < 0 || currAlign.lastTokenIdx < 0) return null;
++  if (nextAlign.firstTokenIdx < 0 || nextAlign.lastTokenIdx < 0) return null;
++
++  const lastSpokenEnd = tokens[currAlign.lastTokenIdx]?.endSec;
++  const nextSpokenStart = tokens[nextAlign.firstTokenIdx]?.startSec;
++  const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec;
++  const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec;
++  if (
++    lastSpokenEnd === undefined || nextSpokenStart === undefined ||
++    currFirstSpokenStart === undefined || nextLastSpokenEnd === undefined
++  ) return null;
++
++  const window = computeBoundarySearchWindow(
++    lastSpokenEnd, nextSpokenStart, currFirstSpokenStart, nextLastSpokenEnd,
++  );
++
++  const usedFallback = boundaryUsedFallback(
++    tokens, silences, window,
++    currAlign.firstTokenIdx, currAlign.lastTokenIdx,
++    nextAlign.firstTokenIdx, nextAlign.lastTokenIdx,
++  );
++
++  // The pair's actual committed boundary — contiguity (Contract 5→6
++  // guarantee 3) means next.startTime IS curr.startTime + curr.duration.
++  const boundaryTime = next.startTime;
++  const boundaryCol = clampIndex(
++    Math.round(boundaryTime * waveformSource.peaksPerSecond), 0, waveformSource.peaks.length - 1,
++  );
++  const boundaryAmplitude = waveformSource.peaks[boundaryCol] ?? 0;
++
++  const quietest = findQuietestRegion(
++    waveformSource.peaks, waveformSource.peaksPerSecond,
++    window.searchStart, window.searchEnd, sustainedWindowSec,
++  );
++
++  const distance = quietest.found && quietest.time !== undefined
++    ? Math.abs(boundaryTime - quietest.time)
++    : undefined;
++
++  const flagged = quietest.found && quietest.meanAmplitude !== undefined && distance !== undefined
++    ? boundaryAmplitude >= BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR &&
++      distance >= BOUNDARY_QUALITY_MIN_DISTANCE_SEC &&
++      boundaryAmplitude > k * quietest.meanAmplitude
++    : false;
++
++  // Defect C — centered placement. Only meaningful when a quiet region was
++  // actually found; expands from that seed, clamped to this pair's own WIDE
++  // search window (`window.searchStart`/`window.searchEnd` — the same window
++  // `findQuietestRegion` just searched to find `quietest.time`), NOT the
++  // narrower real token gap (`lastSpokenEnd`/`nextSpokenStart`) — correction
++  // placement semantics fix, 2026-08-02: clamping the region search to the
++  // gap silently discarded the real measured quiet moment whenever it fell
++  // outside the transcribed gap (Whisper timestamp imprecision routinely
++  // puts it there), forcing a fallback to the gap's own midpoint — the same
++  // "re-commit onto ordinary speech" failure this checker exists to catch.
++  // See `findSilenceRegionCenter`'s own doc comment for the full rationale
++  // and the production fixture (gap [20.36s,20.64s], real quiet ~20.95s)
++  // that motivated it. `resolveCorrectionCandidate` (below) classifies the
++  // resulting `center` as exact or approximate depending on whether it still
++  // lands inside `lastSpokenEnd`/`nextSpokenStart`; it never re-clamps it.
++  // `regionEndThreshold` is an ABSOLUTE delta added to the quietest span's
++  // own mean amplitude — FROZEN 2026-08-02 from the V6 centering sweep (see
++  // BOUNDARY_QUALITY_REGION_END_DELTA's own comment, syncConstants.ts, for
++  // why a RATIO threshold was rejected: it collapses to a single-column fake
++  // region whenever quietest.meanAmplitude is near-zero, a common case for
++  // genuine digital-silence pauses).
++  let region: SilenceRegionCenter | undefined;
++  if (quietest.found && quietest.time !== undefined && quietest.meanAmplitude !== undefined) {
++    const regionEndThreshold = quietest.meanAmplitude + BOUNDARY_QUALITY_REGION_END_DELTA;
++    region = findSilenceRegionCenter(
++      waveformSource.peaks, waveformSource.peaksPerSecond,
++      quietest.time, regionEndThreshold, window.searchStart, window.searchEnd,
++    );
++  }
++
++  return {
++    segmentIndex,
++    boundaryTime,
++    boundaryAmplitude,
++    quietestTime: quietest.time,
++    quietestAmplitude: quietest.meanAmplitude,
++    windowStart: window.searchStart,
++    windowEnd: window.searchEnd,
++    flagged,
++    usedFallback,
++    lastSpokenEnd,
++    nextSpokenStart,
++    regionStart: region?.regionStart,
++    regionEnd: region?.regionEnd,
++    center: region?.center,
++  };
++}
++
++/**
++ * Fallback-only filter over `measureBoundaryQuality` — every existing caller
++ * (`validateBoundaryQuality`'s Phase 1 checker, `applyBoundaryWatcher`'s
++ * Phase 2 corrector) wants ONLY boundaries `snapCoveredBoundaries` placed via
++ * the plain spoken-edge-midpoint fallback (a silence-placed boundary is
++ * already acoustic ground truth and out of scope for either of them). A
++ * one-line wrapper so their behavior stays byte-identical to before
++ * `measureBoundaryQuality` existed.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function measureFallbackBoundary(
++  segmentIndex: number,
++  curr: VideoSegment,
++  next: VideoSegment,
++  currAlign: SegmentAlignment,
++  nextAlign: SegmentAlignment,
++  tokens: TranscriptToken[],
++  silences: SilenceInterval[],
++  waveformSource: WaveformSource,
++  k: number,
++  sustainedWindowSec: number,
++): BoundaryQualityMeasurement | null {
++  const m = measureBoundaryQuality(
++    segmentIndex, curr, next, currAlign, nextAlign, tokens, silences, waveformSource, k, sustainedWindowSec,
++  );
++  return m && m.usedFallback ? m : null;
++}
++
++/** Which of `resolveCorrectionCandidate`'s two placement tiers actually
++ *  produced the returned target — surfaced so a caller can log/DEV-warn on
++ *  the approximate tier without recomputing the same comparison. */
++export type CorrectionCandidateSource = 'center' | 'region-center-approximate';
++
++export interface CorrectionCandidate {
++  target: number;
++  source: CorrectionCandidateSource;
++  /** `true` when `target` lies outside the pair's own transcribed token gap
++   *  (`lastSpokenEnd`/`nextSpokenStart`) — a real measured quiet spot the
++   *  script's word timestamps didn't predict, not a containment fallback.
++   *  `false` for the ideal tier-1 case. Carried onto `BoundaryCorrection`
++   *  once a caller actually commits the write, so the sync log can tell the
++   *  user which corrections were exact vs. approximate. */
++  approximate: boolean;
++}
++
++/**
++ * Correction placement semantics fix (2026-08-02) — resolves the position a
++ * FLAGGED boundary's correction should target, for a measurement that
++ * already has a region computed (`measureBoundaryQuality`'s `regionStart`/
++ * `regionEnd`/`center`). Two placement tiers plus an explicit "no placement"
++ * outcome:
++ *
++ *   1. `center` itself, when it sits STRICTLY inside the pair's own real
++ *      token gap (`lastSpokenEnd`/`nextSpokenStart`) — the ideal case,
++ *      `approximate: false`.
++ *   2. `center` ANYWAY, when it landed outside the gap (or the found region
++ *      collapsed to something degenerate near a gap edge) — `center` is
++ *      always a REAL measured quiet spot (`findSilenceRegionCenter`'s
++ *      expansion from `findQuietestRegion`'s seed), never a synthesized
++ *      point, so it is used as-is, `approximate: true`. The caller (`
++ *      applyBoundaryWatcher`/`verifyCommittedBoundaries`) still enforces the
++ *      real hard safety bounds before committing it (see below).
++ *   3. `null` — no quiet region was found AT ALL (`quietest.found` was
++ *      `false`, so `m.center` itself is `undefined`; see `findQuietestRegion`'s
++ *      own doc comment). There is nothing to place a correction at; the
++ *      caller must skip this pair and report it as a real, user-facing
++ *      warning instead of silently keeping (or worse, midpoint-guessing) a
++ *      proven-bad boundary.
++ *
++ * Rationale (this is the load-bearing design decision this fix changes, not
++ * an incidental detail): a flagged boundary already sits on PROVEN-BAD loud
++ * audio — that is what "flagged" means. A PRIOR revision of this function
++ * clamped an out-of-gap `center` back INTO the gap, or substituted the gap's
++ * own plain midpoint, on the theory that staying inside the transcribed gap
++ * was always safer. In practice both of those re-commit the boundary onto
++ * ordinary speech whenever the real quiet audio sits outside the gap — which
++ * happens routinely, since Whisper word timestamps carry real error (a
++ * production pair with transcribed gap [20.36s,20.64s] had its actual quiet
++ * moment at ~20.95s; clamping/midpointing landed at ~20.50s, on speech) —
++ * i.e. the EXACT failure this whole checker exists to catch, just logged as
++ * "auto-adjusted" instead of surfaced. Trusting the real measurement instead,
++ * labeled `approximate` so the user knows it came from outside the script's
++ * expected gap, is strictly better than either. The ONLY thing that still
++ * legitimately blocks tier 2 from committing is a resulting non-positive
++ * duration on either side of the pair — including the NEIGHBORING pair's own
++ * boundary, since an unclamped target can now reach far enough to threaten
++ * it — which is why that check stays with the caller (`applyBoundaryWatcher`/
++ * `verifyCommittedBoundaries`), which alone has `curr.startTime`/
++ * `next.startTime`/`next.duration` in scope.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function resolveCorrectionCandidate(m: BoundaryQualityMeasurement): CorrectionCandidate | null {
++  if (m.center === undefined) return null;
++
++  if (m.center > m.lastSpokenEnd && m.center < m.nextSpokenStart) {
++    return { target: m.center, source: 'center', approximate: false };
++  }
++
++  return { target: m.center, source: 'region-center-approximate', approximate: true };
++}
++
++// ---------------------------------------------------------------------------
++// Boundary watcher — Phase 2 of the waveform-watcher program (auto-correction
++// of flagged fallback boundaries). Builds directly on `measureFallbackBoundary`
++// above; the calibrated dual-gate constants are frozen for this phase (no
++// threshold changes — see syncConstants.ts's own header on how those were
++// calibrated).
++// ---------------------------------------------------------------------------
++
++/** One boundary this pass actually moved. */
++export interface BoundaryCorrection {
++  /** Index into `segments` of the pair's FIRST (earlier) segment — matches
++   *  `BoundaryQualityMeasurement.segmentIndex`. */
++  pairIndex: number;
++  oldBoundary: number;
++  newBoundary: number;
++  oldAmplitude: number;
++  newAmplitude: number;
++  /** Correction placement semantics fix (2026-08-02) — carried straight from
++   *  `CorrectionCandidate.approximate`: `true` when `newBoundary` landed
++   *  outside this pair's own transcribed token gap (a real measured quiet
++   *  spot the script's word timestamps didn't predict), `false` for the
++   *  ideal in-gap case. Optional so older, already-persisted log entries
++   *  (built before this field existed) decode without it. */
++  approximate?: boolean;
++}
++
++/**
++ * Auto-corrects flagged fallback boundaries by moving them into the nearest
++ * genuinely quiet gap `findQuietestRegion` can find inside the pair's own
++ * search window — the same window `snapCoveredBoundaries` searched for a
++ * silence and came up empty. Architecture B: a post-hoc pass over the FINAL
++ * committed `segments` array; never reorders or re-runs
++ * `snapCoveredBoundaries`/`alignScenestoTranscript`, never touches either
++ * function's signature.
++ *
++ * A pair is corrected whenever:
++ *   (a) `measureFallbackBoundary` returns non-null AND `flagged` — this
++ *       already encodes "used the plain fallback" (a silence-placed boundary
++ *       is never returned at all) AND the full calibrated dual gate
++ *       (amplitude floor, min distance, loudness ratio) AND "neither segment
++ *       is locked" (mirrors `snapCoveredBoundaries`' own guard) — one shared
++ *       implementation, so none of these can drift between the checker and
++ *       the watcher;
++ *   (b) `resolveCorrectionCandidate` returns a non-null candidate — `null`
++ *       means no quiet region was found at all (tier 3); this pair is left
++ *       UNCHANGED and reported as a skip (see below), never midpoint-guessed;
++ *   (c) the resulting curr/next durations both stay positive — including the
++ *       NEIGHBORING pair's own boundary, since tier 2's target (Correction
++ *       placement semantics fix, 2026-08-02 — see `resolveCorrectionCandidate`'s
++ *       own doc comment) is no longer clamped into the pair's own real token
++ *       gap and can in principle reach far enough to threaten it. This is the
++ *       ONLY thing that still blocks a tier-1/tier-2 candidate from
++ *       committing.
++ *
++ * A pair left uncorrected here — either (b) or (c) above — is NOT reported
++ * by this function directly; `verifyCommittedBoundaries` (below), which runs
++ * immediately after over the segments THIS function just produced, re-
++ * measures every pair fresh and surfaces anything still flagged-and-
++ * uncorrected via its own `stillFlagged` (identity-excluding whatever THIS
++ * pass's `corrections` already fixed) — one shared reporting path instead of
++ * two independent ones that could drift.
++ *
++ * PAIRED WRITE: exactly two fields move per correction —
++ * `segments[i].duration` (recomputed so its end lands at the new boundary)
++ * and `segments[i+1].startTime`/`anchorStart` (moved to the new boundary) —
++ * the same two-field discipline `snapCoveredBoundaries`' own Pass 3 uses.
++ * `segments[i+1].duration` is deliberately NOT touched: its own end (the
++ * NEXT pair's boundary) is untouched by this pair's correction, exactly as
++ * `snapCoveredBoundaries` already lets one boundary write ripple forward
++ * through an unchanged `duration` when segments are re-tiled left to right.
++ *
++ * ORDER INDEPENDENCE: `measureFallbackBoundary` never reads `curr.startTime`/
++ * `curr.duration`/`next.duration` — only `curr.locked`/`next.locked` and
++ * `next.startTime` (the pair's OWN boundary, not the pair before it) — so
++ * correcting pair `i` can never change whether pair `i+1` is eligible, or
++ * where pair `i+1`'s own quiet point is. The one thing that DOES chain
++ * left-to-right is the final write: `curr.duration = newBoundary -
++ * curr.startTime` reads whatever `curr.startTime` is AT THAT MOMENT, which is
++ * exactly right — if pair `i-1` was also corrected, `segments[i].startTime`
++ * already reflects that, and this pair's write keeps the chain contiguous
++ * instead of reintroducing a gap or overlap.
++ *
++ * Same contiguity safety net `snapCoveredBoundaries` uses after every write:
++ * re-derives `curr.startTime + curr.duration` post-rounding and nudges
++ * `next.startTime`/`anchorStart` forward if float rounding pushed it past the
++ * intended boundary, so `startTime[i] + duration[i] === startTime[i+1]` holds
++ * exactly, not approximately, for every corrected pair.
++ *
++ * Returns `{ segments, corrections: [] }` with `segments` returned BY
++ * IDENTITY (no copy) when `waveformSource` is `null` — there is nothing to
++ * measure against. Otherwise always returns a fresh shallow-copied array
++ * (never mutates the input), matching `snapCoveredBoundaries`'s own purity
++ * contract, even when zero corrections end up applying.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function applyBoundaryWatcher(
++  segments: VideoSegment[],
++  keptAlignments: SegmentAlignment[],
++  tokens: TranscriptToken[],
++  silences: SilenceInterval[],
++  waveformSource: WaveformSource | null,
++): { segments: VideoSegment[]; corrections: BoundaryCorrection[] } {
++  if (!waveformSource) return { segments, corrections: [] };
++
++  const out: VideoSegment[] = segments.map(s => ({ ...s }));
++  const corrections: BoundaryCorrection[] = [];
++
++  for (let i = 0; i < out.length - 1; i++) {
++    const curr = out[i];
++    const next = out[i + 1];
++    const currAlign = keptAlignments[i];
++    const nextAlign = keptAlignments[i + 1];
++    if (!curr || !next || !currAlign || !nextAlign) continue;
++
++    const measurement = measureFallbackBoundary(
++      i, curr, next, currAlign, nextAlign, tokens, silences, waveformSource,
++      BOUNDARY_QUALITY_LOUDNESS_RATIO_K, BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
++    );
++    if (!measurement || !measurement.flagged) continue;
++
++    const candidate = resolveCorrectionCandidate(measurement);
++    if (!candidate) {
++      // Tier 3 — findQuietestRegion found nothing at all to measure. Leave
++      // the pair unchanged; verifyCommittedBoundaries's fresh re-measurement
++      // picks it up as stillFlagged (same measurement.flagged/center
++      // relationship holds there too).
++      if (import.meta.env.DEV) {
++        console.warn(
++          '[boundary-watcher] no quiet region found — pair (%d,%d) left unchanged',
++          i, i + 1,
++        );
++      }
++      continue;
++    }
++    if (import.meta.env.DEV && candidate.approximate) {
++      console.info(
++        '[boundary-watcher] approximate placement (region center outside the script\'s expected gap) — pair (%d,%d): target=%ss',
++        i, i + 1, candidate.target.toFixed(3),
++      );
++    }
++
++    const snapped = round3(candidate.target);
++    const newCurrDuration = round3(snapped - curr.startTime);
++    // `next`'s own real end — the boundary with the NEIGHBORING pair
++    // (segments[i+2], read via next.startTime + next.duration since
++    // next.duration is never touched by this pass) — computed BEFORE this
++    // pair's write below. Tier 2's target is no longer clamped into this
++    // pair's own real token gap, so it can in principle reach far enough to
++    // threaten that neighboring boundary; this is the "i+2's start sanity"
++    // bound, alongside the existing "i+1's start" (newCurrDuration) bound.
++    const nextEnd = round3(next.startTime + next.duration);
++    const newNextDuration = round3(nextEnd - snapped);
++
++    // The ONLY remaining skip path — reject rather than clamp: a
++    // non-positive duration on either side (including the neighboring
++    // pair's own boundary) means the computed correction is not
++    // trustworthy, however it was derived.
++    if (newCurrDuration <= 0 || newNextDuration <= 0) {
++      if (import.meta.env.DEV) {
++        console.warn(
++          '[boundary-watcher] degenerate correction — pair (%d,%d) skipped: newCurrDuration=%s newNextDuration=%s',
++          i, i + 1, newCurrDuration, newNextDuration,
++        );
++      }
++      continue;
++    }
++
++    const oldBoundary = measurement.boundaryTime;
++    const oldAmplitude = measurement.boundaryAmplitude;
++
++    curr.duration = newCurrDuration;
++    next.startTime = snapped;
++    next.anchorStart = snapped;
++
++    // Contiguity safety net (mirrors snapCoveredBoundaries's own Pass 3):
++    // float rounding of the diff above could in principle push curr's own
++    // end a hair past `snapped` — re-derive and nudge next forward so the
++    // invariant holds exactly, not approximately.
++    const contiguousStart = round3(curr.startTime + curr.duration);
++    if (contiguousStart > next.startTime) {
++      next.startTime = contiguousStart;
++      next.anchorStart = contiguousStart;
++    }
++
++    corrections.push({
++      pairIndex: i,
++      oldBoundary,
++      newBoundary: next.startTime,
++      oldAmplitude,
++      newAmplitude: measurement.quietestAmplitude ?? 0,
++      approximate: candidate.approximate,
++    });
++  }
++
++  return { segments: out, corrections };
++}
++
++// ---------------------------------------------------------------------------
++// Boundary verifier — Watcher follow-up, Defect A. Runs immediately AFTER
++// `applyBoundaryWatcher` above, over the segments IT just produced, and
++// widens the check to boundaries the watcher never looked at: silence-placed
++// ones (`usedFallback === false`) whose committed position still measures as
++// loud relative to a real, quieter alternative nearby — the detected silence
++// interval itself was not necessarily the acoustically quietest point in the
++// pair's own window.
++// ---------------------------------------------------------------------------
++
++/**
++ * Verifies every adjacent pair's FINAL committed boundary (post-watcher)
++ * against the same calibrated dual gate, and conditionally corrects the
++ * silence-placed pairs the watcher never touches (Option C, user-approved).
++ *
++ * `watcherCorrections` — `applyBoundaryWatcher`'s own `corrections` from the
++ * pass that ran immediately before this one, over the SAME segments array
++ * (Log-consistency fix). Re-measuring a just-corrected fallback pair can
++ * still legitimately come back `flagged`: the dual gate's distance/ratio
++ * check compares the NEW committed boundary's own amplitude against
++ * `quietestTime`'s mean amplitude, and even a real, approximate placement
++ * (`resolveCorrectionCandidate`'s tier 2 — the pair's own measured region
++ * center, not necessarily the single loudest-relief point `findQuietestRegion`
++ * found) can still sit measurably louder than that single global minimum —
++ * so a pair the watcher genuinely improved (moved off the loud spike, onto a
++ * real quiet region) can still measure "still loud relative to the single
++ * quietest point in the window". That is not a second failure to report — it
++ * is the same finding the watcher already acted on. `pairIndex` is the shared
++ * identity between a
++ * `BoundaryCorrection` and a `BoundaryQualityMeasurement.segmentIndex`; any
++ * pair index present here is skipped entirely (no `stillFlagged` push, no
++ * second correction attempt) — a corrected pair must never also warn.
++ *
++ * Per pair:
++ *   - Not flagged (or ineligible — locked/missing alignment/no quiet region
++ *     found): no entry, no correction, nothing to report.
++ *   - Flagged AND `usedFallback` AND already in `watcherCorrections`: the
++ *     watcher already fixed this pair — skip silently (see above).
++ *   - Flagged AND `usedFallback` AND NOT in `watcherCorrections`: the
++ *     watcher genuinely gave up on this pair (a degenerate resulting
++ *     duration — its only remaining skip path, `resolveCorrectionCandidate`
++ *     never itself withholds a target). This function does not attempt a
++ *     second correction for the same pair (that would duplicate the
++ *     watcher's own job, using the exact same target it already rejected);
++ *     the measurement is surfaced via `stillFlagged` as a real warning
++ *     instead of silently dropping it.
++ *   - Flagged AND NOT `usedFallback` (a silence-placed boundary that still
++ *     measures loud): corrected via `resolveCorrectionCandidate` — the
++ *     region center when it lands strictly inside the pair's own real token
++ *     gap (exact), else that same real measured center used anyway
++ *     (approximate) — same two-tier placement the watcher uses; see that
++ *     function's own doc comment for the Correction placement semantics fix,
++ *     2026-08-02 — PROVIDED the resulting curr/next durations both stay
++ *     positive (including the NEIGHBORING pair's own boundary — same "i+2's
++ *     start sanity" bound `applyBoundaryWatcher` enforces, since an
++ *     approximate target is no longer clamped into this pair's own gap). A
++ *     non-positive duration, or `resolveCorrectionCandidate` returning `null`
++ *     (tier 3 — no quiet region found at all), is what leaves this pair
++ *     WARNING-only: the measurement goes to `stillFlagged`, the boundary is
++ *     left exactly where `snapCoveredBoundaries` put it.
++ *
++ * Same PAIRED WRITE discipline, same order-independent measurement /
++ * left-to-right chained write, and the same post-write contiguity safety net
++ * as `applyBoundaryWatcher` (see that function's own doc comment — every
++ * invariant it documents holds here identically; this is not a
++ * re-implementation, it is the same shape applied to a different eligibility
++ * rule).
++ *
++ * Returns `{ segments, corrections: [], stillFlagged: [] }` with `segments`
++ * returned BY IDENTITY (no copy) when `waveformSource` is `null`. Otherwise
++ * always returns a fresh shallow-copied array (never mutates the input),
++ * even when zero corrections end up applying.
++ *
++ * Pure; exported for direct unit testing.
++ */
++export function verifyCommittedBoundaries(
++  segments: VideoSegment[],
++  keptAlignments: SegmentAlignment[],
++  tokens: TranscriptToken[],
++  silences: SilenceInterval[],
++  waveformSource: WaveformSource | null,
++  watcherCorrections: readonly BoundaryCorrection[] = [],
++): { segments: VideoSegment[]; corrections: BoundaryCorrection[]; stillFlagged: BoundaryQualityMeasurement[] } {
++  if (!waveformSource) return { segments, corrections: [], stillFlagged: [] };
++
++  const watcherCorrectedIndices = new Set(watcherCorrections.map(c => c.pairIndex));
++  const out: VideoSegment[] = segments.map(s => ({ ...s }));
++  const corrections: BoundaryCorrection[] = [];
++  const stillFlagged: BoundaryQualityMeasurement[] = [];
++
++  for (let i = 0; i < out.length - 1; i++) {
++    const curr = out[i];
++    const next = out[i + 1];
++    const currAlign = keptAlignments[i];
++    const nextAlign = keptAlignments[i + 1];
++    if (!curr || !next || !currAlign || !nextAlign) continue;
++
++    const measurement = measureBoundaryQuality(
++      i, curr, next, currAlign, nextAlign, tokens, silences, waveformSource,
++      BOUNDARY_QUALITY_LOUDNESS_RATIO_K, BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
++    );
++    if (!measurement || !measurement.flagged) continue;
++
++    if (measurement.usedFallback) {
++      // Already handled by applyBoundaryWatcher, which runs immediately
++      // before this pass and shares this exact measurement function.
++      if (watcherCorrectedIndices.has(i)) continue; // corrected — never also warn
++      // The watcher genuinely gave up on this pair (degenerate duration) —
++      // surface it, don't re-attempt it with the same target it rejected.
++      stillFlagged.push(measurement);
++      continue;
++    }
++
++    // Silence-placed pair failing the gate (Option C) — resolve a target via
++    // the same two-tier placement the watcher uses.
++    const candidate = resolveCorrectionCandidate(measurement);
++    if (!candidate) {
++      // Tier 3 — findQuietestRegion found nothing at all to measure.
++      stillFlagged.push(measurement);
++      continue;
++    }
++    if (import.meta.env.DEV && candidate.approximate) {
++      console.info(
++        '[boundary-verify] approximate placement (region center outside the script\'s expected gap) — pair (%d,%d): target=%ss',
++        i, i + 1, candidate.target.toFixed(3),
++      );
++    }
++
++    const snapped = round3(candidate.target);
++    const newCurrDuration = round3(snapped - curr.startTime);
++    // Neighboring-pair sanity bound — see applyBoundaryWatcher's identical
++    // check for the full rationale.
++    const nextEnd = round3(next.startTime + next.duration);
++    const newNextDuration = round3(nextEnd - snapped);
++
++    if (newCurrDuration <= 0 || newNextDuration <= 0) {
++      if (import.meta.env.DEV) {
++        console.warn(
++          '[boundary-verify] degenerate correction — pair (%d,%d) skipped: newCurrDuration=%s newNextDuration=%s',
++          i, i + 1, newCurrDuration, newNextDuration,
++        );
++      }
++      stillFlagged.push(measurement);
++      continue;
++    }
++
++    const oldBoundary = measurement.boundaryTime;
++    const oldAmplitude = measurement.boundaryAmplitude;
++
++    curr.duration = newCurrDuration;
++    next.startTime = snapped;
++    next.anchorStart = snapped;
++
++    // Contiguity safety net (mirrors applyBoundaryWatcher's own).
++    const contiguousStart = round3(curr.startTime + curr.duration);
++    if (contiguousStart > next.startTime) {
++      next.startTime = contiguousStart;
++      next.anchorStart = contiguousStart;
++    }
++
++    corrections.push({
++      pairIndex: i,
++      oldBoundary,
++      newBoundary: next.startTime,
++      oldAmplitude,
++      newAmplitude: measurement.quietestAmplitude ?? 0,
++      approximate: candidate.approximate,
++    });
++  }
++
++  return { segments: out, corrections, stillFlagged };
++}
+diff --git a/src/services/syncConstants.ts b/src/services/syncConstants.ts
+index 849b44d..566a647 100644
+--- a/src/services/syncConstants.ts
++++ b/src/services/syncConstants.ts
+@@ -469,6 +469,38 @@ export const BOUNDARY_QUALITY_MIN_DISTANCE_SEC = 0.10;
+ export const BOUNDARY_QUALITY_K_SWEEP = [1.5, 2, 3] as const;
+ export const BOUNDARY_QUALITY_WINDOW_SWEEP = [0.10, 0.15, 0.20, 0.25] as const;
+ 
++// --- Watcher follow-up, Defect C (centered placement) — FROZEN 2026-08-02 --
++// `findSilenceRegionCenter` (boundaryQuality.ts) expands outward from the
++// raw quietest-window seed while the waveform stays at or under a
++// `regionEndThreshold` amplitude. `measureBoundaryQuality`'s production call
++// site computes `regionEndThreshold = quietest.meanAmplitude +
++// BOUNDARY_QUALITY_REGION_END_DELTA` — an ABSOLUTE delta, not a ratio.
++//
++// Chosen 2026-08-02 from the V6 centering sweep (`{ centering: true }`,
++// App.tsx's `__calibrateBoundaryQuality`, run against both fixture
++// projects): a RATIO threshold (`meanAmplitude * K`) collapses to a
++// single-column region whenever `quietest.meanAmplitude` is near-zero
++// (genuine digital-silence pauses — not a rare case; long-pause narration
++// gaps often bottom out at or near the noise floor), because
++// `meanAmplitude * K` is itself then near-zero and almost nothing in the
++// waveform qualifies as "at or under" it — producing a fake ~10ms region
++// (effectively just the seed column) even inside a real, much wider silent
++// pause. An ABSOLUTE delta has no such degenerate case: it stays a small,
++// fixed, non-zero band regardless of how quiet the seed itself is. +0.05
++// was verified across all 28 known-bad pairs from the sweep, yielding real
++// 0.05–0.14s mid-pause regions (never a single-column collapse).
++export const BOUNDARY_QUALITY_REGION_END_DELTA = 0.05;
++
++// Retained for the DEV calibration harness's `{ centering: true }` sweep
++// (App.tsx's `__calibrateBoundaryQuality`) — exploratory candidates for
++// comparison against the frozen `BOUNDARY_QUALITY_REGION_END_DELTA` above,
++// not alternate production formulas. The ratio sweep in particular is what
++// exposed the near-zero-quietest collapse that ruled ratios out; kept so a
++// future re-calibration can re-derive the same evidence rather than
++// re-discovering it from scratch.
++export const BOUNDARY_QUALITY_REGION_RATIO_SWEEP = [1.5, 2, 3] as const;
++export const BOUNDARY_QUALITY_REGION_DELTA_SWEEP = [0.02, 0.05, 0.10] as const;
++
+ // ---------------------------------------------------------------------------
+ // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
+ //
+diff --git a/src/services/syncContracts.test.ts b/src/services/syncContracts.test.ts
+index 46d8b57..fd3b319 100644
+--- a/src/services/syncContracts.test.ts
++++ b/src/services/syncContracts.test.ts
+@@ -3,7 +3,16 @@
+ // test per rule, a clean-case zero-violations test, and confirmation the
+ // validator never mutates its inputs (the "zero behavior change" guarantee).
+ import { describe, it, expect } from 'vitest';
+-import { analyzeDropDistribution, validateTokenOrdering, validate1to2, validateBoundaryQuality } from './syncContracts';
++import {
++  analyzeDropDistribution,
++  validateTokenOrdering,
++  validate1to2,
++  validateBoundaryQuality,
++  boundaryMeasurementToViolation,
++  boundaryUnplaceableToViolation,
++} from './syncContracts';
++import { verifyCommittedBoundaries, type BoundaryCorrection } from './boundaryQuality';
++import { buildContractViolationEntry } from './syncLog';
+ import type { TokenDrop, SegmentAlignment } from './whisperService';
+ import type { WaveformSource } from './waveformPeaks';
+ import type { SilenceInterval } from './silenceDetector';
+@@ -346,3 +355,138 @@ describe('validateBoundaryQuality (Contract 5→6, waveform-watcher Phase 1)', (
+     expect(tokens).toEqual(tokensCopy);
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// boundaryMeasurementToViolation + the merged log story (Watcher follow-up,
++// Defect A) — App.tsx's post-watcher wiring turns verifyCommittedBoundaries's
++// `stillFlagged` measurements into real SyncLogEntries via exactly these two
++// functions (boundaryMeasurementToViolation here, buildContractViolationEntry
++// in syncLog.ts); this suite exercises that exact combination directly,
++// without needing App.tsx or a DOM harness.
++// ---------------------------------------------------------------------------
++describe('boundaryMeasurementToViolation + merged log story (Watcher follow-up, Defect A)', () => {
++  // Same shared fixture shape as the validateBoundaryQuality suite above
++  // (re-declared here — that suite's own tokens/alignments/twoSegments/
++  // makeWaveform are scoped to its own describe block).
++  const tokens: TranscriptToken[] = [
++    tok(0.0, 0.5, 'alpha'),
++    tok(0.5, 1.0, 'bravo'),
++    tok(2.0, 2.5, 'charlie'),
++    tok(2.5, 3.0, 'delta'),
++  ];
++  const alignments: SegmentAlignment[] = [align(0, 1), align(2, 3)];
++
++  function twoSegments(overrides: Partial<VideoSegment> = {}): VideoSegment[] {
++    return [
++      seg({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0, duration: 2 }),
++      seg({ id: 's1', order: 1, text: 'charlie delta', startTime: 2, duration: 3, ...overrides }),
++    ];
++  }
++
++  function makeWaveform(): WaveformSource {
++    const peaks = new Float32Array(30).fill(0.5);
++    peaks[8] = 0.05;
++    peaks[9] = 0.05;
++    peaks[20] = 0.9;
++    return { peaks, peaksPerSecond: 10, totalDuration: 3 };
++  }
++
++  it('preserves a flagged measurement\'s real fields into the ContractViolation shape', () => {
++    const segments = twoSegments();
++    const waveform = makeWaveform();
++    const measurements = validateBoundaryQuality(segments, alignments, tokens, [], waveform, 2, 0.2, 'report-all');
++    const flagged = measurements.find(m => m.flagged)!;
++    expect(flagged).toBeDefined();
++
++    const violation = boundaryMeasurementToViolation(flagged);
++
++    expect(violation.contract).toBe('5->6');
++    expect(violation.rule).toBe('loud-fallback-boundary');
++    expect(violation.severity).toBe('warning');
++    expect(violation.fixHint.length).toBeGreaterThan(0);
++    expect(violation.detail).toMatchObject({ segmentIndex: flagged.segmentIndex, usedFallback: flagged.usedFallback });
++  });
++
++  it('boundaryUnplaceableToViolation (correction placement semantics fix, tier 3) — distinct rule/message from boundaryMeasurementToViolation, no quiet-point fields in detail', () => {
++    const segments = twoSegments();
++    const waveform = makeWaveform();
++    const measurements = validateBoundaryQuality(segments, alignments, tokens, [], waveform, 2, 0.2, 'report-all');
++    const flagged = measurements.find(m => m.flagged)!;
++    expect(flagged).toBeDefined();
++
++    const violation = boundaryUnplaceableToViolation(flagged);
++
++    expect(violation.contract).toBe('5->6');
++    expect(violation.rule).toBe('unplaceable-fallback-boundary');
++    expect(violation.rule).not.toBe(boundaryMeasurementToViolation(flagged).rule);
++    expect(violation.severity).toBe('warning');
++    expect(violation.message).toContain("couldn't be auto-placed");
++    expect(violation.fixHint.length).toBeGreaterThan(0);
++    expect(violation.detail).toMatchObject({ segmentIndex: flagged.segmentIndex, usedFallback: flagged.usedFallback });
++  });
++
++  it('a silence-placed pair is corrected via containment fallback and produces NO warning', () => {
++    // Committed boundary at 1.5 is loud (0.9); a genuine quiet dip at cols
++    // 17-18 (t=1.7-1.9) sits inside the [1.0,2.0] real token gap — the
++    // ideal tier-1 (in-gap center) case.
++    const correctableSegments = twoSegments();
++    const correctablePeaks = new Float32Array(30).fill(0.5);
++    correctablePeaks[15] = 0.9;
++    correctablePeaks[17] = 0.05; correctablePeaks[18] = 0.05;
++    const correctableWaveform: WaveformSource = { peaks: correctablePeaks, peaksPerSecond: 10, totalDuration: 3 };
++    const correctableSilences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
++    correctableSegments[0]!.duration = 1.5;
++    correctableSegments[1]!.startTime = 1.5;
++
++    const correctedResult = verifyCommittedBoundaries(
++      correctableSegments, alignments, tokens, correctableSilences, correctableWaveform,
++    );
++    expect(correctedResult.corrections).toHaveLength(1);
++    expect(correctedResult.stillFlagged).toEqual([]); // corrected — no warning for this pair
++  });
++
++  it('Fix 3 (log consistency) — a pairIndex present in watcherCorrections is excluded from stillFlagged BY IDENTITY, even though re-measuring it still comes back flagged', () => {
++    // The same fallback fixture applyBoundaryWatcher's own suite uses
++    // (boundaryQuality.test.ts): still-loud boundary, usedFallback=true,
++    // flagged=true. This test does NOT actually move the boundary (no
++    // applyBoundaryWatcher call) — it directly asserts the EXCLUSION
++    // mechanism: passing this pair's index via `watcherCorrections` must
++    // suppress it from `stillFlagged` on identity alone, regardless of what
++    // the fresh re-measurement says (a corrected pair can legitimately
++    // re-measure as still "flagged" — the dual gate compares against the
++    // wide-window's global quietest point, which a real-token-gap-clamped
++    // correction may never be able to reach — see this function's own doc
++    // comment). "A corrected pair must never also warn."
++    const segments = twoSegments();
++    const waveform = makeWaveform(); // peaks[8]=peaks[9]=0.05, peaks[20]=0.9 — flagged, usedFallback=true
++    const watcherCorrections: BoundaryCorrection[] = [
++      { pairIndex: 0, oldBoundary: 2.0, newBoundary: 1.05, oldAmplitude: 0.9, newAmplitude: 0.05 },
++    ];
++
++    const excludedResult = verifyCommittedBoundaries(segments, alignments, tokens, [], waveform, watcherCorrections);
++    expect(excludedResult.stillFlagged).toEqual([]); // excluded by identity
++    expect(excludedResult.corrections).toEqual([]); // never re-attempts a fallback pair's own correction
++
++    // Without that exclusion (e.g. the watcher genuinely gave up on this
++    // pair), the exact same still-loud measurement surfaces as a real
++    // warning — proving the suppression above is the exclusion firing, not
++    // some other reason the pair would never have warned anyway.
++    const stillFlaggedResult = verifyCommittedBoundaries(segments, alignments, tokens, [], waveform, []);
++    expect(stillFlaggedResult.corrections).toEqual([]);
++    expect(stillFlaggedResult.stillFlagged).toHaveLength(1);
++
++    // The log-building step (App.tsx): only stillFlagged measurements become
++    // warning entries — a corrected pair's measurement never reaches this
++    // conversion at all (it isn't in stillFlagged), so it produces no entry.
++    const entries = stillFlaggedResult.stillFlagged.map(m =>
++      buildContractViolationEntry('run-1', boundaryMeasurementToViolation(m), 1234),
++    );
++    expect(entries).toHaveLength(1);
++    const entry = entries[0]!;
++    expect(entry.type).toBe('warning'); // NOT hardcoded 'info'
++    expect(entry.severity).toBe('warning'); // real severity from the ContractViolation, not dropped
++    expect(entry.fixHint).toBeDefined();
++    expect(entry.fixHint!.length).toBeGreaterThan(0);
++    expect(entry.message).not.toMatch(/firstTokenIdx|Hirschberg|token/i); // §6.3(c3) no-jargon rubric
++  });
++});
+diff --git a/src/services/syncContracts.ts b/src/services/syncContracts.ts
+index 5a27256..6a45337 100644
+--- a/src/services/syncContracts.ts
++++ b/src/services/syncContracts.ts
+@@ -15,16 +15,19 @@ import type { TranscriptToken, VideoSegment } from '../types';
+ import type { TokenDrop, SegmentAlignment } from './whisperService';
+ import type { SilenceInterval } from './silenceDetector';
+ import type { WaveformSource } from './waveformPeaks';
+-import { computeBoundarySearchWindow, boundaryUsedFallback } from './snapBoundaries';
+-import { findQuietestRegion } from './boundaryQuality';
++import { measureFallbackBoundary, type BoundaryQualityMeasurement } from './boundaryQuality';
+ import {
+   DROP_CLUSTERING_WINDOW_SEC,
+   DROP_CLUSTERING_RATIO_THRESHOLD,
+   DROP_CLUSTERING_MIN_DROPS,
+-  BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR,
+-  BOUNDARY_QUALITY_MIN_DISTANCE_SEC,
+ } from './syncConstants';
+ 
++// `BoundaryQualityMeasurement` now lives in `boundaryQuality.ts` (Phase 2,
++// shared with `applyBoundaryWatcher`) — re-exported here so existing
++// importers of this module (e.g. App.tsx) don't need to change their import
++// path.
++export type { BoundaryQualityMeasurement };
++
+ /** One contract violation — shared shape across every pair's validator (§3
+  *  Step 3). `severity` and `detail` feed a SyncLogEntry at the wiring call
+  *  site; `detail` is for the log only, never for control flow. */
+@@ -196,30 +199,6 @@ export function validate1to2(
+ // waveform peaks already built for the timeline's own display.
+ // ---------------------------------------------------------------------------
+ 
+-/** One pair's boundary-quality measurement — the full data set, whether or
+- *  not it crossed the flagging ratio. `'report-all'` mode returns these
+- *  directly (calibration); the default mode filters to `flagged` ones and
+- *  maps them to `ContractViolation[]`. */
+-export interface BoundaryQualityMeasurement {
+-  /** Index into `segments` of the pair's FIRST (earlier) segment — the
+-   *  boundary sits between `segments[segmentIndex]` and
+-   *  `segments[segmentIndex + 1]`. */
+-  segmentIndex: number;
+-  boundaryTime: number;
+-  boundaryAmplitude: number;
+-  quietestTime: number | undefined;
+-  quietestAmplitude: number | undefined;
+-  windowStart: number;
+-  windowEnd: number;
+-  flagged: boolean;
+-}
+-
+-function clampIndex(v: number, lo: number, hi: number): number {
+-  if (v < lo) return lo;
+-  if (v > hi) return hi;
+-  return v;
+-}
+-
+ /**
+  * Boundary-quality checker. `segments`/`alignments` are index-parallel — the
+  * SAME contract `snapCoveredBoundaries` depends on (Contract 4→5, assumption
+@@ -290,68 +269,29 @@ export function validateBoundaryQuality(
+     const next = segments[i + 1];
+     const currAlign = alignments[i];
+     const nextAlign = alignments[i + 1];
+-    if (!curr || !next || curr.locked || next.locked || !currAlign || !nextAlign) continue;
+-    if (currAlign.firstTokenIdx < 0 || currAlign.lastTokenIdx < 0) continue;
+-    if (nextAlign.firstTokenIdx < 0 || nextAlign.lastTokenIdx < 0) continue;
+-
+-    const lastSpokenEnd = tokens[currAlign.lastTokenIdx]?.endSec;
+-    const nextSpokenStart = tokens[nextAlign.firstTokenIdx]?.startSec;
+-    const currFirstSpokenStart = tokens[currAlign.firstTokenIdx]?.startSec;
+-    const nextLastSpokenEnd = tokens[nextAlign.lastTokenIdx]?.endSec;
+-    if (
+-      lastSpokenEnd === undefined || nextSpokenStart === undefined ||
+-      currFirstSpokenStart === undefined || nextLastSpokenEnd === undefined
+-    ) continue;
+-
+-    const window = computeBoundarySearchWindow(
+-      lastSpokenEnd, nextSpokenStart, currFirstSpokenStart, nextLastSpokenEnd,
+-    );
++    if (!curr || !next || !currAlign || !nextAlign) continue;
+ 
+-    const usedFallback = boundaryUsedFallback(
+-      tokens, silences, window,
+-      currAlign.firstTokenIdx, currAlign.lastTokenIdx,
+-      nextAlign.firstTokenIdx, nextAlign.lastTokenIdx,
++    const measurement = measureFallbackBoundary(
++      i, curr, next, currAlign, nextAlign, tokens, silences, waveformSource, k, sustainedWindowSec,
+     );
+-    if (!usedFallback) continue;
+-
+-    // The pair's actual committed boundary — contiguity (Contract 5→6
+-    // guarantee 3) means next.startTime IS curr.startTime + curr.duration.
+-    const boundaryTime = next.startTime;
+-    const boundaryCol = clampIndex(
+-      Math.round(boundaryTime * waveformSource.peaksPerSecond), 0, waveformSource.peaks.length - 1,
+-    );
+-    const boundaryAmplitude = waveformSource.peaks[boundaryCol] ?? 0;
+-
+-    const quietest = findQuietestRegion(
+-      waveformSource.peaks, waveformSource.peaksPerSecond,
+-      window.searchStart, window.searchEnd, sustainedWindowSec,
+-    );
+-
+-    const distance = quietest.found && quietest.time !== undefined
+-      ? Math.abs(boundaryTime - quietest.time)
+-      : undefined;
+-
+-    const flagged = quietest.found && quietest.meanAmplitude !== undefined && distance !== undefined
+-      ? boundaryAmplitude >= BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR &&
+-        distance >= BOUNDARY_QUALITY_MIN_DISTANCE_SEC &&
+-        boundaryAmplitude > k * quietest.meanAmplitude
+-      : false;
+-
+-    measurements.push({
+-      segmentIndex: i,
+-      boundaryTime,
+-      boundaryAmplitude,
+-      quietestTime: quietest.time,
+-      quietestAmplitude: quietest.meanAmplitude,
+-      windowStart: window.searchStart,
+-      windowEnd: window.searchEnd,
+-      flagged,
+-    });
++    if (measurement) measurements.push(measurement);
+   }
+ 
+   if (mode === 'report-all') return measurements;
+ 
+-  return measurements.filter(m => m.flagged).map((m): ContractViolation => ({
++  return measurements.filter(m => m.flagged).map(boundaryMeasurementToViolation);
++}
++
++/**
++ * Turns one flagged `BoundaryQualityMeasurement` into a `ContractViolation` —
++ * extracted (Watcher follow-up, Defect A) so `verifyCommittedBoundaries`'s
++ * `stillFlagged` measurements (services/boundaryQuality.ts) can be logged
++ * with the exact same real `severity`/`fixHint` this checker has always
++ * produced, instead of App.tsx re-deriving its own message text or
++ * hardcoding a severity. Pure; exported for direct unit testing.
++ */
++export function boundaryMeasurementToViolation(m: BoundaryQualityMeasurement): ContractViolation {
++  return {
+     contract: '5->6',
+     rule: 'loud-fallback-boundary',
+     severity: 'warning',
+@@ -365,6 +305,37 @@ export function validateBoundaryQuality(
+       quietestAmplitude: m.quietestAmplitude,
+       windowStart: m.windowStart,
+       windowEnd: m.windowEnd,
++      usedFallback: m.usedFallback,
++    },
++  };
++}
++
++/**
++ * Turns a flagged `BoundaryQualityMeasurement` that couldn't be auto-placed
++ * AT ALL — `resolveCorrectionCandidate` (`boundaryQuality.ts`) returned
++ * `null`, i.e. `findQuietestRegion` never located a quiet region anywhere in
++ * the pair's own search window (`m.center === undefined`) — into its own
++ * `ContractViolation`, distinct from `boundaryMeasurementToViolation` above.
++ * That function's message/fixHint assume a nearby quieter moment exists for
++ * the user to nudge toward; this one doesn't, because none was found, so it
++ * says so instead of pointing at a spot that isn't there. Correction
++ * placement semantics fix (2026-08-02, tier 3). Pure; exported for direct
++ * unit testing.
++ */
++export function boundaryUnplaceableToViolation(m: BoundaryQualityMeasurement): ContractViolation {
++  return {
++    contract: '5->6',
++    rule: 'unplaceable-fallback-boundary',
++    severity: 'warning',
++    message: `The cut between segment ${m.segmentIndex + 1} and segment ${m.segmentIndex + 2} couldn't be auto-placed — the audio near it has no measurable quiet gap.`,
++    fixHint: `Nudge the cut between segment ${m.segmentIndex + 1} and segment ${m.segmentIndex + 2} on the timeline, or check the scene's script text near there.`,
++    detail: {
++      segmentIndex: m.segmentIndex,
++      boundaryTime: m.boundaryTime,
++      boundaryAmplitude: m.boundaryAmplitude,
++      windowStart: m.windowStart,
++      windowEnd: m.windowEnd,
++      usedFallback: m.usedFallback,
+     },
+-  }));
++  };
+ }
+diff --git a/src/services/syncLog.ts b/src/services/syncLog.ts
+index e0a4ac5..e7926b8 100644
+--- a/src/services/syncLog.ts
++++ b/src/services/syncLog.ts
+@@ -39,6 +39,7 @@ export function makeSyncLogEntry(
+     SyncLogEntry,
+     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
+     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
++    | 'corrections'
+   >,
+   timestamp: number = Date.now(),
+ ): SyncLogEntry {
+diff --git a/src/types.ts b/src/types.ts
+index 81f38c3..4b31716 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -425,6 +425,29 @@ export interface SyncLogEntry {
+    *  a user-facing fix hint" — something the USER can do, not a developer
+    *  pointer. Undefined on entries with no `severity` and on INFO entries. */
+   fixHint?: string;
++  /** Boundary watcher (waveform-watcher program, Phase 2) — the 'info' summary
++   *  entry a run's auto-correction pass appends carries one of these per
++   *  boundary it actually moved. Undefined on every other entry, including
++   *  Phase 1's own 'loud-fallback-boundary' entries (those stay read-only —
++   *  see services/boundaryQuality.ts's applyBoundaryWatcher). */
++  corrections?: BoundaryCorrectionLogDetail[];
++}
++
++/** One auto-corrected fallback boundary, as recorded on a sync-log entry.
++ *  Declared here rather than imported from services/boundaryQuality.ts (same
++ *  convention as SegmentGrade above — dependency direction stays services ->
++ *  types), structurally identical to that module's own `BoundaryCorrection`. */
++export interface BoundaryCorrectionLogDetail {
++  pairIndex: number;
++  oldBoundary: number;
++  newBoundary: number;
++  oldAmplitude: number;
++  newAmplitude: number;
++  /** Correction placement semantics fix (2026-08-02) — `true` when
++   *  `newBoundary` landed outside the pair's own transcribed token gap (a
++   *  real measured quiet spot, not a containment fallback). Undefined on
++   *  entries logged before this field existed. */
++  approximate?: boolean;
+ }
+ 
+ /** One Apply Sync run, rolled up. Written alongside that run's entries. */
