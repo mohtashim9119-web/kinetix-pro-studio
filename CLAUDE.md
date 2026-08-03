@@ -199,7 +199,8 @@ src/
                      # `docs/sync-pipeline-v2-plan.md` is the accepted-architecture authority for the
                      #   in-progress sync pipeline restructure (accepted 2026-08-03, not yet
                      #   implemented) — see it before touching any file in this directory that
-                     #   participates in sync timing/alignment.
+                     #   participates in sync timing/alignment. The entries below describe CURRENT
+                     #   (pre-v2) behavior and stay accurate until each v2 phase actually lands.
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     resolutionConfig.ts # Project Settings + Aspect Ratio (2026-07-22) — the single source of truth
@@ -1898,7 +1899,7 @@ App.tsx                    — top-level state + orchestration only
 | Filters in the `FILTERS` array without a `getFilterStyle` case | Shows in dropdown, applies nothing — either implement or remove |
 | Segment IDs that aren't globally unique | Timeline and React keys break on collision |
 | `-framerate` on an ffmpeg mux of a raw annexb stream | Only sets the demuxer's displayed `r_frame_rate` — the muxer writes wrong per-packet duration for PTS-less packets (measured 6x-wrong file); use `-r <fps>` instead (`muxOnly.ts`) |
-| Classifying breath-vs-boundary silence from token TIMESTAMPS | Whisper timestamps blur 100-900ms across a real seam (measured); token INDICES (from the Hirschberg alignment pass) are exact and never smeared. `isBreathSilence`'s multi-fragment override was fixed 2026-08-03 to use index position instead — see `snapBoundaries.ts`'s entry and `docs/boundary-drift-investigation.md` |
+| Classifying breath-vs-boundary silence from token TIMESTAMPS, OR building a boundary search window from raw token TIMESTAMPS | Whisper timestamps blur 100-900ms across a real seam (measured); token INDICES (from the Hirschberg alignment pass) are exact and never smeared. `isBreathSilence`'s multi-fragment override was fixed 2026-08-03 to use index position instead — see `snapBoundaries.ts`'s entry and `docs/boundary-drift-investigation.md`. The WINDOW-CONSTRUCTION half of this problem (distinct from classification) is still open: segment 96's boundary picker widened its search window off a claimed gap built from raw timestamps — look ends 289.090, the next token ("A") is declared at 289.200, but the real silence is `[289.380, 289.960]` — the declared onset precedes the pause entirely, so a timestamp-built window can miss the real gap outright. Fix path: `docs/sync-pipeline-v2-plan.md` Part C. |
 | `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
 | Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
 | Adding 4K (or any resolution tier) back without updating `RESOLUTION_TABLE` for all 3 aspect ratios | `resolutionConfig.ts`'s `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes a missing cell a compile error, not a silent runtime hole — but every new tier still needs a deliberate dimension decision for `9:16` and `1:1`, not just `16:9` |

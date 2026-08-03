@@ -5,6 +5,11 @@
 > project's own working rule, audit findings must be persisted to `docs/` —
 > this file is that persistence. Read this before re-investigating anything
 > in the sync boundary-placement pipeline.
+>
+> **The word-shift defect this document documents is addressed by
+> `docs/sync-pipeline-v2-plan.md` Phases 3+5.** This document's own
+> DO NOT RE-INVESTIGATE list and dead-hypothesis measurements remain
+> authoritative and must be read before any related work.
 
 ## Summary
 
