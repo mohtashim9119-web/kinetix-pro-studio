@@ -24,6 +24,9 @@
 > **`docs/sync-pipeline-v2-plan.md` (accepted 2026-08-03) supersedes this program's sequencing** —
 > its Phase 7 absorbs this document's contract/validator concepts. This document remains the
 > authority on the §2 assumption tables and the risk register (R1-R14) — v2 does not restate them.
+> v2's Revision 2 (2026-08-03) additionally writes NEW stage contracts for the 4-stage architecture
+> (its Part J), maps R1-R14 onto them (structurally-impossible vs. surviving), and absorbs this
+> document's §4 severity taxonomy into its Contract OUT — the register text itself still lives here.
 >
 > **Distinct from:** `CLAUDE.md` (architecture/conventions/invariants), `project-state.md` (current
 > status + active tasks), `docs/history.md` (chronological record of shipped work). This file is a
