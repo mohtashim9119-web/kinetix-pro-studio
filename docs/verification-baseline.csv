@@ -1,43 +1,43 @@
-script_word_key,project,verdict,phase_label,date
-small and permanent || a new understanding,V6-447,word-shifted,Phase 0,2026-08-03
-on your shoulder || not hard,V6-447,word-shifted,Phase 0,2026-08-03
-lead hunter slows || the shift moves,V6-447,word-shifted,Phase 0,2026-08-03
-to announce you || you never see,V6-447,word-shifted,Phase 0,2026-08-03
-does the same || what the job,V6-447,word-shifted,Phase 0,2026-08-03
-is the point || it keeps you,V6-447,word-shifted,Phase 0,2026-08-03
-wind || branches pulling tight,V6-447,word-shifted,Phase 0,2026-08-03
-is going fast || you push through,V6-447,word-shifted,Phase 0,2026-08-03
-a long time || you carry it,V6-447,word-shifted,Phase 0,2026-08-03
-positioning was right || the rotations were,V6-447,word-shifted,Phase 0,2026-08-03
-through the living || night after night,V6-447,word-shifted,Phase 0,2026-08-03
-they just do || the band has,V6-447,correct,Phase 0,2026-08-03
-before you look || a predator s,V6-447,correct,Phase 0,2026-08-03
-a false alarm || and you do,V6-447,correct,Phase 0,2026-08-03
-afraid of fear || which is the,V6-447,correct,Phase 0,2026-08-03
-what you had || the rest belongs,V6-447,correct,Phase 0,2026-08-03
-people orient by || when the bands,V6-447,correct,Phase 0,2026-08-03
-seasons than you || can count and,V6-447,correct,Phase 0,2026-08-03
-s youngest scout || a girl of,V6-447,correct,Phase 0,2026-08-03
-chitin thick enough || to deflect small,173-seg,"word-shifted (known defect: produces 75.660, correct target 76.470)",Phase 0,2026-08-03
-just kill soldiers || they take apart,173-seg,correct,Phase 0,2026-08-03
-demolition target instead || the environment did,173-seg,correct (designated placeholder),Phase 0,2026-08-03
-it is close || and the fire,V6-447,correct,Phase 0,2026-08-03
-and fat-soaked moss || bound with sinew,V6-447,correct,Phase 0,2026-08-03
-a torch again || those long column,V6-447,correct,Phase 0,2026-08-03
-never far || never alone,V6-447,correct,Phase 0,2026-08-03
-when you report || but your hands,V6-447,correct,Phase 0,2026-08-03
-to finish arguing || you are twenty,V6-447,correct,Phase 0,2026-08-03
-not worth finding || that night by,V6-447,correct,Phase 0,2026-08-03
-before that moment || slow is the,V6-447,correct,Phase 0,2026-08-03
-you say so || you tell fen,V6-447,correct,Phase 0,2026-08-03
-what they see || the same thing,V6-447,correct,Phase 0,2026-08-03
-everything on it || the jungle did,173-seg,correct,Phase 0,2026-08-03
-an expected outcome || for everyone else,173-seg,correct,Phase 0,2026-08-03
-by warp physics || floors become ceilings,173-seg,correct,Phase 0,2026-08-03
-a maintenance fault || squad formations built,173-seg,correct,Phase 0,2026-08-03
-entire operating sectors || ground that should,173-seg,correct,Phase 0,2026-08-03
-after being destroyed || that single feature,173-seg,correct,Phase 0,2026-08-03
-do not emerge || for ground forces,173-seg,correct,Phase 0,2026-08-03
-no particular standing || a ship that,173-seg,correct,Phase 0,2026-08-03
-a corrupted interior || pocket instabilities isolated,173-seg,correct,Phase 0,2026-08-03
-establish a perimeter || you cannot hold,173-seg,correct,Phase 0,2026-08-03
+script_word_key,project,case_type,verdict,phase_label,date
+small and permanent || a new understanding,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+on your shoulder || not hard,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+lead hunter slows || every person slows,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+to announce you || you never see,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+does the same || what the job,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+is the point || it keeps you,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+wind || small animals,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+is going fast || you push through,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+a long time || you carry it,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+positioning was right || the rotations were,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+through the living || night after night,V6-447,word-shift-11,word-shifted,Phase 0,2026-08-03
+they just do || the band has,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+before you look || a predator s,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+a false alarm || and you do,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+afraid of fear || which is the,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+what you had || the rest belongs,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+people orient by || when the bands,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+seasons than you || can count and,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+s youngest scout || a girl of,V6-447,seam-exemption-8,correct,Phase 0,2026-08-03
+chitin thick enough || to deflect small,173-seg,known-defect,"word-shifted (known defect: produces 75.660, correct target 76.470)",Phase 0,2026-08-03
+just kill soldiers || they take apart,173-seg,skip-adjacent,correct,Phase 0,2026-08-03
+demolition target instead || the environment did,173-seg,locked-segment,"FAIL — locks not preserved across resync (positions reset, lock flag cleared)",Phase 0,2026-08-03
+it is close || and the fire,V6-447,control,correct,Phase 0,2026-08-03
+and fat-soaked moss || bound with sinew,V6-447,control,correct,Phase 0,2026-08-03
+a torch again || those long column,V6-447,control,correct,Phase 0,2026-08-03
+never far || never alone,V6-447,control,correct,Phase 0,2026-08-03
+when you report || but your hands,V6-447,control,correct,Phase 0,2026-08-03
+to finish arguing || you are twenty,V6-447,control,correct,Phase 0,2026-08-03
+not worth finding || that night by,V6-447,control,correct,Phase 0,2026-08-03
+before that moment || slow is the,V6-447,control,correct,Phase 0,2026-08-03
+you say so || you tell fen,V6-447,control,correct,Phase 0,2026-08-03
+what they see || the same thing,V6-447,control,correct,Phase 0,2026-08-03
+everything on it || the jungle did,173-seg,control,correct,Phase 0,2026-08-03
+an expected outcome || for everyone else,173-seg,control,correct,Phase 0,2026-08-03
+by warp physics || floors become ceilings,173-seg,control,correct,Phase 0,2026-08-03
+a maintenance fault || squad formations built,173-seg,control,correct,Phase 0,2026-08-03
+entire operating sectors || ground that should,173-seg,control,correct,Phase 0,2026-08-03
+after being destroyed || that single feature,173-seg,control,correct,Phase 0,2026-08-03
+do not emerge || for ground forces,173-seg,control,correct,Phase 0,2026-08-03
+no particular standing || a ship that,173-seg,control,correct,Phase 0,2026-08-03
+a corrupted interior || pocket instabilities isolated,173-seg,control,correct,Phase 0,2026-08-03
+establish a perimeter || you cannot hold,173-seg,control,correct,Phase 0,2026-08-03

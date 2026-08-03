@@ -356,9 +356,17 @@ a parser/product-ruling question, not a handoff contract.
 - **Backstop monotonic clamp** (D16 defense-in-depth): a backward walk pulls any inflated
   non-locked anchor down to its successor before durations are derived. No-op on already-monotonic
   input. Test: *"(d) backstop clamp: an inverted anchor is clamped, later segment protected"*.
-- **Locks are authoritative everywhere**: locked segments never move or shrink, in
-  `distributeSegmentTimes`, `applyAnchorBasedTiming`, `snapCoveredBoundaries`,
-  `headExtendFirstSegment`, and both gap-fill passes.
+- **Locks are authoritative everywhere *once a segment reaches these five sites carrying `locked:
+  true`* — CORRECTED 2026-08-04, this guarantee is NOT currently met**: locked segments never move
+  or shrink, in `distributeSegmentTimes`, `applyAnchorBasedTiming`, `snapCoveredBoundaries`,
+  `headExtendFirstSegment`, and both gap-fill passes — but clean-slate resync's Stage-1 mint
+  (`parseProjectData`, `App.tsx:318`, building each fresh `VideoSegment` from a `RawSegment` that
+  has no `locked` field at all, `App.tsx:161-172`/`513-528`) drops the flag before any of these
+  five sites ever runs, so none of them is actually checking a segment that could carry `true`.
+  Owner-reproduced defect: locking two overlapping segments and running Apply Sync resets both
+  positions AND clears both lock flags. See `project-state.md`'s Deferred Known Bugs and
+  `docs/sync-pipeline-v2-plan.md`'s K13 for the full mechanism and the fix (Stage 3 must BUILD
+  carry-forward, not merely consolidate the five checks into one).
 - **Contiguity invariant** — `startTime[i] + duration[i] === startTime[i+1]` for every adjacent
   covered pair produced by `snapCoveredBoundaries`. Enforced unconditionally
   (`snapBoundaries.ts:703-709`); `project-state.md` Key Invariant (f).
