@@ -378,6 +378,13 @@ src/
                      #   gap-fill and snapCoveredBoundaries (previously caveated "whenever there is
                      #   no cross-pair silence contention") now holds under contention too — pinned
                      #   by a dedicated "parity" test in syncTiming.test.ts.
+                     #   Index-based seam exemption parity (2026-08-03) — this call site's
+                     #   `isBreathSilence` calls now pass the same `otherSideLastTokenIdx` argument
+                     #   snapBoundaries.ts's `snapCoveredBoundaries` does: `curr.lastTokenIdx` for the
+                     #   NEXT-side call (real seam evidence), hardcoded -1 for the CURR-side call (the
+                     #   curr-side variant is permanently disabled — see snapBoundaries.ts's own entry
+                     #   above for why). Kept in parity deliberately, same as every other predicate this
+                     #   gap-fill ports from snapBoundaries.ts.
                      #   Consecutive-run survival gates (Bug C, 2026-07-31, recovered from stash
                      #   ad38fc5 after being dropped during a detached-HEAD bisect and branch
                      #   checkout sequence — found via `git reflog show --all`) — a defense-in-depth
@@ -535,6 +542,39 @@ src/
                      #   next segment. All three predicates are pure, exported, and unit-tested directly
                      #   with hand-written numbers; they are composed in exactly ONE place (Pass 1's
                      #   filter), so Pass 2's assignment can never disagree with Pass 1's candidacy.
+                     #   Index-based seam exemption for isBreathSilence's multi-fragment override
+                     #   (V6 production autopsy, 2026-08-03; full record: docs/boundary-drift-
+                     #   investigation.md) — the multi-fragment override (high coverage ratio + 2+
+                     #   significant interior tokens) used to classify breath-vs-boundary using token
+                     #   TIMESTAMPS: specifically the tested span's own first token's timestamp, which
+                     #   every distance in the coverage math is measured relative to. Whisper's
+                     #   timestamp for a span's first token can smear 100-900ms backward across a real
+                     #   silence boundary (the model assigns the *preceding* pause's onset to the next
+                     #   word's start rather than to when it's actually articulated) — when that
+                     #   happens the override wrongly reads a genuine inter-segment seam as this span's
+                     #   own internal breath. isBreathSilence now takes an optional
+                     #   `otherSideLastTokenIdx` param: if the immediately PRECEDING span's own genuine
+                     #   last matched token ends at or before the tested silence starts, the silence
+                     #   cannot be this span's own interior breath BY INDEX POSITION — indices come
+                     #   from the Hirschberg text-alignment pass and are never smeared, unlike
+                     #   timestamps. Wired NEXT-side only: `snapCoveredBoundaries` (this file) and
+                     #   whisperService.ts's `alignScenestoTranscript` gap-fill both pass curr's own
+                     #   lastTokenIdx for the NEXT-side call (genuinely temporally adjacent — real seam
+                     #   evidence) and hardcode -1 for the CURR-side call. The CURR-side variant is
+                     #   PERMANENTLY DISABLED: the only symmetric anchor for a curr-side call is the
+                     #   segment TWO positions back from the tested silence — a token with no temporal
+                     #   relationship to it at all — and applying the exemption there was confirmed on
+                     #   a second, independent 173-segment production project to silently strip breath
+                     #   protection from the entire curr side (it wrongly exempted "They're the worst"'s
+                     #   own internal breath, landing the boundary at the pre-fix breath centre instead
+                     #   of the correct edge). Ear-verified on the 447-segment V6 production project:
+                     #   fixes 8 real boundaries (segs 34, 96, 162, 316, 338, 352, 405, 412 — NOT 9; seg
+                     #   60 was retroactively found to be the same curr-side false positive, not a
+                     #   genuine fix), 86.8% -> 96.2% correct cuts on manual full-timeline review. Do
+                     #   not re-enable the curr-side exemption by threading a predecessor index into it
+                     #   without a fundamentally different anchor — "segment two back" is not fixable by
+                     #   tuning, same as the original timestamp-only leading-edge exemption before this
+                     #   rewrite.
                      #   Degenerate-pair guard (rescue false-positive fix, defense-in-depth) — a pair
                      #   whose spoken edges are inverted by more than
                      #   DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC (= TEMPORAL_TOLERANCE_MAX_SEC, 5.0s —
@@ -1854,6 +1894,7 @@ App.tsx                    — top-level state + orchestration only
 | Filters in the `FILTERS` array without a `getFilterStyle` case | Shows in dropdown, applies nothing — either implement or remove |
 | Segment IDs that aren't globally unique | Timeline and React keys break on collision |
 | `-framerate` on an ffmpeg mux of a raw annexb stream | Only sets the demuxer's displayed `r_frame_rate` — the muxer writes wrong per-packet duration for PTS-less packets (measured 6x-wrong file); use `-r <fps>` instead (`muxOnly.ts`) |
+| Classifying breath-vs-boundary silence from token TIMESTAMPS | Whisper timestamps blur 100-900ms across a real seam (measured); token INDICES (from the Hirschberg alignment pass) are exact and never smeared. `isBreathSilence`'s multi-fragment override was fixed 2026-08-03 to use index position instead — see `snapBoundaries.ts`'s entry and `docs/boundary-drift-investigation.md` |
 | `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
 | Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
 | Adding 4K (or any resolution tier) back without updating `RESOLUTION_TABLE` for all 3 aspect ratios | `resolutionConfig.ts`'s `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes a missing cell a compile error, not a silent runtime hole — but every new tier still needs a deliberate dimension decision for `9:16` and `1:1`, not just `16:9` |

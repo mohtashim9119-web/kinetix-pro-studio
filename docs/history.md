@@ -2534,3 +2534,56 @@ that's a code path this Phase 1 pass didn't need to exercise (a first sync's pea
 when the pass would want to run). Also newly recorded as a working rule: audit/investigation reports
 must be persisted into `docs/`, not left to live only in chat transcripts — this investigation's
 findings above are the first case of that rule being followed.
+
+---
+
+## Index-Based Seam Exemption for `isBreathSilence` — Implementation Record (2026-08-03)
+
+**What shipped (commit `c593f1d`).** `isBreathSilence`'s multi-fragment breath override (a silence
+with high speech-coverage ratio plus 2+ significant interior tokens, previously assumed to always
+mean internal fragmentation of one span's own speech) was root-caused and fixed. The override's
+coverage/ratio math is computed relative to the tested span's own first token's timestamp — and
+Whisper's timestamp for a span's first token can smear 100–900ms backward across a real silence
+boundary (the model assigns the *preceding* pause's own onset to the next word's start rather than
+to when it's actually articulated). When that happens, the override wrongly reads a genuine
+inter-segment seam as the span's own internal breath.
+
+**The fix** re-poses the same question in **token index** terms instead of timestamp terms: does the
+tested silence sit at or after the point in the token array where the immediately preceding span's
+own genuine last match (`otherSideLastTokenIdx`) ends? Token indices come from the Hirschberg
+text-alignment pass — a pure text match, never smeared — so this is exact where the timestamp-based
+version was not. `isBreathSilence` gained an optional `otherSideLastTokenIdx` parameter (default -1,
+disabling the exemption — every pre-existing 4-arg call site is unaffected). Wired in both
+`snapBoundaries.ts`'s `snapCoveredBoundaries` and `whisperService.ts`'s `alignScenestoTranscript`
+gap-fill (kept in parity, same as every other predicate that gap-fill ports from `snapBoundaries.ts`).
+
+**NEXT-side only.** The exemption is wired for the NEXT segment's own span only, anchored on curr's
+own `lastTokenIdx` — genuinely temporally adjacent to the tested silence, real seam evidence. A
+CURR-side variant was tried and found unsound: the only symmetric anchor for a curr-side call is the
+segment *two positions back* from the tested silence, which has no temporal relationship to it at
+all. Confirmed on a second, independent 173-segment production project: the curr-side variant wrongly
+exempted "They're the worst"'s own internal 0.38s breath, landing the boundary at 18.51s (the
+pre-fix breath centre the override exists to prevent) instead of the correct 18.87s. Retroactive
+audit found the same mechanism explains a spurious "fix" on the V6 project (segment 60 — see below).
+The curr-side variant is **permanently disabled**: real call sites hardcode `-1` for the curr-side
+call.
+
+**Evidence — 447-segment V6 production project.** 8 real boundaries fixed: segments 34, 96, 162,
+316, 338, 352, 405, 412. (A 9th, segment 60, was originally miscounted as a genuine fix by the
+comparison harness's diff — retroactive audit found it was the curr-side false positive described
+above, not a genuine seam fix; it only looked like an improvement because the corrupted boundary
+happened to also land inside a detected silence.) An exhaustive scan of all 446 real pairs in the
+project (both NEXT-side and CURR-side) found zero cases where the override fires and the NEXT-side
+exemption does *not* correctly strip it — no real "fallback is correct" counter-example exists in
+this dataset. Segment 405 was originally hypothesized as exactly such a counter-example; verification
+against real V6 data found that premise wrong (segment 405 is one of the 8 genuine fixes).
+
+**Ear-verified.** User resynced V6 with this fix in the tree, scrolled the full timeline, and
+confirmed cuts now sit in pauses: **86.8% → 96.2% correct cuts**.
+
+**What this did not fix.** The investigation that produced this fix also surfaced a separate, still-
+open defect — word-shift, where a segment's cut point lands one or more words off from where the
+sentence actually breaks. Two candidate fixes for it (FENCE, QUIET) were tried and both failed. This
+remains open; see `docs/boundary-drift-investigation.md` for the full evidence, dead ends, and
+tooling notes (this document does not repeat that content) and `project-state.md`'s Active Tasks for
+current status.

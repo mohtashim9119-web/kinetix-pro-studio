@@ -5,13 +5,22 @@
 > handoffs between its stages (plus one input annex, contract 0→2), and the program for hardening
 > each one.
 >
-> **Verified-against-HEAD: `458224c`** (Pair 1, Contract 1→2, shipped; boundary-quality checker,
-> Contract 5→6, shipped out-of-order — see that section's 2026-08-02 addendum). Every `file:line`
-> citation in this document was read at this commit. **Re-stamp this field at every pair
-> completion.** Governance rule: any change that touches a pipeline stage (any file named in a
-> §1.3 table) must re-verify the affected §2 assumption rows and re-stamp this field before
-> merging — a stale citation in this document is treated as a doc bug, same as a stale
-> `CLAUDE.md` entry. This governance rule itself moves into `CLAUDE.md` when Pair 1 closes.
+> **Verified-against-HEAD: `30a32cd`** (Pair 1, Contract 1→2, shipped; boundary-quality checker,
+> Contract 5→6, shipped out-of-order — see that section's 2026-08-02 addendum; a Contract 3→4
+> `low-word-coverage` checker also shipped out-of-order, 2026-08-03, UNVERIFIED — see
+> `docs/history.md` and `project-state.md`). Every `file:line` citation in this document was read at
+> a commit no later than this one. **Re-stamp this field at every pair completion.** Governance rule:
+> any change that touches a pipeline stage (any file named in a §1.3 table) must re-verify the
+> affected §2 assumption rows and re-stamp this field before merging — a stale citation in this
+> document is treated as a doc bug, same as a stale `CLAUDE.md` entry. This governance rule itself
+> moves into `CLAUDE.md` when Pair 1 closes.
+>
+> **PROGRAM PAUSED (2026-08-03).** Pair 1's own R2/floor-clamp analysis below is superseded by the
+> boundary-drift investigation (`docs/boundary-drift-investigation.md`) — the investigation found and
+> fixed a real defect (`isBreathSilence`'s multi-fragment override, index-based seam exemption,
+> commit `c593f1d`) that this program's own Pair 1 analysis had not surfaced, and also surfaced a
+> second, still-open defect (word-shift) that takes priority over resuming this program. The program
+> stays paused pending a fix for the word-shift defect — see `project-state.md`'s Active Tasks.
 >
 > **Distinct from:** `CLAUDE.md` (architecture/conventions/invariants), `project-state.md` (current
 > status + active tasks), `docs/history.md` (chronological record of shipped work). This file is a
