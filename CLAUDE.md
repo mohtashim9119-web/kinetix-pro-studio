@@ -196,6 +196,10 @@ src/
                      #   (declared in vite/client.d.ts, no extra type declaration needed) and played
                      #   by services/notificationSound.ts.
   services/
+                     # `docs/sync-pipeline-v2-plan.md` is the accepted-architecture authority for the
+                     #   in-progress sync pipeline restructure (accepted 2026-08-03, not yet
+                     #   implemented) — see it before touching any file in this directory that
+                     #   participates in sync timing/alignment.
     assetStore.ts    # IndexedDB service: putAsset, getAsset, getAllAssets, deleteAsset, clearAllAssets
     projectStore.ts  # localStorage serializer: save/load/clear under key kinetix:project:v1
     resolutionConfig.ts # Project Settings + Aspect Ratio (2026-07-22) — the single source of truth

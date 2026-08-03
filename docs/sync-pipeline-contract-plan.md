@@ -21,6 +21,8 @@
 > commit `c593f1d`) that this program's own Pair 1 analysis had not surfaced, and also surfaced a
 > second, still-open defect (word-shift) that takes priority over resuming this program. The program
 > stays paused pending a fix for the word-shift defect — see `project-state.md`'s Active Tasks.
+> **`docs/sync-pipeline-v2-plan.md` (accepted 2026-08-03) supersedes this program's sequencing** —
+> its Phase 7 absorbs this document's contract/validator concepts.
 >
 > **Distinct from:** `CLAUDE.md` (architecture/conventions/invariants), `project-state.md` (current
 > status + active tasks), `docs/history.md` (chronological record of shipped work). This file is a
