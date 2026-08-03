@@ -11,7 +11,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 |---|---|---|---|---|---|
 | 0 | Programme | Safety and instruments (corpus verification, determinism check, script-word-keyed verification set, baseline CSV) | NOT STARTED | — | — |
 | 1 | Stage 2 (neutrality-exempt; runs first) | Delete the duplicated gap-fill in `alignScenestoTranscript` | NOT STARTED | — | — |
-| 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | NOT STARTED | — | — |
+| 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/v6-smear-baseline.csv` / `docs/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | NOT STARTED | — | — |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | NOT STARTED | — | — |
 | 3 | Stage 1 | Upgrade the timing source (DTW or forced alignment, per 2b's decision gate) | NOT STARTED | — | — |
@@ -121,7 +121,7 @@ The corpus lives at `/Users/mohtashim/Downloads/All Projects Test Data` — OUTS
 | `14 Base Segs Project` | `3. Voiceover.mp3` | 1.3 MB | 32.7s | ✓ | ✓ (`2. Scene Details.txt` is RTF) | English | not determinable from files | Small smoke fixture; RTF-stripping + numbers-heavy script (“$11,000”, “two thousand and three”) |
 | `Missing Segs Project` | `Audio.m4a` | 0.5 MB | 21.4s | ✓ | ✓ (+ `Scene Doc copy.txt`, `NEW Sync.rtf`) | English | not determinable | Hand-built normalization/skip fixture — D16 shapes on display: “thirty-seven”↔“thirty seven”, café/cafe, `SPEAKER 2:`/`NARRATOR:` labels, a zero-width character in “wor​ld” |
 | `100 Segs Project` | `100 AUDIO.mp3` | 4.1 MB | 254.7s | ✓ | ✓ | English | not determinable | Mid-size project; scene doc contains malformed tag lines in the wild (`[ armband_detail]`, `[: twenty_one_reflection]`) — real Contract IN evidence, not synthetic |
-| `173 Segs Project` | `voiceover.m4a` | 17.2 MB | 709.0s | ✓ | ✓ (`sync.txt`) + `assets.zip` | English | tight-pause candidate (UNVERIFIED — prior docs treat it as the contrast project to V6’s long-pause voice; confirm by inspector at Phase 1b) | THE 173/174-segment project: window-overlap regression bisect, curr-side false positive, pairIdx-20 known defect, 169/1973 token drops |
+| `173 Segs Project` | `voiceover.m4a` | 17.2 MB | 709.0s | ✓ | ✓ (`sync.txt`) + `assets.zip` | English | tight-pause **(CONFIRMED by Phase 1b inspector, 2026-08-04 — only 1.1% of tokens follow an audible >0.3s inter-token gap, vs. 4.2% for V6)** | THE 173/174-segment project: window-overlap regression bisect, curr-side false positive, pairIdx-20 known defect, 169/1973 token drops |
 | `294 Segs Project` | `3. Voiceover.m4a` | 30.6 MB | 1265.1s | ✓ | ✓ + `4. Assets/` | English | not determinable | The contention/starvation-cascade project (segments 249–251) |
 | `V6 Natural Long Pause Segs` | `6.m4a` | 32.9 MB | 1421.3s | ✓ (`All Text Files/Script.txt`) | ✓ (`All Text Files/Sync.txt`) | English | **natural / long-pause** (named in the directory) | THE V6 447-segment project — the 11 word-shift cases, the 8 seam-exemption fixes, segment 96 |
 | `V8 Lin-en Fl-ax Concate Segs` | `V.8.m4a` | 31.4 MB | 1296.2s | ✓ (`Humanized Scripts.txt`) | ✓ (`Sync.txt`) + asset zips + a finished MP4 | English | not determinable | The Pass-3 sub-word concatenation evidence project (“lin”+“en”, “fl”+“ax”) |
@@ -131,7 +131,7 @@ The corpus lives at `/Users/mohtashim/Downloads/All Projects Test Data` — OUTS
 
 **Language coverage:** every project in the corpus is English. Of the supported set (Part H.0: English, Spanish, French, Portuguese, German), **Spanish, French, Portuguese, and German are all missing** — zero non-English material exists. H.8 requires at least one Spanish-or-French project before Phase 2a ships; acquiring it is an owner deliverable and currently blocks that phase (see K3).
 
-**Voice-style coverage:** one confirmed long-pause project (V6, named). The tight-pause exemplar is presumed to be the 173 project (contrast project in the boundary-quality calibration record) — the inspector confirms or refutes this at Phase 1b before the Stage 1 gate leans on it.
+**Voice-style coverage:** one confirmed long-pause project (V6, named) and, as of Phase 1b (2026-08-04), one confirmed tight-pause project (173) — the inspector measured 173’s tokens as only 1.1% likely to follow an audible (>0.3s) inter-token gap versus 4.2% for V6, resolving the earlier presumption. See Phase 1b’s entry for the full measured baseline.
 
 ## D.-1 — Lock gates: definition and the hard rule
 
@@ -201,6 +201,25 @@ A dev-only, in-app tool whose purpose is letting the owner SEE the raw material 
 - Side-by-side of DIFFERENT audio styles — at minimum one tight-pause and one long-pause project from the D.0 corpus (V6 confirmed long-pause; 173 presumed tight-pause, which this tool itself confirms or refutes).
 
 **Explicit gate:** Stage 1 cannot be locked until the owner has inspected inspector output across at least one tight-pause and one long-pause project, and the smear distribution is understood and recorded in this document (append the measured numbers to this phase’s entry when done). What “good enough” means numerically for Stage 1 to lock, stated plainly and **provisional until Phase 2b measures it**: median smear ≤ 100ms, p95 smear ≤ 250ms, and the segment-96 pathology (negative smear) on fewer than 1% of pause-following tokens, on both inspected projects. If Phase 2b’s measurements show these thresholds were the wrong shape (e.g. the tail matters more than the median), Phase 2b revises them here, in writing, with the measurement attached.
+
+**Measured baseline (recorded 2026-08-04, current bundled model — `base.en`, no DTW, pre-Phase-2a).** `window.__transcriptInspector()` run in-app against the persisted `transcriptTokens` and a fresh Web-Audio silence scan of the voiceover blob, for both corpus projects named in D.0. Full per-token output: `docs/v6-smear-baseline.csv` (V6, 447-seg, long-pause), `docs/173-smear-baseline.csv` (173-seg, presumed tight-pause). Every number below was independently recomputed from the raw CSV rows and matches the console-printed aggregate line exactly (data integrity cross-check); the kept/dropped token split also reconciles exactly against D.0’s own corpus-inventory counts (4517 and 1973 raw transcript tokens).
+
+| Metric | V6 (447-seg) | 173-seg | Provisional gate | Result |
+|---|---|---|---|---|
+| Raw transcript tokens | 4517 | 1973 | — | matches D.0 |
+| Malformed drops (`inverted-or-zero-duration` / `empty-text`) | 562 (114 / 448) | 169 (30 / 139) | — | matches D.0 (169/1973) |
+| Kept tokens fed to alignment | 3955 | 1804 | — | — |
+| Pause-following tokens (defined smear) | 3954 | 1793 | — | — |
+| Median smear | **0.380s** | **0.760s** | ≤ 0.100s | **FAIL (both)** |
+| p95 smear | **2.660s** | **4.878s** | ≤ 0.250s | **FAIL (both)** |
+| Negative-smear count / fraction (segment-96 pathology) | 1359 / **34.4%** | 423 / **23.6%** | < 1% | **FAIL (both, by ~24–34×)** |
+| Tokens following an audible (>0.3s) inter-token gap | 167 / 4.2% | 19 / 1.1% | — (voice-style signal) | V6 ≈4× denser in audible pauses than 173 |
+
+**Voice-style confirmation:** D.0 presumed 173 as the tight-pause contrast project to V6’s long-pause voice, UNVERIFIED. The inspector confirms it — 173’s tokens are only 1.1% likely to follow an audible (>0.3s) inter-token gap, versus 4.2% for V6, a ~4× difference in how often either voice actually pauses between words. (D.0’s corpus table and Part D.0’s voice-style-coverage note are updated to reflect this below.)
+
+**Gate verdict:** both projects fail the provisional Stage 1 lock thresholds by a wide margin — not a measurement defect, but the expected result given Part A’s headline claim (≈190ms average Whisper timestamp error, up to 900ms on individual words). The negative-smear fraction is the cleanest signal here, since a token can only register negative smear when it sits close enough to (or inside) a real preceding silence for its declared start to still precede that silence’s end — a stale, distant “nearest preceding silence” always yields a large *positive* delta, never negative. Read literally, **23–34% of tokens across both projects show Whisper assigning a pause’s onset to the following word** — the segment-96 pathology is not a rare edge case, it is roughly one word in three (V6) or one in four (173). This is the load-bearing evidence for Part C’s ordering argument (fence after timing upgrade, not before) and for Phase 2a/2b/3 being mandatory before Stage 1 can lock — nothing here suggests skipping them.
+
+Caveat on median/p95, stated for future readers of this baseline: “pause-following” here means “some earlier-in-time detected silence exists” (the nearest preceding one by chronological order), not “a silence within some fixed distance.” For a token deep inside a long pause-free run, its “nearest preceding silence” can be seconds or tens of seconds in the past (173’s own max smear reaches 12.08s), which inflates the *positive* tail and therefore the median/p95 upward relative to what a proximity-windowed version of this metric would show. It does not affect the negative-count/fraction reading above, which is only ever triggered by a genuinely nearby (or overlapping) silence. Phase 2b, which measures word-onset error against ffmpeg `silencedetect` ground truth directly, is the more precise successor measurement; this baseline’s job — done — was to make the scale of the problem visible in-app, on real projects, before committing to that work.
 
 ### Phase 2a — Model swap (supersedes old Phase 2 as written; see Part H)
 Provision the multilingual model (H.1), re-enable `-l auto`, store detected language per project, make it user-overridable (H.7). No timing-source change. English projects re-verified against the Phase 0 baseline: boundaries WILL move (different model, different tokens); the gate is that the forty-boundary verdict does not get worse (count of correct verdicts in `verification-baseline.csv` ≥ the Phase 0 count).
