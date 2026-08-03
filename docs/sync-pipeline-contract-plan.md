@@ -1300,7 +1300,6 @@ for the duration of this program (§7).
 | `RUN_SURVIVAL_MAX_HOLE` | 2 | `:323` | ④ |
 | `RUN_SURVIVAL_MIN_RUN_SHORT` / `_LONG` | 2 / 4 | `:382-383` | ④ |
 | `RUN_SURVIVAL_DENSITY_MIN_CONFIDENCE` / `MAX_MEDIAN_GAP` | 0.5 / 4 | `:407-408` | ④ |
-| `MONOTONIC_CARRY_FORWARD_GAP_SEC` | 0.1 | `:168` | **none — dead.** Verified: no reader anywhere in `src/` outside its own declaration. It is the residue of the rejected time-floor formulation the rescue's `globallyClaimed` set replaced (`whisperService.ts:1010-1020`). Delete during the 3→4 audit. |
 | `DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC` | = `TEMPORAL_TOLERANCE_MAX_SEC` (5.0) | `snapBoundaries.ts:250` | ⑤ |
 | `MIN_SEGMENT_DURATION` | 0.1 | `snapBoundaries.ts:230` | ⑤/⑥ |
 | `MIN_SEGMENT_DURATION` | **0.3** | `App.tsx:278` | UI — **name collision, Risk R4** |

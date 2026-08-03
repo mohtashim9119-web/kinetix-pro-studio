@@ -152,20 +152,6 @@ export const MAX_SYNC_RUN_SUMMARIES = 10;
 export const TEMPORAL_TOLERANCE_RATIO = 0.1;
 export const TEMPORAL_TOLERANCE_MIN_SEC = 1.5;
 export const TEMPORAL_TOLERANCE_MAX_SEC = 5.0;
-// Monotonic carry-forward gap (spec default, kept for interface completeness
-// — NOT used by the current rescue implementation). The original design used
-// this to push a segment's window past the previous segment's own committed
-// t1 (`prevAnchor + this gap`). That was tried and REJECTED: in exactly the
-// overflow scenario the rescue targets, the previous (overflowing) segment's
-// own true trailing match can itself land AFTER the tokens the rescue needs
-// to recover (that IS the bug — see whisperService.ts's `extractSegmentAlignments`
-// doc comment) — a t1-based floor would re-exclude the very words it exists
-// to rescue. The rescue instead gets the same "never double-claim a token"
-// guarantee, at the exact token level rather than a coarser time cutoff, from
-// `globallyClaimed` (every transcript word ANY segment truly matched in the
-// unchanged global pass) — see whisperService.ts. Left here in case a future
-// revision wants a hybrid floor; not wired in today.
-export const MONOTONIC_CARRY_FORWARD_GAP_SEC = 0.1;
 // Temporal-proximity scoring bonus: within a segment's window, a token whose
 // timestamp falls in the CENTRAL 50% gets an additive bonus (max at dead
 // center, linear decay to 0 at the 50% mark), added ONLY to a true textual

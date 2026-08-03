@@ -47,7 +47,7 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
 // non-alnum strip) moved WHOLESALE into the shared ./textNormalize `canonicalize`
 // pipeline as part of the two-normalizer unification (G4). This keeps only the
 // public name `canonicalizeForAlignment` as a thin wrapper so existing callers
-// (normalize/textMateriallyChanged, the aligner, the tests) are unaffected.
+// (normalize, the aligner, the tests) are unaffected.
 
 /**
  * Alignment tokenizer — the unified normalizer (architecture doc §3.2, R1).
@@ -68,9 +68,9 @@ export function canonicalizeForAlignment(s: string): string[] {
 // ---------------------------------------------------------------------------
 
 /**
- * Word-level normalizer used by the aligner (and textMateriallyChanged).
- * Delegates to canonicalizeForAlignment so numbers/contractions/symbols
- * canonicalize identically on the script and Whisper-token sides (D16).
+ * Word-level normalizer used by the aligner. Delegates to
+ * canonicalizeForAlignment so numbers/contractions/symbols canonicalize
+ * identically on the script and Whisper-token sides (D16).
  */
 export function normalize(s: string): string[] {
   return canonicalizeForAlignment(s);
@@ -92,16 +92,6 @@ export function normalize(s: string): string[] {
 export function normalizeSceneDoc(s: string): string[] {
   const stripped = canonicalizeSceneDoc(s);
   return stripped.length > 0 ? stripped : normalize(s);
-}
-
-/**
- * True if two strings differ once normalized to the same word-level
- * representation the aligner matches against (see `normalize`). Used to
- * decide whether a carried-forward 'whisper' anchor is still trustworthy
- * after a re-sync changes a segment's underlying text.
- */
-export function textMateriallyChanged(a: string, b: string): boolean {
-  return normalize(a).join(' ') !== normalize(b).join(' ');
 }
 
 // --- Alignment instrumentation (__ALIGN_INSTRUMENT__) ------------------------
