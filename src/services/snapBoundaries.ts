@@ -481,6 +481,80 @@ export function fillsTokenGapWithinSpan(
  * `fillsTokenGapWithinSpan`'s own guard: a single token has no interior to
  * weigh, so this predicate has no basis to call it a breath either way.
  *
+ * INDEX-BASED SEAM EXEMPTION — NEXT-SIDE ONLY (V6 production autopsy,
+ * 2026-08-03; curr-side disabled 2026-08-03 after a second real project
+ * exposed a false positive — see CURR-SIDE DISABLED below). The
+ * MULTI-FRAGMENT branch above assumes a silence with high coverage and 2+
+ * "significant" interior tokens must be internal fragmentation of ONE span's
+ * own speech. A real 447-segment production project falsified that
+ * assumption at 8 real boundaries (5 independently confirmed by hand —
+ * segments 96, 162, 316, 338, 352 — plus 3 more of the identical shape found
+ * by an exhaustive sweep of the same project: segments 34, 405, 412) via a
+ * mechanism the coverage math has no way to see: Whisper's timestamp for a
+ * span's FIRST token can smear backward across the true silence boundary —
+ * the model assigns the *preceding* pause's own onset to the next word's
+ * start rather than to when it is actually articulated (measured 100-900ms
+ * of smear across the 8 cases). When that happens, `firstTok`'s timestamp —
+ * which every distance in the coverage/ratio computation above is measured
+ * relative to — is not evidence about this span's own speech at all. It is
+ * evidence about the PRECEDING span's smear. No amount of tightening the
+ * coverage ratio or the interior-token floor can fix this, because the
+ * corruption is in the TIMESTAMP the ratio is computed FROM, not in the
+ * ratio's threshold. (A 9th segment, 60, was originally miscounted as part of
+ * this same set — see CURR-SIDE DISABLED below for why it wasn't.)
+ *
+ * Token INDICES, unlike token TIMESTAMPS, are never smeared — the Hirschberg
+ * alignment pass that assigns `firstTokenIdx`/`lastTokenIdx` to each segment
+ * is a pure text match with no timestamp involved, so an index is exactly as
+ * reliable at the seam as anywhere else in the array. This exemption
+ * therefore re-poses the multi-fragment override's question in INDEX terms
+ * instead of timestamp terms: does this silence sit at or after the point in
+ * the token array where the PRECEDING segment's own genuine last match
+ * (`otherSideLastTokenIdx`) ends? If so, the silence cannot — by index
+ * position, independent of whatever timestamp `firstTok` happens to carry —
+ * be interior to the preceding segment's territory, so it is a genuine
+ * inter-segment seam, not this span's own breath, regardless of how the
+ * (potentially smeared) coverage ratio above scored it.
+ *
+ * `otherSideLastTokenIdx` is the last matched token of the span IMMEDIATELY
+ * PRECEDING the one under test. This exemption touches ONLY the
+ * multi-fragment branch — the MOSTLY-EMPTY branch is not interior-token
+ * coverage evidence and is unaffected. `otherSideLastTokenIdx` defaults to
+ * -1 (exemption never fires) so every pre-existing caller that has no
+ * predecessor data in scope — this file's own `boundaryUsedFallback`
+ * diagnostic among them — is unchanged.
+ *
+ * CURR-SIDE DISABLED (2026-08-03, confirmed on a second real 173-segment
+ * production project): `snapCoveredBoundaries` calls this predicate on BOTH
+ * sides of every pair — the NEXT segment's own span (testing whether a
+ * silence is that segment's leading-edge breath) AND the CURR segment's own
+ * span (testing whether it's curr's trailing breath). For the NEXT-side
+ * call, `otherSideLastTokenIdx` = curr's own `lastTokenIdx` — genuinely
+ * adjacent to the silence under test, so "does the silence start after this
+ * ends" is real seam evidence. For a CURR-side call, the only symmetric
+ * choice is the PRECEDING segment's `lastTokenIdx` (segment i-1, TWO
+ * segments back from the silence being tested) — a token with NO temporal
+ * relationship to the silence at all. That condition is satisfied almost
+ * trivially whenever curr has any predecessor, so applying the exemption
+ * there silently strips multi-fragment breath protection from the entire
+ * CURR side. Confirmed concretely: segment "They're the worst" (the exact
+ * production case that originally motivated the multi-fragment override) has
+ * its own 0.38s internal breath silence wrongly exempted this way, landing
+ * the boundary at 18.51s — the pre-fix breath centre the override exists to
+ * prevent — instead of the correct 18.87s. A second real instance was found
+ * retroactively inside the ORIGINAL 447-segment project too: segment 60's
+ * apparent "fix" (previously miscounted among the 9 above) was this same
+ * curr-side false positive stealing a 1.32s trailing breath from "...puts his
+ * hand flat on your shoulder.", not a genuine seam fix — it happened to also
+ * land inside a detected silence, which is what made it look like an
+ * improvement. Every real call site in this file now passes -1 for the
+ * CURR-side call, permanently disabling the exemption there; the NEXT-side
+ * call is unaffected. Do not re-enable the curr-side exemption by threading a
+ * predecessor index into it without a fundamentally different anchor — the
+ * "segment two back" anchor is not fixable by tuning, the same way the
+ * timestamp-only leading-edge exemption before this rewrite was not fixable
+ * by tuning.
+ *
  * Pure; exported for direct unit testing.
  */
 export function isBreathSilence(
@@ -488,6 +562,12 @@ export function isBreathSilence(
   tokens: TranscriptToken[],
   firstTokenIdx: number,
   lastTokenIdx: number,
+  // Index of the immediately PRECEDING span's own last matched token (see
+  // doc comment above) — meaningful ONLY for a NEXT-side call, where it is
+  // curr's own lastTokenIdx (genuinely adjacent to the silence under test).
+  // Real call sites always pass -1 for a CURR-side call — see CURR-SIDE
+  // DISABLED above. -1 (default) disables the exemption entirely.
+  otherSideLastTokenIdx: number = -1,
 ): boolean {
   if (firstTokenIdx < 0 || lastTokenIdx <= firstTokenIdx) return false;
 
@@ -521,7 +601,22 @@ export function isBreathSilence(
   }
 
   const ratio = covered / silenceDur;
-  return ratio <= BREATH_MAX_SPEECH_COVERAGE_RATIO || (ratio >= 0.9 && significantInteriorCount >= 2);
+  if (ratio <= BREATH_MAX_SPEECH_COVERAGE_RATIO) return true;
+  if (!(ratio >= 0.9 && significantInteriorCount >= 2)) return false;
+
+  // Index-based seam exemption (see doc comment above). If the preceding
+  // span's own genuine last match ends at or before this silence starts, the
+  // silence sits at/after that seam BY INDEX POSITION — it cannot be this
+  // span's own interior breath, whatever `firstTok`'s (possibly smeared)
+  // timestamp suggested above.
+  if (otherSideLastTokenIdx >= 0) {
+    const seamAnchor = tokens[otherSideLastTokenIdx];
+    if (seamAnchor && silence.startSec >= seamAnchor.endSec - TOKEN_GAP_EPSILON_SEC) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**
@@ -633,11 +728,21 @@ export function snapCoveredBoundaries(
     // under the coverage-composite test, is out regardless of how shallow its
     // intrusion is — an alignment fact must not be forgivable by a timestamp
     // tolerance.
+    // Index-based seam exemption input — NEXT-SIDE ONLY (see isBreathSilence's
+    // CURR-SIDE DISABLED doc comment). next's own span is tested against
+    // curr's own lastTokenIdx — genuinely adjacent to the silence, real seam
+    // evidence. curr's own span is deliberately passed -1: the only
+    // symmetric choice (the segment BEFORE curr) has no temporal relationship
+    // to this silence and was confirmed on real data to steal curr's own
+    // trailing breath.
+    const currOtherSideLastTokenIdx = -1;
+    const nextOtherSideLastTokenIdx = currAlign.lastTokenIdx;
+
     const overlapping = silences.filter(s =>
       !fillsTokenGapWithinSpan(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx) &&
       !fillsTokenGapWithinSpan(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) &&
-      !isBreathSilence(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx) &&
-      !isBreathSilence(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) &&
+      !isBreathSilence(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx, currOtherSideLastTokenIdx) &&
+      !isBreathSilence(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx, nextOtherSideLastTokenIdx) &&
       isBoundarySilenceCandidate(s, searchStart, searchEnd),
     );
 

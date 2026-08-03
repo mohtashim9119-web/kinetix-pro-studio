@@ -1445,11 +1445,20 @@ export function alignScenestoTranscript(
     // Candidacy: token-gap + breath discrimination FIRST (alignment evidence,
     // short-circuiting), the window/span/tolerance test LAST — same order and
     // same predicates as snapBoundaries.ts's Pass 1.
+    // Index-based seam exemption input — NEXT-SIDE ONLY (snapBoundaries.ts's
+    // isBreathSilence CURR-SIDE DISABLED doc comment): next's own span is
+    // tested against curr's own lastTokenIdx (genuinely adjacent, real seam
+    // evidence). curr's own span is passed -1 — the only symmetric choice
+    // (the segment before curr) has no temporal relationship to the silence
+    // and was confirmed on real data to steal curr's own trailing breath.
+    const currOtherSideLastTokenIdx = -1;
+    const nextOtherSideLastTokenIdx = curr.lastTokenIdx;
+
     const overlapping = silences.filter(s =>
       !fillsTokenGapWithinSpan(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx) &&
       !fillsTokenGapWithinSpan(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
-      !isBreathSilence(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx) &&
-      !isBreathSilence(s, tokens, next.firstTokenIdx, next.lastTokenIdx) &&
+      !isBreathSilence(s, tokens, curr.firstTokenIdx, curr.lastTokenIdx, currOtherSideLastTokenIdx) &&
+      !isBreathSilence(s, tokens, next.firstTokenIdx, next.lastTokenIdx, nextOtherSideLastTokenIdx) &&
       isBoundarySilenceCandidate(s, searchStart, searchEnd),
     );
 

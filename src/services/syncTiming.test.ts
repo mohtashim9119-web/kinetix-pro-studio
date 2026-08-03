@@ -2836,7 +2836,7 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
       { text: 'alpha', startSec: 0.0, endSec: 0.5 },
       { text: 'bravo', startSec: 0.5, endSec: 1.0 },
     ];
-    expect(isBreathSilence({ startSec: 0.9, endSec: 2.0 }, tokens, 0, 1)).toBe(false);
+    expect(isBreathSilence({ startSec: 0.9, endSec: 2.0 }, tokens, 0, 1, -1)).toBe(false);
   });
 
   it('ratio-only rejection: a silence mostly empty of any span speech rejects even with zero interior tokens', () => {
@@ -2853,7 +2853,7 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
     // bravo's [3.0,3.1]=0.1 = 0.2. Ratio = 0.2/2.2 ≈ 0.091, well under 0.3.
     const silence = { startSec: 0.9, endSec: 3.1 };
     // Extent overlap = the whole silence (it sits inside [0,4]) → gate passes.
-    expect(isBreathSilence(silence, tokens, 0, 1)).toBe(true);
+    expect(isBreathSilence(silence, tokens, 0, 1, -1)).toBe(true);
     // Confirm it's really the ratio branch and not the override: no interior
     // token exists in a 2-token span, so significantInteriorCount is 0 by
     // construction — this fires on ratio <= BREATH_MAX_SPEECH_COVERAGE_RATIO
@@ -2872,7 +2872,7 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
       { text: 't4', startSec: 0.63, endSec: 0.95 }, // overlap [0.63,0.78] = 0.15
     ];
     const silence = { startSec: 0.40, endSec: 0.78 }; // width 0.38, fully covered by t2+t3+t4
-    expect(isBreathSilence(silence, tokens, 0, 3)).toBe(true);
+    expect(isBreathSilence(silence, tokens, 0, 3, -1)).toBe(true);
   });
 
   it('sigCount floor edge: two sub-floor interior slivers (0.05s, below the 0.09s floor) do not trigger the override even at full coverage', () => {
@@ -2894,7 +2894,7 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
     const silence = { startSec: 0.20, endSec: 0.80 }; // width 0.60, covered = 0.05+0.05+0.05+0.45 = 0.60 → ratio 1.0
     expect(0.05).toBeLessThan(BREATH_TOKEN_OVERLAP_FLOOR_SEC);
     expect(BREATH_TOKEN_OVERLAP_FLOOR_SEC - 0.05).toBeCloseTo(0.04, 6); // the documented margin
-    expect(isBreathSilence(silence, tokens, 0, 3)).toBe(false);
+    expect(isBreathSilence(silence, tokens, 0, 3, -1)).toBe(false);
   });
 
   it('single-token span returns false, mirroring fillsTokenGapWithinSpan\'s own guard', () => {
@@ -2902,12 +2902,355 @@ describe('isBreathSilence — coverage-composite predicate (iteration 3)', () =>
     // Silence sits almost entirely inside this one token — no interior token
     // can exist, and no ratio-only case is meaningful without at least one
     // neighboring token, so this returns false unconditionally.
-    expect(isBreathSilence({ startSec: 0.1, endSec: 0.9 }, tokens, 0, 0)).toBe(false);
+    expect(isBreathSilence({ startSec: 0.1, endSec: 0.9 }, tokens, 0, 0, -1)).toBe(false);
   });
 
   it('sentinel (-1) span returns false — safe to call on an unmatched segment\'s indices', () => {
     const tokens: TranscriptToken[] = [{ text: 'alpha', startSec: 0.0, endSec: 1.0 }];
-    expect(isBreathSilence({ startSec: 0.1, endSec: 0.9 }, tokens, -1, -1)).toBe(false);
+    expect(isBreathSilence({ startSec: 0.1, endSec: 0.9 }, tokens, -1, -1, -1)).toBe(false);
+  });
+
+  it('otherSideLastTokenIdx defaults to -1 when omitted — 4-arg calls are unaffected by the seam exemption', () => {
+    // Same shape as the override-rejection (pair-4) test above, called WITHOUT
+    // the 5th argument at all — confirms the default parameter, not just an
+    // explicit -1, disables the exemption. Every pre-existing 4-arg call site
+    // in this codebase (e.g. boundaryUsedFallback's own isBreathSilence calls)
+    // relies on exactly this default.
+    const tokens: TranscriptToken[] = [
+      { text: 't1', startSec: 0.00, endSec: 0.25 },
+      { text: 't2', startSec: 0.25, endSec: 0.54 },
+      { text: 't3', startSec: 0.54, endSec: 0.63 },
+      { text: 't4', startSec: 0.63, endSec: 0.95 },
+    ];
+    const silence = { startSec: 0.40, endSec: 0.78 };
+    expect(isBreathSilence(silence, tokens, 0, 3)).toBe(true);
+  });
+});
+
+describe('isBreathSilence — index-based seam exemption (V6 production autopsy, 2026-08-03)', () => {
+  // Real Whisper token timestamps and silence intervals from one 447-segment
+  // production project (audioDuration 1421.29s), extracted via
+  // snapCoveredBoundariesDiag against the project's own filtered token array
+  // and detected silences. Each fixture below is the NEXT segment's own
+  // matched span for a real pair boundary that the OLD (timestamp-only)
+  // coverage-composite predicate wrongly vetoed as a breath — high coverage
+  // (ratio 1.0) plus 2+ significant interior tokens, the multi-fragment
+  // shape — even though the silence sits cleanly AFTER the preceding
+  // segment's own last matched word. The vetoing token is always the span's
+  // own first token: Whisper assigns it a declared onset only ~0.1-0.4s after
+  // the preceding word ends, well before the real silence begins, so the
+  // token's span reads as touching the pause even though the two are
+  // unrelated — the ratio/interior-count math over that span's timestamps
+  // has no way to see this, but the token INDICES are untouched by it: the
+  // preceding segment's own last matched token (`otherSideLastTokenIdx`)
+  // still unambiguously ends before the silence starts.
+  //
+  // Local token arrays below hold index 0 = the preceding segment's own last
+  // matched token (the seam anchor) followed by the tested span's own tokens
+  // (index 1..N = firstTokenIdx..lastTokenIdx) — mirroring the real project's
+  // token array, where these two spans sit immediately adjacent (confirmed:
+  // otherSideLastTokenIdx === firstTokenIdx - 1 in the full array for all 5
+  // cases below).
+
+  it('seg 96→97: "predator" (overlap 0.42s of the 0.58s silence) reads as multi-fragment coverage, but seamAnchor "look" ends at 289.090, well before the silence — exempt', () => {
+    // Full real token indices: currAlign(seg95).lastTokenIdx=805 ("look",
+    // 288.750-289.090), nextAlign(seg96).firstTokenIdx=806
+    // ("A")..lastTokenIdx=817 ("it"). Silence [289.380, 289.960] (dur 0.58).
+    // ratio=1.000, significantInteriorCount=2 ("predator" overlap 0.42,
+    // "'s" overlap 0.13) — the token that actually smears is "predator"
+    // (289.260-289.800), whose 0.54s span improbably eats 0.42s of the pause.
+    const tokens: TranscriptToken[] = [
+      { text: 'look',     startSec: 288.750, endSec: 289.090 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'A',         startSec: 289.200, endSec: 289.260 }, // firstTokenIdx
+      { text: 'predator',  startSec: 289.260, endSec: 289.800 }, // interior; overlap 0.420 — the smeared token
+      { text: "'s",        startSec: 289.800, endSec: 289.930 }, // interior; overlap 0.130
+      { text: 'presence',  startSec: 289.930, endSec: 290.470 }, // interior; overlap 0.030
+      { text: 'reaches',   startSec: 290.470, endSec: 290.980 },
+      { text: 'your',      startSec: 290.980, endSec: 291.280 },
+      { text: 'nose',      startSec: 291.280, endSec: 291.830 },
+      { text: 'before',    startSec: 291.830, endSec: 292.020 },
+      { text: 'your',      startSec: 292.020, endSec: 292.250 },
+      { text: 'mind',      startSec: 292.250, endSec: 292.480 },
+      { text: 'names',     startSec: 292.480, endSec: 292.920 },
+      { text: 'it',        startSec: 292.920, endSec: 293.000 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 289.380, endSec: 289.960 }, tokens, 1, 12, 0)).toBe(false);
+  });
+
+  it('seg 162→163: "you"/"do" (overlaps 0.15s + 0.12s of the 0.32s silence) read as multi-fragment coverage, but seamAnchor "alarm" ends at 481.050, well before the silence — exempt', () => {
+    // Full real token indices: currAlign(seg161).lastTokenIdx=1320 ("alarm",
+    // 480.730-481.050), nextAlign(seg162).firstTokenIdx=1321
+    // ("and")..lastTokenIdx=1330 ("again"). Silence [481.400, 481.720]
+    // (dur 0.32). ratio=1.000, significantInteriorCount=2 ("you" overlap
+    // 0.15, "do" overlap 0.12) — the smeared token is "you" (481.360-481.550).
+    const tokens: TranscriptToken[] = [
+      { text: 'alarm',   startSec: 480.730, endSec: 481.050 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'and',     startSec: 481.230, endSec: 481.360 }, // firstTokenIdx
+      { text: 'you',     startSec: 481.360, endSec: 481.550 }, // interior; overlap 0.150 — the smeared token
+      { text: 'do',      startSec: 481.550, endSec: 481.670 }, // interior; overlap 0.120
+      { text: 'not',     startSec: 481.670, endSec: 481.860 }, // interior; overlap 0.050 (sub-floor)
+      { text: 'want',    startSec: 481.860, endSec: 482.110 },
+      { text: 'to',      startSec: 482.110, endSec: 482.320 },
+      { text: 'carry',   startSec: 482.320, endSec: 482.580 },
+      { text: 'that',    startSec: 482.580, endSec: 482.800 },
+      { text: 'feeling', startSec: 482.800, endSec: 483.430 },
+      { text: 'again',   startSec: 483.430, endSec: 483.560 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 481.400, endSec: 481.720 }, tokens, 1, 10, 0)).toBe(false);
+  });
+
+  it('seg 316→317: "is"/"the" (overlaps 0.13s + 0.19s of the 0.32s silence) read as multi-fragment coverage, but seamAnchor "fear" ends at 966.700, well before the silence — exempt', () => {
+    // Full real token indices: currAlign(seg315).lastTokenIdx=2663 ("fear",
+    // 966.440-966.700), nextAlign(seg316).firstTokenIdx=2664
+    // ("which")..lastTokenIdx=2670 ("know"). Silence [967.140, 967.460]
+    // (dur 0.32). ratio=1.000, significantInteriorCount=2 ("is" overlap
+    // 0.13, "the" overlap 0.19) — the smeared token is "the"
+    // (967.270-967.530).
+    const tokens: TranscriptToken[] = [
+      { text: 'fear',        startSec: 966.440, endSec: 966.700 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'which',       startSec: 967.110, endSec: 967.140 }, // firstTokenIdx
+      { text: 'is',          startSec: 967.140, endSec: 967.270 }, // interior; overlap 0.130
+      { text: 'the',         startSec: 967.270, endSec: 967.530 }, // interior; overlap 0.190 — the smeared token
+      { text: 'worst',       startSec: 967.530, endSec: 967.780 },
+      { text: 'combination', startSec: 967.780, endSec: 968.560 },
+      { text: 'you',         startSec: 968.560, endSec: 968.830 },
+      { text: 'know',        startSec: 968.830, endSec: 969.060 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 967.140, endSec: 967.460 }, tokens, 1, 7, 0)).toBe(false);
+  });
+
+  it('seg 338→339: "rest"/"belongs" (overlaps 0.27s + 0.52s of the 0.96s silence) read as multi-fragment coverage, but seamAnchor "had" ends at 1040.670, well before the silence — exempt', () => {
+    // Full real token indices: currAlign(seg337).lastTokenIdx=2858 ("had",
+    // 1040.400-1040.670), nextAlign(seg338).firstTokenIdx=2859
+    // ("The")..lastTokenIdx=2869 ("you"). Silence [1041.080, 1042.040]
+    // (dur 0.96). ratio=1.000, significantInteriorCount=3 ("rest" overlap
+    // 0.27, "belongs" overlap 0.52, "to" overlap 0.15) — the smeared token
+    // is "belongs" (1041.350-1041.870), which alone covers more than half
+    // the silence.
+    const tokens: TranscriptToken[] = [
+      { text: 'had',     startSec: 1040.400, endSec: 1040.670 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'The',     startSec: 1040.840, endSec: 1041.080 }, // firstTokenIdx
+      { text: 'rest',    startSec: 1041.080, endSec: 1041.350 }, // interior; overlap 0.270
+      { text: 'belongs', startSec: 1041.350, endSec: 1041.870 }, // interior; overlap 0.520 — the smeared token
+      { text: 'to',      startSec: 1041.870, endSec: 1042.020 }, // interior; overlap 0.150
+      { text: 'the',     startSec: 1042.020, endSec: 1042.240 }, // interior; overlap 0.020
+      { text: 'nights',  startSec: 1042.240, endSec: 1042.870 },
+      { text: 'they',    startSec: 1042.870, endSec: 1042.970 },
+      { text: 'will',    startSec: 1042.970, endSec: 1043.290 },
+      { text: 'face',    startSec: 1043.290, endSec: 1043.550 },
+      { text: 'without', startSec: 1043.550, endSec: 1044.020 },
+      { text: 'you',     startSec: 1044.020, endSec: 1044.640 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 1041.080, endSec: 1042.040 }, tokens, 1, 11, 0)).toBe(false);
+  });
+
+  it('seg 352→353: "the"/"bands" (overlaps 0.13s + 0.25s of the 0.38s silence) read as multi-fragment coverage, but seamAnchor "by" ends at 1091.370, well before the silence — exempt', () => {
+    // Full real token indices: currAlign(seg351).lastTokenIdx=2996 ("by",
+    // 1091.170-1091.370), nextAlign(seg352).firstTokenIdx=2997
+    // ("when")..lastTokenIdx=3006 ("night"). Silence [1091.960, 1092.340]
+    // (dur 0.38). ratio=1.000, significantInteriorCount=2 ("the" overlap
+    // 0.13, "bands" overlap 0.25) — the smeared token is "bands"
+    // (1092.090-1093.110), a 1.02s span that alone covers 0.25s of the pause.
+    const tokens: TranscriptToken[] = [
+      { text: 'by',     startSec: 1091.170, endSec: 1091.370 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'when',   startSec: 1091.370, endSec: 1091.780 }, // firstTokenIdx
+      { text: 'the',    startSec: 1091.780, endSec: 1092.090 }, // interior; overlap 0.130
+      { text: 'bands',  startSec: 1092.090, endSec: 1093.110 }, // interior; overlap 0.250 — the smeared token
+      { text: 'gather', startSec: 1093.110, endSec: 1093.280 },
+      { text: 'and',    startSec: 1093.280, endSec: 1093.530 },
+      { text: 'the',    startSec: 1093.530, endSec: 1093.600 },
+      { text: 'talk',   startSec: 1093.600, endSec: 1094.000 },
+      { text: 'turns',  startSec: 1094.000, endSec: 1094.230 },
+      { text: 'to',     startSec: 1094.230, endSec: 1094.480 },
+      { text: 'night',  startSec: 1094.480, endSec: 1094.800 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 1091.960, endSec: 1092.340 }, tokens, 1, 10, 0)).toBe(false);
+  });
+
+  // --- seg 405 -----------------------------------------------------------
+  // The IMPLEMENTATION-PROMPT for this work asserted seg 405's silence
+  // ([1290.240, 1290.720], next=seg405's own span) is "the case where
+  // fallback is correct behavior" and should stay classified as a breath
+  // (true). Verified against the real V6 data below: that premise is WRONG.
+  // seg 405 has the identical multi-fragment shape as the 5 cases above
+  // (ratio=1.000, significantInteriorCount=3) and its seamAnchor ("you",
+  // ends 1289.680) sits before the silence just like the other 5 — Variant B
+  // exempts it too (isBreathSilence returns false, not true). This is
+  // independently confirmed by the comparison harness's own diff: pairIdx
+  // 404 (=seg405) appears in variant-b's IMPROVED list
+  // (/tmp/wexp-v6/compare/results/v6_diff_variantB.json) but NOT in
+  // variant-a's — comparing the two diff files shows variant B (as
+  // originally scored, with the exemption active on BOTH sides) uniquely
+  // fixes 9 real pairs, not just the 5 originally cited: pairIdx
+  // 95/161/315/337/351 (the 5 known-bad segs 96/162/316/338/352 above) PLUS
+  // pairIdx 33, 59, 404, 411 (segs 34, 60, 405, 412). CORRECTION (2026-08-03,
+  // second-project follow-up): pairIdx 59 (seg 60) was NOT actually a genuine
+  // fix — a real 173-segment project exposed the exemption as unsound on the
+  // CURR side (see isBreathSilence's CURR-SIDE DISABLED doc comment), and
+  // auditing seg 60 retroactively showed it was the SAME curr-side false
+  // positive stealing a 1.32s trailing breath from an unrelated sentence; it
+  // only looked like a fix because the corrupted boundary happened to also
+  // land inside a detected silence. The genuine NEXT-side-only fix set is 8
+  // pairs: 95/161/315/337/351/33/404/411 (segs 96/162/316/338/352/34/405/412).
+  // seg 405 (this test) IS one of the 8 genuine ones. An exhaustive scan of
+  // all 446 real pairs in this project (both NEXT-side and CURR-side) found
+  // ZERO real cases where the multi-fragment override fires (ratio>=0.9 &&
+  // significantInteriorCount>=2) and the NEXT-side exemption does NOT strip
+  // it — i.e. no real "fallback is correct" example exists in this dataset.
+  // The existing synthetic "override rejection (pair-4 shape)" test above
+  // (and its "4-arg calls are unaffected" sibling) remain the fixtures
+  // pinning that the override can still fire when the seam anchor is
+  // genuinely far away; this test instead pins seg 405's REAL, verified
+  // behavior so a future change cannot silently regress it back to breath=true
+  // without a visible test failure.
+  it('seg 405→406 (real data, NOT the "stays a breath" control the task brief assumed): seamAnchor "you" ends at 1289.680, before the silence — exempt, same as the other 5', () => {
+    const tokens: TranscriptToken[] = [
+      { text: 'you',    startSec: 1289.500, endSec: 1289.680 }, // seamAnchor (otherSideLastTokenIdx=0)
+      { text: 'can',    startSec: 1289.680, endSec: 1289.870 }, // firstTokenIdx
+      { text: 'count',  startSec: 1289.870, endSec: 1290.260 }, // interior; overlap 0.020
+      { text: 'and',    startSec: 1290.260, endSec: 1290.380 }, // interior; overlap 0.120
+      { text: 'you',    startSec: 1290.380, endSec: 1290.560 }, // interior; overlap 0.180 — the smeared token
+      { text: 'listen', startSec: 1290.560, endSec: 1291.070 }, // interior; overlap 0.160
+      { text: 'to',     startSec: 1291.070, endSec: 1291.110 },
+      { text: 'the',    startSec: 1291.110, endSec: 1291.260 },
+      { text: 'night',  startSec: 1291.260, endSec: 1291.680 }, // lastTokenIdx
+    ];
+    expect(isBreathSilence({ startSec: 1290.240, endSec: 1290.720 }, tokens, 1, 8, 0)).toBe(false);
+  });
+});
+
+describe('snapCoveredBoundaries — curr-side seam exemption disabled (173-segment production project, 2026-08-03)', () => {
+  // A second real project (173 segments, independent of the 447-segment V6
+  // project the NEXT-side exemption above was built from) exposed the
+  // exemption as UNSOUND on the curr side: passing the segment-before-curr's
+  // lastTokenIdx as `otherSideLastTokenIdx` for a curr-side call has no
+  // temporal relationship to the tested silence (it's two segments back from
+  // the silence, not adjacent to it), so the condition
+  // `silence.startSec >= seamAnchor.endSec - EPSILON` is satisfied almost
+  // trivially whenever curr has any predecessor — silently stripping
+  // multi-fragment breath protection from the entire curr side. Real call
+  // sites now hardcode -1 for the curr-side call (see isBreathSilence's
+  // CURR-SIDE DISABLED doc comment); these two fixtures are the permanent
+  // regression locks, using the REAL segments/tokens/silences extracted from
+  // that project (via the console snippet + a faithful port of
+  // silenceDetector.ts's -45dB/0.25s/20ms frame scan against the real
+  // decoded voiceover).
+  it('pairIdx 4, "They\'re the worst" — the exact real segment that originally motivated the multi-fragment override — resolves to 18.870 (both spoken edges touch there), NOT 18.510 (the pre-fix breath centre a curr-side false exemption produces)', () => {
+    // Real tokens (indices 55-58 of the project's transcriptTokens): curr's
+    // own trailing 4 words are 4 touching micro-tokens, same shape as the
+    // synthetic "REGRESSION: real pair-4 production geometry" fixture above
+    // (that fixture's alpha/bravo/charlie/delta ARE these exact numbers,
+    // renamed) — confirming this real segment is what that fixture models.
+    // Silence [18.32, 18.70] sits entirely inside curr's own span (0.38s,
+    // between "'re" ending 18.46 and "the" starting 18.46 through "worst"
+    // starting 18.55) — a genuine internal breath, not a boundary. curr's
+    // predecessor (segment 3, "...because of the numbers.") ends at 17.71,
+    // comfortably before this silence starts — exactly the shape that made
+    // the OLD (buggy) curr-side exemption fire and steal "the worst" away
+    // from its own sentence.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: "They’re the worst", startTime: 17.92, duration: 0.95, anchorStart: 17.92, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'because the environment was already doing the killing before the enemy showed up.', startTime: 18.87, duration: 4.19, anchorStart: 18.87, anchorSource: 'whisper' }),
+    ];
+    const tokens: TranscriptToken[] = [
+      { text: 'They',        startSec: 17.92, endSec: 18.17 },
+      { text: "'re",         startSec: 18.17, endSec: 18.46 },
+      { text: 'the',         startSec: 18.46, endSec: 18.55 },
+      { text: 'worst',       startSec: 18.55, endSec: 18.87 }, // lastSpokenEnd = 18.87
+      { text: 'because',     startSec: 18.87, endSec: 19.32 }, // nextSpokenStart = 18.87
+      { text: 'the',         startSec: 19.32, endSec: 19.62 },
+      { text: 'environment', startSec: 19.62, endSec: 20.24 },
+      { text: 'was',         startSec: 20.24, endSec: 20.56 },
+      { text: 'already',     startSec: 20.56, endSec: 20.96 },
+      { text: 'doing',       startSec: 20.96, endSec: 21.20 },
+      { text: 'the',         startSec: 21.20, endSec: 21.36 },
+      { text: 'killing',     startSec: 21.36, endSec: 21.75 },
+      { text: 'before',      startSec: 21.75, endSec: 22.16 },
+      { text: 'the',         startSec: 22.16, endSec: 22.30 },
+      { text: 'enemy',       startSec: 22.30, endSec: 22.52 },
+      { text: 'showed',      startSec: 22.52, endSec: 22.94 },
+      { text: 'up',          startSec: 22.94, endSec: 23.06 },
+    ];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 18.32, endSec: 18.70 }], 30);
+
+    expect(out[1]!.startTime).toBeCloseTo(18.870, 6);
+    expect(out[1]!.startTime).not.toBeCloseTo(18.510, 3); // the curr-side-false-exemption breath centre
+    expect(out[0]!.duration).toBeCloseTo(0.95, 6);
+  });
+
+  // KNOWN DEFECT (test-honesty fix, 2026-08-03): this fixture's raw token
+  // array contains 3 tokens the REAL pipeline always drops before alignment
+  // ever runs — filterMalformedTokens(rawTokens, audioDuration) removes the
+  // two punctuation-only commas at [74.57,74.74]/[75.44,75.68]
+  // ('empty-text' — normalize(',') is '') and the zero-duration comma at
+  // [78.56,78.56] ('inverted-or-zero-duration'). The version of this test
+  // that asserted 76.470 called extractSegmentAlignments/snapCoveredBoundaries
+  // directly on the UNFILTERED array — skipping a real pipeline stage while
+  // claiming to lock real pipeline behavior. Verified by running the
+  // fixture through the complete path (filterMalformedTokens THEN
+  // extractSegmentAlignments THEN snapCoveredBoundaries): dropping those 3
+  // tokens shifts every downstream token index, and the actual, current
+  // production output is 75.660 — not 76.470. 76.470 is the CORRECT target
+  // (both spoken edges — "enough" ending curr, "to" starting next — actually
+  // touch there); 75.660 is today's broken behavior, landing inside curr's
+  // own internal breath instead. This test now pins the REAL, currently-wrong
+  // output so a future change cannot silently regress it further without a
+  // visible failure, and a future fix of the underlying defect will need to
+  // update this assertion back to 76.470 (with a comment explaining why, at
+  // that time — do not just bump the number).
+  it('pairIdx 20, "...chitin thick enough" — full pipeline (incl. filterMalformedTokens) currently produces 75.660, NOT the correct 76.470 (KNOWN DEFECT)', () => {
+    // Real tokens (indices 214-238): curr's own span ends in a run of touching
+    // micro-tokens ("k"/"ite"/"and"/"thick" — a Whisper sub-word split of
+    // "kite and" for "chitin", i.e. more tokens than words) with a 0.32s
+    // silence [75.50, 75.82] sitting inside it, between "limbs," (ends 75.68)
+    // and "k" (starts 75.68). curr's predecessor ends at 72.35, far before
+    // this silence — same shape as pairIdx 4 above.
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 's0', order: 0, text: 'The Catachan devil itself, six limbs, chitin thick enough', startTime: 72.64, duration: 3.83, anchorStart: 72.64, anchorSource: 'whisper' }),
+      makeSegment({ id: 's1', order: 1, text: 'to deflect small arms fire, hunts by thermal signature.', startTime: 76.47, duration: 3.94, anchorStart: 76.47, anchorSource: 'whisper' }),
+    ];
+    const rawTokens: TranscriptToken[] = [
+      { text: 'The',      startSec: 72.64, endSec: 72.90 },
+      { text: 'C',        startSec: 72.90, endSec: 72.99 },
+      { text: 'atech',    startSec: 72.99, endSec: 73.41 },
+      { text: 'an',       startSec: 73.41, endSec: 73.60 },
+      { text: 'devil',    startSec: 73.60, endSec: 74.04 },
+      { text: 'itself',   startSec: 74.04, endSec: 74.57 },
+      { text: ',',        startSec: 74.57, endSec: 74.74 }, // dropped: empty-text
+      { text: 'six',      startSec: 74.74, endSec: 75.00 },
+      { text: 'limbs',    startSec: 75.00, endSec: 75.44 },
+      { text: ',',        startSec: 75.44, endSec: 75.68 }, // dropped: empty-text
+      { text: 'k',        startSec: 75.68, endSec: 75.85 },
+      { text: 'ite',      startSec: 75.85, endSec: 75.87 },
+      { text: 'and',      startSec: 75.87, endSec: 75.98 },
+      { text: 'thick',    startSec: 75.98, endSec: 76.20 },
+      { text: 'enough',   startSec: 76.20, endSec: 76.47 }, // lastSpokenEnd = 76.47
+      { text: 'to',       startSec: 76.47, endSec: 76.56 }, // nextSpokenStart = 76.47
+      { text: 'deflect',  startSec: 76.56, endSec: 77.04 },
+      { text: 'small',    startSec: 77.04, endSec: 77.52 },
+      { text: 'arms',     startSec: 77.52, endSec: 77.96 },
+      { text: 'fire',     startSec: 77.96, endSec: 78.56 },
+      { text: ',',        startSec: 78.56, endSec: 78.56 }, // dropped: inverted-or-zero-duration
+      { text: 'hunts',    startSec: 78.72, endSec: 78.96 },
+      { text: 'by',       startSec: 78.96, endSec: 79.12 },
+      { text: 'thermal',  startSec: 79.12, endSec: 79.68 },
+      { text: 'signature', startSec: 79.68, endSec: 80.41 },
+    ];
+
+    const filtered = filterMalformedTokens(rawTokens, 90);
+    expect(filtered.skippedCount).toBe(3);
+
+    const alignments = extractSegmentAlignments(segments, filtered.tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, filtered.tokens, [{ startSec: 75.50, endSec: 75.82 }], 90);
+
+    // Current (broken) behavior — see KNOWN DEFECT note above.
+    expect(out[1]!.startTime).toBeCloseTo(75.660, 6);
+    expect(out[1]!.startTime).not.toBeCloseTo(76.470, 3); // the correct target, not yet achieved
   });
 });
 
