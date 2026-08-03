@@ -3,7 +3,7 @@
 // library dependency, just render-to-string and assert on the HTML.
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SyncLogPanel } from './SyncLogPanel';
+import { SyncLogPanel, formatEntryText } from './SyncLogPanel';
 import type { SyncLogEntry } from '../types';
 
 const AT = 1_700_000_000_000;
@@ -166,5 +166,91 @@ describe('SyncLogPanel — WS4 entry kinds', () => {
     expect(html).toContain('ABORT');
     expect(html).toContain('Sync completed: 8 of 8 segments matched.');
     expect(html).not.toContain('undefined');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Log-grouping feature (2026-08-03) — grouped entries (groupedItems set)
+// ---------------------------------------------------------------------------
+
+function makeGroupedEntry(partial: Partial<SyncLogEntry> = {}): SyncLogEntry {
+  return {
+    id: 'e-grouped',
+    timestamp: AT,
+    syncRunId: 'run-1',
+    type: 'warning',
+    message: '4 scenes matched fewer than 60% of their words.',
+    severity: 'warning',
+    fixHint: "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.",
+    groupedItems: [
+      { message: 'Segment 1 ("Small and permanent.") matched only 1 of 3 words (33%).' },
+      { message: 'Segment 5 ("A wide shot.") matched only 1 of 3 words (33%).' },
+      { message: 'Segment 9 ("Cut to black.") matched only 1 of 3 words (33%).' },
+      { message: 'Segment 12 ("The end.") matched only 1 of 2 words (50%).' },
+    ],
+    ...partial,
+  };
+}
+
+describe('SyncLogPanel — grouped entries', () => {
+  it('renders the collapsed one-line summary by default', () => {
+    const html = renderPanel([makeGroupedEntry()]);
+    expect(html).toContain('4 scenes matched fewer than 60% of their words.');
+    expect(html).toContain('WARN');
+  });
+
+  it('does not render per-item detail before the user expands it (collapsed by default)', () => {
+    const html = renderPanel([makeGroupedEntry()]);
+    // Static markup can't simulate the click that would expand it — this
+    // pins the actual first-render (collapsed) state a real user sees.
+    expect(html).not.toContain('Small and permanent');
+  });
+
+  it('exposes an expand affordance (aria-expanded) for a grouped entry', () => {
+    const html = renderPanel([makeGroupedEntry()]);
+    expect(html).toContain('aria-expanded="false"');
+  });
+
+  it('does not treat a single non-grouped entry as grouped (no expand affordance)', () => {
+    const html = renderPanel([{
+      id: 'e-plain', timestamp: AT, syncRunId: 'run-1', type: 'warning',
+      message: 'A single plain warning.', severity: 'warning', fixHint: 'do something',
+    }]);
+    expect(html).toContain('A single plain warning.');
+    expect(html).not.toContain('aria-expanded');
+  });
+
+  it('renders normally and does not crash when groupedItems is an empty array', () => {
+    const html = renderPanel([makeGroupedEntry({ groupedItems: [] })]);
+    expect(html).toContain('4 scenes matched fewer than 60% of their words.');
+    expect(html).not.toContain('aria-expanded'); // treated as non-grouped (isGrouped requires length > 0)
+  });
+});
+
+describe('formatEntryText — Copy button export (grouped entries)', () => {
+  it('includes the summary line AND every item for a grouped entry', () => {
+    const text = formatEntryText(makeGroupedEntry());
+    expect(text).toContain('4 scenes matched fewer than 60% of their words.');
+    expect(text).toContain('Segment 1 ("Small and permanent.") matched only 1 of 3 words (33%).');
+    expect(text).toContain('Segment 5 ("A wide shot.") matched only 1 of 3 words (33%).');
+    expect(text).toContain('Segment 9 ("Cut to black.") matched only 1 of 3 words (33%).');
+    expect(text).toContain('Segment 12 ("The end.") matched only 1 of 2 words (50%).');
+  });
+
+  it('exports exactly one line per item, in order, alongside the summary line', () => {
+    const text = formatEntryText(makeGroupedEntry());
+    const lines = text.split('\n');
+    // header+summary line, then 4 item lines.
+    expect(lines).toHaveLength(5);
+    expect(lines[1]).toContain('Segment 1');
+    expect(lines[4]).toContain('Segment 12');
+  });
+
+  it('is unaffected for a non-grouped entry (no groupedItems)', () => {
+    const text = formatEntryText({
+      id: 'e-plain', timestamp: AT, syncRunId: 'run-1', type: 'info',
+      message: 'Sync completed: 8 of 8 segments matched.',
+    });
+    expect(text).not.toContain('  - ');
   });
 });

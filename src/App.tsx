@@ -68,7 +68,11 @@ import {
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
-import { validateBoundaryQuality, type BoundaryQualityMeasurement } from './services/syncContracts';
+import {
+  validateBoundaryQuality,
+  validateWordCoverage,
+  type BoundaryQualityMeasurement,
+} from './services/syncContracts';
 import {
   MIN_COVERED_RUN_LENGTH,
   NOISE_FLOOR_COVERAGE,
@@ -82,6 +86,7 @@ import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
+  buildGroupedViolationEntry,
   mintSyncLogId,
 } from './services/syncLog';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -2442,6 +2447,21 @@ export default function App() {
         }
       }
 
+      // Word-coverage validator (Stage-4 output validation, Contract 3→4,
+      // rule 'low-word-coverage', 2026-08-03) — a KEPT (survived, matched:
+      // true) segment can still have matched only a minority of its own
+      // words, the rest silently absorbed into a neighboring segment's span
+      // (the segment 28 production case — see syncContracts.ts's own doc
+      // comment). Runs on `kept`/`keptAlignments`, the same index-parallel
+      // pair the boundary-quality checker's input capture below uses — text
+      // content doesn't change across the boundary re-snap that follows, so
+      // there's no need to wait for it. Grouped into ONE log entry when 2+
+      // segments are flagged (log-grouping feature, 2026-08-03); a lone
+      // flagged segment still gets a plain entry (buildGroupedViolationEntry's
+      // own count===1 fallback).
+      const wordCoverageViolations = validateWordCoverage(kept, keptAlignments);
+      const wordCoverageEntry = buildGroupedViolationEntry(syncRunId, wordCoverageViolations, syncRunAt);
+
       // WS-logs (R4-4) — the skip records are no longer DEV-console-only: one
       // 'skip' entry per dropped scene. Bug 1 fix: a summary 'info' entry is now
       // emitted on EVERY successful run — alongside the skip entries, not
@@ -2464,6 +2484,7 @@ export default function App() {
           : []),
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
+        ...(wordCoverageEntry ? [wordCoverageEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
       pendingLogSummary = {
@@ -2645,8 +2666,18 @@ export default function App() {
             BOUNDARY_QUALITY_SUSTAINED_WINDOW_SEC,
           )
         : [];
+      // Log-grouping feature (2026-08-03) — 2+ boundary-quality warnings from
+      // one run fold into a single entry (buildGroupedViolationEntry, same
+      // builder the word-coverage validator above uses) instead of one entry
+      // per flagged boundary; a lone flagged boundary still gets a plain
+      // entry. `entryType: 'info'` preserves this checker's own established
+      // Phase 1 downgrade (see the comment above) — grouping must not
+      // silently promote it to a 'warning'-typed entry.
+      const groupedBoundaryEntry = resolvedWaveform
+        ? buildGroupedViolationEntry(syncRunId, boundaryViolations, syncRunAt, 'info')
+        : undefined;
       const boundaryLogEntries: SyncLogEntry[] = resolvedWaveform
-        ? boundaryViolations.map(v => makeSyncLogEntry(syncRunId, 'info', v.message, { fixHint: v.fixHint }, syncRunAt))
+        ? (groupedBoundaryEntry ? [groupedBoundaryEntry] : [])
         : [makeSyncLogEntry(
             syncRunId,
             'info',

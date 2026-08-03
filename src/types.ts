@@ -425,6 +425,31 @@ export interface SyncLogEntry {
    *  a user-facing fix hint" — something the USER can do, not a developer
    *  pointer. Undefined on entries with no `severity` and on INFO entries. */
   fixHint?: string;
+  /** Grouped-violation entries only (user-requested log grouping, 2026-08-03)
+   *  — when 2+ `ContractViolation`s of the same `rule` land in one sync run,
+   *  `syncLog.ts`'s `buildGroupedViolationEntry` folds them into ONE entry
+   *  (`message` holds the summary form, e.g. "4 scenes matched fewer than
+   *  60% of their words.") instead of one entry per violation, with each
+   *  violation's own message/fixHint/detail preserved here verbatim so the
+   *  panel's expand affordance — and the Copy button's export — can still
+   *  show every item. Undefined on every other entry, including a SINGLE
+   *  violation (which still renders as a plain, non-grouped entry — see
+   *  `buildGroupedViolationEntry`'s own doc comment). Deliberately its own
+   *  minimal shape rather than importing `ContractViolation` from
+   *  `syncContracts.ts`, which would create a type-level import cycle with
+   *  this file. */
+  groupedItems?: GroupedLogItem[];
+}
+
+/** One violation's worth of detail inside a grouped `SyncLogEntry` — a
+ *  minimal mirror of `syncContracts.ts`'s `ContractViolation` (message/
+ *  fixHint/detail only; `contract`/`rule`/`severity` are the grouping key
+ *  and already summarized on the parent entry, so they aren't repeated per
+ *  item). See `SyncLogEntry.groupedItems`. */
+export interface GroupedLogItem {
+  message: string;
+  fixHint?: string;
+  detail?: Record<string, unknown>;
 }
 
 /** One Apply Sync run, rolled up. Written alongside that run's entries. */

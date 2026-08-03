@@ -11,10 +11,10 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem } from '../types';
 import type { TokenDrop } from './whisperService';
 import type { ContractViolation } from './syncContracts';
-import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES } from './syncConstants';
+import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
  *  WKWebView/WebView2, and Vite dev over localhost — a secure context). The
@@ -39,6 +39,7 @@ export function makeSyncLogEntry(
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
+    | 'groupedItems'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -147,6 +148,89 @@ export function buildContractViolationEntry(
     'warning',
     violation.message,
     { severity: violation.severity, fixHint: violation.fixHint },
+    timestamp,
+  );
+}
+
+/**
+ * Rule → summary-sentence builder for `buildGroupedViolationEntry` below.
+ * Each `ContractViolation.rule` that ships a validator gets a human, count-
+ * shaped one-liner here rather than a generic "N issues of type X" — the
+ * per-violation `message` is already segment-specific prose (built for a
+ * SINGLE entry), so grouping needs its own summary form, not a truncation of
+ * the per-item text. Add one line here per new rule as validators ship;
+ * `summarizeGroupedRule`'s fallback covers anything not yet added so a
+ * future rule can never go unsummarized.
+ */
+const GROUPED_RULE_SUMMARIES: Record<string, (count: number) => string> = {
+  'loud-fallback-boundary': (n) => `${n} cuts landed on audio that's still playing.`,
+  'low-word-coverage': (n) =>
+    `${n} scenes matched fewer than ${Math.round(WORD_COVERAGE_MIN_RATIO * 100)}% of their words.`,
+};
+
+function summarizeGroupedRule(rule: string, count: number): string {
+  const builder = GROUPED_RULE_SUMMARIES[rule];
+  if (builder) return builder(count);
+  return `${count} issues found — expand for per-item details.`;
+}
+
+/**
+ * Groups 2+ `ContractViolation`s of the SAME rule (a single sync run's worth
+ * — the caller partitions by rule before calling this, one call per group)
+ * into ONE `SyncLogEntry` instead of one entry per violation (user-requested
+ * grouping, 2026-08-03 — a run with 20+ identical-type violations used to
+ * produce 20+ separate log entries). `message` is the summary sentence
+ * (`summarizeGroupedRule`); every violation's own message/fixHint/detail
+ * survives verbatim on `groupedItems` (types.ts) for the panel's expand
+ * affordance and the Copy button's export.
+ *
+ * `entryType` (default `'warning'`, matching `buildContractViolationEntry`'s
+ * convention) lets a caller with its own established entry-type convention
+ * keep it under grouping — e.g. the boundary-quality checker's wiring
+ * (App.tsx) deliberately logs at `'info'`, not `'warning'` (Phase 1 ships it
+ * as observability only; see that call site's own comment), and grouping
+ * must not silently change that.
+ *
+ * `severity` is the MAX across the group ('error' if any violation is
+ * 'error', else 'warning' — mirrors `buildContractViolationEntry`'s existing
+ * type-'warning'-regardless-of-severity convention for the entry's own
+ * `type`, only `severity` reflects the escalation). `fixHint` is the shared
+ * hint when every violation in the group carries the identical string, else
+ * a generic "expand for per-item details" pointer — a per-item fixHint is
+ * still preserved on each `groupedItems` entry either way, this is only the
+ * one-line summary's own hint.
+ *
+ * A single violation is NOT grouped — returns the same plain entry shape
+ * `buildContractViolationEntry` would build (at `entryType` instead of
+ * always `'warning'`), so a lone finding never gets a pointless one-item
+ * dropdown. Returns `undefined` for an empty array (no entry to log).
+ */
+export function buildGroupedViolationEntry(
+  syncRunId: string,
+  violations: ContractViolation[],
+  timestamp: number = Date.now(),
+  entryType: SyncLogEntryType = 'warning',
+): SyncLogEntry | undefined {
+  if (violations.length === 0) return undefined;
+  if (violations.length === 1) {
+    const v = violations[0]!;
+    return makeSyncLogEntry(syncRunId, entryType, v.message, { severity: v.severity, fixHint: v.fixHint }, timestamp);
+  }
+
+  const severity: 'warning' | 'error' = violations.some(v => v.severity === 'error') ? 'error' : 'warning';
+  const uniqueFixHints = new Set(violations.map(v => v.fixHint));
+  const fixHint = uniqueFixHints.size === 1 ? violations[0]!.fixHint : 'Expand for per-item details.';
+  const groupedItems: GroupedLogItem[] = violations.map(v => ({
+    message: v.message,
+    fixHint: v.fixHint,
+    detail: v.detail,
+  }));
+
+  return makeSyncLogEntry(
+    syncRunId,
+    entryType,
+    summarizeGroupedRule(violations[0]!.rule, violations.length),
+    { severity, fixHint, groupedItems },
     timestamp,
   );
 }

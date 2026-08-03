@@ -20,11 +20,14 @@ import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
+  buildContractViolationEntry,
+  buildGroupedViolationEntry,
   makeSyncLogEntry,
 } from './syncLog';
-import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES } from './syncConstants';
+import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
 import type { Project, SyncLogEntry, SyncRunSummary } from '../types';
+import type { ContractViolation } from './syncContracts';
 
 const RUN_ID = 'run-1';
 const AT = 1_700_000_000_000;
@@ -593,5 +596,152 @@ describe('buildRescueLogEntries (rescue observability, false-positive rescue fix
 
     expect(next.syncLog).toHaveLength(MAX_LOG_ENTRIES);
     expect(next.syncLog![MAX_LOG_ENTRIES - 1]!.type).toBe('rescue');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Log-grouping feature (2026-08-03) — buildGroupedViolationEntry
+// ---------------------------------------------------------------------------
+
+function violation(overrides: Partial<ContractViolation> = {}): ContractViolation {
+  return {
+    contract: '5->6',
+    rule: 'loud-fallback-boundary',
+    severity: 'warning',
+    message: 'The cut between segment 1 and segment 2 landed on audio that\'s still playing, not in a quiet gap.',
+    fixHint: 'Check the cut on the timeline — nudge it toward the quieter moment nearby if it looks or sounds off.',
+    detail: { segmentIndex: 0 },
+    ...overrides,
+  };
+}
+
+describe('buildContractViolationEntry', () => {
+  it('builds a plain warning-type entry carrying the violation\'s message/severity/fixHint', () => {
+    const v = violation();
+    const entry = buildContractViolationEntry(RUN_ID, v, AT);
+    expect(entry.type).toBe('warning');
+    expect(entry.message).toBe(v.message);
+    expect(entry.severity).toBe('warning');
+    expect(entry.fixHint).toBe(v.fixHint);
+    expect(entry.groupedItems).toBeUndefined();
+  });
+});
+
+describe('buildGroupedViolationEntry', () => {
+  it('returns undefined for an empty violations array', () => {
+    expect(buildGroupedViolationEntry(RUN_ID, [], AT)).toBeUndefined();
+  });
+
+  it('a single violation takes the plain (non-grouped) entry path', () => {
+    const v = violation({ message: 'lone violation message' });
+    const entry = buildGroupedViolationEntry(RUN_ID, [v], AT);
+    expect(entry).toBeDefined();
+    expect(entry!.message).toBe('lone violation message');
+    expect(entry!.groupedItems).toBeUndefined();
+    expect(entry!.type).toBe('warning');
+    expect(entry!.severity).toBe('warning');
+    expect(entry!.fixHint).toBe(v.fixHint);
+  });
+
+  it('groups 3+ violations of the same rule into one entry, preserving every item', () => {
+    const violations = [
+      violation({ message: 'cut 1 is loud' }),
+      violation({ message: 'cut 2 is loud' }),
+      violation({ message: 'cut 3 is loud' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+
+    expect(entry).toBeDefined();
+    expect(entry!.syncRunId).toBe(RUN_ID);
+    expect(entry!.timestamp).toBe(AT);
+    expect(entry!.type).toBe('warning');
+    expect(entry!.message).toBe("3 cuts landed on audio that's still playing.");
+    expect(entry!.groupedItems).toHaveLength(3);
+    expect(entry!.groupedItems!.map(i => i.message)).toEqual([
+      'cut 1 is loud',
+      'cut 2 is loud',
+      'cut 3 is loud',
+    ]);
+  });
+
+  it('uses the low-word-coverage summary phrasing, including the live ratio constant', () => {
+    const violations = [
+      violation({ rule: 'low-word-coverage', message: 'scene 1 low coverage' }),
+      violation({ rule: 'low-word-coverage', message: 'scene 2 low coverage' }),
+      violation({ rule: 'low-word-coverage', message: 'scene 3 low coverage' }),
+      violation({ rule: 'low-word-coverage', message: 'scene 4 low coverage' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    const pct = Math.round(WORD_COVERAGE_MIN_RATIO * 100);
+    expect(entry!.message).toBe(`4 scenes matched fewer than ${pct}% of their words.`);
+  });
+
+  it('falls back to a generic summary for a rule with no dedicated phrasing', () => {
+    const violations = [
+      violation({ rule: 'some-future-rule', message: 'a' }),
+      violation({ rule: 'some-future-rule', message: 'b' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.message).toContain('2');
+    expect(entry!.message.toLowerCase()).toContain('expand');
+  });
+
+  it('severity is the MAX across the group (error beats warning)', () => {
+    const violations = [
+      violation({ severity: 'warning' }),
+      violation({ severity: 'error' }),
+      violation({ severity: 'warning' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.severity).toBe('error');
+  });
+
+  it('uses the shared fixHint when every violation carries the identical string', () => {
+    const violations = [
+      violation({ fixHint: 'same hint' }),
+      violation({ fixHint: 'same hint' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.fixHint).toBe('same hint');
+  });
+
+  it('falls back to a generic fixHint when violations disagree', () => {
+    const violations = [
+      violation({ fixHint: 'hint A' }),
+      violation({ fixHint: 'hint B' }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.fixHint).toMatch(/per-item/i);
+    // Per-item fixHints still survive individually, even though the summary's own hint is generic.
+    expect(entry!.groupedItems!.map(i => i.fixHint)).toEqual(['hint A', 'hint B']);
+  });
+
+  it('preserves each violation\'s own detail payload verbatim on groupedItems', () => {
+    const violations = [
+      violation({ detail: { segmentIndex: 0, foo: 'bar' } }),
+      violation({ detail: { segmentIndex: 1, foo: 'baz' } }),
+    ];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.groupedItems!.map(i => i.detail)).toEqual([
+      { segmentIndex: 0, foo: 'bar' },
+      { segmentIndex: 1, foo: 'baz' },
+    ]);
+  });
+
+  it('respects an explicit entryType override (boundary-quality\'s established "info" convention)', () => {
+    const violations = [violation(), violation()];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT, 'info');
+    expect(entry!.type).toBe('info');
+
+    // Same override applies on the single-violation fallback path.
+    const single = buildGroupedViolationEntry(RUN_ID, [violation()], AT, 'info');
+    expect(single!.type).toBe('info');
+  });
+
+  it('mints a fresh id and defaults type to "warning" when entryType is omitted', () => {
+    const violations = [violation(), violation()];
+    const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
+    expect(entry!.type).toBe('warning');
+    expect(entry!.id).toBeTruthy();
   });
 });

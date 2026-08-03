@@ -85,8 +85,11 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
 }
 
 /** Renders one entry exactly as the panel displays it — reused by the Copy
- *  button so the copied text can never drift from what's on screen. */
-function formatEntryText(entry: SyncLogEntry): string {
+ *  button so the copied text can never drift from what's on screen. A
+ *  grouped entry (`groupedItems` set, log-grouping feature 2026-08-03) always
+ *  exports its summary line PLUS every item's own message — the Copy button
+ *  must never drop items behind the panel's own collapse-by-default UI. */
+export function formatEntryText(entry: SyncLogEntry): string {
   const label = (TYPE_STYLES[entry.type] ?? TYPE_STYLES.info).label;
   const header = `[${formatTime(entry.timestamp)}] [${label}]`;
   const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
@@ -109,6 +112,9 @@ function formatEntryText(entry: SyncLogEntry): string {
     const scenePrefix = entry.segmentIndex !== undefined ? `Scene ${entry.segmentIndex + 1}: ` : '';
     lines.push(`${scenePrefix}"${entry.segmentText}"`);
   }
+  if (entry.groupedItems && entry.groupedItems.length > 0) {
+    for (const item of entry.groupedItems) lines.push(`  - ${item.message}`);
+  }
   return lines.join('\n');
 }
 
@@ -123,6 +129,17 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
   const collapsed = manualCollapsed ?? syncLog.length === 0;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
+  // Grouped-entry expand state (log-grouping feature, 2026-08-03) — collapsed
+  // by default (one-line summary), keyed by entry id so expanding one grouped
+  // entry doesn't affect any other.
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string): void => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   // Newest first. `syncLog` is append-ordered (oldest first) on the Project;
   // reverse a COPY so the prop array is never mutated.
@@ -215,6 +232,13 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
               // WS4 — run-level entries (silence-error / malformed-token) use
               // the generic branch below plus one optional detail line.
               const detailLine = isSkip ? undefined : formatDetailLine(entry);
+              // Log-grouping feature (2026-08-03) — a grouped entry renders
+              // its summary (entry.message) collapsed by default, with an
+              // expand affordance revealing one line per underlying
+              // violation. Mutually exclusive with the skip layout above
+              // (a grouped entry is never also a skip entry).
+              const isGrouped = !isSkip && (entry.groupedItems?.length ?? 0) > 0;
+              const isExpanded = expandedIds.has(entry.id);
               return (
                 <div
                   key={entry.id}
@@ -247,6 +271,35 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
                         <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
                           {matchLine}
                         </p>
+                      )}
+                    </>
+                  ) : isGrouped ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => toggleExpanded(entry.id)}
+                        className="w-full flex items-start gap-1 mt-1 text-left"
+                        aria-expanded={isExpanded}
+                      >
+                        {isExpanded
+                          ? <ChevronDown size={10} className="text-gray-600 flex-shrink-0 mt-0.5" />
+                          : <ChevronRight size={10} className="text-gray-600 flex-shrink-0 mt-0.5" />
+                        }
+                        <span className="text-[10px] text-gray-300 leading-snug break-words">
+                          {entry.message}
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <div className="mt-1 pl-4 space-y-1">
+                          {entry.groupedItems!.map((item, idx) => (
+                            <p
+                              key={idx}
+                              className="text-[9px] text-gray-500 leading-snug break-words"
+                            >
+                              {item.message}
+                            </p>
+                          ))}
+                        </div>
                       )}
                     </>
                   ) : (
