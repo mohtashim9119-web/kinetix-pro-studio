@@ -455,6 +455,40 @@ export const BOUNDARY_QUALITY_MIN_DISTANCE_SEC = 0.10;
 export const BOUNDARY_QUALITY_K_SWEEP = [1.5, 2, 3] as const;
 export const BOUNDARY_QUALITY_WINDOW_SWEEP = [0.10, 0.15, 0.20, 0.25] as const;
 
+// --- Word-coverage validator (Stage-4 output validation, Contract 3→4, rule
+// 'low-word-coverage', 2026-08-03) ------------------------------------------
+// Production evidence: segment 28 ("Small and permanent.") matched only 1 of
+// its 3 scene-doc words — `hasQualifyingRun`'s tiny-band rule
+// (`requiredRunLength`, whisperService.ts) gives a 1-3-word segment a
+// required run of just 1, so it survives `matched: true` and its remaining
+// 2 words are silently absorbed into the NEXT segment's span. Nothing in the
+// pipeline previously checked word coverage as its own signal — the boundary
+// checker above audits waveform loudness, not text completeness, and the
+// run-survival gate is a SURVIVAL decision (stay on the timeline vs. get
+// skipped), not a completeness measurement of a segment that DID survive.
+// This validator is that missing signal: read-only, Stage-4 (post-alignment)
+// output validation, same Phase-1-checker philosophy as
+// `validateBoundaryQuality` above (pure, zero behavior change, additive log
+// entries only).
+//
+// A segment is flagged when it matches FEWER than this fraction of its own
+// words. 0.6 is a starting value, not yet calibrated against a real project's
+// distribution the way LOW_CONFIDENCE_RATIO/RUN_SURVIVAL_* were (see this
+// file's own WS5 preamble for that calibration bar) — re-tune only with
+// fixture/production evidence that this rule false-fires or misses a real
+// case, per the same DROP_CLUSTERING_* honesty note above.
+export const WORD_COVERAGE_MIN_RATIO = 0.6;
+// Below this many missing words, a borderline ratio miss is noise, not
+// signal: a 1-of-2 segment (50%, under the ratio) is missing only ONE word —
+// the same single-word gap a 2-3 word segment's run-survival tiny band
+// (`requiredRunLength`) already treats as an accepted trade-off, not a defect
+// to re-flag one layer up. Requiring the ratio failure AND at least this many
+// actually-missing words stops that one class of borderline case from crying
+// wolf on every short segment with a single inflected/mistranscribed word,
+// while still catching the s28 shape (1 of 3 — 2 missing words, well past
+// this floor).
+export const WORD_COVERAGE_MIN_MISSING = 2;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

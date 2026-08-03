@@ -23,6 +23,8 @@ import {
   DROP_CLUSTERING_MIN_DROPS,
   BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR,
   BOUNDARY_QUALITY_MIN_DISTANCE_SEC,
+  WORD_COVERAGE_MIN_RATIO,
+  WORD_COVERAGE_MIN_MISSING,
 } from './syncConstants';
 
 /** One contract violation — shared shape across every pair's validator (§3
@@ -367,4 +369,87 @@ export function validateBoundaryQuality(
       windowEnd: m.windowEnd,
     },
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Contract 3→4 (Alignment → Timing) — word-coverage validator. Stage-4 output
+// validation, same Phase-1-checker philosophy as `validateBoundaryQuality`
+// above: pure, read-only, zero behavior change — it never touches which
+// segments survive or how they're timed, only reports on what already
+// happened. See syncConstants.ts's WORD_COVERAGE_MIN_RATIO header for the
+// production case (segment 28, "Small and permanent.") that motivated it —
+// `matched: true` only requires a qualifying RUN (whisperService.ts's
+// `hasQualifyingRun`/`requiredRunLength`), not full word coverage, so a
+// segment can legitimately survive onto the timeline having matched only a
+// minority of its own words, with the rest silently absorbed into a
+// neighboring segment's span.
+// ---------------------------------------------------------------------------
+
+/** Truncates `text` to at most `maxLen` characters for display in a log
+ *  entry, appending an ellipsis when it was actually cut. Collapses internal
+ *  whitespace/newlines first so a multi-line segment doc still reads as one
+ *  line. */
+function truncateForDisplay(text: string, maxLen = 40): string {
+  const collapsed = text.replace(/\s+/g, ' ').trim();
+  if (collapsed.length <= maxLen) return collapsed;
+  return `${collapsed.slice(0, maxLen).trimEnd()}…`;
+}
+
+/**
+ * Contract 3→4 — flags a segment that survived alignment (`matched: true`)
+ * but matched fewer than `WORD_COVERAGE_MIN_RATIO` of its own scene-doc
+ * words AND is missing at least `WORD_COVERAGE_MIN_MISSING` words outright.
+ * Both conditions are required: the ratio alone would flag a 1-of-2 segment
+ * (50%, only ONE word actually missing) — the same single-word gap
+ * `requiredRunLength`'s tiny band already accepts by design for short
+ * segments, not a defect worth re-flagging one layer up. `matchedWords`/
+ * `totalWords` are read directly off each `SegmentAlignment` — the exact
+ * numbers `extractSegmentAlignments` (whisperService.ts) computed from the
+ * segment's own `normalizeSceneDoc`-tokenized text — never re-derived here.
+ *
+ * `segments`/`alignments` are index-parallel (the same contract every other
+ * validator/consumer in this file depends on — see `validateBoundaryQuality`
+ * above). A segment with no alignment entry, or a zero/one-word segment
+ * (`totalWords <= 1` — includes the zero-token "classification-neutral"
+ * case, WS1b §3.1.1 point 4), is skipped outright: a single word has no
+ * meaningful "coverage fraction" short of all-or-nothing, and a lone match
+ * or lone miss can never reach the 2-word missing floor anyway.
+ *
+ * Pure; exported for direct unit testing.
+ */
+export function validateWordCoverage(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+): ContractViolation[] {
+  const violations: ContractViolation[] = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const align = alignments[i];
+    if (!seg || !align) continue;
+
+    const { matchedWords, totalWords } = align;
+    if (totalWords <= 1) continue;
+    if (matchedWords >= totalWords) continue;
+
+    const missingWords = totalWords - matchedWords;
+    if (missingWords < WORD_COVERAGE_MIN_MISSING) continue;
+
+    const ratio = matchedWords / totalWords;
+    if (ratio >= WORD_COVERAGE_MIN_RATIO) continue;
+
+    const segmentName = truncateForDisplay(seg.text ?? '');
+    const percent = Math.round(ratio * 100);
+
+    violations.push({
+      contract: '3->4',
+      rule: 'low-word-coverage',
+      severity: 'warning',
+      message: `Segment ${i + 1} ("${segmentName}") matched only ${matchedWords} of ${totalWords} words (${percent}%).`,
+      fixHint: "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.",
+      detail: { segmentIndex: i, segmentName, matchedWords, totalWords, missingWords },
+    });
+  }
+
+  return violations;
 }

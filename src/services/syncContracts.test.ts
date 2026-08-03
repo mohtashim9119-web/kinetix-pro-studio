@@ -3,7 +3,13 @@
 // test per rule, a clean-case zero-violations test, and confirmation the
 // validator never mutates its inputs (the "zero behavior change" guarantee).
 import { describe, it, expect } from 'vitest';
-import { analyzeDropDistribution, validateTokenOrdering, validate1to2, validateBoundaryQuality } from './syncContracts';
+import {
+  analyzeDropDistribution,
+  validateTokenOrdering,
+  validate1to2,
+  validateBoundaryQuality,
+  validateWordCoverage,
+} from './syncContracts';
 import type { TokenDrop, SegmentAlignment } from './whisperService';
 import type { WaveformSource } from './waveformPeaks';
 import type { SilenceInterval } from './silenceDetector';
@@ -32,6 +38,17 @@ function align(firstTokenIdx: number, lastTokenIdx: number): SegmentAlignment {
   return {
     t0: 0, t1: 0, firstTokenIdx, lastTokenIdx,
     confidence: 1, matched: true, matchedWords: 2, totalWords: 2, longestRun: 2,
+  };
+}
+
+/** A `matched: true` alignment with a chosen matchedWords/totalWords split —
+ *  the shape `validateWordCoverage` reads directly, independent of the
+ *  token-index fields that shape uses. */
+function alignWords(matchedWords: number, totalWords: number): SegmentAlignment {
+  return {
+    t0: 0, t1: 0, firstTokenIdx: 0, lastTokenIdx: 0,
+    confidence: totalWords > 0 ? matchedWords / totalWords : 0,
+    matched: true, matchedWords, totalWords, longestRun: Math.min(matchedWords, 1),
   };
 }
 
@@ -344,5 +361,102 @@ describe('validateBoundaryQuality (Contract 5→6, waveform-watcher Phase 1)', (
     expect(segments).toEqual(segmentsCopy);
     expect(alignments).toEqual(alignmentsCopy);
     expect(tokens).toEqual(tokensCopy);
+  });
+});
+
+describe('validateWordCoverage (Contract 3→4, low-word-coverage — segment 28 production case)', () => {
+  function s(id: string, order: number, text: string): VideoSegment {
+    return seg({ id, order, text, startTime: order, duration: 1 });
+  }
+
+  it('flags a segment matching 1 of 3 words (33%, the s28 shape)', () => {
+    const segments = [s('s0', 0, 'Small and permanent.')];
+    const alignments = [alignWords(1, 3)];
+
+    const violations = validateWordCoverage(segments, alignments);
+
+    expect(violations).toHaveLength(1);
+    const v = violations[0]!;
+    expect(v.contract).toBe('3->4');
+    expect(v.rule).toBe('low-word-coverage');
+    expect(v.severity).toBe('warning');
+    expect(v.message).not.toMatch(/firstTokenIdx|Hirschberg|matchedSubjectOf/i); // no-jargon rubric
+    expect(v.fixHint.length).toBeGreaterThan(0);
+    expect(v.detail).toEqual({
+      segmentIndex: 0,
+      segmentName: 'Small and permanent.',
+      matchedWords: 1,
+      totalWords: 3,
+      missingWords: 2,
+    });
+  });
+
+  it('does not flag a full match', () => {
+    const segments = [s('s0', 0, 'alpha bravo charlie')];
+    const alignments = [alignWords(3, 3)];
+    expect(validateWordCoverage(segments, alignments)).toEqual([]);
+  });
+
+  it('does not flag a 1-word segment, however it matched', () => {
+    const segments = [s('s0', 0, 'Hello')];
+    expect(validateWordCoverage(segments, [alignWords(0, 1)])).toEqual([]);
+    expect(validateWordCoverage(segments, [alignWords(1, 1)])).toEqual([]);
+  });
+
+  it('does not flag a 0-word (classification-neutral) segment', () => {
+    const segments = [s('s0', 0, '')];
+    expect(validateWordCoverage(segments, [alignWords(0, 0)])).toEqual([]);
+  });
+
+  it('does not flag 2 of 3 matched (67%, clears the 60% ratio)', () => {
+    const segments = [s('s0', 0, 'alpha bravo charlie')];
+    const alignments = [alignWords(2, 3)];
+    expect(validateWordCoverage(segments, alignments)).toEqual([]);
+  });
+
+  it('does not flag 1 of 2 matched (50%, under ratio but only 1 word missing — the missing-2 floor)', () => {
+    const segments = [s('s0', 0, 'alpha bravo')];
+    const alignments = [alignWords(1, 2)];
+    expect(validateWordCoverage(segments, alignments)).toEqual([]);
+  });
+
+  it('flags one violation per bad segment, in order, leaving good segments untouched', () => {
+    const segments = [
+      s('s0', 0, 'alpha bravo charlie'),   // 1/3 — bad
+      s('s1', 1, 'delta echo foxtrot'),    // 3/3 — good
+      s('s2', 2, 'golf hotel india'),      // 1/3 — bad
+    ];
+    const alignments = [alignWords(1, 3), alignWords(3, 3), alignWords(1, 3)];
+
+    const violations = validateWordCoverage(segments, alignments);
+
+    expect(violations).toHaveLength(2);
+    expect(violations.map(v => v.detail!.segmentIndex)).toEqual([0, 2]);
+  });
+
+  it('truncates a long segment name to ~40 chars for the log detail', () => {
+    const longText = 'This is a very long scene description that goes on and on and on';
+    const segments = [s('s0', 0, longText)];
+    const violations = validateWordCoverage(segments, [alignWords(1, 3)]);
+    expect(violations).toHaveLength(1);
+    const name = violations[0]!.detail!.segmentName as string;
+    expect(name.length).toBeLessThanOrEqual(41); // 40 chars + ellipsis
+    expect(longText.startsWith(name.replace('…', ''))).toBe(true);
+  });
+
+  it('returns [] for empty input', () => {
+    expect(validateWordCoverage([], [])).toEqual([]);
+  });
+
+  it('never mutates its inputs', () => {
+    const segments = [s('s0', 0, 'alpha bravo charlie')];
+    const alignments = [alignWords(1, 3)];
+    const segmentsCopy = segments.map(sg => ({ ...sg }));
+    const alignmentsCopy = alignments.map(a => ({ ...a }));
+
+    validateWordCoverage(segments, alignments);
+
+    expect(segments).toEqual(segmentsCopy);
+    expect(alignments).toEqual(alignmentsCopy);
   });
 });
