@@ -74,6 +74,13 @@ import {
   type BoundaryQualityMeasurement,
 } from './services/syncContracts';
 import {
+  buildTranscriptInspectorRun,
+  compareTranscriptInspectorRuns,
+  tokenRowsToCsv,
+  type TranscriptInspectorRun,
+  type TranscriptInspectorTokenComparisonRow,
+} from './services/transcriptInspector';
+import {
   MIN_COVERED_RUN_LENGTH,
   NOISE_FLOOR_COVERAGE,
   BOUNDARY_QUALITY_LOUDNESS_RATIO_K,
@@ -2816,6 +2823,145 @@ export default function App() {
     }).__calibrateBoundaryQuality = calibrate;
     return () => {
       delete (window as unknown as { __calibrateBoundaryQuality?: (options?: { detail?: boolean }) => Promise<void> }).__calibrateBoundaryQuality;
+    };
+  }, []);
+
+  // Transcript Inspector (sync pipeline v2, Phase 1b — docs/sync-pipeline-v2-plan.md)
+  // — DEV-only, in-app; not wired to any UI. Follows __calibrateBoundaryQuality's
+  // precedent exactly: a DEV-gated window global invoked from the devtools
+  // console. MUST run in-app — silences are never persisted and are recomputed
+  // per sync from the audio blob via Web Audio, which does not exist outside the
+  // WebView; a terminal script cannot see what the pipeline sees.
+  //
+  // `await __transcriptInspector()` re-derives fresh tokens (via
+  // filterMalformedTokens, same audioDuration convention as
+  // __calibrateBoundaryQuality above) and fresh silences (via detectSilences)
+  // from the CURRENT project state, never touching it, and prints:
+  //   - a console.table of per-token rows (text/startSec/endSec/durationSec/
+  //     gapToPrevTokenSec/nearestPrecedingSilenceEndSec/smearSec)
+  //   - a CSV dump of the same rows (paste into a spreadsheet)
+  //   - aggregate smear metrics (median/p95, negative-smear count+fraction —
+  //     the segment-96 pathology) and the malformed-token drop breakdown
+  // It also returns the built TranscriptInspectorRun so two runs (e.g. before/
+  // after a transcription-arg or model change) can be captured and compared:
+  //   const a = await __transcriptInspector({ label: 'base.en' });
+  //   // ...re-transcribe / re-sync...
+  //   const b = await __transcriptInspector({ label: 'turbo+dtw' });
+  //   __transcriptInspector.compare(a, b);
+  // compare() keys token rows by normalized word + occurrence, never by index
+  // — the index space differs between runs (docs/sync-pipeline-v2-plan.md Part
+  // C, "Index-keyed references break after Phase 3").
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+
+    const inspect = async (options?: { label?: string }): Promise<TranscriptInspectorRun | undefined> => {
+      const project = projectRef.current;
+      const rawTokens = project.transcriptTokens ?? [];
+      const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
+
+      if (!voiceoverAsset) {
+        console.warn('[inspector] no voiceover asset on the current project.');
+        return undefined;
+      }
+      if (rawTokens.length === 0) {
+        console.warn('[inspector] no persisted transcript tokens on the current project — run Apply Sync first.');
+        return undefined;
+      }
+
+      const blobSize = voiceoverAsset.file?.size;
+      let waveformSource: WaveformSource | null = blobSize !== undefined
+        ? peekWaveform(voiceoverAsset.id, blobSize) ?? null
+        : null;
+      if (!waveformSource && blobSize !== undefined) {
+        waveformSource = await getPersistedWaveform(project.id, voiceoverAsset.id, blobSize);
+      }
+      if (!waveformSource) {
+        console.warn('[inspector] no persisted waveform peaks for the current voiceover — run Apply Sync first.');
+        return undefined;
+      }
+
+      const audioDurationSec = waveformSource.totalDuration;
+      const filterResult = filterMalformedTokens(rawTokens, audioDurationSec);
+
+      let silences: SilenceInterval[] = [];
+      try {
+        const resp = await fetch(voiceoverAsset.url);
+        const blob = await resp.blob();
+        const silenceResult = await detectSilences(blob);
+        if (silenceResult.status === 'ok') silences = silenceResult.silences;
+        else console.warn('[inspector] silence detection failed, inspecting with zero silences:', silenceResult.errorMessage);
+      } catch (err) {
+        console.warn('[inspector] voiceover fetch/silence-scan failed, inspecting with zero silences:', err);
+      }
+
+      const run = buildTranscriptInspectorRun({
+        label: options?.label ?? project.name,
+        tokens: filterResult.tokens,
+        drops: filterResult.drops,
+        totalTokens: filterResult.totalTokens,
+        silences,
+        audioDurationSec,
+      });
+
+      console.log(
+        `[inspector] "${run.label}" — ${run.totalTokens} raw tokens (${run.skippedTokenCount} dropped), ` +
+        `${run.rows.length} kept, ${run.silenceCount} silences detected, audioDuration=${audioDurationSec.toFixed(2)}s`,
+      );
+      console.table(run.rows.map(r => ({
+        idx: r.index,
+        text: r.text,
+        startSec: r.startSec.toFixed(3),
+        endSec: r.endSec.toFixed(3),
+        durationSec: r.durationSec.toFixed(3),
+        gapToPrevSec: r.gapToPrevTokenSec !== null ? r.gapToPrevTokenSec.toFixed(3) : '',
+        nearestSilenceEndSec: r.nearestPrecedingSilenceEndSec !== null ? r.nearestPrecedingSilenceEndSec.toFixed(3) : '',
+        smearSec: r.smearSec !== null ? r.smearSec.toFixed(3) : '',
+      })));
+      console.log(
+        `[inspector] smear — pause-following tokens: ${run.aggregates.pauseFollowingTokenCount}, ` +
+        `median=${run.aggregates.medianSmearSec !== null ? run.aggregates.medianSmearSec.toFixed(3) + 's' : 'n/a'}, ` +
+        `p95=${run.aggregates.p95SmearSec !== null ? run.aggregates.p95SmearSec.toFixed(3) + 's' : 'n/a'}, ` +
+        `negative=${run.aggregates.negativeSmearCount} (${run.aggregates.negativeSmearFraction !== null ? (run.aggregates.negativeSmearFraction * 100).toFixed(1) + '%' : 'n/a'})`,
+      );
+      console.log('[inspector] malformed-token drop breakdown:', run.dropBreakdown);
+      console.log('[inspector] CSV (copy below):');
+      console.log(tokenRowsToCsv(run.rows));
+
+      return run;
+    };
+
+    const compare = (
+      runA: TranscriptInspectorRun,
+      runB: TranscriptInspectorRun,
+    ): TranscriptInspectorTokenComparisonRow[] => {
+      console.log(`[inspector] comparing "${runA.label}" vs "${runB.label}"`);
+      console.table([
+        { metric: 'median smear (s)', [runA.label]: runA.aggregates.medianSmearSec, [runB.label]: runB.aggregates.medianSmearSec },
+        { metric: 'p95 smear (s)', [runA.label]: runA.aggregates.p95SmearSec, [runB.label]: runB.aggregates.p95SmearSec },
+        { metric: 'negative-smear fraction', [runA.label]: runA.aggregates.negativeSmearFraction, [runB.label]: runB.aggregates.negativeSmearFraction },
+        { metric: 'pause-following tokens', [runA.label]: runA.aggregates.pauseFollowingTokenCount, [runB.label]: runB.aggregates.pauseFollowingTokenCount },
+      ]);
+      const rows = compareTranscriptInspectorRuns(runA, runB);
+      console.table(rows.map(r => ({
+        key: r.key,
+        textA: r.textA ?? '',
+        textB: r.textB ?? '',
+        smearA: r.smearA !== null ? r.smearA.toFixed(3) : '',
+        smearB: r.smearB !== null ? r.smearB.toFixed(3) : '',
+        deltaSmearSec: r.deltaSmearSec !== null ? r.deltaSmearSec.toFixed(3) : '',
+      })));
+      return rows;
+    };
+
+    type TranscriptInspectorFn = ((options?: { label?: string }) => Promise<TranscriptInspectorRun | undefined>) & {
+      compare: typeof compare;
+    };
+    const inspectorFn = inspect as TranscriptInspectorFn;
+    inspectorFn.compare = compare;
+
+    (window as unknown as { __transcriptInspector: TranscriptInspectorFn }).__transcriptInspector = inspectorFn;
+    return () => {
+      delete (window as unknown as { __transcriptInspector?: TranscriptInspectorFn }).__transcriptInspector;
     };
   }, []);
 
