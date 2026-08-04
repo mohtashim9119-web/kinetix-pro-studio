@@ -94,6 +94,7 @@ import {
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
   buildGroupedViolationEntry,
+  buildUnsupportedLanguageEntry,
   mintSyncLogId,
 } from './services/syncLog';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -121,7 +122,7 @@ import {
 } from './services/projectStore';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { useFocusTrap } from './hooks/useFocusTrap';
-import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps } from './constants';
+import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
@@ -1427,6 +1428,11 @@ export default function App() {
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const [showReviewMapping, setShowReviewMapping] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
+  // Phase 2a H.4 guard — per-session dismiss for the unsupported-language
+  // banner; reset (in the effect below) whenever project.language changes to
+  // a NEW unsupported value, so dismissing one warning can't silently hide a
+  // later, different one.
+  const [languageBannerDismissed, setLanguageBannerDismissed] = useState(false);
   const [showDashboard, setShowDashboard] = useState(true);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
@@ -2181,6 +2187,7 @@ export default function App() {
         asset,
         duration,
         [],
+        projectRef.current.language,
         () => {},
         (updater) => {
           // Commit-time ownership guard: only write back if `asset` (the file
@@ -3295,6 +3302,28 @@ export default function App() {
     return () => clearTimeout(t);
   }, [exportState.showExportSuccess, dismissSuccess]);
 
+  // --- Phase 2a H.4 guard: unsupported-language log entry ---
+  // Fires once per DISTINCT unsupported value (loggedUnsupportedLanguageRef),
+  // not on every render a language happens to still be unsupported — an
+  // undefined/supported value resets the ref so a later different unsupported
+  // value logs again. The banner below is a plain derived render, independent
+  // of this effect, so it doesn't need its own "already shown" tracking.
+  const loggedUnsupportedLanguageRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const lang = project.language;
+    if (lang === undefined || SUPPORTED_LANGUAGE_CODES.includes(lang)) {
+      loggedUnsupportedLanguageRef.current = undefined;
+      return;
+    }
+    if (loggedUnsupportedLanguageRef.current === lang) return;
+    loggedUnsupportedLanguageRef.current = lang;
+    setLanguageBannerDismissed(false);
+    const entry = buildUnsupportedLanguageEntry(mintSyncLogId(), lang);
+    setProject(prev => appendSyncLogEntries(prev, [entry]));
+  }, [project.language]);
+  const isLanguageUnsupported =
+    project.language !== undefined && !SUPPORTED_LANGUAGE_CODES.includes(project.language);
+
   const togglePlay = () => setIsPlaying(p => !p);
 
   const handleSpeedClick = useCallback(() => {
@@ -4333,6 +4362,8 @@ export default function App() {
           resolutionTier={project.resolutionTier ?? DEFAULT_RESOLUTION_TIER}
           onResolutionTierChange={(v) => setProject(p => ({ ...p, resolutionTier: v }))}
           onSetAllOverlay={handleSetAllOverlay}
+          language={project.language}
+          onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
           onClose={() => setShowProjectSettingsModal(false)}
         />
       )}
@@ -4448,6 +4479,28 @@ export default function App() {
           <button
             onClick={() => setStockError(null)}
             aria-label="Dismiss error"
+            className="shrink-0 text-red-400 hover:text-white transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {/* Unsupported-language banner (Phase 2a, H.4 guard) — persistent while
+          project.language stays outside the supported set; dismissible for
+          the session, re-shown if the language changes to a new unsupported
+          value. Top-anchored (not the bottom toast lane above) since this is
+          ongoing project state, not a one-off action result. */}
+      {isLanguageUnsupported && !languageBannerDismissed && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-lg">
+          <AlertCircle size={16} className="shrink-0 text-red-400" />
+          <span className="flex-1">
+            Project language &quot;{project.language}&quot; is outside the supported set (English, Spanish, French,
+            Portuguese, German) — sync accuracy is not guaranteed.
+          </span>
+          <button
+            onClick={() => setLanguageBannerDismissed(true)}
+            aria-label="Dismiss language warning"
             className="shrink-0 text-red-400 hover:text-white transition-colors"
           >
             <X size={16} />

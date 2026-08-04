@@ -322,6 +322,23 @@ export interface Project {
    *  table. Undefined on pre-existing projects; treat as DEFAULT_RESOLUTION_TIER
    *  ('1080p') — matches today's hardcoded exportResolution default. */
   resolutionTier?: ResolutionTier;
+  /** Multilingual production support (Phase 2a, docs/sync-pipeline-v2-plan.md
+   *  H.1/H.7) — a whisper language code (e.g. `'en'`, `'es'`). Undefined until
+   *  EITHER a transcription runs with no stored language yet (whisper-cli's
+   *  `-l auto` detection result is written here — see useWhisper.ts) OR the
+   *  user sets an explicit override in Project Settings. Once set by either
+   *  path it is STICKY: a later transcription passes it straight through
+   *  (skipping re-detection) and never overwrites it — "detection is a
+   *  suggestion, not a fact" (H.7) means it's always user-editable afterward,
+   *  not that it's silently re-guessed on every run. Undefined on projects
+   *  persisted before this field existed and on every pre-Phase-2a project
+   *  until its next transcription or an explicit Settings edit; the SUPPORTED
+   *  set is English/Spanish/French/Portuguese/German (constants.ts's
+   *  SUPPORTED_LANGUAGES) — anything else is accepted (an explicit override
+   *  is never blocked) but produces the H.4 guard's 'unsupported-language'
+   *  log entry + banner, since whitespace word-splitting and normalization
+   *  are only verified for the supported five. */
+  language?: string;
   /** WS-logs — persistent sync log, newest entries appended at the END. Capped
    *  at MAX_LOG_ENTRIES (services/syncConstants.ts); older entries are pruned
    *  from the front. Undefined on projects saved before WS-logs — treat as []. */
@@ -359,6 +376,16 @@ export interface Project {
  *                      not a new failure mode — it lets a user distinguish a
  *                      legitimate anchor-drift recovery from one that landed
  *                      far from the segment's expected position.
+ *  - 'unsupported-language' Phase 2a, H.4 guard — the project's detected or
+ *                      user-set language (Project.language) is outside the
+ *                      five supported languages (constants.ts's
+ *                      SUPPORTED_LANGUAGES). Error, not warning: whitespace
+ *                      word-splitting and normalization are only verified for
+ *                      the supported five, so sync accuracy on anything else
+ *                      is unguaranteed, not merely degraded. Always carries
+ *                      severity:'error' and a plain-language fixHint; also
+ *                      drives a persistent banner (App.tsx) — see Contract
+ *                      OUT's required-additions table, docs/sync-pipeline-v2-plan.md.
  */
 export type SyncLogEntryType =
   | 'skip'
@@ -368,7 +395,8 @@ export type SyncLogEntryType =
   | 'silence-error'
   | 'malformed-token'
   | 'no-asset'
-  | 'rescue';
+  | 'rescue'
+  | 'unsupported-language';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

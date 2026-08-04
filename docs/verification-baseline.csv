@@ -43,3 +43,77 @@ a corrupted interior || pocket instabilities isolated,173-seg,control,correct,Ph
 establish a perimeter || you cannot hold,173-seg,control,correct,Phase 0,2026-08-03
 lead hunter slows || every person slows,V6-447,word-shift-11,"word-shifted (cascade, not single-word theft: s77 covers own text + steals s78's opening words, boundary lands inside s78; s78 covers remainder + all of s79 ('No signal.'); s79 covers all of s80 ('No sound.'); s80 covers only 2 words of s81; s81 covers its remainder — see sync-pipeline-v2-plan.md Part L)",Phase 0,2026-08-04
 wind || small animals,V6-447,word-shift-11,"word-shifted (cascade, not single-word theft: s144 ('Wind.') plays EMPTY; s145 plays s144's audio + its own words ('Small animals.') play under s146; s146's words ('The fire settling.') play under s147; s147 covers its own full words too — see sync-pipeline-v2-plan.md Part L)",Phase 0,2026-08-04
+small animals || the fire settling,V6-447,short-segment-run,"word-shifted (cascade continues, forward direction: clean cut, but s145's own words ('Small animals.') play under s146 instead of s146's own text ('The fire settling.') — same mechanism as the 144-145 boundary above; owner-confirmed 2026-08-04, Part L)",Phase 0,2026-08-04
+the fire settling || branches pulling tight,V6-447,short-segment-run,"word-shifted (cascade continues, forward direction: clean cut, but s146's own words ('The fire settling.') play under s147; s147 (4.2s) is long enough to also fit its own true words afterward, so the cascade self-corrects there — the contiguity invariant behaving correctly, not a bug; owner-confirmed 2026-08-04, Part L)",Phase 0,2026-08-04
+sleep || three hours at,V6-447,short-segment-run,"correct — clean cut, 'sleep.' plays in its own ~0.8s slot. Short-segment CONTROL: same duration class as the 'No sound.' defect below, but correct — confirms the governing signal is the smear/duration ratio, not duration alone (Part L amendment, 2026-08-04)",Phase 0,2026-08-04
+no signal || no sound,V6-447,short-segment-run,"word-shifted (backward smear — opposite direction to the 144-147 cascade: clean cut, but s80's own words ('No sound.') play under s79 instead of s80's own ~0.8s slot; audio arrives EARLY relative to video here, not late. Part L amendment, 2026-08-04)",Phase 0,2026-08-04
+no sound || the shift moves,V6-447,short-segment-run,"word-shifted (picker over-reach, not smear: this cut is NOT clean — a word lands mid-boundary, chopped. Distinct signature from the clean-but-misplaced cuts elsewhere in this run; s80's slot ends up covering only 2 words of s81. Part L amendment, 2026-08-04)",Phase 0,2026-08-04
+small and permanent || a new understanding,V6-447,word-shift-11,,phase-2a,2026-08-05
+on your shoulder || not hard,V6-447,word-shift-11,,phase-2a,2026-08-05
+lead hunter slows || every person slows,V6-447,word-shift-11,,phase-2a,2026-08-05
+to announce you || you never see,V6-447,word-shift-11,,phase-2a,2026-08-05
+does the same || what the job,V6-447,word-shift-11,,phase-2a,2026-08-05
+is the point || it keeps you,V6-447,word-shift-11,,phase-2a,2026-08-05
+wind || small animals,V6-447,word-shift-11,,phase-2a,2026-08-05
+is going fast || you push through,V6-447,word-shift-11,,phase-2a,2026-08-05
+a long time || you carry it,V6-447,word-shift-11,,phase-2a,2026-08-05
+positioning was right || the rotations were,V6-447,word-shift-11,,phase-2a,2026-08-05
+through the living || night after night,V6-447,word-shift-11,,phase-2a,2026-08-05
+they just do || the band has,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+before you look || a predator s,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+a false alarm || and you do,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+afraid of fear || which is the,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+what you had || the rest belongs,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+people orient by || when the bands,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+seasons than you || can count and,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+s youngest scout || a girl of,V6-447,seam-exemption-8,,phase-2a,2026-08-05
+chitin thick enough || to deflect small,173-seg,known-defect,,phase-2a,2026-08-05
+just kill soldiers || they take apart,173-seg,skip-adjacent,,phase-2a,2026-08-05
+demolition target instead || the environment did,173-seg,locked-segment,,phase-2a,2026-08-05
+it is close || and the fire,V6-447,control,,phase-2a,2026-08-05
+and fat-soaked moss || bound with sinew,V6-447,control,,phase-2a,2026-08-05
+a torch again || those long column,V6-447,control,,phase-2a,2026-08-05
+never far || never alone,V6-447,control,,phase-2a,2026-08-05
+when you report || but your hands,V6-447,control,,phase-2a,2026-08-05
+to finish arguing || you are twenty,V6-447,control,,phase-2a,2026-08-05
+not worth finding || that night by,V6-447,control,,phase-2a,2026-08-05
+before that moment || slow is the,V6-447,control,,phase-2a,2026-08-05
+you say so || you tell fen,V6-447,control,,phase-2a,2026-08-05
+what they see || the same thing,V6-447,control,,phase-2a,2026-08-05
+everything on it || the jungle did,173-seg,control,,phase-2a,2026-08-05
+an expected outcome || for everyone else,173-seg,control,,phase-2a,2026-08-05
+by warp physics || floors become ceilings,173-seg,control,,phase-2a,2026-08-05
+a maintenance fault || squad formations built,173-seg,control,,phase-2a,2026-08-05
+entire operating sectors || ground that should,173-seg,control,,phase-2a,2026-08-05
+after being destroyed || that single feature,173-seg,control,,phase-2a,2026-08-05
+do not emerge || for ground forces,173-seg,control,,phase-2a,2026-08-05
+no particular standing || a ship that,173-seg,control,,phase-2a,2026-08-05
+a corrupted interior || pocket instabilities isolated,173-seg,control,,phase-2a,2026-08-05
+establish a perimeter || you cannot hold,173-seg,control,,phase-2a,2026-08-05
+small animals || the fire settling,V6-447,short-segment-run,,phase-2a,2026-08-05
+the fire settling || branches pulling tight,V6-447,short-segment-run,,phase-2a,2026-08-05
+sleep || three hours at,V6-447,short-segment-run,,phase-2a,2026-08-05
+no signal || no sound,V6-447,short-segment-run,,phase-2a,2026-08-05
+no sound || the shift moves,V6-447,short-segment-run,,phase-2a,2026-08-05
+on your face || the discomfort is,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+in the cold || sleeping people breathing,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+that do not || you are not,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+you carry it || you are thirty,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+are forty one || there are children,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+are forty nine || three of your,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+crossed your path || people look toward,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+hear the strength || fear as a,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+one after her || that one will,V6-447,boundary-quality-flag,,phase-2a,2026-08-05
+charge packs corrode || optical scopes fog,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+decides to engage || catachan devil ants,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+and moves on || number five space,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+a launched round || and the acoustic,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+number four vraks || seventeen years,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+thick rockcrete everywhere || deep vaults below,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+dimensionally compressed architecture || rooms that register,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+and resumed patrol || progress measured in,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+and scaling up || the astral knights,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+where the laws || governing material reality,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+concept of shape || the crew does,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+correct departure coordinates || crew psychological integrity,173-seg,boundary-quality-flag,,phase-2a,2026-08-05
+not a given || some environments kill,173-seg,boundary-quality-flag,,phase-2a,2026-08-05

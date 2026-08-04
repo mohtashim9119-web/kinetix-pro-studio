@@ -18,6 +18,31 @@ export const FONT_FAMILIES = [
 ];
 
 // ---------------------------------------------------------------------------
+// SUPPORTED_LANGUAGES — Multilingual production support (Phase 2a,
+// docs/sync-pipeline-v2-plan.md H.0). The five languages sync accuracy is
+// verified for: all Latin-script, whitespace-delimited, high-resource in
+// Whisper's training data. An explicit Project Settings override is never
+// restricted to this list (H.7 — detection/setting is always user-editable),
+// but a Project.language outside it trips the H.4 guard (SyncLogEntryType
+// 'unsupported-language'). Codes are whisper.cpp's own ISO 639-1 codes —
+// used directly as the `-l` argument (whisper.rs) with no translation layer.
+// ---------------------------------------------------------------------------
+export interface SupportedLanguage {
+  code: string;
+  label: string;
+}
+
+export const SUPPORTED_LANGUAGES: SupportedLanguage[] = [
+  { code: 'en', label: 'English' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'fr', label: 'French' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'de', label: 'German' },
+];
+
+export const SUPPORTED_LANGUAGE_CODES: readonly string[] = SUPPORTED_LANGUAGES.map((l) => l.code);
+
+// ---------------------------------------------------------------------------
 // FILTERS — only entries with a real getFilterStyle implementation.
 // Phantom filters (vignette, scanlines, film-grain, etc.) removed from this
 // list; their ids remain valid in types.ts so stored projects load cleanly.

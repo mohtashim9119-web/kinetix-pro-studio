@@ -17,8 +17,15 @@ import type { AspectRatio, ResolutionTier, VideoSegment } from '../types';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { SUPPORTED_LANGUAGES } from '../constants';
 
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
+
+/** Sentinel for the "no override — detect on next transcription" option.
+ *  Never a real whisper language code (constants.ts's SUPPORTED_LANGUAGES),
+ *  so it can't collide. Selecting it clears Project.language back to
+ *  undefined (see handleSave below). */
+const AUTO_DETECT_VALUE = 'auto';
 
 interface Props {
   segments: VideoSegment[];
@@ -28,6 +35,12 @@ interface Props {
   resolutionTier: ResolutionTier;
   onResolutionTierChange: (v: ResolutionTier) => void;
   onSetAllOverlay: (value: boolean) => void;
+  /** Phase 2a (H.1/H.7) — the project's current language (detected or
+   *  overridden), or undefined if no transcription has run yet and the user
+   *  hasn't set one. Detection is a suggestion, not a fact — this control is
+   *  always editable regardless of how the current value got here. */
+  language: string | undefined;
+  onLanguageChange: (v: string | undefined) => void;
   onClose: () => void;
 }
 
@@ -37,15 +50,18 @@ export function ProjectSettingsModal({
   resolutionTier,
   onResolutionTierChange,
   onSetAllOverlay,
+  language,
+  onLanguageChange,
   onClose,
 }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
 
-  // ── Draft state — all three sections. Committed atomically on Save;
+  // ── Draft state — all four sections. Committed atomically on Save;
   // Cancel/Escape discard everything below (§2.2). ──────────────────────────
   const [draftNativeTier, setDraftNativeTier] = useState<ResolutionTier>(resolutionTier);
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
+  const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
 
   const webcodecsCapable = isWebCodecsExportCapable();
 
@@ -63,6 +79,7 @@ export function ProjectSettingsModal({
     onResolutionTierChange(draftNativeTier);
     setWebCodecsExportToggle(draftWebcodecsEnabled);
     onSetAllOverlay(draftOverlayOn);
+    onLanguageChange(draftLanguage === AUTO_DETECT_VALUE ? undefined : draftLanguage);
     onClose();
   };
 
@@ -111,6 +128,32 @@ export function ProjectSettingsModal({
               <label className="text-[8px] uppercase tracking-widest text-gray-600">Aspect Ratio</label>
               <p className="text-[12px] text-gray-400 font-bold">{aspectRatio}</p>
               <p className="text-[9px] text-gray-600 italic">Aspect ratio is locked at project creation</p>
+            </div>
+          </div>
+
+          {/* Section: Language (Phase 2a, H.1/H.7) — detection is a
+              suggestion, not a fact; always editable here regardless of
+              whether the current value came from detection or a prior
+              override. */}
+          <div className="space-y-2 pt-4 border-t border-[#222]">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Language</p>
+            <div className="space-y-1">
+              <label className="text-[8px] uppercase tracking-widest text-gray-600">Transcription Language</label>
+              <select
+                value={draftLanguage}
+                onChange={(e) => setDraftLanguage(e.target.value)}
+                className="w-full bg-[#1A1A1A] border border-[#282828] p-2.5 rounded-lg text-[11px] font-bold uppercase tracking-widest outline-none focus:border-[#F27D26] transition-colors"
+              >
+                <option value={AUTO_DETECT_VALUE}>Auto-detect</option>
+                {SUPPORTED_LANGUAGES.map((l) => (
+                  <option key={l.code} value={l.code}>{l.label}</option>
+                ))}
+              </select>
+              <p className="text-[9px] text-gray-600">
+                {draftLanguage === AUTO_DETECT_VALUE
+                  ? 'Detected automatically on the next transcription — a suggestion, not a guarantee.'
+                  : 'Overrides auto-detection on the next transcription. Only English, Spanish, French, Portuguese, and German are verified for sync accuracy.'}
+              </p>
             </div>
           </div>
 

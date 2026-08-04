@@ -127,6 +127,12 @@ export interface UseWhisperApi {
     audioAsset: Asset,
     durationSecs: number,
     segments: VideoSegment[],
+    /** Phase 2a (H.1/H.7) — the project's stored/overridden language code, or
+     *  `undefined` to auto-detect. `undefined` here is what makes the run use
+     *  `-l auto`; once detection (or an explicit override) sets a value, this
+     *  should be passed on every subsequent call so detection never re-runs
+     *  and silently overwrites a user's choice. */
+    language: string | undefined,
     onSegmentsUpdated: (segments: VideoSegment[]) => void,
     onProjectUpdated: (updater: (p: Project) => Project) => void,
   ) => Promise<void>;
@@ -171,6 +177,7 @@ export function useWhisper(): UseWhisperApi {
       audioAsset: Asset,
       durationSecs: number,
       segments: VideoSegment[],
+      language: string | undefined,
       onSegmentsUpdated: (segments: VideoSegment[]) => void,
       onProjectUpdated: (updater: (p: Project) => Project) => void,
     ) => {
@@ -198,9 +205,10 @@ export function useWhisper(): UseWhisperApi {
       setTranscriptionStatus({ phase: 'transcribing', percent: 0, jobId });
 
       try {
-        const tokens = await transcribeWithProgress(
+        const { tokens, detectedLanguage } = await transcribeWithProgress(
           audioAsset,
           durationSecs,
+          language,
           (percent) => {
             if (generationRef.current !== generation) return;
             setTranscriptionStatus({ phase: 'transcribing', percent, jobId });
@@ -304,6 +312,14 @@ export function useWhisper(): UseWhisperApi {
             ? getFileIdentity(audioAsset.file)
             : p.lastTranscribedFileIdentity,
           transcriptTokens: tokens,
+          // Phase 2a (H.1/H.7) — detection is a SUGGESTION that fills the gap
+          // only once: only ever written when the project has no language yet.
+          // An already-set value (from a prior detection OR an explicit
+          // Project Settings override) is never overwritten here — re-running
+          // this same transcription with a stored language passes it directly
+          // (see the language param above), so detectedLanguage is undefined
+          // on that path anyway and this branch is a no-op by construction.
+          language: p.language ?? detectedLanguage,
         }));
 
         if (segmentSetStillValid(finalSegments)) {

@@ -40,7 +40,12 @@ pub struct TranscriptToken {
 #[serde(tag = "event", content = "data")]
 pub enum WhisperEvent {
     Progress { percent: u8 },
-    Done { tokens: Vec<TranscriptToken> },
+    // `detected_language` (Phase 2a, multilingual model swap) is `Some(code)`
+    // only when the invocation actually ran `-l auto` AND whisper-cli printed
+    // an "auto-detected language" line to stderr — i.e. never set when the
+    // caller passed an explicit language code (nothing to detect) and never
+    // set on a run that failed before that line could print.
+    Done { tokens: Vec<TranscriptToken>, detected_language: Option<String> },
     Error { message: String },
 }
 
@@ -48,10 +53,18 @@ pub enum WhisperEvent {
 // Model path resolver
 // ---------------------------------------------------------------------------
 
+// Phase 2a (multilingual model swap, docs/sync-pipeline-v2-plan.md H.1) — the
+// English-only ggml-base.en.bin is replaced by the multilingual
+// ggml-large-v3-turbo.bin so `-l auto` (see whisper_transcribe below) is no
+// longer silently ignored (whisper-cli ignores -l auto on an .en-suffixed
+// model). Measured 2026-08-04: 1624555275 bytes (~1.51 GiB) on disk,
+// ~2.1-2.2 GiB resident during inference (docs/sync-pipeline-v2-plan.md H.9).
+const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
+
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // Production: resource_dir bundled by tauri
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let model = resource_dir.join("models").join("ggml-base.en.bin");
+        let model = resource_dir.join("models").join(MODEL_FILENAME);
         if model.exists() {
             return Ok(model);
         }
@@ -59,7 +72,7 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         #[cfg(target_os = "windows")]
         {
             if let Some(parent) = resource_dir.parent() {
-                let model = parent.join("models").join("ggml-base.en.bin");
+                let model = parent.join("models").join(MODEL_FILENAME);
                 if model.exists() {
                     return Ok(model);
                 }
@@ -75,7 +88,7 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .parent()
         .unwrap_or(&exe)
         .join("models")
-        .join("ggml-base.en.bin");
+        .join(MODEL_FILENAME);
     if prod_model.exists() {
         return Ok(prod_model);
     }
@@ -86,17 +99,16 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .parent().unwrap_or(&exe)   // target/
         .parent().unwrap_or(&exe)   // src-tauri/
         .join("models")
-        .join("ggml-base.en.bin");
+        .join(MODEL_FILENAME);
     if dev_model.exists() {
         return Ok(dev_model);
     }
 
-    Err(
-        "ggml-base.en.bin not found. \
-         Run: curl -L -o src-tauri/models/ggml-base.en.bin \
-         https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
-            .to_string(),
-    )
+    Err(format!(
+        "{MODEL_FILENAME} not found. \
+         Run: curl -L -o src-tauri/models/{MODEL_FILENAME} \
+         https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +169,11 @@ async fn transcode_to_wav(
 ///
 /// * `audio_b64`    — base64-encoded audio bytes (any container ffmpeg can read)
 /// * `duration_secs` — total audio duration (drives 0–100 progress)
+/// * `language`     — a whisper language code (e.g. "en"), or "auto" to let
+///                     whisper-cli detect it (Phase 2a — H.1/H.7: detection is
+///                     a suggestion, stored per-project and user-overridable;
+///                     the frontend passes "auto" only when the project has no
+///                     stored/overridden language yet).
 /// * `on_event`     — frontend channel receiving WhisperEvent variants
 #[tauri::command]
 pub async fn whisper_transcribe(
@@ -164,6 +181,7 @@ pub async fn whisper_transcribe(
     state: tauri::State<'_, WhisperState>,
     audio_b64: String,
     duration_secs: f64,
+    language: String,
     on_event: Channel<WhisperEvent>,
 ) -> Result<(), String> {
     // Kill any previously running whisper child before starting a new job.
@@ -237,17 +255,28 @@ pub async fn whisper_transcribe(
 
     let model = model_path(&app)?;
 
+    // Phase 2a — language argument (docs/sync-pipeline-v2-plan.md, Step 3
+    // decisions): "-l auto" (re-enabled now that the model is multilingual)
+    // when the project has no stored/overridden language yet, else the
+    // stored code directly, skipping re-detection. `-np` (no-prints) is
+    // DROPPED: it was suppressing whisper-cli's "auto-detected language"
+    // line along with the rest of the stderr diagnostic dump; empirically
+    // verified (2026-08-04) that dropping it does not change stdout's token
+    // lines at all (byte-identical with vs. without). `--dtw base.en` is
+    // DROPPED: it was already a silent no-op (flash attention is on by
+    // default and disables DTW; -nfa would enable it but breaks stdout
+    // printing) AND the preset name is model-specific — carrying a
+    // base.en-named preset over to turbo would be actively misleading. DTW
+    // is Phase 2b/3 work, not this phase's (no timing-source change here).
     let (mut rx, child) = app
         .shell()
         .sidecar("whisper")
         .map_err(|e| format!("sidecar lookup: {e}"))?
         .args([
-            "-m",    model.to_str().unwrap_or(""),
-            "-f",    wav_path.to_str().unwrap_or(""),
-            "-ml",   "1",
-            "-np",
-            "-l",    "en",
-            "--dtw", "base.en",
+            "-m",  model.to_str().unwrap_or(""),
+            "-f",  wav_path.to_str().unwrap_or(""),
+            "-ml", "1",
+            "-l",  language.as_str(),
         ])
         .spawn()
         .map_err(|e| format!("whisper spawn: {e}"))?;
@@ -260,6 +289,13 @@ pub async fn whisper_transcribe(
 
     let mut line_buf: Vec<u8> = Vec::new();
     let mut accumulated: Vec<String> = Vec::new();
+    // Phase 2a — stderr is now scanned (previously fully ignored) for
+    // whisper-cli's "auto-detected language: XX (p = 0.NN)" line, the only
+    // way to observe what `-l auto` resolved to. Line-buffered the same way
+    // stdout already is, just kept in a separate buffer/accumulator so the
+    // two streams' interleaving can never corrupt either one's line framing.
+    let mut err_line_buf: Vec<u8> = Vec::new();
+    let mut detected_language: Option<String> = None;
 
     while let Some(event) = rx.recv().await {
         match event {
@@ -285,11 +321,23 @@ pub async fn whisper_transcribe(
                     }
                 }
             }
-            CommandEvent::Stderr(_) => {
-                // whisper-cli writes timing info to stderr; ignored.
+            CommandEvent::Stderr(bytes) => {
+                err_line_buf.extend_from_slice(&bytes);
+                while let Some(pos) = err_line_buf.iter().position(|&b| b == b'\n') {
+                    let raw: Vec<u8> = err_line_buf.drain(..=pos).collect();
+                    let line = String::from_utf8_lossy(&raw)
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string();
+                    if detected_language.is_none() {
+                        if let Some(lang) = parse_detected_language(&line) {
+                            detected_language = Some(lang);
+                        }
+                    }
+                }
             }
             CommandEvent::Terminated(status) => {
-                // Flush any remaining bytes in the line buffer.
+                // Flush any remaining bytes in the line buffers.
                 if !line_buf.is_empty() {
                     let line = String::from_utf8_lossy(&line_buf)
                         .trim_end_matches('\n')
@@ -299,6 +347,18 @@ pub async fn whisper_transcribe(
                         accumulated.push(line);
                     }
                     line_buf.clear();
+                }
+                if !err_line_buf.is_empty() {
+                    let line = String::from_utf8_lossy(&err_line_buf)
+                        .trim_end_matches('\n')
+                        .trim_end_matches('\r')
+                        .to_string();
+                    if detected_language.is_none() {
+                        if let Some(lang) = parse_detected_language(&line) {
+                            detected_language = Some(lang);
+                        }
+                    }
+                    err_line_buf.clear();
                 }
 
                 // Remove stored child (process is gone).
@@ -312,7 +372,7 @@ pub async fn whisper_transcribe(
                 match code {
                     0 => {
                         let tokens = parse_stdout_tokens(&accumulated);
-                        let _ = on_event.send(WhisperEvent::Done { tokens });
+                        let _ = on_event.send(WhisperEvent::Done { tokens, detected_language });
                     }
                     // SIGINT (130) or SIGTERM (143) — user cancelled; silent.
                     130 | 143 => {}
@@ -358,6 +418,19 @@ pub async fn whisper_cancel(
 // ---------------------------------------------------------------------------
 // Parsing helpers
 // ---------------------------------------------------------------------------
+
+/// Extracts the language code from a whisper-cli stderr line of the form
+/// `whisper_full_with_state: auto-detected language: en (p = 0.999905)`
+/// (verified against a real run, 2026-08-04), or None if the line doesn't
+/// match. Only ever produced when `-l auto` was passed — a run given an
+/// explicit language code skips detection and never prints this line.
+fn parse_detected_language(line: &str) -> Option<String> {
+    const MARKER: &str = "auto-detected language: ";
+    let idx = line.find(MARKER)?;
+    let after = &line[idx + MARKER.len()..];
+    let code = after.split_whitespace().next()?;
+    if code.is_empty() { None } else { Some(code.to_string()) }
+}
 
 /// Returns the end timestamp in seconds from a whisper progress line of the
 /// form `[HH:MM:SS.mmm --> HH:MM:SS.mmm]  text…`, or None if the line

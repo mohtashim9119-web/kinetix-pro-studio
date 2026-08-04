@@ -15,7 +15,11 @@ export type { TranscriptToken };
 
 type WhisperEvent =
   | { event: 'Progress'; data: { percent: number } }
-  | { event: 'Done'; data: { tokens: TranscriptToken[] } }
+  // detectedLanguage (Phase 2a, multilingual model swap) mirrors Rust's
+  // WhisperEvent::Done.detected_language (whisper.rs) — set only when the
+  // invocation ran with language:'auto' AND whisper-cli printed an
+  // "auto-detected language" line; undefined for an explicit-language run.
+  | { event: 'Done'; data: { tokens: TranscriptToken[]; detectedLanguage?: string } }
   | { event: 'Error'; data: { message: string } };
 
 // ---------------------------------------------------------------------------
@@ -1505,17 +1509,32 @@ export function distributeSegmentTimes(
 // Main entry point
 // ---------------------------------------------------------------------------
 
+/** Result of a transcription run — `detectedLanguage` (Phase 2a) is set only
+ *  when `language` was `undefined` (i.e. the invocation ran `-l auto`) AND
+ *  whisper-cli's stderr printed a detection line; a run given an explicit
+ *  language code never sets it, since nothing was detected. */
+export interface TranscribeResult {
+  tokens: TranscriptToken[];
+  detectedLanguage?: string;
+}
+
 /**
  * Transcribes `audioAsset` using the bundled whisper-cli sidecar, streaming
  * progress via `onProgress` until the result (or an error) is returned.
  * Honouring `signal` aborts the job mid-flight.
+ *
+ * `language` (Phase 2a, H.1/H.7) is a whisper language code (e.g. `'en'`) to
+ * force, or `undefined` to let whisper-cli auto-detect — the caller passes
+ * `project.language` directly, which is exactly this undefined-means-auto
+ * convention (see types.ts's `Project.language` doc comment).
  */
 export async function transcribeWithProgress(
   audioAsset: Asset,
   durationSecs: number,
+  language: string | undefined,
   onProgress: (percent: number) => void,
   signal: AbortSignal,
-): Promise<TranscriptToken[]> {
+): Promise<TranscribeResult> {
   let buffer: ArrayBuffer;
   if (audioAsset.file) {
     // Prefer the raw File object — avoids blob URL fetch restrictions in WebView2 (Windows)
@@ -1530,7 +1549,7 @@ export async function transcribeWithProgress(
   }
   const audiob64 = arrayBufferToBase64(buffer);
 
-  return new Promise<TranscriptToken[]>((resolve, reject) => {
+  return new Promise<TranscribeResult>((resolve, reject) => {
     if (signal.aborted) {
       reject(new DOMException('Aborted', 'AbortError'));
       return;
@@ -1542,7 +1561,7 @@ export async function transcribeWithProgress(
       if (msg.event === 'Progress') {
         onProgress(msg.data.percent);
       } else if (msg.event === 'Done') {
-        resolve(msg.data.tokens);
+        resolve({ tokens: msg.data.tokens, detectedLanguage: msg.data.detectedLanguage });
       } else if (msg.event === 'Error') {
         reject(new Error(msg.data.message));
       }
@@ -1557,6 +1576,7 @@ export async function transcribeWithProgress(
     invoke('whisper_transcribe', {
       audioB64: audiob64,
       durationSecs,
+      language: language ?? 'auto',
       onEvent: channel,
     }).catch((err: unknown) => {
       signal.removeEventListener('abort', onAbort);

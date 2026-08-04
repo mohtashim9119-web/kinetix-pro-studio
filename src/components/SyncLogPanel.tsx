@@ -31,6 +31,9 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // this is the same rescue mechanism (WS6) that has always existed, now
   // surfaced to the user, not a new error or degradation.
   rescue: { label: 'RESCUE', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
+  // Phase 2a H.4 guard — red: outside the five verified languages, sync
+  // accuracy is unguaranteed, not merely degraded.
+  'unsupported-language': { label: 'LANGUAGE', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

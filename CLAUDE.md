@@ -168,6 +168,18 @@ src/
                      #   buildNoAssetSummaryEntry. SyncRunSummary gains noAssetCount? to match —
                      #   optional for the same reason silenceErrorCount? is: summaries persisted
                      #   before this feature genuinely lack it, treat undefined as 0.
+                     #   Project gains optional language?: string (Phase 2a, multilingual model
+                     #   swap, 2026-08-04, docs/sync-pipeline-v2-plan.md H.1/H.7) — a whisper
+                     #   language code, undefined until either a transcription runs with none stored
+                     #   yet (whisper.rs's -l auto detection result is written by useWhisper.ts) or
+                     #   the user sets an explicit override in ProjectSettingsModal.tsx. STICKY once
+                     #   set by either path — a later transcription passes it straight through
+                     #   (useWhisper.ts reads it from the project, never re-detects while it's set)
+                     #   and it is never silently overwritten. constants.ts's SUPPORTED_LANGUAGES is the verified five
+                     #   (en/es/fr/pt/de); anything else is accepted (never blocked) but trips the
+                     #   new SyncLogEntryType 'unsupported-language' member (error severity, red
+                     #   "LANGUAGE" badge in SyncLogPanel.tsx) plus a persistent dismissible banner
+                     #   (App.tsx) — see whisper.rs's and syncLog.ts's entries for the mechanism.
                      #   SyncLogEntryType gains 'rescue' (2026-08-02, false-positive rescue fix) —
                      #   an informational entry (gray RESCUE badge, SyncLogPanel.tsx) for a segment
                      #   the per-segment temporal-bounding rescue (whisperService.ts's
@@ -186,7 +198,13 @@ src/
                      #   fix — omit the suffix, same optional-field convention as noAssetCount?/
                      #   rescueCount? above.
   constants.ts       # FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, TRANSITION_OPTIONS, ANIMATION_OPTIONS,
-                     #   getFilterStyle, getMotionProps + dev-only console.assert guards
+                     #   getFilterStyle, getMotionProps + dev-only console.assert guards.
+                     #   SUPPORTED_LANGUAGES / SUPPORTED_LANGUAGE_CODES (Phase 2a, 2026-08-04) — the
+                     #   five languages (English/Spanish/French/Portuguese/German) sync accuracy is
+                     #   verified for; codes are whisper.cpp's own ISO 639-1 codes, used directly as
+                     #   the -l argument (whisper.rs), no translation layer. Consumed by
+                     #   ProjectSettingsModal.tsx's Language dropdown and App.tsx's H.4
+                     #   unsupported-language guard.
   effectsOptions.ts  # TRANSITIONS, ANIMATIONS, OVERLAYS option lists (shared source for EffectsPanel
                      #   dropdowns/randomize-pools — Effects Tab Rebuild Step 2) + NONE sentinels.
   assets/
@@ -434,6 +452,14 @@ src/
                      #   (buildSkipLogEntries, buildSyncAbortEntry, buildNoAssetSummaryEntry,
                      #   buildRescueLogEntries, clearSyncLog) stay in App.tsx and import
                      #   makeSyncLogEntry from here.
+                     #   buildUnsupportedLanguageEntry (Phase 2a H.4 guard, 2026-08-04) — the
+                     #   'unsupported-language' entry, error severity + a plain-language fixHint,
+                     #   for a Project.language outside constants.ts's SUPPORTED_LANGUAGES. Called
+                     #   from a standalone App.tsx useEffect keyed on project.language (its own
+                     #   mintSyncLogId(), independent of any Apply Sync run — same standalone-run-id
+                     #   precedent this file's staging-path entries already use), not from any of
+                     #   the Apply Sync commit branches, since the guard condition can also arise
+                     #   from a Project Settings-only edit with no sync run at all.
     syncContracts.ts # Pipeline Contract Program (docs/sync-pipeline-contract-plan.md) validators —
                      #   one pure ContractViolation-returning function per contract pair, zero
                      #   behavior change (deleting every call site leaves sync output byte-identical;
@@ -1168,6 +1194,18 @@ src/
     useWhisper.ts            # Whisper transcription orchestration: transcribeWithProgress, alignments,
                              #   distributeSegmentTimes. Generation counter + AbortController
                              #   for cancellation.
+                             #   startTranscription takes a new `language: string | undefined` param
+                             #   (Phase 2a, 2026-08-04) — the caller (App.tsx) passes
+                             #   projectRef.current.language straight through; undefined means "let
+                             #   whisper-cli auto-detect." transcribeWithProgress now resolves
+                             #   { tokens, detectedLanguage } instead of a bare token array; on
+                             #   success this hook writes `language: p.language ?? detectedLanguage`
+                             #   into the project — a no-op once a language is already set (by prior
+                             #   detection or an explicit ProjectSettingsModal.tsx override), since a
+                             #   stored language is passed on the NEXT call and skips re-detection
+                             #   entirely (detectedLanguage comes back undefined on that path). This
+                             #   is the entire mechanism behind H.7's "detection is a suggestion that
+                             #   fills the gap once, never silently re-guessed."
   components/
     BottomDrawer.tsx   # Slide-up per-segment editor (8 controls): header w/ duration badge + lock + ×;
                      #   two-column Asset | OverlayText; collapsible Formatting panel; slip-trim visual
@@ -1377,6 +1415,14 @@ src/
                      #   draftOverlayOn) committed atomically on Save via onResolutionTierChange/
                      #   setWebCodecsExportToggle/onSetAllOverlay; Cancel/Escape discard everything
                      #   (no backdrop-click-to-close, matching NewProjectModal's precedent).
+                     #   Language section (Phase 2a, H.1/H.7, 2026-08-04) — a 4th draft field
+                     #   (draftLanguage, seeded from project.language ?? 'auto') added the same
+                     #   draft-then-commit way: a <select> of Auto-detect + constants.ts's
+                     #   SUPPORTED_LANGUAGES, committed via onLanguageChange(undefined) for the
+                     #   'auto' sentinel value or the chosen code otherwise. Always editable
+                     #   regardless of whether the current value came from detection or a prior
+                     #   override — no provenance is tracked, by design (H.7: "a suggestion," not a
+                     #   fact needing its own detected-vs-overridden flag).
     TimelineWaveform.tsx   # useTimelineWaveform hook — the TILED voiceover waveform (replaced the
                      #   earlier single-canvas approach, which collapsed the whole voiceover into one
                      #   canvas capped at 16384px — on long audio at high zoom that averaged many
@@ -1424,6 +1470,15 @@ src/
                      #   badge in TYPE_STYLES) renders alongside the existing kinds; informational,
                      #   not an error or degradation colour — the same rescue mechanism (WS6) that
                      #   has always existed, now surfaced to the user.
+                     #   Unsupported-language guard (Phase 2a H.4, 2026-08-04) — a new
+                     #   'unsupported-language' entry type (red "LANGUAGE" badge in TYPE_STYLES),
+                     #   built by syncLog.ts's buildUnsupportedLanguageEntry and fired from a
+                     #   standalone App.tsx useEffect (not any Apply Sync branch) whenever
+                     #   project.language is set to a code outside constants.ts's
+                     #   SUPPORTED_LANGUAGES. Paired with a persistent, dismissible top banner
+                     #   (App.tsx, same visual pattern as the existing stock-download-error banner
+                     #   but NOT auto-dismissing — this is ongoing project state, not a one-off
+                     #   action result).
                      #   Copy-logs button (2026-07-31, landed alongside the Bug C run-survival gates
                      #   fix, whisperService.ts's entry above) — a header button (`Copy` icon,
                      #   lucide-react) that joins every entry (newest-first, same order as the panel)
@@ -1588,6 +1643,39 @@ src-tauri/
                      #   miniaudio backend only decodes wav/mp3/ogg/flac and fails silently (exit 0,
                      #   zero tokens) on M4A/AAC; ffmpeg reads virtually anything, so any container
                      #   the user uploads works. Transcode failure surfaces a real Error event.
+                     #   Model swap (Phase 2a, docs/sync-pipeline-v2-plan.md H.1, 2026-08-04) —
+                     #   model_path() now resolves ggml-large-v3-turbo.bin (MODEL_FILENAME const),
+                     #   not ggml-base.en.bin, in all 3 resolution branches (bundled resource_dir,
+                     #   macOS app-bundle fallback, dev target/debug fallback) — measured
+                     #   1,624,555,275 bytes on disk, ~2.1-2.2 GiB peak/resident during inference
+                     #   (see plan doc H.9 for the full table and the resulting download-on-first-use
+                     #   decision, not yet implemented — see project-state.md's SaaS Readiness Tasks).
+                     #   whisper_transcribe gained a `language: String` param ("auto" or a whisper
+                     #   language code) passed straight through as `-l`; the frontend
+                     #   (whisperService.ts) sends `project.language ?? 'auto'`. `-np` (no-prints) is
+                     #   DROPPED — it was suppressing whisper-cli's "auto-detected language" stderr
+                     #   line along with the rest of the diagnostic dump; empirically verified
+                     #   (terminal whisper-cli runs, 2026-08-04) that dropping it does not change
+                     #   stdout's bracketed token lines at all. `--dtw base.en` is DROPPED, not
+                     #   ported to a turbo-named preset — it was already a silent no-op (flash
+                     #   attention is on by default and disables DTW; -nfa would enable it but breaks
+                     #   stdout's progress-line printing) and the preset name is model-specific; DTW
+                     #   is Phase 2b/3 work, out of this phase's "no timing-source change" scope.
+                     #   CommandEvent::Stderr, previously fully ignored, is now line-buffered the same
+                     #   way stdout already is (separate buffer, so the two streams' interleaving
+                     #   can't corrupt either one's line framing) and scanned via the new
+                     #   parse_detected_language() helper for whisper-cli's
+                     #   `auto-detected language: en (p = 0.999905)` line — the only way to observe
+                     #   what `-l auto` resolved to. WhisperEvent::Done gained
+                     #   `detected_language: Option<String>` (serde camelCase ->
+                     #   `detectedLanguage` on the TS side), Some only when the run used `-l auto` AND
+                     #   that stderr line printed before the process exited; None when an explicit
+                     #   language code was passed (nothing to detect) or on a run that errored before
+                     #   the line could appear. Determinism (Phase 0's own bar) re-verified on turbo,
+                     #   both with Phase 0's literal command shape and with the actual shipped
+                     #   `-l auto` flag — PASS both ways, byte-identical MD5s, on this machine (Intel
+                     #   x86_64, no GPU backend found — `whisper_backend_init_gpu: no GPU found`, BLAS/
+                     #   CPU fallback; not re-verified on arm64/Windows).
   binaries/
     README.md        # Re-provisioning instructions for the gitignored ffmpeg sidecar binaries.
     ffmpeg-x86_64-apple-darwin  # gitignored — evermeet.cx 8.1.1 (76 MB, Intel macOS).

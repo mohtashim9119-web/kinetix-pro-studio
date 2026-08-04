@@ -75,6 +75,31 @@ export function buildSilenceErrorEntry(
   );
 }
 
+/**
+ * Phase 2a H.4 guard — the 'unsupported-language' entry. Fired when
+ * `Project.language` is set (by detection or an explicit override) to a code
+ * outside `constants.ts`'s `SUPPORTED_LANGUAGES`. Error severity: whitespace
+ * word-splitting and normalization are only verified for the supported five,
+ * so this isn't a degradation of an otherwise-working path (an ordinary
+ * WARNING), it's a use of the pipeline outside its verified envelope.
+ */
+export function buildUnsupportedLanguageEntry(
+  syncRunId: string,
+  languageCode: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'unsupported-language',
+    `Project language "${languageCode}" is outside the supported set (English, Spanish, French, Portuguese, German) — sync accuracy is not guaranteed.`,
+    {
+      severity: 'error',
+      fixHint: 'Set the correct language in Project Settings if this was misdetected, or expect reduced sync accuracy for this language.',
+    },
+    timestamp,
+  );
+}
+
 const DROP_REASON_LABELS: Record<TokenDrop['reason'], string> = {
   'non-finite': 'unusable timestamp',
   'negative-start': 'negative start time',
