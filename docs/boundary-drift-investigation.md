@@ -195,7 +195,12 @@ segment-index pairs:
 295–296, 428–429.
 
 **The aligner itself is exonerated** — all 447 spans in the V6 project were
-independently confirmed correct at the alignment level. The defect is
+independently confirmed correct at the alignment level. **Partial update
+(2026-08-04):** this exonerates the aligner's SPANS, not its TIMESTAMPS —
+`docs/sync-pipeline-v2-plan.md`'s Part L found that the 77-81 and 144-147
+cases in the list below are token-smear cascades, not (only) picker
+over-reach; see Part L before re-deriving a picker-only conclusion. The
+defect is
 **localized to the boundary picker**: specifically, the picker widens its
 silence-candidate search window when the claimed inter-segment gap looks
 narrow. Measured: **0.244s mean gap on defective pairs vs. 0.700s mean gap
