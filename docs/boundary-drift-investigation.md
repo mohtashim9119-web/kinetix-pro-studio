@@ -75,6 +75,26 @@ good-cut segments, and they don't.
   requires passing `-nfa` (no-flash-attention), which (a) costs decode speed
   and (b) **broke whisper-cli's stdout printing** in this build. Not usable
   as shipped.
+  > **CORRECTED 2026-08-05 by Phase 2b's measurement**
+  > (`docs/sync-pipeline-v2-plan.md`, Phase 2b RESULTS):
+  > - The silent-no-op claim is **CONFIRMED**, now with captured proof —
+  >   whisper-cli's stderr prints `dtw_token_timestamps is not supported with
+  >   flash_attn - disabling` / `dtw = 0`.
+  > - "`-nfa` broke stdout printing" is **FALSE on the currently bundled
+  >   binary.** A real 23.7-minute run with `-nfa` and no `-oj` produced 4,639
+  >   well-formed bracketed stdout lines → 4,579 tokens, parsed by the same
+  >   logic `whisper.rs` uses. Anything scoped on the assumption that `-nfa`
+  >   forces a JSON rewrite is scoped against a false premise.
+  > - Separately and more importantly: **DTW, when correctly enabled, changes
+  >   the timestamps by exactly 0.000000000s** (measured against a no-DTW
+  >   control over 4,579 + 2,080 tokens). It is not merely "not usable as
+  >   shipped" — it is not useful at all under `-ml 1`, because whisper's
+  >   token spans are gapless and DTW cannot dispute a span the emission
+  >   format already fixed.
+  > - **`-nfa` does have a real, separate benefit that was never noticed:** it
+  >   recovers a 9.7s passage of genuinely-spoken narration that the shipped
+  >   flash-attention config silently drops on V6. That is an accuracy
+  >   finding, not a timing one.
 - **`--vad` exists but needs an unbundled VAD model file** that is not part
   of this project's bundled model set. Not usable without adding a new
   bundled asset and provisioning story — not pursued.
@@ -272,6 +292,12 @@ export/download feature exists for it in the app itself.
 - `--dtw base.en` — silent no-op under this build's default flash attention;
   `-nfa` breaks stdout printing. Not usable without further whisper.cpp
   build work.
+  **UPDATED 2026-08-05 (Phase 2b):** still DO NOT re-investigate DTW, but for
+  a stronger reason than this line gives — DTW correctly enabled changes
+  timestamps by **exactly zero** (measured, 4,579 + 2,080 tokens). The
+  "`-nfa` breaks stdout printing" half of this entry is **false** on the
+  bundled binary and must not be used to scope future work. See
+  `docs/sync-pipeline-v2-plan.md`'s Phase 2b RESULTS.
 - `--vad` — needs an unbundled model file; not pursued.
 - The curr-side seam exemption variant — confirmed unsound on real data
   twice (segment 60 on V6, "They're the worst" on the 173-segment project).

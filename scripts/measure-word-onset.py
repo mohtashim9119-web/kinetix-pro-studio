@@ -254,10 +254,28 @@ def filter_word_tokens(tokens: list) -> list:
 
 def score_onset_errors(tokens: list, silences: list) -> list:
     """For each silence (ascending, disjoint), find the first not-yet-consumed
-    token whose END extends past the silence's START — that token is "the
-    word following this pause," including a negatively-smeared one whose
-    declared start already precedes the pause's true end. onset_error =
-    token.start - silence.end (signed).
+    token whose declared MIDPOINT falls at or after the silence's START — that
+    token is "the word following this pause."
+
+    Why midpoint, not "first token whose end pokes past the silence start"
+    (the first version of this function, kept here as a cautionary note
+    rather than deleted silently): that looser rule was tested against real
+    V6 turbo output and produced a false attribution on the very first
+    silence in the file — a token ("The") whose END overlapped the silence's
+    START by a trivial 13ms (out of the token's own ~110ms span and the
+    silence's own ~760ms span) was selected as "the following word," when it
+    was actually the tail of the PRECEDING word with ordinary edge blur, not
+    a smeared following word. The real next word was one token later. Using
+    the token's temporal midpoint as the test correctly excludes a token that
+    is only trivially poking into a silence's leading edge (assigns it to
+    "before"), while still correctly catching a genuinely, substantially
+    smeared token — verified against the committed segment-96 fixture
+    (silence [289.380, 289.960]; token "predator" [289.260, 289.800] has
+    midpoint 289.530, which is >= 289.380, so it is correctly selected even
+    though its own declared START (289.260) precedes the silence's START).
+
+    onset_error = token.start - silence.end (signed; negative = the token's
+    declared start precedes the true end of the pause before it).
 
     Dedup: if two consecutive silences resolve to the same token (a
     real-speech-free gap split into two silencedetect events, or a stray
@@ -269,9 +287,13 @@ def score_onset_errors(tokens: list, silences: list) -> list:
     token_idx = 0
     last_assigned_idx = -1
     n = len(tokens_sorted)
+
+    def midpoint(t):
+        return (t["start"] + t["end"]) / 2.0
+
     for sil in silences:
         s0, s1 = sil["start"], sil["end"]
-        while token_idx < n and tokens_sorted[token_idx]["end"] <= s0:
+        while token_idx < n and midpoint(tokens_sorted[token_idx]) < s0:
             token_idx += 1
         if token_idx >= n:
             break

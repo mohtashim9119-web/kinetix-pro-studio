@@ -13,8 +13,8 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1 | Stage 2 (neutrality-exempt; runs first) | Delete the duplicated gap-fill in `alignScenestoTranscript` | DONE | Owner | 2026-08-04 |
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/v6-smear-baseline.csv` / `docs/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
-| 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | NOT STARTED | — | — |
-| 3 | Stage 1 | Upgrade the timing source (DTW or forced alignment, per 2b's decision gate) | NOT STARTED | — | — |
+| 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | NOT STARTED | — | — |
 | 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
@@ -102,6 +102,12 @@ Conclusion: the fence is correct architecture with an unmet prerequisite. It nee
 The prerequisite
 Three options, cheapest first.
 Whisper’s own DTW. whisper.cpp can refine timestamps by dynamic time warping against its attention weights. Your build already passes --dtw base.en — and it has been a silent no-op the entire time, because flash attention is on by default and silently disables DTW. Turning it on requires -nfa, which in this build broke stdout printing, which is where both the tokens and the progress bar come from. Estimated result: ~190ms → ~80ms error (UNVERIFIED — a recall-based estimate, not a measurement; Phase 2b is what measures it).
+> **MEASURED AND FALSIFIED — Phase 2b, 2026-08-05.** Two claims in the paragraph above are now known to be wrong, and one is confirmed:
+> - **CONFIRMED:** `--dtw base.en` was indeed a silent no-op — whisper-cli's own stderr says so verbatim (`dtw_token_timestamps is not supported with flash_attn - disabling`).
+> - **FALSIFIED — the “~190ms → ~80ms” estimate.** DTW, correctly enabled with `-nfa --dtw large.v3.turbo` (stderr `dtw = 1`), changes the timestamps by **exactly 0.000000000s** against a no-DTW control, over all 4,579 V6 and 2,080 173 tokens. It does not improve them by any amount.
+> - **FALSIFIED — “`-nfa` broke stdout printing.”** `-nfa` without `-oj` produced 4,639 well-formed bracketed stdout lines → 4,579 tokens, parsed by the same logic `whisper.rs` uses. The stdout path is intact under `-nfa` on the currently bundled binary.
+>
+> The reason DTW cannot help is structural and is documented in Phase 2b's Finding 2: under `-ml 1` whisper emits **gapless** token spans (97.8% of V6 transitions), so a pause is necessarily absorbed into the following word's declared span — DTW refines alignment *within* that emission and never gets to dispute it. See Phase 2b's RESULTS section.
 Forced alignment. Throw Whisper’s timestamps away entirely. Take the known script text — which we already have, that’s the whole premise of this app — and align it to the audio at the phoneme level using a CTC acoustic model. This is what WhisperX does and it reaches roughly 20ms (published figure, not locally verified). It needs ONNX Runtime (mature Rust bindings exist) and a wav2vec2-CTC model of comparable size to the whisper model already bundled.
 Neither, and live with a fence built on 190ms error. Honest assessment: this makes word-shift better than today (no more one-word reaches) but introduces a new failure where the fence excludes the real pause, exactly as at segment 96, producing cuts inside the pause’s leading edge. Better than today, not correct.
 The plan measures option one before committing to anything, because it’s an afternoon of read-only work and it might be enough.
@@ -233,6 +239,34 @@ A dev-only, in-app tool whose purpose is letting the owner SEE the raw material 
 
 **Explicit gate:** Stage 1 cannot be locked until the owner has inspected inspector output across at least one tight-pause and one long-pause project, and the smear distribution is understood and recorded in this document (append the measured numbers to this phase’s entry when done). What “good enough” means numerically for Stage 1 to lock, stated plainly and **provisional until Phase 2b measures it**: median smear ≤ 100ms, p95 smear ≤ 250ms, and the segment-96 pathology (negative smear) on fewer than 1% of pause-following tokens, on both inspected projects. If Phase 2b’s measurements show these thresholds were the wrong shape (e.g. the tail matters more than the median), Phase 2b revises them here, in writing, with the measurement attached.
 
+---
+
+#### THRESHOLDS FINALIZED BY PHASE 2B (2026-08-05) — no longer provisional
+
+Phase 2b's measurement is attached in its own entry below (and as `docs/phase2b-onset-*.csv`). The three provisional thresholds are **retained in value but re-scoped, re-prioritized, and joined by a fourth**. Each change is justified by a specific measured result rather than by preference.
+
+**FIRST — a metric-comparability warning that must not be skipped.** Phase 1b's inspector "smear" and Phase 2b's "word-onset error" are **not the same metric and their numbers must never be compared directly.** The inspector scores EVERY token against its *nearest preceding* silence (which, for a token deep inside a pause-free run, can be many seconds back — this entry's own caveat above says so). Phase 2b scores only the word FOLLOWING each detected pause, which is exactly where a boundary decision gets made. Hence V6 turbo reads 33.6% negative smear under the inspector and 97.4% under Phase 2b — **both correct, different denominators.** The finalized thresholds below are stated in **Phase 2b's metric**, because that is the decision-relevant one; a future session applying them via the inspector will get wrong answers.
+
+| # | Threshold | Value | Status | Why |
+|---|---|---|---|---|
+| 1 | Median absolute word-onset error | **≤ 100ms** | **KEPT, but demoted from primary** | It does discriminate (V6 fails at 500ms; 173 passes at 80ms) — but 173 PASSES this gate while still carrying real, ear-verified boundary defects (pairIdx-20; "They're the worst"). A gate that certifies a project known to be broken cannot be the primary gate. |
+| 2 | p95 absolute word-onset error | **≤ 250ms** | **KEPT, PROMOTED to primary** | This is the binding constraint and the one that correctly refuses 173 (measured 0.497s — 2× over, while its median passes 5× under). **The brief's hypothesis that "the tail matters more than the median" is CONFIRMED**: boundary placement is destroyed by individual large errors, not by average ones. One 1.3s error annihilates a sub-second segment (Part L's governing ratio); a good median cannot compensate. |
+| 3 | Negative-smear fraction | **< 1%** | **KEPT, re-scoped as a source-replacement test** | Measured 97.4% (V6) / 68.0% (173) — failing by 68–97×, not by a tunable margin. Phase 2b's mechanism finding explains why this can never be met by refining Whisper timestamps: under `-ml 1` tokens are 93–98% gapless, so a pause is *necessarily* absorbed into the following word's span. **This threshold is therefore not a tuning target — it is the test that distinguishes "Whisper timestamps, refined" from "timestamps replaced."** Only a non-gapless source can pass it. Keeping it at <1% is what forces Phase 3 to be forced alignment rather than a cheaper patch. |
+| 4 | **Zero-duration real-word tokens** | **0** | **NEW — added by Phase 2b** | Measured 68 (V6) / 44 (173) under the shipped config. Each is a real spoken word emitted with `start == end`, silently discarded by `filterMalformedTokens`'s `t0 >= t1` branch (`whisperService.ts:1315`) before alignment. **None of the three original thresholds detects these at all** — a deleted word contributes no onset error to any percentile. This is the exact mechanism behind 173's segment-112 failure (Finding 4). A timing source that emits even one such token is silently deleting words from the alignment corpus, so the bar is zero, not a fraction. |
+
+**How the gate is evaluated from here on:** all four must hold, on both a tight-pause and a long-pause project, measured with `scripts/measure-word-onset.py`. Threshold 2 (p95) is the primary read; threshold 3 is the structural test that the timing source is of the right *kind*; threshold 4 is a hard zero.
+
+**Current standing against the finalized gate (shipped config (a), turbo raw):**
+
+| | V6 (long-pause) | 173 (tight-pause) | Gate |
+|---|---|---|---|
+| Median | 0.500s ✗ | 0.080s ✓ | ≤0.100s |
+| **p95** | **1.283s ✗** | **0.497s ✗** | **≤0.250s** |
+| Negative-smear | 97.4% ✗ | 68.0% ✗ | <1% |
+| Zero-dur words | 68 ✗ | 44 ✗ | 0 |
+
+**7 of 8 readings fail; the single pass (173's median) is precisely the reading demoted above for being non-discriminating.** Stage 1's smear blocker (item (a) on the lock list) is unchanged in substance and now has a sharper statement: it is not "smear is too high," it is **"the timing source is of the wrong kind — it emits gapless spans and deletes words."**
+
 **Measured baseline (recorded 2026-08-04, current bundled model — `base.en`, no DTW, pre-Phase-2a).** `window.__transcriptInspector()` run in-app against the persisted `transcriptTokens` and a fresh Web-Audio silence scan of the voiceover blob, for both corpus projects named in D.0. Full per-token output: `docs/v6-smear-baseline.csv` (V6, 447-seg, long-pause), `docs/173-smear-baseline.csv` (173-seg, presumed tight-pause). Every number below was independently recomputed from the raw CSV rows and matches the console-printed aggregate line exactly (data integrity cross-check); the kept/dropped token split also reconciles exactly against D.0’s own corpus-inventory counts (4517 and 1973 raw transcript tokens).
 
 | Metric | V6 (447-seg) | 173-seg | Provisional gate | Result |
@@ -363,8 +397,165 @@ For each, measure word-onset error against ground truth. Ground truth comes from
 Decision gate unchanged in form: under ~100ms median error, DTW is adopted in Phase 3. Above that, DTW is abandoned permanently and Phase 3 becomes forced alignment. Note the expected shift: turbo’s weaker timestamp head makes forced alignment MORE likely to win, not less. If turbo’s DTW is materially worse than large-v3’s, that is an explicit accuracy-vs-speed product decision to be made with the number in hand.
 Your verification: none needed — this phase produces a number, not a behaviour. It also finalizes Phase 1b’s provisional lock thresholds.
 
+---
+
+## Phase 2b — RESULTS (closed 2026-08-05)
+
+**DECISION: DTW IS ABANDONED PERMANENTLY. Phase 3 becomes FORCED ALIGNMENT (H.3).**
+
+The decision does not rest on the median-error gate at all. It rests on a stronger, simpler measurement: **DTW changes the timestamps that reach the pipeline by exactly zero.**
+
+### Deliverable
+
+`scripts/measure-word-onset.py` + `scripts/measure-word-onset.md` (committed, K8 satisfied). Per-pause raw output committed as `docs/phase2b-onset-{v6,173}-turbo-{raw,dtw}.csv`. Method: ground truth is ffmpeg `silencedetect` (`-45dB`/`0.25s`, matching `silenceDetector.ts`'s production defaults) on the SAME 16kHz mono WAV whisper-cli consumes; for each detected pause, `onset_error = word.start − silence.end`.
+
+### The configurations actually run
+
+The plan specified three; the owner's brief extended it to four (adding large-v3+DTW). **Five were run, and two of the planned four were skipped** — both deviations are recorded here rather than silently absorbed:
+
+- **(a) turbo raw** — exactly the shipped `whisper.rs` invocation. RUN.
+- **(b) turbo `-nfa --dtw large.v3.turbo` + JSON.** RUN.
+- **(e) turbo `-nfa` alone, NO DTW — a control NOT in the plan, added during execution.** RUN. Config (b) changes two variables at once (`-nfa` and `--dtw`); without this control, every difference between (a) and (b) would have been wrongly attributed to DTW. This control is what actually decided the phase.
+- **(c) large-v3 raw / (d) large-v3 + DTW — SKIPPED by owner decision (2026-08-05).** Rationale: the (e)-vs-(b) control settles the DTW question as a property of the `-ml 1` emission format, not of any particular model, so (c)/(d) could not overturn it. **Consequence, stated plainly: the ACCURACY question these two were meant to answer — does large-v3 avoid turbo's content dropout and its zero-duration tokens? — is UNMEASURED and remains open.** See "What this phase did NOT measure" below.
+
+### Measured results
+
+Wall-clock on this machine (Intel i9-9980HK, 16 threads, no GPU backend); `xRT` = audio seconds per wall-clock second.
+
+| Project | Config | Wall-clock | xRT | Tokens | Zero-dur real words | Pauses scored | Median abs err | p95 abs err | Neg-smear |
+|---|---|---|---|---|---|---|---|---|---|
+| V6 (1421.3s) | (a) turbo raw | 834.9s | 1.70 | 4556 | 68 | 533 | **0.500s** | 1.283s | 97.4% |
+| V6 | (e) turbo `-nfa` | 1108.6s | 1.28 | 4579 | 52 | 537 | 0.513s | 1.280s | 96.3% |
+| V6 | (b) turbo `-nfa`+DTW | 1049.0s | 1.35 | 4579 | 52 | 537 | 0.513s | 1.280s | 96.3% |
+| 173 (709.0s) | (a) turbo raw | 452.3s | 1.57 | 2082 | 44 | 194 | **0.080s** | 0.497s | 68.0% |
+| 173 | (e) turbo `-nfa` | 607.3s | 1.17 | 2080 | 41 | 194 | 0.079s | 0.536s | 65.5% |
+| 173 | (b) turbo `-nfa`+DTW | 537.7s | 1.32 | 2080 | 41 | 194 | 0.079s | 0.536s | 65.5% |
+
+**Wall-clock carries ≥5.7% run-to-run noise on this machine** — config (b) timed FASTER than config (e) (1049.0s vs 1108.6s) while producing byte-identical output. Do not read small timing deltas in this table as real. The one robust timing statement: `-nfa` costs roughly 25–33% (it disables flash attention).
+
+### Finding 1 — DTW's effect is exactly zero (the decision)
+
+Config (e) (`-nfa`, no DTW) vs config (b) (`-nfa` + `--dtw large.v3.turbo`):
+
+```
+max timestamp delta = 0.000000000s   over all 4,579 V6 tokens AND all 2,080 173 tokens
+tokens differing by >0.5ms or in text: 0 / 4579   and   0 / 2080
+```
+
+DTW was genuinely ENABLED, not silently ignored — verified directly from whisper-cli's own stderr:
+
+```
+# with -nfa -dtw large.v3.turbo
+whisper_init_with_params_no_state: flash attn = 0
+whisper_init_with_params_no_state: dtw        = 1
+# with -dtw but no -nfa (the pre-Phase-2a shipped shape)
+whisper_init_with_params_no_state: dtw_token_timestamps is not supported with flash_attn - disabling
+whisper_init_with_params_no_state: dtw        = 0
+```
+
+(The second block is also the first direct, captured evidence for this project's long-standing claim that `--dtw base.en` was a silent no-op. That claim was correct.)
+
+So: DTW runs, reports itself active, and refines nothing that reaches the pipeline. **A timing-source upgrade that changes no timestamps cannot fix a timestamp defect.** This is not a marginal-benefit judgement or a threshold argument — there is no effect to weigh.
+
+### Finding 2 — WHY DTW cannot win here (the mechanism)
+
+Whisper's declared word start is not a noisy estimate of the true onset. It is, systematically, **the start of the preceding pause**:
+
+| V6, config (a) | Median error | Median absolute error |
+|---|---|---|
+| vs silence **END** (the correct onset) | −0.500s | 0.500s |
+| vs silence **START** | **+0.038s** | **0.111s** |
+
+The word's declared start lands 38ms after the pause BEGINS — i.e. essentially at the pause's leading edge, with the entire pause absorbed into the word's own span.
+
+The cause is structural, and it is the emission format rather than the model's timestamp head: **under `-ml 1`, tokens are gapless.** Every token's start equals the previous token's end — 97.8% of transitions on V6, 93.4% on 173. Silence therefore has nowhere to live except *inside* some word's declared span. This predicts, correctly, that smear magnitude tracks how much silence a voice contains:
+
+| | Silence as % of audio | Median abs onset error |
+|---|---|---|
+| V6 (long-pause voice) | **25.6%** (364.5s of 1421.3s, 539 pauses) | 0.500s |
+| 173 (tight-pause voice) | **10.5%** (74.2s of 709.0s, 195 pauses) | 0.080s |
+
+It also predicts the error should scale with each individual pause's length, which it does — stratified on V6 config (a):
+
+| Pause duration bucket | n | Median abs error | Neg-smear |
+|---|---|---|---|
+| 0.25–0.50s | 191 | 0.358s | 97.9% |
+| 0.50–0.75s | 165 | 0.559s | 95.2% |
+| 0.75–1.00s | 87 | 0.721s | 100.0% |
+| 1.00–2.00s | 90 | 1.092s | 97.8% |
+
+Median error ≈ pause duration, across the whole range. DTW refines attention alignment *within* this gapless emission; it does not get to dispute a span the output format has already fixed. **This is why no DTW preset, on any model, recovers this — and it is a stronger conclusion than the plan's original expectation** (which anticipated DTW losing because turbo prunes the timestamp-bearing decoder — a model-capacity argument that would have left "maybe large-v3's DTW is better" genuinely open).
+
+This measurement independently re-derives, at scale and with a precise mechanism, Part C's segment-96 walkthrough — and Part L's governing ratio (defect severity ≈ smear / segment duration) now has its numerator explained: the smear a segment suffers is approximately the duration of the pause preceding it.
+
+### Instrument validation (how we know these numbers aren't an artifact)
+
+Stated because this document's own Part F forbids trusting a metric that has not been checked against known ground truth:
+
+1. **The measurement reproduces the committed segment-96 fixture.** Silence `[289.380, 289.960]`, token "predator" `[289.260, 289.800]` — the token's midpoint (289.530) correctly falls inside the silence, so it is selected as the pause-following word exactly as the `c593f1d` fixture and §D.12 describe.
+2. **The error distribution is tightly clustered around a real reference point.** Median absolute error vs silence START is 0.111s on V6 — a tight cluster. A broken token-selection or a time-base mismatch between ground truth and tokens could not produce tight clustering against ANY reference; it would produce noise against all of them.
+3. **Config (a)'s token count (4556) matches Phase 2a's independently-produced in-app turbo count (4556) exactly** — confirming this out-of-app harness reproduces the real pipeline's transcription faithfully.
+4. **Two real bugs were found and fixed in the harness before these numbers were taken**, both recorded in the script's own docstrings so they cannot silently return: (i) pure-punctuation tokens (`.`, `,` — whisper emits these as their own timestamped entries under `-ml 1`) were winning the "word following the pause" slot ahead of the real word; production's `filterMalformedTokens` drops these too, so the fix matches pipeline behaviour. (ii) A token whose declared END trivially overlapped a pause's start by ~13ms was being selected as the *following* word when it was really the *preceding* word's tail — fixed by selecting on token midpoint rather than raw overlap.
+
+### Finding 3 — the V6 dropout is caused by FLASH ATTENTION, not by turbo's accuracy
+
+Phase 2a Step 1 recorded a genuine ~9.7s content dropout on V6 (78.97–88.67s), classified there as "a model-swap accuracy regression." That classification is now **refined, and partly corrected**: the passage is recovered by disabling flash attention, on the same turbo model.
+
+| Config | V6 76.5–90.5s transcript |
+|---|---|
+| (a) turbo raw (**shipped**) | `out into the frost like nothing happened . You start watching the older hunters differently . You` |
+| (e) turbo `-nfa`, no DTW | `into the frost like nothing happened . But something stayed in you . Small and permanent . A new understanding of what the night actually is . You start watching the older hunters differently . You notice` |
+
+All three sentences (segments 27–29) return verbatim. **Attribution is certain: config (e) has no DTW at all**, so this is `-nfa` alone, and DTW cannot be credited for it. Flash attention is silently losing real speech in the shipped configuration.
+
+This is a live production accuracy issue, **recorded as a finding only — no code changed** (Phase 2b is read-only; owner decision 2026-08-05). It is not free to act on: `-nfa` costs roughly 25–33% wall-clock, and adopting it would need its own verification pass (a fresh transcript era, per K9, and a re-listen). Left for a future phase to weigh deliberately.
+
+### Finding 4 — 173 segment 112: Phase 2a's mechanism was wrong in an important way
+
+Phase 2a Step 2 concluded "turbo drops the word 'Some'; base.en does not," and built a run-survival-gate explanation on top of that. **Turbo does not drop it.** It emits it — with a zero-duration timestamp:
+
+```
+config (a):  Some  443.82-443.82   duration = 0.000s
+config (e):  Some  443.82-443.82   duration = 0.000s
+config (b):  Some  443.82-443.82   duration = 0.000s
+```
+
+`filterMalformedTokens` then discards it as `inverted-or-zero-duration` (`whisperService.ts:1315`, the `t0 >= t1` branch) before alignment ever sees it. The downstream reasoning in Phase 2a Step 2 (run-survival gate fails at matched=1, longest run 1) still holds — but the ROOT CAUSE is a degenerate timestamp, not a transcription failure. That distinction matters for Phase 3: **a timing-source that assigns this word a real duration recovers this segment**, whereas a genuine transcription loss could never be recovered downstream. It moves segment 112 from "unfixable by this programme" to "fixed by Phase 3."
+
+Zero-duration real-word tokens are not rare: **68 on V6 and 44 on 173** under the shipped config (a). Each is a word silently deleted from the alignment corpus. DTW does not fix them either (52 / 41 under `-nfa`, and identical between (e) and (b)).
+
+### Finding 5 — `-nfa` does NOT break stdout printing (a documented "fact" is false)
+
+Four places state, as established fact, that `-nfa` breaks whisper-cli's stdout printing: Part C above ("in this build broke stdout printing"), Part E's progress-reporting row, `docs/boundary-drift-investigation.md`'s DO NOT RE-INVESTIGATE list, and `whisper.rs`'s own in-code comment.
+
+**This is false on the currently bundled binary.** Config (e) ran `-nfa` with NO `-oj`, parsed from stdout exactly as `whisper.rs` does, and produced **4,639 well-formed bracketed lines → 4,579 tokens** with no loss.
+
+Consequence: the Phase 3 cost estimate that flowed from it ("JSON output is new code, not a flag flip, and the progress bar becomes an elapsed-time indicator") **was never actually required by `-nfa`.** This is moot for the DTW decision — DTW lost on its own zero-effect evidence, not on implementation cost — but the claim is corrected here, in `docs/boundary-drift-investigation.md`, and in `whisper.rs`'s comment, so no future phase budgets work against a false premise. The stdout/JSON coupling in `whisper.rs` is real and was re-confirmed by direct source read (`parse_stdout_tokens` at `whisper.rs:450` and `parse_progress_line` at `whisper.rs:438` both consume the same bracketed lines); what is false is that `-nfa` forces a move off that path.
+
+### What this phase did NOT measure — stated so it is not later assumed
+
+- **large-v3 (non-turbo) accuracy: UNMEASURED.** Configs (c)/(d) were skipped by owner decision. Whether large-v3 avoids the V6 dropout, or emits fewer zero-duration tokens, is unknown. The dropout's cause is now known to be flash attention rather than model capacity, which weakens (though does not eliminate) the original reason for suspecting turbo here.
+- **Forced alignment's actual accuracy on this corpus: UNMEASURED.** The ~20ms figure in Part C remains a published-literature number, not a local measurement. Phase 3 must measure it with this same script before its own gate is judged.
+- **Threshold sensitivity of the ground truth.** `-45dB`/`0.25s` mirrors production, but was not swept. A different threshold finds different pauses and could shift the distribution.
+- **Determinism of these specific runs.** Phase 0/2a's determinism checks stand; individual Phase 2b runs were not repeated. The (e)-vs-(b) zero-delta result is itself strong evidence of run-to-run stability in the token output.
+- **Machine scope.** Intel x86_64, no GPU backend. Same accepted gap as the rest of this document.
+
+### Consequences for the rest of the programme
+
+1. **Phase 3 is forced alignment (H.3).** Before implementing, H.3's own instruction stands and is now doubly load-bearing: **verify MMS-FA's romanization/CTC mechanics against the actual MMS-FA documentation** — that description is flagged as model recall, not a local read.
+2. **Phase 3 must produce word spans that are NOT gapless.** This is the specific, measurable property the current source lacks, and it is what makes Part C's fence buildable. A forced aligner that emitted gapless spans would reproduce this defect exactly; this is now a stated acceptance criterion for Phase 3, not an implicit hope.
+3. **Part C's "~190ms → ~80ms" DTW estimate is retired as FALSIFIED** (measured: 0ms change). The "~190ms" baseline it was measured against is also not reproduced here — this measurement finds 500ms median on V6 and 80ms on 173 — but those are different corpora slices and possibly a different selection rule, so the older figure is marked superseded rather than declared wrong.
+4. **Phase 3d (adaptive silence thresholds) — evidence now available.** 2b's brief included deciding whether the fixed −45dB threshold is costing us. It is NOT the binding constraint: the ground-truth pauses it finds are real (verified against the waveform) and the failure is on the token side, not the silence side. **Phase 3d should be skipped unless Phase 3's post-forced-alignment measurement shows a silence-side cost** — recorded here per that phase's own "record the finding and skip" instruction.
+
 ### Phase 3 — Upgrade the timing source
+**DECIDED BY PHASE 2B (2026-08-05): FORCED ALIGNMENT. The DTW branch below is closed — do not revisit it without new evidence that overturns the zero-delta measurement.**
 Whichever won. If DTW: switch the Rust side to JSON output, which the audit confirmed is new code rather than a flag flip, and replace the progress bar with an elapsed-time indicator since progress currently scrapes the same stdout lines that -nfa breaks. If forced alignment: bundle ONNX Runtime and the CTC model (multilingual per H.3), implement the Viterbi pass, and slot it behind the Stage 1 timing interface.
+
+**Phase 2b's additions to this phase's brief:**
+1. **Verify MMS-FA's romanization/CTC mechanics against the real MMS-FA documentation BEFORE implementing** — H.3 flags its own description as model recall, not a local read. This is now on the critical path, not a nicety.
+2. **Acceptance criterion, new and explicit: the new source must emit NON-GAPLESS word spans.** Gaplessness is the measured root cause (Phase 2b Finding 2). A forced aligner that emitted gapless spans would reproduce this defect exactly, so this must be checked, not assumed.
+3. **Acceptance criterion: zero zero-duration real-word tokens** (finalized threshold 4 in Phase 1b's entry). Today: 68 on V6, 44 on 173.
+4. **Measure with the committed script** (`scripts/measure-word-onset.py`) against the finalized four thresholds, on both a tight-pause and a long-pause project, before the phase's own listening pass. Part C's ~20ms forced-alignment figure is a published number and is UNVERIFIED locally — this is where it gets verified.
 Either way the interface is identical and the pipeline below is untouched.
 Your verification: resync both projects. Expect boundaries to move (this phase shifts token indices — fewer timestamp-based malformed drops — so the baseline is re-established: fresh resync → inspector → full forty listen → new `verification-baseline.csv` rows). Listen to the full forty-boundary set. Record the new verdict. Some of the eleven word-shift cases may already resolve here, because the gaps become real. Some of the eight may regress, because the seam exemption was tuned to compensate for smear that no longer exists. Both outcomes are informative and neither blocks the phase — what blocks it is a control boundary regressing, because that means the new timings are worse somewhere we weren’t looking.
 
@@ -378,6 +569,8 @@ textNormalize.ts glues mid-call into one alignment word while Whisper emits two 
 ### Phase 3d — Adaptive silence thresholds (conditional; moved from old Phase 8 — see K1)
 Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b’s measurements show the fixed threshold is costing us (it changes the silence array, which the fence consumes — so under stage locking it is Stage 1 work, not an afterthought). If 2b shows no cost, record that finding here and skip this phase.
 
+**PHASE 2B FINDING — SKIP THIS PHASE (recorded 2026-08-05, per this entry's own instruction).** The fixed −45dB / 0.25s threshold is NOT the binding constraint. Evidence: (a) the pauses it detects are real — spot-verified against a rendered waveform of V6's 14–26s range, where the detected intervals line up with visibly silent stretches between speech bursts; (b) the measured failure is entirely on the TOKEN side — word starts land at the *pause's own start* (median +0.038s from it on V6), meaning the silence detector correctly identified a pause that the timestamp source then absorbed into a word; (c) 173, with the identical threshold, measures a 0.080s median error, so the threshold cannot be what makes V6 read 0.500s. **Reopening trigger:** re-evaluate ONLY if Phase 3's post-forced-alignment measurement shows a silence-side cost (e.g. real pauses going undetected once token timing is trustworthy). Threshold sensitivity was not swept — see Phase 2b's "What this phase did NOT measure."
+
 ### STAGE 1 LOCK GATE
 - Contract IN and Contract 1→2 (Part J) verified guarantee-by-guarantee by owner inspection.
 - Inspector inspected across ≥1 tight-pause and ≥1 long-pause project; smear distribution recorded in Phase 1b’s entry; numeric thresholds met (as finalized by 2b).
@@ -387,7 +580,7 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
 - Cross-cutting regression checklist (D.-1) run and clean.
 
 **Status as of 2026-08-05: NOT PASSED.** Explicit blocking list, recorded so the next session doesn't re-derive it:
-  (a) smear thresholds unmet by 24-34× (Phase 1b) → needs Phase 3;
+  (a) smear thresholds unmet → needs Phase 3. **Sharpened by Phase 2b (2026-08-05):** the thresholds are now FINALIZED (four of them, see Phase 1b's entry) and the shipped config fails **7 of 8 readings** across the two projects. The blocker is no longer "smear is too high" — it is **"the timing source is of the wrong kind": it emits gapless word spans (93–98% of transitions) and silently deletes words via zero-duration timestamps (68 on V6, 44 on 173).** DTW is eliminated as a remedy (measured zero effect); only forced alignment can clear this;
   (b) ~~no non-English corpus project exists~~ **PARTIALLY RESOLVED 2026-08-04/05** — Spanish corpus project exists, transcribed cleanly on turbo (Phase 2a Step 5), but its boundaries are unlistened; accepted in writing at Phase 2a's entry above, reopens the moment Spanish-specific code ships (Phase 3b). French/Portuguese/German remain completely absent from the corpus — also accepted in writing there, per H.8's dormant-rules allowance;
   (c) ~~3 short-segment-run boundaries not yet in the verification set~~ **RESOLVED 2026-08-04** — 5 added, see Part L;
   (d) Contract IN / 1→2 not yet verified guarantee-by-guarantee;
@@ -458,7 +651,7 @@ Headings get disturbed. Headings are a separate top-level overlay layer with fix
 Head and tail extension get lost in the move. Segment one stretches back to zero, the last segment runs to the audio end. Both are Stage 4, both explicit.
 Two silences sit in one gap. Rule: longest silence, intersected with the gap, cut at the intersection’s centre. Deterministic and stated, so it isn’t decided ad hoc during implementation.
 A silence extends beyond the gap on either side. Intersect first, then take the centre. Never cut outside the gap, even if the silence continues.
-Progress reporting breaks at Phase 3. parse_progress_line scrapes the same stdout that -nfa breaks. Accepted, planned: elapsed-time indicator instead of percentage. A 21-minute transcription with no progress bar is a real UX regression, and it only lands if DTW actually wins the Phase 2b measurement.
+Progress reporting breaks at Phase 3. parse_progress_line scrapes the same stdout that -nfa breaks. Accepted, planned: elapsed-time indicator instead of percentage. A 21-minute transcription with no progress bar is a real UX regression, and it only lands if DTW actually wins the Phase 2b measurement. **— MOOT AND PARTLY FALSIFIED (Phase 2b, 2026-08-05): DTW did NOT win (zero measured effect), so this risk does not land via that route at all; and its premise is false anyway — `-nfa` does not break stdout printing on the bundled binary (4,639 clean bracketed lines measured). The stdout coupling itself is real and re-confirmed by source read (`whisper.rs:438`/`:450` both consume the bracketed lines), so a FUTURE change that genuinely moves off stdout still owes a progress-bar answer — but `-nfa` is not such a change.**
 The ONNX path is bigger than estimated. Mitigated by Phase 2b’s decision gate — we only take that path if the cheap one measurably fails — and by the timing interface, which means the model is swappable and a failure there doesn’t strand the rest of the plan.
 Better timings don’t fix word-shift. Possible, and handled: Phase 5’s fence removes theft regardless of timing quality, because it removes the permission to reach past a word. Phase 3 and Phase 5 attack the problem independently. If Phase 3 disappoints, Phase 5 still lands.
 Some of the eleven turn out to be alignment errors, not picker errors. The investigation reports the aligner exonerated at 447/447, but doesn’t state how that was verified. The inspector’s output distinguishes the two directly: a wrong span shows as the wrong words attributed to a segment, a wrong cut shows as correct words with the cut misplaced inside a correct span. If any of the eleven are span errors, Phase 5 won’t fix them and we’ll know immediately rather than after a failed phase.
@@ -539,6 +732,22 @@ H.2 PHASE REORDER — this supersedes the original Phase 2 as written
       timestamp head makes forced alignment MORE likely to win, not less. If
       turbo's DTW is materially worse than large-v3's, that is an explicit
       accuracy-vs-speed product decision to be made with the number in hand.
+
+  H.2 RESOLVED — 2026-08-05. DTW ABANDONED; Phase 3 = forced alignment (H.3).
+    The gate was not decided on the median at all. DTW, verifiably enabled
+    (stderr `dtw = 1`), changed timestamps by EXACTLY 0.000000000s versus a
+    no-DTW control across 4,579 + 2,080 tokens. The reasoning above — that
+    turbo's pruned decoder would weaken its DTW relative to large-v3's — is
+    superseded by a stronger, model-independent finding: whisper's `-ml 1`
+    output is GAPLESS (each token starts where the previous ended), so a pause
+    is structurally absorbed into the following word's span and DTW has nothing
+    to dispute. This is a property of the emission format, not of any model, so
+    the large-v3 DTW comparison this section anticipated could not have
+    overturned it. The accuracy-vs-speed product decision this section
+    envisioned did NOT need to be made for the timing question. (It remains
+    open for the SEPARATE accuracy question — see Phase 2b Finding 3: flash
+    attention, not turbo's capacity, is what dropped V6's 9.7s passage.)
+    See Phase 2b's RESULTS section for the full measurement.
 
 H.3 Forced alignment, if Phase 2b triggers it
   Multilingual acoustic backbone (MMS / wav2vec2-multilingual), not an

@@ -268,6 +268,31 @@ pub async fn whisper_transcribe(
     // printing) AND the preset name is model-specific — carrying a
     // base.en-named preset over to turbo would be actively misleading. DTW
     // is Phase 2b/3 work, not this phase's (no timing-source change here).
+    //
+    // PHASE 2B RESULT (2026-08-05) — DTW is now PERMANENTLY abandoned, and
+    // two clauses above are corrected (full measurement:
+    // docs/sync-pipeline-v2-plan.md's "Phase 2b — RESULTS"):
+    //   * CORRECT: `--dtw base.en` was indeed a silent no-op. whisper-cli's
+    //     stderr says so verbatim: "dtw_token_timestamps is not supported
+    //     with flash_attn - disabling".
+    //   * WRONG: "-nfa ... breaks stdout printing". It does not, on this
+    //     bundled binary — a full 23.7-minute run with -nfa and no -oj
+    //     produced 4,639 clean bracketed lines that parse_stdout_tokens
+    //     (below) handled without loss. Do not scope future work as though
+    //     -nfa forces a move to JSON output.
+    //   * The real reason not to add DTW: correctly enabled (stderr
+    //     "dtw = 1"), it changes timestamps by EXACTLY 0.000000000s, measured
+    //     against a no-DTW control over 4,579 + 2,080 tokens. Under `-ml 1`
+    //     whisper emits GAPLESS token spans (each token starts where the
+    //     previous ended), so a pause is structurally absorbed into the
+    //     following word's span and DTW has nothing left to dispute.
+    //     Phase 3 is forced alignment instead.
+    //   * Measured but deliberately NOT acted on (Phase 2b is read-only):
+    //     `-nfa` ALONE recovers a ~9.7s passage of real narration that the
+    //     current flash-attention default silently drops on the V6 corpus
+    //     project, at a cost of ~25-33% wall-clock. Documented as a finding
+    //     for a future phase to weigh; do not enable it casually — it mints
+    //     a new transcript era (K9) and needs its own verification pass.
     let (mut rx, child) = app
         .shell()
         .sidecar("whisper")
