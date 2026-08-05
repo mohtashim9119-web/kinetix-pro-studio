@@ -77,6 +77,11 @@ from pathlib import Path
 os.environ.setdefault("HF_HOME", "/tmp/hf-cache")
 
 MODEL_ID = "jonatasgrosman/wav2vec2-large-xlsr-53-english"
+# Phase 3->4 handoff Step N — jonatasgrosman publishes one fine-tune per
+# language, all Apache-2.0, same Wav2Vec2ForCTC architecture. --model-id
+# overrides MODEL_ID at the call site (build_aligner takes it as a param
+# now); the module-level constant stays the default so every prior English
+# invocation of this script is unaffected.
 
 
 def load_segments(path: Path) -> list:
@@ -94,13 +99,13 @@ def load_segments(path: Path) -> list:
     return out
 
 
-def build_aligner():
+def build_aligner(model_id: str = MODEL_ID):
     import torch
     from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 
     torch.set_num_threads(max(8, os.cpu_count() or 8))
-    processor = Wav2Vec2Processor.from_pretrained(MODEL_ID)
-    model = Wav2Vec2ForCTC.from_pretrained(MODEL_ID)
+    processor = Wav2Vec2Processor.from_pretrained(model_id)
+    model = Wav2Vec2ForCTC.from_pretrained(model_id)
     model.eval()
     vocab = processor.tokenizer.get_vocab()
     blank_id = processor.tokenizer.pad_token_id
@@ -232,7 +237,7 @@ def cmd_align(args):
     print(f"[align-hf:{args.label}] loaded {len(segments)} segments from {args.segments_json}", file=sys.stderr)
 
     run_start = time.perf_counter()
-    model, processor, vocab, blank_id, word_delim_id, valid_chars, sample_rate = build_aligner()
+    model, processor, vocab, blank_id, word_delim_id, valid_chars, sample_rate = build_aligner(args.model_id)
     model_load_elapsed = time.perf_counter() - run_start
     print(f"[align-hf:{args.label}] model loaded in {model_load_elapsed:.2f}s", file=sys.stderr)
 
@@ -287,7 +292,7 @@ def cmd_align(args):
         "token_count": len(all_words),
         "segment_count": len(segments),
         "failed_segments": all_failed,
-        "model": f"transformers Wav2Vec2ForCTC ({MODEL_ID}, Apache-2.0)",
+        "model": f"transformers Wav2Vec2ForCTC ({args.model_id}, Apache-2.0)",
         "torch_version": torch.__version__,
         "torchaudio_version": torchaudio.__version__,
         "pad_sec": args.pad_sec,
@@ -314,6 +319,9 @@ def build_parser():
     pa.add_argument("--segments-json", required=True)
     pa.add_argument("--label", required=True)
     pa.add_argument("--language", default="en")
+    pa.add_argument("--model-id", default=MODEL_ID,
+                     help="HF model repo id — jonatasgrosman publishes one per language "
+                          "(e.g. wav2vec2-large-xlsr-53-spanish); defaults to the English fine-tune")
     pa.add_argument("--pad-sec", type=float, default=3.0)
     pa.set_defaults(func=cmd_align)
 

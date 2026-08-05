@@ -1,0 +1,173 @@
+order,tag,text,startTime,duration,endTime,anchorSource
+0,hostile_landscape,Some places in the 41st Millennium don’t just kill soldiers.,0,4.18,4.18,whisper
+1,testing_parameters,They take apart the conditions under which a soldier can function in the first place.,4.18,4.96,9.14,whisper
+2,military_collapse,"Training, equipment, formation, doctrine, gone before the first contact report.",9.14,5.29,14.43,whisper
+3,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,3.45,17.88,whisper
+4,abysmal_opinion,They’re the worst,17.88,0.63,18.51,whisper
+5,lethal_nature_hazard,because the environment was already doing the killing before the enemy showed up.,18.51,4.65,23.16,whisper
+6,rugged_survivalist,"Number Six, Catachan.",23.16,1.77,24.93,whisper
+7,ancient_training_grounds,"Before Catachan produced the Imperium’s most capable baseline human soldiers,",24.93,5.13,30.06,whisper
+8,historical_visual,the planet had a simpler reputation.,30.06,2.59,32.65,whisper
+9,barren_ruin,It killed everything on it.,32.65,1.97,34.62,whisper
+10,ancient_nature_thriving,The jungle didn’t evolve around human warfare.,34.62,3.11,37.73,whisper
+11,eternal_focus,"It spent millions of years optimizing toward a single outcome,",37.73,4.49,42.22,whisper
+12,fatal_surge,and anything with a nervous system is on the wrong side of that outcome.,42.22,3.84,46.06,whisper
+13,moist_short_circuit,Humidity wrecks unprotected electronics inside a few hours.,46.06,4.38,50.44,whisper
+14,energy_rust,Las-charge packs corrode.,50.44,1.75,52.19,whisper
+15,sight_blur,Optical scopes fog permanently.,52.19,2.14,54.33,whisper
+16,signal_static_frustration,"The canopy generates a biological electrical field that jams vox-casters,",54.33,4.685,59.015,whisper
+17,ancient_schematic_view,something the Mechanicus has catalogued and never adequately explained.,59.015,4.895,63.91,whisper
+18,foliage_hostility,That’s before anything in the jungle decides to engage.,63.91,3.98,67.89,whisper
+19,insect_corrosive,Catachan devil ants dissolve flesh faster than combat-grade acid.,67.89,4.78,72.67,whisper
+20,segmented_stalker,"The Catachan devil itself, six limbs, chitin thick enough",72.67,3.94,76.61,whisper
+21,iron_bounce,"to deflect small arms fire, hunts by thermal signature.",76.61,3.69,80.3,whisper
+22,vicious_growth,Strangler plants drop tendrils that sever limbs before the soldier registers contact.,80.3,5.95,86.25,whisper
+23,danger_soil,Miral land sharks track ground vibration.,86.25,3.21,89.46,whisper
+24,gloomy_hollow,Every shadow has been occupying it longer than any patrol has been searching it.,89.46,5.5,94.96,whisper
+25,vibrant_wilderness_contrast,Forces without Catachan-born soldiers operate at a deficit that no amount of preparation closes.,94.96,6.71,101.67,whisper
+26,silent_forest,The jungle doesn’t telegraph its threats.,101.67,2.67,104.34,whisper
+27,futile_moment,It withholds them until they’re already past the point of response.,104.34,4.23,108.57,whisper
+28,tropical_wilderness_patrol,Catachan regiments work in that environment,108.57,2.19,110.76,whisper
+29,maintenance_blade,because they grew up treating survival as a practical discipline rather than an expected outcome.,110.76,6.51,117.27,whisper
+30,victory_jungle,"For everyone else, the mission doesn’t fail on Catachan.",117.27,4.2,121.47,whisper
+31,wilderness_consumes,The jungle absorbs it and moves on.,121.47,2.24,123.71,whisper
+32,cosmic_debris,"Number Five, Space Hulks.",123.71,2.23,125.94,whisper
+33,cosmic_wreckage_cluster,"A Space Hulk is centuries of accumulated ships, stations,",125.94,3.93,129.87,whisper
+34,shifting_monolith,"and debris, fused by warp transit into a structure too massive to ignore and too unstable for any chart to stay current on.",129.87,8.67,138.54,whisper
+35,vessel_access,Boarding one isn’t a tactical challenge.,138.54,2.86,141.4,whisper
+36,logic_failed_briefing,It’s a structural impossibility that command has decided cannot be avoided.,141.4,4.53,145.93,whisper
+37,unformed_abyss_gap,The corridors weren’t built.,145.93,1.7,147.63,whisper
+38,metallic_fusion,"They’re the overlapping interiors of vessels that were never designed to share a wall,",147.63,4.94,152.57,whisper
+39,spatial_jolt,smashed into adjacency by warp physics.,152.57,3.57,156.14,whisper
+40,inverted_gravity_path,Floors become ceilings two junctions in.,156.14,2.83,158.97,whisper
+41,orientation_conflict,Gravity plates from different ships pull in competing,158.97,3.18,162.15,whisper
+42,wall_split_path,directions in rooms separated by a single bulkhead.,162.15,3.76,165.91,whisper
+43,industrial_gas_leak,Sections pressurize and vent without warning when something fails.,165.91,4.1,170.01,whisper
+44,pungent_vapor,"The atmosphere, where it exists at all, is a chemical residue",170.01,4.73,174.74,whisper
+45,vessel_damage_clue,"of whatever the last crew left behind, which includes whatever finished them.",174.74,4.58,179.32,whisper
+46,creature_flexibility,Genestealers are adapted to this geometry in ways that standard assault doctrine isn’t.,179.32,6.08,185.4,whisper
+47,weightless_physics_defiance,They don’t need consistent gravity.,185.4,1.85,187.25,whisper
+48,rapid_duct_transit,They move through ventilation shafts with the velocity of a launched round,187.25,3.57,190.82,whisper
+49,listening_error,and the acoustic signature of a maintenance fault.,190.82,3.19,194.01,whisper
+50,tight_blind_bend,"Squad formations built around structured corridors collapse because line-of-sight inside a hulk rarely extends six meters,",194.01,8.13,202.14,whisper
+51,perpendicular_structural_entry,and flanking acquires a third dimension when the threat can arrive from overhead or through the wall itself.,202.14,4.84,206.98,whisper
+52,heavy_suit,Terminator armor was developed for this specific operational context.,206.98,4.71,211.69,whisper
+53,loss_statistic,It still doesn’t make the casualty rates acceptable.,211.69,3.26,214.95,whisper
+54,hazard_endured,It makes them survivable for a fraction of the boarding party.,214.95,3.52,218.47,whisper
+55,fatal_acceptance,That’s the best available outcome and everyone going in knows it.,218.47,3.92,222.39,whisper
+56,trench_siege,"Number Four, Vraks.",222.39,1.58,223.97,whisper
+57,duration_recollection,Seventeen years.,223.97,1.4,225.37,whisper
+58,logic_comprehension_view,That number starts making sense once you understand what,225.37,2.84,228.21,whisper
+59,rugged_landscape,the terrain did to every assault the Imperium attempted.,228.21,3.71,231.92,whisper
+60,fortified_vault,"Vraks was an armoury world, built for storage and protection rather than habitation.",231.92,5.77,237.69,whisper
+61,grey_industrial_vista,Thick rockcrete everywhere.,237.69,2.07,239.76,whisper
+62,subterranean_chambers,Deep vaults below it.,239.76,1.42,241.18,whisper
+63,ruins_monument_view,"Defensive lines pre-dating the siege by centuries,",241.18,2.63,243.81,whisper
+64,sturdy_plating,constructed specifically to resist the type of assault being attempted against them.,243.81,5.31,249.12,whisper
+65,combat_territory,"The attacking forces had to advance into ground that had been engineered,",249.12,4.22,253.34,whisper
+66,mechanical_vigil,"decades before they arrived, to stop exactly them.",253.34,2.99,256.33,whisper
+67,earthwork_corridor,Trenches funnel movement and eliminate flanking at the squad level.,256.33,4.78,261.11,whisper
+68,hazard_fluid,"The Chaos-aligned defenders added persistent acidic chemical compounds to that problem,",261.11,5.4,266.51,whisper
+69,liquid_hazard,"agents that pooled in low ground, degraded respirator seals over extended exposure, and corrupted the soil chemistry across entire operating sectors.",266.51,9.77,276.28,whisper
+70,poisonous_terrain_shift,Ground that should have been traversable became toxic inside two weeks of sustained fighting.,276.28,5.83,282.11,whisper
+71,fatigue_hazardous_travel,Soldiers who crossed contaminated sections arrived at their objectives already in physiological decline,282.11,7.23,289.34,whisper
+72,silent_stalking,before any contact occurred.,289.34,2.03,291.37,whisper
+73,ground_morph,"After seventeen years of that, the battlefield substrate changed.",291.37,4.2,295.57,whisper
+74,unstable_land,The soil churned.,295.57,1.15,296.72,whisper
+75,unnatural_fungi_inspection,Contaminated zones developed biological properties that had no business being there.,296.72,5.68,302.4,whisper
+76,perilous_zone_blur,In the worst sectors the distinction between a minefield,302.4,2.68,305.08,whisper
+77,strategic_equivalence,and clear ground stopped mattering operationally because the outcomes were roughly comparable either way.,305.08,6.22,311.3,whisper
+78,casualty_landscape,Fourteen million Krieg Guardsmen died at Vraks.,311.3,3.59,314.89,whisper
+79,clime_influence,The environment wasn’t incidental to that number.,314.89,2.89,317.78,whisper
+80,strategy_predetermined,It was built into the calculation from the start.,317.78,3.06,320.84,whisper
+81,ancient_structure,"Number Three, Necron Tomb Complexes.",320.84,3.09,323.93,whisper
+82,ancient_mechanical_lure,A Necron tomb world has been a trap for several million years.,323.93,4.45,328.38,whisper
+83,celestial_behemoth,The exterior looks like a planet.,328.38,2.21,330.59,whisper
+84,unseen_boundary,That’s where the familiar part ends.,330.59,2.2,332.79,whisper
+85,deep_void_tunnels,"Tomb complexes extend kilometers below the surface through dimensionally compressed architecture,",332.79,6.21,339,whisper
+86,spatial_anomaly,rooms that register on auspex scans as physically larger than the geological formation around them should permit.,339,6.37,345.37,whisper
+87,glitch_check,Whether that’s a sensor artifact or accurate data is,345.37,2.99,348.36,whisper
+88,rapid_skirmish_clash,not a question anyone fighting inside has time to settle.,348.36,4.14,352.5,whisper
+89,recovery_formation,The defenders reassemble after being destroyed.,352.5,3.25,355.75,whisper
+90,distinctive_property_highlight,That single feature separates this from every other hostile environment on this list.,355.75,5.62,361.37,whisper
+91,safety_passage,A fire lane is cleared.,361.37,1.99,363.36,whisper
+92,combatants_defeat_scene,Warriors go down.,363.36,1.41,364.77,whisper
+93,fixed_march,Twenty minutes later they’ve partially rebuilt and resumed patrol.,364.77,4.52,369.29,whisper
+94,count_void,Progress measured in confirmed eliminations stops being meaningful.,369.29,4.25,373.54,whisper
+95,architectural_pivot,"The structure itself continuously reconfigures around the intrusion, sealing corridors, shifting gravity orientations, cycling through",373.54,8.36,381.9,whisper
+96,ancient_guardian_mechanism,"defensive responses the way a biological organism cycles through immune responses, automatic, tireless, and scaling up.",381.9,7.44,389.34,whisper
+97,reveal_secret_chamber,The Astral Knights found this out aboard the World Engine.,389.34,3.84,393.18,whisper
+98,tactical_bypass,The only thing that worked was abandoning the model of fighting through an enemy position entirely,393.18,5.84,399.02,whisper
+99,explosive_focus,and treating the structure as a demolition target instead.,399.02,4.12,403.14,whisper
+100,vicious_wilds,The environment didn’t stop being hostile after that decision.,403.14,3.62,406.76,whisper
+101,heavy_effort,It just became a problem with a physical solution rather than a tactical one.,406.76,4.8,411.56,whisper
+102,void_guardian_watch,"Number Two, Cadian Space.",411.56,0.885,412.445,whisper
+103,void_boundary,Cadia sits at the edge of a permanent spatial rupture where the laws,412.445,4.705,417.15,whisper
+104,logic_clash,governing material reality are contested in ways standard military planning doesn’t account for.,417.15,7.04,424.19,whisper
+105,void_vessel_steering,Navigation through the outer reaches of the Eye of Terror,424.19,3.09,427.28,whisper
+106,gadget_decay,requires specialized instruments that themselves degrade the deeper in you go.,427.28,5.18,432.46,whisper
+107,temporal_flux,Helmsmen on those routes age at accelerated rates.,432.46,3.84,436.3,whisper
+108,unstable_path,Ships that enter the inner Eye on standard transit projections sometimes emerge centuries off course.,436.3,7.27,443.57,whisper
+109,shirking_foundation,"For ground forces during active incursions, the problem is reality as an unreliable physical substrate.",443.57,9.03,452.6,whisper
+110,onslaught_epoch,"During the 13th Black Crusade,",452.6,2.15,454.75,whisper
+111,malignant_swirl_weather,corruption radiating from Abaddon’s fleet destabilized atmospheric conditions across entire operating zones.,454.75,7.62,462.37,whisper
+112,gear_halted,Equipment failed with no physical damage to explain it.,462.37,3.32,465.69,whisper
+113,alien_topography,"Soldiers who spent extended time in contaminated sectors reported geography that didn’t match survey maps,",465.69,6.6,472.29,whisper
+114,mystery_signal_lag,"vox-traffic on dead frequencies, and an inability to track time between events.",472.29,5.24,477.53,whisper
+115,varied_battalions,These were documented across multiple units.,477.53,3.08,480.61,whisper
+116,resolute_stand,They weren’t morale failures.,480.61,1.72,482.33,whisper
+117,unprotected_exposure,They were the operational signature of the Eye’s effect on personnel without shielding.,482.33,5.47,487.8,whisper
+118,military_origin,Cadian Shock Troops were trained from the start with all of this as a baseline.,487.8,4.57,492.37,whisper
+119,routine_protocol,They treated it as standard operating parameters rather than emergency conditions.,492.37,5.11,497.48,whisper
+120,extraordinary_divide,That gap between a force that had normalized the impossible,497.48,3.47,500.95,whisper
+121,strike_encounter,and a force meeting it for the first time determined most of the tactical results at the Cadian Gate.,500.95,6.06,507.01,whisper
+122,fallen_regiment_site,The Cadians died there too.,507.01,1.82,508.83,whisper
+123,policy_check,They just had doctrine that already had a line item for it.,508.83,3.77,512.6,whisper
+124,distorted_rift,"Number One, The Warp, Uncontrolled.",512.6,2.9,515.5,whisper
+125,purple_nebula,Every interstellar vessel passes through the Warp to reach the next star system.,515.5,5.08,520.58,whisper
+126,perilous_overpass_doom,Nobody has survived losing control of that crossing.,520.58,3.75,524.33,whisper
+127,mystic_corridor,The Warp enables faster-than-light travel.,524.33,2.84,527.17,whisper
+128,void_entropy,It also operates under conditions where stable matter has no particular standing.,527.17,5.6,532.77,whisper
+129,craft_ward_vanishing,"A ship that loses its Geller field,",532.77,2.35,535.12,whisper
+130,stable_shield,"the containment system maintaining a bubble of material-reality coherence around the hull, isn’t a vessel in a dangerous environment anymore.",535.12,8.35,543.47,whisper
+131,unstable_formation,It’s matter trying to hold its shape somewhere,543.47,2.15,545.62,whisper
+132,pattern_chaos,that actively works against the concept of shape.,545.62,3.03,548.65,whisper
+133,strange_fate_occurs,The crew doesn’t die the way crews die when life support fails.,548.65,4.78,553.43,whisper
+134,chaotic_rot_witness,The deterioration comes from outside in and doesn’t follow a sequence anyone has successfully predicted.,553.43,6.91,560.34,whisper
+135,harsh_territory_evaluation,What makes this the worst environment in the setting,560.34,2.64,562.98,whisper
+136,unbound_chaos,is what gets stripped away the moment control fails.,562.98,3.45,566.43,whisper
+137,erratic_tide,Navigation stops working because Warp currents have no fixed relationship to physical distances.,566.43,6.41,572.84,whisper
+138,chronal_drift,"Time becomes operationally non-linear: vessels have exited transit weeks before they entered,",572.84,6.87,579.71,whisper
+139,view_trapped_warrior,"as measured by external observers, and some have never exited despite correct departure coordinates.",579.71,6.57,586.28,whisper
+140,unstable_spirit_journey,Crew psychological integrity declines in proportion to transit duration and proximity to Warp anomalies.,586.28,7.6,593.88,whisper
+141,broken_link,Communication with anything outside the hull is severed.,593.88,3.95,597.83,whisper
+142,battle_network,"Supply lines, reinforcements, intelligence, extraction, everything a military force depends on",597.83,5.32,603.15,whisper
+143,protection_failure,"for sustained operation, ceases to function the moment the Geller field goes.",603.15,6.09,609.24,whisper
+144,entry_clash,The final boarding of the Vengeful Spirit illustrated,609.24,3.27,612.51,whisper
+145,unstable_energy_consequence,what even partial Warp exposure does at close range.,612.51,4.42,616.93,whisper
+146,warp_lightning_entry,"A targeted teleport assault,",616.93,2.01,618.94,whisper
+147,engine_flash_array,"the most controlled form of Warp-adjacent transit available, was used as a dispersion mechanism.",618.94,5.74,624.68,whisper
+148,team_disperse,The loyalist strike force scattered across a corrupted interior.,624.68,4.57,629.25,whisper
+149,void_fission,Pocket instabilities isolated individuals from their units mid-transit.,629.25,5.21,634.46,whisper
+150,hidden_zone_vacuum,Dorn was displaced into a pocket dimension entirely.,634.46,3.82,638.28,whisper
+151,hallway_warp,Corridors changed geometry around active engagements.,638.28,3.68,641.96,whisper
+152,corrupted_frame,"That was one ship, partially destabilized by prolonged Warp exposure.",641.96,4.76,646.72,whisper
+153,maelstrom_dawn,"The open Warp produces those conditions as its starting point, not its worst case.",646.72,5.4,652.12,whisper
+154,lost_legion_void,No military force has operated effectively inside the open Warp without navigation.,652.12,5.64,657.76,whisper
+155,perilous_void_threshold,The ones that lost control going in didn’t return to write up what happened.,657.76,5.22,662.98,whisper
+156,nature_hazard,"The environment holds that record not because it kills efficiently,",662.98,4.27,667.25,whisper
+157,strategic_void,but because it removes the preconditions for any organized response.,667.25,4.47,671.72,whisper
+158,boundary_failed,You cannot establish a perimeter.,671.72,2.26,673.98,whisper
+159,failing_defense_line,You cannot hold ground.,673.98,1.62,675.6,whisper
+160,halted_progress,You cannot advance on an objective.,675.6,2.29,677.89,whisper
+161,mental_persistence,"Staying coherent long enough to matter is about the best available outcome,",677.89,3.765,681.655,whisper
+162,uncertain_outcome,and that’s not a given.,681.655,1.875,683.53,whisper
+163,deadly_climate,Some environments kill soldiers.,683.53,2.19,685.72,whisper
+164,strategic_collapse_disarray,These kill the structure of a mission before the first order reaches anyone.,685.72,5.66,691.38,whisper
+165,strategic_metric_view,The officers who sent men into these places had the parameters in front of them,691.38,4.43,695.81,whisper
+166,troop_deployment,and sent them anyway.,695.81,1.73,697.54,whisper
+167,logic_surplus,The calculation kept producing the same answer: the alternative cost more.,697.54,4.7,702.24,whisper
+168,routine_occurrence,Usually it did.,702.24,1.25,703.49,whisper
+169,unyielding_terrain,The hard places stay hard.,703.49,1.76,705.25,whisper
+170,perpetual_clash,The wars don’t stop.,705.25,1.3,706.55,whisper
+171,upcoming_assignment,Somebody else gets the briefing next.,706.55,2.46,709.01,whisper

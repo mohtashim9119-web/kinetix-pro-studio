@@ -143,15 +143,47 @@ tokens (clean pass, same as MMS-FA), wall-clock ~29% slower than MMS-FA on
 this run, peak RSS measurably LOWER than MMS-FA's (a smaller, monolingual
 model with no romanizer/multilingual-vocab overhead).
 
+## Update (Phase 3->4 handoff, 2026-08-06) — `--model-id`, V6 and Spanish measured
+
+`build_aligner`/`cmd_align` now take a `--model-id` CLI parameter (default:
+`MODEL_ID`, the English fine-tune above — every prior invocation of this
+script is byte-unaffected) so a different per-language `jonatasgrosman`
+fine-tune can be measured without duplicating this file. Used to run:
+
+```bash
+# V6 — same stale v6-segments-full.json windows the original V6 MMS-FA run
+# used, for a true apples-to-apples comparison on identical boundaries.
+python3 "$SCRIPT" align --workdir /tmp/phase3/v6 \
+  --segments-json "/Users/mohtashim/Downloads/All Projects Test Data/Projects Backend Data/v6-segments-full.json" \
+  --label hf --language en
+
+# Spanish — jonatasgrosman/wav2vec2-large-xlsr-53-spanish, against Step M's
+# own freshly-committed segment timings (see docs/phase4-baseline-methodology.md).
+python3 "$SCRIPT" align --workdir /tmp/phase3/spanish \
+  --segments-json /tmp/phase3/spanish/spanish-segments.json \
+  --label hf --language es --model-id jonatasgrosman/wav2vec2-large-xlsr-53-spanish
+```
+
+V6: median 25.8ms / p95 400.8ms / negative-smear 49.7% / 0 zero-duration
+tokens — within noise of MMS-FA's own V6 numbers (21.2ms/476ms/49.0%), and
+**both models independently fail on the identical segment (320)**, the same
+CTC-constraint-violation defect Blocker 2 already found — model-agnostic
+confirmation it is a pre-existing committed-duration bug, not an aligner
+artifact. Spanish: see `docs/sync-pipeline-v2-plan.md`'s Phase 3->4 handoff
+entry (Step N.2) for the completed figures, or the disclosed download-time
+gap if the session ended first — the Spanish-language model weight (~1.2GB)
+required a cold download that repeatedly stalled on this network and needed
+a retry-hardened `curl` fallback (see that entry's own note).
+
 ## Known limitations, stated plainly
 
-- **English only.** This model is English-specific by construction (one
-  fine-tune per language in the `jonatasgrosman` family) — H.0's other four
-  supported languages would each need their own per-language model download,
-  unlike MMS-FA's single multilingual checkpoint. This is the direct cost of
-  the commercial-license trade: **~1.2GB × 5 languages ≈ 6GB** total, versus
-  MMS-FA's one ~1.2GB multilingual checkpoint — this script does not measure
-  the other four languages; that is future work if this path is pursued.
+- **English only, originally** (see the Update above for the Spanish run).
+  This model family is one fine-tune per language by construction
+  (`jonatasgrosman`) — H.0's other three still-unmeasured supported languages
+  (French, Portuguese, German) would each need their own per-language model
+  download, unlike MMS-FA's single multilingual checkpoint. This is the
+  direct cost of the commercial-license trade: **~1.2GB × 5 languages ≈ 6GB**
+  total, versus MMS-FA's one ~1.2GB multilingual checkpoint.
 - **Digit-reading is absent**, same limitation class as MMS-FA's own
   romanization gaps but different in kind: a word with digits (e.g. "41st")
   is not dropped outright, it degrades silently to whatever letters survive

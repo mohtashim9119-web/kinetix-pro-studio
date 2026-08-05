@@ -14,7 +14,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/v6-smear-baseline.csv` / `docs/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
-| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **Blockers 1/3 CLOSED, Blocker 2 MEASURED — gate verdict PENDING OWNER DECISION**; integration not started | Measurement (`scripts/measure-forced-alignment.py`); ratio analysis vs. Part L | 2026-08-05 |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **Blockers 1/3 CLOSED, Blocker 2 MEASURED — gate verdict PENDING OWNER DECISION**; pre-implementation baseline (Steps M-P) captured; integration not started | Measurement (`scripts/measure-forced-alignment.py`); ratio analysis vs. Part L; golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`) | 2026-08-06 |
 | 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
@@ -882,6 +882,296 @@ Four raw FAILs, but three are already-explained, benign instances of the SAME pa
 **Clips 9 and 15, resolved — a different class, not headings.** Cross-referencing both against the raw transcript around their flagged windows: **clip2_09 (segment 264)** has no heading nearby; the true gap between "...temporary." (781.900s) and "The dark..." (781.960s) is only **60ms** — an ordinary fast, connected reading with essentially no real pause at all — while the flagged silencedetect interval (780.705-781.203s) sits stranded inside the PRECEDING sentence's own "is temporary" span, a stale-pause-selection instance (Step E's known mechanism, applied here to a target Step E's own 446-boundary sweep never covered, since segment 264 was never part of the original 40-failure list or Step A's 6 residuals). **clip2_15 (segment 293)** is a well-behaved breath case — FA (5.2ms), the F-corrected reference (2.0ms), and human B agree closely; the human's own perceived "A" endpoint (0.692s local, ~300ms earlier than the flagged pad point) reflects ordinary vocal trailing-decay ambiguity on "...yours", not a structural defect. **Neither is the heading class.** A targeted keyword sweep of the full raw transcripts for the 173-project (1836 tokens) and the Spanish project (363 tokens) — searching for "Level"/"Chapter"/"Part"/"Section" and the Spanish equivalents "Nivel"/"Capítulo"/"Parte" — found the two 173-project hits ("squad **level**", "familiar **part** ends") are ordinary in-sentence usage, not chapter markers, and zero hits in Spanish. **This specific defect class (spoken, unscripted chapter-heading recitations) appears to be a V6-specific narration-style artifact** (V6 alone uses a "Level N" chapter convention; neither other project does) — 10 confirmed/highly-likely occurrences in V6, none found in 173 or Spanish by this bounded keyword sweep. This is not an exhaustive script-vs-transcript diff for the other two projects (a much larger undertaking), so absence-of-evidence there is reported as exactly that, not as proof no other unscripted content exists in either.
 
 *Step L — segments 42 and 224.* **Both appear in this batch** — segment 224 is clip2_02, segment 42 is clip2_12, both members of Step H's "worst-remaining residuals" selection (the same 2 boundaries that were still >250ms after Steps E+F, per Step H's corpus re-score). Human labelling: clip2_02 — A=2.529s, no breath, B=2.876s (local); clip2_12 — A=2.920s, no breath, B=3.144s (local). Both show the identical signature already explained by Step K above: the human's own A/B fall roughly 1.5-1.9s past the flagged silence's own pad point, because a full "Level N ..." heading recitation (Level 6 / Level two respectively) sits between the flagged (stale) silence and the segment's true content. **Segments 42 and 224 are now fully explained, not merely re-confirmed as unexplained** — they are the two most severe examples of the same heading-recitation class Step K formalizes, not a novel or mysterious residual as Step H's own text had to describe them at the time. This closes the "entirely unexamined by any ground truth" status Step A/H both assigned them.
+
+### Phase 3 -> Phase 4 handoff — Steps M-P (pre-implementation baseline, 2026-08-06)
+
+**Scope discipline, stated up front and honored throughout: no Rust changes, no timing-source swap, no Viterbi, no contract amendment. Everything below is capture and measurement, run against unmodified HEAD `c4fc289`.**
+
+#### Step M — Golden baseline of current behaviour
+
+Full methodology, provenance, and the exact real-code call sequence used:
+`docs/phase4-baseline-methodology.md`. Summary: a vitest harness
+(`scripts/phase4-handoff-replay-sync.test.ts`) replays the real, unmodified,
+currently-shipped Apply-Sync pipeline (`App.tsx`'s `cachedTokensReady`
+branch, `useWhisper.ts`'s `alignSegmentsFromCachedTranscript`, verbatim call
+sequence — zero reimplementation) against each project's own scene doc/
+script text and the already-captured turbo Whisper token output (unchanged
+since Phase 2a Step 5's resync — no `src/` file the pipeline touches has
+changed since, confirmed pass-by-pass through Phase 2b and every Phase 3
+sub-pass). One disclosed substitution: `snapCoveredBoundaries` needs a
+`SilenceInterval[]`, which in production comes from `silenceDetector.ts`'s
+Web-Audio RMS/dB scan (unavailable outside a browser) — a line-for-line
+Python port of that exact algorithm
+(`scripts/phase4-handoff-app-silence.py`) was run against the same 16kHz WAV
+transcode instead, a sub-frame-quantization-only approximation of decoding
+the original file.
+
+All three projects reproduced cleanly (no abort, `gate.aborted: false` on
+all three) and independently cross-validated three already-published
+findings without being told the answer in advance (see the methodology
+doc's own section for detail) — the strongest available evidence this
+replay is faithful, not silently wrong:
+
+| Project | Parsed | Kept | Skipped | Total committed duration | audioDuration |
+|---|---|---|---|---|---|
+| V6 | 447 | 444 | 3 (segments 27,28,29 — the known flash-attention content dropout) | 1421.29s | 1421.29s |
+| 173 | 175 | 172 | 3 (segments 0,12,111 — 0-indexed; segment 111 = 1-based segment 112, Phase 2b's Finding 2 hypothesis, now DIRECTLY CONFIRMED by running the real pipeline rather than inferred from token evidence) | 709.01s | 709.01s |
+| Spanish | 27 | 26 | 1 (segment 0, "Scylla." alone, 0 of 1 words matched) | 92.04s | 92.04s |
+
+Key Invariant (b) (`CLAUDE.md`) — sum of committed content-segment durations
+equals `audioDuration` — holds exactly on all three, to the millisecond.
+
+**Committed files** (versioned, diffable against a future post-Phase-4 run):
+`docs/phase4-baseline-{v6,173,spanish}-segments.csv` (per-segment committed
+start/end/text/tag), `docs/phase4-baseline-{v6,173,spanish}-words.csv`
+(per-word Whisper token timings — the full, un-1000-row-capped transcript),
+`docs/phase4-baseline-{v6,173,spanish}-skipped.csv` (skip records with
+match/confidence/longest-run), `docs/phase4-baseline-{v6,173,spanish}-silences.csv`
+(the RMS-detected silence array each project's boundaries were snapped
+against). Model/commit/ffmpeg/hardware provenance recorded once at the top
+of `docs/phase4-baseline-methodology.md` rather than repeated per file.
+
+**One project could not be reproduced from committed inputs as originally
+hoped, stated plainly rather than fabricated:** Spanish has no persisted
+post-sync `project.json`-style backup (already flagged in this document's
+Step 4 entry — "declined to reconstruct"). This handoff DID reconstruct it —
+not by guessing, but by running the real `parseProjectData` against the
+real `Spanish Sync.txt`/`Spanish Script.txt` and the real captured Spanish
+Whisper tokens, i.e. exactly the same real-code replay used for V6/173. The
+gap that remains open is narrower than the original one: no *independently
+authored* committed-segment snapshot exists to diff this replay against, so
+its correctness rests on the methodology doc's cross-validation evidence
+(the V6/173 replays matching already-published findings) rather than a
+direct Spanish-specific check. This is disclosed, not hidden.
+
+#### Step N — Closing the two open measurement gaps
+
+**N.1 — Spanish forced alignment, run for the first time.** MMS-FA
+(`scripts/measure-forced-alignment.py`, `--language es`, `uroman`
+romanization — language-agnostic by construction, per Blocker 1's own
+finding) against the 26 kept segments from Step M's own committed timing
+(a *tighter, more accurate* window than V6/173's original FA runs got,
+which used stale base.en-era timings — noted as a methodology improvement,
+not a like-for-like rerun) and Spanish's `silences.json` (ffmpeg
+`silencedetect`, the same independent ground truth every other Phase 1b-3
+measurement in this document uses — NOT the RMS silences Step M used for
+the production replay; the two silence sources serve different purposes
+and must not be conflated).
+
+| | Spanish MMS-FA | Gate |
+|---|---|---|
+| n scored pauses | 22 | — |
+| Median abs error | 61.2ms ✓ | ≤100ms |
+| **p95 abs error (PRIMARY)** | **282.1ms ✗** | ≤250ms |
+| Negative-smear fraction | 9.1% ✗ | <1% |
+| Zero-duration real-word tokens | 0 ✓ | 0 |
+| Wall-clock (92.04s audio) | 19.9s (≈4.62× realtime) | — |
+| Peak RSS | 3.23 GiB | — |
+
+**2 of 4 readings fail** — the same shape as V6 (3/8 fail) and better than
+173 (which passed cleanly): p95 fails, but narrowly (282ms vs. 250ms, a
+32ms miss on a 22-pause sample — this is well inside the kind of sampling
+noise a 22-pause set can produce; V6's own p95 needed corpus-wide breath/
+stale-pause correction across 501 pauses before it cleared the gate, and no
+equivalent correction pass has been run for Spanish). Negative-smear fails
+for the same already-established structural reason (Step D) — expected on
+any accurate, symmetric-noise source, not evidence of a Spanish-specific
+problem. Zero-duration tokens: clean pass. **One real, Spanish-specific
+finding**: 1 segment ("y 12 patas debajo de su cuerpo", segment 005) had one
+word — the digit "12" — dropped as unrepresentable by `uroman`'s
+romanization (digits are not romanized to the 28-symbol vocab), the exact
+digit-reading limitation Blocker 1's de-risking follow-up already
+documented for jonatasgrosman on English; **now confirmed the same
+limitation applies to MMS-FA itself, on a non-English project, for the
+first time.** Full data: `docs/phase3-onset-spanish-fa.csv`.
+
+**Spanish was the original reason for Phase 2a** (H.8's Spanish-or-French
+corpus requirement) — this run means Spanish now has real forced-alignment
+evidence, not zero. It is a favorable result (median passes, p95 misses
+narrowly on a small sample, no cascade-class failure, no zero-duration
+tokens) but it is **one 22-pause sample**, the same caveat Step C already
+applied to V6's own 12-clip human-labeled sample — not enough to certify a
+Spanish-specific gate pass on its own, and **still entirely unlistened** —
+no Spanish speaker's ear has verified a single boundary. The Stage 1 lock
+gate's existing written acceptance for Spanish (Phase 2a's entry, reopening
+at Phase 3b) is unchanged by this measurement.
+
+**N.2 — jonatasgrosman (Apache-2.0) run on V6 and Spanish, completing the
+matrix Task 2 started on 173 alone.** `scripts/measure-forced-alignment-hf.py`
+gained a `--model-id` parameter (additive, defaults to the English fine-tune
+already used for 173 — every prior invocation of this script is
+byte-unaffected) so the Spanish-language fine-tune
+(`jonatasgrosman/wav2vec2-large-xlsr-53-spanish`) could be measured with
+zero duplicated code. V6 used the same stale `v6-segments-full.json`
+windows the original V6 MMS-FA run used, for a true apples-to-apples
+comparison on identical boundaries (matching the precedent already set for
+173's own fa-vs-hf comparison).
+
+| | V6 MMS-FA (fa2) | V6 jonatasgrosman (hf) | 173 MMS-FA | 173 jonatasgrosman | Spanish MMS-FA | Spanish jonatasgrosman | Gate |
+|---|---|---|---|---|---|---|---|
+| Median abs error | 21.2ms ✓ | 25.8ms ✓ | 22.3ms ✓ | 27.5ms ✓ | 61.2ms ✓ | 61.2ms ✓ | ≤100ms |
+| **p95 (PRIMARY)** | 476ms ✗ | 400.8ms ✗ | 69.9ms ✓ | 89.7ms ✓ | 282.1ms ✗ | 282.1ms ✗ | ≤250ms |
+| Negative-smear | 49.0% ✗ | 49.7% ✗ | 42.3% ✗ | 44.8% ✗ | 9.1% ✗ | 9.1% ✗ | <1% |
+| Zero-dur tokens | 0 ✓ | 0 ✓ | 0 ✓ | 0 ✓ | 0 ✓ | 0 ✓ | 0 |
+| Wall-clock | 349.5s | 318.0s | 112.7s | 143.97s | 19.9s | 16.3s | — |
+| Peak RSS | 4.01 GiB | 3.26 GiB | 3.98 GiB | 3.19 GiB | 3.23 GiB | 2.58 GiB | — |
+| Failed segments (CTC) | 1 (seg 320) | 1 (seg 320) | 0 | 0 | 0 | 0 | — |
+
+**Reading it: V6 confirms 173's finding, at scale.** jonatasgrosman is
+within noise of MMS-FA on V6 too (25.8ms vs. 21.2ms median; 400.8ms vs.
+476ms p95 — jonatasgrosman is actually slightly *better* on V6's p95, not
+worse), and **both models fail on the exact same V6 segment** (320, "targets
+length is too long for CTC") — independent, model-agnostic confirmation
+that segment 320's problem is a pre-existing committed-duration defect (a
+4.5x undercount, see Step O item 1), not an artifact of either aligner.
+**Consequence for H.3's commercial path, now stated with V6 evidence
+in hand, not just 173's:** jonatasgrosman remains numerically viable at
+scale — the ~28% wall-clock cost and ~1.2GB-per-language footprint from the
+173-only measurement hold on the 2x-larger V6 project too, and its
+accuracy gap against MMS-FA is noise-level on both projects measured so
+far. Parakeet's unverified CTC-extractability remains correctly out of
+scope.
+
+**Spanish: the two models converge almost exactly** (61.2ms/282.1ms/9.1%
+identical to 1 decimal place on both). Verified this is genuine convergence,
+not a scoring-script bug re-reading the same file: the raw per-word token
+arrays differ between the two models on nearly every word (e.g. "Scylla"
+resolves to `start=0.341, score=0.5163` under MMS-FA vs. `start=0.321,
+score=0.0344` under jonatasgrosman — a real, if small, difference) — the
+scored PAUSES the four-threshold table reads simply happen to select
+near-identical words at near-identical positions on this particular
+92-second, cleanly-recorded clip, at the resolution the two-decimal metrics
+report. jonatasgrosman's Spanish weights (`pytorch_model.bin`, ~1.18GiB)
+required a full cold download that stalled repeatedly on this session's
+network (three automated attempts — `huggingface_hub`'s own downloader
+twice, a bare `curl` once — all stalled indefinitely partway through
+despite active TCP connections; a retry-hardened `curl` with a speed-floor
+timeout made slow but genuine progress before the user completed the
+download manually and supplied the file directly). Wall-clock/RSS above are
+from a subsequent `HF_HUB_OFFLINE=1` run against the manually-placed weights
+— the alignment itself is unaffected by how the weights arrived on disk.
+
+#### Step O — Known-defect inventory (Phase 3, all passes)
+
+Enumerated per instruction — specification of a structural check only,
+nothing implemented. "Gate-catchable" means one of the four finalized Stage
+1 numeric thresholds (median ≤100ms, p95 ≤250ms, negative-smear <1%,
+zero-duration-tokens = 0) would flag the instance; several defect classes
+below are invisible to all four by construction, which is exactly why this
+inventory was asked for.
+
+| # | Defect class | Instances found | Projects | Gate-catchable? | Structural check (spec only) |
+|---|---|---|---|---|---|
+| 1 | Zero-aligned-token / CTC-constraint-violation segment (committed slot too short for its real speech to fit any alignment window) | 1 (V6 segment 320: 1.27s slot, ~5.8s real speech, 4.5x undercount) — now confirmed model-independent (MMS-FA and jonatasgrosman both fail identically, Step N.2) | V6 only; 173/Spanish confirmed clean (0 failed segments each, checked directly) | **NO** — the cascade it caused on segment 321 scored 227ms, under the 250ms gate, in every dataset version before the human listener caught it (Step I) | Assert every segment has ≥1 aligned token after alignment; separately assert a segment's committed duration is plausible for its character count (a minimum-plausible-speaking-rate floor) |
+| 2 | Unscripted spoken headings / chapter markers | 10 (5 directly confirmed, 5 by structural uniformity) — V6's "Level N" convention | V6 only; a bounded (not exhaustive) keyword sweep found none in 173 or Spanish | **PARTIALLY** — large raw errors were visible, but attributed to "FA inaccuracy" until Step K's transcript sweep found the real cause | Detect a sustained transcript-covered, zero-script-mapped gap between two segments' matched spans (a "dead-to-script" run check); optionally a project-configurable chapter-marker vocabulary scan |
+| 3 | Stale-pause / detector-coverage-gap selection (no real candidate silence exists anywhere near the true onset) | 3 (V6 segments 1, 307, 383) | V6 only examined | **PARTIALLY** — large errors visible (1004-2139ms) but misattributed to FA rather than to a reference/detector gap without Step E's audit | Max-plausible-attribution-distance guard (already specified numerically: 1.0s, from the clean population's own p99 doubled) — reject an attribution beyond it rather than silently keeping a stale one |
+| 4 | Breath-vs-boundary silence misclassification | Dominant mechanism behind 37 of the original 40 V6 failures; on the fresh genuinely-blind batch, silencedetect biased 91-406ms toward breath onset on 5 of 6 human-confirmed breath clips | V6 examined in depth; not characterized on 173/Spanish | **NO** without ear verification — raw onset-error numbers alone cannot distinguish "FA is wrong" from "the reference silence is a breath" | The acoustic breath classifier (Step F, 4 frame-level features) is a candidate signal, but does NOT hold up as an unconditional improvement (regressed 8 of 17 clean-control rows in the genuinely blind Step J batch) — spec as "flag for review," not "auto-correct," pending further calibration |
+| 5 | "it."/short-trailing-word SCORER misattribution (measurement-harness bug, already fixed in the harness — listed so a future re-measurement doesn't rediscover it as new) | 12 (V6), fixed at Step 1 of the data-cleaning pass | V6 (173 negligibly affected — 1 row, no median/p95 change) | N/A — this is a bug in the measurement tool, not the production pipeline | Already fixed (`score_onset_errors`' overlap gate); no production check needed |
+| 6 | ASR content dropout (flash-attention artifact) | 1 confirmed (V6 segments 27-29, ~9.7s) | V6 confirmed; not exhaustively checked elsewhere | **NO** — content is entirely absent from the transcript; no token exists to score | No threshold catches this by construction; production's own skip mechanism already surfaces it as a silent timeline gap (confirmed by this handoff's own Step M replay — segments 27-29 ARE skipped today) rather than a wrong timestamp |
+| 7 | 173 segment 112 turbo-era word-drop / run-survival-gate failure | 1 — now DIRECTLY CONFIRMED by Step M's live-pipeline replay (Phase 2b had only hypothesized this from token evidence) | 173 | **YES** — this is the run-survival gate correctly catching a real defect, included for closure, not as an escaping case | None needed — already working as intended |
+| 8 | Small-scale systemic word drops (turbo accuracy trait, beyond item 6) | Several named instances (Three, No, afraid, Fen's, part of Thick, part of Catachan) — not exhaustively counted in the source passes | V6 | **PARTIALLY** — visible only when the drop produces a zero-duration token (item 9's threshold), invisible when the word is dropped cleanly | Zero-duration real-word-token count (already one of the four finalized thresholds) |
+| 9 | CTC constraint violations as a measurement-harness/integration-design concern (the mechanism behind item 1) | Same instance as item 1 | V6 | N/A (harness-level) | The eventual Rust integration needs an explicit skip-and-flag path for "target text doesn't fit the alignment window," matching this codebase's established graceful-degradation precedent (`filterMalformedTokens`, the coverage gate, the silence-scan-error fallback) — not a silent crash |
+| 10 | Word-shift defect residuals (the original item motivating this programme) | 3: 2 unexplained-and-failing, 1 newly identified as structurally unfixable by a timing-source upgrade (`seasons than you \|\| can count and` — clean cut at a real pause that disagrees with the SCRIPT's own sentence break) | V6 | **NO**, by design — none of the four thresholds targets "does the cut match the script's intended break," only "does it match an acoustic pause" | None proposed; explicitly out of scope for a purely acoustic timing-source upgrade |
+| 11 | Lock preservation broken across resync (K13) — unrelated to timing source, a Stage 3 concern surfaced during Phase 0 | 100% reproducible (any locked segment, any resync) | Confirmed on 173; presumed universal (root cause is structural, not project-specific) | **NO** — not covered by any Stage 1 timing threshold | Already specified (Part D/K13): a dedicated repro-based Stage 3 lock-gate test (lock two overlapping segments, Apply Sync, confirm both position and lock flag survive) — not yet built |
+| 12 | Negative-smear gate is structurally non-discriminating (a gate-DESIGN defect, not a pipeline defect) | Confirmed analytically (Step D): an accurate, symmetric-noise source reads ~50% by the literal sign-only test, on every project/model measured in this document (Whisper, MMS-FA, jonatasgrosman, all three projects) | All | **N/A** — this IS one of the four gates, found to be unable to discriminate what it was built to catch | Needs a redesign (e.g. magnitude-weighted or distribution-shape-based), not a threshold retune — flagged for the owner, not actioned |
+
+#### Step P — Cost and rollback
+
+**Current end-to-end sync wall-clock and peak RSS, today's shipped pipeline
+(Whisper turbo raw, config (a) — no FA, no DTW), grounded in numbers
+measured on this machine, this commit lineage:**
+
+| Project | Whisper wall-clock | xRT | Whisper peak RSS | Alignment+snap wall-clock |
+|---|---|---|---|---|
+| V6 (1421.3s audio) | 834.9s (Phase 2b, 2026-08-05) | 1.70× | ~2.1-2.2 GiB (H.9) | sub-second (Step M's replay: all 3 projects' full alignment+snap pipeline together = 3.69s vitest test time) |
+| 173 (709.0s audio) | 452.3s (Phase 2b, 2026-08-05) | 1.57× | not separately captured in Phase 2b; consistent with the model-weight-dominated pattern confirmed on V6 and Spanish (below) — not re-measured here to avoid an ~8-minute rerun for a number already well-constrained by that pattern | sub-second |
+| Spanish (92.04s audio) | **108.5s (measured fresh, this pass)** | 0.85× (fixed model-load cost dominates a short clip) | **2.18 GiB (measured fresh, this pass)** | sub-second |
+
+Whisper transcription is >99% of current sync wall-clock on every project
+measured — the entire alignment/Hirschberg/snap/head-extend pipeline (Step
+M's replay) runs in low single-digit seconds for all three projects
+combined, confirming the FA/HF cost comparisons below are the real
+second-order cost, not a rounding error against something already slow.
+
+**Cost of adding a forced-alignment pass (architecture (A) — both models
+run every sync, sequential), per project, using the actual measured
+numbers rather than V6's figure alone:**
+
+| Project | Whisper only | + MMS-FA | Increase | + jonatasgrosman | Increase |
+|---|---|---|---|---|---|
+| V6 | 834.9s | 1184.4s | **+41.9%** | 1152.9s | +38.1% |
+| 173 | 452.3s | 565.0s | **+24.9%** | 596.3s | +31.8% |
+| Spanish | 108.5s | 128.4s | **+18.3%** | 124.8s | +15.0% |
+
+**The percentage overhead is project-size- and pause-density-dependent, not
+a fixed universal figure** — V6's own +41.9% (the number this document has
+cited throughout Phase 3) is the LARGEST of the three measured, not
+representative of the smaller projects. A short project like Spanish pays
+proportionally less because Whisper's fixed per-run model-load cost (not
+audio-length-dependent) is a larger fraction of its own already-slow
+(sub-realtime) baseline, while FA's own per-segment cost scales more
+directly with segment count. Stating a single "+42%" figure for the whole
+programme, as prior passes have done informally, would be misleading for
+anything other than V6-sized long-form content.
+
+**Peak RSS is not additive.** Since Whisper and the forced aligner run
+sequentially (Blocker 3's confirmed architecture), the honest combined peak
+is `max(Whisper's ~2.1-2.2 GiB, FA/HF's own peak)` — not the sum — **only
+if** the Rust integration releases Whisper's memory before loading the
+second model; this is a design requirement of the integration, not
+something already guaranteed. Measured FA/HF peaks range 3.19-4.01 GiB
+across every (project, model) pair measured in this document — so the
+practical memory floor rises from today's ~2.1-2.2 GiB to roughly 3.2-4.0
+GiB regardless of which commercial-viable candidate is chosen.
+
+**Reversibility.**
+
+- **What is being replaced:** only the WORD-LEVEL TIMESTAMP VALUES inside
+  Stage 1's `{text, start, end}` output contract — specifically, Whisper's
+  own per-token `start`/`end` fields. Confirmed by Blocker 3: "Part B's
+  Stage 1 output contract needs no amendment under this architecture — FA
+  is a drop-in replacement for the timing values behind that same contract
+  shape, not a new pipeline stage or a new field."
+- **What stays unchanged:** Whisper's transcript (word identity and order —
+  needed for the Hirschberg alignment's text matching and skip detection),
+  the Hirschberg alignment itself, `snapCoveredBoundaries`, `headExtendFirstSegment`,
+  and every downstream stage. None of these are aware of which model
+  produced the timestamps they consume.
+- **Can old and new run side by side for comparison?** Yes, both in
+  measurement (already proven — this entire handoff, and every Phase 3
+  pass before it, computed FA/HF timing independently of Whisper's own
+  timestamps with zero `src/` changes) and, architecturally, in production:
+  Stage 1's contract is timing-source-agnostic, so a runtime-gated dual
+  path is structurally straightforward — this codebase already ships
+  exactly this pattern for an unrelated concern (`useExport.ts`'s
+  `isWebCodecsExportGateOpen()`, a capability-probe-plus-persisted-toggle
+  gate deciding between two full implementations behind one contract). Not
+  yet built for the timing source; noted as a low-risk precedent to follow
+  if a gradual rollout is wanted.
+- **What rollback looks like if it fails in use:** because architecture (A)
+  makes FA a strictly ADDITIVE second pass after Whisper (Whisper still
+  runs first, unconditionally, for transcript + matching), rollback is
+  "skip the FA pass, use Whisper's own timestamps as today" — no schema
+  change, no data migration, since the output contract shape is identical
+  either way. This is materially lower-risk than Phase 4's own stage
+  restructuring (which changes contracts, not just a timing source inside
+  one stage already-fixed contract) — the FA swap is architecturally
+  isolated to one step of Stage 1.
+
+### Deliverable summary
+
+Golden baselines captured and committed for all three corpus projects
+(Step M); both open measurement gaps closed — Spanish forced alignment run
+for the first time, jonatasgrosman completed on V6 and Spanish alongside
+its existing 173 measurement (Step N); twelve defect classes inventoried
+with instance counts, gate-catchability, and specified (unimplemented)
+structural checks (Step O); current wall-clock/RSS cost re-grounded in
+fresh measurement rather than V6's figure alone, plus a stated reversibility
+plan (Step P). No `src/` file changed. Two Python scripts gained additive
+parameters (`measure-forced-alignment-hf.py`'s `--model-id`); one new
+Python script (`phase4-handoff-app-silence.py`) and one new TypeScript
+harness (`phase4-handoff-replay-sync.test.ts`, vitest-only, not part of the
+production build) were added under `scripts/`.
 
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).

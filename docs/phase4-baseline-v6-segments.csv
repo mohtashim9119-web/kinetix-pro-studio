@@ -1,0 +1,445 @@
+order,tag,text,startTime,duration,endTime,anchorSource
+0,001_child_seven,You are seven years old.,0,5.64,5.64,whisper
+1,002_skin_shelter,You live inside a skin-covered shelter at the edge of a shallow valley.,5.64,4.25,9.89,whisper
+2,003_mother_fire,The fire your mother tends smells like pine resin and scorched bone.,9.89,4.45,14.34,whisper
+3,004_grandmother_asleep,Your grandmother is asleep against the far wall.,14.34,3.22,17.56,whisper
+4,005_deep_night,It is deep in the night.,17.56,1.83,19.39,whisper
+5,006_boy_alert,You are wide awake.,19.39,1.96,21.35,whisper
+6,007_listening_outside,You can hear something outside.,21.35,2.1,23.45,whisper
+7,008_unknown_void,You do not know what it is.,23.45,1.73,25.18,whisper
+8,009_large_shadow,You only know the sound is large,25.18,2.27,27.45,whisper
+9,010_close_danger,it is close,27.45,1.44,28.89,whisper
+10,011_shivering_by_fire,and the fire is the only reason you are not screaming.,28.89,3.41,32.3,whisper
+11,012_sudden_hush,The sound stops.,32.3,2.02,34.32,whisper
+12,013_silent_prehistoric_night,The night goes quiet.,34.32,1.97,36.29,whisper
+13,014_chest_tightens_fear,Your chest is tight in a way you have no word for.,36.29,3.48,39.77,whisper
+14,015_mother_unmoved,Your mother does not look up.,39.77,2.15,41.92,whisper
+15,016_feeding_the_hearth,She feeds the fire another stick without turning her head.,41.92,3.98,45.9,whisper
+16,017_heavy_stillness,That stillness tells you something.,45.9,2.37,48.27,whisper
+17,018_listening_mother_profile,She has been listening the whole time.,48.27,2.89,51.16,whisper
+18,019_silent_observation,You watch her face and you learn your first lesson without a word being spoken.,51.16,5.4,56.56,whisper
+19,020_lurking_darkness,The darkness past the firelight is not empty.,56.56,3.18,59.74,whisper
+20,021_heavy_flint_spear,It has weight.,59.74,1.37,61.11,whisper
+21,022_fire_boundary_void,The fire is the line between you and whatever lives on the other side of it.,61.11,4.66,65.77,whisper
+22,023_sleeping_mother_side,You fall asleep against her side,65.77,2.54,68.31,whisper
+23,024_hand_warm_stones,one hand on the warm stones ringing the hearth.,68.31,3.53,71.84,whisper
+24,025_dream_sound_shapes,You dream about the sound.,71.84,2.12,73.96,whisper
+25,026_frosty_morning_run,Morning comes bright and cold and you run out into the frost like nothing happened.,73.96,4.6,78.56,whisper
+26,030_watching_older_hunters,You start watching the older hunters differently.,78.56,11.58,90.14,whisper
+27,031_sunset_gaze,You notice where their eyes go when the sun drops.,90.14,2.99,93.13,whisper
+28,032_fire_gathering,You notice how they arrange themselves around the fire before full dark.,93.13,4.73,97.86,whisper
+29,033_watchful_eyes,Nobody told them to do it.,97.86,2.18,100.04,whisper
+30,034_natural_order,They just do.,100.04,1.68,101.72,whisper
+31,035_nocturnal_formation,The band has a shape at night it does not have during the day.,101.72,3.83,105.55,whisper
+32,036_outward_sentry,Certain men always face outward.,105.55,3,108.55,whisper
+33,037_inner_circle,Certain men sleep closest to the fire’s edge.,108.55,3.36,111.91,whisper
+34,038_spear_glint,The arrangement is not accidental.,111.91,2.73,114.64,whisper
+35,039_river_trap,It is as deliberate as any trap your father sets in the river shallows.,114.64,4.57,119.21,whisper
+36,040_outside_circle,You are not old enough to hold a position in that shape.,119.21,3.43,122.64,whisper
+37,041_elder_lesson,But you are old enough to start learning what it means.,122.64,4.53,127.17,whisper
+38,042_eleven_years,You are eleven.,127.17,3.79,130.96,whisper
+39,043_night_migration,On nights when the band moves between camps,130.96,3.04,134,whisper
+40,044_carrying_torch,your job is to carry one of the torches.,134,2.54,136.54,whisper
+41,045_torch_materials,Birch bark and fat-soaked moss,136.54,1.725,138.265,whisper
+42,046_sinew_binding,bound with sinew,138.265,0.645,138.91,whisper
+43,047_proper_hold,held in both hands out in front of your body.,138.91,3.9,142.81,whisper
+44,048_flickering_wind,The flame bends in the wind and you curve yourself around it,142.81,3.57,146.38,whisper
+45,049_chest_protection,using your chest against the cold air.,146.38,2.74,149.12,whisper
+46,050_hunters_ahead,The hunters move ahead.,149.12,2.07,151.19,whisper
+47,051_center_column,You stay in the center column with the women and older children.,151.19,3.4,154.59,whisper
+48,052_rear_guards,"Behind you, two of the most experienced men walk the rear with thrusting spears angled outward into the dark.",154.59,7.46,162.05,whisper
+49,053_silent_men,They do not speak on night marches.,162.05,2.37,164.42,whisper
+50,054_silent_tool,Their silence is a tool,164.42,1.63,166.05,whisper
+51,055_spear_comparison,same as the spear.,166.05,1.65,167.7,whisper
+52,056_dropping_torch,You drop the torch on the third night of your second season carrying it.,167.7,4.05,171.75,whisper
+53,057_root_trip,You catch a root you did not see and the flame hits the ground and sputters and for three full heartbeats the column loses half its light.,171.75,8.16,179.91,whisper
+54,058_silent_reaction,Nobody shouts.,179.91,1.82,181.73,whisper
+55,059_daret_approaches,"But Daret, the rear guard",181.73,2.29,184.02,whisper
+56,060_reassuring_hand,moves up beside you and puts his hand flat on your shoulder.,184.02,3.74,187.76,whisper
+57,061_elder_touch,Not hard.,187.76,1.51,189.27,whisper
+58,062_firm_grip,Not gentle.,189.27,1.29,190.56,whisper
+59,063_scout_silhouette,Just there.,190.56,1.49,192.05,whisper
+60,064_lighting_torch,He holds it until you have the torch burning again from the second carrier’s coals.,192.05,4.96,197.01,whisper
+61,065_elder_leaves,Then he walks back to his post without a word.,197.01,3.15,200.16,whisper
+62,066_torch_reflection,The lesson in that touch,200.16,2.15,202.31,whisper
+63,067_group_danger,your mistake put people in danger.,202.31,2.32,204.63,whisper
+64,068_scout_solitude,You are not punished for it.,204.63,2.22,206.85,whisper
+65,069_scout_resolve,You are expected to understand that on your own.,206.85,2.82,209.67,whisper
+66,070_scout_advancing,You do not drop a torch again.,209.67,2.07,211.74,whisper
+67,071_night_column_walk,Those long column walks teach you how to read the night by its sounds.,211.74,4.49,216.23,whisper
+68,072_neutral_owl,An owl is neutral.,216.23,1.74,217.97,whisper
+69,073_sudden_silence,Every animal going silent at once is not.,217.97,2.72,220.69,whisper
+70,074_erratic_wind,Wind through pine moves without any pattern.,220.69,2.65,223.34,whisper
+71,075_rhythmic_movement,Something large moving through pine has a rhythm even when it is trying to suppress one.,223.34,4.86,228.2,whisper
+72,076_feeling_change,You learn to feel the column change before you see it change.,228.2,3.61,231.81,whisper
+73,077_lead_hunter_slows,When the lead hunter slows,231.81,1.88,233.69,whisper
+74,078_column_stops,every person slows.,233.69,1.65,235.34,whisper
+75,079_no_signal,No signal.,235.34,1.07,236.41,whisper
+76,080_no_sound,No sound.,236.41,1.35,237.76,whisper
+77,081_hearth_shift,The shift moves back through the group the way cold moves through water.,237.76,4.63,242.39,whisper
+78,082_sleepless_vigil,You sleep lightly now even at camp.,242.39,2.88,245.27,whisper
+79,083_unbidden_alertness,You did not decide to.,245.27,1.99,247.26,whisper
+80,084_instinctive_grip,Your body made that choice without asking.,247.26,3.55,250.81,whisper
+81,085_the_spear_bearer,You are sixteen and you carry your own spear.,250.81,5.93,256.74,whisper
+82,086_spear_contrast,Not the heavy thrusting spear of the senior hunters.,256.74,3.14,259.88,whisper
+83,087_throwing_spear_poise,A throwing spear,259.88,1.57,261.45,whisper
+84,088_spear_craftsmanship,its flint point knapped by hand and bound to the shaft with pine pitch and wet sinew that dried hard as rock.,261.45,7.24,268.69,whisper
+85,089_forward_scouting,They start sending you on forward runs.,268.69,2.42,271.11,whisper
+86,090_tethered_distance,Never far.,271.11,1.43,272.54,whisper
+87,091_scouts_walking,Never alone.,272.54,1.55,274.09,whisper
+88,092_moving_with_korik,You go with Korik,274.09,1.68,275.77,whisper
+89,093_korik_scout,"twenty-two, who has been scouting for four years.",275.77,2.87,278.64,whisper
+90,094_scouts_ahead,The two of you move ahead of the main group by about the distance a man can shout and be heard.,278.64,5,283.64,whisper
+91,095_reading_ground,Your job is to read the ground before everyone else walks onto it.,283.64,3.8,287.44,whisper
+92,096_smell_first,You learn to smell before you look.,287.44,2.23,289.67,whisper
+93,097_predator_presence,A predator’s presence reaches your nose before your mind names it.,289.67,3.6,293.27,whisper
+94,098_thick_musky,"Something thick, musky, wrong in a way that is hard to describe.",293.27,5.46,298.73,whisper
+95,099_sudden_stop,You catch it on your third run and stop walking.,298.73,3.44,302.17,whisper
+96,100_korik_stops,Korik stops half a step after you.,302.17,2.53,304.7,whisper
+97,101_shared_realization,He has it too.,304.7,1.73,306.43,whisper
+98,102_frozen_scouts,The two of you stand without moving for a long count,306.43,3.11,309.54,whisper
+99,103_held_breath,long enough for your own breathing to feel very loud.,309.54,3.7,313.24,whisper
+100,104_silent_retreat,You back out the way water runs in reverse.,313.24,3.38,316.62,whisper
+101,105_careful_steps,"Slow, continuous, nothing sudden enough to announce you.",316.62,5.39,322.01,whisper
+102,106_empty_night,You never see the cave lion that night.,322.01,3.24,325.25,whisper
+103,107_frost_tracks,But you find its tracks in the frost the next morning,325.25,3.33,328.58,whisper
+104,108_spear_measure,two spear-lengths from where you stood.,328.58,2.22,330.8,whisper
+105,109_giant_print,The print is wider than both your hands laid side by side.,330.8,3.44,334.24,whisper
+106,110_long_stare,You look at it for a long time.,334.24,1.95,336.19,whisper
+107,111_scout_returning_camp,You bring the information back.,336.19,2.25,338.44,whisper
+108,112_scout_reporting_mission,That is the job.,338.44,1.78,340.22,whisper
+109,113_scout_hiding_shadows,Not to engage.,340.22,1.63,341.85,whisper
+110,114_scout_restrained_grip,Not to prove anything.,341.85,1.75,343.6,whisper
+111,115_scout_observing_turning,"See, register, return.",343.6,2.25,345.85,whisper
+112,116_scout_missed_threat,A scout who sees too little endangers the band.,345.85,3.83,349.68,whisper
+113,117_scout_imagined_monster,A scout who imagines too much does the same.,349.68,2.59,352.27,whisper
+114,118_scout_delivering_truth,What the job requires is exact truth delivered without drama.,352.27,5.62,357.89,whisper
+115,119_scout_inner_tremble,You are not yet calm about it.,357.89,1.57,359.46,whisper
+116,120_scout_steady_voice,Your voice holds when you report,359.46,2.73,362.19,whisper
+117,121_still_hands,but your hands do not.,362.19,1.84,364.03,whisper
+118,122_daret_watching,Daret watches your hands when you speak.,364.03,2.8,366.83,whisper
+119,123_catching_gaze,You see him doing it.,366.83,1.62,368.45,whisper
+120,124_working_hands,You start working on the hands.,368.45,3.9,372.35,whisper
+121,125_night_circle,You are twenty and you have your first real position in the night circle.,372.35,6.55,378.9,whisper
+122,126_eastern_post,The eastern post,378.9,0.57,379.47,whisper
+123,127_river_treeline,facing the tree line where the river bends out of sight.,379.47,4.27,383.74,whisper
+124,128_back_to_fire,You sit with your back to the fire so your eyes can adjust fully to the dark beyond the camp’s edge.,383.74,5.65,389.39,whisper
+125,129_warmth_and_cold,The fire’s warmth is on your back and the night’s cold is on your face.,389.39,4.73,394.12,whisper
+126,130_discomfort_point,The discomfort is the point.,394.12,2.2,396.32,whisper
+127,131_drifting_guard,It keeps you from drifting.,396.32,1.88,398.2,whisper
+128,132_guarding_stretch,You guard your stretch,398.2,1.36,399.56,whisper
+129,133_wake_man,wake the next man,399.56,1.16,400.72,whisper
+130,134_exhausted_sleep,sleep.,400.72,1.06,401.78,whisper
+131,135_three_hours,Three hours at most before you are back up.,401.78,2.89,404.67,whisper
+132,136_nightly_rotation,This runs every night,404.67,1.98,406.65,whisper
+133,137_harsh_weather,no matter the weather.,406.65,1.16,407.81,whisper
+134,138_cracking_ice,On the coldest nights when the river ice cracks and carries those sounds through the valley,407.81,4.7,412.51,whisper
+135,139_restless_tribe,nobody sleeps deep and nobody sleeps long.,412.51,3.62,416.13,whisper
+136,140_sudden_alertness,The body does not wait for the mind to decide if a sound is worth waking for.,416.13,4.97,421.1,whisper
+137,141_night_listening,Night is not quiet.,421.1,2.13,423.23,whisper
+138,142_noisy_void,It is full of noise,423.23,1.94,425.17,whisper
+139,143_meaningless_noises,almost all of it meaningless.,425.17,2.5,427.67,whisper
+140,144_howling_wind,Wind.,427.67,1.41,429.08,whisper
+141,145_scurrying_creature,Small animals.,429.08,1.85,430.93,whisper
+142,146_fire_settling,The fire settling.,430.93,1.71,432.64,whisper
+143,147_frozen_branches,Branches pulling tight in the cold.,432.64,2.51,435.15,whisper
+144,148_breathing_clan,Sleeping people breathing.,435.15,2.07,437.22,whisper
+145,149_month_rotation,You spend your second month in rotation learning to separate the sounds that matter from the enormous volume that do not.,437.22,7.92,445.14,whisper
+146,150_listening_intent,You are not listening for a sound.,445.14,1.785,446.925,whisper
+147,151_scout_listening_void,You are listening for the absence of one.,446.925,4.105,451.03,whisper
+148,152_frozen_brush_mice,When the brush mice stop moving through dry leaves,451.03,2.535,453.565,whisper
+149,153_something_stopped_them,something stopped them.,453.565,2.295,455.86,whisper
+150,154_silent_night_birds,When the night birds cut off mid-call,455.86,1.97,457.83,whisper
+151,155_predator_passing_under,something passed under them.,457.83,2.04,459.87,whisper
+152,156_scout_deep_realization,These gaps tell you more than any loud noise could.,459.87,3.5,463.37,whisper
+153,157_scout_nervous_reflection,You get it wrong twice in your first season.,463.37,2.72,466.09,whisper
+154,158_scout_false_alert,The first time you raise an alert for a branch dropping from a snow-loaded tree.,466.09,4.79,470.88,whisper
+155,159_camp_standing_alert,The whole camp stands up and it takes several minutes to settle.,470.88,3.61,474.49,whisper
+156,160_camp_forgiveness,Nobody is angry with you.,474.49,2.25,476.74,whisper
+157,161_waste_chest,But the waste of it stays in your chest,476.74,2.56,479.3,whisper
+158,162_false_alarm_burn,the specific burn of a false alarm,479.3,2.26,481.56,whisper
+159,163_not_carrying_feeling,and you do not want to carry that feeling again.,481.56,2.77,484.33,whisper
+160,164_waiting_too_long,The second time you wait too long.,484.33,2.65,486.98,whisper
+161,165_talking_out_trust,You hear the interruption and you talk yourself out of trusting it.,486.98,3.93,490.91,whisper
+162,166_dire_wolf_perimeter,The threat is a lone dire wolf testing the perimeter,490.91,3.86,494.77,whisper
+163,167_smell_of_butchery,drawn by the smell of the previous day’s butchering.,494.77,3.2,497.97,whisper
+164,168_daret_thrown_stone,Daret spots it from his post and turns it back with a thrown stone before it gets close.,497.97,5.57,503.54,whisper
+165,169_daret_meets_scout,He finds you at your post afterward.,503.54,2.64,506.18,whisper
+166,170_daret_speaks,He tells you one thing,506.18,1.79,507.97,whisper
+167,171_scout_carrying_load,and you never stop carrying it.,507.97,2.48,510.45,whisper
+168,172_body_instinct_grip,The body knows before the mind agrees.,510.45,3.01,513.46,whisper
+169,173_broken_track_pattern,When something in you says a pattern has broken,513.46,3.3,516.76,whisper
+170,174_enough_standing_tall,that is enough.,516.76,1.61,518.37,whisper
+171,175_stepping_into_void,Stop waiting for your mind to finish arguing.,518.37,6.02,524.39,whisper
+172,176_twenty_six_scout,You are twenty-six.,524.39,3.7,528.09,whisper
+173,177_leading_in_darkness,Fear no longer leads when you move in darkness.,528.09,3.39,531.48,whisper
+174,178_fear_running_alongside,It runs alongside you now,531.48,1.89,533.37,whisper
+175,179_not_in_charge,present but not in charge.,533.37,2.29,535.66,whisper
+176,180_late_autumn_transformation,The night that changes you comes in late autumn.,535.66,3.25,538.91,whisper
+177,181_aurochs_drive,Your group drives a small aurochs herd toward a valley narrowing,538.91,3.91,542.82,whisper
+178,182_breaking_aurochs,and three animals break sideways into the trees instead of funneling through.,542.82,4.79,547.61,whisper
+179,183_chasing_hunters,Two hunters go after them.,547.61,2.3,549.91,whisper
+180,184_mc_running,You are one.,549.91,1.07,550.98,whisper
+181,185_yaro_running,The other is Yaro,550.98,3.2,554.18,whisper
+182,186_yaro_age,thirty years old,554.18,1.38,555.56,whisper
+183,187_composed_yaro,the most composed man on any hunt you have been on.,555.56,3.48,559.04,whisper
+184,188_fading_light,The light is going fast.,559.04,2.41,561.45,whisper
+185,189_heavy_timber,You push through the tree line into heavier timber and the animals are already gone ahead of you into the dark.,561.45,5.6,567.05,whisper
+186,190_yaro_signal,Yaro signals to stop.,567.05,2.1,569.15,whisper
+187,191_both_still,You both go still.,569.15,1.325,570.475,whisper
+188,192_scout_listening,You listen.,570.475,0.595,571.07,whisper
+189,193_low_ground,What you hear instead of aurochs is something low and close to the ground.,571.07,6.2,577.27,whisper
+190,194_breathing_tension,A breathing that belongs to neither of you.,577.27,2.89,580.16,whisper
+191,195_unseen_woods,You cannot locate it in the trees.,580.16,2.06,582.22,whisper
+192,196_main_frozen,You do not move.,582.22,1.39,583.61,whisper
+193,197_yaro_still,Yaro does not move.,583.61,2.25,585.86,whisper
+194,198_stopped_breathing,The breathing stops.,585.86,1.94,587.8,whisper
+195,199_three_seconds,Three seconds.,587.8,1.74,589.54,whisper
+196,200_yaro_shifts,Then Yaro shifts his weight back,589.54,2.605,592.145,whisper
+197,201_stealthy_footstep,one foot at a time,592.145,1.205,593.35,whisper
+198,202_mirroring_scout,and you mirror him exactly.,593.35,2.48,595.83,whisper
+199,203_backward_retreat,You walk backward out of the forest with your spear forward and your free hand trailing behind you to feel for the tree line.,595.83,7.03,602.86,whisper
+200,204_meadow_run,You reach the open meadow and you both run,602.86,3.32,606.18,whisper
+201,205_instinctual_flight,not deciding to run,606.18,1.5,607.68,whisper
+202,206_scouts_sprinting,just running.,607.68,1.09,608.77,whisper
+203,207_reporting_to_leader,You return to the main group and report.,608.77,2.53,611.3,whisper
+204,208_leader_decision,The hunt leader listens and sends nobody back.,611.3,2.87,614.17,whisper
+205,209_empty_meadow,The aurochs are gone.,614.17,1.77,615.94,whisper
+206,210_ominous_timber,Whatever shared that timber with you was not worth finding.,615.94,3.37,619.31,whisper
+207,211_hearth_reflection,That night by the fire you think about the three seconds after the breathing stopped.,619.31,4.27,623.58,whisper
+208,212_watching_eyes,Something in the dark assessed you and made a decision.,623.58,3.19,626.77,whisper
+209,213_pensive_stare,You do not know what it decided or why.,626.77,2.24,629.01,whisper
+210,214_solitary_fire,You only know you are at the fire because whatever it was let you leave.,629.01,5.49,634.5,whisper
+211,215_spear_grip,That is a different kind of knowledge than anything you were taught.,634.5,3.88,638.38,whisper
+212,216_chest_revelation,It does not sit in the same place.,638.38,2.85,641.23,whisper
+213,217_still_silence,You get quieter after that.,641.23,1.79,643.02,whisper
+214,218_upright_posture,"Not afraid, but rearranged inside.",643.02,3.2,646.22,whisper
+215,219_starry_void,You understand that surviving is not only about what you do.,646.22,4.4,650.62,whisper
+216,220_lethal_gap,There is a space between your action and something else’s action,650.62,3.83,654.45,whisper
+217,221_skill_removes,and in that space lives an element that no amount of skill removes entirely.,654.45,4.88,659.33,whisper
+218,222_long_silence,You do not say this to anyone for a long time.,659.33,3.22,662.55,whisper
+219,223_carrying_weight,You carry it.,662.55,1.78,664.33,whisper
+220,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,whisper
+221,225_night_scouts,You lead the night scouts now.,667.47,3.71,671.18,whisper
+222,226_four_scouts,Four of them besides yourself,671.18,2.125,673.305,whisper
+223,227_scout_ages,ranging from seventeen to twenty-four.,673.305,2.245,675.55,whisper
+224,228_informal_bond,They are not yours in any formal sense.,675.55,3.03,678.58,whisper
+225,229_no_formal_sense,There is no formal sense here.,678.58,2.41,680.99,whisper
+226,230_slowing_pace,But when you slow,680.99,1.065,682.055,whisper
+227,231_slowing_pace,they slow.,682.055,0.685,682.74,whisper
+228,232_sudden_halt,"When you stop, they stop.",682.74,2.55,685.29,whisper
+229,233_firelight_speech,When you speak at the fire before a hard night,685.29,4.1,689.39,whisper
+230,234_focused_attention,their attention is different from what they give anyone else.,689.39,3.5,692.89,whisper
+231,235_unasked_burden,You did not ask for this.,692.89,2.06,694.95,whisper
+232,236_uncertain_start,You are not sure when it started.,694.95,2.1,697.05,whisper
+233,237_heavy_weight,The weight of it is not the same as the fear from your younger years.,697.05,4.24,701.29,whisper
+234,238_youthful_fear,That fear was about your own body.,701.29,2.22,703.51,whisper
+235,239_internal_burden,This sits differently.,703.51,1.85,705.36,whisper
+236,240_tribal_survival,It is about theirs.,705.36,1.83,707.19,whisper
+237,241_fen_young_scout,Your youngest scout is Fen.,707.19,2.92,710.11,whisper
+238,242_fen_excited_run,He has the instincts but his feet carry his excitement on runs.,710.11,4.34,714.45,whisper
+239,243_fen_too_quick,"Too quick, consistently.",714.45,1.9,716.35,whisper
+240,244_elder_watching_fen,You watch him for two full seasons and say almost nothing.,716.35,3.56,719.91,whisper
+241,245_seasonal_contrast,You let him see the contrast.,719.91,2.02,721.93,whisper
+242,246_elder_speaks_plainly,Then one evening before a run you tell him plainly,721.93,3.03,724.96,whisper
+243,247_danger_lesson,slow is not about the danger being less.,724.96,2.77,727.73,whisper
+244,248_stealthy_movement,Slow is about being harder to detect.,727.73,3.29,731.02,whisper
+245,249_fast_after_decision,Fast is for after the decision has already been made.,731.02,3.64,734.66,whisper
+246,250_before_the_moment,Before that moment,734.66,1.25,735.91,whisper
+247,251_main_focused_observation,slow is the sharpest thing you have.,735.91,2.17,738.08,whisper
+248,252_fen_slowing_run,On the next run he slows.,738.08,1.94,740.02,whisper
+249,253_fen_measured_movement,Not completely.,740.02,1.42,741.44,whisper
+250,254_main_observing_fen,But you can see it.,741.44,1.69,743.13,whisper
+251,255_daret_hand_on_shoulder,You remember Daret’s hand on your shoulder over the dropped torch.,743.13,4.25,747.38,whisper
+252,256_korik_stopping_in_dark,You remember Korik stopping half a step after you in the dark,747.38,3.72,751.1,whisper
+253,257_wordless_confirmation_scent,that wordless confirmation that your nose had caught something real.,751.1,4.04,755.14,whisper
+254,258_main_contemplative_ridge,The things that kept you alive were not only your own choices.,755.14,4.39,759.53,whisper
+255,259_mentors_around_hearth,They were built into you by people who made room for you to learn without killing your willingness to try.,759.53,6.33,765.86,whisper
+256,260_main_teaching_fen,You try to build that same room for Fen.,765.86,2.86,768.72,whisper
+257,261_weary_leader,You do not always manage it.,768.72,1.88,770.6,whisper
+258,262_stern_warning,Some nights the danger is too close and you have to be hard with them in ways you regret by the time you are sitting at the fire watching their faces.,770.6,8.62,779.22,whisper
+259,263_temporary_dawn,Every dawn is temporary.,779.22,1.73,780.95,whisper
+260,264_feeding_fire,The dark comes back the same way your mother fed the fire,780.95,4.63,785.58,whisper
+261,265_unending_dark,"without announcement, without end.",785.58,4.75,790.33,whisper
+262,266_forty_one_burden,You are forty-one.,790.33,3.86,794.19,whisper
+263,267_leader_of_children,There are children here who have never known a night where someone other than you was the person the adults looked to when something moved at the perimeter.,794.19,9.19,803.38,whisper
+264,268_morning_visitor,That reaches you one morning when a girl of about nine walks to you at the fire’s edge,803.38,5.15,808.53,whisper
+265,269_gift_of_meat,puts a piece of dried meat in your hand,808.53,1.75,810.28,whisper
+266,270_silent_departure,and walks away without any explanation.,810.28,2.47,812.75,whisper
+267,271_holding_meat,You hold the meat and understand you have become something this group has no simple word for.,812.75,5.21,817.96,whisper
+268,272_hunched_back,Your back has decades stored in it.,817.96,2.35,820.31,whisper
+269,273_cold_grass,Long crouches in cold grass.,820.31,2.31,822.62,whisper
+270,274_stillness_ache,The particular ache of held stillness.,822.62,3.22,825.84,whisper
+271,275_morning_knees,Your knees announce themselves on cold mornings before you are fully awake.,825.84,4.63,830.47,whisper
+272,276_not_old,You are not old by some measures.,830.47,2.63,833.1,whisper
+273,277_night_body,But you are old the way that twenty years of moving at night makes a body old.,833.1,4.98,838.08,whisper
+274,278_faster_men,There are faster men now.,838.08,1.9,839.98,whisper
+275,279_sharper_ears,There are scouts with sharper ears.,839.98,2.29,842.27,whisper
+276,280_saying_so,You say so.,842.27,1.23,843.5,whisper
+277,281_hearth_counsel,You tell Fen,843.5,1.33,844.83,whisper
+278,282_fen_leading,twenty-five now and leading runs you no longer go on,844.83,3.51,848.34,whisper
+279,283_fen_keen_ears,that his ears are better than yours in the birch stands.,848.34,3.48,851.82,whisper
+280,284_fen_modesty,He takes it as modesty at first.,851.82,2.54,854.36,whisper
+281,285_elder_seriousness,You explain that it is not.,854.36,2.18,856.54,whisper
+282,286_fact_to_act,It is a fact he needs to act on,856.54,2.66,859.2,whisper
+283,287_growing_responsibility,and acting on it correctly means his responsibility at night is larger than it was,859.2,5.24,864.44,whisper
+284,288_not_smaller,not smaller.,864.44,0.95,865.39,whisper
+285,289_winter_predator_breach,A predator gets through the western perimeter on a winter night and kills one of the youngest members of the band before anyone can reach the site.,865.39,7.47,872.86,whisper
+286,290_tragic_aftermath,The child is barely four years old.,872.86,2.58,875.44,whisper
+287,291_eastern_post,You are at the eastern post.,875.44,2.16,877.6,whisper
+288,292_distant_attack,The attack comes from the direction that is not yours.,877.6,3.4,881,whisper
+289,293_sitting_brooding,You sit with that for a long time.,881,2.21,883.21,whisper
+290,294_intense_thought,You go back through every decision of that night.,883.21,2.9,886.11,whisper
+291,295_defensive_positioning,The positioning was right.,886.11,2.26,888.37,whisper
+292,296_orderly_rotations,The rotations were right.,888.37,1.74,890.11,whisper
+293,297_standard_arrangement,The arrangement was what it has always been.,890.11,2.7,892.81,whisper
+294,298_heavy_burden,None of that lifts the weight.,892.81,2.2,895.01,whisper
+295,299_realization_moment,What you arrive at,895.01,1.52,896.53,whisper
+296,300_night_gap,"eventually, is that you can build the best structure knowledge and experience allow and the night will still find the gap that structure cannot close.",896.53,8.62,905.15,whisper
+297,301_hearth_reflection,Accepting that without it hollowing out your readiness is harder than any technique you have ever learned.,905.15,6.27,911.42,whisper
+298,302_night_sprint,Harder than any night run in open ground.,911.42,3.09,914.51,whisper
+299,303_rebuilding_shelter,You rebuild.,914.51,1.56,916.07,whisper
+300,304_closing_gap,You add a post that covers the gap the night found.,916.07,3.11,919.18,whisper
+301,305_carrying_grief,You do not put down the grief.,919.18,2.13,921.31,whisper
+302,306_flint_knapping,You carry it alongside everything else and you keep working.,921.31,5.66,926.97,whisper
+303,307_forty_nine_years,You are forty-nine.,926.97,4.43,931.4,whisper
+304,308_scouts_leading,Three of your old scouts lead their own groups now in different parts of the territory.,931.4,4.85,936.25,whisper
+305,309_wide_river_meeting,When the bands come together at the seasonal meeting place by the wide river,936.25,3.84,940.09,whisper
+306,310_scouts_at_fire,those men find you at the fire,940.09,1.59,941.68,whisper
+307,311_quiet_hearth_talk,"sit close, and the talk moves between ordinary things and the kind of talk that only happens between people who have shared a particular kind of night.",941.68,9.22,950.9,whisper
+308,312_fen_scouts_introduction,Fen brings two young scouts to you at the gathering.,950.9,3.54,954.44,whisper
+309,313_fen_silent_gaze,He does not ask you to teach them anything.,954.44,2.7,957.14,whisper
+310,314_scouts_settle_down,He places them near you and you understand what he is asking.,957.14,4.39,961.53,whisper
+311,315_observing_over_time,You watch the two of them over several evenings.,961.53,2.92,964.45,whisper
+312,316_scout_instinct_fear,One has good instincts but is afraid of fear,964.45,2.85,967.3,whisper
+313,317_sharpening_bone_tool,which is the worst combination you know.,967.3,2,969.3,whisper
+314,318_scout_on_ridge,The fear itself is not the problem.,969.3,2.61,971.91,whisper
+315,319_eye_reflection_awareness,Fear is information.,971.91,2.35,974.26,whisper
+316,320_body_warning_signal,The problem is what happens when the body’s warning triggers a second signal that overrides the first.,974.26,5.91,980.17,whisper
+317,321_hearth_counsel,That young man needs to understand that the tightness in his chest before a hard night is not a sign of weakness arriving.,980.17,6.71,986.88,whisper
+318,322_body_readiness,It is the body getting ready.,986.88,1.92,988.8,whisper
+319,323_direct_speech,You tell him directly because he is young enough that direct still works.,988.8,4.3,993.1,whisper
+320,324_youth_realization,You see it take in his face.,993.1,2.05,995.15,whisper
+321,325_contrasting_student,The other one is nearly the opposite.,995.15,3,998.15,whisper
+322,326_careless_ease,She moves into dark terrain with an ease that looks like calm but is actually the absence of proper attention.,998.15,7.09,1005.24,whisper
+323,327_perimeter_lesson,You take her to the perimeter edge one evening and ask her to stand still and report what she notices.,1005.24,6.51,1011.75,whisper
+324,328_obvious_sights,At first she reports the obvious.,1011.75,2.85,1014.6,whisper
+325,329_patient_silence,You wait.,1014.6,1.32,1015.92,whisper
+326,330_finer_observations,The reports get finer.,1015.92,1.9,1017.82,whisper
+327,331_scent_at_slope,A smell change at the base of a slope.,1017.82,2.83,1020.65,whisper
+328,332_fading_sound,A sound she had not consciously registered until it was gone.,1020.65,4.16,1024.81,whisper
+329,333_passing_knowledge,You tell her that.,1024.81,1.69,1026.5,whisper
+330,334_internal_noticing,That second kind of noticing.,1026.5,2.08,1028.58,whisper
+331,335_tracking_skill,That is where the whole skill lives.,1028.58,2.99,1031.57,whisper
+332,336_uncertain_mentorship,You are not certain you gave either of them what they needed.,1031.57,3.74,1035.31,whisper
+333,337_mutual_exchange,You were not certain Daret and Korik gave you everything you needed.,1035.31,4.17,1039.48,whisper
+334,338_final_gift,You gave what you had.,1039.48,2.08,1041.56,whisper
+335,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,6.01,1047.57,whisper
+336,340_fifty_eight,You are fifty-eight.,1047.57,4.08,1051.65,whisper
+337,341_aging_temples,Your hair has gone pale at the edges.,1051.65,2.72,1054.37,whisper
+338,342_steady_grip,Your hands are steady now,1054.37,2.05,1056.42,whisper
+339,343_shaking_scout,the same hands that could not hold still over your first real guarding post.,1056.42,4.58,1061,whisper
+340,344_marked_palms,They are also marked with everything the years put into them.,1061,3.19,1064.19,whisper
+341,345_palm_scar,The white line across your left palm from a night in the limestone hills.,1064.19,4.36,1068.55,whisper
+342,346_shortened_finger,The shortened finger on your right hand from something you do not describe in detail.,1068.55,4.59,1073.14,whisper
+343,347_thickened_knuckles,The thickened knuckles from four decades of gripping things hard in the cold.,1073.14,4.6,1077.74,whisper
+344,348_distant_bands,Other bands know your name.,1077.74,1.97,1079.71,whisper
+345,349_stoic_presence,Not the way a man is known for a single event.,1079.71,3.28,1082.99,whisper
+346,350_mountain_ridge,The way a specific ridge is known,1082.99,2.59,1085.58,whisper
+347,351_river_crossing,or a reliable river crossing.,1085.58,2.78,1088.36,whisper
+348,352_orient_landmark,A feature of the world that people orient by.,1088.36,3.79,1092.15,whisper
+349,353_gathering_bands,When the bands gather and the talk turns to the night,1092.15,3.02,1095.17,whisper
+350,354_dark_beast,to what lives in it,1095.17,1.44,1096.61,whisper
+351,355_reading_tracks,to how to read an animal that is following you against one that only crossed your path,1096.61,4.45,1101.06,whisper
+352,356_respectful_glance,people look toward where you are sitting.,1101.06,2.43,1103.49,whisper
+353,357_sitting_quietly,Not because you stand and announce anything.,1103.49,2.89,1106.38,whisper
+354,358_knowledge_face,Because over enough years your name has attached to a kind of knowledge people understand is not easily replaced.,1106.38,6.905,1113.285,whisper
+355,359_listening_hunters,Young hunters from other bands sit near your fire and listen.,1113.285,3.795,1117.08,whisper
+356,360_scout_wisdom,You know what they see.,1117.08,1.45,1118.53,whisper
+357,361_daret_observation,The same thing you saw when you first looked at Daret.,1118.53,2.78,1121.31,whisper
+358,362_survival_proof,Proof that surviving a long time is possible.,1121.31,3.14,1124.45,whisper
+359,363_facing_night,An answer to the question of whether you can face the night across a whole life without it eventually winning.,1124.45,6.31,1130.76,whisper
+360,364_the_full_cost,You tell them the full cost,1130.76,2.11,1132.87,whisper
+361,365_recurrent_storytelling,same as you always do.,1132.87,1.51,1134.38,whisper
+362,366_missing_calm,You tell them the calm they see was not always there.,1134.38,3.05,1137.43,whisper
+363,367_dropped_torch,You tell them about the dropped torch,1137.43,2.27,1139.7,whisper
+364,368_forest_terror,the three seconds in the forest,1139.7,1.93,1141.63,whisper
+365,369_unreached_child,the child you could not reach in time.,1141.63,2.47,1144.1,whisper
+366,370_dark_mercy,You tell them about the nights you got it right only because something in the dark chose to let you.,1144.1,6.8,1150.9,whisper
+367,371_listening_scouts,Most of them hear the strength.,1150.9,2.79,1153.69,whisper
+368,372_wide_eyed_fear,Fear as a tool.,1153.69,2.53,1156.22,whisper
+369,373_slow_blade_draw,Slow as a weapon.,1156.22,1.71,1157.93,whisper
+370,374_scout_instinct,The body ahead of the mind.,1157.93,1.51,1159.44,whisper
+371,375_group_incomprehension,They do not take in the losses the same way.,1159.44,3.05,1162.49,whisper
+372,376_observing_the_unready,They are not ready for them yet.,1162.49,2.43,1164.92,whisper
+373,377_main_character_memory,You know this because you were not ready either,1164.92,2.95,1167.87,whisper
+374,378_flashback_fire,sitting at someone else’s fire at their age,1167.87,2.94,1170.81,whisper
+375,379_partial_understanding,being told the whole truth and only catching part of it.,1170.81,3.92,1174.73,whisper
+376,380_scarred_hands_experience,The knowledge that comes from actual experience cannot be handed over by talking.,1174.73,5.57,1180.3,whisper
+377,381_growth_lesson,It has to grow inside the living of it.,1180.3,2.51,1182.81,whisper
+378,382_honesty_transfer,All you can do is be honest and let them take what they are able to carry right now.,1182.81,8,1190.81,whisper
+379,383_sixty_four,You are sixty-four.,1190.81,2.96,1193.77,whisper
+380,384_night_scouts,The night runs belong to someone else now.,1193.77,2.54,1196.31,whisper
+381,385_lost_precision,Your legs still work but your eyes have lost the edge-of-darkness precision that forward scouting demands.,1196.31,6.15,1202.46,whisper
+382,386_quiet_knowing,You know this without needing anyone to tell you.,1202.46,3.05,1205.51,whisper
+383,387_handing_spear,Three winters ago you stepped back from active perimeter work and gave it fully to Fen’s people,1205.51,5.89,1211.4,whisper
+384,388_fen_teaching,who have by now become the ones teaching the people after them.,1211.4,3.57,1214.97,whisper
+385,389_unnamed_role,What you do now is harder to put a name to.,1214.97,3.6,1218.57,whisper
+386,390_center_fire,You sit at the center fire on long winter nights when the band is settled deep in the valley and the cold has pulled everything close.,1218.57,7.56,1226.13,whisper
+387,391_children_gathering,Children gather near you.,1226.13,2.3,1228.43,whisper
+388,392_young_hunters_fire,Young hunters too new for real posts sit at the outer edge of your fire ring and listen to what you say in the dark hours.,1228.43,7.08,1235.51,whisper
+389,393_intense_speaker,You are not telling stories to fill time.,1235.51,2.57,1238.08,whisper
+390,394_passing_knowledge,You are passing something.,1238.08,2.16,1240.24,whisper
+391,395_darets_hand,You describe what Daret’s hand felt like on your shoulder and what it meant.,1240.24,4.94,1245.18,whisper
+392,396_forest_yaro,You describe the three seconds in the forest with Yaro when something in the dark made a choice.,1245.18,5.88,1251.06,whisper
+393,397_failed_rescue,You describe the child you could not save and what you did in the weeks after,1251.06,4.82,1255.88,whisper
+394,398_carrying_on,and why you did not let that weight take the work from you.,1255.88,3.38,1259.26,whisper
+395,399_fens_realization,You describe the look on Fen’s face the first time slowing his feet made a difference he could feel in his whole body.,1259.26,7.49,1266.75,whisper
+396,400_endless_dark,You tell them the dark cannot be finished.,1266.75,2.87,1269.62,whisper
+397,401_nightfall_encroaching,It comes back every night,1269.62,1.84,1271.46,whisper
+398,402_cyclical_darkness,the same as it always has,1271.46,2.1,1273.56,whisper
+399,403_vigilant_embers,and it expects the same quality of attention on the thousandth night as it did on the first.,1273.56,5.9,1279.46,whisper
+400,404_the_fire_line,You tell them the fire is the line and they are the ones responsible for keeping it fed.,1279.46,5.69,1285.15,whisper
+401,405_ancient_hearth,You sit in the warmth of a hearth your family has tended across more seasons than you,1285.15,5.33,1290.48,whisper
+402,406_listening_darkness,can count and you listen to the night the way you have listened to it for fifty years.,1290.48,3.81,1294.29,whisper
+403,407_shadow_movement,You still catch the interruptions.,1294.29,2.13,1296.42,whisper
+404,408_shifting_air,You still feel when the air outside the camp shifts in a certain way.,1296.42,4.15,1300.57,whisper
+405,409_wise_gaze,The knowledge has not left you.,1300.57,3.11,1303.68,whisper
+406,410_internal_instinct,It lives in a different place now,1303.68,2.1,1305.78,whisper
+407,411_scout_transition,the place a thing moves to when it stops being something you do and becomes something you simply are.,1305.78,6.37,1312.15,whisper
+408,412_youngest_scout,Fen’s youngest scout,1312.15,1.12,1313.27,whisper
+409,413_fifteen_girl,a girl of fifteen,1313.27,1,1314.27,whisper
+410,414_past_firelight,sits just past your firelight on a clear cold night,1314.27,4.48,1318.75,whisper
+411,415_watching_treeline,watching the tree line.,1318.75,1.58,1320.33,whisper
+412,416_straight_posture,Back straight but not locked.,1320.33,2.78,1323.11,whisper
+413,417_balanced_weight,Weight even.,1323.11,1.59,1324.7,whisper
+414,418_eyes_sweep,Eyes moving in a slow sweep rather than fixed on one point.,1324.7,4.55,1329.25,whisper
+415,419_spear_hand,One hand loose on her spear shaft.,1329.25,2.65,1331.9,whisper
+416,420_silent_watch,You watch her for a long time without making a sound.,1331.9,3.67,1335.57,whisper
+417,421_hidden_observer_perspective,She does not know you are watching.,1335.57,2.2,1337.77,whisper
+418,422_focused_work_detail,She is entirely in her work.,1337.77,2.53,1340.3,whisper
+419,423_teaching_through_motion,She is doing the thing that cannot be scratched into bone or pressed into clay or passed through any medium other than one watching body alongside another watching body,1340.3,10.8,1351.1,whisper
+420,424_generations_of_repetition,repeated across more generations than anyone alive can count.,1351.1,4.14,1355.24,whisper
+421,425_passing_the_torch,She will teach the one after her.,1355.24,2.74,1357.98,whisper
+422,426_next_generation_teaching,That one will teach the next.,1357.98,2.49,1360.47,whisper
+423,427_knowledge_in_motion,The knowledge traveling the only way it has ever traveled,1360.47,3.72,1364.19,whisper
+424,428_through_the_living,through the living,1364.19,0.765,1364.955,whisper
+425,429_night_after_night,night after night,1364.955,1.535,1366.49,whisper
+426,430_edge_of_light_and_dark,along the line where firelight ends and the dark begins.,1366.49,4.27,1370.76,whisper
+427,431_child_huddling_mother,Somewhere right now a child is pressed against their mother’s side.,1370.76,4.33,1375.09,whisper
+428,432_cave_entrance_vigil,There is a sound from outside.,1375.09,2.21,1377.3,whisper
+429,433_child_eyes_firelight,The child has no word for what they feel.,1377.3,2.79,1380.09,whisper
+430,434_tight_chest_anxiety,The tightness in the chest.,1380.09,1.97,1382.06,whisper
+431,435_focused_attention_void,"The sudden, total attention.",1382.06,2.2,1384.26,whisper
+432,436_solemn_child_profile,"The understanding, arriving without explanation",1384.26,3.25,1387.51,whisper
+433,437_glowing_eyes_shadows,that the space past the firelight is not empty.,1387.51,3.19,1390.7,whisper
+434,438_child_standing_resolve,That child will learn.,1390.7,1.85,1392.55,whisper
+435,439_child_ear_listening,They will learn what the sounds mean.,1392.55,2.63,1395.18,whisper
+436,440_slow_silent_tread,They will learn to slow their feet.,1395.18,2.52,1397.7,whisper
+437,441_scout_cold_post,One day they will sit a cold post with their back to the fire and their face toward the dark.,1397.7,5.86,1403.56,whisper
+438,442_scout_torch_wind,They will carry a torch in both hands and guard it with their body against the wind.,1403.56,5.2,1408.76,whisper
+439,443_scout_cliff_edge,They will spend a whole life finding out what the night holds.,1408.76,3.81,1412.57,whisper
+440,444_scout_past_watch,They always have.,1412.57,1.67,1414.24,whisper
+441,445_scout_future_watch,They always will.,1414.24,1.66,1415.9,whisper
+442,446_dark_landscape,The dark does not change.,1415.9,1.22,1417.12,whisper
+443,447_scout_facing_dark,Only the ones who learn to face it.,1417.12,4.17,1421.29,whisper
