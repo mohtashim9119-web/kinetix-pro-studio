@@ -1,0 +1,62 @@
+segment_display_order,segment_text,segment_duration_sec,word,onset_error_sec,severity_ratio,fa_confidence_score,scorer_margin_sec,is_it_scorer_artifact,is_known_legacy_defect_segment
+61,Not hard.,0.44,hard.,-0.5965630000000033,1.3558,0.0358,0.0361,False,True
+144,Wind.,0.55,Wind.,-0.5535629999999969,1.0065,0.0528,0.8047,False,True
+61,Not hard.,0.44,Not,0.41056199999999876,0.9331,0.0478,1.7631,False,True
+303,You rebuild.,0.475,You,-0.41012499999999363,0.8634,0.0411,0.6903,False,False
+171,and you never stop carrying it.,2.48,it.,-1.4352499999999964,0.5787,0.9996,0.0179,True,False
+80,No sound.,0.825,No,-0.4766249999999843,0.5777,0.0058,0.8486,False,True
+185,The other is Yaro,1.03,Yaro,-0.5059380000000147,0.4912,0.0,0.0759,False,False
+383,You are sixty-four.,2.96,You,1.4518749999999727,0.4905,0.9396,1.9696,False,False
+307,You are forty-nine.,4.43,You,2.1386250000000473,0.4828,0.9838,2.8497,False,False
+261,You do not always manage it.,1.88,it.,-0.8587499999999864,0.4568,0.9992,0.0098,True,False
+123,You see him doing it.,1.62,it.,-0.7269380000000183,0.4487,0.9987,0.0062,True,False
+78,every person slows.,1.95,person,-0.873187999999999,0.4478,0.2833,0.0909,False,True
+28,Small and permanent.,1.28,permanent.,-0.5035000000000025,0.3934,0.0001,0.0891,False,True
+263,Every dawn is temporary.,1.73,temporary.,-0.5749369999999772,0.3323,0.0018,0.0643,False,False
+154,When the night birds cut off mid-call,1.215,When,0.39931300000000647,0.3287,0.9704,0.8436,False,False
+295,The positioning was right.,1.33,right.,-0.43687499999998636,0.3285,0.0,0.0644,False,True
+130,The discomfort is the point.,1.15,The,0.3745000000000118,0.3257,0.5635,1.0434,False,True
+22,The fire is the line between you and whatever lives on the other side of it.,4.66,it.,-1.3851250000000022,0.2972,0.9995,0.0058,True,False
+78,every person slows.,1.95,every,0.5715629999999976,0.2931,0.0143,1.0846,False,True
+381,It has to grow inside the living of it.,2.51,it.,-0.7038749999999254,0.2804,0.9993,0.0095,True,False
+21,It has weight.,1.36,It,0.38093699999999586,0.2801,0.9989,0.7738,False,False
+281,You tell Fen,1.33,You,0.3683120000000599,0.2769,0.9249,0.733,False,False
+381,It has to grow inside the living of it.,2.51,It,0.5919999999998709,0.2359,0.9998,1.0507,False,False
+131,It keeps you from drifting.,2.94,It,-0.6833750000000123,0.2324,0.9992,0.2103,False,True
+56,You drop the torch on the third night of your second season carrying it.,4.05,it.,-0.8811880000000087,0.2176,0.9996,0.0104,True,False
+119,You are not yet calm about it.,2.34,You,0.5063119999999799,0.2164,0.9747,1.1185,False,False
+95,Your job is to read the ground before everyone else walks onto it.,3.8,it.,-0.8125,0.2138,0.9996,0.0095,True,False
+119,You are not yet calm about it.,2.34,it.,-0.49131199999999353,0.21,0.9959,0.0173,True,False
+1,You are seven years old.,5.64,You,1.0040629999999997,0.178,0.9984,2.695,False,False
+296,The rotations were right.,2.67,The,-0.44518799999991643,0.1667,0.9983,0.1675,False,True
+70,You do not drop a torch again.,2.07,You,0.33781300000001124,0.1632,0.9433,0.7579,False,False
+169,He finds you at your post afterward.,2.64,He,0.4073750000000018,0.1543,0.9998,0.9376,False,False
+77,When the lead hunter slows,2.65,When,0.39587499999998954,0.1494,0.997,0.8061,False,True
+36,Certain men always face outward.,3,Certain,0.44243799999999567,0.1475,0.9963,1.1513,False,False
+228,They are not yours in any formal sense.,3.03,They,0.4331249999999045,0.1429,0.9997,0.9234,False,False
+117,A scout who imagines too much does the same.,2.59,A,0.327686999999969,0.1265,0.9983,0.6906,False,True
+30,You start watching the older hunters differently.,2.91,You,0.3628130000000027,0.1247,0.986,1.183,False,False
+224,You are thirty-three.,2.98,You,0.3688129999999319,0.1238,0.9859,1.4868,False,False
+351,or a reliable river crossing.,2.78,or,0.3417500000000473,0.1229,0.931,0.7968,False,False
+233,When you speak at the fire before a hard night,2.85,When,0.34568799999999555,0.1213,0.996,1.0369,False,False
+398,and why you did not let that weight take the work from you.,3.38,and,0.40637500000002547,0.1202,0.9246,0.7884,False,False
+181,Your group drives a small aurochs herd toward a valley narrowing,3.91,Your,0.4683749999999236,0.1198,0.9996,0.9867,False,False
+257,that wordless confirmation that your nose had caught something real.,4.04,that,0.4808749999999691,0.119,0.9468,0.8156,False,False
+260,You try to build that same room for Fen.,2.86,You,0.3365000000000009,0.1177,0.9983,1.1344,False,False
+418,Eyes moving in a slow sweep rather than fixed on one point.,4.55,Eyes,0.5218119999999544,0.1147,0.9985,1.0794,False,False
+246,Then one evening before a run you tell him plainly,3.03,Then,0.3252499999999827,0.1073,0.9197,0.7236,False,False
+400,You tell them the dark cannot be finished.,2.87,You,0.3063130000000456,0.1067,0.9611,1.1433,False,False
+69,You are expected to understand that on your own.,2.82,You,0.2814380000000085,0.0998,0.9993,0.9161,False,False
+86,Not the heavy thrusting spear of the senior hunters.,3.14,Not,0.28831199999996215,0.0918,0.8776,0.7756,False,False
+159,The whole camp stands up and it takes several minutes to settle.,3.61,The,0.32456200000001445,0.0899,0.9997,0.7658,False,False
+42,You are eleven.,3.79,You,0.3302499999999924,0.0871,0.9779,1.6179,False,False
+420,You watch her for a long time without making a sound.,3.67,You,0.31349999999997635,0.0854,0.9983,0.7313,False,False
+301,Accepting that without it hollowing out your readiness is harder than any technique you have ever learned.,6.27,Accepting,0.5305000000000746,0.0846,0.826,1.5668,False,False
+214,You only know you are at the fire because whatever it was let you leave.,4.47,You,0.33818699999994806,0.0757,0.9985,1.0546,False,False
+203,You walk backward out of the forest with your spear forward and your free hand trailing behind you to feel for the tree line.,7.03,You,0.509499999999889,0.0725,0.9609,1.1896,False,False
+397,You describe the child you could not save and what you did in the weeks after,4.82,You,0.3428129999999783,0.0711,0.9984,1.2479,False,False
+304,You add a post that covers the gap the night found.,4.195,You,0.2906869999999344,0.0693,0.9935,0.8912,False,False
+268,That reaches you one morning when a girl of about nine walks to you at the fire’s edge,5.15,That,0.33037500000000364,0.0642,0.9616,1.1106,False,False
+442,They will carry a torch in both hands and guard it with their body against the wind.,5.2,They,0.3212499999999636,0.0618,0.9998,1.0318,False,False
+390,You sit at the center fire on long winter nights when the band is settled deep in the valley and the cold has pulled everything close.,7.56,You,0.35799999999994725,0.0474,0.9386,1.4756,False,False
+423,She is doing the thing that cannot be scratched into bone or pressed into clay or passed through any medium other than one watching body alongside another watching body,10.8,She,0.2786869999999908,0.0258,0.9696,0.8744,False,False

@@ -19,3 +19,7 @@ src-tauri/models/*.bin
 
 # WebCodecs Phase 0 spike — throwaway test asset, never committed (see docs/webcodecs-architecture-plan.md)
 public/_spike/
+
+# Python bytecode cache — scripts/ has measurement tooling (measure-word-onset.py, measure-forced-alignment.py)
+__pycache__/
+*.pyc
