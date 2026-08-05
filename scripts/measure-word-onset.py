@@ -255,7 +255,9 @@ def filter_word_tokens(tokens: list) -> list:
 def score_onset_errors(tokens: list, silences: list) -> list:
     """For each silence (ascending, disjoint), find the first not-yet-consumed
     token whose declared MIDPOINT falls at or after the silence's START — that
-    token is "the word following this pause."
+    token is a CANDIDATE for "the word following this pause." A candidate is
+    only accepted once it also clears the OVERLAP GATE below; the first
+    candidate that clears both is "the word following this pause."
 
     Why midpoint, not "first token whose end pokes past the silence start"
     (the first version of this function, kept here as a cautionary note
@@ -274,6 +276,35 @@ def score_onset_errors(tokens: list, silences: list) -> list:
     midpoint 289.530, which is >= 289.380, so it is correctly selected even
     though its own declared START (289.260) precedes the silence's START).
 
+    OVERLAP GATE (Phase 3 data-cleaning pass, 2026-08-05 — the "it." scorer
+    bug fix). The midpoint test alone is not scale-invariant: it only asks
+    whether a token's own center of mass sits past the silence's start, so
+    for a VERY SHORT trailing token (a one-syllable sentence-final word like
+    "it.", "hard.", "right.", "Yaro" — typically ~60-100ms long) even a few
+    tens of milliseconds of ordinary trailing edge blur is enough to push the
+    token's own midpoint past a silence's start, exactly the same failure
+    mode the "The" case above was built to reject, just at a shorter token
+    duration than the original fix anticipated. Found on V6/fa2: 8 sentence-
+    final tokens spelled "it."/"It" plus 4 more short trailing words
+    ("hard.", "Yaro", "temporary.", "right.") were each misattributed to the
+    pause that immediately FOLLOWED them (not preceded them) — e.g. silence
+    [65.101, 66.452]: "it." [65.067, 65.147] pokes only 46ms into this
+    1.35s-long silence's leading edge (its own midpoint crosses the start by
+    a mere 5.8ms), yet under the plain midpoint test it was picked as "the
+    word following the pause," producing a fabricated onset_error of -1.385s.
+    The real following word is "You," a full 1.37s later, at the very end of
+    the silence. Distinguishing signal: what FRACTION of the SILENCE ITSELF
+    does the candidate's span actually cover? "it."'s ~46ms is ~3% of that
+    1.35s silence; "predator"'s smear, by contrast, consumes 0.42s of the
+    segment-96 fixture's 0.58s silence — 72%, a clear majority of the pause.
+    That is the operative difference between "brushing a pause's leading
+    edge" and "smeared substantially across it": the gate requires a
+    candidate's declared END to reach at least the silence's own MIDPOINT
+    (equivalent to covering at least half the silence), not merely poke past
+    its start. "The" (13ms into a ~760ms silence, ~2%) and "it." (~3%) both
+    fail this gate and are correctly skipped; "predator" (72%) clears it and
+    is still correctly selected, exactly as before.
+
     onset_error = token.start - silence.end (signed; negative = the token's
     declared start precedes the true end of the pause before it).
 
@@ -281,7 +312,12 @@ def score_onset_errors(tokens: list, silences: list) -> list:
     real-speech-free gap split into two silencedetect events, or a stray
     sub-threshold blip), only the LATER (closer) silence's attribution is
     kept — that pairing is the one that's actually "immediately before" the
-    word once a closer gap is known to also precede it with nothing between."""
+    word once a closer gap is known to also precede it with nothing between.
+    This can also fire as a side effect of the overlap gate: rejecting a
+    trailing-edge candidate for an earlier of two adjacent silence blips can
+    make both blips resolve to the same later, real word, correctly
+    collapsing them into one attribution (measured on V6: one such pair,
+    502 -> 501 scored pauses)."""
     tokens_sorted = sorted(tokens, key=lambda t: t["start"])
     results = []
     token_idx = 0
@@ -293,11 +329,21 @@ def score_onset_errors(tokens: list, silences: list) -> list:
 
     for sil in silences:
         s0, s1 = sil["start"], sil["end"]
+        silence_midpoint = (s0 + s1) / 2.0
         while token_idx < n and midpoint(tokens_sorted[token_idx]) < s0:
             token_idx += 1
         if token_idx >= n:
             break
-        tok = tokens_sorted[token_idx]
+        # Overlap gate: skip past any candidate whose declared span doesn't
+        # reach at least this silence's own midpoint — a token that only
+        # brushes the leading edge is the PRECEDING word's ordinary trailing
+        # blur, not the following word smeared across the pause.
+        cand_idx = token_idx
+        while cand_idx < n and tokens_sorted[cand_idx]["end"] < silence_midpoint:
+            cand_idx += 1
+        if cand_idx >= n:
+            continue
+        tok = tokens_sorted[cand_idx]
         row = {
             "silence_start": s0,
             "silence_end": s1,
@@ -306,11 +352,11 @@ def score_onset_errors(tokens: list, silences: list) -> list:
             "token_end": tok["end"],
             "onset_error_sec": tok["start"] - s1,
         }
-        if token_idx == last_assigned_idx and results:
+        if cand_idx == last_assigned_idx and results:
             results[-1] = row
         else:
             results.append(row)
-        last_assigned_idx = token_idx
+        last_assigned_idx = cand_idx
     return results
 
 

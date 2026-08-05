@@ -1,0 +1,4 @@
+project,script_word_count,transcript_word_count,word_edit_distance,WER_naive_pct,script_char_count,transcript_char_count,char_edit_distance,CER_pct
+V6,3874,3989,384,9.91,16382,16339,717,4.38
+173,1648,1836,409,24.82,9084,8974,197,2.17
+Spanish,249,363,215,86.35,1204,1157,66,5.48

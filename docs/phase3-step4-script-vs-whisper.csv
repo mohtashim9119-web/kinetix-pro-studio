@@ -1,0 +1,5 @@
+project,mode,n_scored_pauses,median_abs_error_ms,p95_abs_error_ms,negative_smear_pct,word_token_count,low_confidence_lt0.5_count,low_confidence_pct,zero_duration_tokens
+V6,script-text,501,19.7,338.2,46.9,3857,81,2.1,0
+V6,whisper-text,514,118.9,633.8,23.7,3969,518,13.1,0
+173,script-text,194,22.3,69.9,41.8,1648,28,1.7,0
+173,whisper-text,193,38.4,520.8,29.5,1834,142,7.7,0
