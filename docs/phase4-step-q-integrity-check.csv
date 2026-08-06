@@ -1,0 +1,11 @@
+clip,heard_transcript,manifest_first_word,first_word_test,first_word_match_mode,lead_in_test,lead_in_detail,foreign_content_test,foreign_content_detail
+clip3_01,"antes de llegar al PSO. Aún así, prepara",aun,PASS,exact,PASS,4/5 in prev tail,PASS,0/8 unattributed
+clip3_02,aparecen en un solo ataque. El detalle importante,el,PASS,exact,PASS,4/5 in prev tail,PASS,0/8 unattributed
+clip3_03,alejarse más. Navegar cerca de silla,navegar,PASS,exact,PASS,2/2 in prev tail,PASS,0/6 unattributed
+clip3_04,La frase entre sillas,la,PASS,exact,PASS,no lead-in audio,PASS,1/4 unattributed: sillas
+clip3_05,"suficientemente cerca, las seis cabezas se",las,PASS,exact,PASS,2/2 in prev tail,PASS,0/6 unattributed
+clip3_06,Silla. Silla es un monstruo que vive,scylla,PASS,fuzzy:silla(0.73),PASS,n/a (corpus start),PASS,0/7 unattributed
+clip3_07,cada cabeza atrapa a un hombre,cada,PASS,exact,PASS,no lead-in audio,PASS,1/6 unattributed: hombre
+clip3_08,cerca del acantilado. Eso significa que la estrategia,eso,PASS,exact,PASS,3/3 in prev tail,PASS,0/8 unattributed
+clip3_09,Tiene seis cuellos largos.,tiene,PASS,exact,PASS,no lead-in audio,PASS,0/4 unattributed
+clip3_10,debajo de su cuerpo. Su ataque es sencillo.,su,PASS,exact,PASS,2/2 in prev tail,PASS,0/8 unattributed

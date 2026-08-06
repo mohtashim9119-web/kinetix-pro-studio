@@ -23,3 +23,9 @@ public/_spike/
 # Python bytecode cache — scripts/ has measurement tooling (measure-word-onset.py, measure-forced-alignment.py)
 __pycache__/
 *.pyc
+
+# Blinded listening-clip batches + their private answer keys (Phase 3/4 sync
+# measurement). Kept OUT of docs/ so a listener cannot see the key, and out of
+# /tmp so they survive cleanup -- see the K8 pattern in docs/sync-pipeline-v2-plan.md
+.listening-clips/
+.answer-keys/

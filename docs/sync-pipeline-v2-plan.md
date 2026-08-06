@@ -1173,6 +1173,735 @@ Python script (`phase4-handoff-app-silence.py`) and one new TypeScript
 harness (`phase4-handoff-replay-sync.test.ts`, vitest-only, not part of the
 production build) were added under `scripts/`.
 
+### Phase 4 pre-implementation — Steps Q-T (2026-08-06)
+
+**Scope discipline, honored throughout: no production Rust, no timing-source
+swap, no Viterbi, no contract amendment, no threshold retuned. Step Q exports
+and integrity-checks a listening batch; Steps R and T are written design only;
+Step S is a standalone harness under `scripts/`, outside the app.** Baseline:
+HEAD `b49e5d3`, tag `phase3-4-handoff-baseline-2026-08-06`.
+
+#### Owner decisions, recorded verbatim as instructed
+
+1. **Gate:** 250ms p95 is APPROVED as the standard. Human ground truth put FA
+   within 12-39ms on English; that is sufficient.
+2. **Spanish:** 10-clip human listening pass, not 20.
+3. **Models:** `jonatasgrosman/wav2vec2-large-xlsr-53` is the permanent
+   standard, all 5 languages (en, es, fr, de, pt), ~1.26GB each, downloaded on
+   demand and cached. Installer stays ~100-150MB. No non-commercial model
+   ships, ever, not even temporarily.
+4. **Windowing:** production-grade design, neighbor-midpoint clamping with
+   bounded padding. No measurement-convenience shortcuts.
+5. **Structural checks:** all 12 built and proven in an isolated harness before
+   any Rust.
+6. **fr/de/pt:** loading plumbing now, explicitly labelled UNVALIDATED.
+   Real-corpus validation deferred until business demand.
+7. **No production Rust in this pass.** Design and harness only.
+
+**Consequence of decision 3, applied immediately across this section: MMS-FA is
+now out.** Every MMS-FA number in this document (V6's 21.2ms/476ms, 173's
+22.3ms/69.9ms, Spanish's 61.2ms/282.1ms, the whole Blocker 2 arc, Steps 1-4,
+A-L) remains valid as *evidence about forced alignment as a technique*, and is
+retained unedited for that reason — but it can never ship (CC-BY-NC-4.0). The
+shipping numbers are jonatasgrosman's: V6 25.8ms/400.8ms, 173 27.5ms/89.7ms,
+Spanish 61.2ms/282.1ms (Step N.2's table). Where the two differ the
+jonatasgrosman column is now the one that counts.
+
+**The tension, stated without softening, per instruction.** With 250ms
+approved, **Spanish's p95 of 282.1ms FAILS the gate** — by 32.1ms, on 22 scored
+pauses, on both candidate models identically. English showed that most of a gap
+of this shape was `silencedetect` reference bias rather than FA error (Step C:
+FA 12-39ms vs. reference 335-2474ms against human truth on 6 of 7 scored
+failures; Step H: corpus p95 338.2ms → 82.2ms from correcting the reference
+alone, with FA untouched). **Step Q is what settles whether Spanish is the same
+story.** The Spanish number is not adjusted here, and no prediction is recorded
+about which way it will go — the batch is exported blinded, the answer key is
+held privately, and the verdict waits on the owner's ear. Two outcomes are both
+live and both meaningful: if Spanish is reference bias, the gate passes on a
+corrected reference and the English finding generalizes; if it is genuine FA
+error, a per-language accuracy gap exists that decision 3's one-model-per-
+language architecture will have to answer for.
+
+---
+
+#### Step Q — Spanish listening batch
+
+**10 clips exported, blinded, integrity-checked, ready to send.** New committed
+script: `scripts/phase4-step-q-spanish-clips.py` (two subcommands, `export` and
+`integrity`). Public manifest: `docs/phase4-step-q-spanish-manifest.csv` (clip
+name + script text only, nothing else). Protocol:
+`docs/phase4-step-q-listening-protocol.md`. Integrity results:
+`docs/phase4-step-q-integrity-check.csv`. Private answer key: `.answer-keys/`
+(see the K8 note below), deliberately not in `docs/`.
+
+**Selection.** 7 failures — every one of the 7 worst-scoring boundaries in the
+Spanish MMS-FA dataset (`docs/phase3-onset-spanish-fa.csv`, 22 scored pauses)
+by `|onset_error|`: 1085ms, 287ms, 193ms, 167ms, 166ms, 147ms, 141ms. 3
+controls drawn from the cleanly-passing rows, chosen for phonetic spread rather
+than by rank — a liquid-initial (`las`, +16ms), a vowel-initial (`Aún`, +27ms),
+and a plosive-initial (`Cada`, −18ms) — mirroring Step B's finding that
+soft-vs-sharp onset class is the strongest predictor of reference error.
+Selection is hard-coded in the script by `silence_start` key, not recomputed at
+run time, so the batch is reproducible and auditable.
+
+**Protocol, identical to both English batches.** 1.0s padding before the flagged
+silence's start, 1.0s after the flagged word's end, sourced from the original
+`.m4a` (not the 16kHz working transcode). Opaque `clip3_01`-`clip3_10` names via
+a seeded shuffle (seed 7, distinct from Step C's 42 and Step H's 99). Padding
+and duration verified programmatically before export: **10/10 exact.** One
+disclosed and correct deviation: `clip3_06` has 0.723s of pre-padding rather
+than 1.000s, because its flagged silence starts at 0.723s — there is no more
+audio before it. That is the clamp working, not a defect.
+
+**Integrity check — run BEFORE sending, per instruction, all 10 clips.** Batch
+2's clip 11 was a genuine content mismatch that only a human ear caught, so this
+is now programmatic. Each clip was transcoded to 16kHz and transcribed with the
+**production** whisper-cli sidecar (`ggml-large-v3-turbo.bin`, `-l es`) — the
+same binary and model the app itself ships — then tested three ways:
+
+  (a) **FIRST-WORD** — the manifest segment's own first word is present in the
+      clip's heard audio;
+  (b) **LEAD-IN** — the words heard *before* it match the tail of the previous
+      committed segment's script text;
+  (c) **FOREIGN-CONTENT** — every heard word is attributable to either the
+      previous segment's tail or the manifest segment itself.
+
+(c) is the sharpest and is the one that would have caught batch 2's clip 11,
+whose heard content contained zero of its manifest segment's words.
+
+| Clip | first-word | lead-in | foreign-content | heard (leading) |
+|---|---|---|---|---|
+| clip3_01 | PASS (exact) | PASS | PASS | "antes de llegar al PSO. Aún así, prepara" |
+| clip3_02 | PASS (exact) | PASS | PASS | "aparecen en un solo ataque. El detalle importante" |
+| clip3_03 | PASS (exact) | PASS | PASS | "alejarse más. Navegar cerca de silla" |
+| clip3_04 | PASS (exact) | PASS | PASS | "La frase entre sillas" |
+| clip3_05 | PASS (exact) | PASS | PASS | "suficientemente cerca, las seis cabezas se" |
+| clip3_06 | PASS (fuzzy) | PASS | PASS | "Silla. Silla es un monstruo que vive" |
+| clip3_07 | PASS (exact) | PASS | PASS | "cada cabeza atrapa a un hombre" |
+| clip3_08 | PASS (exact) | PASS | PASS | "cerca del acantilado. Eso significa que la estrategia" |
+| clip3_09 | PASS (exact) | PASS | PASS | "Tiene seis cuellos largos." |
+| clip3_10 | PASS (exact) | PASS | PASS | "debajo de su cuerpo. Su ataque es sencillo." |
+
+**10/10 pass all three tests.** One result is reported as a *qualified* pass
+rather than a clean one: `clip3_06`'s first word is "Scylla", which whisper
+consistently transcribes "Silla" — the exact writing convention Step 4's CER
+analysis already documented (8 occurrences, ~16 chars of the Spanish edit
+distance). The check reports this as `fuzzy:silla(0.73)` with the heard spelling
+recorded, not as a silent equality and not as a failure; the content is
+genuinely correct. Every other clip matched exactly.
+
+**One structural risk disclosed without identifying the clip** (the protocol doc
+carries the same warning): one of the seven failure clips sits at the very start
+of the corpus, where no left context exists — the same edge-of-corpus condition
+that forced batch 1's clip 3 to be excluded from scoring, and the same condition
+behind V6 segment 1's implausible 1.87s one-word FA span. It may prove
+unscoreable. Which clip it is stays in the private answer key so the listen is
+not biased.
+
+**K8 recurrence, third time, recorded rather than absorbed silently.**
+`/tmp/phase3/` is **gone** — verified absent at the start of this session. That
+directory held the private answer keys for both English batches
+(`step_c_answer_key.json`, `step_h_answer_key.json`), the Spanish FA token
+arrays, `emission.pt`, `silences.json`, and the 16kHz working transcodes for
+every project. Nothing in `docs/` was lost (every published number is backed by
+a committed CSV), and both English batches were already fully scored, so no
+conclusion in this document is invalidated — but re-deriving anything that
+needed the raw FA per-word arrays now requires re-running
+`measure-forced-alignment.py`, and Step S below hit exactly that wall (see C05).
+This is the same pattern K8 recorded once and the Blocker 2 recovery recorded
+again. **Fix applied this pass, not merely noted:** blinded batches and their
+answer keys now live in `.listening-clips/` and `.answer-keys/` at the repo root
+— gitignored (so a key never reaches `docs/` where a listener would see it) but
+outside `/tmp` (so OS cleanup cannot take them). Stated trade-off: gitignored
+means not committed, so a fresh clone still would not have them; that is
+accepted, since the observed failure mode is /tmp cleanup, not repo loss.
+
+**Not scored.** This batch awaits the owner's listen, exactly as Step C's and
+Step H's did before it.
+
+---
+
+#### Step R — Production windowing design (design only, not implemented)
+
+Every number in Phase 3 came from a window this document itself calls a
+measurement convenience: per-segment, `[committed startTime, committed endTime]`,
+clamped to the midpoint of the gap to each neighbour. Because the corpus is
+perfectly gapless (Key Invariant (f)), that clamp **degenerates to zero padding
+on every interior segment** — the window is exactly the committed span, which is
+the very quantity under repair. Five distinct failures in this document trace to
+it: the 5 Blocker-2 low-confidence rows, segment 320's total CTC failure,
+Method 1's neighbour-bleed regression on segments 144/80, segment 96's
+window-construction defect (still on the DO-NOT list), and the 10 unscripted
+headings. This section specifies the real one.
+
+**R.0 — The governing change.** The unit of alignment stops being the SEGMENT
+and becomes the RUN. A run is a maximal contiguous group of committed segments
+bounded on both sides by an independently verified anchor. FA receives the
+concatenated script text of the whole run against the audio span of the whole
+run, in ONE pass; per-segment word attribution is then read off FA's own
+word-level output rather than imposed by the input window. This is not a new
+idea — it is precisely Method 2 (joint multi-segment context), which this
+document already measured resolving cases Method 1's wide-padding bypass made
+worse (segments 144 and 80, both from `+0.019s`/`+0.038s` error at ~0.9-1.0
+confidence). Method 2 worked because there is no "neighbour" to bleed into when
+the window *is* the neighbours, carrying their own real transcript.
+
+**R.1 — Anchors: how a run's edges are chosen.** A time `t` is an anchor for
+script word `w` only when **three independent sources agree within
+`ANCHOR_AGREEMENT_SEC` (0.15s)**:
+
+  (a) the Hirschberg alignment maps `w` to a specific Whisper token (unchanged
+      — architecture (A) retains Whisper for matching and skip detection);
+  (b) that token's declared onset;
+  (c) a detected silence interval ends immediately before it.
+
+Plus two admissibility rules, both derived from findings already in this
+document rather than invented here:
+
+  * `w` must be **distinctive** — not a function word. Step B measured
+    glide-initial boundaries (almost entirely "You"/"Your"/"When"/"We") at
+    14.1% >250ms and p95 368.8ms, the worst fine-grained bucket in the corpus,
+    while plosive- and affricate-initial boundaries read a clean **0.0%**
+    corpus-wide. Anchoring on the class that fails 14% of the time is the
+    single most avoidable design error available here.
+  * `w`'s Hirschberg match must sit inside a contiguous matched run of at least
+    `MIN_ANCHOR_RUN` (4) words — the same evidence standard the shipped
+    run-survival gate already applies to keep a segment at all
+    (`RUN_SURVIVAL_MIN_RUN_LONG`, `syncConstants.ts`). Reusing the existing
+    constant rather than minting a second, independently-tuned one is
+    deliberate.
+
+Anchors are computed **before any FA pass**, entirely from data that already
+exists today (Whisper tokens, Hirschberg output, the RMS silence array).
+
+**R.2 — Padding, and how it is bounded.** A run's audio window is
+
+```
+  windowStart = firstAnchor - padBefore
+  windowEnd   = lastAnchor  + padAfter
+
+  padBefore = min(PAD_BASE, PAD_SHARE * (firstAnchor - prevRunLastWordEnd))
+  padAfter  = min(PAD_BASE, PAD_SHARE * (nextRunFirstWordStart - lastAnchor))
+```
+
+`PAD_BASE = 0.75s`. Derived, not chosen: the production RMS detector's own
+silence durations across all three corpus projects run p50 0.40-0.70s with a
+maximum of 2.08s (V6 0.700/2.080, 173 0.400/0.620, Spanish 0.500/0.920, measured
+from `docs/phase4-baseline-*-silences.csv`). 0.75s therefore covers a typical
+inter-sentence pause **in full**, which is all the room FA needs to recover a
+word onset it currently misses by ≤300ms. It is deliberately **not** the
+measurement script's own `--pad-sec 3.0` default: 3.0s reaches across an entire
+neighbouring segment in the dense sub-1s runs where this corpus's worst cases
+live (Part L), which is exactly how Method 1 produced its neighbour-bleed
+regression.
+
+`PAD_SHARE = 0.5`. A run may claim at most half the free audio between itself
+and its neighbour, so **two adjacent runs' windows can never overlap** — the
+same 50/50 idea as today's midpoint clamp, and this is the sense in which
+decision 4's "neighbor-midpoint clamping with bounded padding" is honored.
+
+**R.3 — The clamp's reference point changes, and that is the whole fix.** Today
+the clamp is anchored to *the neighbouring segment's committed boundary*. That
+boundary is the quantity under repair, so a mistimed neighbour poisons this
+segment's window — the defect that produced 5 of the 6 ratio>0.5 rows. Under
+R.2 the clamp is anchored to *the neighbouring run's own last verified word
+end*, i.e. to a point with three-source agreement.
+
+**What happens when a neighbour is itself mistimed** is therefore answered
+structurally rather than by a tolerance: a mistimed segment, by definition, does
+not have three-source agreement at its boundary, so **it never becomes an
+anchor**. It is absorbed INTO the run and re-derived from FA's own output. A
+segment whose committed timing is wrong contributes no constraint to anything.
+That is the property today's design lacks and the reason it cascades.
+
+**R.4 — Run length bounds.** `MAX_RUN_SEC = 30`. wav2vec2-class encoders are
+O(n²) in attention, and 30s is the standard chunk length for this model family;
+at 50 frames/sec that is 1500 emission frames against ≈450 target symbols for
+30s of narration, a 675k-cell Viterbi lattice — trivial to hold. If no admissible
+anchor exists within `MAX_RUN_SEC`, the run is **force-split at the best
+available candidate and the split is marked LOW-CONFIDENCE** (R.6), rather than
+growing unbounded or silently accepting a weak anchor. A run of one segment is
+legal; it simply gets R.2's padding.
+
+**R.5 — Unscripted audio inside a run.** Between consecutive segments inside a
+run, insert a CTC wildcard (`<star>` in MMS-FA; the equivalent free blank-run
+allowance in a `Wav2Vec2ForCTC` decode) that may absorb arbitrary audio at zero
+alignment cost. Audio absorbed by a wildcard belongs to **no** segment: the
+preceding segment ends at its own last word's end, the following segment starts
+at its own first word's start, and the wildcard span becomes an explicit,
+recorded gap.
+
+**This collides with Key Invariant (b) (Σ committed durations = audioDuration)
+and the collision is stated, not finessed.** Today that invariant *forces* a
+heading's 2.79-5.58s onto one of the two neighbours, and the split point is
+whichever spurious silence happens to land inside the recitation — measured at
+47%, 63%, 92% and ~49% through the heading on the four sampled cases (Step K).
+R.5 removes the **arbitrariness** but does not by itself decide where the seconds
+go. **Recommendation, flagged for an owner ruling rather than assumed:** assign
+the whole wildcard gap to the PRECEDING segment (its asset simply holds longer),
+which preserves invariant (b) unchanged, is the least visible option on screen,
+and is logged as an explicit `unscripted-gap` sync-log entry so it is
+inspectable rather than silent.
+
+**R.6 — Corpus start and end.**
+
+  * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,
+    firstAnchor)` — the clamp against a non-existent neighbour degenerates to
+    the file's own start, not to zero. The run's text is additionally prefixed
+    with a wildcard, so the model is never *forced* to place the first script
+    word onto unscripted lead-in. This is aimed directly at V6 segment 1 /
+    batch-1 clip 3, where FA produced a 1.87s span for the one-syllable word
+    "You" because it had no left context and an unscripted "Level one"
+    recitation sat in front of it.
+  * **End:** symmetric — `padAfter = min(PAD_BASE, audioDuration - lastAnchor)`,
+    plus a trailing wildcard.
+  * `headExtendFirstSegment` and the tail extension to `audioDuration` are
+    Stage 4 FINALIZATION steps and are unchanged. FA never sees them, and they
+    are applied after alignment exactly as today.
+
+**R.7 — Failure paths (the skip-and-flag contract).** Matching this codebase's
+established graceful-degradation precedent (`filterMalformedTokens`, the
+coverage gate, the silence-scan-error fallback), never a crash:
+
+  * target text cannot fit the window even at full run length → **skip the
+    segment, insert a wildcard in its place, emit a structural finding** (Step S
+    check C09). This is the segment-320 path.
+  * no admissible anchor within `MAX_RUN_SEC` → force-split, mark
+    LOW-CONFIDENCE, emit a finding.
+  * FA per-word confidence below `CONF_MIN` (0.3 — the same line Blocker 2's own
+    analysis used to separate "FA was confident and wrong" from "FA correctly
+    refused") on a run's first or last word → do not use that word as a
+    boundary; fall back to the run's own anchor.
+
+**R.8 — The cascade-safety argument, stated at the strength it actually holds.**
+
+*Claim:* an incorrect boundary at segment `i` cannot change the computed
+boundary at segment `i±1`.
+
+*Case 1 — `i` and `i±1` are in DIFFERENT runs.* The run edge between them is an
+anchor with three-source agreement; each run is aligned independently; R.2's
+`PAD_SHARE = 0.5` guarantees the two windows cannot overlap, so neither run's
+audio contains the other's. **Full independence — a genuine no-propagation
+guarantee.**
+
+*Case 2 — `i` has no valid alignment at all* (the segment-320 case). It is
+skipped-and-flagged and its span becomes a wildcard. Its neighbours' boundaries
+are read off their own words. **The segment-321 cascade cannot occur**, because
+321's window is never derived from 320's boundary.
+
+*Case 3 — `i` and `i±1` are in the SAME run.* **This is where the guarantee is
+weaker, and the honest statement is that it is bounded, not zero.** A monotonic
+CTC alignment does couple neighbours: word `k`'s onset is constrained to be ≤
+word `k+1`'s. A misplaced word can therefore displace its successor forward. What
+it *cannot* do is compound: each word's placement is scored against its own
+acoustic evidence, so the next word with strong evidence pulls the path back, and
+the displacement does not accumulate across the run. What R.0 eliminates outright
+is today's mechanism, which is categorically worse than a monotonic constraint:
+today segment `i`'s committed boundary **is literally the input window** for
+segment `i+1`'s alignment, so an error is not merely propagated, it is copied
+verbatim and then compounded by the next segment's own window being wrong in the
+same direction. **Claim as proved: no-propagation for cross-run neighbours and
+for skipped segments; within a run, reduction from verbatim error-copying to a
+bounded monotonic-ordering constraint.** Anything stronger would be an
+overclaim.
+
+**R.9 — Which Phase 3 cases this design would have prevented, named.**
+
+| Case | Prevented? | By what |
+|---|---|---|
+| **Segment 320** (CTC constraint violation, 102 chars in a 1.27s slot) | **YES**, twice over | R.7's fit precheck skips-and-flags instead of the run dying; R.0's run structure means segment 321's window is never derived from 320's boundary, so the ~4s misplacement of "That" cannot happen. **But see the correction below — this defect is latent, not live.** |
+| **The 10 unscripted headings** (2.79-5.58s each, split arbitrarily) | **PARTIALLY** | R.5's wildcard removes the arbitrariness — no neighbour is forced to claim heading audio. It does NOT by itself decide where the seconds go; that needs the R.5 owner ruling. |
+| **The 5 Blocker-2 low-confidence rows** (segments 61×2, 144, 80, 303) | **YES** | These are precisely the zero-padding starvation cases. R.0 + R.2 give them room, and Method 2's own re-run already demonstrated the recovery empirically (+0.019s / +0.038s at 0.91-1.00 confidence). |
+| **Segment 96's window-construction defect** (the still-open DO-NOT-list item: look ends 289.090, next token declared 289.200, real silence [289.380, 289.960]) | **YES** | The window is no longer built from raw token timestamps at all. R.1(c) requires a *detected silence* immediately preceding an anchor, and 289.200 has none. |
+| **Segment 1** (edge-of-corpus, 1.87s one-word span) | **YES** | R.6's leading wildcard + the file-start clamp. |
+| **Segments 307, 383** (stale-pause / detector-coverage gaps) | **PARTIALLY** | R.1's anchor admissibility declines to anchor there at all (no silence, function word "You"), so they are absorbed into a run and the 1.4-2.5s *reference* error disappears. Segment 307's own **335ms FA residual is NOT fixed** — Step G showed FA inherits Whisper's token position (929.335 vs. Whisper's 929.330) after an interposed heading, and windowing does not change where the search starts. |
+| **`seasons than you \|\| can count and`** (third failure class) | **NO** | The cut is clean and lands at a genuine acoustic pause; the narrator's pause disagrees with the script's sentence break. No acoustic windowing resolves an authority conflict between two correct-but-different segmentations. Needs a product ruling. Out of scope, same as Step O item 10. |
+| **Flash-attention content dropout** (V6 segments 27-29) | **NO** | No windowing recovers text the model never emitted. |
+| **K13 lock preservation** | **NO** | Orthogonal — a Stage 3 concern, not a timing-source or windowing one. |
+
+**A material correction to segment 320's status, found while building Step S and
+reported rather than absorbed.** Segment 320's "1.27s slot for 5.8s of speech,
+a 4.5x undercount" comes from `v6-segments-full.json` — the **stale, base.en-era,
+pre-Phase-2a** snapshot every Phase 3 forced-alignment measurement windowed
+against. In **today's shipped pipeline**, per Step M's own golden baseline
+(`docs/phase4-baseline-v6-segments.csv`, row `320_body_warning_signal`), that
+segment is committed at **974.26-980.17s, a duration of 5.91s** — a correct fit
+for its real speech at 973.92-979.70s. Its successor `321_hearth_counsel` starts
+at **980.17s** against a true first-word onset of 979.90s, i.e. 270ms, well
+inside the gate; in the stale snapshot the same boundary sat at 975.53s and
+segment 321 carried an 11.35s duration. **Segment 320's defect, and the segment-321
+cascade it caused, do not exist in the currently-shipped pipeline** — they are
+artifacts of measuring against stale windows, already fixed by the Phase 2a
+model swap plus the shipped boundary work. This does not weaken Step I's
+analysis of *how* the cascade worked, and it does not change R.7's requirement
+(a CTC-fit precheck is still mandatory, since the failure mode is real and
+recurs whenever a committed slot is too tight). It does mean the case is
+**latent, not live**, and this document should stop describing it in the present
+tense.
+
+---
+
+#### Step S — Structural-check harness, outside the app
+
+**All 12 Step O checks built as a standalone harness:
+`scripts/phase4-step-s-structural-checks.py`.** Touches no `src/` file, is not
+part of the production build, and does not import from the app. Inputs are the
+Step M golden baselines already committed
+(`docs/phase4-baseline-{v6,173,spanish}-{segments,words,skipped,silences}.csv`)
+plus one extra real fixture used only for the segment-320 question (the stale
+`v6-segments-full.json`). Four subcommands: `poison`, `real`, `seg320`, `csv`.
+Full findings: `docs/phase4-step-s-check-results.csv` (198 rows).
+
+**Threshold discipline.** Every numeric threshold is derived from the clean
+population of the three real corpora, stated at its own constant, and was fixed
+**before** the poison cases were written. The one that matters most:
+`MAX_CHARS_PER_SEC = 40`, against an observed maximum of **28.2 chars/sec**
+across all 642 clean committed segments (V6 28.1, 173 28.2, Spanish 19.4; p95
+≈19) — a 1.42x margin over the worst real value, and far below the poison case's
+80.3. It is not fit to the poison.
+
+**Requirement 1 — every check catches 100% of its poison cases: PASS, 13/13.**
+(13 rather than 12 because C01 carries two structurally distinct sub-assertions
+and both are poisoned separately.)
+
+| # | Check | Poison case | Result |
+|---|---|---|---|
+| C01a | zero-aligned-token segment | a segment whose committed span contains no token at all | TRIP |
+| C01b | implausible slot duration for character count | 102 chars in 1.27s → 80.3 chars/sec | TRIP |
+| C02 | dead-to-script run (unscripted heading) | "level nine the one who waits beneath" spoken inside a segment | TRIP |
+| C03 | stale-pause / detector-coverage attribution | the only detected silence sits 2.4s before the nearest word | TRIP |
+| C04 | breath-vs-boundary (flag for review) | boundary placed inside a 0.20s intra-segment breath | TRIP |
+| C05 | scorer short-trailing-word misattribution | a 60ms "it." claiming a 1.35s pause | TRIP |
+| C06 | ASR dropout run | 3 consecutive fully-unmatched segments | TRIP |
+| C07 | run-survival gate consistency | a skip recorded despite `longestRun 5 ≥ required 2` | TRIP |
+| C08 | zero-duration real-word token | one token with `start == end` | TRIP |
+| C09 | CTC targets exceed available frames | 84 target symbols against 64 frames in 1.27s | TRIP |
+| C10 | seam cross-attribution (script vs acoustic) | boundary shifted two words left | TRIP |
+| C11 | lock preservation across resync | the confirmed K13 repro: flag cleared + position reset | TRIP |
+| C12 | negative-smear gate discrimination | the gate handed an **accurate** ±20ms symmetric-noise source | TRIP |
+
+C12's poison is deliberately *healthy* data: a check that trips on it proves the
+GATE is the defect, which is exactly what Step O item 12 asserts analytically.
+It reads 46.2% negative on a source with 20ms symmetric noise.
+
+**Requirement 2 — clean against all three real projects except where a known
+real defect exists. Reported honestly, including where it does not hold.**
+
+| Check | V6 | 173 | Spanish | Verdict |
+|---|---|---|---|---|
+| C01 | 0 | 0 | 0 | **CLEAN** |
+| C02 | 6 | 0 | 0 | **EXACT** — all 6 are genuine V6 heading recitations; recall gap noted below |
+| C03 | 1 | 0 | 0 | **EXACT** — one finding, and it is the known flash-attention dropout |
+| C04 | 0 | 0 | 0 | **CLEAN** (see the caveat below) |
+| C05 | 172 | 15 | 2 | **FAILS requirement 2 — not validatable on these artifacts** |
+| C06 | 1 | 0 | 0 | **EXACT** — V6 segments 26-28, the known dropout, and nothing else |
+| C07 | 0 | 0 | 0 | **CLEAN** |
+| C08 | 0 | 0 | 0 | **CLEAN** |
+| C09 | 0 | 0 | 0 | **CLEAN** |
+| C10 | 1 | 0 | 0 | **1 false positive** — see below |
+| C11 | — | — | — | **NOT RUNNABLE** — see below |
+| C12 | rejects | rejects | rejects | **BY DESIGN** — the gate rejects all three |
+
+Detail on every non-clean row, per the instruction to report false positives
+honestly:
+
+* **C02 — 6 findings, all genuine, but recall is 6 of 10.** The 6 are V6
+  segments 0, 38, 81, 220, 303, 336 — "Level one The child who does not yet
+  know what dark means", "The boy who carries fire", "Level three the scout",
+  "The one they follow", "what cannot be taught easily", "one whose name the
+  stories use". Zero false positives on 173 and Spanish. The 4 missed headings
+  fall below `DEAD_TO_SCRIPT_MIN_SEC` after the surrounding segment's own words
+  dilute the attribution ratio. **A first draft of this check fired 8 false
+  positives** (4 on 173, 4 on Spanish) — all caused by whisper's `-ml 1`
+  sub-word fragmentation ("Humidity" → "Hum"+"idity", "tiene" → "T"+"iene")
+  scoring every fragment as unscripted. Fixed by making attribution
+  substring-based rather than word-set-based, and by treating pure-digit tokens
+  as attributed (whisper writes "seis" as "6" — Step 4's documented convention).
+  That is a mechanism fix, not a threshold tune; the thresholds are unchanged.
+* **C03 — 1 finding, and it is a known defect, not a false positive.** V6 at
+  84.16s: the attributed word "the" sits 2.96s past the pause end. That window
+  is 78.97-88.67s — the flash-attention content dropout. Verified directly in
+  the token stream: the token "watching" carries a 4.07s span (83.05-87.12s)
+  smeared across the region where segments 27-29's text should be. C03
+  independently rediscovers item 6 from a completely different signal, which is
+  corroboration rather than noise.
+* **C04 — 0 findings, and this deserves scrutiny rather than celebration.**
+  Item 4 calls breath misclassification "the dominant mechanism behind 37 of
+  40" failures, so a check that fires zero times looks wrong. It is not: that
+  dominance was in the *scoring reference* (ffmpeg `silencedetect`), whereas
+  this check runs against production's own RMS silence array and production's
+  own committed boundaries, where the shipped `isBreathSilence` index-based fix
+  (2026-08-03, 86.8% → 96.2% correct cuts) already handles the case. **Zero here
+  is consistent with that fix having worked, but this check has not been proven
+  against a corpus where the defect is live**, so its real-world sensitivity is
+  unestablished. Stated, not claimed.
+* **C05 — 189 findings across three projects. This check cannot be validated on
+  the available artifacts, and that is a real limitation, not a pass.** The
+  defect it targets is defined over WHOLE words. The only committed per-word
+  arrays are whisper's `-ml 1` output, which is (i) sub-word fragmented and
+  (ii) **gapless** — Phase 2b's Finding 2, where each token starts exactly where
+  the previous ended, so a pause is structurally absorbed into the following
+  word's span. Measured directly: **59% (V6), 67% (173) and 100% (Spanish) of
+  the flagged disagreements are the gapless pause-absorption signature** (the
+  candidate token's own span contains the silence start), not the
+  short-trailing-word mechanism. Validating C05 properly needs the **FA** token
+  arrays, which were in `/tmp/phase3/` and are gone (see Step Q's K8 note); it
+  requires a re-run of `measure-forced-alignment.py`. **Status: proven on
+  poison, NOT validated clean on real data.** A first formulation flagged every
+  gate-failing attribution (219 findings); restricting to gated-vs-ungated
+  *disagreements* on real words brought it to 189, which is still far from Step
+  1's 12 genuine instances.
+* **C10 — 1 finding, and it is a false positive as far as anything known can
+  say.** V6 segment 70, "2 seam words attributed to the wrong side (Wind
+  through)". It matches none of the 3 remaining ear-verified word-shift cases,
+  and none of the original 11. It cannot be adjudicated without an ear. **A
+  first formulation fired 29 times** (V6 23, 173 6) against 3 known defects — a
+  ~10:1 false-positive ratio, which by the standing rule is worse than no check
+  — dominated by function words present in both sides' script text. Requiring
+  seam words to be *distinctive* (≥3 chars, not a closed-class function word in
+  English or Spanish) brought it to 1. Even so, **recall against the 3 known
+  word-shift residuals is 0 of 3.** C10 is the weakest of the twelve and is not
+  production-ready; item 10's own "None proposed; explicitly out of scope"
+  verdict stands, and this implementation does not overturn it.
+* **C11 — not runnable against the three baselines, stated rather than faked.**
+  No committed baseline contains a locked segment, and structurally cannot:
+  locks are cleared by resync (K13), so a post-sync snapshot never carries one.
+  Proven on synthetic fixtures only. Real validation needs the K13 repro run
+  live in the app, which is Stage 3 work.
+* **C12 — the gate rejects all three real projects, which is the finding.**
+  Against each project's own committed-boundary-vs-nearest-silence signed
+  errors: V6 98.4% negative at 390ms median, 173 93.0% at 210ms, Spanish 96.0%
+  at 250ms. A sign-only gate at <1% cannot be passed by any real source; this
+  is the same conclusion Step D reached analytically, now with three
+  independent corpora behind it.
+
+**Would each of the 12 have caught segment 320?** Run against the stale
+`v6-segments-full.json` fixture, where the defect is live (index 319 of 447).
+
+| # | Check | Catches segment 320? | Why |
+|---|---|---|---|
+| C01 | zero-token / implausible duration | **YES** | 80.3 chars/sec (102 chars in 1.27s) against a 40.0 ceiling — and it is the **only** finding C01 produces in the entire 447-segment stale corpus |
+| C02 | dead-to-script run | no | segment 320's audio IS its own script text; nothing unscripted about it |
+| C03 | stale-pause attribution | no | the defect is a too-short slot, not a missing silence candidate |
+| C04 | breath-vs-boundary | no | no breath involved |
+| C05 | scorer overlap gate | no | a measurement-harness concern; segment 320's defect is in the committed data |
+| C06 | ASR dropout run | no | the content WAS transcribed correctly; nothing was dropped |
+| C07 | run-survival consistency | no | segment 320 was never skipped by the gate; it was kept, with a bad duration |
+| C08 | zero-duration tokens | no | its tokens have real durations |
+| C09 | CTC target-fits-window | **YES** | 84 target symbols need more than the 64 emission frames a 1.27s window provides — this is literally the mechanism, and again the **only** finding C09 produces corpus-wide |
+| C10 | seam cross-attribution | no | fires on 10 stale-corpus boundaries, none of them 320 |
+| C11 | lock preservation | no | orthogonal |
+| C12 | negative-smear gate | no | reads sign only, at any magnitude |
+
+**2 of 12 catch it — C01 and C09 — and each catches it with perfect precision:
+one finding apiece across 447 segments, and in both cases that one finding is
+segment 320.** Notably, **zero of the twelve catch the segment-321 cascade
+directly** (the 227ms case). That is consistent with Step I's own conclusion —
+the cascade was invisible to every numeric gate because both the reference and
+FA were wrong together, by similar amounts, in the same wrong place. The
+defence against it is not detection at 321; it is C01/C09 catching 320 first,
+plus Step R's run structure removing the mechanism by which 320's error could
+reach 321 at all. Both C01 and C09 return **0 findings on today's shipped
+baseline**, consistent with the correction recorded in R.9.
+
+---
+
+#### Step T — Model distribution design (design only, no Rust)
+
+Decision 3 fixes the model set: `jonatasgrosman/wav2vec2-large-xlsr-53-{english,
+spanish,french,german,portuguese}` (Apache-2.0), one ~1.26GB model per language,
+plus the existing Whisper turbo model. Decision 3 also bars MMS-FA permanently
+— not "until a swap is convenient," but never, including temporarily.
+
+**T.0 — The size problem, stated first because it drives everything.**
+
+| Artifact | Measured size |
+|---|---|
+| `ggml-large-v3-turbo.bin` (Whisper) | 1,624,555,275 B (1.51 GiB) |
+| `wav2vec2-large-xlsr-53-english` weights | 1,261,942,732 B (1.18 GiB, measured exactly) |
+| × 5 languages | ≈ 5.9 GiB |
+| **Total if all five languages are installed** | **≈ 7.4 GiB** |
+| ffmpeg sidecar | 76 MB (x86_64) / 48 MB (arm64) / 97 MB (Windows) |
+| whisper sidecar binary | 2.9 MB |
+
+Against a ~100-150MB installer budget, **every model downloads on demand;
+nothing model-sized ships in the installer.** Two immediate consequences that
+are build-blocking today:
+
+  1. `src-tauri/tauri.conf.json`'s `bundle.resources: {"models/*": "models/"}`
+     **must be removed.** It glob-bundles the whole directory, which currently
+     holds 4.87 GB (`ggml-base.en.bin` 148 MB + turbo 1.62 GB + `ggml-large-v3.bin`
+     3.10 GB). This is already recorded as a SaaS-readiness item; it is now a
+     hard prerequisite.
+  2. **Per-architecture installers, not universal.** A universal macOS bundle
+     carries both ffmpeg builds (124 MB of ffmpeg alone) and blows the budget
+     before the app's own code is counted.
+
+**T.1 — Cache location.** Tauri v2's `app_local_data_dir()`:
+
+  * macOS: `~/Library/Application Support/<bundle-id>/models/`
+  * Windows: `%LOCALAPPDATA%\<app>\models\`
+
+Two location choices that are deliberate, not incidental. **Not
+`~/Library/Caches`** — macOS may purge it under disk pressure, and silently
+losing a 1.2GB model the user waited ten minutes for is unacceptable. **Not
+`%APPDATA%` (roaming) on Windows** — roaming profiles sync to a domain server,
+and a 7 GB roaming profile is actively hostile in a managed environment.
+
+```
+<app_local_data>/models/
+  manifest.json
+  whisper/ggml-large-v3-turbo.bin
+  fa/en/{pytorch_model.bin,config.json,vocab.json,preprocessor_config.json}
+  fa/es/… fa/fr/… fa/de/… fa/pt/…
+  .partial/<sha256>.part
+```
+
+`manifest.json` is the single source of truth for what is installed:
+`{ modelId, language, files: [{name, bytes, sha256}], installedAt, verifiedAt,
+lastUsedAt, sizeBytes, source: "download"|"manual", validationStatus:
+"validated"|"unvalidated" }`. Nothing is considered installed because a file
+exists on disk — only because the manifest says so and the hash verified.
+
+**T.2 — SHA-256 verification.** Expected hashes are **pinned in a build-time
+constant table** (`src-tauri/src/models/registry.rs`), never fetched from the
+network alongside the file — otherwise a compromised endpoint supplies both the
+payload and the hash that blesses it. Hashing is streamed as bytes land (no
+second full read), and re-run in full on first load after any manual ingestion.
+Cost: ~1.2 GB at typical SHA-256 throughput is a couple of seconds, in Rust, off
+the UI thread, with its own progress phase so the user is not staring at a
+frozen "Verifying…".
+
+**T.3 — Download.** HTTP range requests, resumable. Bytes land in
+`.partial/<sha256>.part`; on completion the file is `fsync`'d, hash-verified,
+and only then atomically renamed into place. **Nothing is renamed into the model
+directory before verification passes.** One model at a time — a 1.2 GB transfer
+is bandwidth-bound, so parallel downloads make both slower and multiply disk
+pressure for no gain. Progress (bytes/total, rate, ETA) streams to the renderer
+over a Tauri Channel, the same pattern `whisper.rs` already uses for
+transcription progress. Cancellation uses a `CancellationToken` in shared state,
+the same shape as `WhisperState`'s existing child-process handle; a cancelled
+download **keeps** its `.part` so a later resume works.
+
+**Hosting, flagged as a real cost decision rather than assumed.** HuggingFace
+`resolve` URLs are the zero-infrastructure option, but this programme has
+already hit them failing in practice: Step N.2's Spanish weights stalled
+indefinitely across three separate automated attempts (two via
+`huggingface_hub`, one via bare `curl`) and had to be downloaded manually.
+**Recommendation: pin exact HF URLs as primary with a self-hosted mirror (R2/S3)
+as fallback**, because a first-run experience that stalls at 40% is worse than
+no feature. Bandwidth cost at 1.26 GB per language per user is not trivial and
+belongs in the launch budget.
+
+**T.4 — Eviction.** **No automatic eviction of an installed model while any
+project in the registry declares that language.** Silently deleting 1.2 GB the
+user needs again in five minutes is worse than the disk cost. What exists
+instead:
+
+  * A **Models pane** in Project Settings listing each installed model with
+    size, install date, last-used date, validation status, and a Remove button.
+    Remove requires confirmation and **refuses** if a project currently declares
+    that language, naming the project.
+  * An **opt-in** "keep only the last N languages" (default **OFF**, N=2).
+    Off by default because eviction-by-surprise is user-hostile.
+  * The **only** automatic deletion is `.partial/` garbage collection after
+    `RESUME_TTL_DAYS = 7`.
+
+**T.5 — Manual ingestion — three entry points, one code path.** All three land
+in the same verify-then-install routine, so a manually supplied file gets
+exactly the same hash check as a downloaded one:
+
+  1. **File picker** (`rfd`, already a dependency).
+  2. **Drag-and-drop** onto the Models pane (Tauri v2 `onDragDropEvent`).
+  3. **Downloads auto-detect.** On opening the Models pane — an explicit user
+     action, never on app start — scan the OS Downloads directory
+     **non-recursively** for filenames matching the registry's expected names
+     **and** matching byte size, and offer "found `pytorch_model.bin` in
+     Downloads — import?". **Never copy silently.** On acceptance, **copy**
+     (not move) into internal storage, verify SHA-256, then *offer* to delete
+     the Downloads copy. Copy-not-move is deliberate: the user may have fetched
+     that file for their own reasons, and moving it out from under them is
+     destructive. Privacy discipline: filename+size matching only, no content
+     is read until the user accepts, no recursion, nothing outside Downloads.
+
+**T.6 — Failure modes. These matter more than the happy path.**
+
+| Failure | What the app does |
+|---|---|
+| **Offline, model missing** | The project **opens, edits and exports normally**; only Apply Sync is gated. The message names the specific model, its size, and all three manual paths — never a generic "download failed". "Download later" is remembered. |
+| **Interrupted download** | The `.part` file and its byte offset are retained in the manifest. The next attempt sends `Range: bytes=<offset>-`. **If the server answers 200 instead of 206, restart from zero and say so** — appending to a non-range response silently corrupts the file, and this is the specific bug worth naming, because the corruption only surfaces at the hash check much later. |
+| **Server does not support resume** | Detected by exactly the 200-vs-206 test above. Restart with a one-line notice; do not pretend to resume. |
+| **Insufficient disk** | Preflight before starting: require free ≥ `fileSize × 1.15`. Re-check at 50%. Failure states the **actual numbers** ("needs 1.4 GB, 0.6 GB free"). Keep the partial only if there is room; otherwise delete it and say that too. |
+| **Corrupted / tampered file** | Hash mismatch → **never installed**. The `.part` is **deleted**, not resumed (a corrupt partial can only produce another corrupt file). The manifest records a `failedVerification` count; after 2 consecutive failures on the same URL, automatic retry stops and the manual paths are surfaced. |
+| **Checksum mismatch on a MANUALLY supplied file** | Same verification, different wording: name the expected size and hash and state plainly that this file is not the expected model. Do not install, and do not imply the user did something wrong — a renamed or truncated download is the common cause. |
+| **Model missing at project open** | The project opens. A **non-blocking, dismissible banner** (the same pattern as the existing `unsupported-language` banner in `App.tsx`) names the language and offers Download / Import. Sync is disabled with a tooltip explaining why; editing, preview and export are unaffected. |
+| **Two projects in different languages open at once** | Both models may be **resident on disk** — they are cached per language and independent. But **at most one FA model is LOADED in memory at a time.** Step P measured FA/HF peak RSS at 3.19-4.01 GiB per model; two resident at once would put the app at 6-8 GiB. A sync request for a second language **queues** behind the running one, with a visible "waiting for the Spanish sync to finish" state rather than a silent stall. **Downloads may proceed in parallel with a running sync** (I/O, not memory). This is the same discipline Step P already requires between Whisper and FA ("releases Whisper's memory before loading FA") — one rule, two places. |
+
+**T.7 — fr/de/pt: UNVALIDATED, in the doc and in what the user sees.**
+
+| Language | Model | Validation status |
+|---|---|---|
+| English (en) | `…-xlsr-53-english` | **VALIDATED** — 173 + V6 measured (27.5ms/89.7ms and 25.8ms/400.8ms), 12+20 human-labeled clips |
+| Spanish (es) | `…-xlsr-53-spanish` | **MEASURED, UNLISTENED** — 61.2ms/282.1ms on 22 pauses; p95 fails the approved gate; Step Q's listen is pending |
+| French (fr) | `…-xlsr-53-french` | **UNVALIDATED** — plumbing only, zero corpus |
+| German (de) | `…-xlsr-53-german` | **UNVALIDATED** — plumbing only, zero corpus |
+| Portuguese (pt) | `…-xlsr-53-portuguese` | **UNVALIDATED** — plumbing only, zero corpus |
+
+Surfaced to the user in three places, not one:
+
+  1. The **language dropdown** (`ProjectSettingsModal.tsx`) renders the label as
+     "Français (unvalidated)".
+  2. Selecting an unvalidated language shows a **one-time dialog** stating that
+     sync accuracy has not been verified for it and results should be reviewed
+     manually before export.
+  3. Each sync run on an unvalidated language writes an informational
+     **`unvalidated-language` sync-log entry** — a new `SyncLogEntryType`
+     sibling of the existing `unsupported-language` — so the status is in the
+     permanent record and not only at the moment of selection. This is
+     deliberately a *third* surface: a dialog dismissed once is not a durable
+     disclosure.
+
+Note the distinction from the existing guard: `unsupported-language` (error
+severity, red badge) means "outside the five entirely"; `unvalidated-language`
+(informational, gray badge) means "one of the five, plumbing present, accuracy
+unverified". They are different states and must not share a badge.
+
+**T.8 — What this design does not cover.** No Rust is written. Model *inference*
+integration (the ONNX/torch runtime choice, the Viterbi pass, memory release
+between Whisper and FA) is Phase 3's own remaining work, not this document's.
+Digit handling — `uroman` drops "12" (Step N.1), jonatasgrosman degrades "41st"
+to "st" (Blocker 1) — is a **normalization** concern that Phase 3b's
+language-keyed `NUMBER_WORDS` layer must solve before any of these models is
+asked to align a numeral; it is named here so it is not mistaken for a
+distribution problem.
+
+---
+
+#### Steps Q-T deliverable summary
+
+Ten blinded Spanish clips exported and programmatically integrity-checked
+(10/10 pass all three tests, one qualified pass disclosed), the first Spanish
+listening batch this programme has produced (Step Q). A production windowing
+design specified in full — run-based alignment, three-source anchors, bounded
+`PAD_BASE = 0.75s` padding clamped at `PAD_SHARE = 0.5` against a *verified*
+neighbour point rather than a committed boundary, wildcard handling for
+unscripted audio, explicit corpus-start/end behaviour, a skip-and-flag failure
+contract, and a cascade-safety argument stated at the strength it actually holds
+rather than an overclaimed one (Step R). All 12 structural checks built in a
+standalone harness, 13/13 poison cases trip, 8 of 12 run clean or exactly-on-
+target against the three real corpora, with the 4 that do not (C05, C10, C11,
+C12) reported as failures of requirement 2 rather than softened (Step S). A
+model-distribution design covering on-demand download, cache location, SHA-256
+pinning, three ingestion paths, eviction policy, progress/cancellation, and
+eight named failure modes, with fr/de/pt marked UNVALIDATED across three user
+surfaces (Step T). **No `src/` file changed. No production Rust written. No
+threshold retuned.** New: `scripts/phase4-step-q-spanish-clips.py`,
+`scripts/phase4-step-s-structural-checks.py`,
+`docs/phase4-step-q-spanish-manifest.csv`,
+`docs/phase4-step-q-integrity-check.csv`,
+`docs/phase4-step-q-listening-protocol.md`,
+`docs/phase4-step-s-check-results.csv`.
+
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
 GATE: the English path must be provably byte-identical to today’s, verified against the frozen English baseline — so this phase does NOT shift English indices. Non-English rule verification requires the non-English corpus (K3); if only one non-English project exists by this point, the others’ rules land dormant behind their language keys and are verified when corpus material arrives — recorded as an explicit written acceptance at the Stage 1 lock.
