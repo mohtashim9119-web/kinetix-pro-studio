@@ -56,7 +56,7 @@ import {
   type TranscriptToken,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import {
   computeCoverageSummary,
@@ -95,6 +95,7 @@ import {
   buildMalformedTokenEntry,
   buildGroupedViolationEntry,
   buildUnsupportedLanguageEntry,
+  buildLockFindingLogEntries,
   mintSyncLogId,
 } from './services/syncLog';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -1069,13 +1070,24 @@ export function clearSyncLog(project: Project): Project {
   return { ...project, syncLog: [], syncRunSummaries: [] };
 }
 
-/** Recomputes sequential startTimes from accumulated durations. Pure. */
+/**
+ * Recomputes sequential startTimes from accumulated durations. Pure.
+ *
+ * K14 fix (decision 9 / Step AB) — also writes `anchorStart` to match the
+ * freshly-computed `startTime` on every segment it touches. Before this fix,
+ * a drag rewrote `startTime`/`duration` here but never touched `anchorStart`,
+ * so the pipeline's own record of "where this segment actually is" went
+ * stale by exactly the cascaded delta — the root cause `applyAnchorBasedTiming`
+ * (syncEngine.ts) later re-derived positions from on any unrelated lock
+ * toggle. Keeping the two in lockstep on every write closes that gap at the
+ * source rather than only inside the locked branch.
+ */
 function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
   let acc = 0;
   return segs.map(s => {
-    const t = acc;
+    const t = Number(acc.toFixed(3));
     acc += s.duration;
-    return { ...s, startTime: Number(t.toFixed(3)) };
+    return { ...s, startTime: t, anchorStart: t };
   });
 }
 
@@ -1099,7 +1111,14 @@ function resolveAudioDuration(audioEl: HTMLAudioElement | null, fallbackSegments
 
 /**
  * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
- * Affected segments (dragged + all that absorbed any portion) are auto-locked.
+ *
+ * K14 fix (decision 9 point 1 / Step AB) — dragging locks NOTHING. Neither
+ * the dragged segment nor any absorbing neighbour is auto-locked anymore;
+ * locking is exclusively an explicit user action (the lock toggle, or "Lock
+ * All"). This function still RESPECTS an already-locked neighbour — it
+ * remains an impassable wall the cascade cannot move through — that check is
+ * unrelated to auto-locking and is unchanged.
+ *
  * Returns the updated array, or null if a locked neighbor blocked the cascade
  * (caller should revert the live-preview state and show a toast).
  */
@@ -1112,7 +1131,7 @@ function computeDragCascade(
   onLockedBlock: (segIndex: number, segId: string) => void,
 ): VideoSegment[] | null {
   const segs = originalSegments.map(s => ({ ...s }));
-  segs[draggedIdx] = { ...segs[draggedIdx]!, duration: finalDuration, trimStart: finalTrimStart, locked: true };
+  segs[draggedIdx] = { ...segs[draggedIdx]!, duration: finalDuration, trimStart: finalTrimStart };
   const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
   let remaining = -delta; // positive → neighbor must grow; negative → neighbor must shrink
   const step = direction === 'right' ? 1 : -1;
@@ -1126,11 +1145,11 @@ function computeDragCascade(
     }
     const newDur = neighbor.duration + remaining;
     if (newDur >= MIN_SEGMENT_DURATION) {
-      segs[ni] = { ...neighbor, duration: newDur, locked: true };
+      segs[ni] = { ...neighbor, duration: newDur };
       remaining = 0;
     } else {
       // Clamp neighbor to MIN; pass overflow to next segment in same direction.
-      segs[ni] = { ...neighbor, duration: MIN_SEGMENT_DURATION, locked: true };
+      segs[ni] = { ...neighbor, duration: MIN_SEGMENT_DURATION };
       remaining += neighbor.duration - MIN_SEGMENT_DURATION; // remaining stays negative
       ni += step;
     }
@@ -1696,7 +1715,11 @@ export default function App() {
         s.id === segmentId ? { ...s, locked: !s.locked } : s
       );
       const audioDuration = resolveAudioDuration(audioRef.current, toggled);
-      return { ...prev, segments: applyAnchorBasedTiming(toggled, audioDuration) };
+      const findings: LockFinding[] = [];
+      const segments = applyAnchorBasedTiming(toggled, audioDuration, f => findings.push(f));
+      const withTiming: Project = { ...prev, segments };
+      if (findings.length === 0) return withTiming;
+      return appendSyncLogEntries(withTiming, buildLockFindingLogEntries(mintSyncLogId(), findings));
     });
   }, []);
 

@@ -153,6 +153,26 @@ export function contiguousWordMatch(tagName: string, assetName: string): boolean
 }
 
 /**
+ * A lock (decision 9 / Step AB, docs/sync-pipeline-v2-plan.md) forced a
+ * different placement on an UNLOCKED neighbour than plain anchor-to-anchor
+ * derivation would have given it — `applyAnchorBasedTiming` reports every
+ * one of these via its optional `onLockFinding` callback rather than
+ * resolving them silently (Step AB: "never silence... every one of the
+ * above is answered because leaving any of them implicit is exactly how
+ * K14 happened"). `kind` maps 1:1 onto the two new `SyncLogEntryType`
+ * members these are built into (`syncLog.ts`'s `buildLockFindingLogEntries`).
+ */
+export interface LockFinding {
+  /** The bounded span couldn't hold even the minimum slot (Step AB's
+   *  "too short" case) — warning severity. */
+  kind: 'lock-span-overflow' | 'lock-preserved-adjustment';
+  segmentId: string;
+  /** Index into the array `applyAnchorBasedTiming` was called with. */
+  segmentIndex: number;
+  amountSec: number;
+}
+
+/**
  * Re-derives startTime and duration for each segment from its anchorStart,
  * preserving surviving scene positions across re-sync after scene add/remove.
  *
@@ -165,34 +185,63 @@ export function contiguousWordMatch(tagName: string, assetName: string): boolean
  * Postconditions:
  *  - every segment has anchorStart, startTime, duration set
  *  - startTimes are monotonically non-decreasing and contiguous
- *  - first segment startTime = 0
- *  - last segment duration = audioDuration - last.startTime
- *  - locked segments: duration is preserved UNLESS removal opened a gap
- *    immediately after the segment, in which case duration grows to absorb it.
- *    Locked segments never shrink and never move.
+ *  - first segment startTime = 0, UNLESS it is locked (see below)
+ *  - last segment duration = audioDuration - last.startTime, UNLESS it is
+ *    locked
+ *  - LOCKED SEGMENTS ARE A HARD WALL (K14 fix — decision 9 / Step AB):
+ *    `startTime` and `duration` are pinned — never derived from
+ *    `anchorStart`, never grown or shrunk to absorb a neighbour. The prior
+ *    one-directional growth exemption ("locked segments never shrink, but
+ *    grow to absorb a removal gap that opened up after them") is WITHDRAWN;
+ *    a lock no longer moves in either direction, full stop. `anchorStart` is
+ *    instead kept in lockstep with `startTime` at all times (INVARIANT L2)
+ *    rather than read as a separately-stale value — this is what closes
+ *    K14, where a drag left a locked segment's `anchorStart` stale and a
+ *    later, unrelated lock toggle silently re-derived its `startTime` from
+ *    that stale value, moving a segment the toggle never touched.
+ *  - an UNLOCKED segment can never start before an immediately preceding
+ *    LOCKED segment's actual end (that lock's own `startTime + duration` is
+ *    a hard floor on the very next segment's start) — this is what stops an
+ *    unlocked neighbour from overlapping a lock. An unlocked segment
+ *    immediately before a LOCKED segment is likewise bounded by that lock's
+ *    own `startTime`, not by the lock's `anchorStart` (Step AC's R.1(d)/R.2
+ *    substitution — a lock is a hard wall, not an ordinary neighbour
+ *    anchor). This bound is DELIBERATELY LOCAL, never propagated through a
+ *    running cursor past the one segment immediately touching the lock — a
+ *    lock is a non-cascading, single-segment-deep wall (Step AC: "a locked
+ *    boundary is always a run-boundary case, never same-run interior"), and
+ *    an ordinary unlocked-to-unlocked overshoot keeps its pre-existing,
+ *    LOCAL collapse-to-floor behaviour (the D16 backstop clamp above) rather
+ *    than rippling into a later, correctly-anchored segment. Multi-segment
+ *    windowing when a bounded span is too small for ALL of its trapped
+ *    content (more than one segment between two locks) is Step AC / forced-
+ *    alignment territory, out of K14's scope — only the segment directly
+ *    adjacent to each lock is bounded here.
+ *  - a lock-caused adjustment to an unlocked neighbour's placement is
+ *    reported via `onLockFinding`, never silent (Step AB) — `lock-span-
+ *    overflow` (warning) when the bounded span can't meet the minimum slot,
+ *    `lock-preserved-adjustment` (info) for any other lock-caused move.
  */
 export function applyAnchorBasedTiming(
   segments: VideoSegment[],
   audioDuration: number,
+  onLockFinding?: (finding: LockFinding) => void,
 ): VideoSegment[] {
   if (segments.length === 0) return segments;
   if (audioDuration <= 0) return segments;
 
   const out: VideoSegment[] = segments.map(s => ({ ...s }));
 
-  // PASS 1 — normalize first-segment anchor to 0. (PASS 2 deleted in 3d-2)
-  // If the new first segment was previously not first (its anchor > 0), or is brand-new
-  // (anchor undefined), shift it to 0 so there is never a silent gap at the front.
+  // PASS 1 — normalize first-segment anchor to 0, UNLESS it is locked: a
+  // lock is a hard wall even at the very front of the timeline (decision 9
+  // point 3 is unconditional). A locked first segment's anchorStart is
+  // corrected below, in the main pass, to match its own untouched startTime.
   const first = out[0];
-  if (first && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
+  if (first && !first.locked && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
     if (first.anchorStart === undefined) first.anchorSource = 'estimate';
     first.anchorStart = 0;
   }
 
-  // PASS 2 — recompute startTime and duration from anchors.
-  // Locked-segment exemption: locked segments snap their startTime to their anchor
-  // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps
-  // that opened up after them. They never shrink.
   for (let i = 1; i < out.length; i++) {
     const prev = out[i - 1]!;
     const cur = out[i]!;
@@ -222,27 +271,78 @@ export function applyAnchorBasedTiming(
     }
   }
 
+  // PASS 2 — recompute startTime and duration. Left-to-right; each segment's
+  // lock-boundedness is read directly off its immediate neighbours (`out[i -
+  // 1]`/`out[i + 1]`), never propagated through a running cursor — a lock is
+  // a non-cascading, single-segment-deep wall (Step AC: "a locked boundary
+  // is always a run-boundary case, never same-run interior"), and an
+  // ordinary unlocked-to-unlocked overshoot must keep its pre-existing,
+  // LOCAL behaviour (the overshooting segment alone collapses to the floor;
+  // it must never push a later, correctly-anchored segment forward — see the
+  // D16 backstop clamp above, which this pass must not re-break).
   for (let i = 0; i < out.length; i++) {
     const seg = out[i];
     if (!seg) continue;
     const isLast = i === out.length - 1;
-    const nextAnchor = isLast ? audioDuration : (out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? audioDuration);
-    const anchorStart = seg.anchorStart ?? seg.startTime ?? 0;
+    const nextLocked = !isLast && out[i + 1]?.locked === true;
+    const naiveNextAnchor = isLast
+      ? audioDuration
+      : (out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? audioDuration);
+    // A locked next segment's boundary is its startTime, unconditionally —
+    // never its (possibly stale) anchorStart. This is the R.1(d)/R.2
+    // substitution: a lock is a hard wall, not an ordinary neighbour anchor.
+    const nextAnchor = nextLocked ? out[i + 1]!.startTime : naiveNextAnchor;
 
     if (seg.locked) {
-      seg.startTime = Number(anchorStart.toFixed(3));
-      const preservedDuration = seg.duration ?? 0;
-      const availableSpan = Math.max(0, nextAnchor - seg.startTime);
-      seg.duration = Number(Math.max(preservedDuration, availableSpan).toFixed(3));
-    } else {
-      seg.startTime = Number(anchorStart.toFixed(3));
-      seg.duration = Number(Math.max(0.1, nextAnchor - seg.startTime).toFixed(3));
+      // Hard wall (Step AB): startTime/duration are read-only here — never
+      // snapped to anchorStart, never grown or shrunk. Only anchorStart
+      // moves, to stay in lockstep with the pinned position (INVARIANT L2).
+      seg.anchorStart = seg.startTime;
+      continue;
+    }
+
+    const rawAnchor = seg.anchorStart ?? seg.startTime ?? 0;
+    const prevLocked = i > 0 && out[i - 1]?.locked === true;
+    // Only a LOCKED predecessor's own end is a hard floor on this segment's
+    // start. An unlocked predecessor's (possibly floor-collapsed) end is
+    // deliberately NOT a floor here — that would re-introduce exactly the
+    // ripple the D16 backstop clamp above is designed to contain locally.
+    const lockFloor = prevLocked ? out[i - 1]!.startTime + out[i - 1]!.duration : -Infinity;
+    const effectiveStart = Math.max(rawAnchor, lockFloor);
+    const boundedByLock = prevLocked || nextLocked;
+    const availableSpan = nextAnchor - effectiveStart;
+    const tooShort = boundedByLock && availableSpan < 0.1;
+
+    seg.startTime = Number(effectiveStart.toFixed(3));
+    seg.duration = Number((tooShort ? Math.max(0, availableSpan) : Math.max(0.1, availableSpan)).toFixed(3));
+
+    if (boundedByLock) {
+      if (tooShort) {
+        onLockFinding?.({
+          kind: 'lock-span-overflow',
+          segmentId: seg.id,
+          segmentIndex: i,
+          amountSec: Number((0.1 - availableSpan).toFixed(3)),
+        });
+      } else {
+        const naiveDuration = Math.max(0.1, naiveNextAnchor - rawAnchor);
+        const moved = Math.abs(effectiveStart - rawAnchor) + Math.abs(seg.duration - naiveDuration);
+        if (moved > 0.001) {
+          onLockFinding?.({
+            kind: 'lock-preserved-adjustment',
+            segmentId: seg.id,
+            segmentIndex: i,
+            amountSec: Number(moved.toFixed(3)),
+          });
+        }
+      }
     }
   }
 
-  // PASS 3 — clamp last segment exactly to audioDuration.
+  // PASS 3 — clamp last segment exactly to audioDuration, UNLESS it is
+  // locked (a hard wall, same as everywhere else in this pass).
   const last = out[out.length - 1];
-  if (last) {
+  if (last && !last.locked) {
     last.duration = Number(Math.max(0.1, audioDuration - last.startTime).toFixed(3));
   }
 

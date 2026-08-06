@@ -396,7 +396,9 @@ export type SyncLogEntryType =
   | 'malformed-token'
   | 'no-asset'
   | 'rescue'
-  | 'unsupported-language';
+  | 'unsupported-language'
+  | 'lock-span-overflow'
+  | 'lock-preserved-adjustment';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

@@ -34,6 +34,14 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // Phase 2a H.4 guard — red: outside the five verified languages, sync
   // accuracy is unguaranteed, not merely degraded.
   'unsupported-language': { label: 'LANGUAGE', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
+  // K14 fix (decision 9 / Step AB) — a locked span couldn't hold its (or its
+  // trapped neighbour's) content even at the minimum slot. Warning, matching
+  // the existing unscripted-gap/monotonic-clamp precedent.
+  'lock-span-overflow': { label: 'LOCK OVERFLOW', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
+  // K14 fix — a lock's hard wall bounded an unlocked neighbour's placement.
+  // Informational: the output is correct, just worth knowing why a boundary
+  // landed where it did.
+  'lock-preserved-adjustment': { label: 'LOCK', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

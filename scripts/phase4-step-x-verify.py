@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
 phase4-step-x-verify.py — Phase 4 Step X: the manual verification harness.
+Extended at the K14 implementation commit (Step AD) with a 14th rule, C13.
 
-ONE COMMAND, NO ARGUMENTS. Walks all THIRTEEN structural rules in front of you.
+ONE COMMAND, NO ARGUMENTS. Walks all FOURTEEN structural rules in front of you.
 For each rule it says, in plain language, what the rule checks and why that
 matters, then runs it TWICE:
 
@@ -17,9 +18,11 @@ evidence-strength grade per rule — including the rules that rest on weaker
 evidence than the others, named as such.
 
 Two rules are INVERTED and say so on screen: C11's real half is a live
-reproduction of a defect that is still present (so "quiet" is not available),
-and C12's poison IS healthy data (a rule that fires on it proves the gate under
-test is the defect). Neither is finessed.
+reproduction of a defect that is STILL present (K13 is unfixed, so "quiet" is
+not available), and C12's poison IS healthy data (a rule that fires on it
+proves the gate under test is the defect). Neither is finessed. C13 (new)
+looks like C11 mechanically — both re-run a live vitest artifact — but is NOT
+inverted: K14 is fixed, so its real half genuinely stays quiet.
 
 Run:  .venv-phase4/bin/python scripts/phase4-step-x-verify.py
       (any python3 with no third-party imports works; numpy is not needed here)
@@ -42,6 +45,8 @@ WORK = REPO / ".work-phase4"
 CLIPS = WORK / "step-x-clips"
 C11_ARTIFACT = WORK / "step-w-c11-live-repro.json"
 K13_TEST = "scripts/phase4-step-w-k13-repro.test.ts"
+C13_ARTIFACT = WORK / "step-aa-c13-live-repro.json"
+K14_TEST = "scripts/phase4-step-aa-unlock-repro.test.ts"
 
 FFMPEG = REPO / "src-tauri" / "binaries" / "ffmpeg-x86_64-apple-darwin"
 AUDIO = {
@@ -563,31 +568,79 @@ def run_c12():
     record("C12", p, r, "B", "IN (as a standing argument, not a data check)")
 
 
+def run_c13():
+    rule("C13", "a locked segment whose anchorStart drifted from its startTime",
+         "a locked segment's anchorStart must equal its startTime, always — this IS the K14 "
+         "invariant (INVARIANT L2, docs/sync-pipeline-v2-plan.md Step AB)",
+         "K14 was exactly this: a drag left a locked segment's anchor stale without moving "
+         "it, and\n                   the next unrelated lock toggle anywhere silently "
+         "re-derived its position from that stale\n                   value. This check "
+         "catches the staleness directly, at its source",
+         "A", "backed by a LIVE reproduction against production code — the same drag + "
+         "explicit-lock +\n                   unlock sequence K14's own repro used, now "
+         "required to stay clean")
+    f = poison_for("C13")()
+    p = half("POISON HALF", "FIRE", "a locked segment with anchorStart 3s stale relative to "
+             "its startTime, plus a healthy control row",
+             f"{len(f)} finding(s) (control row correctly ignored): "
+             f"{f[0].detail if f else 'none'}", len(f) == 1)
+    print("\n  REAL HALF, unlike C11, is NOT inverted: K14 is fixed, so this genuinely stays")
+    print("  quiet. Mechanically it re-uses C11's pattern (a live vitest artifact) — the two")
+    print("  rules look alike on screen but assert opposite things about their own defect.")
+    ok = False
+    started = time.time()
+    try:
+        proc = subprocess.run(["npx", "vitest", "run", K14_TEST], cwd=REPO,
+                              capture_output=True, text=True, timeout=420)
+        ran = proc.returncode == 0
+    except Exception as e:  # noqa: BLE001
+        ran = False
+        print(f"    (could not run vitest: {e})")
+    art = json.loads(C13_ARTIFACT.read_text()) if C13_ARTIFACT.exists() else None
+    if art:
+        saw = (f"{art['scenario']} -> "
+               f"{len(art['untouchedSegmentsMoved'])} untouched segment(s) moved, "
+               f"{len(art['lockedSegmentsWithDriftedAnchor'])} locked segment(s) with a "
+               f"drifted anchor, still-locked segment moved: {art['stillLockedSegmentMoved']}")
+        ok = ran and art["verdict"] == "FIX CONFIRMED"
+    else:
+        saw = "no artifact produced"
+    r = half("REAL HALF", "STAY QUIET", f"live vitest run of {K14_TEST} "
+             f"({time.time() - started:.0f}s)", saw, ok,
+             "if this half ever starts failing, K14 has regressed — that is a real defect, "
+             "not a\n             broken test, same convention as every other live-repro "
+             "rule in this file")
+    record("C13", p, r, "A", "IN (as the K14 regression lock)")
+
+
 # ------------------------------------------------------------------ main
 
 def main():
     global DEFECTS, CONTROLS, UNRESOLVED
     t0 = time.time()
     print(BAR)
-    print("STEP X — MANUAL VERIFICATION HARNESS: all 13 structural rules, twice each")
+    print("STEP X — MANUAL VERIFICATION HARNESS: all 14 structural rules, twice each")
     print(BAR)
     print("""
   Each rule below is run on a deliberately broken input where it MUST fire, and on
   real corpus data where it MUST stay quiet. Two rules are inverted and say so.
 
-  Why 13 rules and not the 12 Step O specified — the count reconciled:
+  Why 14 rules and not the 12 Step O specified — the count reconciled:
     Step O item 1 is ONE inventory entry covering TWO structurally different
     assertions: "the slot holds no words at all" and "the slot is far too short
     for its words". They share nothing but a paragraph — different inputs,
     different thresholds, different failure modes — so they are poisoned and run
-    separately here as C01a and C01b. There is no 13th check and nothing was
-    renumbered: 12 inventory items, 13 assertions.""")
+    separately here as C01a and C01b: 12 inventory items, 13 assertions, nothing
+    renumbered. C13 is a 14th rule added at the K14 implementation commit (Step
+    AD's own recommendation) — "lock isolation across unrelated edits" — scoped
+    to a defect Step O never inventoried (K14 was found afterward, addendum
+    Step AA), not a further split of an existing item.""")
 
     CORPORA.clear()
     DEFECTS, CONTROLS, UNRESOLVED = ear_verified()
 
     for fn in (run_c01a, run_c01b, run_c02, run_c03, run_c04, run_c05,
-               run_c06, run_c07, run_c08, run_c09, run_c10, run_c11, run_c12):
+               run_c06, run_c07, run_c08, run_c09, run_c10, run_c11, run_c12, run_c13):
         try:
             fn()
         except Exception as e:  # noqa: BLE001 — one broken rule must not hide the rest
@@ -614,7 +667,7 @@ def main():
           f"{sum(1 for r in RESULTS if r['poison'] and r['real'])}/{n}")
     if ex_fail:
         print(f"  FAILS an extra half beyond the standard two: {', '.join(ex_fail)}")
-        print("  -> the headline 13/13 is TRUE and INCOMPLETE. C10 fires on its poison and")
+        print(f"  -> the headline {pp}/{n} is TRUE and INCOMPLETE. C10 fires on its poison and")
         print("     stays quiet on healthy data, and is still useless, because it finds none")
         print("     of the real defects it exists for. Read the ranking below, not the count.")
 
@@ -634,7 +687,14 @@ def main():
             labels come from the diff of two committed scorer outputs, so they were
             not produced by the rule being tested.
        C11  a live reproduction against production code and the real 173 project.
-            It is the only rule here backed by running the actual app pipeline.
+       C13  a live reproduction against production code — the same drag + explicit-
+            lock + unlock sequence K14's own repro used, run against the real
+            applyAnchorBasedTiming. Its own honest caveat, stated rather than
+            buried: unlike C11, whose real half runs against a real corpus project,
+            C13's scenario is a 6-segment synthetic timeline. It is graded A for
+            exercising production code on the exact defect shape, not for corpus
+            breadth — no committed baseline contains a locked segment to test
+            against (locks are cleared by resync: K13, still open).
 
   B  good — fires exactly on defects this programme already knew about, and nowhere
      else, but the ground truth is this programme's own analysis, not an outside ear

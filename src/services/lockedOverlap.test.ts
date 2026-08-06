@@ -5,16 +5,27 @@ import { TransitionType, AnimationType } from '../types';
 
 /**
  * Regression test for the locked-overlap early-cutoff bug (fixed in App.tsx's
- * handleToggleLock via resolveAudioDuration). A locked segment can carry
- * duration > its available span (locks never shrink — applyAnchorBasedTiming's
- * locked branch, syncEngine.ts:94-98), inflating Σ duration by that overlap
- * amount. Before the fix, downstream re-sync paths re-derived audioDuration
- * self-referentially from that inflated Σ duration and fed it into PASS 3,
- * baking the inflation into the last segment's declared end — it would claim
- * to run past where the real audio physically ends, so its tail silently
- * never played. The fix prefers the real live <audio> duration (mirroring how
- * Apply Sync sources it, App.tsx:1498-1500) and only falls back to Σ duration
- * when no live duration is available (no-voiceover projects).
+ * handleToggleLock via resolveAudioDuration). A locked segment used to be
+ * able to carry a duration exceeding its available span (locks never shrink),
+ * inflating Σ duration by that overlap amount. Before that fix, downstream
+ * re-sync paths re-derived audioDuration self-referentially from the inflated
+ * Σ duration and fed it into PASS 3, baking the inflation into the last
+ * segment's declared end — it would claim to run past where the real audio
+ * physically ends, so its tail silently never played. The fix prefers the
+ * real live <audio> duration (mirroring how Apply Sync sources it,
+ * App.tsx:1498-1500) and only falls back to Σ duration when no live duration
+ * is available (no-voiceover projects) — that fallback discipline is still
+ * correct and is what the second test below still covers.
+ *
+ * UPDATED (K14 fix, decision 9 / Step AB, 2026-08-07): a locked segment is now
+ * a hard wall in BOTH directions (the prior one-directional growth exemption
+ * is withdrawn), and an unlocked segment can never start before an
+ * immediately preceding lock's actual end. The overlap this file used to
+ * "document as intended" no longer occurs at all — the unlocked neighbour is
+ * pushed forward to the lock's exact end instead, so Σ duration is no longer
+ * inflated by a locked segment in the first place. The first test below is
+ * updated to assert the new, non-overlapping outcome; the locked segment's
+ * own duration still never shrinking is unchanged.
  */
 
 function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string; order: number }): VideoSegment {
@@ -40,9 +51,13 @@ function resolveAudioDuration(liveDuration: number | undefined, fallbackSegments
  * 8-segment timeline. Segment 3 (0-indexed, middle — not last, not
  * second-to-last) is LOCKED with a manually-set duration of 8s from an
  * earlier drag-resize. A re-sync has since moved segment 4's anchor closer
- * (18 instead of the "clean" 20), shrinking segment 3's available span to
- * 3s while its locked duration (8s) is preserved — producing an intended
- * overlap of G = 8 - 3 = 5s.
+ * (18 instead of the "clean" 20), shrinking segment 3's "natural" span to
+ * 3s while its locked duration (8s) is preserved. Pre-K14-fix this produced
+ * an "intended" overlap of G = 8 - 3 = 5s; post-fix, segment 4 is instead
+ * pushed forward to the lock's exact end (23) and its own 5s of natural
+ * space is entirely consumed by the lock's 5s overflow — a `lock-span-
+ * overflow` case (Step AB's "too short" trapped-segment shape), not an
+ * overlap.
  */
 function buildInputWithLockedOverlap(): VideoSegment[] {
   const anchors = [0, 5, 10, 15, 18, 23, 28, 33]; // s3->s4 gap shrunk from 5 to 3
@@ -63,7 +78,8 @@ function buildInputWithLockedOverlap(): VideoSegment[] {
 }
 
 describe('locked-overlap early-cutoff regression', () => {
-  it('documents the intended lock behavior: a locked segment can exceed its available span (overlap G)', () => {
+  it('K14 fix: a locked segment still never shrinks, but its neighbour is pushed forward '
+    + 'instead of overlapping it (no more Σ-duration inflation)', () => {
     const input = buildInputWithLockedOverlap();
     const afterResync = applyAnchorBasedTiming(input, TRUE_AUDIO_DURATION);
 
@@ -71,12 +87,21 @@ describe('locked-overlap early-cutoff regression', () => {
     const next = afterResync[4]!;
     const G = (locked.startTime + locked.duration) - next.startTime;
 
-    // Locks never shrink — this overlap is intended behavior, not a bug in
-    // applyAnchorBasedTiming itself. The bug (fixed elsewhere) was in how
-    // the heading paths re-derived audioDuration from a Σ duration already
-    // inflated by this G.
+    // Locks never shrink — unchanged, still true post-fix.
     expect(locked.duration).toBe(8);
-    expect(G).toBeCloseTo(5, 6);
+
+    // FIXED (was the bug this whole file used to "document as intended"):
+    // the neighbour no longer overlaps the lock. It is pushed forward to
+    // the lock's exact end (23), so G is now 0, not 5.
+    // (Pre-fix: `expect(G).toBeCloseTo(5, 6);` — the neighbour kept its own
+    // anchor-derived position (18) while the lock extended past it to 23.)
+    expect(G).toBeCloseTo(0, 6);
+    expect(next.startTime).toBeCloseTo(23, 6);
+
+    // The neighbour's own 5s natural window (anchor 18 to the next
+    // segment's anchor 23) is entirely consumed by the lock's overflow —
+    // it collapses to zero rather than overlapping the lock.
+    expect(next.duration).toBeCloseTo(0, 6);
   });
 
   it('UNCHANGED — no-voiceover fallback still uses Σ duration when no live audio duration is available', () => {

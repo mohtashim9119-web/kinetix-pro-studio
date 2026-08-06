@@ -455,6 +455,27 @@ def c11_lock_preservation(pre, post):
     return out
 
 
+def c13_lock_anchor_consistency(segments):
+    """Item 13 (K14 implementation, Step AD) — a locked segment's anchorStart
+    must equal its startTime, always (INVARIANT L2). This is the K14 defect's
+    own signature: a drag that leaves a locked segment's anchor stale is
+    invisible until some LATER, unrelated action re-derives startTime from
+    that stale anchor — this check catches the staleness directly, at its
+    source, rather than waiting for it to surface as a moved segment. Pure;
+    synthetic and live-repro-artifact input only (see run_c13 in
+    phase4-step-x-verify.py for the live half)."""
+    out = []
+    for s in segments:
+        if not s.get("locked"):
+            continue
+        anchor = s.get("anchor", s["start"])
+        if abs(anchor - s["start"]) > 1e-6:
+            out.append(Finding("C13", s.get("key", s.get("id", "?")),
+                               f"locked segment anchorStart {anchor:.3f} != startTime {s['start']:.3f} "
+                               f"(drift {abs(anchor - s['start']):.3f}s)"))
+    return out
+
+
 def c12_smear_gate_discrimination(errors):
     """Item 12 — the negative-smear gate itself. Returns a finding when the gate
     CANNOT discriminate: i.e. when it rejects the distribution handed to it."""
@@ -628,6 +649,14 @@ def build_poisons():
     acc = [random.gauss(0, 0.020) for _ in range(500)]
     cases.append(("C12", "gate rejects an accurate symmetric-noise source",
                   lambda acc=acc: c12_smear_gate_discrimination(acc)))
+
+    # C13 — the K14 shape itself: a drag left a locked segment's anchorStart
+    # 3s stale relative to its own startTime (App.tsx's computeDragCascade,
+    # pre-fix, never kept the two in lockstep).
+    poisoned = [dict(key="a", locked=True, start=23.0, anchor=20.0),
+                dict(key="b", locked=True, start=50.0, anchor=50.0)]  # healthy control row
+    cases.append(("C13", "locked segment's anchorStart drifted from startTime",
+                  lambda p=poisoned: c13_lock_anchor_consistency(p)))
     return cases
 
 
@@ -682,6 +711,13 @@ def cmd_real():
     print("       committed baseline contains a locked segment (locks are cleared by")
     print("       resync, K13, so a post-sync snapshot structurally cannot carry one).")
     print("       Proven on synthetic fixtures only; stated, not faked.")
+
+    print("\n  C13  locked-segment anchor consistency — NOT RUNNABLE against the three")
+    print("       baselines either, and for the SAME structural reason as C11 (no")
+    print("       committed baseline carries a locked segment). Its real half runs")
+    print("       instead as a live vitest repro against production code — see")
+    print("       scripts/phase4-step-x-verify.py's run_c13 and")
+    print("       scripts/phase4-step-aa-unlock-repro.test.ts. Stated, not faked.")
     v6 = corpora[0]
     print("\n  C12  negative-smear gate — run against each project's own committed")
     print("       boundary-vs-nearest-silence signed errors:")
@@ -722,6 +758,8 @@ def cmd_seg320():
     print("            committed data, and C05 no longer reads committed data at all.")
     print("  C11  no  — lock preservation is orthogonal to this defect.")
     print("  C12  no  — the smear gate reads sign only, at any magnitude.")
+    print("  C13  no  — locked-segment anchor consistency is orthogonal to this defect")
+    print("            (segment 320 involves no lock at all).")
 
 
 def cmd_csv():

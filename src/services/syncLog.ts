@@ -14,6 +14,7 @@
 import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem } from '../types';
 import type { TokenDrop } from './whisperService';
 import type { ContractViolation } from './syncContracts';
+import type { LockFinding } from './syncEngine';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
@@ -98,6 +99,41 @@ export function buildUnsupportedLanguageEntry(
     },
     timestamp,
   );
+}
+
+/**
+ * K14 fix (decision 9 / Step AB) — turns `applyAnchorBasedTiming`'s
+ * `LockFinding`s (syncEngine.ts) into `SyncLogEntry`s, one per finding.
+ * `segmentIndex` is 0-based into whatever segments array
+ * `applyAnchorBasedTiming` was called with, matching the convention every
+ * other segment-indexed entry (skip, no-asset, rescue) already uses;
+ * messages use the 1-based display number.
+ */
+export function buildLockFindingLogEntries(
+  syncRunId: string,
+  findings: LockFinding[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f => {
+    const displayNumber = f.segmentIndex + 1;
+    if (f.kind === 'lock-span-overflow') {
+      return makeSyncLogEntry(
+        syncRunId,
+        'lock-span-overflow',
+        `Segment ${displayNumber} is squeezed by a locked boundary — its content is short `
+        + `${f.amountSec.toFixed(2)}s of the space it needs.`,
+        { segmentIndex: f.segmentIndex, severity: 'warning', fixHint: 'Unlock the bounding segment, or shorten its content, to give this segment more room.' },
+        timestamp,
+      );
+    }
+    return makeSyncLogEntry(
+      syncRunId,
+      'lock-preserved-adjustment',
+      `Segment ${displayNumber}'s boundary moved ${f.amountSec.toFixed(2)}s to respect a locked neighbour.`,
+      { segmentIndex: f.segmentIndex, severity: 'info' },
+      timestamp,
+    );
+  });
 }
 
 const DROP_REASON_LABELS: Record<TokenDrop['reason'], string> = {

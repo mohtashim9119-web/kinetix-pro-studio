@@ -3272,6 +3272,166 @@ gains K14 alongside K13; Phase 4 status updated).
 
 ---
 
+#### K14 implementation (Steps AA-AD → shipped, 2026-08-07)
+
+**K14 is FIXED.** Own commit, on top of the addendum above, per instruction —
+not bundled with K13 or the timing-source swap. Mechanism, named per file:
+
+  * **`computeDragCascade` (`App.tsx`) no longer writes `locked: true`
+    anywhere** — INVARIANT L1. The three auto-lock sites (dragged segment,
+    an absorbing neighbour, a MIN-clamped absorbing neighbour) are deleted;
+    the pre-existing "an already-locked neighbour blocks the cascade" check
+    is untouched (that was never auto-locking, it was respecting a manual
+    lock, and decision 9 point 3 still requires it).
+  * **`recomputeStartTimes` (`App.tsx`, the tail of `computeDragCascade`)
+    now writes `anchorStart` in lockstep with every `startTime` it
+    commits**, instead of leaving `anchorStart` untouched. This is the root-
+    cause fix: Step AA traced K14 to the drag path never keeping the two in
+    sync, and this is the single write site that closes it — a drag can no
+    longer leave a stale anchor behind for a later, unrelated action to
+    silently re-derive a position from.
+  * **`applyAnchorBasedTiming`'s locked branch (`syncEngine.ts`) now PINS
+    `startTime`/`duration`** — INVARIANT L2 — instead of snapping
+    `startTime` to `anchorStart` and only flooring `duration`. A locked
+    segment's `anchorStart` is forced to mirror its `startTime` on every
+    call, never read as a separately-stale value. The prior one-directional
+    growth exemption ("locked segments never shrink, but grow to absorb a
+    removal gap") is WITHDRAWN, per Step AB — a lock is a hard wall in both
+    directions, full stop. PASS 1 (first-segment-to-0) and PASS 3 (last-
+    segment-to-audioDuration) both gained a `!locked` guard for the same
+    reason — either could previously move a locked first/last segment.
+  * **An unlocked segment can never start before an immediately preceding
+    LOCKED segment's actual end**, and an unlocked segment immediately
+    before a lock is bounded by the lock's own `startTime` (never its
+    `anchorStart`) as its `nextAnchor` — the Step AC R.1(d)/R.2 substitution.
+    This bound is DELIBERATELY LOCAL (read directly off `out[i-1]`/`out[i+1]`
+    each iteration, never propagated through a running cursor) — a lock is a
+    non-cascading, single-segment-deep wall (Step AC), and an ordinary
+    unlocked-to-unlocked overshoot keeps its pre-existing, local collapse-
+    to-floor behaviour (the D16 backstop clamp) rather than rippling into a
+    later, correctly-anchored segment. **This scoping was found and fixed
+    during implementation, not designed up front** — an early version
+    applied the forward bound unconditionally (any preceding segment, locked
+    or not) and broke `syncTiming.test.ts`'s existing "(d) backstop clamp"
+    test, which depends on exactly this local-collapse behaviour for
+    ordinary (non-lock) anchor disorder; see the regression accounting
+    below.
+  * **Two new sync-log surfaces** — `lock-span-overflow` (warning) and
+    `lock-preserved-adjustment` (info), both new `SyncLogEntryType` members
+    (`types.ts`), styled in `SyncLogPanel.tsx`, built by
+    `syncLog.ts`'s new `buildLockFindingLogEntries` from
+    `applyAnchorBasedTiming`'s new optional third parameter,
+    `onLockFinding?: (finding: LockFinding) => void` — additive, so none of
+    the ~30 existing call sites needed to change. Wired at `handleToggleLock`
+    (`App.tsx`), the site Step AA's whole diagnosis is about, with a
+    standalone `mintSyncLogId()` per toggle (same precedent as the H.4
+    unsupported-language guard: a finding that isn't tied to an Apply Sync
+    run gets its own run id). Not wired into the Apply Sync / staging-
+    transcription call sites — deliberately, to keep this commit's blast
+    radius to K14's own site; those paths are K13/timing-source-swap
+    territory.
+
+**Repro handling.** `scripts/phase4-step-aa-unlock-repro.test.ts` was NOT
+deleted. Every assertion is inverted in place (proves the fix, not the
+defect); the original buggy values are preserved in comments at each site,
+per instruction. PART 3 (the D16 backstop-clamp destructive-overwrite case)
+is unrelated to locking and its own numeric outcome is unchanged by this fix
+— it is pinned as still-correct, adversarial-input behaviour, with a new
+assertion added showing the specific drag sequence that used to feed it a
+stale, out-of-order anchor no longer can. A PART 4 was added that writes
+`.work-phase4/step-aa-c13-live-repro.json`, the live artifact C13's real half
+consumes (same precedent as `phase4-step-w-k13-repro.test.ts` writing C11's).
+
+**Regressions, sorted honestly (the two tests that changed, beyond the
+repro file's own designed inversion):**
+
+  * `src/services/lockedOverlap.test.ts`, "a locked segment can exceed its
+    available span (overlap G)" — **INTENDED.** This test's own docstring
+    said the overlap it asserted (`G ≈ 5`) was "intended behavior" under the
+    Phase-3-era one-directional growth exemption Step AB explicitly
+    withdraws. Post-fix the unlocked neighbour is pushed forward to the
+    lock's exact end instead of overlapping it (`G ≈ 0`), and Σ duration is
+    no longer inflated by a locked segment at all — the very mechanism the
+    ORIGINAL `resolveAudioDuration` fix (this test's stated subject) existed
+    to work around no longer produces inflation in the first place. Renamed
+    and rewritten to assert the new, correct, non-overlapping outcome; the
+    locked segment's own duration still never shrinking is unchanged and
+    still asserted.
+  * `src/services/syncTiming.test.ts`, "(d) backstop clamp: an inverted
+    anchor is clamped, later segment protected" — **REGRESSION, caught and
+    fixed in `syncEngine.ts`, not by editing the test.** An early
+    implementation applied the new forward-start bound unconditionally
+    (`effectiveStart = max(rawAnchor, prevSegmentEnd)` for every unlocked
+    segment, not only one immediately after a lock), which made a floor-
+    collapsed, non-lock-related segment's end push its own NEXT segment
+    forward too — breaking this test's explicit contract ("d2, the correct,
+    earlier segment, keeps its true anchor — not pushed forward"). Fixed by
+    scoping the forward bound to fire ONLY when the immediately preceding
+    segment is locked (see the local-vs-cursor point above); re-running the
+    suite after the fix reproduced this test's original expected values
+    exactly, with zero edits to the test itself.
+
+**Suite: `npx vitest run` → 53 files, 1293 tests, 0 failures** (was 53/1292;
+the +1 test is PART 4's artifact-writing test — the file's other 3 tests
+were already counted). `tsc --noEmit` clean.
+
+**C13 built** ("lock isolation across unrelated edits", Step AD's own
+recommendation), in the same isolated-harness style as the other thirteen:
+`c13_lock_anchor_consistency` (`scripts/phase4-step-s-structural-checks.py`)
+— a poison case (a locked segment with `anchorStart` 3s stale relative to
+its `startTime`, plus a healthy control row the check must correctly ignore)
+that fires, and a live half wired into
+`scripts/phase4-step-x-verify.py`'s `run_c13()` that re-runs
+`phase4-step-aa-unlock-repro.test.ts` and reads its new PART 4 artifact —
+unlike C11, C13's real half is NOT inverted: K14 is fixed, so it genuinely
+stays quiet (`verdict: "FIX CONFIRMED"`). `python3 scripts/phase4-step-x-
+verify.py` now walks **14** rules, 14/14 poison PASS, 14/14 real PASS
+(headline still incomplete for the same reason as before — C10's third,
+recall, half still FAILS and C10 stays OUT of CI; nothing about that
+changed). C13 graded A (live reproduction against production code, same
+tier as C11) with its own stated caveat: its scenario is a synthetic
+6-segment timeline, not a real corpus project, because no committed baseline
+carries a locked segment (locks are cleared by resync — K13, still open) —
+the same structural reason C11's own real half can't run against a
+baseline either.
+
+**Verification.** `tsc --noEmit` clean. The Step Y replay harness
+(`scripts/phase4-handoff-replay-sync.test.ts`) reproduces Step M's golden
+values EXACTLY — 444/172/26 segments kept on v6/173/spanish, zero diff
+against `docs/phase4-baseline-*.csv` — expected and unremarkable, since none
+of the three replayed corpus projects contains a locked segment and this fix
+only changes locked-segment-adjacent behaviour; recorded as confirmed, not
+assumed. A manual end-to-end walkthrough against the real 173-project
+baseline (`docs/phase4-baseline-173-segments.csv`, not a synthetic fixture)
+confirmed: (1) a drag + an unrelated lock toggle moves nothing outside the
+dragged/absorbed/toggled segments, anywhere in the 175-segment array; (2) an
+explicitly-locked segment survives that same sequence with `startTime`,
+`duration`, and `anchorStart` bit-for-bit intact; (3) a locked segment
+survives an in-editor re-derive (`applyAnchorBasedTiming`) with start AND
+end intact even when both neighbours' anchors are perturbed hard around it,
+and the unlocked neighbour is pushed clear of the lock rather than
+overlapping it. **Stated precisely, not implied:** "survives a re-sync" in
+this walkthrough means the in-editor `applyAnchorBasedTiming` re-derivation
+K14 lives in (drag commits, lock toggles) — NOT a full Apply Sync click
+(`parseProjectData`'s clean-slate rebuild), which remains K13-broken by
+design; a direct check against the real 173 project confirms Apply Sync
+still mints 0 segments carrying any lock field, exactly as K13's own repro
+already demonstrates. K13 is untouched, as instructed.
+
+**No K13 change. No timing-source-swap change. No Rust.** New:
+`scripts/phase4-step-s-structural-checks.py`'s `c13_lock_anchor_consistency`
++ poison case; `scripts/phase4-step-x-verify.py`'s `run_c13`. Amended:
+`src/App.tsx` (`computeDragCascade`, `recomputeStartTimes`,
+`handleToggleLock`), `src/services/syncEngine.ts`
+(`applyAnchorBasedTiming`, new exported `LockFinding` type), `src/services/
+syncLog.ts` (new `buildLockFindingLogEntries`), `src/types.ts` (two new
+`SyncLogEntryType` members), `src/components/SyncLogPanel.tsx` (two new
+badge styles), `src/services/lockedOverlap.test.ts` (one test rewritten,
+intended), `scripts/phase4-step-aa-unlock-repro.test.ts` (inverted in
+place, one test added).
+
+---
+
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
 GATE: the English path must be provably byte-identical to today’s, verified against the frozen English baseline — so this phase does NOT shift English indices. Non-English rule verification requires the non-English corpus (K3); if only one non-English project exists by this point, the others’ rules land dormant behind their language keys and are verified when corpus material arrives — recorded as an explicit written acceptance at the Stage 1 lock.
