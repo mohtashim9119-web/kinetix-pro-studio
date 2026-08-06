@@ -492,6 +492,44 @@ src/
                      #   (drawing/extraction) or snapBoundaries.ts (boundary computation) already
                      #   have. Pure, DOM/React-free. Consumed by syncContracts.ts's
                      #   validateBoundaryQuality — see that file's entry above.
+    dragCascade.ts   # Timeline drag-resize cascade (K15, 2026-08-07) — computeDragCascade +
+                     #   neighbourYieldableSec + MIN_SEGMENT_DURATION, all moved out of App.tsx
+                     #   (they were module-private and had never been unit-tested). App.tsx's
+                     #   applyDurationChange is now a thin wrapper that resolves the dragged index,
+                     #   forwards project.transcriptTokens, and commits. Two invariants live here:
+                     #   (1) LOCALITY — the cascade restacks ONLY the contiguous index window it
+                     #   actually touched, anchored on whichever edge the drag does not move (the
+                     #   dragged segment's own start for a right-edge drag, the far end of the
+                     #   cascade for a left-edge one). The pre-K15 code ended with a global
+                     #   recomputeStartTimes that rebuilt EVERY startTime from a running duration sum
+                     #   starting at 0, which deletes any gap in the array by construction. That was
+                     #   harmless until K14 withdrew applyAnchorBasedTiming's locked-segment growth
+                     #   exemption — before K14 a lock grew to fill any span opening after it, so the
+                     #   array was contiguous by construction and no gap could reach a drag; after
+                     #   K14 a lock is a hard wall and leaves a real gap, and any drag anywhere then
+                     #   collapsed it (measured: a 0.200s drag displaced the following segments by
+                     #   3.000s, moving their slots entirely off their own audio — and it fired even
+                     #   when dragging the LAST segment, with no neighbour to cascade into).
+                     #   (2) THE YIELD FLOOR — a neighbour may yield its own SILENCE and nothing
+                     #   else: a head-yielding neighbour's start may not pass its own first word's
+                     #   onset, a tail-yielding one's end may not fall below its last word's offset.
+                     #   Read from project.transcriptTokens (times, not indices — so the persisted
+                     #   unfiltered array is correct here, unlike the index-based
+                     #   snapCoveredBoundaries call site), ownership by token MIDPOINT inside the
+                     #   slot. It is a POSITION bound, NOT a duration floor: a duration floor is only
+                     #   equivalent while the neighbour's far edge is pinned, and under a
+                     #   multi-neighbour cascade it is not — that formulation was implemented first
+                     #   and let a cascade push a neighbour's start past its own first word while the
+                     #   duration still satisfied the floor. neighbourYieldableSec returns Infinity
+                     #   (= no bound, exactly pre-K15 behavior) for a transcript-less project or a
+                     #   zero-token neighbour (unscripted heading, aligner-skipped scene), leaving
+                     #   MIN_SEGMENT_DURATION as the only clamp there. Shrink the floor refuses is
+                     #   handed BACK to the dragged segment, conserving the touched window's total
+                     #   duration exactly, so the drag stops where the neighbour's words begin
+                     #   instead of taking time no neighbour gave up.
+                     #   Dragging still locks NOTHING (K14 decision 9 point 1) and an already-locked
+                     #   neighbour is still an impassable wall that returns null. Full record:
+                     #   docs/sync-pipeline-v2-plan.md -> "K15 — drag over-absorption".
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-

@@ -3432,6 +3432,156 @@ place, one test added).
 
 ---
 
+#### K15 — drag over-absorption (owner report post-K14, fixed 2026-08-07)
+
+**Owner's report:** "Dragging a segment a few hundred ms sometimes consumes a
+neighbour's entire audio. Intermittent: sometimes correct, sometimes
+catastrophic." The owner's hypothesis was that K14's removal of auto-lock-on-drag
+had exposed unbounded absorption in `computeDragCascade`. **That hypothesis is
+half right, and the half it misses is the catastrophic half.** There are two
+independent defects here, with different origins, and they were separated by
+measurement before anything was changed.
+
+**Method.** `computeDragCascade` and `recomputeStartTimes` were module-private in
+`App.tsx` and had never had a unit test. Both were copied verbatim — HEAD's
+version and the version at tag `phase4-implementation-ready-2026-08-07` (the
+pre-K14 baseline) — into a throwaway harness alongside the REAL
+`applyAnchorBasedTiming` from each tree, and run over hand-built arrays. The
+distinguishing condition was then read off the numbers, not guessed.
+
+**K15a — gap collapse. INTRODUCED BY K14. This is the catastrophic case.**
+
+The condition that distinguishes a working drag from a broken one is not
+direction, not neighbour duration, and not zero-token segments. It is: **does the
+segments array contain a gap — a pair where `startTime[i] + duration[i] <
+startTime[i+1]` — anywhere at all.** If it does, EVERY drag anywhere in the
+timeline is catastrophic; if it does not, no drag is. That is exactly the
+intermittency the owner described, and it explains why the damage is wildly
+disproportionate to the drag distance.
+
+Two halves, and only one of them is new:
+
+* The mechanism is old. `computeDragCascade` ended by calling
+  `recomputeStartTimes(segs)`, which rebuilt EVERY segment's `startTime` from a
+  running sum of durations starting at 0 — a flexbox-style global re-flow that
+  deletes any gap in the array by construction. That code is original and K14
+  did not touch its re-flow behaviour.
+* The precondition is K14's. Pre-K14 no upstream stage could produce a gap:
+  `applyAnchorBasedTiming`'s locked branch grew a locked segment to fill any span
+  that opened after it (`duration = max(preservedDuration, availableSpan)`), so
+  its output was contiguous by construction and the re-flow was a no-op on
+  position. K14 withdrew that growth exemption deliberately, to make a lock a
+  hard wall in both directions. A locked segment whose end now falls before the
+  following segment's anchor leaves a REAL gap
+  (`effectiveStart = max(rawAnchor, lockFloor)`, `syncEngine.ts`). **So K14
+  turned dead code into a live defect. Honest answer: K14 introduced it.**
+
+Measured, on the array `applyAnchorBasedTiming` itself produces for
+`[A unlocked, B locked 10-12, C anchored 15, D anchored 18]` at
+`audioDuration = 20` — a 3.000s gap between B's end and C's start:
+
+| drag | pre-K15 result | displacement |
+|---|---|---|
+| C right edge, +0.2s | `C[12.00..15.20] D[15.20..17.00]` | C moved **-3.000s**, D **-2.800s** |
+| D right edge, +0.2s (no neighbour at all) | `C[12.00..15.00] D[15.00..17.20]` | C moved **-3.000s** |
+
+C's new slot contains none of C's own audio; D's contains C's. The second row is
+the proof that this was never a cascade bug — the re-flow was unconditional, so
+it fired with zero cascade work to do.
+
+**Fix:** the cascade is now STRICTLY LOCAL. Only the contiguous index window the
+cascade actually touched is restacked, anchored on whichever edge of that window
+the drag does not move (the dragged segment's own start for a right-edge drag;
+the far end of the cascade for a left-edge drag). Every segment outside the
+window keeps `startTime`/`anchorStart` byte-identical, so a gap outside the
+window survives. This is the same locality rule K14 already established for
+`applyAnchorBasedTiming` ("DELIBERATELY LOCAL, never propagated through a running
+cursor") — K15a is that rule reaching the one writer that had been exempt from
+it. Contiguity inside the window is preserved because the cascade conserves the
+window's total duration exactly (see the give-back below).
+
+**K15b — unbounded neighbour absorption. PREDATES K14.**
+
+The cascade floored an absorbing neighbour at `MIN_SEGMENT_DURATION` (0.3s) and
+at nothing else, so a neighbour could be crushed from several seconds to 0.3s and
+lose every word it owns. That floor is original; K14 did not change it, and a
+FIRST drag behaves identically on both sides of K14 (verified: both trees return
+`A[0.00..5.30] B[5.30..5.60] C[5.60..10.40]` for the same crush case).
+
+What K14 did change is repeatability. Pre-K14 the cascade wrote `locked: true`
+onto the dragged segment and every absorbing neighbour, so a SECOND drag into the
+same neighbour hit the locked-neighbour guard and was refused with a toast — an
+accidental one-shot circuit breaker, not a bound. Measured over three successive
++0.3s drags on `[A 5s, B 1s, C 5s]`:
+
+| drag | pre-K14 (baseline tag) | post-K14 (HEAD) |
+|---|---|---|
+| #1 | `B[5.30..6.00]` | `B[5.30..6.00]` |
+| #2 | **BLOCKED** (toast: "Segment 2 is locked") | `B[5.60..6.00]` |
+| #3 | — | `B[5.90..6.20]` (B now at the 0.3s floor) |
+
+Decision 9 point 1 forbids restoring auto-lock, so the bound has to be a real one.
+
+**The floor, and where it comes from.** A neighbour's slot may never be moved past
+its own outermost word: a head-yielding neighbour's start may not pass its own
+FIRST word's onset, and a tail-yielding neighbour's end may not fall below its own
+LAST word's offset. **A neighbour may yield its own silence, and nothing else.**
+The floor is read from the project's own `transcriptTokens` — the same word-level
+array the aligner and `snapBoundaries.ts` place every boundary against; nothing
+new is measured or inferred. Ownership is by token MIDPOINT inside the
+neighbour's slot, so a word straddling a slot edge counts as the neighbour it is
+mostly inside and that edge yields nothing. Times, not indices, are what the floor
+reads, so the persisted (unfiltered) array is the correct one at this call site —
+unlike the index-based `snapCoveredBoundaries` call, which must use the filtered
+array `useWhisper` returns; malformed tokens are skipped defensively regardless.
+
+Two deliberate degradations, both preserving pre-K15 behaviour exactly: a project
+with no transcript at all, and a **zero-token neighbour** (an unscripted heading,
+or a scene the aligner skipped), both yield `Infinity` — no bound — leaving
+`MIN_SEGMENT_DURATION` as the only clamp, because there are no words there to
+protect and a larger floor would only refuse drags the user is entitled to make.
+
+**The bound is a POSITION bound, not a duration floor.** A duration floor
+(`slotEnd - firstWordOnset` as a minimum duration) was implemented first and is
+wrong: it is only equivalent while the neighbour's far edge is pinned, and under a
+multi-neighbour cascade it is not. It was caught by this commit's own tests,
+which showed a two-neighbour cascade pushing a neighbour's start to 7.00s past its
+own first word at 6.00s while its duration still satisfied the floor.
+
+**Give-back.** Shrink demand the word bound refuses is handed BACK to the dragged
+segment rather than dropped. Dropping it is what let a drag take time that no
+neighbour ever gave up — the touched window's total duration would change and the
+restack would have to push the difference into a segment the drag never touched.
+Giving it back conserves the window's total exactly, so the drag simply stops
+where the neighbour's words begin: the CapCut/Premiere behaviour. It is bounded by
+construction (`refused` can never exceed the original delta, so the dragged
+segment never ends below the duration it started at). The separate case of the
+cascade running off the END of the array with demand outstanding is deliberately
+left as it was — that is not over-absorption, and changing it would move unrelated
+behaviour into this fix.
+
+**Verification.** `computeDragCascade`/`recomputeStartTimes` moved out of
+`App.tsx` into new `src/services/dragCascade.ts` (they were untestable where they
+were; `App.tsx` imports `MIN_SEGMENT_DURATION` back from it). New
+`src/services/dragCascade.test.ts`, 20 tests in three parts: PART 1 K15a, PART 2
+K15b, PART 3 pre-K15 behaviour that must not change. **The 5 defect assertions
+were confirmed FAILING against the pre-K15 cascade** (restored verbatim into the
+module and re-run) **while all 15 unchanged-behaviour assertions passed on both
+sides** — which is the evidence that the change is targeted rather than a rewrite.
+Pre-K15 values are recorded inline next to every inverted assertion. Suite: 54
+files / 1313 tests, 0 failures (was 53/1293). `tsc --noEmit` clean. Step Y replay
+harness reproduces Step M's golden values exactly — expected, since none of the
+three replayed corpus projects contains a locked segment, so none can contain a
+gap.
+
+**No K13 change. No timing-source-swap change. No Rust. No test expectation
+edited** (the two files whose expectations changed at K14 are untouched here).
+New: `src/services/dragCascade.ts`, `src/services/dragCascade.test.ts`. Amended:
+`src/App.tsx` (two functions and one constant removed to the new service;
+`applyDurationChange` forwards `transcriptTokens`).
+
+---
+
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
 GATE: the English path must be provably byte-identical to today’s, verified against the frozen English baseline — so this phase does NOT shift English indices. Non-English rule verification requires the non-English corpus (K3); if only one non-English project exists by this point, the others’ rules land dormant behind their language keys and are verified when corpus material arrives — recorded as an explicit written acceptance at the Stage 1 lock.

@@ -56,6 +56,7 @@ import {
   type TranscriptToken,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
+import { computeDragCascade, MIN_SEGMENT_DURATION } from './services/dragCascade';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import {
@@ -308,7 +309,6 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
   return newAssets;
 }
 
-const MIN_SEGMENT_DURATION = 0.3; // seconds — minimum timeline slot width
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
 // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
@@ -1071,27 +1071,6 @@ export function clearSyncLog(project: Project): Project {
 }
 
 /**
- * Recomputes sequential startTimes from accumulated durations. Pure.
- *
- * K14 fix (decision 9 / Step AB) — also writes `anchorStart` to match the
- * freshly-computed `startTime` on every segment it touches. Before this fix,
- * a drag rewrote `startTime`/`duration` here but never touched `anchorStart`,
- * so the pipeline's own record of "where this segment actually is" went
- * stale by exactly the cascaded delta — the root cause `applyAnchorBasedTiming`
- * (syncEngine.ts) later re-derived positions from on any unrelated lock
- * toggle. Keeping the two in lockstep on every write closes that gap at the
- * source rather than only inside the locked branch.
- */
-function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
-  let acc = 0;
-  return segs.map(s => {
-    const t = Number(acc.toFixed(3));
-    acc += s.duration;
-    return { ...s, startTime: t, anchorStart: t };
-  });
-}
-
-/**
  * Resolves the audioDuration to feed into applyAnchorBasedTiming, preferring
  * the real, live <audio> element duration (same source Apply Sync uses,
  * App.tsx:1498) over a self-referential Σ duration of the segments array.
@@ -1107,54 +1086,6 @@ function resolveAudioDuration(audioEl: HTMLAudioElement | null, fallbackSegments
   const live = audioEl?.duration;
   if (live !== undefined && isFinite(live) && live > 0) return live;
   return fallbackSegments.reduce((sum, s) => sum + s.duration, 0);
-}
-
-/**
- * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
- *
- * K14 fix (decision 9 point 1 / Step AB) — dragging locks NOTHING. Neither
- * the dragged segment nor any absorbing neighbour is auto-locked anymore;
- * locking is exclusively an explicit user action (the lock toggle, or "Lock
- * All"). This function still RESPECTS an already-locked neighbour — it
- * remains an impassable wall the cascade cannot move through — that check is
- * unrelated to auto-locking and is unchanged.
- *
- * Returns the updated array, or null if a locked neighbor blocked the cascade
- * (caller should revert the live-preview state and show a toast).
- */
-function computeDragCascade(
-  originalSegments: VideoSegment[],
-  draggedIdx: number,
-  finalDuration: number,
-  finalTrimStart: number,
-  direction: 'right' | 'left',
-  onLockedBlock: (segIndex: number, segId: string) => void,
-): VideoSegment[] | null {
-  const segs = originalSegments.map(s => ({ ...s }));
-  segs[draggedIdx] = { ...segs[draggedIdx]!, duration: finalDuration, trimStart: finalTrimStart };
-  const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
-  let remaining = -delta; // positive → neighbor must grow; negative → neighbor must shrink
-  const step = direction === 'right' ? 1 : -1;
-  let ni = draggedIdx + step;
-  while (Math.abs(remaining) > 0.001) {
-    if (ni < 0 || ni >= segs.length) break;
-    const neighbor = segs[ni]!;
-    if (neighbor.locked) {
-      onLockedBlock(ni, neighbor.id);
-      return null;
-    }
-    const newDur = neighbor.duration + remaining;
-    if (newDur >= MIN_SEGMENT_DURATION) {
-      segs[ni] = { ...neighbor, duration: newDur };
-      remaining = 0;
-    } else {
-      // Clamp neighbor to MIN; pass overflow to next segment in same direction.
-      segs[ni] = { ...neighbor, duration: MIN_SEGMENT_DURATION };
-      remaining += neighbor.duration - MIN_SEGMENT_DURATION; // remaining stays negative
-      ni += step;
-    }
-  }
-  return recomputeStartTimes(segs);
 }
 
 const TEXT_ENTRY_INPUT_TYPES = new Set([
@@ -1548,10 +1479,18 @@ export default function App() {
   }, []);
 
   /**
-   * Applies a duration change for one segment with the same cascade + auto-lock
-   * semantics as a drag-resize. Shared by the drag-resize handler and the
-   * playback-speed slider. Returns true if the cascade succeeded, false if a
-   * locked neighbor blocked it (caller must revert live-preview state if any).
+   * Applies a duration change for one segment with the same cascade semantics
+   * as a drag-resize. Shared by the drag-resize handler and the playback-speed
+   * slider. Returns true if the cascade succeeded, false if a locked neighbor
+   * blocked it (caller must revert live-preview state if any).
+   *
+   * The project's `transcriptTokens` are forwarded to the cascade as the source
+   * of each absorbing neighbour's yield floor (K15b — services/dragCascade.ts's
+   * `neighbourFloorDuration`). Times, not indices, are what the floor reads, so
+   * the persisted (unfiltered) array is the right one here — unlike the
+   * index-based `snapCoveredBoundaries` call site, which must use the filtered
+   * array `useWhisper` returns. Undefined on a project with no voiceover yet,
+   * which the floor handles by degrading to MIN_SEGMENT_DURATION.
    */
   const applyDurationChange = useCallback((
     originalSegments: VideoSegment[],
@@ -1582,6 +1521,7 @@ export default function App() {
           } : undefined,
         );
       },
+      projectRef.current.transcriptTokens,
     );
     if (cascadeResult === null) return false;
     const finalSegments = additionalUpdates
