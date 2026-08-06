@@ -2831,6 +2831,446 @@ retuned. No baseline re-fitted.** New: `scripts/phase4-restore-replay-inputs.py`
 `scripts/phase4-handoff-replay-sync.test.ts` (repointed + assertions added),
 `scripts/phase4-handoff-app-silence.py` (usage example moved off `/tmp`).
 
+---
+
+### Phase 4 addendum — Manual lock semantics (Steps AA-AD, 2026-08-07)
+
+**Owner verification of Step X, recorded verbatim as instructed.** The owner ran
+`python3 scripts/phase4-step-x-verify.py` independently and confirmed: **13 of 13
+poison halves FIRED, 13 of 13 real halves stayed QUIET.** C10's third half — the
+recall check against the owner's own word-shift verdicts — **failed as designed**
+(0 of 4). This matches Step X's own printed output exactly and is now recorded
+here as owner-verified, not merely tool-reported. No numbers changed by this
+verification; it is a second, independent confirmation of Step X's result.
+
+**Scope discipline for this addendum, same terms as Steps Y-Z: design only, no
+Rust, no `src/` file changed.** One new committed test file demonstrates the
+Step AA defect against production code (the same convention Step W used for
+K13) — it is a repro, not an implementation.
+
+**New owner requirement — decision 9, recorded verbatim as instructed:**
+
+> 1. Dragging or adjusting any segment boundary must NEVER auto-lock any
+>    segment, neither the dragged one nor its neighbour.
+> 2. Segments lock only when the user explicitly toggles them.
+> 3. Manually locked segments are immovable anchors across pipeline re-sync:
+>    their start and end are preserved exactly while unlocked segments adjust
+>    around them.
+
+This is a separate workstream from the timing-source swap and lands as its own
+commit, not bundled with it.
+
+---
+
+#### Step AA — Diagnosing the existing defect
+
+**The owner's report — "unlocking a neighbour currently ruins the timing of
+adjacent segments" — is a real, distinct, second defect. It is not K13.** K13
+(`docs/sync-pipeline-v2-plan.md` Part K) is Apply-Sync clean-slate rebuild
+dropping the `locked` field entirely, every resync, unconditionally. This new
+defect needs no resync at all — it fires **inside the editor**, on the lock
+toggle, with no Apply Sync in between. Naming it **K14** so it has its own
+identity in the register rather than being folded into K13's writeup, which
+would misstate both.
+
+**File and function: `src/App.tsx`, `handleToggleLock` (line 1692), calling
+`applyAnchorBasedTiming` (`src/services/syncEngine.ts`, line 174).**
+
+**The mechanism, traced end to end:**
+
+1. **Auto-lock-on-drag happens in `computeDragCascade`** (`App.tsx:1106`). A
+   segment-boundary drag sets `locked: true` on the dragged segment AND on every
+   neighbour the cascade absorbed overflow into (`App.tsx:1115`, `:1129`,
+   `:1133`) — this is the behaviour decision 9 point 1 now explicitly forbids.
+   The cascade's own docstring already says so plainly: "Affected segments
+   (dragged + all that absorbed any portion) are auto-locked" (`App.tsx:1102`).
+
+2. **The cascade writes `startTime`/`duration` but never touches
+   `anchorStart`.** `computeDragCascade` ends by calling the module-private
+   `recomputeStartTimes` (`App.tsx:1072`), which derives every segment's
+   `startTime` purely from the running sum of `duration` — a flexbox-style
+   left-to-right accumulation. `anchorStart` is never read or written anywhere
+   in the drag path. So after any drag, the segments the user sees are correct
+   and contiguous, but their `anchorStart` fields — the pipeline's own record of
+   "where the aligner actually placed this segment" — are now **stale**,
+   silently disagreeing with `startTime` by exactly the cascaded delta.
+
+3. **Unlocking mutates one flag and then re-derives the whole array from that
+   stale record.** `handleToggleLock` flips `locked` on the target segment and
+   immediately calls `applyAnchorBasedTiming(toggled, audioDuration)` — **over
+   the entire `project.segments` array**, not just the toggled segment.
+   `applyAnchorBasedTiming`'s PASS 2 (`syncEngine.ts:225-241`) sets
+   `seg.startTime = anchorStart` unconditionally for every unlocked segment. The
+   segment that was just unlocked snaps back onto its stale anchor — that part
+   is at least explicable, if wrong. **The damage that is not explicable:**
+   every OTHER unlocked segment in the array is re-derived the same way in the
+   same pass, off anchors that a completely unrelated, earlier drag left stale.
+   Nothing scopes the re-derivation to the one segment the user actually
+   touched.
+
+4. **Why the damage reaches segments that are themselves still locked.** PASS 2's
+   locked branch (`syncEngine.ts:232-236`) is not the immovable-anchor guarantee
+   decision 9 point 3 asks for — it only refuses to let `duration` *shrink*:
+   `seg.startTime = anchorStart` runs unconditionally for locked segments too
+   (`syncEngine.ts:233`), and `duration = max(preservedDuration, availableSpan)`
+   (`:236`) only floors the duration, it does not pin the start. A locked
+   segment therefore still SLIDES onto its own stale anchor whenever
+   `applyAnchorBasedTiming` runs for any reason — including a lock toggle on a
+   segment three positions away that this one never interacted with. `handleUp`
+   commits a drag through the same `applyDurationChange` → `setProject` path
+   (`App.tsx:1571`), so the identical stale-anchor snap-back can also fire off a
+   completely ordinary resize-drag elsewhere in the timeline, not only off a
+   lock toggle — the toggle is simply the shortest path to it and the one the
+   owner named.
+
+**Live repro against production code:** `scripts/phase4-step-aa-unlock-repro.test.ts`
+(new, committed). Three parts, run with `npx vitest run
+scripts/phase4-step-aa-unlock-repro.test.ts`:
+
+  * **Part 1** reproduces steps 1-2 above: a drag leaves `startTime=23` next to
+    a stale `anchorStart=20` on the very segment the cascade just repositioned,
+    and confirms both cascade participants were auto-locked without being
+    asked for.
+  * **Part 2** reproduces steps 3-4: two independent drags, far apart on a
+    6-segment, 60s timeline. Unlocking ONE segment from the first drag moves
+    it back 3s onto its stale anchor (expected, if wrong) **and also moves a
+    different, still-locked segment from the second, unrelated drag back 4s**
+    (`expect(after[5]!.locked).toBe(true); expect(after[5]!.startTime -
+    cur[5]!.startTime).toBeCloseTo(-4, ...)`) — leaving the timeline
+    self-overlapping (segment 4 ends at 54, segment 5 now starts at 50). This
+    is the owner's report, demonstrated: a segment neither dragged nor
+    unlocked in this action moves anyway, and being locked did not save it.
+  * **Part 3** shows a second consequence of the same stale-anchor mechanism:
+    the backward monotonic clamp (`syncEngine.ts:215-223`) can destructively
+    overwrite `anchorStart` itself when two stale anchors end up out of order,
+    permanently losing the pipeline's own placement record for that segment,
+    not merely mis-deriving its displayed position.
+
+All three assertions pass today; they are written to assert the defect and
+**must start failing** once Step AB's semantics are implemented — same
+convention as the K13 repro, and stated at the top of the new file so it is not
+"repaired" by mistake.
+
+**Root cause, one sentence:** `anchorStart` is the sole timing authority
+`applyAnchorBasedTiming` re-derives every `startTime` from, the drag path never
+keeps it in sync with the `startTime`/`duration` it actually commits, and
+nothing scopes a lock-toggle's re-derivation to the segment that was toggled —
+so any stale anchor left behind by an earlier, unrelated drag can surface on
+any later lock toggle anywhere in the timeline, moving segments — including
+locked ones — that the current action never referenced.
+
+---
+
+#### Step AB — Lock semantics design (design only, not implemented)
+
+**What a lock stores, and where it persists.** No new field is needed beyond
+`VideoSegment.locked?: boolean` (`types.ts:199`) — the type already exists. What
+changes is what MUST be true whenever `locked === true`: **`startTime` and
+`duration` are the pinned values, and `anchorStart` is kept equal to `startTime`
+at all times a lock is true** (a lock is defined in start/duration/timeline
+terms — an editor-facing concept — not in anchor terms — the pipeline's own
+placement-provenance concept; conflating the two is Step AA's root cause). This
+persists exactly where `locked` already persists today: inline on the
+`VideoSegment`, through `projectStore.ts`'s existing serialization (no schema
+change — the field already round-trips). What is NEW is a discipline invariant,
+enforced at every site that WRITES `startTime`/`duration`/`anchorStart`, not a
+new stored shape:
+
+  * **INVARIANT L1** — no write path may ever set `locked: true` as a side
+    effect of any other action (drag, cascade, resync, lock-all). It is set
+    ONLY by the explicit toggle handler and the explicit "Lock All" action —
+    both already user-initiated UI affordances (`App.tsx:1692`, `:3696`); no
+    new UI is needed, only the removal of the auto-lock writes named in Step
+    AA.
+  * **INVARIANT L2** — whenever a segment is locked, every OTHER write path
+    (drag cascade, `applyAnchorBasedTiming`, resync's carry-forward) must treat
+    its `startTime` and `duration` as read-only and its `anchorStart` as
+    equal to `startTime` — not independently derived, not independently
+    stale-able. This closes Step AA's mechanism at the root: there is no
+    longer a "stale anchor vs. live position" pair to disagree, because a
+    locked segment's anchor IS its position, always, by construction.
+
+**What happens when re-sync wants to move a locked boundary but cannot.** It
+does not move it, full stop — decision 9 point 3 is unconditional ("their start
+and end are preserved exactly"), which is a small change from today's
+Phase-3-era spec (`applyAnchorBasedTiming`'s own docstring: "duration is
+preserved UNLESS removal opened a gap immediately after… in which case duration
+grows to absorb it" — the one-directional lock exemption). **That exemption is
+withdrawn by decision 9.** A locked segment's span is now a hard wall in BOTH
+directions: it neither shrinks NOR grows to absorb a neighbour's removal.
+Whatever content Apply Sync would have placed inside that exact span is
+either (a) placed there anyway if it fits the same window R.0/R.2 would already
+compute for an anchor with three-source agreement (a locked boundary trivially
+qualifies — the user's own placement is stronger evidence than any acoustic
+signal), or (b) if the new content genuinely cannot occupy the locked span (the
+matched text is longer or shorter than the fixed window allows), the excess/
+deficit is absorbed by the UNLOCKED neighbour(s) per the next answer below —
+never by silently resizing the lock.
+
+**What happens to an unlocked segment trapped between two locks whose fixed
+span is too short or too long for its content.** This is the shape Step AC
+below calls out explicitly for windowing, so the placement mechanism and this
+answer must agree: the trapped segment's window is bounded by the two locks —
+it can never see audio outside `[lockA.end, lockB.start]`, by construction,
+because a lock is now a hard wall (see Step AC). Within that bounded window:
+
+  * **Too short** (the trapped segment's real speech doesn't fit): the segment
+    is placed at its best-fit alignment inside the available span and an
+    explicit `lock-span-overflow` sync-log entry (informational→warning
+    severity, matching the existing `unscripted-gap`/`monotonic-clamp`
+    precedent) names the segment, the shortfall in seconds, and both bounding
+    locks. **The content is never allowed to overflow past a lock** — that
+    would silently move the lock, which decision 9 point 3 forbids outright.
+    This mirrors R.7's existing skip-and-flag contract (never a crash, never a
+    silent boundary violation) rather than inventing a new failure mode.
+  * **Too long** (extra silence/slack in the fixed span): the trapped segment's
+    own placement uses only what its aligned content needs; the remaining slack
+    is absorbed the same way `headExtendFirstSegment`/the tail-extension
+    already absorb lead-in/trail-out — attributed to whichever adjacent
+    segment (the trapped one, by default, matching Option A's "the segment
+    already on screen absorbs it" precedent) rather than left as an unaccounted
+    gap. No new mechanism; the existing unscripted-audio precedent (owner
+    decision 8) already covers this shape and is reused rather than
+    re-litigated.
+  * If the trapped span is bounded by a lock on ONLY one side (its other
+    neighbour is unlocked), the unlocked side behaves exactly as it does today
+    — only the locked side is a hard wall.
+
+**Whether a lock pins start, end, or both independently.** **Both, and always
+together — not independently settable.** A lock pins the segment's
+`[startTime, startTime+duration]` interval as a single unit. Independent
+start-only or end-only pinning was considered and rejected here: decision 9
+point 3 says "their start and end are preserved exactly," not "either edge";
+and independent-edge pinning reopens exactly Step AA's failure shape one edge
+at a time (an unpinned edge is still derived from something else's stale
+state). If a future need for one-sided pinning appears, it is a distinct
+feature (a different field, e.g. `lockedEdge?: 'start' | 'end' | 'both'`), not
+an extension of this boolean — flagged here so it is not silently smuggled in
+as a "small" variant of `locked` later.
+
+**What the user sees when a lock and the pipeline disagree.** Never silence —
+that is the discipline this whole document has enforced everywhere else
+(`unscripted-gap`, `monotonic-clamp`, `lock-preserved-adjustment`,
+`estimated-timeline`), and Step AA's root cause is itself a case of a
+disagreement (stale anchor vs. live position) that was allowed to resolve
+silently. Three concrete surfaces, all additive to `SyncLogEntry`
+(`types.ts`), all following the existing severity convention:
+
+  * **`lock-span-overflow`** (warning) — a locked span could not hold its
+    trapped or own content; per the "too short" case above.
+  * **`lock-preserved-adjustment`** (info) — already specified at Contract 3→4
+    P4 (`docs/sync-pipeline-v2-plan.md` line ~3266) as a REQUIRED ADDITION;
+    this addendum confirms it is still the right surface under decision 9 and
+    widens its trigger from "a lock forced a neighbour to grow/shrink" (the
+    old one-directional exemption) to "a lock's hard-wall bounded a
+    neighbour's placement in either direction" (the new one).
+  * **A per-segment "locked" affordance already visible in the UI**
+    (`BottomDrawer.tsx:128-130`, `DropZonePanel.tsx:1535-1541`) continues to be
+    the passive, always-on signal that a given segment's position is
+    authoritative — no new UI chrome is required, only correcting what
+    `locked: true` actually guarantees once L1/L2 above are enforced.
+
+**Silent failure is what produced the current bug — every one of the above is
+answered because leaving any of them implicit is exactly how K14 happened.**
+
+---
+
+#### Step AC — Interaction with Step R windowing
+
+**Step R's neighbour-midpoint clamp (R.2/R.3) and a lock are different
+mechanisms, and R.2's own padding formula already tells you which one wins: a
+lock is not a midpoint, it is a hard wall, and it must be substituted as such
+rather than fed through the padding math as if it were an ordinary neighbour
+boundary.**
+
+**How FA windows are chosen next to a locked boundary.** R.1's anchor
+admissibility test (three-source agreement, `ANCHOR_AGREEMENT_SEC`) is
+unnecessary for a locked boundary — the user's own placement is a *stronger*
+claim than three-source acoustic agreement, so **a locked segment's boundary is
+always an anchor, unconditionally, regardless of what R.1(a)-(c) would say
+about it.** This is a genuine, explicit AMENDMENT to R.1, stated here rather
+than left implicit: R.1 as written only admits anchors derived from Hirschberg
++ token onset + silence agreement; it has no clause for a boundary the user
+fixed by hand. Add one: **R.1(d) — a `locked` segment's `startTime` and
+`startTime+duration` are anchors by construction, with no agreement check.**
+
+Given that, R.2's padding formula needs exactly one substitution, not a
+rewrite: wherever `prevRunLastWordEnd` or `nextRunFirstWordStart` would be
+read from an adjacent run's own aligned output, and that adjacent boundary is
+instead a LOCK, substitute the lock's own fixed edge directly and **set
+`padBefore`/`padAfter` to 0 on that side**, not to `min(PAD_BASE, ...)` of
+anything. A lock is not "the free audio up to the neighbour's last verified
+word, shared 50/50" (R.2's `PAD_SHARE`) — it is a hard, user-declared boundary
+with zero slack on the locked side. Padding past it would let a run's audio
+window reach into a span the user has explicitly frozen, which is precisely
+the word-theft shape this whole document exists to prevent, just committed by
+the new mechanism instead of the old one.
+
+**Whether a lock can starve a neighbour's window the way segment 320 starved
+321.** **Structurally, no — and this is the reason locks are the SAFER
+boundary type in this design, not merely a special case of an ordinary one.**
+Segment 320 starved segment 321 because 320's own boundary was WRONG (a timing
+defect) and 321's window was derived from it anyway, with no way to tell a bad
+boundary from a good one. A lock cannot be "wrong" in that sense — it is a
+declared fact, not a measurement, so there is nothing for R.7's fit-precheck to
+disagree with. **The failure mode a lock CAN cause is different: it can make
+the trapped segment's window too SHORT for its real content** — not because the
+boundary is mistimed, but because the user genuinely fixed a span that doesn't
+match the script's true duration for that stretch. This is exactly Step AB's
+"too short" case above, and it routes through the SAME `lock-span-overflow`
+finding R.7 already specifies for "target text cannot fit the window even at
+full run length" (R.7, first bullet) — no new failure path, the existing one
+already covers a fixed-too-small window; a lock is just one more way to
+produce one.
+
+**Whether locks can cascade.** **No, by the same argument as R.8 Case 1
+(cross-run independence), extended.** Two locks bound every window between
+them; R.2's padding under the R.1(d) amendment above never crosses a lock (zero
+padding on the locked side, by construction). A segment between two locks can
+therefore never influence alignment on the far side of either lock — the lock
+is as strong an isolation boundary as R.1's three-source-agreement anchor, in
+fact stronger, since it needs no agreement check to qualify. **No amendment to
+R.8's cascade-safety argument is needed beyond restating that a lock is always
+case-1-eligible (different-run boundary), never case-3 (same-run, bounded
+monotonic coupling)** — a lock cannot sit inside a run's interior alignment the
+way an ordinary word-level anchor can, because R.1(d) makes it a run boundary
+by definition.
+
+**Which part of the Step R design needs amending, stated exactly.** One
+addition (R.1(d), above) and one clarification to R.2 (the zero-padding
+substitution on a locked edge, above). **Nothing else in Step R (R.0, R.4-R.9)
+changes.** R.5's wildcard-for-unscripted-audio mechanism composes with this
+unchanged: a locked span simply has no wildcard applied to it from the outside
+— it is not itself a run to align, it is a boundary between runs (or, per Step
+AB, a fixed run of its own that supplies its own content verbatim without
+needing FA to place it).
+
+---
+
+#### Step AD — Impact on C11 and the check suite
+
+**C11 stays exactly as specified — CI-IN, grade A, a live K13 repro built on
+lock fields — and decision 9 changes NOTHING about what it asserts, because
+C11 tests K13, and K13 is untouched by this addendum.** This must be stated
+precisely because the two defects are easy to conflate now that both are named
+in the same document section: **K13 is Apply Sync's clean-slate rebuild
+dropping `locked` entirely** (`App.tsx`'s `parseProjectData`/Stage-1 mint never
+reads or writes it). **K14 (this addendum's defect) is the in-editor
+propagation bug — it needs no resync.** Decision 9's carry-forward requirement
+(point 3, "immovable anchors across pipeline re-sync") is in fact PRECISELY
+what C11 already demands and today fails to find: the K13 repro
+(`scripts/phase4-step-w-k13-repro.test.ts`) locks two overlapping segments,
+runs `parseProjectData`, and asserts zero segments carry any lock field. That
+assertion is completely orthogonal to K14's mechanism (`applyAnchorBasedTiming`
+being called with a stale anchor grid, no `parseProjectData` involved) — fixing
+K14 without fixing K13 leaves C11 exactly where it is today: TRIP, defect
+confirmed. **C11 must keep failing until K13 specifically is fixed — decision 9
+does not touch K13's fix, so C11's pass/fail state is unaffected by this
+addendum landing.**
+
+**What C11 should assert once the K13 fix DOES land, under decision 9's
+semantics — stated now so nobody re-derives it later.** When Stage 3 builds the
+carry-forward step K13 already specifies (Part K: "a carry-forward step — by
+script-position/order, not id... from the pre-sync `project.segments` into the
+freshly parsed array"), decision 9 point 3 adds ONE requirement to what that
+carry-forward must do beyond restoring the `locked` flag and duration: **it
+must restore `startTime` and `anchorStart` in lockstep, exactly, for every
+locked segment** — not merely "the flag and position both survive" as Part K's
+repro currently phrases it, but specifically that surviving position satisfies
+the L1/L2 invariants from Step AB (locked segment's `anchorStart ===
+startTime`, both frozen). The existing K13 repro's Part 2 assertion (`movedMs
+>​ 1` — "the flag is load-bearing") remains valid and does not need rewriting;
+what changes is that a THIRD part should be added when the fix lands: lock a
+segment, drag an unrelated neighbour elsewhere in the timeline (the K14 shape),
+confirm the locked segment's `startTime`/`anchorStart` are bit-for-bit
+unchanged. That is a new assertion for the fix commit to add, not a retroactive
+change to the currently-failing repro — adding it now, before K13 is fixed,
+would just be another form of asserting the defect, which C11 already does.
+
+**A new check is warranted for K14 specifically, and should be added at the
+SAME commit that fixes it — not before, matching this document's own
+convention that a repro-as-poison precedes its check** (Step W's own pattern
+for C11: the repro existed before the check was trusted). **Recommended new
+check, C13 — "lock isolation across unrelated edits":** run a drag+cascade on
+segment A, then toggle the lock on unrelated segment B, and assert every
+segment NOT dragged, absorbed, or toggled in this sequence is bit-for-bit
+unchanged (`startTime`, `duration`, `anchorStart`, `locked`). This is
+`scripts/phase4-step-aa-unlock-repro.test.ts`'s Part 2 promoted from a
+demonstrated defect to a permanent regression lock, the same way C11 is Step
+W's K13 repro promoted. **It does not exist yet — this addendum only asserts
+the defect (Step AA) and specifies the fix (Step AB); C13 is scoped for the
+implementation commit, per the instruction that this pass designs and does not
+implement.**
+
+**Are any of the other 12 checks affected? No, checked one by one against
+decision 9's three points:** C01a/C01b (zero-token / implausible-duration) —
+unaffected, both are Stage-1/2 checks with no lock dependency. C02
+(dead-to-script run) — unaffected, headings are a separate overlay layer with
+no lock field. C03/C06 (stale-pause, ASR dropout) — unaffected, timing-source
+checks with no lock interaction. C04 (breath-vs-boundary) — unaffected,
+acoustic classification only. C05 (scorer misattribution) — unaffected,
+measurement-harness-only, no lock involvement by construction. C07
+(run-survival consistency) — unaffected, reads `longestRun`, not `locked`.
+C08/C09 (zero-duration token, CTC-fit) — unaffected, Stage-1/2 token-level
+checks. **C10 (seam cross-attribution) — unaffected and stays OUT of CI**;
+decision 9 changes nothing about its 0-of-4 recall against the owner's ear,
+and it was excluded for a reason orthogonal to locking. C12 (negative-smear
+gate discrimination) — unaffected, a Stage-1 gate-design argument with no lock
+involvement. **Net: 11 of 12 IN checks unaffected, C11 unaffected in its
+pass/fail state but its future-assertion scope is now specified above, and one
+new check (C13) is recommended for the implementation commit.**
+
+---
+
+#### Addendum deliverable summary
+
+Owner verification of Step X recorded verbatim (13/13 poison FIRED, 13/13 real
+QUIET, C10's recall half FAILED as designed) — an independent confirmation,
+not a new measurement. Decision 9 recorded verbatim. **Step AA** distinguished
+a genuinely new defect (K14: in-editor lock-toggle propagation via a stale
+`anchorStart` grid that drag operations never keep in sync) from the
+previously-documented K13 (Apply-Sync clean-slate lock loss), traced it to
+`computeDragCascade`'s auto-lock writes plus `handleToggleLock`'s whole-array
+`applyAnchorBasedTiming` call, and demonstrated it live against production code
+in a new committed repro (`scripts/phase4-step-aa-unlock-repro.test.ts`, 3
+parts, all passing today, all required to start failing once fixed). **Step
+AB** specified lock semantics answering all five required questions: storage
+(existing `locked` field, no schema change, but a new discipline invariant
+that a locked segment's `anchorStart` equals its `startTime` at all times);
+re-sync behaviour when a lock blocks a move (never moves — the one-directional
+growth exemption from the earlier Phase-3-era spec is withdrawn); the
+too-short/too-long trapped-segment cases (best-fit-within-bounds with an
+explicit finding, or slack absorbed by the adjacent segment per the existing
+Option-A precedent); pinning granularity (both edges together, not
+independently settable); and user-visible disagreement surfaces (two new
+sync-log entry types plus the already-specified `lock-preserved-adjustment`,
+widened). **Step AC** amended Step R's windowing design with one addition
+(R.1(d) — a lock is always an anchor, no agreement check needed) and one
+clarification (R.2's padding is zero on a locked edge, substituting the lock's
+fixed boundary directly rather than treating it as an ordinary
+three-source-agreement neighbour), and showed locks cannot starve a neighbour
+the way segment 320 starved 321 (a lock cannot be "wrong," only sometimes
+too-small for its trapped content, which routes through R.7's existing
+fit-precheck finding) and cannot cascade (a locked boundary is always a
+run-boundary case under R.8, never a same-run interior case). **Step AD**
+confirmed C11 is untouched by decision 9 (it tests K13, not K14, and must keep
+failing until K13 specifically is fixed), specified what C11's assertions
+should grow to once the K13 fix lands under decision-9 semantics, recommended
+a new check C13 scoped to the implementation commit rather than built now, and
+confirmed the other 11 CI-IN/OUT checks are unaffected.
+
+**No production Rust. No `src/` file changed. No threshold retuned. No baseline
+re-fitted.** New: `scripts/phase4-step-aa-unlock-repro.test.ts` (live repro,
+production code, 3 tests, all passing, all a designed-to-fail-later
+regression lock). Amended: `docs/sync-pipeline-v2-plan.md` (this addendum,
+Part K gains K14 by reference here rather than a full Part K entry, since
+this addendum IS its full writeup), `project-state.md` (Deferred Known Bugs
+gains K14 alongside K13; Phase 4 status updated).
+
+**Suite: `npx vitest run` → 53 files, 1292 tests, 0 failures** (the +1 file /
++3 tests are the new K14 repro; nothing else changed).
+
+---
 
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
