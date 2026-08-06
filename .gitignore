@@ -29,3 +29,5 @@ __pycache__/
 # /tmp so they survive cleanup -- see the K8 pattern in docs/sync-pipeline-v2-plan.md
 .listening-clips/
 .answer-keys/
+.venv-phase4/
+.work-phase4/

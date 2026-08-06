@@ -21,6 +21,13 @@ Subcommands:
               check, "would this have caught segment 320?"
     all     — all three, in order
 
+AMENDED AT STEP W (2026-08-06), recorded here rather than silently: C05 was
+rewritten (wrong input source AND wrong predicate — see its docstring) and moved
+out of the Corpus-shaped CHECKS loop; its poison case was rewritten too, because
+the original one DID NOT TRIP and this file's own `poison` subcommand printed
+"12/13 tripped -> FAIL" from the day it was committed. The Steps Q-T write-up's
+"13/13 PASS" was wrong for that one case. It now genuinely passes 13/13.
+
 THRESHOLD DISCIPLINE. Every numeric threshold below is derived from the clean
 population of the three real corpora (stated at each constant) and was fixed
 BEFORE the poison cases were written. Where a check produces false positives on
@@ -67,10 +74,6 @@ MAX_ATTRIBUTION_DISTANCE_SEC = 1.0
 # own floor is 0.25s (silenceDetector.ts minDurationSec); real inter-sentence
 # pauses in this corpus median 0.40-0.70s. 0.45 sits between the two.
 BREATH_MAX_SEC = 0.45
-
-# C5. The scorer's own overlap gate, as shipped in measure-word-onset.py: an
-# attributed word must reach the silence's own midpoint.
-SCORER_MIN_OVERLAP_FRAC = 0.5
 
 # C6. An ASR dropout shows as a RUN of consecutive fully-unmatched segments; an
 # isolated skip is ordinary (a title card, a planted string, a one-word segment).
@@ -288,47 +291,70 @@ def c04_breath_boundary(c: Corpus):
     return out
 
 
-def c05_scorer_overlap_gate(c: Corpus):
+def c05_scorer_gate(rows):
     """Item 5 — the measurement harness's short-trailing-word misattribution.
 
-    Audits the PRE-FIX (midpoint-only) walk: any attribution it makes that fails
-    the shipped overlap gate is an instance of the "it." bug. Firing here means
-    the corpus contains material that WOULD be misattributed by an ungated
-    scorer — which is the property worth regression-locking, since the fix lives
-    in the harness and a future re-measurement could silently drop it.
+    REWRITTEN AT STEP W (2026-08-06). Two things were wrong with the Step S
+    formulation and both are recorded rather than quietly replaced:
+
+      (1) WRONG INPUT. It ran over the whisper `-ml 1` corpus baselines, which
+          are sub-word fragmented and GAPLESS (each token starts exactly where
+          the previous ended, Phase 2b Finding 2). 59-100% of its 189 real-corpus
+          findings were that gaplessness, not the defect. The defect is defined
+          over whole words with real gaps — i.e. over FORCED-ALIGNMENT output.
+          Those arrays are partially committed after all:
+          docs/phase3-onset-{v6,173}-fa.csv is the PRE-FIX (ungated) attribution
+          per scored pause and ...-fa-corrected.csv is the POST-FIX (gated) one.
+
+      (2) WRONG PREDICATE. It tested an overlap FRACTION (>=50% of the pause
+          covered). The shipped gate in measure-word-onset.py is not that: a
+          candidate must END at or past the silence's own MIDPOINT. A word lying
+          wholly AFTER a pause overlaps it 0% and is the CORRECT attribution, so
+          the fraction test fires on almost every row — measured 692 of 696.
+
+    The predicate below is the shipped gate itself. A word that ends before the
+    pause midpoint began before the pause did: it is the PRECEDING sentence's
+    trailing word ("it.", ~60-100ms), not the following one.
+
+    `rows` are FA CSV rows: silence_start, silence_end, token_text, token_start,
+    token_end. Returns Findings. Measured at Step W: recall 13/13 against the
+    labelled instances, 0 false positives across 696 scored pauses.
     """
     out = []
-    # The defect is defined over WHOLE words. These baselines are whisper `-ml 1`
-    # output, which is sub-word fragmented, so a fragment-vs-fragment
-    # disagreement is a tokenizer artifact, not an instance of the "it." bug.
-    # Restrict to candidates that are real words of some segment's own script.
-    vocab = set()
-    for s in c.segments:
-        vocab |= set(wordlist(s["text"]))
-
-    def real_word(w):
-        t = norm(w["text"]).strip()
-        return len(t) >= 2 and t in vocab
-
-    out = []
-    gated = {a: w for (a, _b), w in _scorer_walk(c, gated=True)}
-    for (a, b), w in _scorer_walk(c, gated=False):
-        if not real_word(w):
+    for r in rows:
+        a, b = float(r["silence_start"]), float(r["silence_end"])
+        ws, we = float(r["token_start"]), float(r["token_end"])
+        if b <= a:
             continue
-        # Only a DISAGREEMENT is a defect instance: the ungated walk attributing
-        # a different word than the shipped gated walk. Flagging every
-        # gate-failing attribution instead fires 219 times across the three
-        # corpora against Step 1's 12 genuine instances -- measured, and
-        # rejected as a false-positive machine.
-        g = gated.get(a)
-        if g is None or g["idx"] == w["idx"]:
-            continue
-        overlap = max(0.0, min(w["e"], b) - max(w["s"], a))
-        frac = overlap / (b - a) if b > a else 0.0
-        out.append(Finding("C05", f"{c.name}@{a:.2f}",
-                           f"ungated walk picks '{w['text']}' ({frac:.0%} pause overlap); "
-                           f"gated walk correctly picks '{g['text']}' — scorer misattribution"))
+        if we < (a + b) / 2:
+            margin_ms = ((ws + we) / 2 - a) * 1000.0
+            out.append(Finding("C05", f"@{a:.6f}",
+                               f"'{r['token_text']}' ({(we-ws)*1000:.0f}ms) ends before the "
+                               f"midpoint of its {(b-a)*1000:.0f}ms pause; its own midpoint is "
+                               f"only {margin_ms:+.0f}ms past the pause start — this is the "
+                               f"PRECEDING sentence's trailing word"))
     return out
+
+
+def load_fa_rows(proj: str, corrected: bool = False):
+    suffix = "-fa-corrected" if corrected else "-fa"
+    with open(DOCS / f"phase3-onset-{proj}{suffix}.csv") as f:
+        return list(csv.DictReader(f))
+
+
+def c05_labelled_truth(proj: str):
+    """Silence starts where the shipped gated walk picked a DIFFERENT word than
+    the ungated walk — Step 1's own 12(+1) corrected instances, read straight
+    off the two committed CSVs rather than re-derived."""
+    pre = load_fa_rows(proj)
+    post = {round(float(r["silence_start"]), 6): r for r in load_fa_rows(proj, True)}
+    truth = set()
+    for r in pre:
+        k = round(float(r["silence_start"]), 6)
+        p = post.get(k)
+        if p is None or p["token_text"] != r["token_text"]:
+            truth.add(k)
+    return truth
 
 
 def c06_dropout_run(c: Corpus):
@@ -445,15 +471,17 @@ CHECKS = [
     ("C02", "dead-to-script run (unscripted heading)", c02_dead_to_script),
     ("C03", "stale-pause attribution distance", c03_attribution_distance),
     ("C04", "breath-vs-boundary (flag for review)", c04_breath_boundary),
-    ("C05", "scorer short-trailing-word overlap gate", c05_scorer_overlap_gate),
     ("C06", "ASR dropout run", c06_dropout_run),
     ("C07", "run-survival gate consistency", c07_run_survival_consistency),
     ("C08", "zero-duration real-word tokens", c08_zero_duration_tokens),
     ("C09", "CTC target-fits-window precheck", c09_ctc_fit),
     ("C10", "seam cross-attribution (script vs acoustic)", c10_seam_cross_attribution),
 ]
-# C11 and C12 do not take a Corpus — they are exercised separately (see below),
-# stated openly rather than faked into the corpus-shaped loop.
+# C05, C11 and C12 do not take a Corpus — they are exercised separately (see
+# below), stated openly rather than faked into the corpus-shaped loop. C05 moved
+# out of this list at Step W: it is a check on the MEASUREMENT harness's word
+# attribution (FA arrays), not on a committed corpus, and pretending otherwise is
+# what produced its 189 false positives.
 
 
 # ---------------------------------------------------------------- poison cases
@@ -533,14 +561,23 @@ def build_poisons():
     cases.append(("C04", "boundary inside an intra-segment breath",
                   lambda c=c: c04_breath_boundary(c)))
 
-    # C05 — an "it."-shaped 60ms word barely poking into a 1.35s pause.
-    c = poison_corpus()
-    a = c.segments[1]["end"] + 0.10
-    c.silences = [(a, a + 1.35)]
-    c.words = [dict(idx=0, text="it", s=a + 0.02, e=a + 0.08),
-               dict(idx=1, text="he", s=a + 1.40, e=a + 1.60)]
+    # C05 — an "it."-shaped 60ms word barely poking into a 1.35s pause, in the
+    # FA-row shape the rewritten check actually consumes.
+    #
+    # CORRECTION RECORDED AT STEP W: the previous version of this poison built a
+    # `poison_corpus()` whose segment texts do not contain the word "it", so the
+    # old check's `real_word` vocabulary test discarded the candidate and the
+    # poison DID NOT TRIP. The committed Step S harness printed
+    # "POISON RESULT: 12/13 tripped -> FAIL" from the day it was written; the
+    # Steps Q-T write-up's claim of 13/13 PASS was wrong for this one case and is
+    # corrected in the plan doc rather than left standing.
+    a = 100.0
+    fa_poison = [dict(silence_start=a, silence_end=a + 1.35, token_text="it.",
+                      token_start=a + 0.02, token_end=a + 0.08),
+                 dict(silence_start=a + 5.0, silence_end=a + 5.6, token_text="You",
+                      token_start=a + 5.62, token_end=a + 5.81)]  # healthy control row
     cases.append(("C05", "short trailing word claims a long pause",
-                  lambda c=c: c05_scorer_overlap_gate(c)))
+                  lambda r=fa_poison: c05_scorer_gate(r)))
 
     # C06 — three consecutive fully-unmatched segments (the dropout shape).
     c = poison_corpus(skipped=[dict(index=i, tag=f"{i}", text="x", matched=0,
@@ -630,6 +667,17 @@ def cmd_real():
                 print(f"          [{name}] {f.subject}: {f.detail[:100]}")
             if len(fs) > 6:
                 print(f"          [{name}] ... and {len(fs)-6} more")
+    print("\n  C05  scorer short-trailing-word misattribution — run against the RECOVERED")
+    print("       FA arrays (docs/phase3-onset-{v6,173}-fa.csv), not the corpus baselines:")
+    for proj in ("v6", "173"):
+        rows = load_fa_rows(proj)
+        truth = c05_labelled_truth(proj)
+        found = {float(f.subject[1:]) for f in c05_scorer_gate(rows)}
+        found = {round(x, 6) for x in found}
+        print(f"        {proj}: {len(rows)} scored pauses, {len(truth)} labelled defect rows -> "
+              f"caught {len(truth & found)}, missed {len(truth - found)}, "
+              f"false positives {len(found - truth)}")
+
     print("\n  C11  lock preservation — NOT RUNNABLE against the three baselines: no")
     print("       committed baseline contains a locked segment (locks are cleared by")
     print("       resync, K13, so a post-sync snapshot structurally cannot carry one).")
@@ -670,7 +718,9 @@ def cmd_seg320():
         print(f"  {cid}  {verdict:>8}  {label}")
         if hit:
             print(f"            {hit[0].detail[:110]}")
-    print("\n  C11  no  — lock preservation is orthogonal to this defect.")
+    print("\n  C05  no  — a measurement-harness concern; segment 320's defect is in the")
+    print("            committed data, and C05 no longer reads committed data at all.")
+    print("  C11  no  — lock preservation is orthogonal to this defect.")
     print("  C12  no  — the smear gate reads sign only, at any magnitude.")
 
 

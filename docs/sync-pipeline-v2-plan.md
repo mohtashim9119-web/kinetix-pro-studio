@@ -14,7 +14,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/v6-smear-baseline.csv` / `docs/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
-| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **Blockers 1/3 CLOSED, Blocker 2 MEASURED — gate verdict PENDING OWNER DECISION**; pre-implementation baseline (Steps M-P) captured; integration not started | Measurement (`scripts/measure-forced-alignment.py`); ratio analysis vs. Part L; golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`) | 2026-08-06 |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **Blockers 1/2/3 CLOSED — Spanish settled by owner ear (Step U): reference bias, corrected p95 50.4ms vs the approved 250ms gate.** Pre-implementation baseline (Steps M-P) and gate-closing pass (Steps U-X) captured; integration not started | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`) | 2026-08-06 |
 | 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
@@ -1842,7 +1842,7 @@ exactly the same hash check as a downloaded one:
 | Language | Model | Validation status |
 |---|---|---|
 | English (en) | `…-xlsr-53-english` | **VALIDATED** — 173 + V6 measured (27.5ms/89.7ms and 25.8ms/400.8ms), 12+20 human-labeled clips |
-| Spanish (es) | `…-xlsr-53-spanish` | **MEASURED, UNLISTENED** — 61.2ms/282.1ms on 22 pauses; p95 fails the approved gate; Step Q's listen is pending |
+| Spanish (es) | `…-xlsr-53-spanish` | **VALIDATED** (updated by Step U, 2026-08-06) — 10 human-labeled clips. Raw-reference 61.2ms/282.1ms was reference bias: on a human-validated breath-aware reference the same 22 pauses read 30.3ms/**50.4ms**, clearing the approved gate. One known structural failure remains (corpus-start duplicated word, clip3_06, −1084ms), covered by R.6. |
 | French (fr) | `…-xlsr-53-french` | **UNVALIDATED** — plumbing only, zero corpus |
 | German (de) | `…-xlsr-53-german` | **UNVALIDATED** — plumbing only, zero corpus |
 | Portuguese (pt) | `…-xlsr-53-portuguese` | **UNVALIDATED** — plumbing only, zero corpus |
@@ -1901,6 +1901,468 @@ threshold retuned.** New: `scripts/phase4-step-q-spanish-clips.py`,
 `docs/phase4-step-q-integrity-check.csv`,
 `docs/phase4-step-q-listening-protocol.md`,
 `docs/phase4-step-s-check-results.csv`.
+
+---
+
+### Phase 4 gate-closing pass — Steps U-X (2026-08-06)
+
+**Scope discipline, honored throughout: no production Rust, no `src/` file
+changed, no timing-source swap, no threshold retuned, nothing tuned after the
+Spanish labels arrived.** Baseline: HEAD `040cc63`. New files are three
+`scripts/` entries, one `docs/` CSV, and this section. Three things gated Rust;
+all three are addressed below, two closed and one closed with a named exclusion.
+
+---
+
+#### Step U — Spanish scored against human ground truth
+
+**The owner's ear settles it: Spanish is REFERENCE BIAS, the same mechanism
+English showed, with exactly one genuine FA error whose cause is structural and
+already designed for.** Scoring script: `scripts/phase4-step-u-score-spanish.py`.
+Per-clip table: `docs/phase4-step-u-spanish-scored.csv`.
+
+**Method, and what was NOT done.** The owner returned per-clip A-end / breath /
+B-start labels for all 10 blinded clips. Those labels were joined against three
+candidate references — FA's declared onset, raw `silencedetect`'s declared
+pause-end (the reference every Spanish number in this document was scored
+against), and Step F's breath-aware corrected onset. **`phase3-breath-aware-
+reference.py` was run completely unmodified**; its thresholds were fixed for the
+English batch before any Spanish clip existed and were not touched after these
+labels arrived. No threshold anywhere in this programme was changed in this pass.
+The scoring script only joins and subtracts.
+
+**All 10 clips, absolute seconds, errors in ms signed against the human B onset
+(positive = late).**
+
+| Clip | Kind | Breath (human) | Human B | FA | raw SD | Step-F | FA err | SD err | F err |
+|---|---|---|---|---|---|---|---|---|---|
+| clip3_01 | control | no | 45.293 | 45.322 | 45.295 | 45.281 | **+29** | +2 | −12 |
+| clip3_02 | failure | yes | 27.962 | 27.982 | 27.815 | 27.959 | **+20** | −147 | −3 |
+| clip3_03 | failure | yes | 65.579 | 65.622 | 65.335 | 65.583 | **+43** | −243 | +4 |
+| clip3_04 | failure | no | 84.332 | 84.371 | 84.205 | 84.342 | **+39** | −127 | +10 |
+| clip3_05 | control | no | 17.417 | 17.431 | 17.415 | 17.414 | **+14** | −2 | −3 |
+| clip3_06 | failure | yes | 1.425 | 0.341 | 1.426 | 1.525 | **−1084** | +1 | +100 |
+| clip3_07 | control | yes | 20.170 | 20.152 | 20.170 | 20.189 | **−18** | +0 | +19 |
+| clip3_08 | failure | yes | 34.467 | 34.490 | 34.349 | 34.461 | **+23** | −118 | −6 |
+| clip3_09 | failure | yes | 6.308 | 6.292 | 6.099 | 6.313 | **−16** | −209 | +5 |
+| clip3_10 | failure | no | 13.125 | 13.152 | 13.005 | 13.203 | **+27** | −120 | +78 |
+
+**Absolute-error summary (ms), split as instructed.**
+
+| Group | n | \|FA\| median | \|FA\| max | \|raw SD\| median | \|raw SD\| max | \|Step-F\| median | \|Step-F\| max |
+|---|---|---|---|---|---|---|---|
+| all | 10 | 25.1 | 1084.0 | 118.8 | 243.4 | 8.0 | 99.7 |
+| 7 failures | 7 | 27.4 | 1084.0 | 127.1 | 243.4 | 6.0 | 99.7 |
+| 3 controls | 3 | 18.1 | 29.1 | 2.1 | 2.2 | 12.0 | 19.0 |
+| 6 breath clips | 6 | 21.4 | 1084.0 | 132.3 | 243.4 | 5.5 | 99.7 |
+| 4 no-breath clips | 4 | 28.3 | 39.2 | 61.0 | 127.1 | 11.0 | 78.0 |
+
+**The verdict, stated plainly: BIAS, like English — with one named exception that
+is not bias and is not softened.**
+
+Six of the seven "failures" are pure reference bias. On each, FA sits within
+**16-43ms** of where the owner's ear puts the word, while raw `silencedetect`
+sits **118-243ms EARLY**. The recorded 118-287ms "onset errors" that made Spanish
+look like it failed the gate are almost entirely the reference moving, not FA.
+The three controls confirm the mechanism from the other side: where the owner
+heard no problem, raw `silencedetect` is accurate to **±2ms** — it is not broken
+in general, it is broken specifically where something interrupts the pause.
+
+The seventh, **clip3_06, is a genuine FA error of −1084ms, and it is reported as
+an error, not explained away.** Its cause is structural and was named in this
+document before the labels arrived. The clip sits at corpus start. The pipeline
+SKIPPED the preceding segment `001_scylla_intro`, whose entire script text is the
+single word "Scylla.", so the next segment's committed window begins at t=0 and
+contains that unscripted lead-in — **which is the same word the segment itself
+starts with**. FA matched the first "Scylla" (0.12-0.64s per the production token
+array) instead of the segment's own (human B 1.425s). Duplicated word, zero left
+context, and a window that IS the committed span: precisely the case **Step R.6**
+specifies a leading wildcard and a file-start clamp for, and precisely the shape
+of V6 segment 1 / batch-1 clip 3. Excluding it, FA's median error across the
+other 9 clips is **22.8ms and its worst is 43.4ms**.
+
+**The breath mechanism is confirmed but is not the whole story, and the exception
+matters.** Of the 6 clips where the owner heard a breath, 5 show the early-
+reference signature (raw SD −118 to −243ms): the breath's onset crosses
+`silencedetect`'s −45dB floor and terminates the silence before the next word is
+articulated. The sixth, **clip3_07, has an audible breath (1.211-1.423s) and yet
+raw SD is accurate to +0ms** — that breath stayed under the threshold. So breath
+presence predicts bias but does not guarantee it; what matters is whether the
+breath is loud enough to break the detector's floor. Conversely two no-breath
+clips (clip3_04 −127ms, clip3_10 −120ms) show bias anyway, so breath is not the
+only interrupting mechanism either. Reported as measured.
+
+**The Step F detector against the ear, reported including where it loses.** On
+breath detection it is conservative: **3 of 6 human-heard breaths found, 0 false
+alarms on the 4 clips with no breath.** On the number that actually matters — the
+corrected onset — it is close to the ear on 8 of 10 clips (within 12ms) and off
+by 78ms and 100ms on the other two, both in the LATE direction (it fires past the
+true onset into ordinary consonant energy), which is the same disclosed cost Step
+J recorded on the English batch-2 clips. It is a better reference than raw
+`silencedetect` here, not a perfect one.
+
+**Recomputed Spanish p95 against the corrected reference — all 22 scored pauses,
+FA untouched, only the reference swapped.**
+
+| Reference | median | p95 | max | rows >250ms | vs 250ms gate |
+|---|---|---|---|---|---|
+| raw `silencedetect` | 61.2ms | **282.1ms** | 1085.1ms | 2 of 22 | **FAIL** |
+| Step F breath-aware | 30.3ms | **50.4ms** | 1183.7ms | 1 of 22 | **PASS** |
+
+**The gate is cleared — with the statistic stated honestly rather than sold.**
+With n=22 the p95 rank sits below the maximum, so the single remaining >250ms row
+(clip3_06, the corpus-start case) is excluded by rank from BOTH figures. The
+comparison is like-for-like and the improvement is real: 21 of 22 pauses land at
+**50.6ms or better** once the reference is corrected, against 2 of 22 above 250ms
+before. But "p95 50.4ms" is not a claim that every Spanish boundary is inside
+250ms; one is not, and it is the one named above.
+
+**Sample size, stated so it is not over-read.** This is 10 clips out of 22 scored
+pauses in one Spanish project of 26 segments. It supports the conclusion that
+Spanish's headline p95 failure was reference bias of the same kind English's was,
+because the mechanism is directly visible in the per-clip numbers rather than
+inferred from an aggregate. It does not support any claim about Spanish narration
+in general, about other Spanish speakers, or about French, German or Portuguese —
+which remain UNVALIDATED per Step T.7.
+
+**Consequence for Step T.7's table:** Spanish moves from *MEASURED, UNLISTENED —
+p95 fails the approved gate* to **VALIDATED (10 human-labeled clips) — p95 clears
+the gate on a human-validated reference; one known structural failure at corpus
+start, covered by R.6**.
+
+---
+
+#### Step V — Heading wildcard ruling: options for the owner, not a decision
+
+**No option is chosen here.** R.5 removes the ARBITRARINESS of where an
+unscripted heading's seconds go; it does not decide WHERE they go, and that is a
+product ruling. What follows is the measured situation and every candidate rule
+with its consequences.
+
+**What is actually at stake, measured from `docs/phase3-step-k-heading-sweep.csv`
+and the Step M golden baseline.** Ten unscripted "Level N ..." recitations in V6,
+one per chapter. Nine sit between two committed segments and have a measurable
+gap; the tenth sits at corpus start, before segment 1, and is a different case
+(R.6 owns it — there is no preceding segment to give anything to, and
+`headExtendFirstSegment` already stretches segment 1 back to t=0).
+
+  * Total audio at stake: **37.50s across 9 gaps** — 2.64% of V6's 1421.29s.
+  * Per gap: mean **4.17s**, range **2.79-5.58s**.
+  * Where today's committed boundary actually falls inside the recitation:
+    **median 55% of the way in, range 23-68%** (n=8). One gap (662.24-665.03s)
+    contains TWO committed boundaries, i.e. an entire short segment is currently
+    living inside a spoken chapter title.
+  * Today the preceding segment absorbs **0.92-2.93s** and the following segment
+    absorbs **0.98-3.16s**, per gap, with the split decided by whichever spurious
+    silence inside the recitation the picker happened to reach.
+
+Every option below preserves Key Invariant (b) (Σ committed durations =
+audioDuration) unless its row says otherwise, and none changes total timeline
+length, because the audio's length is fixed regardless of who is charged for it.
+
+| # | Rule | Preceding segment | Following segment | Total length | Segment count |
+|---|---|---|---|---|---|
+| **A** | All to the PRECEDING segment | grows by the full gap: **+0.98 to +3.16s** vs today (mean +2.14s) | starts at its own first spoken word: **starts 0.98-3.16s later** than today, duration unchanged | unchanged | unchanged |
+| **B** | All to the FOLLOWING segment | ends at its own last spoken word: **shrinks 0.92-2.93s** vs today (mean 2.27s) | grows by the full gap, **starts 0.92-2.93s earlier** than today | unchanged | unchanged |
+| **C** | Even 50/50 split, deterministic | grows/shrinks by **at most ±1.0s** vs today (today's median split is already 55%) | mirror image, same magnitude | unchanged | unchanged |
+| **D** | The heading gets its own explicit span, owned by neither neighbour | ends at its own last word (as B) | starts at its own first word (as A) | unchanged | **+9 segments** the user never authored |
+| **E** | Do nothing — keep today's picker-decided split | unchanged | unchanged | unchanged | unchanged |
+
+**Which produces the least user-visible drift — and the answer depends on which
+question is being asked, so both are given.**
+
+*Least change from what the timeline renders TODAY: **C**.* Today's split already
+sits at a median of 55%, so formalizing it at 50% moves each of the nine
+boundaries by well under a second, and seven of the nine by under 0.5s. Nothing
+the owner has already reviewed and accepted would visibly move. **E** is trivially
+zero drift but leaves the split non-deterministic, so the same project can re-sync
+to a different answer.
+
+*Least visible as a DEFECT to someone watching for the first time: **A**.* A
+picture that holds a little longer than its narration is close to invisible —
+this is ordinary editorial pacing, and the viewer has no reference for when the
+cut "should" have come. The opposite error is conspicuous: under **B** the next
+chapter's image appears while the previous chapter's narration has only just
+finished and a title is being read, which reads as a cut arriving early. Under
+**C** the cut lands *inside a spoken phrase* — mid-title, between "Level" and the
+chapter name — which is audibly wrong in a way neither A nor B is, and which is
+the actual complaint behind this whole class.
+
+**Which is simplest to reason about later: A.** One sentence a future maintainer
+can hold entirely in their head — *unscripted audio belongs to the segment
+already on screen* — with no arithmetic, no split point, no tie-break, and no new
+concept in the data model. **D** is conceptually the cleanest description of
+reality (the audio genuinely belongs to nobody) but is the most expensive to live
+with: nine segments appear that no user authored, each needs an asset or a defined
+empty-render behaviour, and every consumer of the segments array — the timeline,
+the drawer, the export router, the sync log — grows a case for a segment class
+that has no script text. **C** requires the reader to know where the split point
+comes from and why it is 50 and not 55. **B** is as simple as A but is the one
+whose failure mode a viewer notices.
+
+**A genuine argument FOR B, stated because it is real and cuts against the
+recommendation.** Editorially, a chapter title introduces the chapter that
+follows it. Under B the incoming chapter's image is on screen while its own title
+is spoken, which is what a human editor would probably do by hand. The cost is
+that every one of these nine cuts then lands earlier than the ear expects it, and
+this programme's own ear-verified record shows early cuts are exactly what gets
+reported as a defect. If the owner values the editorial reading over the
+perceptual one, B is defensible and should be chosen deliberately, not by
+accident.
+
+**RECOMMENDATION (clearly marked as a recommendation, not a decision).**
+
+> Take **A — assign the whole unscripted gap to the PRECEDING segment**, logged
+> as an explicit `unscripted-gap` sync-log entry naming the segment, the
+> duration, and the heard text, so it is inspectable rather than silent.
+>
+> Reasoning, in order of weight: (1) it is the only option whose failure mode is
+> invisible rather than conspicuous — a held picture versus an early cut or a cut
+> inside a spoken phrase; (2) it is one sentence with no arithmetic, which is
+> what a rule has to be to survive three phases of refactoring; (3) it preserves
+> invariant (b) and the segment count unchanged, so nothing downstream of Stage 4
+> learns a new case; (4) it matches what R.5 already recommended, so accepting it
+> costs no re-specification. The drift it introduces versus today is real and
+> bounded — nine segments hold on average 2.14s longer, none more than 3.16s —
+> and that drift is in the direction the eye forgives.
+>
+> If the owner prefers the editorial reading (title belongs to the chapter it
+> announces), choose **B** deliberately; it is the only other option I would
+> defend. I would not recommend C (keeps a cut inside a spoken phrase), D (buys
+> conceptual purity with nine phantom segments), or E (leaves the outcome
+> non-deterministic across re-syncs).
+
+**This ruling is required before Phase 5, not before Phase 3.** R.5's wildcard is
+what makes the choice available; the choice itself only has to be made when the
+fence replaces the picker.
+
+---
+
+#### Step W — C05, C10 and C11 made trustworthy, or excluded
+
+Script: `scripts/phase4-step-w-trust.py`. Live repro:
+`scripts/phase4-step-w-k13-repro.test.ts`.
+
+**A material correction to Step S, found immediately and reported rather than
+absorbed.** Step S's write-up claims "Requirement 1 — every check catches 100% of
+its poison cases: PASS, 13/13." **That was false when it was written.** Running
+the committed harness unmodified at `040cc63` prints `POISON RESULT: 12/13
+tripped -> FAIL`. C05's poison did not trip: its poison corpus's segment texts do
+not contain the word "it", so the check's own `real_word` vocabulary test
+discarded the candidate before testing it. The claim was not verified against the
+harness's own output. It is corrected here, and the harness now genuinely prints
+13/13.
+
+**C05 — route taken: RECOVERED FA TOKEN ARRAYS. Now CI-IN.**
+
+Step S reported C05 as "not validatable on these artifacts" because the FA per-
+word arrays were lost with `/tmp/phase3`. That is only partly true and the
+correction is worth stating: **the arrays needed for this specific check are
+committed.** `docs/phase3-onset-{v6,173}-fa.csv` is the PRE-FIX (ungated)
+attribution for every scored pause with real FA word spans;
+`...-fa-corrected.csv` is the POST-FIX (gated) one. Their disagreement IS Step 1's
+own labelled ground truth — 12 rows on V6 (11 text changes plus the one row the
+adjacent-silence dedup collapsed) and 1 on 173.
+
+Two things were wrong with the Step S formulation and both were changed:
+
+  * **Wrong input.** It ran over the whisper `-ml 1` corpus baselines, which are
+    sub-word fragmented and GAPLESS (Phase 2b Finding 2 — each token starts where
+    the previous ended, so a pause is absorbed into the following word's span).
+    That is why 59-100% of its 189 findings were the gapless signature rather than
+    the defect. The defect is defined over whole words with real gaps.
+  * **Wrong predicate.** It tested an overlap FRACTION (≥50% of the pause
+    covered). The shipped gate in `measure-word-onset.py` is not that: a candidate
+    must END at or past the silence's own MIDPOINT. A word lying wholly AFTER a
+    pause overlaps it 0% and is the CORRECT attribution — so the fraction test
+    fires on nearly everything. Measured directly on the FA arrays: **692 findings
+    out of 696 pauses.**
+
+Rewritten to the shipped gate and run on the FA arrays: **recall 13 of 13, zero
+false positives across 696 real scored pauses.** The flagged rows are exactly the
+"it."/"hard."/"Yaro"/"temporary."/"right."/"through" set, each a 60-280ms word
+whose own midpoint sits 6-129ms past its pause start. **Thresholds unchanged** —
+the gate value came from the shipped scorer, not from this data.
+
+*Where C05 belongs:* Step O item 5's own verdict is "a bug in the measurement
+tool, not the production pipeline… no production check needed." That still
+stands. C05 goes into the MEASUREMENT harness's CI as a regression lock, so a
+future re-measurement cannot silently drop the fix — not into the app's.
+
+**C10 — route taken: EAR-VERIFIED CORPUS CASES. Stays CI-OUT.**
+
+Scored against `docs/verification-baseline.csv` — the owner's own listening
+verdicts — by rebuilding each boundary's script-word key from the committed
+baseline segments. 63 of 70 keys resolve; 4 of the 7 that do not are apostrophe/
+hyphen normalization mismatches and are named in the script's output rather than
+dropped silently.
+
+  * On the **37 boundaries the owner listened to and called CORRECT**: 0 fires.
+    Clean.
+  * On the **4 boundaries the owner called WORD-SHIFTED**: **0 of 4 found.**
+  * Its single V6 finding (segment 70) has no ear verdict either way and cannot be
+    adjudicated.
+
+**Quiet AND blind. C10 stays out of CI.** A rule that fires on none of the defects
+it was written for detects nothing, and its findings cannot be acted on. This
+confirms rather than overturns Step O item 10's own "explicitly out of scope"
+verdict. Recall was 0 of 3 in Step S against a smaller resolved set and is 0 of 4
+here against a larger one — the extra evidence did not change the answer.
+
+**C11 — route taken: LIVE K13 REPRO. Now CI-IN.**
+
+`scripts/phase4-step-w-k13-repro.test.ts` runs against the REAL production
+functions and the REAL 173 corpus, and asserts the DEFECT:
+
+  * **Part 1** — `parseProjectData` (production, `src/App.tsx`) is run on the 173
+    project's own scene doc and script. It mints **175 segments, 0 of which carry
+    any lock field.** Apply Sync's clean-slate rebuild means no lock can reach the
+    timing chain at all; `preserveEffectFields` carries five effect fields forward
+    by `assetId` and `locked` is not among them.
+  * **Part 2** — the lost flag is load-bearing, not cosmetic. Real committed 173
+    segments are fed to the production `applyAnchorBasedTiming` twice, identical
+    except for one `locked: true`, with the successor's anchor squeezed 0.9s. The
+    locked run preserves the 4.96s duration; the unlocked run shrinks it to 4.06s.
+    **900ms of divergence** on one segment from one flag.
+
+This is the difference between a defect this repo asserted and one it has
+demonstrated. **The repro doubles as the regression test: it MUST START FAILING
+when Stage 3 fixes K13** — that is the signal the fix landed, not a broken test,
+and the file says so at the top so nobody "repairs" it.
+
+**The three checks that over-fired on healthy data — what changed, and proof the
+poison still trips.** All three are re-run both ways by
+`scripts/phase4-step-w-trust.py`; the numbers below are its output.
+
+| Check | What changed (mechanism, not threshold) | Poison OLD | Poison NEW | False positives OLD → NEW | Real detection preserved? |
+|---|---|---|---|---|---|
+| **C02** | attribution test word-SET → SUBSTRING of the segment's own normalized text, plus pure-digit tokens counted as attributed | TRIP | **TRIP** | **8 → 0** on 173+Spanish (neither has a heading) | **Yes** — V6 7 → 6 findings, and all 6 are genuine heading recitations; the one lost was a fragmentation artifact, not a heading |
+| **C05** | changed twice: Step S restricted it to real-word gated-vs-ungated disagreements (219 → 189, still a false-positive machine); Step W changed the PREDICATE (overlap fraction → the shipped end-past-midpoint gate) and the INPUT (whisper `-ml 1` baselines → recovered FA arrays) | MISS (see the correction above) | **TRIP**, and the healthy control row placed beside it is correctly ignored | **692 → 13** findings on 696 FA pauses, and all 13 are the labelled defects | **Yes** — recall went from unmeasurable to 13/13 |
+| **C10** | a seam word counts only if DISTINCTIVE (≥3 chars, not a closed-class English/Spanish function word) | TRIP | **TRIP** | **29 → 1** (V6 23→1, 173 6→0) | **No, and this is the point.** Recall against the ear is 0/4 before and after. The change made it quieter without making it useful — quieter is not fixed, and it is why C10 is excluded |
+
+**No threshold was changed in any of the three.** Every change is to what the
+check reads or how it decides, and each is stated at its own call site in the
+harness.
+
+**The count reconciled: 12 checks, 13 assertions, no 13th check and no renumbering.**
+Step O item 1 is ONE inventory entry covering TWO structurally different
+assertions — "the committed slot contains no transcribed word at all" and "the
+committed slot is far too short for the words it holds". They share a paragraph
+and nothing else: different inputs (token positions vs. character count),
+different thresholds (none vs. 40 chars/sec), different failure modes, and they
+catch different things (only the second catches segment 320). They are therefore
+poisoned and run separately, as **C01a** and **C01b**. That is the whole
+discrepancy: **12 inventory items, 13 assertions, 13 poison cases.**
+
+---
+
+#### Step X — the manual verification harness
+
+**One command, no arguments:**
+
+```
+python3 scripts/phase4-step-x-verify.py
+```
+
+Runs in **4 seconds** against a 900s budget. No third-party imports (the repo's
+`.venv-phase4` is not required for this script). Walks all 13 rules in front of
+the reader; for each it prints, in plain language, what the rule checks and why
+that matters, then runs it twice — once on the deliberate poison where it MUST
+fire, once on real corpus data where it MUST stay quiet — printing the rule name,
+the input, what the rule actually saw, and PASS/FAIL for each half. It ends with a
+tally, a list of exported clips, and an honest evidence ranking.
+
+**Result: 13/13 poison halves PASS, 13/13 real halves PASS, and the harness still
+exits 1** — because C10 carries a **third** half the other rules do not need, and
+fails it. That third half exists precisely so the headline count cannot be read as
+an all-clear:
+
+```
+  C10    PASS     PASS    recall: FAIL          D      OUT
+  -> the headline 13/13 is TRUE and INCOMPLETE. C10 fires on its poison and
+     stays quiet on healthy data, and is still useless, because it finds none
+     of the real defects it exists for. Read the ranking below, not the count.
+```
+
+**Two rules are INVERTED and the harness says so on screen rather than finessing
+it.** C11's real half cannot be "stay quiet" — K13 is an open defect, so there is
+no clean corpus; instead it re-runs the live vitest repro and requires it to still
+reproduce. C12's poison IS healthy data — a synthetic accurate source with
+symmetric ±20ms noise — because a rule that fires on it proves the GATE under test
+is the defect, which is what Step O item 12 asserts analytically.
+
+**Clips exported, so the audible defects can be heard rather than read about.**
+Written to `.work-phase4/step-x-clips/` (gitignored), cut from the original corpus
+`.m4a` files with the production ffmpeg sidecar:
+
+| Clip | Source | What to listen for |
+|---|---|---|
+| `C02_v6_unscripted_heading.wav` | V6 0.00-6.14s | the narrator reciting a chapter title that appears in no script line |
+| `C03_v6_dropout_window.wav` | V6 78.50-89.20s | ~10s where the model transcribed almost nothing that was said |
+| `C04_173_breath_boundary.wav` | 173 16.01-21.01s | "They're the worst" — the cut falls after a breath, not at the sentence gap |
+| `C05_v6_it_trailing_word.wav` | V6 64.10-67.60s | "…it." then a long pause — the 60ms word that got blamed for the pause |
+| `C10_v6_unadjudicated_seam.wav` | V6 217.69-223.69s | C10's only V6 finding, which has no ear verdict either way |
+
+**Ear-verified citations printed inline**, per rule, with the clip and the human
+timestamp: C04 cites 173's `They're the || worst` (segment 5-6, owner verdict
+word-shifted — the exact fixture the curr-side seam exemption was disabled over)
+and the five Spanish Step U clips with audible breaths and their human boundaries
+(clip3_02 1.571-1.758s, clip3_03 1.652-1.804s, clip3_07 1.211-1.423s, clip3_08
+1.227-1.375s, clip3_09 1.240-1.433s). C10 cites the owner's own word-shift
+verdicts by key.
+
+**The honest evidence ranking the harness prints — which rules rest on weaker
+evidence than the others.**
+
+| Grade | Rules | Why |
+|---|---|---|
+| **A** — an independent ground truth says the rule is right | **C05, C11** | C05: 13/13 labelled instances, 0 FP over 696 real pauses, and the labels come from the diff of two committed scorer outputs, so they were not produced by the rule under test. C11: a live reproduction against production code and the real 173 project — the only rule here backed by running the actual app pipeline. |
+| **B** — fires exactly on defects already known, nowhere else, but the ground truth is this programme's own analysis rather than an outside ear | **C02, C03, C06, C12** | C02: 6 genuine V6 headings, 0 elsewhere, recall 6 of 10 known. C03 and C06 find the same flash-attention dropout from two different signals — corroboration, not one result counted twice. C12 is an argument about a gate, proved on 3 corpora plus a synthetic source. |
+| **C** — clean on real data, but no live instance has ever tripped them, so SENSITIVITY is unproven | **C01a, C01b, C04, C07, C08, C09** | Quiet here proves the corpus is clean; it does not prove the rule would catch a dirty one. **C04 deserves the most suspicion of the whole set**: breath misplacement is the dominant real-world failure this programme has chased, yet C04 reads zero — consistent with the shipped index-based breath fix having worked, and also exactly what a rule that cannot see the defect would print. C01b and C09 are only demonstrable against the stale pre-Phase-2a fixture, because the model swap already repaired their one real instance. |
+| **D** — failed validation, do not put it in CI | **C10** | 0 of 4 against the owner's own word-shift verdicts, quiet on 37 correct controls, blind to every known defect. |
+
+**Recommended for CI (12):** C01a, C01b, C02, C03, C04, C05 (in the measurement
+harness's CI, not the app's), C06, C07, C08, C09, C11 (as the K13 regression
+lock), C12 (as a standing argument, not a data check). **Kept out (1):** C10.
+
+---
+
+#### Steps U-X deliverable summary
+
+Spanish scored against the owner's ear and settled: **reference bias, as English
+was** — FA within 16-43ms on six of seven failures where raw `silencedetect` sits
+118-243ms early, one genuine −1084ms error whose corpus-start/duplicated-word
+cause is already covered by R.6, and a corrected-reference p95 of **50.4ms**
+against the approved 250ms gate, with the n=22 rank caveat stated rather than
+hidden and nothing tuned after the labels arrived (Step U). Five candidate rules
+for the 37.50s of unscripted heading audio, each with its consequence for both
+neighbours and for total length, the two different readings of "least drift"
+separated, a real counter-argument for the runner-up stated, and a marked
+recommendation for the owner to accept or reject (Step V). C05 rebuilt on
+recovered FA arrays (recall 13/13, 0 false positives over 696 pauses) and C11
+backed by a live K13 reproduction against production code — both now trustworthy;
+C10 validated against the owner's ear, found blind at 0 of 4, and **kept out of
+CI**; the three mechanism changes each proved to keep their poison detection; and
+Step S's "13/13 poison PASS" corrected to the 12/13 FAIL it actually printed
+(Step W). A single-command harness that walks all 13 rules twice each, exports 5
+clips of the audible defects, cites the ear-verified timestamps, prints a tally
+and an evidence ranking that names its own weakest rules, and exits non-zero
+because one of them failed (Step X).
+
+**No `src/` file changed. No production Rust written. No threshold retuned.** New:
+`scripts/phase4-step-u-score-spanish.py`, `scripts/phase4-step-w-trust.py`,
+`scripts/phase4-step-w-k13-repro.test.ts`, `scripts/phase4-step-x-verify.py`,
+`docs/phase4-step-u-spanish-scored.csv`. Amended:
+`scripts/phase4-step-s-structural-checks.py` (C05 rewritten and moved out of the
+Corpus-shaped loop, its poison corrected), `docs/phase4-step-s-check-results.csv`
+(regenerated, 198 → 9 rows, the drop being C05's 189 retired false positives).
+`.gitignore` gained `.venv-phase4/` and `.work-phase4/`.
+
+**Rust gates: two of three closed.** Step U closed the Spanish accuracy question.
+Step W/X closed the structural-check question, with C10 excluded by name rather
+than shipped unverified. **Step V is deliberately NOT closed** — it is an owner
+ruling, laid out for a decision, and it does not block Phase 3's Rust work; it
+blocks Phase 5.
 
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
