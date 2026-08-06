@@ -57,6 +57,14 @@ import {
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import { computeDragCascade, MIN_SEGMENT_DURATION } from './services/dragCascade';
+import {
+  timelineContentX,
+  segmentEdgeContentX,
+  computeGrabOffsetPx,
+  resolveDragEdge,
+  MIN_PLAYBACK_SPEED,
+  MAX_PLAYBACK_SPEED,
+} from './services/dragGeometry';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import {
@@ -312,8 +320,8 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
 // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
-const MIN_PLAYBACK_SPEED = 0.5;
-const MAX_PLAYBACK_SPEED = 2.0;
+// MIN_PLAYBACK_SPEED / MAX_PLAYBACK_SPEED moved to services/dragGeometry.ts (K16),
+// alongside the drag math that applies them; imported back at the top of this file.
 const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
 
 // Enhanced parser that handles heading-voiceover logic
@@ -3889,7 +3897,7 @@ export default function App() {
                   setCurrentTime(time);
                   if (audioRef.current) audioRef.current.currentTime = time;
                 }}
-                onResizeStart={(id, type) => {
+                onResizeStart={(id, type, downClientX) => {
                   setResizingId(id);
                   setResizingType(type);
                   document.body.classList.add('resizing');
@@ -3901,98 +3909,107 @@ export default function App() {
                   const pps = pixelsPerSecondRef.current;
                   // B3 — cache the timeline element + its left edge ONCE at drag start.
                   // rect.left is stable for the whole gesture, so re-measuring it (a
-                  // layout read) on every mousemove was pure thrash. scrollLeft is still
+                  // layout read) on every move was pure thrash. scrollLeft is still
                   // read live, but only at the top of each rAF frame, before any write.
                   const timeline = document.getElementById('timeline-scroll-area');
                   if (!timeline) return;
                   const rectLeft = timeline.getBoundingClientRect().left;
-                  // B1 — elements whose width we update directly during the drag (visual
-                  // row + waveform row share the same data-seg-id), so we avoid a
-                  // per-frame setProject/full re-render. The real state change is
-                  // committed ONCE on mouseup via applyDurationChange (unchanged, below).
+                  // B1 — elements whose geometry we update directly during the drag
+                  // (the thumbnail-lane card and the waveform-lane cell share the same
+                  // data-seg-id), so we avoid a per-move setProject/full re-render. The
+                  // real state change is committed ONCE on pointerup, below.
                   const liveEls = Array.from(
                     timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
                   );
-                  let lastX = 0;
                   let hasMoved = false;
                   // Capture video context at drag-start for speed coupling.
                   const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
                   const isVideoSeg = dragAsset?.type === 'video';
-                  const srcDur = originalTarget.sourceDuration ?? 0;
 
-                  // Pointer clientX -> content-space x (same formula + -24 gutter as before).
-                  const computeX = (clientX: number): number =>
-                    clientX - rectLeft + timeline.scrollLeft - 24;
-                  // Live duration implied by a content-space x — mirrors the mouseup math
-                  // so the width shown during the drag matches the value committed on drop.
-                  // Used for the visual width ONLY; the committed state is computed
-                  // independently in handleUp (kept identical to the pre-change path).
-                  const liveDurationForX = (x: number): number => {
-                    let liveDuration: number;
-                    let liveTrimStart: number = originalTarget.trimStart ?? 0;
-                    if (type === 'end') {
-                      liveDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
-                    } else {
-                      const rawDelta = (x / pps) - originalTarget.startTime;
-                      liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
-                      liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
-                    }
-                    if (isVideoSeg && srcDur > 0) {
-                      const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
-                      if (liveClipLen > 0) {
-                        const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
-                        const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
-                        liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
-                      }
-                    }
-                    return liveDuration;
-                  };
+                  // K16 — how far the pointer sat from the edge it grabbed, held
+                  // constant for the whole gesture. Subtracting it on every move is
+                  // what keeps the edge under the exact point of the handle the user
+                  // is holding, instead of snapping it to the pointer on the first
+                  // move (the handles are 8px wide, so that snap was worth up to 8px).
+                  const grabOffsetPx = computeGrabOffsetPx(
+                    timelineContentX(downClientX, rectLeft, timeline.scrollLeft),
+                    originalTarget,
+                    type,
+                    pps,
+                  );
+                  // Content-space x the grabbed edge should sit at, for a given
+                  // pointer position. timelineContentX carries NO padding correction —
+                  // the container measures 0px padding / 0px border; the pre-K16 `- 24`
+                  // was a stale constant from the initial commit's `p-6` container and
+                  // was placing every dragged edge 24px left of the pointer.
+                  const edgeXFor = (clientX: number): number =>
+                    timelineContentX(clientX, rectLeft, timeline.scrollLeft) - grabOffsetPx;
+                  let lastEdgeX = segmentEdgeContentX(originalTarget, type, pps);
 
-                  // B5 — coalesce mousemoves into a single rAF; only the latest pointer
-                  // position matters per frame.
+                  // B5 — coalesce pointermoves into a single rAF; only the latest
+                  // pointer position matters per frame. The frame body is deliberately
+                  // the cheapest thing that can express the drag: one scrollLeft read,
+                  // one pure resolveDragEdge call, and two style writes per element. No
+                  // React state is touched, so no render, no timing recomputation and
+                  // no cascade runs until release.
                   let rafId: number | null = null;
-                  let pendingEvent: MouseEvent | null = null;
+                  let pendingEvent: PointerEvent | null = null;
                   const applyFrame = (): void => {
                     rafId = null;
                     if (!pendingEvent) return;
-                    lastX = computeX(pendingEvent.clientX);
-                    const w = `${liveDurationForX(lastX) * pps}px`;
-                    for (const el of liveEls) el.style.width = w;
+                    lastEdgeX = edgeXFor(pendingEvent.clientX);
+                    // Same function the commit below calls — the live preview cannot
+                    // drift from the value that will actually be committed.
+                    const live = resolveDragEdge({
+                      segment: originalTarget,
+                      edge: type,
+                      edgeContentX: lastEdgeX,
+                      pixelsPerSecond: pps,
+                      isVideo: isVideoSeg,
+                    });
+                    const w = `${live.duration * pps}px`;
+                    const l = `${live.segmentLeftPx}px`;
+                    for (const el of liveEls) {
+                      el.style.width = w;
+                      // K16 — `left` is written too. Pre-K16 only `width` moved, so a
+                      // START-edge drag pinned the very edge the user was holding and
+                      // moved the opposite one instead: the grabbed edge's lag equalled
+                      // the whole drag distance. On an END-edge drag this is a no-op
+                      // write of the segment's own unchanged left.
+                      el.style.left = l;
+                    }
                   };
-                  const handleMove = (e: MouseEvent): void => {
+                  const handleMove = (e: PointerEvent): void => {
                     pendingEvent = e;
                     hasMoved = true;
                     if (rafId === null) rafId = requestAnimationFrame(applyFrame);
                   };
                   const handleUp = () => {
                     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-                    // Ensure lastX reflects the final pointer position even if the last
-                    // mousemove's rAF frame had not fired yet — so the committed size
-                    // matches exactly where the user released.
-                    if (pendingEvent) lastX = computeX(pendingEvent.clientX);
+                    // Ensure lastEdgeX reflects the final pointer position even if the
+                    // last pointermove's rAF frame had not fired yet — so the committed
+                    // size matches exactly where the user released.
+                    if (pendingEvent) lastEdgeX = edgeXFor(pendingEvent.clientX);
                     setResizingId(null);
                     setResizingType(null);
                     document.body.classList.remove('resizing');
-                    window.removeEventListener('mousemove', handleMove);
-                    window.removeEventListener('mouseup', handleUp);
+                    window.removeEventListener('pointermove', handleMove);
+                    window.removeEventListener('pointerup', handleUp);
+                    window.removeEventListener('pointercancel', handleUp);
                     // isResizingRef is cleared by the resizingId effect below,
                     // not here — see D12 fix note there.
                     // D12 fix (round 4) — the real cause of the "playhead jumps to
-                    // wherever I dragged" report: each segment row is a flex item, so
-                    // its on-screen left edge is the sum of every PRECEDING row's width,
-                    // which never changes while THIS row is being resized. The right-edge
-                    // handle sits at `right-0`, so it tracks the cursor continuously (row
-                    // width is driven live by cursor x) and the mouseup lands on it. The
-                    // left-edge handle sits at a fixed `left-0` that never moves during
-                    // the drag, so after any meaningful left-edge drag the cursor ends up
-                    // far from it at release. The browser fires a native 'click' right
-                    // after this mouseup, hit-tested at the release position — for a
-                    // left-edge drag that lands on the segment ROW body, not the handle,
-                    // whose onClick is onSeek(s.startTime) (Timeline.tsx) — a real,
-                    // direct setCurrentTime call, unrelated to anything currentSegment-
-                    // or transition-preview-derived. Swallow exactly that one ghost click
-                    // before any React handler (row onClick, ruler onMouseDown-installed
-                    // handlers, etc.) can see it.
+                    // wherever I dragged" report: the left-edge handle sits at a fixed
+                    // `left-0` inside the card, so after a left-edge drag the pointer
+                    // ends up away from it and the browser's native 'click', hit-tested
+                    // at the release position, lands on the segment ROW body instead of
+                    // the handle — and that row's onClick is onSeek(s.startTime)
+                    // (Timeline.tsx), a real, direct setCurrentTime call. Swallow
+                    // exactly that one ghost click before any React handler can see it.
+                    // (K16 note: the card now tracks the pointer on a left-edge drag,
+                    // which narrows but does not close this — the handle is only 8px
+                    // wide and the release can still land beside it — so the swallow
+                    // stays.)
                     if (hasMoved) {
                       const swallowGhostClick = (clickEvent: MouseEvent) => {
                         clickEvent.stopPropagation();
@@ -4001,44 +4018,36 @@ export default function App() {
                       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
                     }
                     if (!hasMoved) return;
-                    // Compute final duration from last known mouse position.
-                    let finalDuration: number;
-                    let finalTrimStart: number = originalTarget.trimStart ?? 0;
-                    if (type === 'end') {
-                      finalDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
-                    } else {
-                      const rawDelta = (lastX / pps) - originalTarget.startTime;
-                      finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
-                      finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
-                    }
-                    // Speed coupling: clamp duration + compute new playbackSpeed for video.
-                    let speedUpdate: { playbackSpeed: number } | undefined;
-                    if (isVideoSeg && srcDur > 0) {
-                      const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
-                      if (finalClipLen > 0) {
-                        const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
-                        const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
-                        finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
-                        const newSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration));
-                        speedUpdate = { playbackSpeed: newSpeed };
-                      }
-                    }
+                    // Commit — one pure call, the identical one the live frames used.
+                    const final = resolveDragEdge({
+                      segment: originalTarget,
+                      edge: type,
+                      edgeContentX: lastEdgeX,
+                      pixelsPerSecond: pps,
+                      isVideo: isVideoSeg,
+                    });
+                    const speedUpdate = final.playbackSpeed === undefined
+                      ? undefined
+                      : { playbackSpeed: final.playbackSpeed };
                     // Negligible drag — revert live preview to original.
-                    if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
+                    if (Math.abs(final.duration - originalTarget.duration) < 0.01) {
                       setProject(prev => ({ ...prev, segments: originalSegments }));
                       return;
                     }
                     const direction = type === 'end' ? 'right' as const : 'left' as const;
                     speedBaselineRef.current = null;
                     const succeeded = applyDurationChange(
-                      originalSegments, id, finalDuration, finalTrimStart, direction, speedUpdate,
+                      originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
                     );
                     // null cascade → locked neighbor blocked: revert live preview.
                     if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
                   };
                   isResizingRef.current = true;
-                  window.addEventListener('mousemove', handleMove);
-                  window.addEventListener('mouseup', handleUp);
+                  window.addEventListener('pointermove', handleMove);
+                  window.addEventListener('pointerup', handleUp);
+                  // A cancelled pointer (OS gesture takeover, device switch) must not
+                  // leave the drag armed forever; treat it as a release.
+                  window.addEventListener('pointercancel', handleUp);
                 }}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}

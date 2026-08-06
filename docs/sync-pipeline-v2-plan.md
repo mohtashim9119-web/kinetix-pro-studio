@@ -3582,6 +3582,142 @@ New: `src/services/dragCascade.ts`, `src/services/dragCascade.test.ts`. Amended:
 
 ---
 
+#### K16 — drag pointer accuracy and smoothness (owner report, fixed 2026-08-07)
+
+**Owner's report:** the dragged edge lags the pointer by roughly 100px,
+sometimes less, and does not track live. Target: CapCut/Premiere feel — the
+edge sits under the pointer exactly, every frame, both edges. Two candidates
+were named to check: a stale/wrong px-to-seconds scale factor (would scale with
+zoom), or a missing grab offset (would be a constant gap); scroll-offset and
+container-origin error were also to be checked.
+
+**Diagnosis, measured before anything was changed.** Three independent faults,
+none of which is the scale-factor hypothesis:
+
+1. **A stale container-origin constant, 24px, constant in pixels.** The
+   pointer→content mapping was `clientX - rect.left + scrollLeft - 24`. That
+   `- 24` is annotated `// 24 is padding` in the app's initial commit, where
+   `#timeline-scroll-area` genuinely carried `p-6 pt-10` (24px of real
+   horizontal padding). A later layout redesign changed the container to
+   `p-0 pt-[15px]` and the constant was never removed. Measured live in the
+   running app: the container's computed `paddingLeft` and `borderLeftWidth`
+   are both `0px`, and its content origin sits exactly `0px` from
+   `getBoundingClientRect().left`. So the term was a pure 24px error — constant
+   in PIXELS, which is why it looked zoom-dependent: in SECONDS it is
+   `24 / pixelsPerSecond`, so 0.24s at the default 100px/s and well over a
+   second when zoomed out. This answers the owner's candidate (a) as stated —
+   the scale factor itself was never wrong — but the container-origin term was.
+2. **No grab offset, up to 8px.** `onResizeStart` never received the pointer
+   position, so the edge snapped to wherever the pointer was rather than
+   preserving where inside the handle the user grabbed. Measured: the handles
+   are `w-2`, 8px wide.
+3. **The dragged edge did not move at all on a left-edge drag — the owner's
+   candidate (b), and the actual source of "roughly 100px."** Each segment
+   card is absolutely positioned from React state (`left`/`width`); the drag
+   loop wrote only `style.width`. On a right-edge drag that's correct — the
+   left edge is meant to stay put. On a LEFT-edge drag it means the grabbed
+   edge stayed pinned while the OPPOSITE edge moved in the opposite direction,
+   so the lag equalled the full drag distance, unbounded — not a fixed gap.
+   "Roughly 100px, sometimes less" is (3) on a left-edge drag and (1)+(2) on a
+   right-edge one.
+
+No scroll-offset or scale-factor error was found; `pixelsPerSecondRef` is read
+live at drag start and used consistently throughout.
+
+**Fix.** `src/services/dragGeometry.ts` (new, pure — no DOM/React) is the single
+source of truth for what a dragged edge position means:
+`timelineContentX` (pointer → content-space x, no padding correction — see
+fault 1), `computeGrabOffsetPx` (fault 2), and `resolveDragEdge` (the duration/
+trimStart/playbackSpeed math, unified — see below — plus `segmentLeftPx`, fault
+3's fix: on a start-edge drag this is `(originalEnd - duration) * pps`, pinning
+the right edge; on an end-edge drag it is the segment's own unchanged start).
+`App.tsx`'s handler now: reads the grab offset once at pointerdown; on every
+frame calls `resolveDragEdge` and writes `style.left`/`style.width` on BOTH the
+thumbnail-lane card and (new) the waveform-lane cell — Timeline.tsx's waveform
+sub-cell gained `data-seg-id={s.id}` so it tracks too, closing a smaller,
+related bug where the two lanes visibly disagreed during a drag.
+
+**Unification, not just relocation.** Pre-K16 the live-preview width
+(`liveDurationForX`) and the committed width (`handleUp`) were two
+hand-written copies of the same expression. Two copies of timing math that
+must agree is a drift risk by construction. There is now exactly one function,
+`resolveDragEdge`, called from both the per-frame preview and the commit —
+verified in `dragGeometry.test.ts` ("the live-preview duration and the
+committed duration are now one value, not two copies").
+
+**Smoothness — pointer capture, rAF batching, no per-move recomputation.**
+`onMouseDown`/`window.addEventListener('mousemove'/'mouseup')` replaced with
+`onPointerDown` + `element.setPointerCapture(pointerId)` +
+`window.addEventListener('pointermove'/'pointerup'/'pointercancel')` — capture
+guarantees the element keeps receiving events for the whole gesture even if the
+pointer leaves it, leaves the window, or the element re-renders underneath;
+`pointercancel` is handled identically to `pointerup` so an OS gesture takeover
+can't leave the drag armed forever. `touchAction: 'none'` on each handle stops
+the browser claiming the gesture as a scroll before the first move arrives.
+Moves are coalesced into a single `requestAnimationFrame` (unchanged pattern
+from before K16) — the frame body is one `scrollLeft` read, one pure
+`resolveDragEdge` call, and two `style` writes per element (four total, two
+lanes). **No React state is touched during the drag** — no `setProject`, so no
+re-render, no timing recomputation, no cascade — until `pointerup`, where the
+real commit runs exactly once via the same `applyDurationChange` →
+`computeDragCascade` path K15 already hardened.
+
+**Per-move cost, stated:** pre-K16, one duration/trimStart/speed computation
+(the live-preview copy) plus one `style.width` write per rAF frame; no
+`style.left` write, no full pointer-capture guarantee, native `mousemove`
+(bubble-only, droppable if the cursor left the handle). Post-K16: one
+`resolveDragEdge` call (duration+trimStart+speed+left, all four values, one
+function) plus two style writes (`left`+`width`) on up to two elements (two
+lanes) per rAF frame, under captured pointer events. The added cost is one
+extra property write per element per frame; the removed cost is a whole second
+hand-written duration computation that used to live only in the commit path
+and is now shared. Net: not more expensive in any way that matters at
+one-write-per-frame scale, and the previous implementation was already
+rAF-batched — K16 did not introduce batching, it removed the accuracy and
+liveness bugs sitting inside it.
+
+**Timing-neutrality proof (the owner's constraint).** `dragGeometry.test.ts`
+PART 1 transcribes `App.tsx`'s pre-K16 `handleUp` expression verbatim into a
+named reference function and asserts `resolveDragEdge` returns byte-identical
+`duration`/`trimStart`/`playbackSpeed` across a sweep of edge positions (both
+edges, five segment fixtures including video/non-video and an
+already-at-minimum segment, three zoom levels, positions swept from 0 to past
+the segment on both sides) — 30 sweep tests, all passing. **K16 changes which
+`edgeContentX` a given pointer position produces (PART 2); it does not change
+what a given `edgeContentX` means (PART 1).** That is the boundary the owner
+asked for proof of, and it is enforced by a test, not by inspection.
+
+**Verification.** New `src/services/dragGeometry.ts` + `dragGeometry.test.ts`
+(38 tests: PART 1 timing neutrality as above, PART 2 the pointer-accuracy
+fixes — the 24px constant reproduced and measured scaling in SECONDS not
+pixels, the grab-offset snap reproduced, both-edges-track-the-pointer
+assertions at three zoom levels). Also verified live in the running dev
+server (`preview_start` + synthetic `PointerEvent` dispatch, since no fixture
+project with real assets was available): a 3-segment project injected
+directly into `localStorage`, a right-edge drag on segment A moved through
+four pointer positions with the live DOM `style.width` matching the expected
+value to within 0.002px (float-display noise, not a real gap — previously off
+by tens of pixels) at every step, the COMMITTED result after `pointerup`
+matched the live extrapolation exactly (A: 5→6.443s, B: 5→3.557s, conserving
+the pair's total duration, C untouched — K15 locality holding in the real DOM
+too), and a left-edge drag on segment B moved `style.left` while pinning the
+opposite edge (`left + width` constant at 692.8px) — the direct fix for fault
+3. No console errors either drag. Suite: 55 files / 1351 tests, 0 failures
+(was 54/1313 after K15). `tsc --noEmit` clean. Step Y replay harness
+(`phase4-handoff-replay-sync.test.ts`, part of the suite) still reproduces
+Step M's golden values exactly — untouched, since nothing here runs outside an
+interactive drag.
+
+**No K13 change. No timing-source-swap change. No Rust. No test expectation
+edited.** New: `src/services/dragGeometry.ts`, `src/services/dragGeometry.test.ts`.
+Amended: `src/App.tsx` (drag handler rewritten on `resolveDragEdge`; two
+constants moved to the new service), `src/components/Timeline.tsx`
+(`onResizeStart` signature gains `clientX`; handles use `onPointerDown` +
+pointer capture instead of `onMouseDown`; waveform-lane sub-cell gains
+`data-seg-id`).
+
+---
+
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
 GATE: the English path must be provably byte-identical to today’s, verified against the frozen English baseline — so this phase does NOT shift English indices. Non-English rule verification requires the non-English corpus (K3); if only one non-English project exists by this point, the others’ rules land dormant behind their language keys and are verified when corpus material arrives — recorded as an explicit written acceptance at the Stage 1 lock.

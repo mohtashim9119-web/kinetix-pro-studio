@@ -59,7 +59,12 @@ interface Props {
   waveformSource: WaveformSource | null;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
-  onResizeStart: (id: string, type: 'start' | 'end') => void;
+  /** K16 — `clientX` is the pointerdown position, required so the drag can hold
+   *  the grabbed edge under the exact point of the handle the user pressed
+   *  instead of snapping it to the pointer (services/dragGeometry.ts's
+   *  `computeGrabOffsetPx`). Without it the edge jumps by up to the handle's
+   *  own 8px on the first move. */
+  onResizeStart: (id: string, type: 'start' | 'end', clientX: number) => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onSetTrimmingSegment: (id: string | null) => void;
@@ -538,12 +543,32 @@ export function Timeline({
                       </div>
                     )}
 
+                    {/* K16 — pointer events + pointer capture, not mousedown.
+                        Capture guarantees this element keeps receiving
+                        pointermove/pointerup for the whole gesture even when the
+                        pointer leaves it, leaves the window, or the element is
+                        re-rendered underneath — and the events still bubble to
+                        App's window listeners. `touchAction: 'none'` stops the
+                        browser claiming the gesture as a pan/scroll before the
+                        first pointermove arrives. `e.clientX` is forwarded so
+                        the drag can preserve the grab offset within the handle
+                        (services/dragGeometry.ts). */}
                     <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                      style={{ touchAction: 'none' }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        onResizeStart(s.id, 'start', e.clientX);
+                      }}
                       onClick={(e) => e.stopPropagation()}
                     />
                     <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                      style={{ touchAction: 'none' }}
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        e.currentTarget.setPointerCapture(e.pointerId);
+                        onResizeStart(s.id, 'end', e.clientX);
+                      }}
                       onClick={(e) => e.stopPropagation()}
                     />
 
@@ -665,6 +690,15 @@ export function Timeline({
                     return (
                     <div
                       key={`vo-new-${s.id}`}
+                      // K16 — carries data-seg-id so App's resize-drag writes its
+                      // live left/width here too. Without it only the thumbnail
+                      // lane tracked during a drag and this lane's cell snapped
+                      // into place at release, so the two lanes visibly
+                      // disagreed for the whole gesture. Purely visual: this
+                      // element has no handles and no click behaviour, and the
+                      // shared waveform TILE layer above still deliberately
+                      // carries no data-seg-id.
+                      data-seg-id={s.id}
                       style={{ position: 'absolute', left: `${voLayout.left}px`, width: `${voLayout.width}px` }}
                       className={`h-full relative flex items-center flex-shrink-0 border-r border-[rgba(255,255,255,0.05)] ${i % 2 === 1 ? 'bg-white/[0.015]' : ''}`}
                     >

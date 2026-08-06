@@ -530,6 +530,29 @@ src/
                      #   Dragging still locks NOTHING (K14 decision 9 point 1) and an already-locked
                      #   neighbour is still an impassable wall that returns null. Full record:
                      #   docs/sync-pipeline-v2-plan.md -> "K15 — drag over-absorption".
+    dragGeometry.ts  # Timeline drag-resize GEOMETRY (K16, 2026-08-07) — pure pointer-coordinates-in,
+                     #   segment-timing-out, sibling of dragCascade.ts above. timelineContentX
+                     #   (pointer clientX -> content-space x — carries NO padding correction;
+                     #   #timeline-scroll-area measures 0px padding/border, and the pre-K16 `- 24`
+                     #   was a stale constant left over from the app's initial commit, where the
+                     #   container genuinely had `p-6` padding, surviving a later redesign to `p-0`),
+                     #   computeGrabOffsetPx (distance from pointer to the grabbed edge, held
+                     #   constant for the gesture so the edge doesn't snap to the pointer on the
+                     #   first move), and resolveDragEdge — the SINGLE function for what a dragged
+                     #   edge position means, called from both the per-frame live preview and the
+                     #   pointerup commit (pre-K16 these were two hand-written copies of the same
+                     #   duration/trimStart/speed expression that had to be kept in sync by hand).
+                     #   resolveDragEdge also returns segmentLeftPx — the fix for a THIRD fault
+                     #   (unrelated to pointer math): pre-K16 the drag loop wrote only style.width,
+                     #   so a start-edge drag left the grabbed edge pinned and moved the OPPOSITE
+                     #   edge instead, lagging the pointer by the whole drag distance. Its own
+                     #   dragGeometry.test.ts PART 1 pins resolveDragEdge byte-identical to a literal
+                     #   transcription of the pre-K16 commit expression across a 30-case sweep — the
+                     #   timing-neutrality proof that K16 changes WHICH edgeContentX a pointer
+                     #   position produces, never what a given edgeContentX means. Also hosts
+                     #   MIN_PLAYBACK_SPEED/MAX_PLAYBACK_SPEED, moved from App.tsx alongside the math
+                     #   that uses them. Full record: docs/sync-pipeline-v2-plan.md -> "K16 — drag
+                     #   pointer accuracy and smoothness".
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-
@@ -1529,7 +1552,17 @@ src/
                      #   `, longest run N` when `entry.longestRun` is defined — backward compatible
                      #   with older entries built before the run-survival gates existed, which simply
                      #   omit the field and render the line unchanged.
-    Timeline.tsx          # Scrollable track + playhead + zoom. Each segment row's onClick calls
+    Timeline.tsx          # Scrollable track + playhead + zoom. Resize handles (K16, 2026-08-07) use
+                     #   onPointerDown + element.setPointerCapture (not onMouseDown) so the drag
+                     #   survives the pointer leaving the handle/window; touchAction:'none' stops the
+                     #   browser claiming the gesture as a scroll. onResizeStart's signature gained a
+                     #   third clientX param — App.tsx needs the pointerdown position to compute the
+                     #   grab offset (services/dragGeometry.ts's computeGrabOffsetPx). The waveform-
+                     #   lane sub-cell (~line 664) also gained data-seg-id={s.id} so App's resize-drag
+                     #   writes live left/width there too, not just the thumbnail lane — without it
+                     #   the two lanes visibly disagreed for the whole gesture; the shared waveform
+                     #   TILE layer above it still deliberately carries no data-seg-id.
+                     #   Each segment row's onClick calls
                      #   onSeek(s.startTime) directly — this is the element the D12 ghost-click
                      #   fix (App.tsx handleUp) guards against: a left-edge resize-drag ends with
                      #   the cursor far from the (fixed-position) left handle, so the browser's
