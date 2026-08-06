@@ -25,8 +25,17 @@ time-based (ms/seconds), not sample-based, results at 16kHz vs. the source's
 native rate differ only by sub-frame quantization noise -- not a source of
 disagreement large enough to move a boundary discussion.
 
-Usage:
-    python3 phase4-handoff-app-silence.py --wav /tmp/phase3/v6/audio_16k.wav --out /tmp/phase3/v6/silences_app.json
+Usage (normally invoked for you by scripts/phase4-restore-replay-inputs.py,
+which also verifies the output against the committed Step M baseline):
+    python3 scripts/phase4-handoff-app-silence.py \
+        --wav .work-phase4/replay/v6/audio_16k.wav \
+        --out .work-phase4/replay/v6/silences_app.json
+
+Artifact location note (Step Y, 2026-08-07): this used to be documented against
+/tmp/phase3/. That directory was purged and took the Step M replay harness's
+inputs with it — the fourth K8 recurrence. Working artifacts belong under
+.work-phase4/ (gitignored, durable); scripts/no-tmp-artifacts.test.ts now fails
+if a harness reaches for /tmp again.
 """
 import argparse
 import json

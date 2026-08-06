@@ -14,7 +14,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/v6-smear-baseline.csv` / `docs/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
-| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **Blockers 1/2/3 CLOSED — Spanish settled by owner ear (Step U): reference bias, corrected p95 50.4ms vs the approved 250ms gate.** Pre-implementation baseline (Steps M-P) and gate-closing pass (Steps U-X) captured; integration not started | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`) | 2026-08-06 |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **IMPLEMENTATION-READY, not started.** Blockers 1/2/3 CLOSED; **all three Rust gates closed** (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, **restored and proven faithful at Step Y**; readiness statement at Step Z. Integration not started | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
 | 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
@@ -2034,6 +2034,13 @@ start, covered by R.6**.
 
 #### Step V — Heading wildcard ruling: options for the owner, not a decision
 
+> **CLOSED 2026-08-07 — the owner ruled OPTION A.** The verbatim decision, and
+> what it binds concretely, are recorded as owner decision 8 at the head of the
+> "Phase 4 readiness close-out — Steps Y-Z" section below. The options analysis
+> below is retained unedited as the reasoning the ruling was made against; the
+> "no option is chosen here" framing describes this step as written, not the
+> current state.
+
 **No option is chosen here.** R.5 removes the ARBITRARINESS of where an
 unscripted heading's seconds go; it does not decide WHERE they go, and that is a
 product ruling. What follows is the measured situation and every candidate rule
@@ -2358,11 +2365,472 @@ Corpus-shaped loop, its poison corrected), `docs/phase4-step-s-check-results.csv
 (regenerated, 198 → 9 rows, the drop being C05's 189 retired false positives).
 `.gitignore` gained `.venv-phase4/` and `.work-phase4/`.
 
-**Rust gates: two of three closed.** Step U closed the Spanish accuracy question.
-Step W/X closed the structural-check question, with C10 excluded by name rather
-than shipped unverified. **Step V is deliberately NOT closed** — it is an owner
-ruling, laid out for a decision, and it does not block Phase 3's Rust work; it
-blocks Phase 5.
+**Rust gates: two of three closed *as of this pass*.** Step U closed the Spanish
+accuracy question. Step W/X closed the structural-check question, with C10
+excluded by name rather than shipped unverified. **Step V was deliberately NOT
+closed here** — it is an owner ruling, laid out for a decision, and it does not
+block Phase 3's Rust work; it blocks Phase 5. **It was subsequently CLOSED on
+2026-08-07 (Option A) — see owner decision 8 in the Steps Y-Z section below. All
+three gates are now closed.**
+
+### Phase 4 readiness close-out — Steps Y-Z (2026-08-07)
+
+**Scope discipline, honored: no production Rust, no `src/` file changed, no
+timing-source swap, no threshold retuned, no baseline re-fitted.** Baseline:
+HEAD `8f6b966`.
+
+---
+
+#### Owner decision 8, recorded verbatim as instructed — closes Step V
+
+> **Heading / unscripted audio: OPTION A is approved. The preceding segment
+> absorbs the full duration of unscripted audio. Log each as an explicit
+> unscripted-gap entry. Total timeline length unchanged, segment count
+> unchanged.**
+
+This is the ruling Step V laid out five options for and deliberately declined to
+make. **Step V is now CLOSED.** The three Rust gates are therefore all closed:
+Spanish accuracy (Step U), structural checks (Steps W/X), heading assignment
+(this decision).
+
+What it binds, concretely, for whoever implements it:
+
+  * The rule, in one sentence a maintainer can hold in their head: **unscripted
+    audio belongs to the segment already on screen.** No split point, no
+    tie-break, no arithmetic.
+  * It applies to the **9 measurable V6 gaps** (37.50s total, mean 4.17s, range
+    2.79-5.58s). The tenth "Level N" recitation sits at corpus start with no
+    preceding segment; R.6's file-start clamp owns that one, and
+    `headExtendFirstSegment` already stretches segment 1 back to t=0.
+  * Measured consequence versus what ships today: nine segments hold **+0.98 to
+    +3.16s longer** (mean +2.14s); each following segment starts that much later
+    and its own duration is unchanged. **Total timeline length unchanged.
+    Segment count unchanged. Key Invariant (b) preserved.**
+  * One gap (662.24-665.03s) currently contains TWO committed boundaries — an
+    entire short segment living inside a spoken chapter title. Under A that
+    segment's placement changes materially, not marginally; it is named here so
+    it is not discovered as a surprise.
+  * The `unscripted-gap` log entry must name the segment, the duration absorbed,
+    and the heard text, so the absorption is inspectable rather than silent.
+    Informational severity — this is designed behaviour, not a defect.
+  * **This blocks Phase 5, not Phase 3.** R.5's CTC wildcard is what makes the
+    choice available; the choice is only consumed when the fence replaces the
+    picker.
+
+The counter-argument for B recorded at Step V (a chapter title editorially
+introduces the chapter that follows it) is not withdrawn and was not wrong — it
+is overruled by decision, on the perceptual reading: an early cut is what this
+programme's own ear-verified record repeatedly reports as a defect, and a held
+picture is not.
+
+---
+
+#### Step Y — the Step M replay harness, restored and made re-runnable
+
+**The problem, and why this recurrence mattered more than the previous three.**
+`npx vitest run` at HEAD `8f6b966` reported **3 failed / 1284 passed**, all
+three being `scripts/phase4-handoff-replay-sync.test.ts` ENOENT-ing on
+`/tmp/phase3/*`. This is K8's fourth recurrence. The first three cost a harness,
+a driver script, and two answer keys. This one cost the ability to re-run **Step
+M's golden baseline** — the artifact that exists specifically so the Phase 3
+timing-source swap can be diffed per boundary rather than in aggregate. A
+baseline that cannot be re-run cannot prove anything: the committed CSVs would
+still be readable, but nothing could be compared against them.
+
+**What was restored, and from what.** Both missing inputs were regenerated from
+sources committed to this repository. New script:
+`scripts/phase4-restore-replay-inputs.py` (regenerate + self-verify; `--verify`
+checks without regenerating).
+
+| Input | Regenerated from | Tool |
+|---|---|---|
+| `transcript_tokens.json` (3989 / 1836 / 363 tokens) | `docs/{V6,173,Spanish}-Smear-Phase2a.csv` — the Phase 2a transcript-inspector exports, committed | the committed `scripts/extract-full-transcript.py` |
+| `silences_app.json` (547 / 239 / 27 intervals) | the corpus `.m4a` → 16 kHz mono transcode via the bundled ffmpeg sidecar | the committed `scripts/phase4-handoff-app-silence.py` |
+
+**Why a fresh whisper-cli run was deliberately NOT the restoration path, stated
+because it looks like the obvious choice and is the wrong one.** The lost
+`/tmp/phase3/*_raw_transcript*.json` files were, despite the name, the
+**post-`filterMalformedTokens`** arrays extracted from the inspector CSV
+exports — 3989/1836/363 tokens, not the pre-filter 4556/2082/399 whisper-cli
+emits. Re-transcribing would have produced a *different array* from the one Step
+M actually consumed, then re-filtered it live, and any edge-case disagreement
+would have been indistinguishable from a real pipeline change. Reconstructing
+from the committed CSV via the committed extractor reproduces the exact input.
+It is also ~23 minutes cheaper, but that is not the reason.
+
+**Where they now live: `.work-phase4/replay/<project>/` — gitignored, inside the
+repo, durable.** Same pattern Step Q established for `.listening-clips/` and
+`.answer-keys/`. The harness resolves this path relative to its own file
+location, not to `cwd`.
+
+**Proof the restoration is faithful, not merely present.** This was checked
+three ways, in increasing strength:
+
+1. **Input-level, value for value.** `phase4-restore-replay-inputs.py` diffs
+   every regenerated token against `docs/phase4-baseline-<key>-words.csv` and
+   every regenerated silence interval against
+   `docs/phase4-baseline-<key>-silences.csv` — the committed Step M outputs —
+   at 1e-9 tolerance. **0 differences across all 3 projects** (3989+1836+363
+   tokens, 547+239+27 intervals). A mismatch is a hard failure *before* the
+   replay harness runs, so a silently-wrong restoration cannot be mistaken
+   downstream for a real pipeline change.
+2. **Output-level, per boundary.** The harness was upgraded from "not a
+   correctness test" (its original words — it wrote a summary and asserted
+   almost nothing) to a **golden diff**. Every replayed segment's `order`,
+   `tag`, `text`, `anchorSource`, `startTime`, `duration` and `endTime` is
+   compared against `docs/phase4-baseline-<key>-segments.csv`; the skip set is
+   compared against `-skipped.csv` by index, tag and match counts; the R13
+   coverage gate must still not abort; Key Invariant (b) must still hold
+   exactly. **All three projects reproduce the committed Step M values with zero
+   divergence** — 444/172/26 segments, every boundary identical to 1e-9.
+3. **Negative control, so "green" is not vacuous.** A deliberate +0.01s
+   perturbation was injected into one segment's `startTime` and the suite
+   re-run: all three project tests failed, each naming the boundary by index and
+   tag (`seg 3 (004_grandmother_asleep) startTime: replay=14.35 baseline=14.34
+   (Δ0.010000s)`). The perturbation was then removed. The diff is live, and it
+   reports *which* boundary moved rather than a bare count — which is the whole
+   point for a per-boundary swap comparison.
+
+**Nothing was re-baselined.** No value in `docs/phase4-baseline-*.csv` was
+touched. Had any differed, the instruction was to stop and report rather than
+re-baseline; none did, so the question did not arise.
+
+**Suite result: `npx vitest run` → 52 files, 1289 tests, 0 failures.** Up from
+1284 passed / 3 failed. The +5 is the 3 now-passing replay tests plus 2 new
+assertions from the K8 tripwire below. `npx tsc --noEmit` is clean.
+`python3 scripts/phase4-step-x-verify.py` still runs and still exits 1 on C10 by
+design, unchanged.
+
+**What stops K8 recurring a fifth time: `scripts/no-tmp-artifacts.test.ts`.**
+Not a note in a document — a test that runs on every `npx vitest run` and fails
+at the moment someone writes a new `/tmp` artifact dependency, rather than weeks
+later when the file is gone and the context with it. Two rules of deliberately
+different strength:
+
+  * **RULE 1 — hard zero, no allowlist.** No `*.test.ts` under `scripts/` or
+    `src/` may reference `/tmp` in code. These are exactly the files that run on
+    every suite invocation, which is exactly the failure mode that just cost
+    three tests. Comments may still discuss `/tmp` (this file and the replay
+    harness both do); the scan strips them.
+  * **RULE 2 — a frozen per-file ceiling.** Each legacy `scripts/*.py`
+    measurement tool's `/tmp` occurrence count is pinned in a committed table
+    with a one-line reason. Adding one, or introducing `/tmp` in a new `.py`,
+    fails. Removing one never fails — the numbers are ceilings, not equalities.
+    The legacy scripts were **not** rewritten: they are point-in-time tools
+    whose `/tmp` paths are part of the record of how an already-reported
+    measurement was invoked, and rewriting them would buy nothing while
+    rewriting history. That is a judgement, and it is stated rather than hidden.
+
+Both rules assert their own scan is non-empty, so the guard cannot pass by
+silently finding no files. The failure message names the durable locations and
+points at `phase4-restore-replay-inputs.py` as the worked example, so the fix is
+mechanical rather than archaeological.
+
+**Honest limit of the tripwire.** It catches `/tmp` specifically. It would not
+catch a harness depending on some *other* purgeable or machine-local location —
+`~/Downloads/All Projects Test Data` being the obvious live example, which every
+corpus-reading harness including this one depends on and which is not in the
+repo. That dependency is real, known, and unaddressed here; it is a corpus
+provisioning problem (Part D.0), not an artifact-storage one, and conflating
+them would be the wrong fix.
+
+---
+
+#### Step Z — pre-implementation readiness statement
+
+*Written for someone who was not present for Phases 0-4. Everything below is
+either measured and cited, or explicitly flagged as unmeasured.*
+
+##### What is being replaced, and what is not
+
+**Replaced: one thing only — the per-token timestamp VALUES in Stage 1.** Today
+those come from whisper.cpp's own `-ml 1` output. They will come from a forced
+aligner (CTC), run as a second pass over the same audio.
+
+**Not replaced, and this list is the reason the change is reversible:** the
+Whisper transcript itself (the *words* stay Whisper's); the Hirschberg text
+alignment; the run-survival gates; `filterToCoveredSegments`; the boundary
+picker; `snapCoveredBoundaries`; `headExtendFirstSegment`; every downstream
+stage; the persisted schema. The token contract `{text, start, end}` is
+unchanged (Blocker 3). Architecture (A): FA supplies timing only.
+
+**Why, in one paragraph.** Whisper's `-ml 1` output is **gapless** — each token
+starts exactly where the previous ended (97.8% of V6 transitions, 93.4% of
+173's) — so a pause is *structurally* absorbed into the following word's
+declared span. A word's declared start sits a median of **+0.038s from the
+pause's START**, versus −0.500s from its end, where the word is actually spoken.
+This is not a tuning problem and no boundary rule can repair it: it is the wrong
+*kind* of timing source. DTW was measured and changes timestamps by **exactly
+0.000000000s** (against a purpose-built no-DTW control, over all 4,579 V6 and
+2,080 173 tokens, with DTW verifiably enabled) — it is eliminated, not deferred.
+
+##### The model
+
+`jonatasgrosman/wav2vec2-large-xlsr-53-<lang>`, Apache-2.0, ~1.18-1.26 GB per
+language, five languages (en, es, fr, pt, de), **downloaded on demand, never
+bundled** (owner decision 3). MMS-FA is permanently out on licence (CC-BY-NC-4.0)
+despite being the model most numbers in this document were measured on; where
+the two differ, jonatasgrosman's column is the one that counts, and the two were
+measured within noise of each other on both projects where both were run.
+
+##### Evidence, per language — stated at the strength it actually holds
+
+| Language | Human listening evidence | Corpus | Status |
+|---|---|---|---|
+| **English** | **Two batches, 32 clips total.** Batch 1: 12 clips (Step C), 11 scored. Batch 2: 20 clips (Steps H-J), 17 scored, genuinely blind — none reusing batch 1's segments, and the reference under test had never seen them. | V6 (447 segs, 23.7 min) + 173 (175 segs, 11.8 min) | **VALIDATED.** FA closer to human than `silencedetect` on all 7 batch-1 scored failures, by 6x-78x. On batch 2, excluding two now-explained heading-contaminated residuals, FA's worst error against human truth is **131.6ms**. |
+| **Spanish** | **One batch, 10 clips** (Steps Q/U), all 10 scored. | Spanish project (26 segs, 92s) | **VALIDATED, on a small sample.** FA within 16-43ms on six of seven "failures"; one genuine −1084ms error, named below. |
+| **French, Portuguese, German** | **None. Zero clips, zero corpus material, zero measurements.** | — | **UNVALIDATED. Plumbing only.** |
+
+**The fr/de/pt position, stated bluntly because it is the largest silent risk in
+this programme.** These three ship with loading plumbing and no accuracy
+evidence of any kind — not a weak measurement, *no* measurement. Owner decision
+6 accepted this deliberately, deferring real-corpus validation until business
+demand. Step T requires them labelled UNVALIDATED on three separate user-facing
+surfaces (dropdown label, one-time dialog, and a new informational
+`unvalidated-language` sync-log entry, deliberately distinct from the
+error-severity `unsupported-language` guard). **If those three surfaces are not
+built, this decision becomes an undisclosed risk rather than an accepted one.**
+That is the single most important implementation obligation on this page.
+
+##### The gate, and Spanish's corrected number
+
+**Approved standard (owner decision 1): p95 word-onset error ≤ 250ms.** The
+median ≤100ms threshold is kept but demoted (it passes projects with known real
+defects). The negative-smear <1% threshold is **retained on paper but is known
+to be unpassable by any accurate source** — Step D proved analytically that a
+source with symmetric noise around zero reads ~50% by that sign-only definition
+regardless of quality; it was built to catch Whisper's whole-pause-absorption
+pathology and cannot discriminate anything else. Zero-duration real-word tokens
+must be 0; FA passes this cleanly where Whisper turbo produces 68 on V6 and 44
+on 173.
+
+| Project | p95 against raw `silencedetect` | p95 against the corrected reference | vs. 250ms gate |
+|---|---|---|---|
+| V6 (English) | 338.2ms | **82.2ms** | PASS — 2 boundaries remain >250ms, both explained as the heading-recitation class (segments 42, 224) |
+| 173 (English) | 89.7ms | — (already passing) | PASS |
+| **Spanish** | **282.1ms (FAIL)** | **50.4ms** | **PASS** |
+
+**Spanish's corrected number carries a caveat that must travel with it.** At
+n=22 scored pauses the p95 rank sits below the maximum, so the single remaining
+>250ms row is excluded by rank from the figure. That row is real: **clip3_06,
+−1084ms**, a genuine FA error at corpus start. Its cause is structural and was
+named before the labels arrived — the pipeline skipped the preceding one-word
+segment ("Scylla."), so the next segment's window begins at t=0 and contains an
+unscripted lead-in that is *the same word* the segment itself starts with; FA
+matched the wrong one. R.6's leading wildcard and file-start clamp exist for
+exactly this shape. "p95 50.4ms" is not a claim that every Spanish boundary is
+inside 250ms. One is not, and it is that one.
+
+**What the gate rests on, said plainly:** a large share of the original
+"failures" on both languages were the *reference* being wrong, not FA. Raw
+`silencedetect`'s declared pause-end lands within 3ms of **breath onset** on 4
+of 5 scorable breath clips — it measures the breath, not the word. This was
+confirmed by human ear, not inferred.
+
+##### Checks going into CI, and the ones deliberately excluded
+
+Twelve inventory items, thirteen assertions (item 1 is two structurally
+different assertions, run as C01a/C01b). All thirteen are built and proven in a
+standalone harness outside the app: `python3 scripts/phase4-step-x-verify.py`,
+one command, no arguments, ~4s. It runs each rule twice — once on deliberate
+poison where it must fire, once on real corpus data where it must stay quiet —
+and prints its own evidence ranking.
+
+**IN (12):** C01a, C01b, C02, C03, C04, C05, C06, C07, C08, C09, C11, C12.
+
+Two carry qualifications rather than plain membership. **C05** goes into the
+*measurement harness's* CI, not the app's — Step O's own verdict is that it
+describes a bug in the measurement tool, not the production pipeline; it is a
+regression lock so a future re-measurement cannot silently drop the Step 1
+scorer fix. **C11** is inverted: its "real" half cannot be "stay quiet", because
+K13 (lock preservation broken across resync) is an *open* defect and there is no
+clean corpus. It instead re-runs a live reproduction against production code and
+requires the defect to still reproduce. **It MUST START FAILING when Stage 3
+fixes K13** — that is the signal the fix landed, not a broken test, and the file
+says so at the top.
+
+**OUT (1): C10 (seam cross-attribution), excluded by name.** Scored against the
+owner's own listening verdicts: **0 fires on the 4 boundaries the owner called
+word-shifted**, 0 fires on the 37 he called correct, and its single V6 finding
+has no ear verdict either way and cannot be adjudicated. Recall was 0-of-3
+against a smaller set at Step S and 0-of-4 against a larger one at Step W — more
+evidence did not change the answer. Requiring seam words to be phonetically
+distinctive dropped its false positives 29 → 1; **quieter is not fixed**. A rule
+that finds none of the defects it exists for detects nothing. `phase4-step-x-
+verify.py` gives C10 a third half that it fails, and exits 1 as a result,
+specifically so the headline "13/13" cannot be read as an all-clear.
+
+##### The two known-weak items, stated as weak
+
+**C04 (breath-vs-boundary misclassification) — grade C, and it deserves the most
+suspicion of the entire set.** Breath misplacement is *the dominant real-world
+failure this programme has spent months chasing*. C04 reads **zero** findings
+across all three real corpora. Two readings fit that equally well: the shipped
+index-based seam-exemption fix (2026-08-03, ear-verified 86.8% → 96.2% correct
+cuts on V6) genuinely repaired the corpus — or C04 cannot see the defect it was
+written for. **Nothing in this programme distinguishes those two.** It ships in
+CI because a quiet check costs nothing and a live instance would be valuable;
+its silence must not be read as evidence the class is closed.
+
+**C10 — grade D, failed validation, excluded.** Covered above. It is named here
+a second time because a future reader scanning only the CI list should not
+discover the exclusion by its absence.
+
+More generally, six of the thirteen (C01a, C01b, C04, C07, C08, C09) are grade
+C: **clean on real data, but no live instance has ever tripped them, so their
+sensitivity is unproven.** Quiet proves the corpus is clean; it does not prove
+the rule would catch a dirty one. C01b and C09 are demonstrable only against the
+stale pre-Phase-2a fixture, because the model swap already repaired their one
+real instance.
+
+##### The heading rule
+
+**Option A, approved (decision 8, verbatim at the head of this section): the
+preceding segment absorbs the full duration of unscripted audio, logged as an
+explicit `unscripted-gap` entry. Total length unchanged, segment count
+unchanged.** Nine V6 gaps, 37.50s, mean +2.14s onto the preceding segment.
+Blocks Phase 5, not Phase 3. The one V6-specific caveat worth carrying: a
+transcript sweep found this "Level N" chapter convention in V6 only — a bounded
+keyword sweep of the 173 and Spanish transcripts found nothing comparable — so
+the rule is being adopted on evidence from one narrator's convention.
+
+##### Rollback
+
+**Tag: `phase4-implementation-ready-2026-08-07`** (this commit). Rollback is
+genuinely cheap, for structural reasons rather than optimistic ones:
+
+  * FA is a **strictly additive second pass**. Rolling back is "skip the FA
+    pass" — Whisper's own timestamps are still produced and still valid.
+  * **No schema change.** The token contract is `{text, start, end}` before and
+    after; nothing persisted changes shape, so no migration exists to reverse
+    and no project saved under the new build is unreadable by the old one.
+  * Old and new can run **side by side**, which is not a hope — it is what every
+    Phase 2b/3 measurement already did. In production the same capability-gate
+    pattern this codebase already ships (`useExport.ts`'s
+    `isWebCodecsExportGateOpen()` — capability probe AND persisted user toggle,
+    both required, decided fresh every run) applies directly.
+  * `git revert` to the tag restores a suite that is green at **1289 tests**,
+    and `python3 scripts/phase4-restore-replay-inputs.py` +
+    `npx vitest run scripts/phase4-handoff-replay-sync.test.ts` re-proves the
+    Step M baseline from committed sources on any machine with the corpus.
+
+**The one thing rollback does not undo:** downloaded model weights and any
+`manifest.json` written by the download-on-demand path (Step T). Those are
+cache, not state, but a rollback should delete them rather than leave a newer
+manifest for older code to read.
+
+##### What could still go wrong after the swap, and what would show it early
+
+Ordered by expected cost, not by likelihood. **Overstating these costs less than
+understating them.**
+
+1. **fr/de/pt are wrong in a way nobody measures for months.** Highest expected
+   cost on this page: three languages ship with zero accuracy evidence. *Early
+   signal:* the `unvalidated-language` log entry firing in a real user's project
+   — which only works if Step T's three surfaces are actually built. If they are
+   skipped, there is no early signal at all, and that is the failure this list
+   most wants to prevent.
+2. **Latency regression drives users off the feature.** Adding FA costs **+41.9%
+   on V6, +24.9% on 173, +18.3% on Spanish** — project-size-dependent, not the
+   universal "+42%" this document informally cited for a while. Peak RSS rises
+   from ~2.1-2.2 GiB to **~3.2-4.0 GiB** (not additive if the two models run
+   sequentially with memory released between them — *if*). *Early signal:*
+   wall-clock and peak-RSS per sync run, logged from the first build; two FA
+   models resident simultaneously is a real risk Step T specifies against, not a
+   theoretical one.
+3. **The corrected reference is right on 42 human-labelled clips and wrong in
+   general.** Every gate number that passes does so against a *corrected*
+   reference, and Step J found the Step F breath-aware corrector is **not an
+   unqualified improvement**: on 8 of 17 blind rows its error exceeded raw
+   `silencedetect`'s, occasionally firing past the true onset into ordinary
+   trailing-consonant energy on a clean control. It is a clear net win on breath
+   clips and a qualified one elsewhere. *Early signal:* boundaries that pass
+   every numeric gate but get reported by ear — precisely the shape of the
+   segment-321 defect below.
+4. **A defect invisible to every numeric gate.** This has already happened once
+   and will happen again. V6 segment 321's onset error was **227ms — under the
+   gate** — in both the original and corrected datasets, while the cut was
+   ~4s wrong, because an upstream segment (320) aligned to zero tokens and
+   deprived it of a valid neighbour boundary. Only the human listener caught it.
+   *Early signal:* C01a/C01b/C09 (the only checks that catch segment 320), plus
+   R.5's run structure removing the propagation path. Neither is proven against
+   a live instance — see the grade-C caveat above.
+5. **Within-run cascade.** Step R's cascade-safety claim is stated at the
+   strength it holds and no further: **full independence is proven for cross-run
+   neighbours and skipped segments; within a run it is reduced from today's
+   verbatim-error-copying to a bounded monotonic-ordering constraint — not
+   zero.** *Early signal:* two or more adjacent boundaries in one run moving
+   together in the same direction.
+6. **Things the swap cannot fix, and will be blamed for.** Three named classes
+   survive it: the flash-attention content dropout (V6 segments 27-29 — no
+   timing source recovers text the model never emitted); `seasons than you ||
+   can count and` (the narrator's pause genuinely disagrees with the script's
+   sentence break — a script-vs-narration authority conflict); and K13 lock
+   preservation (a Stage 3 concern, unrelated to timing). *Early signal:* a
+   post-swap regression report matching one of these three — check them before
+   suspecting FA.
+7. **The corpus is one narrator per language.** V6 and 173 are English from a
+   corpus assembled by one person; Spanish is 92 seconds. Breath loudness
+   relative to the −45dB floor — the mechanism behind most of the reference
+   bias — is a property of a voice and a microphone, not of a language. *Early
+   signal:* a new project whose boundaries fail in a pattern none of the three
+   corpus projects showed.
+
+##### Does anything in Steps U-Z change the eight owner decisions?
+
+**No.**
+
+Checked one by one, and stated as a negative claim rather than an omission:
+decision 1 (250ms gate) — Step U's Spanish result **satisfies** it on a
+corrected reference rather than challenging it, and the corrected reference was
+built and its thresholds fixed *before* the Spanish labels arrived. Decision 2
+(10 Spanish clips, not 20) — executed exactly; the resulting n=22 rank caveat is
+disclosed, not litigated. Decision 3 (jonatasgrosman, all 5 languages, no
+non-commercial model ever) — untouched; nothing measured since gives any reason
+to revisit MMS-FA. Decision 4 (production-grade windowing) — Step U's clip3_06
+is additional *support*, being precisely the corpus-start case R.6 already
+specifies. Decision 5 (all checks proven in an isolated harness before any Rust)
+— Steps W/X/Y are that decision being carried out, including the parts that
+failed. Decision 6 (fr/de/pt plumbing, labelled UNVALIDATED) — unchanged and
+re-emphasised above as the largest silent risk. Decision 7 (no production Rust
+in that pass) — honored again here. Decision 8 (Option A) — recorded verbatim
+above and is itself the newest decision, not a modification of an older one.
+
+**Two factual corrections were made across U-Z, neither decisional.** Step S's
+claimed "13/13 poison PASS" was false when written — the committed harness
+printed 12/13 FAIL, corrected at Step W and now genuinely 13/13. And segment
+320's "4.5x duration undercount" is a stale pre-Phase-2a artifact: Step M's own
+golden baseline shows it committed at 974.26-980.17s, a correct fit. The defect
+is **latent, not live**, and this document should stop describing it in the
+present tense.
+
+---
+
+#### Steps Y-Z deliverable summary
+
+Option A recorded verbatim and Step V closed, making all three Rust gates
+closed (Step V/decision 8). The Step M golden-baseline replay harness restored
+from committed sources, repointed off `/tmp` to `.work-phase4/replay/`, upgraded
+from a summary-writer to a per-boundary golden diff, and **proven faithful three
+ways** — inputs value-for-value identical to the committed baseline, outputs
+reproducing all 444/172/26 segments to 1e-9 with zero divergence, and a
+negative-control perturbation confirming the diff actually fires and names the
+boundary (Step Y). K8 given a tripwire that fails on every `npx vitest run`
+rather than a fourth note in a document, with its own scope limit disclosed
+(Step Y). A one-page readiness statement covering what changes and what does
+not, per-language evidence at its real strength, the CI in/out list with C04 and
+C10 stated weak, the approved gate and Spanish's corrected 50.4ms with its rank
+caveat, the Option A rule, the rollback path, and seven ways this can still go
+wrong with the signal that would reveal each (Step Z).
+
+**Suite: `npx vitest run` → 52 files, 1289 tests, 0 failures.** `npx tsc
+--noEmit` clean. `phase4-step-x-verify.py` unchanged (still exits 1 on C10, by
+design). **No `src/` file changed. No production Rust written. No threshold
+retuned. No baseline re-fitted.** New: `scripts/phase4-restore-replay-inputs.py`,
+`scripts/no-tmp-artifacts.test.ts`. Amended:
+`scripts/phase4-handoff-replay-sync.test.ts` (repointed + assertions added),
+`scripts/phase4-handoff-app-silence.py` (usage example moved off `/tmp`).
+
 
 ### Phase 3b — Language-keyed normalization (moved from old Phase 8 / H.5 — see K1)
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
