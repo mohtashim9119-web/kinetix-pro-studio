@@ -31,3 +31,6 @@ __pycache__/
 .answer-keys/
 .venv-phase4/
 .work-phase4/
+
+# graphify tool output — regeneratable, not source (2026-08-07)
+graphify-out/

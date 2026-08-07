@@ -2756,3 +2756,10 @@ detail: this file's "Repository Consolidation" entry above.
 carrying the full sync-pipeline-contract programme and K14-K17. `model-p-editor-work` sits one
 unreviewed commit ahead, holding real, wanted work whose migration is not yet decided. Nothing
 here required a `src/` change to record.
+
+**`docs/context-report-2026-08-07.md` is SUPERSEDED.** It lives only on branch
+`wip/preserve-2026-08-07` (never copied to `main`) and was written from a detached-HEAD
+checkout at `8d83358` before this repository's real `docs/` set was visible, so its "Model P"
+characterization (48 independent commits, no recorded rationale) is known-wrong — see this
+file's own "Repository Consolidation" entry above. `docs/decisions/2026-08-07-model-p-revert.md`
+supersedes its Model P conclusions.
