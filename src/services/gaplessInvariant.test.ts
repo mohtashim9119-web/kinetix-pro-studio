@@ -279,3 +279,93 @@ describe('gapless invariant — the export guard (checkTimelineIsGapless)', () =
     expect(checkTimelineIsGapless([seg('A', 0, 5.0004), seg('B', 5, 5)])).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// restackWindow's locality PRECONDITION (Stage 3b).
+//
+// `restackWindow`'s doc comment states it restacks only `[lo, hi]` and leaves
+// everything outside untouched, "which is what preserves a pre-existing gap
+// (K15a)". Under Model P that justification is retired: a gap is illegal, so
+// the property that actually matters is that its locality is EQUIVALENT to a
+// full re-flow — which holds exactly while nothing upstream can hand it a
+// gapped array (ruling §2, and `segments-invariant-ruling.md` §6.3's
+// "K15a survives as an optimisation").
+//
+// These tests pin that precondition end to end, by chaining the real editor
+// operations in the order a user performs them, rather than asserting it in
+// prose.
+// ---------------------------------------------------------------------------
+
+describe('restackWindow locality precondition — a full editor session stays gapless', () => {
+  const AUDIO = 100;
+
+  it('sync -> drag -> drag -> sync keeps the array gapless at every step', () => {
+    let arr = applyAnchorBasedTiming(
+      [
+        seg('A', 0, 10, { anchorStart: 0 }),
+        seg('B', 18, 5, { anchorStart: 18 }),
+        seg('C', 40, 5, { anchorStart: 40 }),
+        seg('D', 70, 5, { anchorStart: 70 }),
+      ],
+      AUDIO,
+    );
+    assertGapless(arr, 'after initial sync');
+
+    arr = computeDragCascade(arr, 1, arr[1]!.duration + 3, 0, 'right', noBlock)!;
+    assertGapless(arr, 'after drag 1');
+
+    arr = computeDragCascade(arr, 2, arr[2]!.duration - 2, 0, 'left', noBlock)!;
+    assertGapless(arr, 'after drag 2');
+
+    // A re-sync over the dragged array — the case K14's stale-anchor family
+    // lived in, since a drag writes startTime and anchorStart in lockstep.
+    arr = applyAnchorBasedTiming(arr, AUDIO);
+    assertGapless(arr, 'after re-sync');
+  });
+
+  it('locking a segment mid-session, then dragging around it, stays gapless', () => {
+    let arr = applyAnchorBasedTiming(
+      [
+        seg('A', 0, 10, { anchorStart: 0 }),
+        seg('B', 18, 5, { anchorStart: 18 }),
+        seg('C', 40, 5, { anchorStart: 40 }),
+        seg('D', 70, 5, { anchorStart: 70 }),
+      ],
+      AUDIO,
+    );
+
+    // The user locks segment C, exactly as handleToggleLock does: flip the
+    // flag, then re-derive the whole array.
+    arr = applyAnchorBasedTiming(arr.map((s, i) => (i === 2 ? { ...s, locked: true } : s)), AUDIO);
+    assertGapless(arr, 'after locking C');
+    const lockedStart = arr[2]!.startTime;
+    const lockedDuration = arr[2]!.duration;
+
+    // Drag either side of the wall; the wall must not move, and no gap may open.
+    for (const idx of [1, 3]) {
+      const out = computeDragCascade(arr, idx, arr[idx]!.duration + 1.5, 0, 'right', noBlock);
+      if (!out) continue; // the lock legitimately blocked this drag
+      assertGapless(out, `after dragging index ${idx} beside the lock`);
+      expect(out[2]!.startTime).toBe(lockedStart);
+      expect(out[2]!.duration).toBe(lockedDuration);
+    }
+  });
+
+  it('unlocking is never refused and leaves the array gapless', () => {
+    // Unlocking removes a wall, so it can only make the partition more
+    // satisfiable — canLockSegment is deliberately not consulted for it.
+    const locked = applyAnchorBasedTiming(
+      [
+        seg('A', 0, 10, { anchorStart: 0, locked: true }),
+        seg('B', 18, 5, { anchorStart: 18 }),
+        seg('C', 40, 60, { anchorStart: 40 }),
+      ],
+      AUDIO,
+    );
+    const unlocked = applyAnchorBasedTiming(
+      locked.map((s, i) => (i === 0 ? { ...s, locked: false } : s)),
+      AUDIO,
+    );
+    assertGapless(unlocked, 'after unlocking');
+  });
+});
