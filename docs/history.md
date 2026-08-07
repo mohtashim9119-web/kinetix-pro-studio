@@ -2683,3 +2683,76 @@ commit actually contains and why it references a revert to `18f5734`: `docs/deci
 model-p-revert.md`.
 
 </details>
+
+---
+
+## The Sync-Pipeline-Contract Programme Through K17 and the Park Commit — Arc Summary (2026-06-01 to 2026-08-07)
+
+A single narrative thread runs through 47 commits (`8d83358`..`6eae48e`, all on the branch
+`webgl2-effects-engine`, whose name predates and no longer describes this work — see the
+Repository Consolidation entry above) plus one further unreviewed commit
+(`model-p-editor-work`'s `210855d`). This entry is the map; each stage's own full record is
+linked rather than repeated.
+
+**1. Sync-pipeline-contract programme (2026-08-01 to 2026-08-07), the bulk of the 47 commits.**
+Started from the Pipeline Contract Program (`docs/sync-pipeline-contract-plan.md`, paused
+pending this work) and the boundary-quality checker. Ran through: `docs/sync-redesign-audit-
+report.md` and `docs/audit-verification-2026-08-03.md` (structural audits of the pre-existing
+sync pipeline); the index-based seam-exemption fix for `isBreathSilence` (ear-verified 86.8%→
+96.2% correct cuts, `docs/boundary-drift-investigation.md`); `docs/sync-pipeline-v2-plan.md`'s
+acceptance as the live plan (Revision 2 same day — stage contracts, per-stage lock gates, the
+Russian descope, adversarial audit); Phases 0/1/1b/2a/2b closing (DTW abandoned, measured
+zero effect — Phase 3 becomes forced alignment); Phase 3's long forced-alignment measurement
+arc (blockers closed, reference-validity and reference-correction passes, blinded human
+listening batches on English and Spanish, the segment-320/321 cascade root-caused); Phase 3→4
+handoff (Step M's golden-baseline replay harness); Phase 4 pre-implementation and gate-closing
+passes (Steps Q-X — Spanish scored, heading-wildcard options laid out, structural checks
+built); Phase 4 readiness close-out (`18f5734`, Steps Y-Z — Option A ruled for headings, the
+replay harness restored after a fourth K8 `/tmp`-loss recurrence, a permanent tripwire added).
+**Every commit through `18f5734` is measurement, design, or docs — zero `src/` changes**, by
+explicit, repeated instruction. Full detail: `project-state.md`'s Current State field (the
+dense, dated chain) and `docs/sync-pipeline-v2-plan.md` itself.
+
+**2. K14-K17 — a separate, explicitly-labeled workstream (2026-08-07, `ad70019`..`6eae48e`).**
+Real owner-reported bugs in the editor's lock/drag-cascade behavior, diagnosed and fixed with
+measurement and tests, unrelated to the forced-alignment timing-source swap: K14 (lock
+hard-wall semantics — fixed a stale-anchor propagation bug), K15 (bounded and localized the
+drag cascade — one defect K14 introduced, one that predated it), K16 (three real pointer-math
+faults, including a stale 24px constant from a padding redesign years earlier), K17 (fixed a
+frozen-neighbour overlap in the live drag preview). Suite reached 1365 tests, green, at
+`6eae48e`. Full detail: `project-state.md`'s Current State field and Active Tasks (Manual lock
+semantics, K13, K14 entries).
+
+**3. The `segments` invariant surfaces (2026-08-07, immediately after K16/K17).**
+`docs/segments-invariant-ruling.md` found that K14's hard-wall and K15a's `restackWindow`
+locality had silently adopted "Model S" (independent slots, gaps legal) while nine other
+components — including both export paths — assume "Model P" (gapless partition) and cannot
+represent a gap. Recommended Model P; flagged a real, sourced export-desync risk. A companion,
+`docs/drag-path-testability-assessment.md`, recommended a scoped drag-session test harness
+timed to land alongside the ruling's migration. Both AWAITING OWNER RULING as of this entry.
+
+**4. The park commit (`210855d`, `model-p-editor-work`) — Model P implementation begins,
+in flight, uncommitted-then-parked.** Owner rulings (numbered "task 2," "task 4" in code
+comments, not otherwise persisted in this repo) authorized implementation: a gapless-partition
+enforcer (`timelinePartition.ts`), a lock-fingerprint persistence rule closing the pre-existing
+K13 bug (`projectFingerprint.ts`), a 50/50 silence-split rule (`snapBoundaries.ts`), and an
+explicit export gapless-timeline guard (`exportPipeline.ts`, `exportPipelineWebCodecs.ts`) —
+19 files, +3,160/−447 lines, on top of `6eae48e`. The commit's own message frames it as a
+safety snapshot ahead of `src/` being reverted to `18f5734` (5 commits before K14) — a revert
+that was never actually carried out anywhere in reachable history. Full investigation of what
+that revert would have discarded and why it was queued: `docs/decisions/2026-08-07-model-p-
+revert.md`.
+
+**5. Repository consolidation, Parts 1-2 (2026-08-07, this same day).** Separately from the
+above, the working tree was found detached at `8d83358` with untracked research data and 18
+local branches, several stale. Reattached to `main`/`webgl2-effects-engine` (`6eae48e`,
+identical after a clean fast-forward); pushed a durable safety net (5 tags + 1 recovery
+branch); retired 13 branches (12 already fully merged, one — `phase-7-task-1-export-
+profiling` — whose sole commit was already folded into this file); left `phase-7-sync-audit`
+untouched pending an owner decision (its content is rescued into this file, above). Full
+detail: this file's "Repository Consolidation" entry above.
+
+**Net effect on `main` as of this entry:** `main` = `webgl2-effects-engine` = `6eae48e`,
+carrying the full sync-pipeline-contract programme and K14-K17. `model-p-editor-work` sits one
+unreviewed commit ahead, holding real, wanted work whose migration is not yet decided. Nothing
+here required a `src/` change to record.
