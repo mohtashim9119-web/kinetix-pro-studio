@@ -76,6 +76,7 @@ import {
 import type { FrameGlobalConfig } from '../frameRenderer';
 import { resolveEffectiveTransition } from '../transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
+import { checkTimelineIsGapless } from '../timelinePartition';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
 import type {
   ExportError,
@@ -845,6 +846,16 @@ export async function exportProjectWebCodecs(
   const segments = project.segments;
   if (segments.length === 0) {
     return { ok: false, error: { kind: 'encode', message: 'Project has no segments to export.' } };
+  }
+
+  // MODEL P export guard (compliance backlog item 4, ruling §1.3) — the same
+  // check, in the same position, as `exportPipeline.ts`'s. Both paths position
+  // output by prefix-sum of `duration` and cannot represent a gap, so both need
+  // it; the guard lives in `timelinePartition.ts` precisely so the two cannot
+  // drift apart on what "continuous" means.
+  const gapReason = checkTimelineIsGapless(segments);
+  if (gapReason) {
+    return { ok: false, error: { kind: 'timeline_gap', message: gapReason } };
   }
 
   const assetMap = new Map<string, Asset>(project.assets.map((a) => [a.id, a]));

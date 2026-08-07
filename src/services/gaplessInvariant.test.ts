@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { computeDragCascade, resolveDragPreview, MIN_SEGMENT_DURATION } from './dragCascade';
 import { applyAnchorBasedTiming } from './syncEngine';
-import { findPartitionViolations, PARTITION_EPSILON_SEC } from './timelinePartition';
+import { findPartitionViolations, checkTimelineIsGapless, PARTITION_EPSILON_SEC } from './timelinePartition';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
@@ -225,5 +225,57 @@ describe('gapless invariant — the sync path (applyAnchorBasedTiming)', () => {
     assertGapless(once, 'sync pass 1');
     assertGapless(twice, 'sync pass 2');
     expect(twice.map(s => [s.startTime, s.duration])).toEqual(once.map(s => [s.startTime, s.duration]));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Compliance backlog item 4 — the export guard.
+// ---------------------------------------------------------------------------
+
+describe('gapless invariant — the export guard (checkTimelineIsGapless)', () => {
+  it('passes a contiguous timeline', () => {
+    expect(checkTimelineIsGapless(gaplessArray(4))).toBeNull();
+  });
+
+  it('passes a single-segment and an empty timeline', () => {
+    expect(checkTimelineIsGapless(gaplessArray(1))).toBeNull();
+    expect(checkTimelineIsGapless([])).toBeNull();
+  });
+
+  it('refuses a timeline with a gap, naming the size and the segment', () => {
+    const reason = checkTimelineIsGapless([
+      seg('A', 0, 5),
+      seg('B', 8, 5), // 3.000s hole
+    ]);
+    expect(reason).not.toBeNull();
+    expect(reason).toContain('3.000s gap');
+    expect(reason).toContain('segment 2');
+  });
+
+  it('refuses a timeline with an overlap too — illegal under BOTH models', () => {
+    const reason = checkTimelineIsGapless([
+      seg('A', 0, 7),
+      seg('B', 5, 5),
+    ]);
+    expect(reason).toContain('overlap');
+  });
+
+  it('reports how many further violations follow the first', () => {
+    const reason = checkTimelineIsGapless([
+      seg('A', 0, 5),
+      seg('B', 8, 5),
+      seg('C', 20, 5),
+    ]);
+    expect(reason).toContain('+1 more');
+  });
+
+  it('does NOT depend on audioDuration — a no-voiceover project still exports', () => {
+    // Sum of durations legitimately differs from any audio length here; the
+    // guard checks adjacency only, so this must pass.
+    expect(checkTimelineIsGapless([seg('A', 0, 3), seg('B', 3, 4)])).toBeNull();
+  });
+
+  it('tolerates sub-epsilon rounding noise rather than blocking a valid export', () => {
+    expect(checkTimelineIsGapless([seg('A', 0, 5.0004), seg('B', 5, 5)])).toBeNull();
   });
 });

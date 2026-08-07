@@ -3,6 +3,7 @@ import { encodeSegment, encodePlainVideoSegment, encodeStaticImageSegment, Ffmpe
 import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
+import { checkTimelineIsGapless } from './timelinePartition';
 
 export interface ExportOptions {
   width?: number;
@@ -25,6 +26,11 @@ export type ExportErrorKind =
   | 'mux'
   | 'asset_missing'
   | 'cancelled'
+  /** Model P ruling §1.3 (2026-08-07) — `project.segments` is not a gapless
+   *  partition, so positioning by prefix-sum of `duration` would silently
+   *  desynchronise A/V and misplace headings. See `timelinePartition.ts`'s
+   *  `checkTimelineIsGapless`. */
+  | 'timeline_gap'
   | 'unknown';
 
 export interface ExportError {
@@ -90,6 +96,16 @@ export async function exportProject(
   const segments = project.segments;
   const segmentFiles: string[] = [];
   const allTempFiles: string[] = [];
+
+  // MODEL P export guard (compliance backlog item 4, ruling §1.3). Runs before
+  // any encoding so a bad timeline costs the user nothing but the check — this
+  // path positions output by prefix-sum of `duration` and cannot represent a
+  // gap, so a gap here produces a silently desynchronised export rather than a
+  // failure. Fail loudly instead.
+  const gapReason = checkTimelineIsGapless(segments);
+  if (gapReason) {
+    return { ok: false, error: { kind: 'timeline_gap', message: gapReason } };
+  }
 
   // ── 1. Encode each segment ──────────────────────────────────────────────────
   for (let i = 0; i < segments.length; i++) {

@@ -140,6 +140,44 @@ export function findPartitionViolations(
   return found;
 }
 
+/**
+ * The EXPORT GUARD (compliance backlog item 4, ruling §1.3).
+ *
+ * Returns a human-readable reason string when `segments` is not a gapless
+ * partition, or `null` when it is safe to render.
+ *
+ * Both export paths position a segment by the running PREFIX SUM of
+ * `duration` and never consult `startTime` to place output — they cannot
+ * represent a gap at all. Headings, by contrast, are selected by absolute
+ * `startTime` (`headingLayer.ts`'s `getActiveHeadingAt`). So when a gap
+ * reaches export those two disagree: every segment after the gap renders
+ * earlier than the editor showed it, the video desynchronises from the audio
+ * by the gap's width, and headings land on the wrong segments. None of that
+ * announces itself — the export completes "successfully" and is silently
+ * wrong, which is why this is a hard, typed failure rather than a warning.
+ *
+ * Checks ADJACENCY only, deliberately. The head/tail clauses depend on
+ * `audioDuration`, which legitimately differs from Σ duration on projects
+ * with no voiceover — a real, supported case that must still export.
+ */
+export function checkTimelineIsGapless(
+  segments: Pick<VideoSegment, 'id' | 'startTime' | 'duration' | 'locked'>[],
+): string | null {
+  const violations = findPartitionViolations(segments)
+    .filter(v => v.kind === 'lock-lock-gap' || v.kind === 'lock-lock-overlap');
+  if (violations.length === 0) return null;
+
+  const first = violations[0]!;
+  const shape = first.kind === 'lock-lock-gap' ? 'gap' : 'overlap';
+  const more = violations.length > 1 ? ` (+${violations.length - 1} more)` : '';
+  return (
+    `Timeline is not continuous: a ${first.amountSec.toFixed(3)}s ${shape} before `
+    + `segment ${first.index + 1}${more}. Exporting would desynchronise the video from `
+    + `the audio and misplace headings. Re-run Apply Sync, or adjust the segment `
+    + `boundaries, before exporting.`
+  );
+}
+
 /** What `canLockSegment` refuses, and why — surfaced to the user verbatim. */
 export interface LockRefusal {
   /** Index of the ALREADY-locked segment this lock would collide with. */
