@@ -171,16 +171,36 @@ describe('K15a — restack locality (gap fixtures now constructed directly)', ()
 // ---------------------------------------------------------------------------
 
 describe('K15b — neighbour yield floor (predates K14)', () => {
-  it('neighbourYieldableSec: head yield is exactly the leading silence', () => {
-    // Slot [5,10]; the words the slot owns run 6.0 → 9.4, so 1.0s of leading
-    // silence is all a right-edge drag on the previous segment may take.
+  // RE-DERIVED 2026-08-08 (manual triage F1). These two previously asserted the
+  // bound was the neighbour's leading/trailing SILENCE — its OUTERMOST word.
+  // That measured ~0.15s on real synced material (snapCoveredBoundaries puts a
+  // boundary at the silence CENTRE, so a neighbour's leading silence is half an
+  // inter-word gap), which is a few screen pixels of total outward drag budget:
+  // the reported "outward drag stalls after a few px". The bound is now the
+  // INNERMOST word — the neighbour is guaranteed to keep at least one of its own
+  // words, which is the harm K15b actually names. See dragCascade.ts's header.
+  it('neighbourYieldableSec: head yield runs to the neighbour\'s LAST word', () => {
+    // Slot [5,10]; the words the slot owns run 6.0 → 9.4. A right-edge drag on
+    // the previous segment may move this slot's start up to its last word's
+    // onset at 9.0 — 4.0s — and no further.
     expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', tokens(6, 10)))
-      .toBeCloseTo(6 - 5, 6);
+      .toBeCloseTo(9 - 5, 6);
   });
 
-  it('neighbourYieldableSec: tail yield is exactly the trailing silence', () => {
+  it('neighbourYieldableSec: tail yield runs back to the neighbour\'s FIRST word', () => {
+    // Mirrored: the slot's end may fall to its first word's offset, 6.4.
     expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'tail', tokens(6, 10)))
-      .toBeCloseTo(10 - 9.4, 6);
+      .toBeCloseTo(10 - 6.4, 6);
+  });
+
+  it('degrades to the silence-only bound for a neighbour holding exactly ONE word', () => {
+    // The innermost and outermost word are the same word here, so the bound
+    // collapses to the original leading/trailing-silence budget — the correct
+    // answer at this limit: any further yield pushes the segment's only word
+    // out of its own slot.
+    const one: TranscriptToken[] = [{ startSec: 6, endSec: 9.4, text: 'w' }];
+    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', one)).toBeCloseTo(1, 6);
+    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'tail', one)).toBeCloseTo(0.6, 6);
   });
 
   it('neighbourYieldableSec is Infinity — i.e. no bound, pre-K15 behaviour — with no owned word', () => {
@@ -208,45 +228,56 @@ describe('K15b — neighbour yield floor (predates K14)', () => {
     expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', tk)).toBeCloseTo(1, 6);
   });
 
-  it('a right-edge drag cannot eat past the next segment\'s first word', () => {
+  it('a right-edge drag cannot strip the next segment of its last word', () => {
     const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
-    // Words: A 0.0-4.4, B 6.0-9.4 (1s of leading silence), C 11.0-14.4.
+    // Words: A 0.0-4.4, B 6.0-9.4 (last word onset 9.0), C 11.0-14.4.
     const tk = [...tokens(0, 5), ...tokens(6, 10), ...tokens(11, 15)];
-    // Ask A to grow by 3.0s — far past B's first word at 6.0.
+    // Ask A to grow by 3.0s. B may yield up to its last word's onset — 4.0s —
+    // so this is granted in full, and the dragged edge tracks the pointer.
     const out = computeDragCascade(arr, 0, 8, 0, 'right', noBlock, tk)!;
 
-    // PRE-K15 this returned 'A[0.00..8.00] B[8.00..10.00] C[10.00..15.00]': B
-    // was cut from 5.0s to 2.0s and lost its words at 6.0, 7.0 and part of 8.0
-    // into A's slot. B was nowhere near MIN_SEGMENT_DURATION, so the old 0.3s
-    // floor never engaged — which is why "a few hundred ms" could still be
-    // catastrophic for a long neighbour.
-    //
-    // Now: B yields its 1.0s of leading silence and not one frame more, and the
-    // 2.0s the bound refused is handed back to A. The cascade never reaches C,
-    // because for a right-edge drag B's start IS the dragged segment's end —
-    // no amount of yielding further down the chain can move it back.
-    expect(spans(out)).toBe('A[0.00..6.00] B[6.00..10.00] C[10.00..15.00]');
-    // The headline invariant: B's own first word (6.0) is still inside B.
-    expect(out[1]!.startTime).toBeLessThanOrEqual(6);
+    // PRE-K15 this same call returned exactly this array too, but for the wrong
+    // reason — nothing bounded it at all, and a 6.0s demand would have been
+    // granted just as readily, stranding every one of B's words in A's slot.
+    // RE-DERIVED 2026-08-08 (F1): under the first K15b formulation this returned
+    // 'A[0.00..6.00] B[6.00..10.00] ...' — B yielded only its 1.0s of leading
+    // silence and 2.0s of a legitimate 3.0s drag was refused, which is the
+    // "outward drag stalls" defect. The bound still exists; it now sits at B's
+    // LAST word, not its first.
+    expect(spans(out)).toBe('A[0.00..8.00] B[8.00..10.00] C[10.00..15.00]');
+    // The headline invariant: B still holds a word of its own (9.0 → 9.4).
+    expect(out[1]!.startTime).toBeLessThanOrEqual(9);
     expect(out[2]).toEqual(arr[2]);
     // And total timeline duration is conserved — nothing was invented or lost.
     const total = (s: VideoSegment[]) => s.reduce((a, x) => a + x.duration, 0);
     expect(total(out)).toBeCloseTo(total(arr), 6);
   });
 
-  it('a left-edge drag cannot eat past the previous segment\'s last word', () => {
+  it('the right-edge bound still refuses a drag that would empty the neighbour', () => {
     const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
-    // A's words end at 3.4, leaving 1.6s of trailing silence before B starts.
+    const tk = [...tokens(0, 5), ...tokens(6, 10), ...tokens(11, 15)];
+    // Demand 4.5s — past B's last word at 9.0, which would leave B holding
+    // nothing it owns. B yields 4.0s; the remaining 0.5s is handed back to A.
+    const out = computeDragCascade(arr, 0, 9.5, 0, 'right', noBlock, tk)!;
+    expect(spans(out)).toBe('A[0.00..9.00] B[9.00..10.00] C[10.00..15.00]');
+    expect(out[1]!.startTime).toBeLessThanOrEqual(9);
+    expect(out[1]!.duration).toBeGreaterThan(MIN_SEGMENT_DURATION);
+  });
+
+  it('a left-edge drag cannot strip the previous segment of its first word', () => {
+    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+    // A's words run 0.0 → 3.4; its FIRST word ends at 0.4, so A's tail may fall
+    // to 0.4 — 4.6s of yield — before A would hold nothing of its own.
     const tk = [...tokens(0, 3.5), ...tokens(6, 10)];
-    // Drag B's left edge 3.0s earlier (B 5 → 8).
+    // Drag B's left edge 3.0s earlier (B 5 → 8). Granted in full.
     const out = computeDragCascade(arr, 1, 8, 0, 'left', noBlock, tk)!;
 
-    // PRE-K15: 'A[0.00..2.00] B[2.00..10.00] C[10.00..15.00]' — A cut to 2.0s,
-    // losing its own word at 3.0 into B's slot.
-    // Now A yields only its 1.6s of trailing silence; the other 1.4s is returned
-    // to B, whose right edge never moved on a left-edge drag either way.
-    expect(spans(out)).toBe('A[0.00..3.40] B[3.40..10.00] C[10.00..15.00]');
-    expect(out[0]!.startTime + out[0]!.duration).toBeGreaterThanOrEqual(3.4);
+    // RE-DERIVED 2026-08-08 (F1): under the first K15b formulation this was
+    // 'A[0.00..3.40] B[3.40..10.00] ...' — A yielded only its 1.6s of trailing
+    // silence and 1.4s of the drag was refused.
+    expect(spans(out)).toBe('A[0.00..2.00] B[2.00..10.00] C[10.00..15.00]');
+    // A still holds a word of its own (0.0 → 0.4).
+    expect(out[0]!.startTime + out[0]!.duration).toBeGreaterThanOrEqual(0.4);
     expect(out[2]).toEqual(arr[2]);
   });
 
@@ -256,19 +287,26 @@ describe('K15b — neighbour yield floor (predates K14)', () => {
     // refused with a toast — an accidental one-shot circuit breaker, not a
     // bound. Decision 9 point 1 forbids restoring it, so the floor has to hold
     // on its own across any number of drags.
+    //
+    // RE-DERIVED 2026-08-08 (F1): the loop count is raised from 8 to 30 because
+    // the floor now sits at B's LAST word rather than its first, so 8 drags no
+    // longer reach it — and reaching it is the entire point of this test. The
+    // assertion is unchanged in kind: however many times the user drags, B is
+    // never emptied and never bottoms out at MIN_SEGMENT_DURATION.
     const tk = [...tokens(0, 5), ...tokens(6, 10), ...tokens(11, 15)];
     let cur: VideoSegment[] = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 30; i++) {
       cur = computeDragCascade(cur, 0, cur[0]!.duration + 0.3, 0, 'right', noBlock, tk)!;
-      expect(cur[1]!.startTime).toBeLessThanOrEqual(6);
+      // B keeps its last word (onset 9.0) inside its own slot, every time.
+      expect(cur[1]!.startTime).toBeLessThanOrEqual(9);
     }
-    // Eight 0.3s drags demanded 2.4s; B only ever gave up its 1.0s of leading
-    // silence, and the remaining 1.4s was refused. B still holds its first word
-    // and never came near MIN_SEGMENT_DURATION. Pre-K15 the same eight drags
-    // left B at 5.0 - 2.4 = 2.6s starting at 7.4, with its words from 6.0 to 7.4
-    // stranded in A's slot.
-    expect(cur[0]!.duration).toBeCloseTo(6, 3);
-    expect(cur[1]!.duration).toBeCloseTo(4, 3);
+    // Thirty 0.3s drags demanded 9.0s; B gave up 4.0s — everything down to its
+    // last word — and every further request was refused and handed back to A,
+    // which is why A settles at 9.0 rather than 14.0. Pre-K15 the same drags
+    // left B pinned at MIN_SEGMENT_DURATION with all four of its words stranded
+    // in A's slot.
+    expect(cur[0]!.duration).toBeCloseTo(9, 3);
+    expect(cur[1]!.duration).toBeCloseTo(1, 3);
     expect(cur[1]!.duration).toBeGreaterThan(MIN_SEGMENT_DURATION);
   });
 

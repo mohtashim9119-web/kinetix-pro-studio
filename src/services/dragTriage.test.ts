@@ -64,16 +64,20 @@ const byId = (segs: VideoSegment[], id: string): VideoSegment =>
 //      while inward (shrink) works normally.
 // ---------------------------------------------------------------------------
 describe('F1 — outward drag on a middle segment stalls', () => {
-  // Three 3s segments over a synced voiceover. C's first word starts 0.15s
-  // into its own slot, which is the realistic shape after
-  // snapCoveredBoundaries places a boundary at a silence CENTRE: roughly half
-  // the inter-word gap ends up as the following segment's leading silence.
+  // Three 3s segments over a synced voiceover, each holding SEVERAL words —
+  // the realistic shape (a one-word-per-segment fixture would hide the
+  // distinction this failure turns on). Each segment's first word starts
+  // ~0.15s into its own slot, which is what snapCoveredBoundaries produces
+  // when it places a boundary at a silence CENTRE: roughly half the inter-word
+  // gap becomes the following segment's leading silence.
   const base = (): VideoSegment[] => [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 3)];
-  const tokens: TranscriptToken[] = [
-    tok(0.2, 2.8),   // A's word
-    tok(3.2, 5.8),   // B's word
-    tok(6.15, 8.8),  // C's word — 0.15s of leading silence in C's slot
+  const words = (from: number): TranscriptToken[] => [
+    tok(from + 0.15, from + 0.55),
+    tok(from + 0.85, from + 1.25),
+    tok(from + 1.55, from + 1.95),
+    tok(from + 2.25, from + 2.80),
   ];
+  const tokens: TranscriptToken[] = [...words(0), ...words(3), ...words(6)];
 
   it('grows B by the full dragged distance when the user drags its right edge outward', () => {
     const h = harnessOf(base(), { transcriptTokens: tokens });

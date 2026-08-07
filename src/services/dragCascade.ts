@@ -70,14 +70,44 @@ function isUsableToken(t: TranscriptToken): boolean {
 
 /**
  * How many seconds a neighbour may give up on `yieldSide` before the drag would
- * start pushing that neighbour's own words out of its slot — the K15b bound.
+ * strip that neighbour of the last of its own words — the K15b bound, as
+ * re-derived by the 2026-08-08 manual triage (failure F1).
  *
  * **The floor, stated plainly: a neighbour's slot may never be moved past its
- * own outermost word.** A head-yielding neighbour's start may not pass its own
- * FIRST word's onset; a tail-yielding neighbour's end may not fall below its own
- * LAST word's offset. Everything between the slot edge and that word is the
- * neighbour's own leading/trailing silence, and silence is the only thing a drag
- * is entitled to take. So the yieldable amount is exactly that silence.
+ * own INNERMOST word.** A head-yielding neighbour's start may not pass its own
+ * LAST word's onset; a tail-yielding neighbour's end may not fall below its own
+ * FIRST word's offset. Either way the neighbour is guaranteed to keep at least
+ * one of its own words, which is precisely the harm K15b was written to prevent:
+ * "a neighbour could be crushed from several seconds to 0.3s and **lose every
+ * word it owns**."
+ *
+ * ---------------------------------------------------------------------------
+ * F1 — why this is the innermost word and not, as originally written, the
+ * outermost one
+ * ---------------------------------------------------------------------------
+ *
+ * K15b's first formulation bounded the yield at the neighbour's leading (or
+ * trailing) SILENCE — its start could not pass its own FIRST word. That reads
+ * well in the abstract and is wrong in practice, because of where the boundary
+ * it measures from actually sits. `snapCoveredBoundaries` places a boundary at
+ * the CENTRE of the silence between two segments, so a neighbour's leading
+ * silence is only ever about half an inter-word gap: measured on the triage
+ * fixture, 0.15s. That was the entire outward-drag budget for the whole
+ * gesture, and at a zoomed-out 30 px/s it is four and a half screen pixels —
+ * the manual tester's report was, verbatim, that an outward drag "stalls after
+ * a few px" while an inward one worked normally. (Inward is unaffected: a
+ * shrink makes the neighbour GROW, which this bound never governed.)
+ *
+ * The two requirements in tension are both real and both owner-stated: K15b's
+ * "a drag must not silently strip a neighbour of its words" and the drag
+ * checklist's step 1, "the dragged edge tracks the pointer with no visible lag
+ * or snap". Bounding at the innermost word satisfies both — the neighbour can
+ * never be emptied, and an ordinary boundary correction of a few hundred
+ * milliseconds to a couple of seconds is no longer refused. It also degrades
+ * correctly at the limit: for a neighbour holding exactly ONE word the
+ * innermost and outermost word are the same word, so the bound collapses back
+ * to the original silence-only budget, which is the right answer there — any
+ * further yield would push that segment's only word out of its own slot.
  *
  * **Where the floor comes from:** the project's own `transcriptTokens` — the
  * same word-level array the aligner and `snapBoundaries.ts` place every boundary
@@ -114,23 +144,29 @@ export function neighbourYieldableSec(
   const slotStart = neighbour.startTime;
   const slotEnd = neighbour.startTime + neighbour.duration;
 
-  let firstOwnedStart = Infinity;
-  let lastOwnedEnd = -Infinity;
+  // The INNERMOST owned word as seen from each yielding edge: for a head yield
+  // that is the last word's onset, for a tail yield the first word's offset.
+  // On a single-word neighbour these are that one word's own two edges, so the
+  // bound degrades to the leading/trailing silence — see this function's header.
+  let lastOwnedStart = -Infinity;
+  let firstOwnedEnd = Infinity;
+  let owns = false;
   for (const t of tokens) {
     if (!isUsableToken(t)) continue;
     const mid = (t.startSec + t.endSec) / 2;
     if (mid < slotStart || mid >= slotEnd) continue;
-    if (t.startSec < firstOwnedStart) firstOwnedStart = t.startSec;
-    if (t.endSec > lastOwnedEnd) lastOwnedEnd = t.endSec;
+    owns = true;
+    if (t.startSec > lastOwnedStart) lastOwnedStart = t.startSec;
+    if (t.endSec < firstOwnedEnd) firstOwnedEnd = t.endSec;
   }
-  if (firstOwnedStart === Infinity) return Infinity;
+  if (!owns) return Infinity;
 
-  const silence = yieldSide === 'head'
-    ? firstOwnedStart - slotStart
-    : slotEnd - lastOwnedEnd;
+  const yieldable = yieldSide === 'head'
+    ? lastOwnedStart - slotStart
+    : slotEnd - firstOwnedEnd;
   // Never negative: a word already straddling the yielding edge means there is
-  // no silence there to take, so the neighbour yields nothing.
-  return Math.max(0, silence);
+  // nothing there to take, so the neighbour yields nothing.
+  return Math.max(0, yieldable);
 }
 
 /**

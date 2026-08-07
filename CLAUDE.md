@@ -510,9 +510,22 @@ src/
                      #   collapsed it (measured: a 0.200s drag displaced the following segments by
                      #   3.000s, moving their slots entirely off their own audio — and it fired even
                      #   when dragging the LAST segment, with no neighbour to cascade into).
-                     #   (2) THE YIELD FLOOR — a neighbour may yield its own SILENCE and nothing
-                     #   else: a head-yielding neighbour's start may not pass its own first word's
-                     #   onset, a tail-yielding one's end may not fall below its last word's offset.
+                     #   (2) THE YIELD FLOOR — a neighbour may never be stripped of ALL its own
+                     #   words: a head-yielding neighbour's start may not pass its own LAST word's
+                     #   onset, a tail-yielding one's end may not fall below its FIRST word's offset,
+                     #   so it always keeps at least one word. RE-DERIVED 2026-08-08 (manual triage
+                     #   F1) from the original formulation, which bounded at the OUTERMOST word (i.e.
+                     #   the neighbour's leading/trailing silence only). That reads well in the
+                     #   abstract and is unusable in practice: snapCoveredBoundaries places a boundary
+                     #   at the silence CENTRE, so a neighbour's leading silence is half an inter-word
+                     #   gap — measured 0.15s, about four screen pixels at a zoomed-out 30 px/s, and
+                     #   that was the whole outward-drag budget for the gesture. The manual tester's
+                     #   report was that an outward drag "stalls after a few px" while an inward one
+                     #   (which makes the neighbour GROW, and was never governed by this bound) worked
+                     #   normally. The innermost-word bound satisfies both the K15b harm it was
+                     #   written for ("lose every word it owns") and the drag checklist's step 1 ("the
+                     #   dragged edge tracks the pointer"), and degrades to the original silence-only
+                     #   budget for a neighbour holding exactly one word — the right answer there.
                      #   Read from project.transcriptTokens (times, not indices — so the persisted
                      #   unfiltered array is correct here, unlike the index-based
                      #   snapCoveredBoundaries call site), ownership by token MIDPOINT inside the
