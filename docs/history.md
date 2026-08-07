@@ -2763,3 +2763,264 @@ checkout at `8d83358` before this repository's real `docs/` set was visible, so 
 characterization (48 independent commits, no recorded rationale) is known-wrong — see this
 file's own "Repository Consolidation" entry above. `docs/decisions/2026-08-07-model-p-revert.md`
 supersedes its Model P conclusions.
+
+<details>
+<summary>Sync Pipeline — Structural Audit Report (Archived, migrated from the deleted docs/sync-redesign-audit-report.md, final source sha 53ff455) — read-only audit dated 2026-08-03, findings absorbed into docs/sync-pipeline-v2-plan.md</summary>
+
+Read-only structural audit of the sync pipeline (`App.tsx`'s `handleApplySyncFromFiles`,
+`useWhisper.ts`, `whisperService.ts`, `snapBoundaries.ts`, `syncEngine.ts`, `syncContracts.ts`,
+`syncLog.ts`, `syncConstants.ts`, `silenceDetector.ts`, `boundaryQuality.ts`, `types.ts`) to
+support the sync-pipeline redesign. No files were modified. **Confirmed absorbed into
+`docs/sync-pipeline-v2-plan.md`** (spot-checked 2026-08-07: the pipeline's two-pass snap
+duplication, the token-index-vs-timestamp distinction, and the console-only silent-fallback
+inventory all appear in v2, the last as v2's Contract OUT required-additions table).
+
+**Pipeline execution map.** Apply Sync is the single entry point (`handleApplySyncFromFiles`) —
+no separate re-sync path; it branches internally on whether a cached Whisper transcript exists.
+Full 15-step call graph (staging → `parseProjectData` → cache check → alignment branch →
+gap-fill → coverage gate → `filterToCoveredSegments` → boundary re-snap
+(`snapCoveredBoundaries`, the "middle-gap" fix) → `headExtendFirstSegment` → asset
+re-matching → commit → post-hoc boundary-quality check) is preserved verbatim in the git
+history of this file's source commit if ever needed again; the branch/fallback summary table
+(9 rows: voiceover-duration-probe failure, 0-segments, 0-cached-tokens, coverage-gate trip,
+`cachedTokensReady===false` fallback, per-segment `matched===false` drop, 0-tokens-after-filter
+fallback to `retileCoveredSegments`, silence-detection failure fallback to token midpoints, no
+surviving silence candidate fallback to plain midpoint, backwards-monotonic clamp, and the
+`DEGENERATE_PAIR_INVERSION_THRESHOLD_SEC` 5.0s pair-skip) is the durable part and is unchanged
+in the current pipeline as of this archival.
+
+**Token INDEX vs. TIMESTAMP usage (§4) — the audit's clearest structural finding, now the
+governing principle behind Part C's "four-line rule" in v2.** Token indices (Hirschberg
+text-alignment output) are trusted over token timestamps (Whisper's own smeared output,
+100-900ms of documented blur) for: `fillsTokenGapWithinSpan`'s gap test, `isBreathSilence`'s
+index-based seam exemption, the rescue forward-ordering bound, and every `AlignResult`
+downstream consumer reading spoken edges through `firstTokenIdx`/`lastTokenIdx` rather than
+stored timestamps. Timestamps are still used for pure temporal-window arithmetic
+(`computeBoundarySearchWindow`, `isBoundarySilenceCandidate`, the monotonic checks, the
+degenerate-pair guard). The documented tension: the NEXT-side seam exemption is real,
+verified evidence; the symmetric CURR-side variant was tried and permanently disabled
+(confirmed false-positive on two independent production projects — see the "Index-Based Seam
+Exemption" entry elsewhere in this file) because its only available anchor (two segments back)
+has no temporal relationship to the tested silence — "not fixable by tuning."
+
+**Console-only & silent-fallback inventory (§5) — the audit's most consequential finding,
+absorbed into v2's Contract OUT "required additions" list.** Catalogued every fallback/clamp
+NOT reaching the user-facing sync log: the degenerate-pair guard and monotonic-fallback
+re-check in `snapBoundaries.ts` (DEV-console-only); `alignScenestoTranscript`'s own monotonic
+check (no console.warn at all, no second-level re-check); `applyAnchorBasedTiming`'s
+out-of-order anchor detection (warns on detection, but the actual backstop-clamp correction a
+few lines later logs nothing); `headExtendFirstSegment` (fully silent by design); Branch B's
+"unexpected fallback" detection; rescue recovery's per-pass diagnostic detail (DEV-console-only,
+though the aggregate fact does reach the user via the `'rescue'` log entry); `useWhisper.ts`'s
+empty-token-array and stale-alignment-discard warnings (console-only, never persisted);
+`parseProjectData`'s duplicate/ambiguous tag-match and duplicate-assetId warnings (console-only,
+"diagnostic only, no UI surfacing" per the code's own comment — this is the mechanism behind
+the duplicate-asset-assignment class flagged in project-state.md's Active Tasks, rescued from
+the separate `phase-7-sync-audit` audit); `resolveVideoNativeFps` failure; the DEV calibration
+harness's own silence-detection failure; the opt-in Hirschberg/pass-timing instrumentation.
+Six duration/value clamps catalogued as "silent floors worth flagging for a redesign" (§5.3):
+`MIN_SEGMENT_DURATION` exists as two independent unsynchronized constants (0.1 in
+`snapBoundaries.ts`, 0.3 in `App.tsx`, confirmed deliberate non-consolidation, not dead code);
+a third bare-literal 0.1 floor in `distributeSegmentTimes`; `retileCoveredSegments`'s
+degenerate-duration guard (keeps the segment's original duration on a bad recompute, zero
+logging, not even DEV-gated); a 0.05s rescue-path minimum span floor; the backstop monotonic
+clamp (corrects without logging).
+
+Full appendix of files read is preserved in git history; no files were modified during the
+audit itself.
+
+</details>
+
+<details>
+<summary>Audit Verification Report — 2026-08-03 (Archived, migrated from the deleted docs/audit-verification-2026-08-03.md, final source sha 53ff455) — read-only verification against HEAD 8587cac, findings absorbed into docs/sync-pipeline-v2-plan.md</summary>
+
+Independent, source-grounded verification pass re-deriving (not trusting) the structural
+audit's claims directly from code, plus five specific claims the task brief attributed to an
+unlocated "4-stage proposal" document (confirmed: no such document exists anywhere in this
+repository, tracked or dangling — verified each claim against running code instead).
+
+**`computeBoundarySearchWindow` narrow-gap expansion — CONFIRMED exactly.** `spokenGapWidth <
+0.1` → fixed 1.0s radius; otherwise `max(0.5, gap/2 + 0.4)`. **Correction later made by v2
+(2026-08-07): the real culprit for the FENCE clamp's failure is the `Math.max(0.5, …)` floor,
+not the `<0.1s → 1.0s` branch** — a 0.5s minimum radius always reaches past at least one word
+at normal speech rate; this report's own instinct was right, the mechanism was one line off.
+
+**Every duration-floor site enumerated** (6 sites, cross-checked against the structural
+audit's §5.3 — see that entry above; `syncConstants.ts` itself documents the two
+`MIN_SEGMENT_DURATION` constants as a deliberate, accepted non-consolidation, not an oversight).
+
+**If `alignScenestoTranscript`'s internal gap-fill were deleted — traced end to end, not
+assumed.** For the one real call site that reaches it with non-empty segments
+(`alignFromCache`), its output is **operationally redundant**: `snapCoveredBoundaries`
+downstream recomputes every interior pair boundary from `tokens[align.lastTokenIdx]`/
+`firstTokenIdx` index lookups, never from the gap-fill's own `t0`/`t1` — a grep for `.t0`/`.t1`
+reads across `App.tsx`/`syncContracts.ts` returns zero hits. **Caveat: redundant ≠ dead** — 29
+test call sites in `syncTiming.test.ts` directly exercise the gap-fill logic; deleting it
+requires updating those tests even though it has no observable effect on Apply Sync's final
+output.
+
+**FENCE clamp mechanism — walked through with real numbers (V6 segment 96).** Tokens: "look"
+288.750–289.090, "A" 289.200–289.260, "predator" 289.260–289.800. Real silence:
+[289.380, 289.960]. A naive `[A.lastTokenIdx.endSec, B.firstTokenIdx.startSec]` clamp produces
+[289.090, 289.200] — 0.11s wide, **zero overlap** with the real silence (`289.380 > 289.200`).
+Widening by one token each side — `[288.750, 289.260]`, 0.51s — **still zero overlap**, by
+0.12s, because the smear crosses not just the boundary token but the one after it ("predator").
+**No fixed token-count clamp recovers this fix**; the current un-clamped ±0.5-1.0s radius is
+precisely why it works where a token-adjacency clamp would not. This exact numeric case (later
+independently reproduced via the Transcript Inspector against `docs/v6-smear-baseline.csv` row
+807, confirmed byte-identical) became v2's canonical proof that FENCE fails structurally, not
+by mistuning.
+
+**FENCE/QUIET dead ends — no code trace anywhere, prose only.** Confirmed via `git log -S`,
+`git fsck --dangling`, and a repo-wide grep: neither term appears in any `.ts`/`.tsx` file,
+committed or dangling. The described mechanisms only ever existed as prose in
+`docs/boundary-drift-investigation.md` (still on `main`, KEEP — see that doc directly for the
+quoted failure descriptions).
+
+**Determinism — the pipeline's own TypeScript is deterministic for identical inputs.**
+`crypto.randomUUID()` (segment/asset ids) and `Date.now()` (log/metadata timestamps) are
+cosmetic, feed no timing formula. `Map`/`Set` iteration order is NOT a nondeterminism risk in
+JavaScript (spec-guaranteed insertion order, and every insertion here is fixed-loop-order
+already). Floating-point accumulation in `parseProjectData`'s character-weight proportioning is
+sequential/single-threaded, deterministic. **Two genuine, code-external wildcards flagged as
+UNVERIFIED at the time:** whisper-cli's own run-to-run determinism (native binary, outside this
+codebase's control), and Web Audio API `decodeAudioData` determinism (browser/WebView-
+dependent). **Both were later independently confirmed PASS** by Phase 0/2a's own determinism
+checks (byte-identical MD5s across repeated runs, base.en and turbo both) — see
+`docs/sync-pipeline-v2-plan.md`'s Phase 0/2a entries.
+
+**Test coverage of the 8 seam-exemption fixes — gap identified, not yet closed as of this
+archival.** Only 6 of the 8 production V6 fixes (segments 34, 96, 162, 316, 338, 352, 405, 412)
+have committed test fixtures with real timestamp data (`syncTiming.test.ts`); **segments 34 and
+412 have zero test coverage of any kind** — no fixture, no assertion, only a bare comment
+citation. No test drives the full Apply Sync pipeline for any of the 8. Not resolved by any
+later work found in this repository as of 2026-08-07 — flagged here so it isn't lost.
+
+</details>
+
+<details>
+<summary>Sync Pipeline Contract Plan — Working Document (Archived, migrated from the deleted docs/sync-pipeline-contract-plan.md, final source sha 124ad3d) — program paused 2026-08-03, superseded in sequencing by docs/sync-pipeline-v2-plan.md</summary>
+
+A stage-contract hardening program for the pre-v2, 7-stage sync pipeline (six handoffs + one
+input annex). **Paused 2026-08-03** when the boundary-drift investigation found and fixed a
+real defect (`isBreathSilence`'s seam exemption, `c593f1d`) this program's own Pair 1 analysis
+had not surfaced, and surfaced the still-open word-shift defect that took priority.
+`docs/sync-pipeline-v2-plan.md` (accepted the same day) absorbed this program's sequencing and
+contract/validator concepts into its own Part J and Phase 7 — **this document remained the sole
+authority for its §2 assumption tables and risk register (R1-R14) until this archival**, since
+v2 explicitly does not restate them.
+
+**Why the program existed (§0) — five real incidents, none of them math bugs, all of them
+contract violations across a stage handoff:**
+
+| Incident | Producer did | Consumer assumed | Result |
+|---|---|---|---|
+| Middle-gap position offset (2026-07-25) | Emitted `-1` sentinel token indices for unmatched segments | `tokens[idx]?.endSec` resolves to a real spoken edge | 0.13s drift on covered segments adjacent to skipped ones |
+| Token-stealing (2026-07-29, WS6) | Global Hirschberg consumed a neighbour's words as substitutions | Every segment's own words remain available to it | Wronged neighbour got zero true matches |
+| False-positive rescue (2026-07-31) | Rescue claimed a token ~412s away | Rescue claims are temporally plausible | ~206s phantom first segment, real successor collapsed |
+| Window-overlap regression (2026-07-31) | `isBoundarySilenceCandidate` rejected on a 0.3s timestamp tolerance | Whisper trailing-word blur stays under 0.3s | Genuine boundary silences rejected wholesale on a 173/174-segment project |
+| Contiguity break (2026-07-31) | `snapCoveredBoundaries` wrote `next.startTime` while `curr.duration` was floored | `startTime[i] + duration[i] === startTime[i+1]` | Visible overlapping segment cards once Timeline went absolute-positioned |
+
+All five are separately archived in full elsewhere in this file (window-overlap/contiguity:
+"Window-Overlap Silence Regression Fix..." entry; token-stealing: WS6 record; middle-gap:
+sync rewrite record) — listed here only as the program's own stated motivation.
+
+**Pipeline map (§1).** Documented the "5/6 interleave" — the real execution order runs
+boundary-snapping TWICE, on two different arrays with different sentinel guarantees
+(`snapCoveredBoundaries` on the covered-only array, `alignScenestoTranscript`'s own ported
+gap-fill on the full array including unmatched segments) — flagged as undocumented anywhere
+outside this file at the time (now documented in `snapBoundaries.ts`'s own header, per CLAUDE.md).
+
+**The Six Contracts + input annex (§2).** Built full assumption tables for all seven handoffs
+(0→2 input annex through 6→7 presentation), each assumption marked verified/`UNVALIDATED`/
+`USER-REPORTED`. Two rows worth preserving standalone: Contract 1→2's drop-set-unbiased-by-
+position assumption (instrumented via `analyzeDropDistribution`, three threshold constants
+stated as starting values, never calibrated against a real corrupted-stretch case); Contract
+5→6's "a floored duration means the boundary was degenerate" assumption (`UNVALIDATED` and
+silent — five floor sites, zero warnings, zero log entries — this is Risk R2 below).
+
+**Risk Register (§5) — preserved VERBATIM below, all 14 entries, per the explicit preservation
+requirement for this table.** "Confidence" means confidence in the *current behaviour being
+correct*, not in the description's accuracy.
+
+| ID | Pair | Risk | Evidence | Confidence | Detection today |
+|---|---|---|---|---|---|
+| **R1** | 1→2 | **INSTRUMENTED (was: token-drop clustering unknown).** `filterMalformedTokens` now records a `TokenDrop` per rejection (index/reason/raw values) and `analyzeDropDistribution` (`syncContracts.ts`) flags a WARNING when drops cluster inside one `DROP_CLUSTERING_WINDOW_SEC` window above `DROP_CLUSTERING_RATIO_THRESHOLD`. Re-run against the original 169/1973-drop production project: breakdown is 139 `empty-text` + 30 `inverted-or-zero-duration`, zero clustering violation fired (drops were not concentrated in one stretch on this project). The three constants are the task's stated starting values — **not yet calibrated** against a real corrupted-stretch case, since this project's own drops happened not to cluster. | `USER-REPORTED` count; drop-reason breakdown now captured directly; `analyzeDropDistribution`/`validateTokenOrdering` unit-tested in `syncContracts.test.ts` | **Low** (mechanism); **calibration unverified** | Distribution + reason breakdown, both logged |
+| **R2** | 5→6 | **Floor clamps fire silently.** Five sites: `snapBoundaries.ts:699`, `:717`, `whisperService.ts:1612`, `syncEngine.ts:239`, `:246`. A clamped duration is the *symptom* of a degenerate boundary — the 2026-07-30 starvation cascade produced exactly this and was found only because a user saw a collapsed segment. No warning, no counter, no entry. | Verified by reading all five sites | **Low** | None |
+| **R3** | 6→7 | **Presentation is freshly rebuilt with shallow mileage.** Absolute positioning, lane redesign, cross-lane boundary markers, and the border-as-overlay WebKit workaround all landed 2026-07-31. `Timeline.tsx` has **no test file**. Its correctness now depends on Key Invariant (f), which the fallback `retileCoveredSegments` path does not enforce. **Split for scheduling: test-debt half CLOSED (`7e6309f`); contract half (log-truthfulness / `retileCoveredSegments` contiguity write) remains open — deferred to Pair 6 as planned.** | Verified: `timelineLayout.ts`/`timelineLayout.test.ts`/`timeline.render.test.tsx` land in `7e6309f`; `retileCoveredSegments` (`App.tsx:836-849`) still has no contiguity write | **Low** | Visual only |
+| **R4** | 5→6 | **Two `MIN_SEGMENT_DURATION` constants.** `0.1` in `snapBoundaries.ts:230`, `0.3` in `App.tsx:278`. Same name, different values, different purposes (pipeline floor vs. timeline slot width), no cross-reference. A future edit to one will look like it fixed both. | Verified by reading both | **Medium** (both are individually correct today) | None |
+| **R5** | 1→2 | **Token ordering never asserted.** `fillsTokenGapWithinSpan` walks `j → j+1` assuming ascending time; `earliestClaimStartSec` exists precisely because list order ≠ time order elsewhere. Nothing checks that the filtered array is ascending. | Verified | **Medium** | None |
+| **R6** | 3→4 | **Forward-ordering bound is vacuous when no later segment has a true global match.** `computeForwardBoundStartSec` returns `undefined` and every claim is accepted. A project ending in a long tail of zero-match segments has no bound on any of their rescues. | Verified at `whisperService.ts:905-911`; the legitimate last-segment case is tested, the tail case is not | **Medium** | None |
+| **R7** | 4→5 | **The "same filtered array" coupling is convention-only.** `keptAlignments[i].firstTokenIdx` indexes `aligned.tokens`. Passing `project.transcriptTokens` instead produces wrong boundaries with no crash. One call site is correct today; nothing prevents a second. | Verified at `App.tsx:2524-2531` | **Medium** | None |
+| **R8** | 4→5 | **Silence-array identity coupling.** `snapCoveredBoundaries` and the ported gap-fill both key a `Map` on `SilenceInterval` **object identity**. Any `.map()` copy upstream silently breaks contention assignment (every silence becomes its own key). | Verified at `snapBoundaries.ts:582-601` | **Medium** | None |
+| **R9** | 5→6 | **Degenerate-pair skip and monotonic clamp are DEV-gated console warnings.** Both fire on exactly the corrupted-data shape that caused the 2026-07-31 phantom-segment incident. In a production build they are invisible. | Verified: `import.meta.env.DEV` guards at `snapBoundaries.ts:638` and `:684` | **Low** | None in production |
+| **R10** | 3→4 | **Run-survival thresholds calibrated against two projects.** `RUN_SURVIVAL_*` were recalibrated once already after the first (ratio-scaled) formulation miscalibrated on a real 174-segment project. `syncConstants.ts` itself documents an accepted phantom-match risk on the new 1-3-word band. | Verified in `syncConstants.ts`'s own header | **Medium** | Skip entries show `longest run N` (good), but nothing aggregates across runs |
+| **R11** | 1→2 | **RESOLVED WITH CORRECTIONS (was: staging-path failures never reach the log).** The fresh-transcription path (`useWhisper.ts`) now mints/reuses `jobId` as its `syncRunId` and appends summary-less silence/malformed-token/contract-violation entries via `appendSyncLogEntries` (`services/syncLog.ts`) on the live path. **Corrections to this row's original plan:** (1) the "Option A branch" mentioned as needing a fresh UUID was proven statically unreachable and was DELETED, not wired; (2) `SyncLogPanel.tsx` does **not** group entries by `syncRunId` — it renders a flat, reverse-chronological list; (3) the `syncLog.ts` extraction was a **prerequisite** this row's original plan didn't mention. | Verified at `useWhisper.ts`'s staging path and `services/syncLog.ts`; `SyncLogPanel.tsx` read end-to-end, confirmed no `syncRunId` reference | **Medium → Low** | Full log entries (severity + fix hint), same as the Apply Sync path |
+| **R12** | 2→3 | **No cost bound on the `O(n·m)` DP.** `__ALIGN_INSTRUMENT__` exists but is dormant. A pathological scene doc has no guard and no warning; the UI shows the blocking `SyncLoadingOverlay` with no indication anything is wrong. | Verified | **Medium** | None |
+| **R13** | 4→5 | **`kept` ordering unasserted in `snapCoveredBoundaries`.** `retileCoveredSegments` sorts defensively; `snapCoveredBoundaries` does not. Out-of-order input would make the monotonic check fire on every pair, silently collapsing the timeline to floors. | Verified | **Medium** | None (would present as R2) |
+| **R14** | 6→7 | **Discarded stale alignments are silent no-ops.** `segmentSetStillValid` fails → `console.warn` + `return` (`useWhisper.ts:203`, `:304`). The user sees a sync that appears to have done nothing. | Verified | **Medium** | Console only |
+
+**Cross-cutting (§5).** The full console-only failure inventory (9 sites logging to console but
+not the sync log) and the fully-silent sites (the R2 floor clamps plus `App.tsx:846`'s
+degenerate-retile duration keep, `App.tsx:453`'s fabricated no-voiceover duration, `App.tsx:478`'s
+silent video-slowdown-to-fill-slot) is preserved above inline within R2/R4's own rows and this
+paragraph; the inventory was frozen as of `8d83358` and explicitly declared "the work-down
+list" for the (now-superseded) program.
+
+**Liveness as of this archival (2026-08-07):** only R11 is resolved. **R1-R10 and R12-R14 (13
+of 14) remain live, unaddressed technical debt** — none were touched by the K14-K17 lock/drag
+workstream or the Model P/S ruling, which were unrelated. Not blocking, not scheduled; surfaced
+in `project-state.md`'s Open Decisions index as a pointer to this entry rather than restated
+there in full.
+
+</details>
+
+<details>
+<summary>Phase 3/4 Blinded Listening Protocols — Steps C, H, Q (Archived, migrated from the deleted docs/phase3-step-c-listening-protocol.md [sha c77509d], docs/phase3-step-h-listening-protocol.md [sha 1f5de51], docs/phase4-step-q-listening-protocol.md [sha 040cc63]) — combined entry, all three batches scored</summary>
+
+Three blinded listening batches, same core protocol each time: opaque clip naming, a
+script-text-only manifest (no timing/error/pass-fail data, so a listen-through can't be biased
+by which clips "should" be wrong), and a private answer key held outside the repo
+(`.answer-keys/`, gitignored — see the K8 pattern documented in `docs/sync-pipeline-v2-plan.md`
+and the "Research Artifact Directories" note in `project-state.md`). Listener instructions: for
+each clip, report clip-relative timestamps to roughly a tenth of a second — where the
+narrator's voice truly stops (last audible energy, not trailing breath/mouth noise) and where
+the next word's speech genuinely begins (first audible articulation, not breath intake/lip-smack)
+— plus "clear"/"uncertain," without reasoning about what the "correct" answer should be.
+
+**Step C — 12 clips (`clip_01`-`clip_12`.wav), V6 project, 1.0s padding each side.** Two
+timestamps per clip (stop/start). **Scored:** all 12 checked against the private answer key —
+see `docs/sync-pipeline-v2-plan.md`'s Phase 3 "Step C" section for the C1-C5 results (FA closer
+to human than `silencedetect` on all 7 scored failures, 6x-78x, median ~15x; breath mechanism
+confirmed with direct evidence).
+
+**Step H — 20 clips (`clip2_01`-`clip2_20`.wav), a SECOND, independent V6 batch, none
+overlapping Step C's 12 (avoiding a circular confirmation).** 12 drawn from the worst-remaining
+residuals under the Steps E+F corrected reference, 8 controls. Three timestamps per clip
+(stop/breath-window/start) — this batch added the explicit breath-window report Step C didn't
+ask for. Padding verified programmatically before export (all 20 exact to <5ms). **Scored via
+Step J** (`docs/sync-pipeline-v2-plan.md`'s "Blinded-batch scoring pass, Steps I-L" section) —
+excluding two heading-recitation-contaminated outliers (Step K's finding), FA's worst error
+across the remaining 15 clips was 131.6ms, comfortably under the 250ms gate.
+
+**Step Q — 10 clips (`clip3_01`-`clip3_10`.wav), the Spanish corpus project's first-ever
+human-ear pass.** 7 from worst-scoring MMS-FA boundaries, 3 controls. Same three-timestamp
+protocol, plus a Spanish-specific note that the judgement is purely acoustic (listener doesn't
+need to understand the language) and to mark genuinely ambiguous onsets "uncertain" rather than
+guess. **Pre-send integrity check (a direct fix motivated by Step H's own clip-11 mismatch,
+which only a human ear had caught):** every clip's padding/duration verified programmatically,
+and every clip transcribed with the production whisper-cli sidecar and matched against its
+manifest text on three tests (first-word present, lead-in matches the previous segment's tail,
+no foreign content) — **10/10 pass**, results in `docs/phase4-step-q-integrity-check.csv`. One
+clip flagged in advance, without identifying it, as sitting at the corpus's very start (no left
+context, the same edge condition that excluded Step C's clip 3 from scoring). **Scored via Step
+U** (`docs/sync-pipeline-v2-plan.md`'s Phase 4 "Steps U-X" section) — against the Step F
+breath-aware reference, the 22 Spanish pauses went from median 61.2ms/p95 282.1ms (FAIL) to
+median 30.3ms/p95 50.4ms (PASS) against the approved 250ms gate, with one genuine remaining FA
+error (clip3_06, -1084ms, a corpus-start unscripted-lead-in case) reported as one, not hidden.
+
+**All three batches' manifests and CSV outputs remain in `docs/` / `docs/measurements/`** (not
+folded — they're data, not documentation); only the three protocol documents themselves, whose
+content is now fully executed and scored, were archived here.
+
+</details>
