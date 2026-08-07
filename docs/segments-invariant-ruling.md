@@ -1,5 +1,10 @@
 # The `segments` Invariant — Ruling Document
 
+> **Provenance:** originally authored on commit `210855d` (`model-p-editor-work`'s "park"
+> commit), which was never merged to `main`. Brought onto `main` 2026-08-07 as a docs-only
+> change — content unmodified, byte-identical to the source, no code landed alongside it.
+> See `docs/decisions/2026-08-07-model-p-revert.md` for the full context.
+
 > **Status: AWAITING OWNER RULING. Design only — no code written, no commit made.**
 > Written 2026-08-07, at HEAD `0e2ac5b` (K16), working tree clean.
 >

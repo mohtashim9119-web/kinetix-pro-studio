@@ -965,6 +965,51 @@ src/
                      #   NOT checked here — textRenderer.ts renders all of it regardless of which
                      #   tier a segment's media/transition compositing lands in. Pure — no I/O,
                      #   DOM, or React — evaluated on the main thread by the orchestrator.
+    videoDecoderPool.ts # Owns `VideoDecoder` instance lifecycle for the WebCodecs PREVIEW path
+                     #   (docs/webcodecs-architecture-plan.md, archived — full record in
+                     #   docs/history.md): configure, windowed decode-ahead scheduling, output-frame
+                     #   queueing, LRU eviction across sessions, decoder-instance reuse by asset id,
+                     #   and explicit `VideoFrame.close()` discipline (an unclosed decoded frame is a
+                     #   hard GPU/CPU memory leak, not just inefficiency — GC does not reliably
+                     #   reclaim it promptly). Exists for a scrubbable, randomly-seekable PREVIEW
+                     #   timeline shared across many segments — deliberately NOT what the export
+                     #   worker's `sequentialDecode.ts` (below) retrofits, since export has none of
+                     #   those requirements (walks a range once, start to end). Also exports
+                     #   `findChunkRange` (keyframe-backed range selection), reused by
+                     #   `sequentialDecode.ts`. Undocumented in this file until 2026-08-07's
+                     #   repository consolidation, despite being load-bearing (cited by name in
+                     #   `sequentialDecode.ts`'s own entry below and by an earlier investigation as
+                     #   sitting in `Asset`'s largest consumer set).
+    videoDemuxer.ts  # Wraps mp4box.js to turn an asset URL/blob into a seekable sequence of
+                     #   `EncodedVideoChunk`s + a `VideoDecoder` config (codec/dimensions/description)
+                     #   + track duration — the WebCodecs preview path's only demuxer (WebCodecs
+                     #   itself has no container parser). Exports `getOrCreateDemux`, reused by
+                     #   `sequentialDecode.ts` for the export worker's chunk list/decoder config.
+                     #   Carries forward two real bugs found and fixed in the Phase 0 spike
+                     #   (`src/dev/webcodecsSpike/main.ts`) — both produced total silence (zero
+                     #   decoded frames, zero thrown errors) rather than an exception, so a
+                     #   regression here is easy to misdiagnose as a WebCodecs/browser limitation
+                     #   rather than a demuxer bug. Undocumented in this file until 2026-08-07's
+                     #   repository consolidation.
+    headingLayer.ts  # Path B heading layer (docs/history.md's "Path B — Separate Heading Layer —
+                     #   Design Decisions" archive, Decision 4) — `getActiveHeadingAt(headings, t)`,
+                     #   the single shared lookup used by both preview (`PreviewStage.tsx`) and
+                     #   export (`frameRenderer.ts`/`exportPipeline.ts`), no per-caller
+                     #   reimplementation. Start-inclusive/end-exclusive (`t` in
+                     #   `[heading.time, heading.time + heading.duration)`); if multiple headings
+                     #   overlap at `t`, the last one in array order wins. Also exports
+                     #   `interleaveHeadingRows`, used by `ReviewMappingModal.tsx` to place heading
+                     #   rows between segment cards. Undocumented in this file until 2026-08-07's
+                     #   repository consolidation.
+    transcriptInspector.ts # Pure computation behind the dev-only `window.__transcriptInspector`
+                     #   global (sync pipeline v2 Phase 1b, `docs/sync-pipeline-v2-plan.md`) — lets
+                     #   the owner SEE the raw material (Whisper's per-token timestamps against
+                     #   detected-silence intervals, exactly as the pipeline receives them) rather
+                     #   than a scored verdict. This is the instrument Phase 1b's Stage 1 lock gate
+                     #   depends on; its output fed `docs/v6-smear-baseline.csv` /
+                     #   `docs/173-smear-baseline.csv` and the Phase 2a-era `*-Smear-Phase2a.csv`
+                     #   files. Undocumented in this file until 2026-08-07's repository
+                     #   consolidation.
       sequentialDecode.ts # decodeSegmentFrames() — one dedicated VideoDecoder per call, no
                      #   pooling, no session/window concept — walks a GL run's source range
                      #   exactly once, start to end. Deliberately NOT a retrofit of
@@ -1162,6 +1207,25 @@ src/
                      #   near-black frames return neutral. PreviewStage.tsx owns the sampler (it
                      #   holds the decode pool + assets); App.tsx's handleAutoGrade drives scope.
   hooks/
+    useWebCodecsPreview.ts   # The replacement for the dual-slot <video> orchestration in
+                             #   PreviewStage.tsx (docs/webcodecs-architecture-plan.md, archived —
+                             #   full record in docs/history.md, Section 3.2). Given segments, assets,
+                             #   the active segment, and currentTime — read from the existing,
+                             #   unmodified audio clock (usePlayback.ts) — returns the VideoFrame to
+                             #   paint for the active segment's video. `currentSegment` is accepted
+                             #   directly rather than re-derived from segments+currentTime, so it
+                             #   can't silently diverge from App.tsx's own memo (including the
+                             #   isResizingRef freeze-during-drag behavior). Undocumented in this
+                             #   file until 2026-08-07's repository consolidation, despite being the
+                             #   production video-preview path.
+    useFirstFrameCache.ts    # First-frame cache (Phase 1, preview correctness layer). Whenever
+                             #   segments/assets change (sync, edit, add — playing or paused), decodes
+                             #   each VIDEO segment's frame at its trimStart once, off the main render
+                             #   path, into a cached JPEG dataURL keyed by segment id; PreviewStage
+                             #   paints that cached frame the instant the playhead enters a video
+                             #   segment whose live <video> slot hasn't seeked yet, instead of a flash
+                             #   of black/stale frame. Undocumented in this file until 2026-08-07's
+                             #   repository consolidation.
     usePlayback.ts           # Playback loop: RAF (~16ms) when voiceover loaded, setInterval (100ms) no-voiceover path; audio sync, spacebar.
     useGlPreview.ts          # WebGL2 preview driver (docs/history.md -> "WebGL2 Effects Engine — Full
                              #   Plan, archived 2026-07-20", Section 3.2/6) —
@@ -1276,6 +1340,29 @@ src/
                      #   longer in-array segments. Click-outside backdrop closes drawer.
                      #   Header also shows a read-only effect-pills row (icon+label per applied
                      #   transition/animation/overlay; off-states hidden) — Effects Tab Rebuild bonus.
+    DevTestPanel.tsx   # Dev-only test panel (Phase 6, WebGL2 effects engine) — lets a non-developer
+                     #   run the effects engine's verification checks and load a 500-segment
+                     #   stress-test project via button clicks, no terminal/config needed beyond
+                     #   `npm run tauri:dev`. Opened via Ctrl/Cmd+Shift+D (App.tsx's window keydown
+                     #   effect); mounted only when `import.meta.env.DEV`, and early-returns null
+                     #   in that case too — a belt-and-suspenders guard against a production bundle
+                     #   path. Undocumented in this file until 2026-08-07's repository consolidation
+                     #   found it missing from the File Map despite predating it.
+    ReviewMappingModal.tsx # Full-width review modal shown after Apply Sync — one card per segment
+                     #   (thumbnail + `SegmentControls.tsx` fields) plus interleaved heading rows via
+                     #   `headingLayer.ts`'s `interleaveHeadingRows`. Shared field/button/icon styling
+                     #   was extracted OUT into `SegmentControls.tsx` (single source of truth) — this
+                     #   file keeps only the thumbnail + card chrome. Undocumented in this file until
+                     #   2026-08-07's repository consolidation.
+    SegmentControls.tsx # Shared per-segment control styling + field components (asset picker, text
+                     #   overlay fields, formatting row) — single source of truth for the visual
+                     #   language `BottomDrawer.tsx` and `ReviewMappingModal.tsx` both render (32px
+                     #   controls, 7px radius, #3a3a3a border, #e07c3a focus/active). Extracted so the
+                     #   two callers' controls cannot visually drift from each other. Undocumented in
+                     #   this file until 2026-08-07's repository consolidation.
+    TextLayersPanel.tsx # Global text layers panel, shown inside DropZonePanel's Segments tab —
+                     #   add/edit/delete a project-wide `TextOverlay`, toggle it on/off per segment.
+                     #   Undocumented in this file until 2026-08-07's repository consolidation.
     DropZonePanel.tsx  # Left-panel host with the Script/Assets/Editor/Effects tabs. The Effects
                      #   tab mounts only EffectsPanel.tsx and owns lookPresetService persistence —
                      #   it no longer holds any settings sections. The former standalone
