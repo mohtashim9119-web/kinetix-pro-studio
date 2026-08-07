@@ -3403,3 +3403,131 @@ harness), task 3 (this one). WS2 is closed as a workstream — see `project-stat
 Tasks and `docs/roadmap-2026-08-07.md`'s new §D7. What remains touching this code is the
 pre-existing, deliberately-unfixed stuck-`resizingId` bug (found by task 1, re-pinned by task
 2's harness) — a standing known bug, not a WS2 task, and not fixed by WS2 closing.
+
+## Manual-Failure Triage — Implementation Record (2026-08-08)
+
+WS2 closed 2026-08-07/08 with a fully green suite (1470 tests, `tsc` clean) and a new manual
+checklist (`docs/wkwebview-drag-checklist.md`, WS2 task 3). This entry records the FIRST actual
+manual run against that checklist, performed the same day it was adopted, and its aftermath —
+because it found seven real defects, none caught by the suite the close-out had just described
+as complete.
+
+**Governing method.** Reproduce first, fix second. Every one of the 17 characterization tests
+(`dragSession.test.ts`) and 12 harness tests (`dragSessionHarness.test.ts`) was written to pin
+EXISTING behaviour, which is now known to be wrong in several places — so a passing test was
+treated as possible evidence a bug had been pinned, not evidence of correctness. Where a fix
+made an existing test fail, the test's expectation was re-derived from a ruling or the
+checklist's own stated expected result, never silently accommodated. Tag
+`pre-drag-triage-2026-08-08` marks the baseline this triage started from.
+
+**Stage 0 — the regression question.** Before touching anything, checked whether F4's
+"pointercancel discards but leaves state dirty" was new or old. Diffed `dragSession.ts` against
+`pre-route2-2026-08-07`: the ghost-click-swallower leak was PRE-EXISTING (the identical
+unconditional `window.addEventListener('click', ...)` line ran on a cancel before the discard
+ruling too — the ruling changed what a cancel COMMITS, not what it ARMS); the speed-baseline
+leak was NEWLY INTRODUCED by the discard implementation itself (the `wasCancelled` early return
+it added skipped the `clearSpeedBaseline()` call that used to run unconditionally in the commit
+branch a cancel used to fall through to).
+
+**Stage 1 — reproduction.** All seven failures reproduced as failing tests in a new file,
+`src/services/dragTriage.test.ts`, run through `DragSessionHarness` (the real
+`startDragSession`), before any fix. 11 of 17 assertions failed on first run — hard numeric
+proof for F1, F2, F4, F5, F7; F3 reproduced partially (proves the CAPABILITY is absent — no code
+path ever writes `scrollLeft` — but jsdom has no layout engine to prove the scroll RATE or
+easing); F6 was not reproducible in jsdom at all and was investigated by direct code tracing
+instead.
+
+**Stage 2 — fixes, five landed, in dependency order:**
+
+1. **F5 — a locked segment was movable by its own edge.** `computeDragCascade`
+   (`src/services/dragCascade.ts`) checked a locked absorbing NEIGHBOUR's lock but never the
+   DRAGGED segment's own — an invariant violation Model P's lock rework and owner decision 9
+   ("a locked segment is an immovable anchor") both depend on. Fixed with a guard at the top of
+   the cascade (covers preview, commit, and the speed slider in one place, since all three
+   resolve through this function). No existing test asserted the old behaviour — every
+   locked-segment test in the suite locks a neighbour, never the dragged segment.
+
+2. **F1 — an outward (grow) drag on a middle segment stalled after a few px; inward worked.**
+   Root cause: K15b's `neighbourYieldableSec` bounded a head-yielding neighbour at its own FIRST
+   word's onset — its leading silence only. `snapCoveredBoundaries` places boundaries at the
+   silence CENTRE, so on real synced material that silence is routinely ~0.15s: a few screen
+   pixels of total outward drag budget for the whole gesture, at a zoomed-out 30px/s. A shrink
+   makes the neighbour GROW, which this bound never governed — hence "inward works". Re-derived
+   the bound to the neighbour's LAST word instead: still guaranteed to keep at least one word
+   (the harm K15b actually names, "lose every word it owns"), while an ordinary boundary
+   correction is no longer refused; degrades correctly to the old silence-only budget for a
+   neighbour holding exactly one word. Five `dragCascade.test.ts` tests in the K15b block
+   encoded the old bound and were re-derived in place (not deleted), with the old, buggy
+   expectation kept inline as a documented record of what was wrong; two new tests pin what the
+   old ones were actually protecting (a drag that WOULD empty the neighbour is still refused;
+   the one-word degradation case).
+
+3. **F2 — dragging the last segment's right edge visibly moved every EARLIER segment.**
+   CORRECTED THE REPORT'S OWN PREMISE first: this is not data corruption. The committed array is
+   provably untouched outside the dragged index (a last-segment drag has no neighbour to cascade
+   into, so `computeDragCascade` restacks a one-element window) — `dragTriage.test.ts`'s first F2
+   case pins this and passed before any fix. The actual defect is a RESCALE:
+   `computeZoomPixelsPerSecond`'s `ppsMin` term is `(width * 0.95) / totalDuration`, so
+   lengthening the timeline shrinks `pixelsPerSecond`, and every card's `left = startTime * pps`
+   shrinks with it — measured 300px → 259.09px for a segment whose own `startTime` never moved.
+   Fixed in `Timeline.tsx` by evaluating zoom against a BASIS duration a resize drag never moves
+   (`zoomBasisDuration` state, re-synced only on a genuine scale change — the zoom slider or a
+   panel resize — via a `resizingId`-gated effect). No test previously covered the
+   drag-x-zoom-formula interaction at all — this repo has no React test harness for
+   `Timeline.tsx` (a pre-existing, documented gap), so the RULE is locked in a service-level
+   test (`dragTriage.test.ts`) that calls `computeZoomPixelsPerSecond` the same way the component
+   now does — against a frozen basis rather than live `totalDuration`.
+
+4. **F4 — pointercancel discarded correctly but left two things dirty**, per the Stage 0 finding
+   above. Both fixed in `dragSession.ts`: the ghost-click swallower is now armed only on
+   `hasMoved && !wasCancelled`; `deps.clearSpeedBaseline()` moved to just after the `!hasMoved`
+   guard, ahead of the `wasCancelled` branch, so it runs on every resolution (commit, cancel, or
+   locked-block) instead of only the commit path.
+
+5. **F7 — the negligible-drag revert threshold, WITHDRAWN by owner ruling, not a bug fix.**
+   Ruling: retain movements down to 10px; do not revert micro-drags. `NEGLIGIBLE_DRAG_SEC`
+   removed entirely from `dragCascade.ts` (not lowered — the ruling's own wording reads as
+   removing the concept). `dragSession.ts`'s `handleUp` no longer has any distance check between
+   `hasMoved` and the commit call; `hasMoved` alone (a movement question, not a distance one) is
+   what still guards a plain click from committing anything, and is unaffected.
+   **`dragSession.test.ts` is intentionally UNCHANGED IN BEHAVIOUR** — it is WS2 task 1's
+   historical fidelity record of pre-extraction `App.tsx`, so it keeps asserting the OLD 0.01s
+   threshold, now against an explicitly-labelled `HISTORICAL_NEGLIGIBLE_DRAG_SEC` local constant
+   rather than the (now-deleted) production export; it continues to describe what the code did
+   at extraction time, not what it does now. Every test that drives the REAL session
+   (`dragSessionHarness.test.ts`) or the real preview function (`dragCascade.test.ts`'s K17
+   block) was re-derived: a tiny drag now asserts `'committed'`, not `'reverted-negligible'`; a
+   genuine no-pointermove press-and-release is still the only thing that stays a
+   `'no-op-not-moved'`.
+
+**Fixes explicitly NOT attempted:**
+
+- **F6 — after dragging a video boundary, both adjacent video segments freeze in preview.**
+  Traced through `dragCascade.ts`/`dragSession.ts` first (commit and gapless timing correct on
+  every check) into `src/hooks/useWebCodecsPreview.ts`'s decode-pool frame-pull/decode-ahead
+  effects (`ensureSession`/`getFrameAt`/the chase-mutex machinery) — outside the drag path
+  proper. Per instruction, stopped rather than fixing blind. No automated coverage exists for
+  the decode pool's response to a segment-timing change at all. Left as a standing known bug
+  (`project-state.md`'s Deferred Known Bugs); needs its own investigation.
+- **F3 — no auto-scroll past the visible right edge of the timeline.** Confirmed as a genuine,
+  structurally absent capability (no code path in `dragSession.ts` ever writes `scrollLeft`), not
+  a small fix — a continuous scroll-ramp while the pointer holds at an edge needs threshold
+  zones, sustained ticking independent of pointermove frequency, and real-viewport interaction.
+  Scoped as separate follow-up work rather than attempted inline, per instruction.
+
+**Stage 3 — suite credibility audit.** Reviewed the remaining characterization/harness tests
+for other observation-derived (not ruling- or invariant-derived) expectations: none found. Every
+surviving test traces to a named invariant (Model P gaplessness, the K16 pointer-neutrality
+proof, the K17 preview/commit parity rule, the 2026-08-08 cancel ruling) rather than raw
+observed behaviour. `dragGeometry.ts` (pure pointer math) and `dragGeometry.test.ts` are
+untouched by any of the five fixes and were not implicated. The Step M golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) was re-run directly and confirmed byte-identical
+— none of the five fixes touch sync/timing code (`syncEngine.ts`, `snapBoundaries.ts`,
+`whisperService.ts`), only the drag-cascade/timeline-zoom path.
+
+**Result.** 1491 passed, 1 expected fail (F3's auto-scroll repro, converted to `it.fails` so the deliberately unimplemented capability is documented without leaving the suite red), 1 skipped (1493 total), 60 files — net +23 over the 1470 baseline.
+`tsc --noEmit` clean. `docs/wkwebview-drag-checklist.md` gained two permanent steps (11: a
+locked segment's own edge; 12: a video-boundary drag, then play both sides) from failures this
+run found that weren't yet checklist steps, plus a full run-log entry recording this pass's
+per-step results. A second manual run — against the five fixes, plus the two new checklist
+steps — is warranted before the next release; F3 and F6 remain open.

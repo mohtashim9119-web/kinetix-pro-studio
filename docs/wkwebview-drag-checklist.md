@@ -96,7 +96,9 @@ automated suite already covers so you're not re-checking it by eye.
 | 7 | Grab an edge, move the pointer **only a few pixels**, and release. | Nothing commits. The segment snaps back to its exact starting size with no visible flicker, no console error, and — importantly — releasing does **not** trigger an accidental seek or selection change (the ghost-click case). | Numbers only. The negligible-drag threshold and its "reverted" outcome are fully covered by `dragSessionHarness.test.ts`; the ghost-click swallow (`window.addEventListener('click', ..., {capture:true, once:true})`) is real-browser click-synthesis behavior that `jsdom`'s synthetic events don't reproduce — only the eye can confirm no stray seek happens. |
 | 8 | **Zoom in** until the timeline overflows its panel, **scroll right**, then drag a segment that is now positioned to the left of the original (unscrolled) viewport. | The drag tracks the pointer correctly relative to the *scrolled* position — no jump the instant the drag starts, and the edge stays under the pointer for the whole gesture. | **Nothing.** `jsdom` has no real scroll-affecting layout; `timelineContentX`'s `scrollLeft` term is only ever exercised with hand-fed numbers in unit tests, never against a real scrolled viewport. This is the single step with the least automated coverage (§4.1) — give it real attention. |
 | 9 | While zoomed in, drag a segment's edge **toward and past the visible right edge** of the timeline panel. | The drag keeps tracking correctly (or the timeline auto-scrolls, if that's the intended behavior — note which one actually happens). The UI must not freeze, clip the drag, or lose the pointer. | **Nothing.** This is real-viewport, real-scroll behavior with no `jsdom` equivalent at all. |
-| 10 | Start a drag, then force an interruption: release the mouse button **outside the browser window**, or switch applications mid-drag (Cmd+Tab) so the OS takes the gesture away. | See the open pointercancel question below — for now, confirm what **actually happens** (does the drag commit at its last position, or discard?) and report it. Either way: the drag session must end cleanly — no stuck cursor, no stuck "resizing" state that blocks the next drag, no leaked listeners (immediately try a normal drag on another segment right after; it must work normally). | Partial. `dragSessionHarness.test.ts` PART 4 pins the *code path* — a synthetic `pointercancel` event resolves through the identical `handleUp` a `pointerup` does — but it cannot produce a **real** OS-triggered `pointercancel` (window-switch, device change, gesture takeover). This step is the only way to confirm the real trigger fires the same listener at all. |
+| 10 | Start a drag, then force an interruption: release the mouse button **outside the browser window**, or switch applications mid-drag (Cmd+Tab) so the OS takes the gesture away. | The drag **discards** — the edge springs back to its pre-drag geometry, no timing change lands (ruled 2026-08-08, `docs/decisions/2026-08-08-pointercancel-ruling.md`). The drag session must end cleanly — no stuck cursor, no stuck "resizing" state that blocks the next drag, no leaked listeners (immediately try a normal drag on another segment right after; it must work normally), and no armed ghost-click swallower left over to eat your next real click anywhere in the app. | Partial. `dragSessionHarness.test.ts` PART 4 pins the *code path* — a synthetic `pointercancel` event resolves through the identical `handleUp` a `pointerup` does — but it cannot produce a **real** OS-triggered `pointercancel` (window-switch, device change, gesture takeover). This step is the only way to confirm the real trigger fires the same listener at all. |
+| 11 | Grab a **locked** segment's own edge (not a neighbour's — the segment itself) and try to drag it. | The segment does not move by even a pixel, in the live preview or after release. No console error. (Found 2026-08-08 by a manual run: `computeDragCascade` checked a locked absorbing NEIGHBOUR but never the dragged segment's own lock, so this drag silently succeeded — fixed in `dragCascade.ts`.) | Numbers only, as of the 2026-08-08 fix. `dragCascade.test.ts`/`dragSessionHarness.test.ts` assert the array and live preview never move; only the eye confirms the stop doesn't look broken. |
+| 12 | Drag a boundary between two **video** segments (either edge), then let playback cross into both the segment you shrank and the one you grew, without navigating away from the preview. | Both segments play normally — no frozen/stuck frame in the preview player on either side of the moved boundary. (Reported 2026-08-08: both adjacent video segments froze after such a drag. Root cause was NOT found in the drag path itself — `dragCascade.ts`/`dragSession.ts` commit correct, gapless timing every time this was checked — the freeze traces into the WebCodecs preview decode pool's frame-pull/decode-ahead effects, `src/hooks/useWebCodecsPreview.ts`, which is outside this checklist's and this triage's scope. Left unfixed; needs its own investigation.) | Nothing. No automated coverage exists for the preview decode pool's response to a segment-timing change at all. |
 
 **Known issue, not a checklist failure:** dragging a segment id that doesn't exist, or
 starting a drag before the timeline DOM exists, is a documented, deliberately-unfixed bug
@@ -128,7 +130,38 @@ Step 8  (drag while scrolled):               PASS / FAIL   Notes: __________
 Step 9  (drag past visible edge):            PASS / FAIL   Notes: __________
 Step 10 (interrupted drag / pointercancel):  PASS / FAIL   Notes: __________
                                               Observed behavior: commit / discard (circle one)
+Step 11 (locked segment, own edge):          PASS / FAIL   Notes: __________
+Step 12 (video boundary, both sides play):   PASS / FAIL   Notes: __________
 
 Overall: PASS / FAIL
 Follow-up filed (if any): __________
 ```
+
+---
+
+## Run log
+
+### 2026-08-08 — first real manual run
+
+The first actual manual run against this checklist, performed by the app owner. Found **seven
+real defects** the fully-green automated suite (1470 tests) had not caught — direct
+confirmation of why this checklist exists at all (see "Why this exists" above). Steps 11 and
+12 above were added AFTER this run, from failures the tester found that weren't yet checklist
+steps — the checklist itself was gapped, not just the automated suite.
+
+| # | Step | Result | Outcome |
+|---|---|---|---|
+| 1 | Middle segment, right edge (outward) | FAIL | Stalled after a few px. Fixed 2026-08-08 — the K15b neighbour yield floor was bounded at the neighbour's OUTERMOST word (its leading/trailing silence only, ~0.15s on real synced material), not its innermost. See `dragCascade.ts`'s `neighbourYieldableSec`. |
+| 2 | Middle segment, left edge (outward) | FAIL | Same root cause as step 1 — fixed by the same change. |
+| 4 | Last segment, right edge | FAIL | Grew the segment correctly but visibly moved every EARLIER segment too. Not data corruption — the committed array was untouched outside the dragged index. Cause: `Timeline.tsx`'s zoom formula read live `totalDuration`, so lengthening the timeline rescaled `pixelsPerSecond` and re-laid out every card. Fixed 2026-08-08 by freezing the zoom basis across a resize drag. |
+| 7 | Negligible drag reverts | RULING | Not a bug — owner ruled the revert-on-negligible-drag behavior should be REMOVED. Implemented 2026-08-08: `NEGLIGIBLE_DRAG_SEC` withdrawn: a drag that moved commits however small. |
+| 9 | Drag past visible edge | FAIL | No auto-scroll. Confirmed as a real, unimplemented capability — scoped as separate follow-up work (continuous scroll-ramp logic while the pointer holds at an edge is more than a small change; not attempted in the 2026-08-08 triage). |
+| 10 | Interrupted drag / pointercancel | FAIL (partial) | The discard itself (landed the task before this run, per the 2026-08-08 pointercancel ruling) worked correctly, but left two pieces of state dirty: a ghost-click swallower stayed armed (pre-existing — present since before the discard ruling too) and the playback-speed baseline was never cleared (newly introduced by the discard implementation, since it added an early return that skipped the existing clear). Both fixed 2026-08-08. |
+| 11 (new) | Locked segment, own edge | FAIL | Not a prior checklist step. A locked segment could be freely resized by grabbing its own edge — `computeDragCascade` only ever checked a locked NEIGHBOUR. Fixed 2026-08-08. |
+| 12 (new) | Video boundary, both sides play | FAIL | Not a prior checklist step. Both adjacent video segments froze in preview after a boundary drag. Investigated 2026-08-08 — traced to `src/hooks/useWebCodecsPreview.ts`'s decode pool, outside the drag path proper. NOT fixed as part of this triage; needs its own investigation. |
+
+Steps 3, 5, 6, 8 were not reported as failing in this run.
+
+Follow-up filed: step 9 (auto-scroll) needs separate scoping; step 12 (video freeze) needs its
+own investigation into the WebCodecs preview decode pool. A second manual run against the
+fixes above (plus the two new steps 11/12) is warranted before the next release.

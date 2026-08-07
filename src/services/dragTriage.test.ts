@@ -337,7 +337,18 @@ describe('F7 — micro-drags are retained, not reverted', () => {
 // F3 — no auto-scroll when dragging past the visible right edge.
 // ---------------------------------------------------------------------------
 describe('F3 — auto-scroll past the viewport edge', () => {
-  it('scrolls the timeline when the drag passes its visible right edge', () => {
+  // DELIBERATELY NOT FIXED (2026-08-08 triage) — scoped as separate follow-up
+  // work rather than attempted inline. A continuous scroll-ramp while the
+  // pointer holds at an edge (threshold zones, sustained ticking independent
+  // of pointermove frequency, real-viewport interaction) is a new capability,
+  // not a small change — see project-state.md's Deferred Known Bugs.
+  //
+  // `it.fails` rather than a normal `it` or a silent `it.skip`: this asserts
+  // the CURRENT (missing) behaviour and is expected to keep failing — vitest
+  // reports it green as long as the assertion inside keeps failing, and turns
+  // it RED the moment F3 is implemented, which is exactly the signal needed
+  // to come back and convert this into a real passing test at that point.
+  it.fails('scrolls the timeline when the drag passes its visible right edge', () => {
     // PARTIAL REPRO ONLY. jsdom has no layout engine and no viewport:
     // `clientWidth` is 0, `getBoundingClientRect` is stubbed by the harness,
     // and nothing enforces a scroll range. What this test CAN prove is the
