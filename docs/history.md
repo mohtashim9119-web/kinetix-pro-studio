@@ -2587,3 +2587,99 @@ sentence actually breaks. Two candidate fixes for it (FENCE, QUIET) were tried a
 remains open; see `docs/boundary-drift-investigation.md` for the full evidence, dead ends, and
 tooling notes (this document does not repeat that content) and `project-state.md`'s Active Tasks for
 current status.
+
+---
+
+<details>
+<summary>Phase 7 Sync Audit — Read-Only Investigation (Archived, rescued from orphaned branch `phase-7-sync-audit`, commit `2fdbbc0`, source `docs/phase-7-sync-audit.md`) — dated 2026-06-01, pre-sync-rewrite architecture</summary>
+
+**Provenance.** This audit was committed on a branch (`phase-7-sync-audit`) that was never merged
+into `main` or any of its ancestors — unreachable from `main`, `webgl2-effects-engine`, or
+`model-p-editor-work`, and never archived here. Found and rescued during the 2026-08-07 repository
+consolidation (this file's own entry below, "Repository Consolidation"). The branch itself is
+retained (not deleted) pending an owner decision on housekeeping; this entry preserves its substance
+regardless of what happens to the branch.
+
+**Verdict: obsolete, not actionable as written.** Every mechanism this audit traces describes an
+architecture that has since been rebuilt end to end:
+
+- **Sync entry point.** The audit traces a 3-step wizard (`runSyncStep1/2/3`) culminating in a
+  `finalizeSync()` handler. That flow no longer exists — `handleApplySyncFromFiles` (the single
+  "Apply Sync" entry point CLAUDE.md documents) replaced it during the WS1-WS6 sync rewrite
+  (2026-07-24 to 2026-07-29, archived elsewhere in this file). `finalizeSync` survives only as an
+  informal name in a few `App.tsx` code comments, not as a function.
+- **Headings.** The audit's #1 CRITICAL finding — a `currentTime` snap-back loop caused by
+  in-array heading segments (`currentSegment.heading && !currentSegment.text`) fighting the
+  playback interval — is structurally impossible today. Headings became a separate top-level
+  `HeadingOverlay[]` layer in Path B (2026-07-08, this file's own "Path B" archive), not
+  segment-array entries; there is no `currentSegment.heading` field to snap back on.
+- **Playback loop.** The audit's #2/#4/#6/#10 findings all concern a single `setInterval(100ms)`
+  loop with `project.segments`/`currentSegment` in its dependency array and a duplicate
+  `onTimeUpdate` write path. `usePlayback.ts` (CLAUDE.md's `hooks/` entry) now uses a ~16ms
+  `requestAnimationFrame` loop when a voiceover is loaded, falling back to `setInterval(100ms)`
+  only when there is none — a different mechanism than the one audited.
+- **Duration allocation.** The audit's #3 (hardcoded 0.5s heading floor overrunning the voiceover)
+  is moot — headings own no timeline seconds at all post-Path-B (`project-state.md` Key Invariant
+  (c)). #8 (character-count vs. word-count duration weighting) is **not a bug** under the current
+  design — CLAUDE.md's own top-level description confirms character-weight proportioning is the
+  deliberate, current behavior, not a documentation mismatch.
+- **Video/waveform rendering.** #5 (`getMediaDuration` per-call, no cache) and #7 (fire-and-forget
+  preview seeks) describe the pre-WebCodecs `<video>`-element preview path, superseded by the
+  WebCodecs preview migration (`useWebCodecsPreview.ts`, `videoDecoderPool.ts`, archived
+  elsewhere in this file). #13 (waveform bars rendered via `Math.random()`, not real audio data)
+  is superseded by the real peak-extraction system (`waveformPeaks.ts`/`waveformPipeline.ts`).
+
+**The one finding worth carrying forward as a still-relevant class, not a specific bug: the
+missing-asset reflow bug (§"Missing-Asset Bug — Root Cause").** The audit traced a real mechanism —
+deleting an asset clears `assetId` silently (no reflow), but a subsequent re-sync's
+`unusedAsset ?? matchingAssets[0]` fallback can then silently assign one remaining asset to two
+segments, with no duplicate-assignment warning. The specific line numbers and call path
+(`App.tsx:172`, pre-rewrite `parseProjectData`) no longer apply — that matching logic is now
+`syncEngine.ts`'s `isFuzzyMatch`/`contiguousWordMatch`/`findAssetByContext`/`autoMatchSegments` — but
+whether an equivalent silent-duplicate-assignment gap still exists in the current matcher has **not
+been checked** by this rescue and is not asserted either way. If asset-matching work is ever
+scheduled, worth a fresh, current-code check of this specific class (silent duplicate asset
+assignment across segments, no log entry) rather than assuming either "still broken" or "already
+fixed."
+
+**Not carried forward, and not because it's wrong — because it's unverifiable against current code
+without a fresh audit:** the export-path `asset_missing` guard bypass (#4, "guard fires only when
+`assetId` is defined-but-missing") and the `Open Questions` section at the audit's own end. Both
+concern surfaces (export pipeline, sync-log surfacing) that have been rewritten multiple times since
+2026-06-01 (Tier 1/GL/Canvas export tiers, the WebCodecs export path, the `no-asset` sync-log entry
+type) and re-deriving them against 2026-06-code would misattribute current behavior to a two-month-old
+trace.
+
+</details>
+
+<details>
+<summary>Repository Consolidation — branch-naming drift and the "Model P" correction (Archived, migrated from the deleted scratch note docs/_part2-findings.md) — 2026-08-07</summary>
+
+Two findings surfaced while mapping branch topology during the 2026-08-07 repository consolidation
+(reattaching a detached `HEAD`, retiring stale branches, fast-forwarding `main`).
+
+**Finding 1 — `webgl2-effects-engine` stopped being about WebGL2 effects long ago.** The branch name
+is stale. Its 47 commits beyond `8d83358` (tag `clean-baseline-2026-07-31`) are the sync-pipeline-
+contract program — Phase 2/3/4 forced-alignment measurement, the boundary-quality checker, Contract
+1→2 validators, the word-coverage validator, K14-K17 drag-cascade fixes — not WebGL2 effects work.
+The actual WebGL2 effects engine work ended at `c522248` ("docs: v2 plan — stage contracts, stage
+locking, Stage 1 observability, RU descope, adversarial audit"); everything after that on the branch
+is sync-engine/timeline work that happened to land on this pre-existing branch rather than a new one.
+Consequence: `main` was fast-forwarded onto `webgl2-effects-engine`'s tip (`6eae48e`) as part of this
+consolidation (with owner approval) — as of 2026-08-07, `main` and `webgl2-effects-engine` are
+identical, both carrying the sync-pipeline-contract-program work under a WebGL2-labeled branch name.
+No rename was performed; flagging here so a future reader isn't misled by the name alone.
+
+**Finding 2 — "Model P" was never a distinct 48-commit effort; it's one park commit.** A same-day
+investigation (`docs/context-report-2026-08-07.md` §5) had characterized "Model P" as *"a large
+follow-on effort... 48 commits... built on top of `HEAD` and then fully reverted"* — misleading. The
+actual topology: `model-p-editor-work` (`210855d`) = `webgl2-effects-engine` (`6eae48e`) **plus
+exactly one commit** — `210855d`, `"park: uncommitted Model P / editor working tree at revert
+time"`, whose own message says it captures work *"on top of 6eae48e (K14/K15/K16/K17)"*, not on top
+of some earlier, separate baseline. The 47 commits the earlier report attributed to "Model P" were
+actually `webgl2-effects-engine`'s own sync-pipeline-contract-program commits (Finding 1 above), and
+are on `main` regardless of what happens to `model-p-editor-work`. Full rationale for what the park
+commit actually contains and why it references a revert to `18f5734`: `docs/decisions/2026-08-07-
+model-p-revert.md`.
+
+</details>
