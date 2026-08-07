@@ -553,6 +553,33 @@ src/
                      #   MIN_PLAYBACK_SPEED/MAX_PLAYBACK_SPEED, moved from App.tsx alongside the math
                      #   that uses them. Full record: docs/sync-pipeline-v2-plan.md -> "K16 — drag
                      #   pointer accuracy and smoothness".
+    dragSession.ts   # Timeline drag-resize SESSION (WS2 task 1, 2026-08-07) — the DOM/pointer-event
+                     #   ORCHESTRATION for one drag gesture, extracted verbatim out of App.tsx's
+                     #   onResizeStart (no behaviour change; no timing math moved — dragCascade.ts/
+                     #   dragGeometry.ts above already own all of it). startDragSession(id, type,
+                     #   downClientX, deps) is a plain, non-hook function: it holds no React state
+                     #   and calls no hooks, only DOM APIs (document.getElementById/querySelectorAll,
+                     #   direct el.style.left/width writes bypassing React per K17's rationale above,
+                     #   window pointer-event listeners) plus an explicit DragSessionDeps callback
+                     #   object for everything React-bound (setResizingId/setResizingType,
+                     #   isResizingRef/speedBaselineRef writes, applyDurationChange as
+                     #   commitDurationChange, the setProject revert as revertSegments) — App.tsx
+                     #   keeps every useState/useRef declaration; only accessors cross the boundary.
+                     #   Builds the data-seg-id element map, rAF-coalesces pointermove into one
+                     #   writeGeometry call per frame (diffs the previewed array against the drag-
+                     #   start snapshot, writing changed segments' style and reverting any segment a
+                     #   PRIOR frame moved but this one no longer does), and on release either commits
+                     #   via deps.commitDurationChange or reverts via deps.revertSegments — the D12
+                     #   ghost-click swallow and the negligible-drag threshold (NEGLIGIBLE_DRAG_SEC,
+                     #   dragCascade.ts) are unchanged. App.tsx's onResizeStart prop is now a thin
+                     #   call-in (App.tsx: 4876 -> 4660 lines). FOUND, NOT FIXED — a pre-existing bug
+                     #   preserved verbatim: setResizingId/setResizingType/the resizing body class are
+                     #   set UNCONDITIONALLY before validating the dragged segment or the timeline DOM
+                     #   element exist, and nothing on that early-bail path clears them (see
+                     #   project-state.md's Deferred Known Bugs). Characterization tests
+                     #   (dragSession.test.ts, 17 tests, written and passing BEFORE the extraction,
+                     #   byte-identical after) transcribe the pre-move closure verbatim per this
+                     #   repo's own dragGeometry.test.ts PART-1 precedent.
     syncConstants.ts # Shared numeric/tuning constants for the sync pipeline — imported by
                      #   whisperService.ts and snapBoundaries.ts, never duplicated locally.
                      #   Existing: MALFORMED_TOKEN_DURATION_TOLERANCE_SEC, temporal-bonus/rescue-

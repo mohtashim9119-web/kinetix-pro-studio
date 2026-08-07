@@ -3158,3 +3158,58 @@ live preview path is asserted equal to the commit path across every index and bo
 chained sync → drag → drag → re-sync → lock → unlock session test. WS2's first task is the
 `dragSession` extraction (`App.tsx:3977-4206`, ~230 lines) — its own work, not an upstream
 dependency, and deliberately not done in this pass.
+
+---
+
+## WS2 Task 1 — `dragSession.ts` Extraction (2026-08-07)
+
+**Pure refactor, no behaviour change.** `App.tsx`'s `onResizeStart` closure (lines 3977-4206,
+~230 lines) moved verbatim into `src/services/dragSession.ts`'s `startDragSession`. This was
+WS2's own first task per the prior entry above, not an upstream dependency, and unblocks
+Route 2 (the drag-path test harness) as its next task.
+
+**What actually moved.** Everything left in the closure by this point was DOM/pointer-event
+orchestration, not timing math — every pure decision (`computeDragCascade`, `resolveDragPreview`,
+`resolveDragEdge`, `computeGrabOffsetPx`, `timelineContentX`, `segmentEdgeContentX`) was already
+extracted in prior K15-K17 work and neither `dragCascade.ts` nor `dragGeometry.ts` was touched
+here. What moved: the `data-seg-id` element map, `writeGeometry`'s rAF-coalesced per-frame DOM
+style diff (writes changed segments, reverts any segment a prior frame moved but the current one
+no longer does — bypassing React entirely, per K17's own "writing behind React's back"
+rationale), and `handleUp`'s release dispatch (negligible-drag threshold, commit via
+`applyDurationChange`, revert on a locked-neighbour block, the D12 ghost-click swallow).
+
+**Shape.** `startDragSession(id, type, downClientX, deps)` is a plain function, not a hook — it
+holds no React state and calls no `useState`/`useEffect`. Every piece of React state crosses
+through an explicit `DragSessionDeps` callback object (`getSegments`, `getPixelsPerSecond`,
+`getAssets`, `getTranscriptTokens`, `setResizingId`, `setResizingType`, `setIsResizing`,
+`clearSpeedBaseline`, `commitDurationChange` = `applyDurationChange`, `revertSegments`) —
+`App.tsx` keeps every `useState`/`useRef` declaration exactly where it was; only accessors cross
+the boundary. `App.tsx`'s `onResizeStart` prop is now a thin call-in.
+
+**Characterization tests first.** `src/services/dragSession.test.ts` (17 tests) was written and
+committed *before* the move, following this repo's own `dragGeometry.test.ts` PART-1 precedent
+for exactly this situation (an inline, unexported closure with no jsdom/testing-library in this
+repo): the element-map/`writeGeometry`/`handleUp`-dispatch logic is transcribed verbatim from the
+pre-move `App.tsx`, cited by line number, and exercised with plain duck-typed fake elements
+(only `.dataset.segId`/`.style.left`/`.style.width` are touched — no real DOM node required). Also
+closes a real gap in the existing drag-path suite: a "locks on both sides" scenario (neither
+existing `dragCascade.test.ts` nor `gaplessInvariant.test.ts` had one for the drag path
+specifically). Confirmed byte-identical between the pre-move and post-move commits via `git diff`.
+
+**Bug found, deliberately left.** The original closure sets `resizingId`/`resizingType`/the
+`resizing` body class unconditionally, before validating that the dragged segment or the
+`#timeline-scroll-area` DOM element exist, and nothing on that early-bail path ever clears them
+— a drag starting against a stale segment id or before the timeline node exists leaves
+`resizingId` stuck non-null and the cursor class stuck on `<body>` forever. Pre-existing, not
+introduced by this move; preserved verbatim and pinned by `dragSession.test.ts`'s own tests for
+it. Recorded in `project-state.md`'s Deferred Known Bugs — likely unreachable in practice, not
+prioritized.
+
+**DEV gapless-assertion effect — checked, not a concern.** `App.tsx`'s Model P `useEffect`
+(keyed on `[project.segments]`) does not fire per drag frame: the live-preview path writes DOM
+styles directly and never calls `setProject`, so the effect fires at most once per gesture, on
+release.
+
+**Verification.** 1425 → **1442 tests, 58 files, all passing** (+17, `dragSession.test.ts`);
+`tsc --noEmit` clean. Step M golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3
+unchanged. `App.tsx`: 4876 → 4660 lines (-216).
