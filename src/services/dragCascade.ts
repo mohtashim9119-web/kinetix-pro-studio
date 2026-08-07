@@ -182,6 +182,24 @@ export function computeDragCascade(
   const segs = originalSegments.map(s => ({ ...s }));
   const dragged = segs[draggedIdx];
   if (!dragged) return null;
+  // F5 (2026-08-08 manual triage) — the DRAGGED segment's own lock is a wall
+  // too. Until now only an absorbing NEIGHBOUR's lock was checked, so a locked
+  // segment could be freely resized by grabbing its own edge: the one gesture
+  // that most obviously has to be refused. Owner decision 9 and the Model P
+  // lock rework both state a locked segment is an immovable anchor, and the
+  // rest of the pipeline (`applyAnchorBasedTiming`'s hard wall, the
+  // lock-shortfall refusal) is built on that holding everywhere.
+  //
+  // Placed here rather than in `dragSession.ts` deliberately: this function is
+  // the single writer of segment timing on the drag path, so one check covers
+  // the live preview (`resolveDragPreview` → null → original array, the card
+  // visibly does not move), the pointerup commit (`applyDurationChange` →
+  // false → revert), and the playback-speed slider, which reaches the same
+  // cascade. A guard in the session would have covered only the first two.
+  if (dragged.locked) {
+    onLockedBlock(draggedIdx, dragged.id);
+    return null;
+  }
   segs[draggedIdx] = { ...dragged, duration: finalDuration, trimStart: finalTrimStart };
   const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
   let remaining = -delta; // positive → neighbour must grow; negative → neighbour must shrink
