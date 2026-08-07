@@ -3024,3 +3024,53 @@ folded — they're data, not documentation); only the three protocol documents t
 content is now fully executed and scored, were archived here.
 
 </details>
+
+<details>
+<summary>The Model P Ruling — segments invariant decided (2026-08-07)</summary>
+
+**Owner ruling, recorded 2026-08-07:** `project.segments` IS a gapless partition
+("Model P") — `startTime[0] === 0` and `startTime[i] + duration[i] === startTime[i+1]`
+for every adjacent pair, `startTime` a derived cache of the duration prefix-sum, never
+independently authoritative. Model S (independently-positioned slots, gaps legal) is
+rejected. This closes the question `docs/segments-invariant-ruling.md` posed the same
+day (written at HEAD `0e2ac5b`/K16, originally only on the never-merged
+`model-p-editor-work` branch, landed on `main` as part of the repository consolidation
+just ahead of this ruling) — eleven components had answered the question differently,
+with no decision ever recorded, and the answer had silently flipped five times across
+K13-K16-adjacent work. Full ruling record: `docs/decisions/2026-08-07-model-p-ruling.md`.
+Full original analysis, updated in place with the ruling stamped at the top:
+`docs/segments-invariant-ruling.md`.
+
+**The lock-shortfall rule (§4.1(a)) is confirmed as part of the same ruling:** an
+ordinary (satisfiable) shortfall against a locked segment is absorbed by the adjacent
+unlocked segment; an unsatisfiable shortfall (a locked segment on both sides of a gap)
+refuses the second lock-toggle outright, with a clear conflict message, rather than
+committing a gap. The alternative of letting an earlier lock's slot grow to meet a later
+one was rejected (it reopens the pre-K14 growth exemption K14 withdrew on purpose); the
+alternative of permitting a gap between two locks as a first-class exception was rejected
+as Model S admitted through a side door.
+
+**Consequences, same day:**
+- `docs/drag-path-testability-assessment.md`'s Route 2 test-harness recommendation —
+  previously conditioned on this exact ruling, since its central assertion needed to know
+  which model to encode — is now unconditionally approved, sequenced alongside (not
+  before) the P-migration's step 5, per that document's own sequencing argument.
+- `project-state.md`'s Open Decisions section was rewritten from "AWAITING OWNER RULING"
+  to a compliance backlog: a read-only code search the same day found the concrete places
+  a gap can still form under current `main` — `syncEngine.ts`'s `applyAnchorBasedTiming`
+  locked branch (Model-S hard-wall behaviour, K14's named rework target),
+  `dragCascade.ts`'s `restackWindow` (correct once its upstream input is gapless, not
+  itself broken), the absence of any dev-only gaplessness assertion anywhere in `src/`,
+  and the absence of any gap guard in either export path (`exportPipeline.ts`,
+  `webcodecsExport/exportPipelineWebCodecs.ts`) — the park commit's unmerged
+  `checkTimelineIsGapless` is the only place that check has ever existed.
+- The park commit's (`210855d`, `model-p-editor-work`) in-flight Model-P rework is
+  confirmed as work in the *correct* direction by this ruling, but per
+  `docs/decisions/2026-08-07-model-p-revert.md`'s existing recommendation, should be
+  re-derived against current `main` (which now includes K17) rather than cherry-picked
+  from a diff that predates it and was never reviewed.
+- No `src/` change landed as part of this ruling — it is a decision record only.
+  Implementation (K14's rework, the dev-only assertion, the export guard) remains open
+  and tracked in `project-state.md`'s Active Tasks and Open Decisions.
+
+</details>

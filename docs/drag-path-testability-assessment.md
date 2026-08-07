@@ -1,11 +1,31 @@
 # Drag-Path Testability — Assessment and Recommendation
 
+> **STATUS UPDATE, 2026-08-07: the ruling this document was waiting on landed — Model P
+> (`docs/segments-invariant-ruling.md`, `docs/decisions/2026-08-07-model-p-ruling.md`).**
+> What that settles and what's still open, item by item:
+> - **§6 Q1 (Approve Route 2, "alongside not before" sequencing) — SETTLED, approved.**
+>   The ruling this recommendation was conditioned on is now in. Route 2's central
+>   assertion can be written in its final, correct form: under Model P, a shrink drag
+>   must close the space in the SAME FRAME (§4.4's Model-P row) — a Model-S-shaped
+>   "gap may legitimately open" assertion would now be wrong to encode. Per §5's own
+>   sequencing argument, build it at step 5 of the P migration
+>   (`segments-invariant-ruling.md` §6.1), i.e. alongside the K14 lock-hard-wall rework
+>   and the live-drag-preview fix, not before either.
+> - **§6 Q2 (Route 1 off the table) — SETTLED, confirmed.** Nothing in the ruling bears
+>   on this; the Route 1 cost analysis (§2) stands unchanged.
+> - **§6 Q3 (manual WKWebView checklist) — STILL OPEN.** The ruling doesn't touch this;
+>   it remains a standing recommendation awaiting adoption as a repeatable practice, not
+>   a one-time approval.
+> - **F9 in §3's table (export desync from a gap) is now explicitly in scope** — Model P
+>   is ruled specifically to make this unrepresentable by construction (once the
+>   compliance backlog in `docs/decisions/2026-08-07-model-p-ruling.md` is closed), not
+>   just asserted against.
+
 > **Provenance:** originally authored on commit `210855d` (`model-p-editor-work`'s "park"
 > commit), which was never merged to `main`. Brought onto `main` 2026-08-07 as a docs-only
 > change — content unmodified, byte-identical to the source, no code landed alongside it.
 > See `docs/decisions/2026-08-07-model-p-revert.md` for the full context.
 
-> **Status: AWAITING OWNER RULING. Design only — no code written, no commit made.**
 > Written 2026-08-07, at HEAD `0e2ac5b`, working tree clean apart from the
 > `package.json` test-gate change reported in Part 1.
 >

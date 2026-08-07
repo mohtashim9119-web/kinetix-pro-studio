@@ -1,16 +1,25 @@
 # The `segments` Invariant — Ruling Document
 
+> **STATUS: RULED — MODEL P, 2026-08-07.** Owner ruling, recorded formally the same day
+> as this document's consolidation onto `main`: `project.segments` IS a gapless partition.
+> `startTime[0] === 0` and `startTime[i] + duration[i] === startTime[i+1]` for every `i`
+> is now the official, locked invariant; Model S (§3 below) is rejected. The analysis
+> below is kept in full as the record of how the ruling was reached — it is no longer
+> "awaiting" anything, but every section's reasoning stands and should be read before
+> touching lock/drag-cascade code. See `docs/decisions/2026-08-07-model-p-ruling.md` for
+> the ruling itself, what it forbids, and the compliance backlog it opens; §4.1's answer
+> below (rule (a), refuse an unsatisfiable lock) is confirmed as the lock-shortfall rule.
+
 > **Provenance:** originally authored on commit `210855d` (`model-p-editor-work`'s "park"
 > commit), which was never merged to `main`. Brought onto `main` 2026-08-07 as a docs-only
 > change — content unmodified, byte-identical to the source, no code landed alongside it.
 > See `docs/decisions/2026-08-07-model-p-revert.md` for the full context.
 
-> **Status: AWAITING OWNER RULING. Design only — no code written, no commit made.**
 > Written 2026-08-07, at HEAD `0e2ac5b` (K16), working tree clean.
 >
-> This document exists because the question below has never been decided, and
-> eleven components in this codebase answer it differently. Every one of K14,
-> K15a, K15b and K16 is downstream of it. Reverting them does not resolve it.
+> This document exists because the question below had never been decided, and
+> eleven components in this codebase answered it differently. Every one of K14,
+> K15a, K15b and K16 was downstream of it. Reverting them would not have resolved it.
 
 ---
 
@@ -396,12 +405,12 @@ Stated so it is not assumed settled:
 
 ---
 
-## 8. What I need from you
+## 8. What I need from you — ANSWERED, 2026-08-07
 
-1. **P or S.**
-2. If **P**: confirm §4.1(a) — refuse a lock that would create an unsatisfiable
-   gap — as the lock-shortfall rule.
-3. If **S**: confirm you accept an export rewrite, and that decision 8 gets
-   re-asked.
+1. ~~**P or S.**~~ → **P.** Official and locked. See §0 status banner and
+   `docs/decisions/2026-08-07-model-p-ruling.md`.
+2. ~~If **P**: confirm §4.1(a)~~ → **Confirmed.** Refuse a lock that would create
+   an unsatisfiable gap is the lock-shortfall rule.
+3. If **S**: N/A — S was rejected.
 4. Independently of 1–3: **the drag-preview fix (§4.4) is a bug under both
-   models** and can be authorised now without pre-empting the ruling.
+   models** and was already authorised/shipped as K17, ahead of this ruling.
