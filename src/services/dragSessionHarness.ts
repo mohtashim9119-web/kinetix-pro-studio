@@ -66,8 +66,14 @@ export interface DragHarnessConfig {
   unmountedIds?: string[];
 }
 
-/** Mirrors `dragSession.test.ts`'s reference `CommitOutcome` — the harness's
- *  proof obligation is that the REAL session reaches the same four outcomes. */
+/** Mirrors `dragSession.test.ts`'s reference `CommitOutcome`, historically —
+ *  that file transcribes PRE-F7 `App.tsx` and still names `'reverted-negligible'`
+ *  as one of its four outcomes. The real session can no longer reach it (F7,
+ *  2026-08-08 owner ruling — the negligible-drag threshold is withdrawn, so a
+ *  drag that moved always reaches `commitDurationChange`); kept here anyway so
+ *  a caller pattern-matching on `DragOutcomeKind` gets an exhaustiveness error
+ *  instead of silent undefined behaviour if it's ever reintroduced, and so
+ *  this type continues to name every outcome the historical reference does. */
 export type DragOutcomeKind =
   | 'no-op-not-moved'
   | 'reverted-negligible'
@@ -119,9 +125,14 @@ export class DragSessionHarness {
   private disposed = false;
   /** Set by `cancel()` for the CURRENT gesture only, reset on every `grab()` —
    *  distinguishes a `reverted-cancelled` outcome (ruled 2026-08-08: a
-   *  pointercancel discards) from an ordinary `reverted-negligible` release,
-   *  since both resolve through `revertSegments` with `commitAttempted`
-   *  never having been set. */
+   *  pointercancel discards) from `reverted-blocked` (a locked segment refused
+   *  the drag), the other case that resolves through `revertSegments` with
+   *  `commitAttempted` never having been set. Before the F7 ruling withdrew
+   *  the negligible-drag threshold, an ordinary sub-threshold RELEASE also
+   *  reverted this way — that third case can no longer happen: a drag that
+   *  moved always reaches `commitDurationChange` now (see `dragSession.ts`'s
+   *  `handleUp`), so `reverted && !commitAttempted` is unambiguous without
+   *  this flag for that case. It survives only to name the cancel case. */
   private cancelledThisGesture = false;
 
   constructor(initialSegments: VideoSegment[], config: DragHarnessConfig = {}) {

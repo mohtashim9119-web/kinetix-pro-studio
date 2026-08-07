@@ -14,16 +14,22 @@
  * PART 4 closes the coverage gaps a duck-typed reference transcription
  * structurally cannot reach: multi-gesture sessions, `pointercancel`,
  * locks on both sides of the dragged segment (through the real session, not
- * just `computeDragCascade` directly), rapid back-to-back drags, the
- * negligible-drag revert path (with live-DOM proof, not just the segment
- * array), a drag on the timeline's last segment, and the gapless invariant
- * re-checked after every individual frame rather than once at the end.
+ * just `computeDragCascade` directly), rapid back-to-back drags, a
+ * plain-click no-op vs. a tiny-but-real drag (with live-DOM proof, not just
+ * the segment array), a drag on the timeline's last segment, and the
+ * gapless invariant re-checked after every individual frame rather than
+ * once at the end.
+ *
+ * UPDATED 2026-08-08 (manual triage F7): several tests below previously
+ * exercised `NEGLIGIBLE_DRAG_SEC`, a revert threshold withdrawn by owner
+ * ruling the same day — a drag that moved now commits however small it was.
+ * Each was re-derived in place rather than deleted; see the inline note at
+ * each one for what it asserted before and why.
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
 import { DragSessionHarness } from './dragSessionHarness';
 import { checkTimelineIsGapless } from './timelinePartition';
-import { NEGLIGIBLE_DRAG_SEC } from './dragCascade';
 import { TransitionType, AnimationType, type VideoSegment } from '../types';
 
 function seg(
@@ -168,16 +174,22 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
       expect(outcome.segments).toBe(original);
     });
 
-    it('a negligible drag reverts without ever calling commit', () => {
+    // RE-DERIVED 2026-08-08 by owner ruling (manual triage F7): the
+    // negligible-drag threshold is withdrawn. A drag that moved commits
+    // however small it was, and the live preview draws it, because fine
+    // adjustment at high zoom is a real editing gesture. This test previously
+    // asserted `'reverted-negligible'` and an unwritten DOM.
+    it('a tiny drag now COMMITS and previews, rather than being discarded', () => {
       const original = [seg('A', 0, 5), seg('B', 5, 5)];
       const h = harnessOf(original);
-      h.grab('A', 'end').moveBy(0.005); // < NEGLIGIBLE_DRAG_SEC
-      // The live preview ALSO falls back to originalSegments below the
-      // threshold (resolveDragPreview), so nothing was ever written.
-      expect(h.liveGeometryFor('A')).toEqual({ leftPx: null, widthPx: null });
+      h.grab('A', 'end').moveBy(0.005);
+      // The live preview draws it too — preview and commit still agree, which
+      // is the K17 invariant that actually matters here.
+      expect(h.liveGeometryFor('A').widthPx).toBeCloseTo(5.005 * 100, 6);
       const outcome = h.release();
-      expect(outcome.kind).toBe('reverted-negligible');
-      expect(outcome.segments).toBe(original);
+      expect(outcome.kind).toBe('committed');
+      expect(outcome.segments).not.toBe(original);
+      expect(outcome.segments[0]!.duration).toBeCloseTo(5.005, 6);
     });
 
     it('a real drag calls commit and reports success', () => {
@@ -202,15 +214,18 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
       expect(outcome.segments).toBe(original);
     });
 
-    it('the negligible-drag threshold is exactly NEGLIGIBLE_DRAG_SEC, symmetric both directions', () => {
+    // RE-DERIVED 2026-08-08 (F7): there is no threshold to be symmetric about
+    // any more — this now pins that even a sub-millimeter drag on both sides of
+    // the OLD threshold commits identically, i.e. the boundary itself is gone.
+    it('there is no negligible-drag threshold left — a drag on either side of the old boundary commits the same way', () => {
       const original = [seg('A', 0, 5), seg('B', 5, 5)];
       const under = harnessOf(original);
-      under.grab('A', 'end').moveBy(NEGLIGIBLE_DRAG_SEC - 0.001);
-      expect(under.release().kind).toBe('reverted-negligible');
+      under.grab('A', 'end').moveBy(0.001);
+      expect(under.release().kind).toBe('committed');
       under.dispose();
 
       const over = harnessOf(original);
-      over.grab('A', 'end').moveBy(NEGLIGIBLE_DRAG_SEC + 0.001);
+      over.grab('A', 'end').moveBy(0.02);
       expect(over.release().kind).toBe('committed');
     });
   });
@@ -379,16 +394,31 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     expect(totalAfter).toBeCloseTo(totalBefore, 6);
   });
 
-  it('the negligible-drag revert path leaves BOTH the segment array and the live DOM untouched', () => {
+  // RE-DERIVED 2026-08-08 (F7): a sub-pixel drag used to revert untouched; it
+  // now commits like any other drag that moved. Renamed to describe what it
+  // now proves — that a genuine no-op (no pointermove at all) is still the
+  // only thing that leaves the array and DOM untouched, which `hasMoved`
+  // (unaffected by the ruling) still guards.
+  it('a plain press-and-release with no pointermove leaves BOTH the segment array and the live DOM untouched', () => {
     const original = [seg('A', 0, 5), seg('B', 5, 5)];
     const h = harnessOf(original);
-    h.grab('A', 'end').moveBy(0.003);
+    h.grab('A', 'end');
     expect(h.liveGeometryFor('A')).toEqual({ leftPx: null, widthPx: null });
     expect(h.liveGeometryFor('B')).toEqual({ leftPx: null, widthPx: null });
     const outcome = h.release();
-    expect(outcome.kind).toBe('reverted-negligible');
+    expect(outcome.kind).toBe('no-op-not-moved');
     expect(outcome.segments).toBe(original);
     expect(h.liveGeometryFor('A')).toEqual({ leftPx: null, widthPx: null });
+  });
+
+  it('a tiny (sub-pixel) drag still commits, with the live DOM matching the committed array', () => {
+    const original = [seg('A', 0, 5), seg('B', 5, 5)];
+    const h = harnessOf(original);
+    h.grab('A', 'end').moveBy(0.003);
+    expect(h.liveGeometryFor('A').widthPx).toBeCloseTo(5.003 * 100, 6);
+    const outcome = h.release();
+    expect(outcome.kind).toBe('committed');
+    expect(outcome.segments[0]!.duration).toBeCloseTo(5.003, 6);
   });
 
   it('a drag on the final segment\'s right edge has no neighbour to cascade into, and stays gapless', () => {

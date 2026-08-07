@@ -40,7 +40,7 @@ import {
   timelineContentX,
   type DragEdge,
 } from './dragGeometry';
-import { NEGLIGIBLE_DRAG_SEC, resolveDragPreview } from './dragCascade';
+import { resolveDragPreview } from './dragCascade';
 
 export interface DragSessionDeps {
   /** Segment array snapshot at drag start — `projectRef.current.segments`. */
@@ -324,14 +324,12 @@ export function startDragSession(
     const speedUpdate = final.playbackSpeed === undefined
       ? undefined
       : { playbackSpeed: final.playbackSpeed };
-    // Negligible drag — nothing to commit. K17: the last preview frame
-    // resolved through the SAME threshold (resolveDragPreview) and so
-    // already restored the original geometry; this setProject is the
-    // state-side half of that and cannot move anything on screen.
-    if (Math.abs(final.duration - originalTarget.duration) < NEGLIGIBLE_DRAG_SEC) {
-      deps.revertSegments(originalSegments);
-      return;
-    }
+    // F7, OWNER RULING 2026-08-08 — there is no negligible-drag threshold any
+    // more. A drag that moved is committed however small it was: fine
+    // adjustment at high zoom is a real editing gesture, and silently
+    // discarding it made the timeline feel like it was ignoring the user. The
+    // guard against a plain CLICK committing anything is `hasMoved` above,
+    // which is unaffected — it requires an actual pointermove, not a distance.
     const succeeded = deps.commitDurationChange(
       originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
     );

@@ -21,7 +21,6 @@ import {
   neighbourYieldableSec,
   MIN_SEGMENT_DURATION,
   resolveDragPreview,
-  NEGLIGIBLE_DRAG_SEC,
 } from './dragCascade';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { TransitionType, AnimationType, type TranscriptToken, type VideoSegment } from '../types';
@@ -449,12 +448,27 @@ describe('K17 — live preview equals the committed cascade', () => {
     }
   });
 
-  it('a negligible drag previews the original array unchanged — nothing to un-draw on release', () => {
+  // RE-DERIVED 2026-08-08 by owner ruling (manual triage F7): the
+  // negligible-drag threshold `resolveDragPreview` used to fall back on is
+  // withdrawn. A preview that has moved at all now draws the drag — there is
+  // no longer a distance below which it declines to.
+  it('a tiny drag now previews the change instead of falling back to the original array', () => {
     const arr = [seg('A', 0, 5), seg('B', 5, 5)];
-    // App.tsx's pointerup path declines to commit below this same threshold, so
-    // a preview that had drawn the drag would have to snap back at release.
-    const out = resolveDragPreview(arr, 0, 5 + NEGLIGIBLE_DRAG_SEC / 2, 0, 'right', SILENCE_TOKENS);
-    expect(out).toBe(arr);
+    const out = resolveDragPreview(arr, 0, 5.001, 0, 'right', SILENCE_TOKENS);
+    expect(out).not.toBe(arr);
+    expect(out[0]!.duration).toBeCloseTo(5.001, 6);
+  });
+
+  it('an EXACT zero-change resolve (identical duration) draws the same geometry, even though it is no longer the same array reference', () => {
+    // Not a threshold — this was never guarded by NEGLIGIBLE_DRAG_SEC even
+    // before F7 (0 is not "close to 0 but nonzero"); computeDragCascade always
+    // rebuilds the array (a fresh `{ ...s }` per segment), so identity was
+    // never actually guaranteed here — only VALUES are. writeGeometry's own
+    // per-frame diff (`dragSession.ts`) is what makes a value-identical
+    // rebuild a no-op on screen, not reference equality upstream of it.
+    const arr = [seg('A', 0, 5), seg('B', 5, 5)];
+    const out = resolveDragPreview(arr, 0, 5, 0, 'right', SILENCE_TOKENS);
+    expect(spans(out)).toBe(spans(arr));
   });
 
   it('a locked neighbour previews the original array — the blocked commit reverts to exactly this', () => {

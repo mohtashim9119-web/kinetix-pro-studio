@@ -41,7 +41,6 @@ import { describe, it, expect } from 'vitest';
 import {
   computeDragCascade,
   resolveDragPreview,
-  NEGLIGIBLE_DRAG_SEC,
 } from './dragCascade';
 import { resolveDragEdge, type DragEdgeResult, type DragEdge } from './dragGeometry';
 import { checkTimelineIsGapless } from './timelinePartition';
@@ -225,6 +224,18 @@ function referenceWriteGeometry(
   return moved;
 }
 
+/**
+ * HISTORICAL VALUE. `NEGLIGIBLE_DRAG_SEC` was withdrawn from production by
+ * owner ruling on 2026-08-08 (manual triage F7: a drag that moved is committed
+ * however small it was). It is inlined here because everything in this file is
+ * a verbatim transcription of the PRE-EXTRACTION `App.tsx` closure, kept as the
+ * historical record that WS2 task 1's move was faithful — that record has to go
+ * on describing what the code did at the time, not what it does now. Nothing in
+ * this file drives the real `startDragSession`; `dragSessionHarness.test.ts`
+ * does, and its equivalents were re-derived to the new behaviour.
+ */
+const HISTORICAL_NEGLIGIBLE_DRAG_SEC = 0.01;
+
 type CommitOutcome = 'no-op-not-moved' | 'reverted-negligible' | 'reverted-blocked' | 'committed';
 
 /**
@@ -251,7 +262,7 @@ function referenceResolveCommitOutcome(
   commit: () => boolean,
 ): CommitOutcome {
   if (!hasMoved) return 'no-op-not-moved';
-  if (Math.abs(final.duration - originalDuration) < NEGLIGIBLE_DRAG_SEC) return 'reverted-negligible';
+  if (Math.abs(final.duration - originalDuration) < HISTORICAL_NEGLIGIBLE_DRAG_SEC) return 'reverted-negligible';
   const succeeded = commit();
   return succeeded ? 'committed' : 'reverted-blocked';
 }
@@ -377,7 +388,7 @@ describe('PART 1 — reference transcription of the current onResizeStart orches
       expect(outcome).toBe('no-op-not-moved');
     });
 
-    it('a negligible drag reverts without ever calling commit', () => {
+    it('a negligible drag reverted without ever calling commit (HISTORICAL — withdrawn 2026-08-08)', () => {
       const outcome = referenceResolveCommitOutcome(true, edge(5.005), 5, () => {
         throw new Error('must not be called');
       });
@@ -394,9 +405,9 @@ describe('PART 1 — reference transcription of the current onResizeStart orches
       expect(outcome).toBe('reverted-blocked');
     });
 
-    it('the negligible-drag threshold is exactly NEGLIGIBLE_DRAG_SEC, symmetric both directions', () => {
-      const justUnder = referenceResolveCommitOutcome(true, edge(5 + NEGLIGIBLE_DRAG_SEC - 0.001), 5, () => true);
-      const justOver = referenceResolveCommitOutcome(true, edge(5 + NEGLIGIBLE_DRAG_SEC + 0.001), 5, () => true);
+    it('the negligible-drag threshold was exactly 0.01s, symmetric both directions (HISTORICAL — withdrawn 2026-08-08)', () => {
+      const justUnder = referenceResolveCommitOutcome(true, edge(5 + HISTORICAL_NEGLIGIBLE_DRAG_SEC - 0.001), 5, () => true);
+      const justOver = referenceResolveCommitOutcome(true, edge(5 + HISTORICAL_NEGLIGIBLE_DRAG_SEC + 0.001), 5, () => true);
       expect(justUnder).toBe('reverted-negligible');
       expect(justOver).toBe('committed');
     });

@@ -352,16 +352,21 @@ export function computeDragCascade(
 }
 
 /**
- * A drag whose resolved duration differs from the segment's own by less than
- * this is treated as no drag at all: the gesture is a click, or a jitter, and
- * both the live preview and the commit leave the array untouched.
+ * WITHDRAWN 2026-08-08 by owner ruling (manual triage F7) — there is no
+ * negligible-drag threshold any more, and `NEGLIGIBLE_DRAG_SEC` is gone with
+ * it. A drag that moved is committed however small it was.
  *
- * Exported so `App.tsx`'s pointerup path and `resolveDragPreview` below read
- * ONE threshold. They used to hold two independent copies of `0.01`, which is
- * the same drift risk `resolveDragEdge` (services/dragGeometry.ts) was created
- * to remove on the geometry side.
+ * It used to be 0.01s: a drag resolving to a duration within that of the
+ * segment's own was treated as a click or a jitter, and both the preview and
+ * the commit left the array untouched. The ruling is that fine adjustment at
+ * high zoom is a real editing gesture — 0.01s is a whole pixel at the default
+ * 100 px/s and ten at a zoomed-out 1 px/s — and silently discarding it made
+ * the timeline feel like it was ignoring the user.
+ *
+ * What still guards a plain CLICK from committing anything is `hasMoved` in
+ * `dragSession.ts`, which requires an actual `pointermove` to have fired. That
+ * is a different question from how FAR the pointer moved, and it is unchanged.
  */
-export const NEGLIGIBLE_DRAG_SEC = 0.01;
 
 /**
  * K17 — the array the timeline must DRAW for an in-progress drag.
@@ -396,10 +401,9 @@ export const NEGLIGIBLE_DRAG_SEC = 0.01;
  * plus the two fallbacks the commit path already applied, so the preview cannot
  * drift from the commit without `computeDragCascade` itself changing.
  *
- * Returns `originalSegments` UNCHANGED in the two cases the commit also
- * declines to write:
- *   - a negligible drag (see `NEGLIGIBLE_DRAG_SEC`);
- *   - a locked neighbour blocking the cascade (`computeDragCascade` → null).
+ * Returns `originalSegments` UNCHANGED in the case the commit also declines to
+ * write: a locked segment — the dragged one, or a neighbour the cascade would
+ * have to move through (`computeDragCascade` → null).
  * The locked case matters for more than tidiness: the commit path reverts to
  * `originalSegments` on a block, so a preview that had drawn the drag anyway
  * would have to un-draw it on release — the very jump (2) this exists to
@@ -420,7 +424,6 @@ export function resolveDragPreview(
 ): VideoSegment[] {
   const dragged = originalSegments[draggedIdx];
   if (!dragged) return originalSegments;
-  if (Math.abs(finalDuration - dragged.duration) < NEGLIGIBLE_DRAG_SEC) return originalSegments;
   return computeDragCascade(
     originalSegments,
     draggedIdx,
