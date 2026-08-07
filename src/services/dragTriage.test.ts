@@ -59,6 +59,27 @@ afterEach(() => {
 const byId = (segs: VideoSegment[], id: string): VideoSegment =>
   segs.find(s => s.id === id)!;
 
+/** Dispatches one real bubbling click at a throwaway element and reports
+ *  whether it survived the capture-phase window listeners `handleUp` arms.
+ *  Consumes exactly one armed one-shot swallower per call. */
+function clickReachesTarget(): boolean {
+  let reached = false;
+  const target = document.createElement('button');
+  document.body.appendChild(target);
+  target.addEventListener('click', () => { reached = true; });
+  target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+  target.remove();
+  return reached;
+}
+
+/** jsdom never synthesizes the click a real browser produces after a release,
+ *  so swallowers armed by earlier tests in this shared-per-file environment
+ *  survive into later ones. Drain them so a swallow assertion measures the
+ *  gesture under test rather than the file's history. */
+function drainGhostClickSwallowers(): void {
+  for (let i = 0; i < 100; i++) if (clickReachesTarget()) return;
+}
+
 // ---------------------------------------------------------------------------
 // F1 — outward (grow) drag on a middle segment stalls after a few pixels,
 //      while inward (shrink) works normally.
@@ -202,20 +223,32 @@ describe('F4 — pointercancel leaves state dirty', () => {
     // `handleUp` arms a one-shot capture-phase window 'click' listener
     // whenever the drag moved, to swallow the synthetic click a real
     // pointerUP produces. A pointerCANCEL produces no click at all, so the
-    // listener is never consumed — it stays armed and eats the next
+    // listener was never consumed — it stayed armed and ate the next
     // legitimate click anywhere in the app (a seek, a segment selection, a
     // toolbar button).
+    //
+    // vitest shares one jsdom per FILE, and a real browser — unlike jsdom —
+    // synthesizes the click that consumes this listener after every genuine
+    // release. So drain whatever earlier tests in this file left armed before
+    // measuring; otherwise this asserts test-file pollution, not the defect.
+    drainGhostClickSwallowers();
+
     const h = harnessOf(base());
     h.grab('B', 'end').moveBy(1.0).cancel();
 
-    let clickReached = false;
-    const target = document.createElement('button');
-    document.body.appendChild(target);
-    target.addEventListener('click', () => { clickReached = true; });
-    target.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-    target.remove();
+    expect(clickReachesTarget()).toBe(true);
+  });
 
-    expect(clickReached).toBe(true);
+  it('CONTROL — a genuine release still arms exactly one swallower', () => {
+    // Proves the test above can actually fail: the swallow is real, one-shot,
+    // and still does its D12 job on the path that produces a ghost click.
+    drainGhostClickSwallowers();
+
+    const h = harnessOf(base());
+    h.grab('B', 'end').moveBy(1.0).release();
+
+    expect(clickReachesTarget()).toBe(false);  // swallowed
+    expect(clickReachesTarget()).toBe(true);   // one-shot: the next one lands
   });
 
   it('clears the playback-speed baseline on cancel, as every other resolution path does', () => {

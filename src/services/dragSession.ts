@@ -283,7 +283,14 @@ export function startDragSession(
     // which narrows but does not close this — the handle is only 8px
     // wide and the release can still land beside it — so the swallow
     // stays.)
-    if (hasMoved) {
+    // F4 (manual triage 2026-08-08) — armed ONLY for a genuine pointerup.
+    // The listener exists to eat the ONE synthetic click the browser
+    // synthesizes from a real release; a `pointercancel` produces no click at
+    // all, so arming it there left a one-shot swallower permanently armed,
+    // waiting to eat the user's next legitimate click anywhere in the app — a
+    // seek, a segment selection, a toolbar button. Pre-existing: a cancel ran
+    // this identical line before the 2026-08-08 discard ruling too.
+    if (hasMoved && !wasCancelled) {
       const swallowGhostClick = (clickEvent: MouseEvent) => {
         clickEvent.stopPropagation();
         clickEvent.preventDefault();
@@ -291,6 +298,12 @@ export function startDragSession(
       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
     }
     if (!hasMoved) return;
+    // This gesture moved, so its speed baseline is spent however it resolves —
+    // commit, cancel, or block. It used to be cleared only on the commit path,
+    // which the `wasCancelled` early return below (added with the discard
+    // ruling) then skipped, stranding a stale {segmentId, clipLen} for a
+    // segment the user may go on to re-time by other means.
+    deps.clearSpeedBaseline();
     // Ruled 2026-08-08 (docs/decisions/2026-08-08-pointercancel-ruling.md): a
     // cancelled gesture never commits, however far it moved before the OS
     // took the pointer away — it reverts, exactly like a blocked/negligible
@@ -319,7 +332,6 @@ export function startDragSession(
       deps.revertSegments(originalSegments);
       return;
     }
-    deps.clearSpeedBaseline();
     const succeeded = deps.commitDurationChange(
       originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
     );
