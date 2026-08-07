@@ -61,3 +61,5 @@ npm test       # vitest run
 
 - [CLAUDE.md](CLAUDE.md) — architecture, file map, conventions, and invariants
 - `project-state.md` — current status, active tasks, and bug tracking
+- `docs/history.md` — completed-work history and implementation records, once a body of work closes out
+- `docs/decisions/` — dated rulings on open architectural questions (e.g. the `segments` gapless-partition vs. independent-slots question — see `project-state.md`'s Active Tasks for its current status)
