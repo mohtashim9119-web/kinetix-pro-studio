@@ -3074,3 +3074,87 @@ as Model S admitted through a side door.
   and tracked in `project-state.md`'s Active Tasks and Open Decisions.
 
 </details>
+
+---
+
+## Model P Compliance — Implementation Record (2026-08-07)
+
+The `segments` gapless-partition invariant went from **ruled but unimplemented** to
+**ruled, implemented, and regression-locked** in one pass. Rollback point:
+tag `pre-k14-2026-08-07`. Ruling: `docs/decisions/2026-08-07-model-p-ruling.md`.
+
+**Baseline.** 1365 tests, 3 failing — the `.work-phase4/replay/` gitignored-input gap, not a
+code defect. Fixed by running the committed `scripts/phase4-restore-replay-inputs.py`, which
+regenerated all three projects deterministically from committed sources and self-verified
+value-for-value against the Step M baseline (3989/1836/363 tokens, 547/239/27 silences). The
+tests were left untouched — their loud failure naming the fix is Step Y's design. Both
+external inputs the harness needs are now documented in `docs/phase4-baseline-methodology.md`.
+
+**Item 1 — K14's lock hard wall (`2f25ab4`).** `applyAnchorBasedTiming` computed an unlocked
+successor's start as `Math.max(rawAnchor, lockFloor)`. A max is a FLOOR: it closes an overlap
+and is **structurally blind to a gap**. That is the precise mechanism by which K14's hard wall
+adopted Model S without anyone choosing it. Reproduced before fixing: a lock ending at 20s
+followed by a segment anchored at 35s left a real 15.000s hole. Replaced with the ruling's
+§4.1 fill rule — an unlocked segment following a lock starts at the lock's exact end and
+absorbs the shortfall as leading silence, its END unchanged so nothing ripples past it.
+Scoped to a LOCKED predecessor only, preserving D16's local containment and leaving lock-free
+projects byte-identical. §4.1(a) shipped alongside: `handleToggleLock` refuses a lock that
+would leave an unassignable span between two adjacent locks, surfaced as a new `lock-refused`
+sync-log entry; unlocking is never refused, since removing a wall can only make the partition
+more satisfiable.
+
+**Item 2 — the drag cascade's window edge (`a49f58f`). The backlog's assessment was wrong,
+and the sweep is what caught it.** The backlog recorded `restackWindow` as "not broken in
+isolation — only needs no change once #1 is fixed." A property sweep over every index × both
+edges × nine magnitudes found a real, UI-reachable, pre-existing violation *independent* of
+item 1: the cascade loop breaks when it runs off the array (`ni < 0`) leaving `remaining`
+unabsorbed, and `restackWindow` then moves the touched window's trailing edge while the next
+segment's start stays put. The live case is a LEFT-edge drag on **segment 0** — the timeline
+head has no predecessor to trade with, and `Timeline.tsx` renders its left handle like every
+other segment's. Measured: a −0.7s drag left a 0.700s hole; a large grow produced a 40.000s
+**overlap**, illegal under both candidate models. Fixed by conserving the touched window's
+total duration — the same "refuse what no neighbour gave up" rule K15b already applies to its
+word-onset floor — scoped to `hi < segs.length - 1` so the deliberately-preserved
+pre-K15 off-the-end behaviour is untouched.
+
+**Item 3 — the dev-only write-time assertion (`74d0e5b`).** One DEV-only effect keyed on
+`project.segments`, not an assertion threaded through each of the ~79 `setProject` call sites:
+an effect observes the committed result of every writer, including ones added later and ones
+reaching `segments` indirectly, so its coverage cannot rot as call sites move. Never throws,
+never mutates. Adjacency only — the head/tail clauses settle asynchronously during hydration
+and Apply Sync, so including them would fire false positives on legitimately mid-flight state.
+
+**Item 4 — the export guard (`1b611a6`).** New shared `checkTimelineIsGapless`, called at the
+top of both `exportProject` and `exportProjectWebCodecs` before any encoding. Both paths
+position by prefix-sum of `duration` and cannot represent a gap, while headings are selected
+by absolute `startTime` — so a gap makes them disagree, desynchronising A/V by the gap's width
+and misplacing headings, with the export completing "successfully" and silently wrong. New
+typed `ExportErrorKind: 'timeline_gap'`; adding it made `getExportErrorSummary`'s switch
+non-exhaustive, a compile error caught by the existing exhaustiveness net.
+
+**What was deliberately NOT adopted.** The park commit's (`210855d`) wholesale
+`enforceGaplessPartition` positioner — single writer of `startTime`, deleting
+`applyAnchorBasedTiming`'s PASS 1/PASS 3 and `headExtendFirstSegment`, re-routing six
+producers. Assessed as sound in the abstract (and, contrary to the framing it was handed to
+this session with, written *after* the owner ruled Model P — its own code cites the ruling by
+number, as `2026-08-07-model-p-revert.md` established). Not adopted because it re-owns the
+head/tail rules for **every** project, including the ~99% that contain no lock and therefore
+have no Model P defect, putting the Step M golden replay's byte-identical guarantee at risk
+for no compliance gain. `timelinePartition.ts` landed as a READER only. Re-deriving the
+positioner remains a legitimate future refactor, not a compliance prerequisite.
+
+**Verification.** 1365 → **1425 tests, 57 files, all passing**; `tsc --noEmit` clean.
+**+60 tests, zero deletions, zero assertions loosened.** Three pre-existing `dragCascade`
+K15a tests were REWRITTEN in place: they manufactured their gapped fixture by invoking the
+very defect being fixed, so the fixtures became literals, and the one that asserted "a gap
+exists" was inverted to assert it is closed. The Step M golden replay passes unchanged
+throughout — all three corpus projects are lock-free, so their output is byte-identical,
+which is exactly the signal the minimal-scope approach was chosen to preserve.
+
+**WS2 unblocked.** Both named blockers cleared. Route 2's central assertion can now be written
+in final form (Model P's shrink-side semantics are settled, implemented, and verified — the
+live preview path is asserted equal to the commit path across every index and both edges).
+`restackWindow`'s locality precondition is guaranteed at every producer and pinned by a
+chained sync → drag → drag → re-sync → lock → unlock session test. WS2's first task is the
+`dragSession` extraction (`App.tsx:3977-4206`, ~230 lines) — its own work, not an upstream
+dependency, and deliberately not done in this pass.
