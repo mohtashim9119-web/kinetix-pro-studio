@@ -3213,3 +3213,116 @@ release.
 **Verification.** 1425 → **1442 tests, 58 files, all passing** (+17, `dragSession.test.ts`);
 `tsc --noEmit` clean. Step M golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3
 unchanged. `App.tsx`: 4876 → 4660 lines (-216).
+
+## WS2 Task 2 — The Route 2 Drag-Path Test Harness (2026-08-07)
+
+**What Route 2 is, restated before building.** `docs/drag-path-testability-assessment.md`
+recommends extracting the drag session's DOM orchestration (done — WS2 task 1, above) and then
+testing it with a real `jsdom` `document`/`window`, rather than mounting the whole `<App />`
+(Route 1 — rejected: 9 browser-API families to mock across a 4,722-line component). It was
+blocked on the Model P ruling because the harness's central assertion — "every segment the
+cascade touches moves in the same frame; a shrink closes the space in the same frame" — has a
+different correct shape under Model P (closes immediately) vs. Model S (a gap may legitimately
+open); writing it first risked baking in the wrong semantics. The ruling landed 2026-08-07
+(`docs/decisions/2026-08-07-model-p-ruling.md`), unblocking this task. What it catches that
+`dragSession.test.ts`'s 17 characterization tests structurally cannot: those tests transcribe
+fragments of the closure as free-standing reference functions run against duck-typed fake
+elements — no real event wiring, no real multi-frame `rAF` coalescing — so they cannot catch
+wiring bugs in *how* real DOM elements are discovered/written (the K16 "wrote only `style.width`,
+not `style.left`" class), and critically cannot catch drift between the live multi-frame preview
+and what actually commits at release (the assessment's F3, "the frozen neighbour" bug — "the
+strongest case for building this").
+
+**One real deviation from the assessment, stated before building, not substantial enough to
+pause for approval.** The assessment envisioned `dragSession.ts` receiving "DOM dependencies by
+injection (an element-lookup function... a rect origin)." The actual WS2 task 1 extraction
+doesn't do that — `startDragSession` calls `document.getElementById`/`querySelectorAll`/
+`window.addEventListener` directly against the real global `document`/`window`; only the
+React-state half of its dependencies is injected via `DragSessionDeps`. So the harness cannot be
+a duck-typed fake intercepting those calls (`dragSession.test.ts`'s PART 1 approach) — it has to
+be a real jsdom-backed class. This doesn't change the recommended route (`jsdom` was always
+Route 2's one stated dependency), only its shape.
+
+**The harness.** `src/services/dragSessionHarness.ts`'s `DragSessionHarness` builds the DOM
+`startDragSession` expects — `#timeline-scroll-area` plus `[data-seg-id]` elements, 2 per
+segment by default (matching the real Timeline's thumbnail + waveform lanes) — and stubs only
+what jsdom structurally cannot provide: `getBoundingClientRect` (no layout engine; every
+geometric fact is test-supplied, the same ceiling the assessment's §4.1 documents) and a
+purpose-built, manually-flushed `requestAnimationFrame`/`cancelAnimationFrame` stub installed on
+`globalThis` (since `dragSession.ts` calls the bare identifier, which resolves through the
+global scope). `DragSessionDeps` is implemented by holding the segment array as harness state;
+`commitDurationChange` calls the SAME `computeDragCascade` `App.tsx`'s `applyDurationChange`
+calls — not a reimplementation of the timing math, only of the plumbing around it. Only `jsdom`
+(`^30.0.1`) was added as a new devDependency, opted into per test file via a leading
+`// @vitest-environment jsdom` docblock; the other 58 node-environment test files (including the
+`fake-indexeddb` ones) are confirmed unaffected by a full-suite run before and after.
+
+**API.** A drag gesture is expressed as intentions, not raw pointer coordinates:
+```ts
+const h = new DragSessionHarness(segments);
+const outcome = h.grab('B', 'end').moveBy(2).moveBy(1).release();
+// outcome.kind: 'no-op-not-moved' | 'reverted-negligible' | 'reverted-blocked' | 'committed'
+```
+`grab(id, edge, grabOffsetSeconds?)` computes the real down-position at the segment's own edge
+(offset zero by default; a non-zero offset exercises K16's grab-offset preservation) and calls
+`startDragSession` directly — a gesture is not itself started by a synthetic `pointerdown`, since
+the real code's callers (`Timeline.tsx`'s `onResizeStart`) invoke `startDragSession` directly
+from a React event handler, not from a window-level listener. `moveBy(deltaSeconds)` dispatches a
+real `pointermove` (`MouseEvent` with `clientX` set — `dragSession.ts`'s handlers only ever read
+`.clientX`, so a full `PointerEvent` isn't required even though jsdom 30 does provide one) and
+flushes exactly one queued animation frame, so a test can inspect DOM state between moves instead
+of guessing at real timer/rAF interleaving. `release()`/`cancel()` dispatch `pointerup`/
+`pointercancel` and resolve to the four-way outcome above — discovered in the process that both
+event types are wired to the exact same `handleUp`, so a `pointercancel` mid-gesture COMMITS
+rather than discarding the drag (real, observed behavior of the extracted code, documented as a
+finding rather than asserted as "correct" UX). `liveGeometryFor(id)` reads back real
+`style.left`/`style.width` and throws if a segment's multiple mounted elements disagree (the
+real K16 "two lanes visibly disagree for the whole gesture" bug class, guarded by construction).
+`readLiveSegments(original)` reconstructs a full `{id, startTime, duration}` array from the live
+DOM, falling back to each segment's original values where a frame hasn't written it yet — the
+read-back half of asserting the gapless invariant after every individual frame, not just once at
+release. `dispose()` (called in every test's `afterEach`) restores the global `rAF` pair and
+unmounts the harness's DOM subtree — required because vitest's `jsdom` environment is shared per
+FILE, not reset per test, so a second harness's `#timeline-scroll-area` would otherwise
+shadow-collide with a prior one still attached to `document.body` (`getElementById` returns the
+first match in document order).
+
+**Fidelity proof — PART 3, `dragSessionHarness.test.ts`.** All 17 of `dragSession.test.ts`'s
+characterization tests ported to run through the real harness end-to-end, each producing
+byte-identical outcomes to the original reference-transcription version. `dragSession.test.ts`
+itself was not edited — 0 diff, confirmed — preserving it as the neutrality contract WS2 task 1
+established. The port often turned out STRONGER than the original: e.g. the "onResizeStart
+top-of-closure bug" tests now grab a genuinely nonexistent segment id through the real exported
+function (not a hand-transcribed stand-in), and the "elsBySegId construction" port lets the real
+`querySelectorAll('[data-seg-id]')` selector do its own filtering of a stray no-attribute element
+rather than a hand-written loop simulating it.
+
+**New coverage closed — PART 4, 12 tests.** Per the task's checklist: (1) several grabs/releases
+in sequence within one session (two distinct gestures on different segments, second starting from
+the first's committed result); (2) a `pointercancel` mid-gesture — resolves through the same
+`handleUp` as a release (see the API section above) and a follow-up gesture confirms no listener
+leak; (3) `pointercancel` with no movement, a harmless no-op; (4) a drag on a segment with locks
+on BOTH immediate neighbours, through the FULL session (not just `computeDragCascade` called
+directly, which `dragSession.test.ts`'s own PART 0 already covered) — a left-edge shrink variant,
+complementing PART 3's ported right-edge grow/left-edge grow/right-edge shrink trio; (5) five
+rapid successive drags on one shared harness instance with no reset between them, each committing
+correctly and the whole timeline's total duration conserved; (6) the negligible-drag revert path
+proven at the DOM layer, not just the segment array (`liveGeometryFor` stays `{null, null}`
+throughout); (7)/(8) a drag on the timeline's LAST segment's right edge, both grow (no neighbour
+to absorb into, extends freely) and shrink (clamped only by `MIN_SEGMENT_DURATION`); (9)/(10) the
+gapless invariant (`checkTimelineIsGapless`) re-checked after EVERY individual frame — not just
+once at the end — across two different multi-frame drags, one absorbing into a single neighbour
+and one cascading across two hops, each frame's live-DOM read-back additionally cross-checked
+against the pure duration math so a "gapless but wrong" frame couldn't slip through undetected.
+
+**The stuck-state bug, re-pinned in two forms.** WS2 task 1's "found, not fixed" bug (early-bail
+drag start leaves `resizingId`/the `resizing` body class stuck forever) is re-confirmed through
+the real exported function as a PASSING test (current, buggy behavior) alongside a NEW `it.skip`'d
+test asserting the DESIRED behavior (`resizingIdValue` should be `null` after an early-bail
+grab) — confirmed, via a throwaway unskipped run, to actually fail today exactly as expected,
+before being left `.skip`'d with a clear rationale in its title. Not fixed in this task, per
+instruction — the fix remains future work, now with a concrete regression test waiting for it.
+
+**Verification.** 1442 → **1470 tests (1469 passing, 1 deliberately skipped), 59 files** (+28:
+27 new passing in `dragSessionHarness.test.ts` + 1 skipped bug-pin); `tsc --noEmit` clean. Step M
+golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3 unchanged.
