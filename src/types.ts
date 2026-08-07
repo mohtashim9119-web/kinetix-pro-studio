@@ -398,7 +398,17 @@ export type SyncLogEntryType =
   | 'rescue'
   | 'unsupported-language'
   | 'lock-span-overflow'
-  | 'lock-preserved-adjustment';
+  | 'lock-preserved-adjustment'
+  /** 'lock-refused' — Model P ruling §4.1(a) (2026-08-07). A lock toggle was
+   *  REFUSED because granting it would have made the gapless invariant
+   *  unsatisfiable: it would have produced two ADJACENT locked segments with
+   *  space between them, which nothing is permitted to absorb (both are
+   *  immovable by definition). severity:'warning', with a fixHint naming the
+   *  conflicting segment. Unlike every other entry here this one records an
+   *  action the app DECLINED to take, so the segment's `locked` flag is
+   *  unchanged when it appears. See services/timelinePartition.ts's
+   *  `canLockSegment`. */
+  | 'lock-refused';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

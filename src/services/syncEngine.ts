@@ -303,12 +303,36 @@ export function applyAnchorBasedTiming(
 
     const rawAnchor = seg.anchorStart ?? seg.startTime ?? 0;
     const prevLocked = i > 0 && out[i - 1]?.locked === true;
-    // Only a LOCKED predecessor's own end is a hard floor on this segment's
-    // start. An unlocked predecessor's (possibly floor-collapsed) end is
-    // deliberately NOT a floor here — that would re-introduce exactly the
-    // ripple the D16 backstop clamp above is designed to contain locally.
-    const lockFloor = prevLocked ? out[i - 1]!.startTime + out[i - 1]!.duration : -Infinity;
-    const effectiveStart = Math.max(rawAnchor, lockFloor);
+    // MODEL P (ruling §4.1's fill rule, 2026-08-07) — an unlocked segment
+    // following a LOCK starts at that lock's exact end, not merely at or
+    // after it.
+    //
+    // This used to be `Math.max(rawAnchor, lockFloor)`. A max is a FLOOR: it
+    // closes an overlap (anchor before the wall) and is structurally blind to
+    // a GAP (anchor after the wall), which is precisely how K14's hard wall
+    // came to permit Model S. Measured: a lock ending at 20s followed by a
+    // segment anchored at 35s left a real 15-second hole that nothing
+    // downstream repaired.
+    //
+    // Pinning the start to the wall makes the successor absorb the shortfall
+    // as LEADING SILENCE — its own END is still `nextAnchor`, so its words do
+    // not move and nothing ripples past it. That is the ruling's own answer
+    // ("the following segment starts early, at the lock's actual end, and
+    // absorbs the space"), and the same operation `headExtendFirstSegment`
+    // already performs against the timeline start and Option A (decision 8)
+    // performs for unscripted-heading audio.
+    //
+    // Deliberately scoped to a LOCKED predecessor only. An unlocked
+    // predecessor's (possibly floor-collapsed) end is still NOT a floor here
+    // — making it one would re-introduce exactly the forward ripple the D16
+    // backstop clamp above exists to contain locally. This is also what keeps
+    // a lock-free project's output byte-identical to pre-fix: with no lock in
+    // the array this branch never runs, which the Step M golden replay
+    // (`scripts/phase4-handoff-replay-sync.test.ts`, three real corpus
+    // projects, none containing a locked segment) verifies on every run.
+    const effectiveStart = prevLocked
+      ? out[i - 1]!.startTime + out[i - 1]!.duration
+      : rawAnchor;
     const boundedByLock = prevLocked || nextLocked;
     const availableSpan = nextAnchor - effectiveStart;
     const tooShort = boundedByLock && availableSpan < 0.1;

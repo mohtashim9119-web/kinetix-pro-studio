@@ -136,6 +136,35 @@ export function buildLockFindingLogEntries(
   });
 }
 
+/**
+ * Model P ruling §4.1(a) (2026-08-07) — the lock toggle was REFUSED because
+ * granting it would have left an unassignable span between two adjacent
+ * locks. Records a declined action: the segment's `locked` flag is unchanged.
+ *
+ * `segmentIndex`/`conflictIndex` are 0-based into the segments array, matching
+ * every other segment-indexed entry; the message uses 1-based display numbers.
+ */
+export function buildLockRefusedLogEntry(
+  syncRunId: string,
+  segmentIndex: number,
+  conflictIndex: number,
+  amountSec: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'lock-refused',
+    `Segment ${segmentIndex + 1} was not locked — it would leave ${amountSec.toFixed(2)}s of `
+    + `timeline unassigned against already-locked segment ${conflictIndex + 1}.`,
+    {
+      segmentIndex,
+      severity: 'warning',
+      fixHint: `Unlock segment ${conflictIndex + 1} first, or close the space between the two before locking.`,
+    },
+    timestamp,
+  );
+}
+
 const DROP_REASON_LABELS: Record<TokenDrop['reason'], string> = {
   'non-finite': 'unusable timestamp',
   'negative-start': 'negative start time',

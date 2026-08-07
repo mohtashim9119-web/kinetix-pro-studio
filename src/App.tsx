@@ -110,8 +110,10 @@ import {
   buildGroupedViolationEntry,
   buildUnsupportedLanguageEntry,
   buildLockFindingLogEntries,
+  buildLockRefusedLogEntry,
   mintSyncLogId,
 } from './services/syncLog';
+import { canLockSegment } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -1664,6 +1666,26 @@ export default function App() {
   const handleToggleLock = useCallback((segmentId: string): void => {
     speedBaselineRef.current = null;
     setProject(prev => {
+      // MODEL P §4.1(a) (2026-08-07) — refuse a lock that would make the
+      // gapless invariant unsatisfiable, rather than committing a gap.
+      //
+      // Only the LOCK direction is gated. Unlocking removes a wall, which can
+      // only ever make the partition more satisfiable, so it is never refused
+      // (see `canLockSegment`'s own doc comment).
+      const index = prev.segments.findIndex(s => s.id === segmentId);
+      const target = index >= 0 ? prev.segments[index] : undefined;
+      if (target && !target.locked) {
+        const refusal = canLockSegment(prev.segments, index);
+        if (refusal) {
+          // Declined: `locked` is left exactly as it was, and the reason is
+          // surfaced rather than swallowed.
+          return appendSyncLogEntries(
+            prev,
+            [buildLockRefusedLogEntry(mintSyncLogId(), index, refusal.conflictIndex, refusal.amountSec)],
+          );
+        }
+      }
+
       const toggled = prev.segments.map(s =>
         s.id === segmentId ? { ...s, locked: !s.locked } : s
       );

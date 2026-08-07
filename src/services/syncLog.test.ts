@@ -22,6 +22,7 @@ import {
   buildMalformedTokenEntry,
   buildContractViolationEntry,
   buildGroupedViolationEntry,
+  buildLockRefusedLogEntry,
   makeSyncLogEntry,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
@@ -743,5 +744,33 @@ describe('buildGroupedViolationEntry', () => {
     const entry = buildGroupedViolationEntry(RUN_ID, violations, AT);
     expect(entry!.type).toBe('warning');
     expect(entry!.id).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model P ruling §4.1(a) — the refused-lock surface.
+// ---------------------------------------------------------------------------
+
+describe('buildLockRefusedLogEntry', () => {
+  it('names both segments in 1-based display numbers and reports the unassignable span', () => {
+    const entry = buildLockRefusedLogEntry(RUN_ID, 4, 3, 2.5, AT);
+
+    expect(entry.type).toBe('lock-refused');
+    expect(entry.severity).toBe('warning');
+    // 0-based index preserved for the UI to locate the row...
+    expect(entry.segmentIndex).toBe(4);
+    // ...while the human-readable message uses 1-based display numbers.
+    expect(entry.message).toContain('Segment 5');
+    expect(entry.message).toContain('segment 4');
+    expect(entry.message).toContain('2.50s');
+    expect(entry.fixHint).toContain('Unlock segment 4');
+    expect(entry.syncRunId).toBe(RUN_ID);
+    expect(entry.timestamp).toBe(AT);
+  });
+
+  it('is a warning, not an error — the project remains in a valid state', () => {
+    // The distinction matters: nothing failed, an action was declined. An
+    // 'error' severity here would misreport a healthy project as broken.
+    expect(buildLockRefusedLogEntry(RUN_ID, 1, 0, 0.75, AT).severity).toBe('warning');
   });
 });

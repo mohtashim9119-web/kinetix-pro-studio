@@ -66,15 +66,32 @@ const noBlock = (): void => {};
 // PART 1 — K15a: a gap anywhere in the array must survive a drag.
 // ---------------------------------------------------------------------------
 
-describe('K15a — gap collapse (K14-introduced)', () => {
+describe('K15a — restack locality (gap fixtures now constructed directly)', () => {
   /**
-   * The gap is not hypothetical: this is the array `applyAnchorBasedTiming`
-   * itself produces post-K14 whenever a locked segment's end falls before the
-   * following segment's anchor. The pre-K14 locked branch grew the lock to fill
-   * that span (`duration = max(preservedDuration, availableSpan)`), so its
-   * output was contiguous by construction and no gap could reach a drag.
+   * REWRITTEN 2026-08-07, Model P ruling (`docs/decisions/2026-08-07-model-p-
+   * ruling.md`). NOT relaxed — the assertions below are strictly stronger.
+   *
+   * These three tests used to MANUFACTURE their gapped fixture by calling
+   * `applyAnchorBasedTiming` with a locked segment, relying on K14's hard wall
+   * leaving a real 3.000s hole after the lock. That hole was the Model S
+   * behaviour the ruling rejected, and it is now fixed at source (the §4.1
+   * fill rule: an unlocked successor starts at the lock's exact end and
+   * absorbs the shortfall as leading silence — see `syncEngine.ts` PASS 2 and
+   * `modelPLockSemantics.test.ts`). The old fixture is therefore no longer
+   * producible through the production pipeline at all.
+   *
+   * What is still worth testing is `restackWindow`'s LOCALITY — that a drag
+   * restacks only the index window it touched and never re-flows the whole
+   * array from 0. That property is independent of how the input array came to
+   * look the way it does, so the gapped arrays below are now written as
+   * LITERALS. A literal is the honest fixture here: it says "given an array
+   * shaped like this, the cascade does that," without asserting that the
+   * pipeline can still produce that shape (it cannot).
+   *
+   * The first test is inverted in place: it asserted the gap EXISTS; it now
+   * asserts the gap is CLOSED, which is the K14 rework's headline result.
    */
-  it('applyAnchorBasedTiming leaves a real gap after a locked segment (the K14 precondition)', () => {
+  it('applyAnchorBasedTiming no longer leaves a gap after a locked segment (K14 rework, Model P)', () => {
     const out = applyAnchorBasedTiming(
       [
         seg('A', 0, 10),
@@ -84,21 +101,29 @@ describe('K15a — gap collapse (K14-introduced)', () => {
       ],
       20,
     );
-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.00]');
-    // 3.000s of dead air between the lock's end and C's start.
-    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(3, 6);
+    // PRE-FIX (Model S, asserted by this very test until 2026-08-07):
+    //   'A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.00]'
+    //   — 3.000s of dead air between the lock's end and C's start.
+    // POST-FIX: C starts at the lock's exact end and absorbs that 3.000s as
+    // leading silence. C's END (18.00, i.e. D's own anchor) is unchanged, so
+    // D does not move and nothing ripples past the fill.
+    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[12.00..18.00] D[18.00..20.00]');
+    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(0, 6);
+    // The lock itself is untouched in both position and length.
+    expect(out[1]!.startTime).toBe(10);
+    expect(out[1]!.duration).toBe(2);
   });
 
-  it('a 0.2s drag on C does not move C — the 3s gap in front of it survives', () => {
-    const gapped = applyAnchorBasedTiming(
-      [
-        seg('A', 0, 10),
-        seg('B', 10, 2, { locked: true }),
-        seg('C', 15, 3, { anchorStart: 15 }),
-        seg('D', 18, 2, { anchorStart: 18 }),
-      ],
-      20,
-    );
+  it('a 0.2s drag on C does not move C — a pre-existing gap in front of it survives', () => {
+    // Literal fixture (see the describe-block note): an array carrying a
+    // 3.000s hole between B's end and C's start, however it might have arisen
+    // — e.g. a project persisted before the Model P rework landed.
+    const gapped = [
+      seg('A', 0, 10),
+      seg('B', 10, 2, { locked: true }),
+      seg('C', 15, 3, { anchorStart: 15 }),
+      seg('D', 18, 2, { anchorStart: 18 }),
+    ];
     const out = computeDragCascade(gapped, 2, gapped[2]!.duration + 0.2, 0, 'right', noBlock)!;
 
     // PRE-K15 this returned 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.20] D[15.20..17.00]'
@@ -110,15 +135,12 @@ describe('K15a — gap collapse (K14-introduced)', () => {
   });
 
   it('dragging the LAST segment — no neighbour to cascade into — still cannot collapse the gap', () => {
-    const gapped = applyAnchorBasedTiming(
-      [
-        seg('A', 0, 10),
-        seg('B', 10, 2, { locked: true }),
-        seg('C', 15, 3, { anchorStart: 15 }),
-        seg('D', 18, 2, { anchorStart: 18 }),
-      ],
-      20,
-    );
+    const gapped = [
+      seg('A', 0, 10),
+      seg('B', 10, 2, { locked: true }),
+      seg('C', 15, 3, { anchorStart: 15 }),
+      seg('D', 18, 2, { anchorStart: 18 }),
+    ];
     const out = computeDragCascade(gapped, 3, gapped[3]!.duration + 0.2, 0, 'right', noBlock)!;
 
     // PRE-K15: 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.00] D[15.00..17.20]'.

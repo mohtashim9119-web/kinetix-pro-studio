@@ -42,6 +42,12 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // Informational: the output is correct, just worth knowing why a boundary
   // landed where it did.
   'lock-preserved-adjustment': { label: 'LOCK', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
+  // Model P ruling §4.1(a) — a lock toggle was REFUSED (it would have left an
+  // unassignable span between two adjacent locks). Warning, not error: the
+  // user's project is in a perfectly valid state, their requested action just
+  // wasn't granted. Amber matches the other "we declined / we adjusted"
+  // lock surfaces above rather than the red reserved for real failures.
+  'lock-refused': { label: 'LOCK REFUSED', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be
