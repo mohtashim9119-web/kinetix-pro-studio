@@ -56,7 +56,12 @@ import {
   type TranscriptToken,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
-import { computeDragCascade, MIN_SEGMENT_DURATION } from './services/dragCascade';
+import {
+  computeDragCascade,
+  resolveDragPreview,
+  NEGLIGIBLE_DRAG_SEC,
+  MIN_SEGMENT_DURATION,
+} from './services/dragCascade';
 import {
   timelineContentX,
   segmentEdgeContentX,
@@ -3906,6 +3911,9 @@ export default function App() {
                   const draggedIdx = originalSegments.findIndex(s => s.id === id);
                   const originalTarget = originalSegments[draggedIdx];
                   if (draggedIdx < 0 || !originalTarget) return;
+                  // K17 — pre-drag geometry, for restoring any card a later frame
+                  // stops moving (see writeGeometry below).
+                  const originalById = new Map(originalSegments.map(s => [s.id, s]));
                   const pps = pixelsPerSecondRef.current;
                   // B3 — cache the timeline element + its left edge ONCE at drag start.
                   // rect.left is stable for the whole gesture, so re-measuring it (a
@@ -3914,13 +3922,27 @@ export default function App() {
                   const timeline = document.getElementById('timeline-scroll-area');
                   if (!timeline) return;
                   const rectLeft = timeline.getBoundingClientRect().left;
-                  // B1 — elements whose geometry we update directly during the drag
-                  // (the thumbnail-lane card and the waveform-lane cell share the same
-                  // data-seg-id), so we avoid a per-move setProject/full re-render. The
-                  // real state change is committed ONCE on pointerup, below.
-                  const liveEls = Array.from(
-                    timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
-                  );
+                  // B1 — elements whose geometry we update directly during the drag,
+                  // so we avoid a per-move setProject/full re-render. The real state
+                  // change is committed ONCE on pointerup, below.
+                  //
+                  // K17 — indexed by segment id, for EVERY segment, not just the
+                  // dragged one. The cascade moves neighbours, so the preview has to
+                  // move them too; leaving them frozen is what let a growing segment's
+                  // edge run straight through the next card and then snap everything
+                  // into place on release (services/dragCascade.ts's resolveDragPreview
+                  // documents the three symptoms). Both lanes tag their cell with the
+                  // same data-seg-id, so one id can map to several elements.
+                  const elsBySegId = new Map<string, HTMLElement[]>();
+                  for (const el of Array.from(
+                    timeline.querySelectorAll<HTMLElement>('[data-seg-id]'),
+                  )) {
+                    const segId = el.dataset.segId;
+                    if (!segId) continue;
+                    const bucket = elsBySegId.get(segId);
+                    if (bucket) bucket.push(el);
+                    else elsBySegId.set(segId, [el]);
+                  }
                   let hasMoved = false;
                   // Capture video context at drag-start for speed coupling.
                   const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
@@ -3945,21 +3967,75 @@ export default function App() {
                   const edgeXFor = (clientX: number): number =>
                     timelineContentX(clientX, rectLeft, timeline.scrollLeft) - grabOffsetPx;
                   let lastEdgeX = segmentEdgeContentX(originalTarget, type, pps);
+                  const direction = type === 'end' ? 'right' as const : 'left' as const;
+
+                  // K17 — ids whose DOM geometry this drag has overwritten. Needed
+                  // because we are writing behind React's back: React diffs the style
+                  // props it rendered LAST against the ones it renders NEXT, and never
+                  // looks at the DOM. So a card we moved on frame 10 and that the
+                  // cascade no longer touches on frame 20 (the cascade window can
+                  // shrink as the pointer comes back) would keep frame 10's inline
+                  // styles forever — React sees no prop change and issues no write.
+                  // Each frame therefore restores anything it did not itself move.
+                  let writtenIds = new Set<string>();
+
+                  /** Writes `segs`' geometry straight to the DOM. `segs` is always a
+                   *  full array in the original order, so index i lines up with
+                   *  originalSegments[i]. */
+                  const writeGeometry = (segs: VideoSegment[]): void => {
+                    const moved = new Set<string>();
+                    for (let i = 0; i < segs.length; i++) {
+                      const s = segs[i]!;
+                      const orig = originalSegments[i];
+                      if (!orig) continue;
+                      if (s.startTime === orig.startTime && s.duration === orig.duration) continue;
+                      const els = elsBySegId.get(s.id);
+                      if (!els) continue;
+                      // Exactly Timeline.tsx's own layout expression
+                      // (computeSegmentLayout): left = startTime * pps,
+                      // width = duration * pps. Anything else here would make the
+                      // preview and the post-commit render disagree by construction.
+                      const l = `${s.startTime * pps}px`;
+                      const w = `${s.duration * pps}px`;
+                      for (const el of els) {
+                        el.style.left = l;
+                        el.style.width = w;
+                      }
+                      moved.add(s.id);
+                    }
+                    for (const prevId of writtenIds) {
+                      if (moved.has(prevId)) continue;
+                      const orig = originalById.get(prevId);
+                      const els = elsBySegId.get(prevId);
+                      if (!orig || !els) continue;
+                      const l = `${orig.startTime * pps}px`;
+                      const w = `${orig.duration * pps}px`;
+                      for (const el of els) {
+                        el.style.left = l;
+                        el.style.width = w;
+                      }
+                    }
+                    writtenIds = moved;
+                  };
 
                   // B5 — coalesce pointermoves into a single rAF; only the latest
-                  // pointer position matters per frame. The frame body is deliberately
-                  // the cheapest thing that can express the drag: one scrollLeft read,
-                  // one pure resolveDragEdge call, and two style writes per element. No
-                  // React state is touched, so no render, no timing recomputation and
-                  // no cascade runs until release.
+                  // pointer position matters per frame. The frame body stays the
+                  // cheapest thing that can express the drag: one scrollLeft read, two
+                  // pure calls, and two style writes per moved element. No React state
+                  // is touched, so no render and no timing recomputation until release.
                   let rafId: number | null = null;
                   let pendingEvent: PointerEvent | null = null;
                   const applyFrame = (): void => {
                     rafId = null;
                     if (!pendingEvent) return;
                     lastEdgeX = edgeXFor(pendingEvent.clientX);
-                    // Same function the commit below calls — the live preview cannot
-                    // drift from the value that will actually be committed.
+                    // Same two functions the commit below resolves through, in the
+                    // same order, so the live preview cannot drift from what will
+                    // actually be committed:
+                    //   resolveDragEdge   — pointer position → this segment's timing
+                    //   resolveDragPreview — that timing → the whole array
+                    // K16's pointer math is untouched; the edge still sits exactly
+                    // under the grabbed point of the handle.
                     const live = resolveDragEdge({
                       segment: originalTarget,
                       edge: type,
@@ -3967,17 +4043,17 @@ export default function App() {
                       pixelsPerSecond: pps,
                       isVideo: isVideoSeg,
                     });
-                    const w = `${live.duration * pps}px`;
-                    const l = `${live.segmentLeftPx}px`;
-                    for (const el of liveEls) {
-                      el.style.width = w;
-                      // K16 — `left` is written too. Pre-K16 only `width` moved, so a
-                      // START-edge drag pinned the very edge the user was holding and
-                      // moved the opposite one instead: the grabbed edge's lag equalled
-                      // the whole drag distance. On an END-edge drag this is a no-op
-                      // write of the segment's own unchanged left.
-                      el.style.left = l;
-                    }
+                    // Read the tokens live rather than closing over a drag-start copy,
+                    // so the preview's yield floor is the same input applyDurationChange
+                    // will read at commit time.
+                    writeGeometry(resolveDragPreview(
+                      originalSegments,
+                      draggedIdx,
+                      live.duration,
+                      live.trimStart,
+                      direction,
+                      projectRef.current.transcriptTokens,
+                    ));
                   };
                   const handleMove = (e: PointerEvent): void => {
                     pendingEvent = e;
@@ -4029,17 +4105,23 @@ export default function App() {
                     const speedUpdate = final.playbackSpeed === undefined
                       ? undefined
                       : { playbackSpeed: final.playbackSpeed };
-                    // Negligible drag — revert live preview to original.
-                    if (Math.abs(final.duration - originalTarget.duration) < 0.01) {
+                    // Negligible drag — nothing to commit. K17: the last preview frame
+                    // resolved through the SAME threshold (resolveDragPreview) and so
+                    // already restored the original geometry; this setProject is the
+                    // state-side half of that and cannot move anything on screen.
+                    if (Math.abs(final.duration - originalTarget.duration) < NEGLIGIBLE_DRAG_SEC) {
                       setProject(prev => ({ ...prev, segments: originalSegments }));
                       return;
                     }
-                    const direction = type === 'end' ? 'right' as const : 'left' as const;
                     speedBaselineRef.current = null;
                     const succeeded = applyDurationChange(
                       originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
                     );
-                    // null cascade → locked neighbor blocked: revert live preview.
+                    // null cascade → locked neighbour blocked. K17: the preview frames
+                    // resolved the same block to the same `originalSegments`, so the
+                    // cards are already sitting at their pre-drag geometry and this
+                    // revert moves nothing on screen — it only re-syncs state. Before
+                    // K17 this was a visible snap-back at release.
                     if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
                   };
                   isResizingRef.current = true;

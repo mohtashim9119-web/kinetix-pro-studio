@@ -258,3 +258,84 @@ export function computeDragCascade(
   const hi = Math.max(draggedIdx, lastTouched);
   return restackWindow(segs, lo, hi);
 }
+
+/**
+ * A drag whose resolved duration differs from the segment's own by less than
+ * this is treated as no drag at all: the gesture is a click, or a jitter, and
+ * both the live preview and the commit leave the array untouched.
+ *
+ * Exported so `App.tsx`'s pointerup path and `resolveDragPreview` below read
+ * ONE threshold. They used to hold two independent copies of `0.01`, which is
+ * the same drift risk `resolveDragEdge` (services/dragGeometry.ts) was created
+ * to remove on the geometry side.
+ */
+export const NEGLIGIBLE_DRAG_SEC = 0.01;
+
+/**
+ * K17 — the array the timeline must DRAW for an in-progress drag.
+ *
+ * The live preview and the pointerup commit have to answer one question
+ * identically: given this pointer position, what does the whole segment array
+ * become? Before K17 they did not even ask the same question. The preview wrote
+ * `left`/`width` for the DRAGGED CARD ONLY and left every neighbour frozen at
+ * its pre-drag geometry, while the commit ran `computeDragCascade` and moved
+ * the neighbours too. Three consequences, all visible:
+ *
+ *   1. **Overlap.** Growing a segment's end pushed its right edge straight
+ *      through the frozen next card. Under the timeline's pre-2026-07-31
+ *      flexbox layout this was unrepresentable — a card's left edge WAS the sum
+ *      of its predecessors' widths, so neighbours were shoved along by the
+ *      browser for free. Absolute positioning (each card at its own
+ *      `startTime`) removed that accidental coupling and exposed the defect;
+ *      it did not introduce it. Overlap is illegal under BOTH candidate models
+ *      of `segments` (docs/segments-invariant-ruling.md §0), so this needs no
+ *      ruling to fix.
+ *   2. **A jump on release.** Every neighbour the cascade moved snapped from
+ *      its frozen position to its committed one the instant the pointer came
+ *      up. What the user saw during the gesture was never what they got.
+ *   3. **A dragged card that lied about its own size.** K15b's word-bound
+ *      giveback can hand refused shrink back to the dragged segment, so its
+ *      committed duration is smaller than the raw pointer geometry asked for.
+ *      The preview drew the raw value and the commit wrote the bounded one.
+ *
+ * The fix is to make the preview render this function's output, and to make
+ * the commit path resolve through the same call. It is deliberately NOT a
+ * second, preview-flavoured copy of the cascade rules — it is `computeDragCascade`
+ * plus the two fallbacks the commit path already applied, so the preview cannot
+ * drift from the commit without `computeDragCascade` itself changing.
+ *
+ * Returns `originalSegments` UNCHANGED in the two cases the commit also
+ * declines to write:
+ *   - a negligible drag (see `NEGLIGIBLE_DRAG_SEC`);
+ *   - a locked neighbour blocking the cascade (`computeDragCascade` → null).
+ * The locked case matters for more than tidiness: the commit path reverts to
+ * `originalSegments` on a block, so a preview that had drawn the drag anyway
+ * would have to un-draw it on release — the very jump (2) this exists to
+ * remove. Rendering the original array throughout means a blocked drag shows
+ * the user, truthfully and immediately, that nothing is moving.
+ *
+ * Pure. `onLockedBlock` is intentionally absent: a preview frame runs up to
+ * 60×/second and must not raise a toast. The commit path passes its own
+ * reporting callback straight to `computeDragCascade`.
+ */
+export function resolveDragPreview(
+  originalSegments: VideoSegment[],
+  draggedIdx: number,
+  finalDuration: number,
+  finalTrimStart: number,
+  direction: 'right' | 'left',
+  tokens?: TranscriptToken[],
+): VideoSegment[] {
+  const dragged = originalSegments[draggedIdx];
+  if (!dragged) return originalSegments;
+  if (Math.abs(finalDuration - dragged.duration) < NEGLIGIBLE_DRAG_SEC) return originalSegments;
+  return computeDragCascade(
+    originalSegments,
+    draggedIdx,
+    finalDuration,
+    finalTrimStart,
+    direction,
+    () => undefined,
+    tokens,
+  ) ?? originalSegments;
+}

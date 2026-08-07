@@ -20,6 +20,8 @@ import {
   computeDragCascade,
   neighbourYieldableSec,
   MIN_SEGMENT_DURATION,
+  resolveDragPreview,
+  NEGLIGIBLE_DRAG_SEC,
 } from './dragCascade';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { TransitionType, AnimationType, type TranscriptToken, type VideoSegment } from '../types';
@@ -296,5 +298,133 @@ describe('K15 — unchanged behaviour', () => {
 
   it('an out-of-range dragged index is a no-op null, not a throw', () => {
     expect(computeDragCascade([seg('A', 0, 5)], 7, 6, 0, 'right', noBlock)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PART 4 — K17: the live drag preview must show what the commit will write.
+//
+// The defect these pin: the drag's live preview wrote `left`/`width` for the
+// DRAGGED CARD ONLY, leaving every neighbour the cascade would move frozen at
+// its pre-drag geometry. So a growing segment's edge ran through the next card
+// (an overlap, illegal under BOTH candidate models of `segments`), and every
+// neighbour snapped into place on release.
+//
+// `resolveDragPreview` is the array the preview now draws. What must hold is
+// not "it looks right" but that it is the SAME array the commit path writes —
+// App.tsx's applyDurationChange resolves through `computeDragCascade` with the
+// identical arguments, so these compare the two directly.
+// ---------------------------------------------------------------------------
+
+describe('K17 — live preview equals the committed cascade', () => {
+  /** Three 5s slots, one spoken word centred in each, leaving exactly 1.0s of
+   *  true silence at both edges of every slot. `tokens(0, 15)` is deliberately
+   *  NOT used here: it puts a word onset at each slot's exact start, so K15b's
+   *  word bound correctly refuses ALL yield and no neighbour can move — which
+   *  makes it useless for asserting that neighbours DO move. */
+  const SILENCE_TOKENS: TranscriptToken[] = [
+    { startSec: 1, endSec: 4, text: 'a' },
+    { startSec: 6, endSec: 9, text: 'b' },
+    { startSec: 11, endSec: 14, text: 'c' },
+  ];
+  const threeSegs = (): VideoSegment[] => [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+
+  const CASES: ReadonlyArray<
+    readonly [label: string, draggedIdx: number, duration: number, dir: 'right' | 'left']
+  > = [
+    ['grow right into next', 0, 5.8, 'right'],
+    ['shrink right, next takes it back', 0, 3.5, 'right'],
+    ['grow left into prev', 2, 5.8, 'left'],
+    ['shrink left, prev takes it back', 2, 3.5, 'left'],
+  ];
+
+  it.each(CASES)(
+    'preview is byte-identical to the commit — %s',
+    (_label, draggedIdx, duration, dir) => {
+      const arr = threeSegs();
+      const committed = computeDragCascade(arr, draggedIdx, duration, 0, dir, noBlock, SILENCE_TOKENS);
+      const previewed = resolveDragPreview(arr, draggedIdx, duration, 0, dir, SILENCE_TOKENS);
+      expect(previewed).toEqual(committed);
+    },
+  );
+
+  it.each(CASES)(
+    'the preview actually MOVES a neighbour, not only the dragged card — %s',
+    (_label, draggedIdx, duration, dir) => {
+      const arr = threeSegs();
+      const out = resolveDragPreview(arr, draggedIdx, duration, 0, dir, SILENCE_TOKENS);
+      // The assertion this whole fix exists for, stated directly: some segment
+      // OTHER than the dragged one has different geometry than it started with.
+      // The pre-K17 preview moved only the dragged card and fails here.
+      const movedOthers = out.filter((s, i) =>
+        i !== draggedIdx &&
+        (s.startTime !== arr[i]!.startTime || s.duration !== arr[i]!.duration),
+      );
+      expect(movedOthers.length).toBeGreaterThan(0);
+    },
+  );
+
+  it('previews a two-neighbour cascade — the second neighbour moves as well', () => {
+    // B is token-less (yield floor = Infinity) and short, so MIN_SEGMENT_DURATION
+    // clamps it and the overflow passes on to C. All three cards must move.
+    const arr = [seg('A', 0, 5), seg('B', 5, 0.4), seg('C', 5.4, 5)];
+    const out = resolveDragPreview(arr, 0, 5.3, 0, 'right');
+    expect(spans(out)).toBe('A[0.00..5.30] B[5.30..5.60] C[5.60..10.40]');
+    expect(out).toEqual(computeDragCascade(arr, 0, 5.3, 0, 'right', noBlock));
+  });
+
+  it('no two cards ever overlap in a previewed frame, at any drag position', () => {
+    // An overlap at ANY pointer position is the bug, so one hand-picked position
+    // would not be evidence — sweep both edges densely, with and without tokens.
+    for (const toks of [SILENCE_TOKENS, undefined]) {
+      for (let d = 0.3; d <= 12; d += 0.1) {
+        for (const [idx, dir] of [[0, 'right'], [2, 'left']] as const) {
+          const out = resolveDragPreview(threeSegs(), idx, Number(d.toFixed(2)), 0, dir, toks);
+          for (let i = 0; i + 1 < out.length; i++) {
+            const end = out[i]!.startTime + out[i]!.duration;
+            expect(end).toBeLessThanOrEqual(out[i + 1]!.startTime + 1e-9);
+          }
+        }
+      }
+    }
+  });
+
+  it('a negligible drag previews the original array unchanged — nothing to un-draw on release', () => {
+    const arr = [seg('A', 0, 5), seg('B', 5, 5)];
+    // App.tsx's pointerup path declines to commit below this same threshold, so
+    // a preview that had drawn the drag would have to snap back at release.
+    const out = resolveDragPreview(arr, 0, 5 + NEGLIGIBLE_DRAG_SEC / 2, 0, 'right', SILENCE_TOKENS);
+    expect(out).toBe(arr);
+  });
+
+  it('a locked neighbour previews the original array — the blocked commit reverts to exactly this', () => {
+    const arr = [seg('A', 0, 5), seg('B', 5, 5, { locked: true }), seg('C', 10, 5)];
+    expect(computeDragCascade(arr, 0, 7, 0, 'right', noBlock, SILENCE_TOKENS)).toBeNull();
+    expect(resolveDragPreview(arr, 0, 7, 0, 'right', SILENCE_TOKENS)).toBe(arr);
+  });
+
+  it('K15a locality holds in the preview too — a gap outside the touched window survives', () => {
+    // The K14-shaped array: B is locked and ends at 3.0, C starts at 5.0.
+    const arr = [seg('A', 0, 2), seg('B', 2, 1, { locked: true }), seg('C', 5, 3), seg('D', 8, 3)];
+    const out = resolveDragPreview(arr, 2, 4, 0, 'right', SILENCE_TOKENS);
+    expect(out[0]).toEqual(arr[0]);
+    expect(out[1]).toEqual(arr[1]);
+    expect(out[2]!.startTime).toBe(5);
+    // The 2.000s gap between B's end and C's start is untouched by the preview,
+    // exactly as it is by the commit.
+    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(2, 9);
+  });
+
+  it("previews K15b's bounded duration, not the raw pointer duration", () => {
+    // B owns words from 6.0, so it can yield only 1.0s of leading silence; a drag
+    // asking for 3.0s more is bounded and the refused 2.0s is given back to A.
+    // Pre-K17 the preview drew the raw request and the commit wrote the bounded
+    // value — a visible jump at release.
+    const arr = threeSegs();
+    const RAW = 8;
+    const out = resolveDragPreview(arr, 0, RAW, 0, 'right', SILENCE_TOKENS);
+    expect(out[0]!.duration).toBe(6);
+    expect(out[0]!.duration).toBeLessThan(RAW);
+    expect(out).toEqual(computeDragCascade(arr, 0, RAW, 0, 'right', noBlock, SILENCE_TOKENS));
   });
 });
