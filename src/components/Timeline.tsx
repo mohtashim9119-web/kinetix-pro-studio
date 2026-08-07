@@ -119,12 +119,56 @@ export function Timeline({
     return () => ro.disconnect();
   }, []);
 
+  // F2 (manual triage 2026-08-08) — THE ZOOM BASIS.
+  //
+  // Reported: dragging the LAST segment's right edge stretches it and also
+  // moves every earlier segment. The committed array is not at fault — it is
+  // provably untouched outside the dragged index (dragTriage.test.ts pins
+  // that) — the movement is a rescale. `computeZoomPixelsPerSecond` derives
+  // its lower bound `ppsMin` as a FIT-TO-WIDTH term, `(width * 0.95) /
+  // totalDuration`, so lengthening the timeline shrinks pixelsPerSecond, and
+  // every card's `left = startTime * pixelsPerSecond` shrinks with it. Measured
+  // on the triage fixture: segment B's left went 300px -> 259.09px without B's
+  // own timing changing by a single millisecond.
+  //
+  // So the zoom is evaluated against a BASIS duration that a resize drag never
+  // moves, rather than against live `totalDuration`. An edit changes what the
+  // timeline contains, not how far you are zoomed into it — the invariant the
+  // report states as "nothing before the dragged segment should ever move".
+  // The basis re-syncs to reality the moment the user does something that is
+  // genuinely about scale: touching the zoom slider, or the panel being
+  // resized. Everything else on this component — lane widths, scroll extent,
+  // marker and card positions — still reads live `totalDuration`; only the
+  // zoom formula reads the basis.
+  const [zoomBasisDuration, setZoomBasisDuration] = useState(totalDuration);
+  const resizeTouchedZoomRef = useRef(false);
+  useEffect(() => {
+    if (resizingId !== null) {
+      // A gesture is in flight; whatever totalDuration does next is its doing.
+      resizeTouchedZoomRef.current = true;
+      return;
+    }
+    if (resizeTouchedZoomRef.current) {
+      // The commit lands in the same batched render that clears resizingId, so
+      // this is the one totalDuration change that must NOT rebase the zoom.
+      resizeTouchedZoomRef.current = false;
+      return;
+    }
+    setZoomBasisDuration(totalDuration);
+  }, [totalDuration, resizingId]);
+  // A deliberate scale change always re-fits, so "fully zoomed out" keeps its
+  // promise to fit the real content.
+  useEffect(() => {
+    setZoomBasisDuration(computeTotalDuration(segments));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sliderT, containerWidth]);
+
   // Single source of truth for zoom: exponential interpolation between ppsMin
   // (fit-to-width) and ppsMax (100). When ppsMin >= ppsMax the project is short
   // enough to fit, so the slider is a no-op pinned at 100.
   const pixelsPerSecond = useMemo(
-    () => computeZoomPixelsPerSecond(totalDuration, containerWidth, sliderT),
-    [sliderT, containerWidth, totalDuration],
+    () => computeZoomPixelsPerSecond(zoomBasisDuration, containerWidth, sliderT),
+    [sliderT, containerWidth, zoomBasisDuration],
   );
 
   // Keep App's pixelsPerSecond ref in sync for its non-rendering consumer sites.

@@ -147,13 +147,33 @@ describe('F2 — dragging the last segment moves earlier segments', () => {
     const h = harnessOf(base());
     const out = h.grab('C', 'end').moveBy(2.0).release();
 
-    const ppsBefore = computeZoomPixelsPerSecond(computeTotalDuration(before), containerWidth, sliderT);
-    const ppsAfter = computeZoomPixelsPerSecond(computeTotalDuration(out.segments), containerWidth, sliderT);
+    // Evaluated exactly as Timeline.tsx now does it: against a zoom BASIS that
+    // a resize drag never moves, so a drag re-lays out nothing.
+    const zoomBasis = computeTotalDuration(before);
+    const ppsBefore = computeZoomPixelsPerSecond(zoomBasis, containerWidth, sliderT);
+    const ppsAfter = computeZoomPixelsPerSecond(zoomBasis, containerWidth, sliderT);
 
     const leftOfBBefore = byId(before, 'B').startTime * ppsBefore;
     const leftOfBAfter = byId(out.segments, 'B').startTime * ppsAfter;
 
     expect(leftOfBAfter).toBeCloseTo(leftOfBBefore, 3);
+  });
+
+  it('pins the MECHANISM: rebasing zoom on the new total duration is what moved them', () => {
+    // Locks WHY the basis exists. If a future change lets the zoom formula read
+    // live totalDuration again, this records the consequence in numbers rather
+    // than leaving the whole timeline layout to regress silently.
+    const containerWidth = 1000;
+    const sliderT = 0.0;
+    const before = base();
+    const after = [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 5)];
+
+    const frozen = computeZoomPixelsPerSecond(computeTotalDuration(before), containerWidth, sliderT);
+    const rebased = computeZoomPixelsPerSecond(computeTotalDuration(after), containerWidth, sliderT);
+    expect(rebased).toBeLessThan(frozen);
+    // B's own timing is identical in both arrays, yet it would move on screen.
+    expect(byId(before, 'B').startTime * frozen).toBeCloseTo(300, 3);
+    expect(byId(after, 'B').startTime * rebased).toBeCloseTo(259.0909, 3);
   });
 });
 
