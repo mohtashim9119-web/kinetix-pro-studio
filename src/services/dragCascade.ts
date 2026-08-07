@@ -256,6 +256,44 @@ export function computeDragCascade(
 
   const lo = Math.min(draggedIdx, lastTouched);
   const hi = Math.max(draggedIdx, lastTouched);
+
+  // MODEL P (2026-08-07, compliance backlog item 2) — the touched window's
+  // total duration must be CONSERVED whenever a segment follows it.
+  //
+  // `restackWindow` anchors on `segs[lo].startTime` and leaves everything
+  // outside `[lo, hi]` untouched. So if the window's total length changes,
+  // `segs[hi]`'s end moves while `segs[hi + 1]`'s start does not — a gap or an
+  // overlap, exactly the adjacency violation Model P forbids.
+  //
+  // That is reachable today, and not theoretically: the cascade loop breaks
+  // when it runs off the array (`ni < 0`), leaving `remaining` unabsorbed. The
+  // live case is a LEFT-edge drag on segment 0 — the timeline head, which has
+  // no predecessor to trade with, and whose left handle the Timeline renders
+  // like any other. Measured before this fix: a -0.7s left drag on segment 0
+  // left a 0.700s hole in front of segment 1, and a large grow produced a
+  // 40.000s overlap.
+  //
+  // Handing `remaining` back to the dragged segment conserves the window
+  // exactly, so the drag simply stops where there is nothing left to trade
+  // with — the same "refuse what no neighbour gave up" rule K15b already
+  // applies to its word-onset floor, and the same CapCut/Premiere feel.
+  //
+  // Scoped deliberately to `hi < segs.length - 1`. When the window ends at the
+  // LAST segment there is no following segment to be disjoint from, so no
+  // adjacency is broken and the pre-K15 off-the-end behaviour (explicitly
+  // preserved above, and pinned by this file's own last-segment test) is left
+  // exactly as it was. Model P's separate tail clause — the last segment ends
+  // at `audioDuration` — cannot be enforced here in any case: this function is
+  // not given the audio length, by design, so that a drag never re-stretches
+  // the timeline mid-gesture.
+  if (Math.abs(remaining) > EPSILON_SEC && hi < segs.length - 1) {
+    const cur = segs[draggedIdx]!;
+    segs[draggedIdx] = {
+      ...cur,
+      duration: Number(Math.max(MIN_SEGMENT_DURATION, cur.duration + remaining).toFixed(3)),
+    };
+  }
+
   return restackWindow(segs, lo, hi);
 }
 
