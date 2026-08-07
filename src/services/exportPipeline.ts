@@ -3,6 +3,7 @@ import { encodeSegment, encodePlainVideoSegment, encodeStaticImageSegment, Ffmpe
 import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
+import { findPartitionViolations } from './timelinePartition';
 
 export interface ExportOptions {
   width?: number;
@@ -25,6 +26,7 @@ export type ExportErrorKind =
   | 'mux'
   | 'asset_missing'
   | 'cancelled'
+  | 'timeline_gap'
   | 'unknown';
 
 export interface ExportError {
@@ -40,6 +42,60 @@ export type ExportResult =
 
 function causeString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * TASK 4 (2026-08-07) — the export guard the ruling asked to be made explicit.
+ *
+ * **`segmentEncoder.ts` still ignores `startTime` entirely.** It always has:
+ * a segment's frame count comes from `duration` alone (`segmentEncoder.ts`'s
+ * own `totalFrames = max(1, round(segment.duration * fps))`), and segments are
+ * concatenated in ARRAY ORDER, not by position. That was §1.3's finding in
+ * `docs/segments-invariant-ruling.md`, and Model P does not change it — it
+ * changes what upstream GUARANTEES about the array before export ever sees it.
+ *
+ * So export's correctness now rests entirely on a PRECONDITION it does not
+ * itself produce: that `project.segments` is already a gapless, contiguous
+ * partition by the time it reaches here. Every writer of `segments` in
+ * `App.tsx` (Apply Sync, the lock toggle, the drag commit) now routes through
+ * `enforceGaplessPartition` (`timelinePartition.ts`), so that precondition
+ * holds for anything produced going forward — but "holds for anything produced
+ * going forward" is an argument about the REST of the codebase, not a fact
+ * export can verify about itself. A project persisted before this fix, or
+ * loaded from an external source, is not bound by that argument at all.
+ *
+ * Rather than leave that correct-by-coincidence, this function makes the
+ * precondition an EXPLICIT, checked gate: every segment writer already routes
+ * through `enforceGaplessPartition`, so a well-formed project always passes it
+ * for free, and a project that still carries a real gap (legacy data, or a
+ * lock-lock conflict `timelinePartition.ts` can report but not silently
+ * close — ruling §4.1) fails LOUDLY, before a single frame is rendered,
+ * instead of silently producing the A/V-desynced, heading-dropping export
+ * `docs/segments-invariant-ruling.md` §1.3 first found. Called once, from both
+ * export entry points (`exportProject` here and
+ * `webcodecsExport/exportPipelineWebCodecs.ts`'s `exportProjectWebCodecs`), so
+ * neither path can regress independently of the other.
+ *
+ * Deliberately does NOT check against `audioDuration` (a head/tail mismatch
+ * against the voiceover's own length): that is a video/audio LENGTH
+ * difference, already handled by ffmpeg's `-shortest` mux flag, not the
+ * INTERNAL segment-position divergence this guard exists to catch. An
+ * interior gap or overlap is the only shape that can make the exported video's
+ * own frame positions disagree with what the editor showed.
+ */
+export function checkTimelineIsGapless(segments: VideoSegment[]): ExportError | null {
+  const violations = findPartitionViolations(segments);
+  if (violations.length === 0) return null;
+  const detail = violations
+    .map(v => `segment ${v.index + 1} (${v.kind}, ${v.amountSec.toFixed(3)}s)`)
+    .join('; ');
+  return {
+    kind: 'timeline_gap',
+    message:
+      `Export aborted — the timeline has ${violations.length} unassigned or overlapping span(s) that would ` +
+      `desync audio/video in the exported file: ${detail}. This happens when two locked segments leave a gap ` +
+      `neither can absorb. Unlock one of the segments named above and re-run Apply Sync, then export again.`,
+  };
 }
 
 /**
@@ -90,6 +146,11 @@ export async function exportProject(
   const segments = project.segments;
   const segmentFiles: string[] = [];
   const allTempFiles: string[] = [];
+
+  // TASK 4 — explicit gapless-partition guard (see checkTimelineIsGapless's
+  // own doc comment). Before any ffmpeg work happens.
+  const gapError = checkTimelineIsGapless(segments);
+  if (gapError) return { ok: false, error: gapError };
 
   // ── 1. Encode each segment ──────────────────────────────────────────────────
   for (let i = 0; i < segments.length; i++) {

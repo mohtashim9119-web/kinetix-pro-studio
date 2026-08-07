@@ -346,6 +346,41 @@ export interface Project {
   /** WS-logs — per-run rollups, same append/prune discipline, capped at
    *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
   syncRunSummaries?: SyncRunSummary[];
+  /** Lock lifecycle fingerprint (Model P, owner ruling 2026-08-07 task 2) —
+   *  written by every committed Apply Sync run. `hash` is the SHA-256 defined
+   *  in services/projectFingerprint.ts; `input` is the exact four-field tuple
+   *  it was computed from, stored alongside so the NEXT run can say WHICH input
+   *  moved rather than only that something did.
+   *
+   *  The next Apply Sync recomputes the hash and compares: identical → manual
+   *  locks are carried forward bit-for-bit by script position; different →
+   *  locks are wiped and the run re-aligns from scratch. Undefined on every
+   *  project synced before this field existed, which the comparison treats as
+   *  "changed" — the conservative direction, since there is no evidence the
+   *  locks still describe the current inputs. */
+  syncFingerprint?: {
+    hash: string;
+    input: SyncFingerprintInput;
+  };
+}
+
+/** The exact input set {@link Project.syncFingerprint} hashes. Structurally
+ *  duplicated from services/projectFingerprint.ts's own interface rather than
+ *  imported, for the same reason SegmentGrade is declared here: the dependency
+ *  direction stays services → types, never the reverse. */
+export interface SyncFingerprintInput {
+  /** `Project.script` — the voiceover script text, verbatim, unnormalized. */
+  scriptText: string;
+  /** SHA-256 hex of the voiceover blob's BYTES — not its name, id, size, or
+   *  `lastModified`, all of which churn on a plain re-stage of the same file.
+   *  Undefined when no voiceover is staged. */
+  audioFileHash: string | undefined;
+  /** Voiceover length as resolved by the ffmpeg probe, seconds. */
+  audioDurationSec: number;
+  /** Segment count `parseProjectData` produced for this run — the proxy for
+   *  "scene structure changed", and what makes the locks' by-index
+   *  carry-forward sound. */
+  segmentCount: number;
 }
 
 // ---------------------------------------------------------------------------

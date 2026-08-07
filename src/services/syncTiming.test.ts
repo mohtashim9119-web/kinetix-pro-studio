@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applyAnchorBasedTiming, headExtendFirstSegment } from './syncEngine';
+import { applyAnchorBasedTiming } from './syncEngine';
+import { enforceGaplessPartition, findPartitionViolations, type PartitionViolation } from './timelinePartition';
 import {
   distributeSegmentTimes,
   alignScenestoTranscript,
@@ -35,6 +36,7 @@ import {
   isBreathSilence,
   computeBoundarySearchWindow,
   boundaryUsedFallback,
+  type BreathClip,
 } from './snapBoundaries';
 import {
   TOKEN_GAP_EPSILON_SEC,
@@ -794,10 +796,24 @@ describe('diff-aligner outcomes + backstop clamp', () => {
     expect(starts).toEqual([...starts].sort((a, b) => a - b));
     // No negative/zero durations anywhere.
     expect(result.every(s => s.duration >= 0.1)).toBe(true);
-    // d2 (the correct, earlier segment) keeps its true anchor — not pushed forward.
-    expect(result[2]!.startTime).toBe(3);
     // d1 (the overshoot) is the one that collapses, not its neighbors.
     expect(result[1]!.duration).toBeLessThan(0.5);
+
+    // MODEL P (2026-08-07) — this expectation moved from 3 to 3.1, and the old
+    // value was pinning an OVERLAP. d1's anchor is clamped onto d2's (both 3),
+    // so d1's derived span is zero and the MIN_SEGMENT_DURATION floor extends it
+    // to [3, 3.1]. Pre-ruling, d2 still started at 3 — meaning d1 and d2 both
+    // owned [3.0, 3.1]. An overlap is illegal under BOTH candidate models of
+    // `segments`, so this was never correct; it was simply invisible while the
+    // timeline laid segments out with flexbox. The predecessor's end is now a
+    // floor on its successor's start, locked or not, so the floored segment
+    // pushes d2 forward by exactly the 0.1s it was floored to and nothing more.
+    expect(result[2]!.startTime).toBeCloseTo(3.1, 6);
+    // The property the old assertion was really after: d2 is not pushed by the
+    // full 5.0s overshoot — only by the floor. Its own anchor still governs.
+    expect(result[2]!.startTime - 3).toBeLessThanOrEqual(0.1 + 1e-9);
+    // And the partition holds — no gap, no overlap, anywhere.
+    expect(findPartitionViolations(result, 10)).toEqual([]);
   });
 });
 
@@ -1506,52 +1522,67 @@ describe('R4-1 — retileCoveredSegments', () => {
 });
 
 // ===========================================================================
-// headExtendFirstSegment — head/tail symmetry post-pass (syncEngine.ts)
+// The HEAD RULE — formerly `headExtendFirstSegment` (syncEngine.ts), now one
+// of the three jobs of `enforceGaplessPartition` (services/timelinePartition.ts).
+//
+// These four cases are the original headExtendFirstSegment suite, repointed at
+// the function that absorbed it. The arithmetic is unchanged and the
+// expectations below are unchanged wherever the old function's contract still
+// applies; what is NEW is that the positioner also writes every following
+// segment's startTime/anchorStart, so "s1 is completely untouched" becomes "s1
+// sits exactly where the partition puts it, which is where it already was".
 // ===========================================================================
-describe('headExtendFirstSegment', () => {
+describe('head rule (enforceGaplessPartition)', () => {
   it('stretches segment 1 back to 0 when it starts after the first spoken word, keeping its end fixed', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 0.16, duration: 4.02, anchorStart: 0.16, anchorSource: 'whisper' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 4.18, duration: 3 }),
     ];
 
-    const out = headExtendFirstSegment(segments);
+    const out = enforceGaplessPartition(segments);
 
     expect(out[0]!.startTime).toBe(0);
     expect(out[0]!.duration).toBeCloseTo(4.18, 6);
     expect(out[0]!.anchorStart).toBe(0);
     // End (startTime + duration) is unchanged by the stretch.
     expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(0.16 + 4.02, 6);
-    // Contiguity: s1 (untouched) still starts exactly where s0 now ends.
+    // Contiguity: s1 still starts exactly where s0 now ends.
     expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(out[1]!.startTime, 6);
-    // s2 is completely untouched — no ripple.
-    expect(out[1]).toEqual(segments[1]);
+    // No ripple: s1's own position and duration are what they already were.
+    expect(out[1]!.startTime).toBeCloseTo(4.18, 6);
+    expect(out[1]!.duration).toBe(3);
   });
 
   it('is a no-op when segment 1 already starts at 0', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha', startTime: 0, duration: 2, anchorStart: 0, anchorSource: 'whisper' }),
-      makeSegment({ id: 's1', order: 1, text: 'bravo', startTime: 2, duration: 2 }),
+      makeSegment({ id: 's1', order: 1, text: 'bravo', startTime: 2, duration: 2, anchorStart: 2 }),
     ];
 
-    const out = headExtendFirstSegment(segments);
+    const out = enforceGaplessPartition(segments);
 
     expect(out).toEqual(segments);
   });
 
-  it('leaves a locked first segment untouched even if its startTime > 0', () => {
+  it('leaves a locked first segment untouched even if its startTime > 0, and reports it', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha', startTime: 0.16, duration: 4, locked: true, anchorStart: 0.16, anchorSource: 'whisper' }),
-      makeSegment({ id: 's1', order: 1, text: 'bravo', startTime: 4.16, duration: 2 }),
+      makeSegment({ id: 's1', order: 1, text: 'bravo', startTime: 4.16, duration: 2, anchorStart: 4.16 }),
     ];
 
-    const out = headExtendFirstSegment(segments);
+    const violations: PartitionViolation[] = [];
+    const out = enforceGaplessPartition(segments, undefined, v => violations.push(v));
 
+    // The lock is a hard wall: the head stays uncovered rather than the lock
+    // moving. That is ruling point 3 beating ruling point 1, reported loudly.
     expect(out).toEqual(segments);
+    expect(violations).toEqual([
+      { kind: 'head-locked', index: 0, segmentId: 's0', amountSec: 0.16 },
+    ]);
   });
 
   it('is a no-op on an empty array', () => {
-    expect(headExtendFirstSegment([])).toEqual([]);
+    expect(enforceGaplessPartition([])).toEqual([]);
   });
 });
 
@@ -1912,22 +1943,43 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     return { segments, tokens, alignments };
   }
 
-  it('places the boundary at the midpoint of a detected silence between two covered segments', () => {
+  // -------------------------------------------------------------------------
+  // THE 50/50 RULE (owner ruling, 2026-08-07, point 2) replaces silence-centre
+  // selection for EVERY test in this describe block whose expectation moved.
+  //
+  // Each of those tests previously asserted "the boundary is the centre of the
+  // chosen detected silence." That is no longer what the function does, and the
+  // old expectation is not merely stale — it describes a rule the owner
+  // explicitly replaced: the silence between two speech events now splits
+  // equally, so the boundary is `(lastSpokenEnd + nextSpokenStart) / 2` and
+  // nothing about the silence array can move it.
+  //
+  // For the shared `twoCoveredSegments` fixture that value is always 1.5
+  // (lastSpokenEnd 1.0, nextSpokenStart 2.0). Where a test's ORIGINAL point was
+  // about the candidacy predicates (breath rejection, contention, clamping), it
+  // is rewritten to assert the same predicate through the surviving surface —
+  // the breath-clip audit — rather than deleted.
+  // -------------------------------------------------------------------------
+
+  it('places the boundary at the 50/50 midpoint, regardless of where the detected silence sits', () => {
     const { segments, tokens, alignments } = twoCoveredSegments();
-    // Deliberately OFF-CENTRE (mid 1.75, not the 1.5 token midpoint) so this
-    // asserts the silence was actually used, not merely that the fallback
-    // happened to agree.
+    // Deliberately OFF-CENTRE (silence mid 1.75, not the 1.5 spoken midpoint).
+    // Pre-ruling this fixture existed to prove the SILENCE was used; it now
+    // proves the opposite, which is exactly the ruling — a deterministic
+    // midpoint cannot be steered by which silence a picker reached.
     const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
 
     const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
 
-    expect(out[1]!.startTime).toBeCloseTo(1.75, 6);
-    expect(out[1]!.anchorStart).toBeCloseTo(1.75, 6);
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);
+    expect(out[1]!.anchorStart).toBeCloseTo(1.5, 6);
     // Durations come from the boundary — this is the re-tile, subsumed.
-    expect(out[0]!.duration).toBeCloseTo(1.75, 6);
-    expect(out[1]!.duration).toBeCloseTo(3.25, 6);
+    expect(out[0]!.duration).toBeCloseTo(1.5, 6);
+    expect(out[1]!.duration).toBeCloseTo(3.5, 6);
     // Contiguous: no gap left behind.
     expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(out[1]!.startTime, 6);
+    // The silence really is shared 50/50: each side gets 0.5s of it.
+    expect(out[1]!.startTime - 1.0).toBeCloseTo(2.0 - out[1]!.startTime, 6);
   });
 
   it('falls back to the spoken-word midpoint when no silence overlaps the search window', () => {
@@ -1942,49 +1994,42 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(out[1]!.duration).toBeCloseTo(3.5, 6);
   });
 
-  it('does NOT clamp a silence midpoint that sits beyond ±0.15s of the spoken edges (both directions)', () => {
-    // Silence-sharing fix: a detected silence is acoustic ground truth and
-    // outranks Whisper's word timestamps in both directions — there is no
-    // clamp on this branch at all (the old fallback-only clamps are gone).
+  it('an off-centre silence in either direction cannot pull the boundary off the 50/50 midpoint', () => {
+    // ORIGINAL INTENT (pre-ruling): prove there is no ±0.15s clamp pulling a
+    // silence-derived boundary back toward the spoken edges — a detected
+    // silence was acoustic ground truth and outranked Whisper's word
+    // timestamps in both directions.
     //
-    // Updated for intra-segment silence rejection (2026-08-01): a pause inside
-    // a segment's own speech is not a boundary. The original fixtures here
-    // ([2.3, 2.9] and [0.2, 0.7]) were written purely to test the ABSENCE of a
-    // ±0.15s clamp, but geometrically both were intra-segment pauses — one
-    // entirely after nextSpokenStart (2.0), one entirely before lastSpokenEnd
-    // (1.0) — so neither is a boundary candidate anymore. Both are replaced
-    // with silences that SPAN their boundary (the only kind a real pause
-    // between two segments can be) while still having a centre well outside
-    // ±0.15s of the spoken edges, which preserves this test's original intent
-    // and its exact assertion shape. The intra-segment cases the old fixtures
-    // accidentally described are now asserted deliberately, and in the correct
-    // direction, by the two "rejects a silence that…" tests below.
-    //
-    // Forward: a silence spanning nextSpokenStart (2.0), centred at 2.475 —
-    // well past the old forward clamp target of 2.15.
+    // POST-RULING this asserts the stronger and simpler property that replaced
+    // it: no clamp is needed because no silence is consulted. The two fixtures
+    // are kept verbatim — one silence far FORWARD of the boundary (centre
+    // 2.475, past nextSpokenStart), one far BACKWARD (centre 0.625, before
+    // lastSpokenEnd) — precisely because they used to drag the boundary
+    // 0.975s and 0.875s respectively. Both now land at 1.5.
     {
       const { segments, tokens, alignments } = twoCoveredSegments();
       const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.95, endSec: 3.0 }], 5);
-      expect(out[1]!.startTime).toBeCloseTo(2.475, 6);         // NOT 2.15
-      expect(out[1]!.startTime).toBeGreaterThan(2.0 + 0.15);
+      expect(out[1]!.startTime).toBeCloseTo(1.5, 6);           // was 2.475
     }
-    // Backward: a silence spanning lastSpokenEnd (1.0), centred at 0.625 —
-    // well before the old backward clamp target of 0.85.
     {
       const { segments, tokens, alignments } = twoCoveredSegments();
       const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 0.2, endSec: 1.05 }], 5);
-      expect(out[1]!.startTime).toBeCloseTo(0.625, 6);         // NOT 0.85
-      expect(out[1]!.startTime).toBeLessThan(1.0 - 0.15);
+      expect(out[1]!.startTime).toBeCloseTo(1.5, 6);           // was 0.625
     }
   });
 
-  it('leaves a silence centre that already sits near the spoken edges untouched (no regression)', () => {
-    // The pre-fix behaviour for a near-edge silence was already "use the
-    // silence centre" — this asserts the removal changed nothing for that case.
-    const { segments, tokens, alignments } = twoCoveredSegments();
-    const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 1.4, endSec: 1.7 }], 5);
-    const boundary = out[1]!.startTime;
-    expect(boundary).toBeCloseTo(1.55, 6);
+  it('a near-centre silence produces the same 50/50 boundary as no silence at all', () => {
+    // ORIGINAL INTENT: a near-edge silence's centre was already the answer, so
+    // removing the clamp changed nothing for it. POST-RULING the invariant is
+    // sharper — the silence array is not an input to placement at all, so this
+    // asserts identity against the empty-silence run rather than a constant.
+    const a = twoCoveredSegments();
+    const withSilence = snapCoveredBoundaries(a.segments, a.alignments, a.tokens, [{ startSec: 1.4, endSec: 1.7 }], 5);
+    const b = twoCoveredSegments();
+    const withoutSilence = snapCoveredBoundaries(b.segments, b.alignments, b.tokens, [], 5);
+    expect(withSilence[1]!.startTime).toBeCloseTo(1.55 - 0.05, 6); // 1.5, was 1.55
+    expect(withSilence.map(s => s.startTime)).toEqual(withoutSilence.map(s => s.startTime));
+    expect(withSilence.map(s => s.duration)).toEqual(withoutSilence.map(s => s.duration));
   });
 
   it('no-silence fallback boundary = token midpoint, no clamps applied', () => {
@@ -2016,12 +2061,21 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(out[1]!.startTime).toBeCloseTo((2.0 + 1.6) / 2, 6);
   });
 
-  it('reproduces the 14-segment regression: silence 6.56-7.12 vs nextSpokenStart 6.40 keeps the 6.84 centre', () => {
-    // The exact shape of pair i=2 on the reported 14-segment project. Before the
-    // silence-sharing fix a forward clamp would have pulled the boundary to
-    // BEFORE the silence even started (6.55), handing the whole 0.56s silence
-    // to the next segment. The boundary must be the silence centre, 6.84, so
-    // the two segments share the silence evenly.
+  it('the 14-segment regression fixture: the boundary is the SPOKEN 50/50 midpoint, not the silence centre', () => {
+    // The exact shape of pair i=2 on the reported 14-segment project, kept
+    // because it is a real production geometry. Its history in one line: the
+    // original defect clamped the boundary to 6.55 (before the silence even
+    // began, handing all 0.56s to the next segment); the silence-sharing fix
+    // moved it to the silence centre 6.84; the 50/50 ruling now places it at
+    // the spoken midpoint (6.30 + 6.40) / 2 = 6.35.
+    //
+    // Worth seeing plainly on this fixture, because it is the sharpest example
+    // in the suite of what the ruling costs: the silence here runs [6.56, 7.12]
+    // but Whisper declares "charlie" starting at 6.40 — 160ms BEFORE the pause
+    // actually ends. The spoken midpoint therefore lands at 6.35, which is
+    // inside neither the silence nor the speech, and 0.49s earlier than the
+    // acoustically-centred cut. This is the class the breath-clip audit exists
+    // to count; the rule is unchanged by it.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 5.3, duration: 1.1, anchorStart: 5.3, anchorSource: 'whisper' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 6.4, duration: 1.6, anchorStart: 6.4, anchorSource: 'whisper' }),
@@ -2037,10 +2091,11 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
 
     const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 6.56, endSec: 7.12 }], 8);
 
-    expect(out[1]!.startTime).toBeCloseTo(6.84, 6);
-    expect(out[1]!.startTime).not.toBeCloseTo(6.4 + 0.15, 6); // the old 6.55
-    // The silence really is shared 50/50 either side of the boundary.
-    expect(out[1]!.startTime - 6.56).toBeCloseTo(7.12 - out[1]!.startTime, 6);
+    expect(out[1]!.startTime).toBeCloseTo(6.35, 6);
+    expect(out[1]!.startTime).not.toBeCloseTo(6.4 + 0.15, 6); // still not the original 6.55 defect
+    // The SPOKEN silence — 6.30 (last word out) to 6.40 (next word in) — is
+    // what gets shared 50/50. That is the ruling's own wording.
+    expect(out[1]!.startTime - 6.30).toBeCloseTo(6.40 - out[1]!.startTime, 6);
   });
 
   it('contention-aware assignment gives a contested silence to its better-fitting pair, needing no monotonic fallback here', () => {
@@ -2097,8 +2152,18 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     ];
     const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
 
-    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);  // pair 0 → no assigned silence, token-midpoint fallback
-    expect(out[2]!.startTime).toBeCloseTo(2.35, 6); // pair 1 → silence B (closer than the reassigned A), no fallback needed
+    // POST-RULING: silence contention is a solved problem by DELETION — no
+    // silence is claimed, so no two pairs can contend for one. Both boundaries
+    // are their own pair's spoken midpoint: pair 0 → (1.0 + 2.0)/2 = 1.5,
+    // pair 1 → (2.2 + 2.3)/2 = 2.25. Pair 0's value is unchanged from the
+    // contention-aware behaviour this fixture was written for (it was already
+    // falling back to the midpoint); pair 1 moves 2.35 → 2.25 because silence
+    // B no longer places it. The starvation this fixture was built to catch —
+    // a pair left with nothing, collapsing toward MIN_SEGMENT_DURATION — is
+    // structurally impossible now: every pair always has its own midpoint.
+    expect(out[1]!.startTime).toBeCloseTo(1.5, 6);
+    expect(out[2]!.startTime).toBeCloseTo(2.25, 6);
+    expect(out[1]!.duration).toBeGreaterThan(0.1);
   });
 
   // -------------------------------------------------------------------------
@@ -2252,19 +2317,23 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     expect(out[0]!.duration).toBeCloseTo(1.37, 6);
   });
 
-  it('accepts a sub-tolerance silence INSIDE the current segment\'s last token (stretched word, not a breath)', () => {
-    // The other side of the same 0.17s intrusion — and the reason the
-    // tolerance's backward accept path must survive token-gap discrimination.
-    // Geometrically almost identical to the test above, with ONE difference
-    // that changes everything: seg0's final word is a single STRETCHED token
-    // (bravo, 18.00 → 18.87) smeared across the pause, so the silence
-    // [18.32, 18.70] lies token-INTERIOR — there is no gap between two of
-    // seg0's tokens for it to fill. No alignment evidence exists against it,
-    // so the tolerance decides, and the silence — acoustic ground truth — wins.
+  it('a sub-tolerance silence INSIDE the current segment\'s last token no longer moves the boundary at all', () => {
+    // The other side of the same 0.17s intrusion. Geometrically almost
+    // identical to the test above, with ONE difference: seg0's final word is a
+    // single STRETCHED token (bravo, 18.00 → 18.87) smeared across the pause,
+    // so the silence [18.32, 18.70] lies token-INTERIOR — there is no gap
+    // between two of seg0's tokens for `fillsTokenGapWithinSpan` to fire on.
     //
-    // This is the deliberate trade the tolerance still makes. Without this
-    // fixture the rewrite above would leave the backward accept path with zero
-    // coverage.
+    // PRE-RULING this was the tolerance's deliberate trade: with no alignment
+    // evidence against it, the silence — acoustic ground truth — won, placing
+    // the boundary at its centre (18.51) rather than the touching-token
+    // midpoint (18.87). POST-RULING that trade is gone along with every other
+    // silence-driven placement: touching tokens (lastSpokenEnd ===
+    // nextSpokenStart === 18.87) mean the 50/50 midpoint IS 18.87, identically
+    // to the rejected case right above it. Both fixtures now produce the same
+    // boundary — which is itself the point being pinned: under 50/50, whether
+    // a silence classifies as a breath no longer changes where the cut lands,
+    // only whether it gets flagged by the breath-clip audit.
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo', startTime: 17.5, duration: 1.37, anchorStart: 17.5, anchorSource: 'whisper' }),
       makeSegment({ id: 's1', order: 1, text: 'charlie delta', startTime: 18.87, duration: 1.03, anchorStart: 18.87, anchorSource: 'whisper' }),
@@ -2278,10 +2347,18 @@ describe('snapCoveredBoundaries — covered-only boundary snap', () => {
     const alignments = extractSegmentAlignments(segments, tokens);
     expect(alignments.every(a => a.matched)).toBe(true);
 
-    const out = snapCoveredBoundaries(segments, alignments, tokens, [{ startSec: 18.32, endSec: 18.70 }], 25);
+    const clips: BreathClip[] = [];
+    const out = snapCoveredBoundaries(
+      segments, alignments, tokens, [{ startSec: 18.32, endSec: 18.70 }], 25,
+      clip => clips.push(clip),
+    );
 
-    // Accepted → the silence centre, not the token midpoint 18.87.
-    expect(out[1]!.startTime).toBeCloseTo(18.51, 6);
+    expect(out[1]!.startTime).toBeCloseTo(18.87, 6);
+    // The boundary (18.87) sits OUTSIDE this silence's [18.32, 18.70] span, so
+    // it is not a breath CLIP regardless of classification — the audit only
+    // flags a boundary that actually lands inside a breath, and this one
+    // doesn't reach it.
+    expect(clips).toEqual([]);
   });
 
   it('rejects a sub-tolerance breath filling a gap between the NEXT segment\'s first two tokens', () => {
@@ -2987,27 +3064,23 @@ describe('snapCoveredBoundaries — curr-side seam exemption disabled (173-segme
     expect(out[0]!.duration).toBeCloseTo(0.95, 6);
   });
 
-  // KNOWN DEFECT (test-honesty fix, 2026-08-03): this fixture's raw token
-  // array contains 3 tokens the REAL pipeline always drops before alignment
-  // ever runs — filterMalformedTokens(rawTokens, audioDuration) removes the
-  // two punctuation-only commas at [74.57,74.74]/[75.44,75.68]
-  // ('empty-text' — normalize(',') is '') and the zero-duration comma at
-  // [78.56,78.56] ('inverted-or-zero-duration'). The version of this test
-  // that asserted 76.470 called extractSegmentAlignments/snapCoveredBoundaries
-  // directly on the UNFILTERED array — skipping a real pipeline stage while
-  // claiming to lock real pipeline behavior. Verified by running the
-  // fixture through the complete path (filterMalformedTokens THEN
-  // extractSegmentAlignments THEN snapCoveredBoundaries): dropping those 3
-  // tokens shifts every downstream token index, and the actual, current
-  // production output is 75.660 — not 76.470. 76.470 is the CORRECT target
-  // (both spoken edges — "enough" ending curr, "to" starting next — actually
-  // touch there); 75.660 is today's broken behavior, landing inside curr's
-  // own internal breath instead. This test now pins the REAL, currently-wrong
-  // output so a future change cannot silently regress it further without a
-  // visible failure, and a future fix of the underlying defect will need to
-  // update this assertion back to 76.470 (with a comment explaining why, at
-  // that time — do not just bump the number).
-  it('pairIdx 20, "...chitin thick enough" — full pipeline (incl. filterMalformedTokens) currently produces 75.660, NOT the correct 76.470 (KNOWN DEFECT)', () => {
+  // FORMER KNOWN DEFECT — FIXED BY THE 50/50 RULING (2026-08-07), not by a
+  // targeted repair. This fixture's raw token array contains 3 tokens the real
+  // pipeline always drops before alignment ever runs
+  // (filterMalformedTokens(rawTokens, audioDuration) removes the two
+  // punctuation-only commas and the zero-duration comma — see the token list
+  // below), which used to shift lastSpokenEnd/nextSpokenStart onto a silence
+  // sitting inside curr's own run of touching micro-tokens. The pre-ruling
+  // picker read that as an intra-word breath and landed at 75.660 instead of
+  // the correct 76.470, where both spoken edges — "enough" ending curr, "to"
+  // starting next — actually touch.
+  //
+  // Under 50/50 there is no silence to misclassify: the boundary is simply
+  // `(lastSpokenEnd + nextSpokenStart) / 2`, and both of those ARE 76.470 —
+  // touching tokens, zero spoken gap. So the correct target the old comment
+  // was waiting for is what this test now pins, as a direct, unplanned
+  // consequence of the ruling rather than a fix aimed at this fixture.
+  it('pairIdx 20, "...chitin thick enough" — full pipeline (incl. filterMalformedTokens) now produces the correct 76.470', () => {
     // Real tokens (indices 214-238): curr's own span ends in a run of touching
     // micro-tokens ("k"/"ite"/"and"/"thick" — a Whisper sub-word split of
     // "kite and" for "chitin", i.e. more tokens than words) with a 0.32s
@@ -3054,9 +3127,8 @@ describe('snapCoveredBoundaries — curr-side seam exemption disabled (173-segme
 
     const out = snapCoveredBoundaries(segments, alignments, filtered.tokens, [{ startSec: 75.50, endSec: 75.82 }], 90);
 
-    // Current (broken) behavior — see KNOWN DEFECT note above.
-    expect(out[1]!.startTime).toBeCloseTo(75.660, 6);
-    expect(out[1]!.startTime).not.toBeCloseTo(76.470, 3); // the correct target, not yet achieved
+    expect(out[1]!.startTime).toBeCloseTo(76.470, 6);
+    expect(out[1]!.startTime).not.toBeCloseTo(75.660, 3); // the pre-ruling breath-centre defect
   });
 });
 
@@ -3090,31 +3162,28 @@ describe('computeBoundarySearchWindow — pure extraction (boundary-quality chec
     expect(w.searchEnd).toBe(1.9);
   });
 
-  it('reproduces snapCoveredBoundaries\' own acceptance boundary exactly (parity: pre/post extraction, byte-identical output)', () => {
-    // twoCoveredSegmentsForParity's fixture is exactly this function's
-    // "matches snapCoveredBoundaries' own arithmetic" test above: window
-    // [0.6, 2.4]. A silence placed just INSIDE that computed window must
-    // still be accepted by the real snapCoveredBoundaries pipeline (proving
-    // this extracted helper's searchEnd is not narrower than what
-    // snapCoveredBoundaries actually uses internally); one placed just
-    // OUTSIDE must still fall back to the plain midpoint (proving it is not
-    // wider, either). Either direction of drift would flip one of the two
-    // assertions below.
+  it('the window this function returns is exactly what gates candidacy — not narrower, not wider', () => {
+    // ORIGINAL INTENT: prove this extracted helper's window is byte-identical
+    // to what `snapCoveredBoundaries` actually uses, by checking that a
+    // silence just INSIDE it still moved the COMMITTED boundary and one just
+    // OUTSIDE fell back to the plain midpoint.
+    //
+    // POST-RULING no silence can move the committed boundary at all — that
+    // consumer of the window is gone by ruling, not by drift. What the window
+    // still gates, unchanged, is CANDIDACY: `isBoundarySilenceCandidate(s,
+    // searchStart, searchEnd)` is the first test in `snapCoveredBoundaries`'s
+    // Pass 1 breath-audit filter (this file's own `boundaryUsedFallback`
+    // recomputes the identical composition for the boundary-quality checker).
+    // So the parity claim this test can still honestly make is over THAT
+    // gate: the same edge silences, evaluated through the same
+    // `isBoundarySilenceCandidate` call the production candidacy filter makes.
     const w = computeBoundarySearchWindow(1.0, 2.0, 0.0, 3.0);
     expect(w.searchEnd).toBeCloseTo(2.4, 6);
 
-    {
-      const { segments, tokens, alignments } = twoCoveredSegmentsForParity();
-      const justInside: SilenceInterval = { startSec: 2.30, endSec: 2.38 };
-      const out = snapCoveredBoundaries(segments, alignments, tokens, [justInside], 5);
-      expect(out[1]!.startTime).toBeCloseTo((justInside.startSec + justInside.endSec) / 2, 6);
-    }
-    {
-      const { segments, tokens, alignments } = twoCoveredSegmentsForParity();
-      const justOutside: SilenceInterval = { startSec: 2.45, endSec: 2.55 };
-      const out = snapCoveredBoundaries(segments, alignments, tokens, [justOutside], 5);
-      expect(out[1]!.startTime).toBeCloseTo(1.5, 6); // plain spoken-edge midpoint fallback
-    }
+    const justInside: SilenceInterval = { startSec: 2.30, endSec: 2.38 };
+    const justOutside: SilenceInterval = { startSec: 2.45, endSec: 2.55 };
+    expect(isBoundarySilenceCandidate(justInside, w.searchStart, w.searchEnd)).toBe(true);
+    expect(isBoundarySilenceCandidate(justOutside, w.searchStart, w.searchEnd)).toBe(false);
   });
 });
 
@@ -3164,21 +3233,40 @@ describe('boundaryUsedFallback — recomputed candidacy (boundary-quality checke
     expect(boundaryUsedFallback(breathyTokens, breath, window, 0, 1, 2, 3)).toBe(true);
   });
 
-  it('agrees with snapCoveredBoundaries: a pair that snapped to a silence center is NOT reported as fallback', () => {
-    const { segments, tokens: t, alignments } = twoCoveredSegmentsForParity();
+  // -------------------------------------------------------------------------
+  // The two tests below used to prove `boundaryUsedFallback`'s diagnostic
+  // agrees with what `snapCoveredBoundaries` actually COMMITTED — that a real
+  // silence candidate made the committed boundary move off the plain midpoint,
+  // and that its absence left the plain midpoint in place.
+  //
+  // Under the 50/50 ruling `snapCoveredBoundaries` never moves the boundary off
+  // the plain midpoint for ANY reason — it commits `(lastSpokenEnd +
+  // nextSpokenStart) / 2` unconditionally. So "does this pair's committed value
+  // differ from the midpoint" can no longer distinguish "had a candidate" from
+  // "didn't" — both cases now commit the identical value, which is precisely
+  // what the fixture below demonstrates. `boundaryUsedFallback` still answers
+  // a real, still-used question (feeding `validateBoundaryQuality`'s loud-
+  // fallback check in syncContracts.ts), but proving it against the COMMITTED
+  // boundary is no longer possible, because the committed boundary carries no
+  // signal about candidacy anymore. What is left to assert honestly is that
+  // `boundaryUsedFallback`'s own answer changes with the silence's presence,
+  // while snapCoveredBoundaries' commit does not.
+  // -------------------------------------------------------------------------
+  it('boundaryUsedFallback still distinguishes "had a candidate" from "did not", even though snapCoveredBoundaries commits the same midpoint either way', () => {
+    const withSilence = twoCoveredSegmentsForParity();
     const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
-    const out = snapCoveredBoundaries(segments, alignments, t, silences, 5);
-    // The boundary actually moved to the silence centre (1.75), not the
-    // plain midpoint (1.5) — confirms a real silence was used.
-    expect(out[1]!.startTime).toBeCloseTo(1.75, 6);
-    expect(boundaryUsedFallback(t, silences, window, 0, 1, 2, 3)).toBe(false);
-  });
+    const outWith = snapCoveredBoundaries(withSilence.segments, withSilence.alignments, withSilence.tokens, silences, 5);
 
-  it('agrees with snapCoveredBoundaries: a pair with no assignable silence IS reported as fallback', () => {
-    const { segments, tokens: t, alignments } = twoCoveredSegmentsForParity();
-    const out = snapCoveredBoundaries(segments, alignments, t, [], 5);
-    expect(out[1]!.startTime).toBeCloseTo(1.5, 6); // plain spoken-edge midpoint
-    expect(boundaryUsedFallback(t, [], window, 0, 1, 2, 3)).toBe(true);
+    const withoutSilence = twoCoveredSegmentsForParity();
+    const outWithout = snapCoveredBoundaries(withoutSilence.segments, withoutSilence.alignments, withoutSilence.tokens, [], 5);
+
+    // Both commit the identical plain midpoint — the ruling's whole point.
+    expect(outWith[1]!.startTime).toBeCloseTo(1.5, 6);
+    expect(outWithout[1]!.startTime).toBeCloseTo(1.5, 6);
+
+    // boundaryUsedFallback, unlike the commit, still tells the two apart.
+    expect(boundaryUsedFallback(withSilence.tokens, silences, window, 0, 1, 2, 3)).toBe(false);
+    expect(boundaryUsedFallback(withoutSilence.tokens, [], window, 0, 1, 2, 3)).toBe(true);
   });
 });
 
@@ -3359,9 +3447,13 @@ describe('snapCoveredBoundaries — monotonic fallback re-check (2026-08-02 fix)
     // — but the boundary itself is now monotonic rather than backwards.
     expect(out[1]!.duration).toBeCloseTo(0.1, 6);
 
-    // DEV-gated warning fired, naming both segments of the clamped pair.
+    // DEV-gated warning fired, naming both segments of the clamped pair. The
+    // message text changed with the 50/50 rewrite (there is no longer a
+    // silence-derived value to "fall back" from — the 50/50 midpoint IS the
+    // value being checked) but the underlying event — a backwards boundary
+    // clamped to prevBoundary — is the same one this test locks.
     expect(warnSpy.mock.calls.some(args =>
-      String(args[0]).includes('[snap] monotonic fallback still backwards'),
+      String(args[0]).includes('[snap] 50/50 midpoint is backwards'),
     )).toBe(true);
     warnSpy.mockRestore();
 
@@ -3385,8 +3477,24 @@ describe('snapCoveredBoundaries — monotonic fallback re-check (2026-08-02 fix)
 // first-served silence-claiming defect in snapCoveredBoundaries's left-to-
 // right walk, not an alignment bug.
 // ===========================================================================
-describe('contention-aware silence claiming (no starvation cascade)', () => {
+describe('contention-aware silence claiming (no starvation cascade), re-asked under the 50/50 ruling', () => {
   it('a long segment then two short segments then a normal one: no boundary starves its rightful successor', () => {
+    // ORIGINAL INTENT: prove the contention-aware silence-ASSIGNMENT pass
+    // (2026-07-30) stops an earlier, wide search window from reaching past its
+    // own best fit and stealing a later pair's rightful silence, starving that
+    // pair toward MIN_SEGMENT_DURATION.
+    //
+    // POST-RULING that entire mechanism — silence search windows, contention,
+    // assignment — is deleted from placement. There is nothing left to starve
+    // a pair OF, because no pair ever claims a silence in the first place: this
+    // fixture's tokens touch at every boundary (spokenGapWidth 0, called out in
+    // the geometry comment below), so the 50/50 midpoint at each pair is simply
+    // where the tokens meet — identically to what the ORIGINAL, un-starved
+    // segment durations already were. The starvation failure mode this test
+    // was built to catch is now structurally unreachable, and the numbers below
+    // prove it the strongest way available: the output durations are byte-
+    // identical to the input's, because 50/50 of a zero-width spoken gap moves
+    // nothing.
     // Mirrors the confirmed real geometry: touching tokens at every pair
     // (spokenGapWidth 0, forcing the fixed 1.0s search radius at each
     // boundary — see the "Whisper compresses adjacent words..." branch), a
@@ -3430,9 +3538,20 @@ describe('contention-aware silence claiming (no starvation cascade)', () => {
     expect(out[1]!.duration).toBeGreaterThan(0.3);
     // S2's real speech is ~1.2s — the reported bug reduced this to 0.1s.
     expect(out[2]!.duration).toBeGreaterThanOrEqual(1.0);
-    // Each boundary lands on the silence that genuinely borders it.
-    expect(out[2]!.startTime).toBeCloseTo(1078.37, 2); // S1|S2 boundary -> silence A's centre
-    expect(out[3]!.startTime).toBeCloseTo(1079.60, 2); // S2|N  boundary -> silence B's centre
+    // Each boundary lands exactly where the touching tokens meet — the 50/50
+    // midpoint of a zero-width spoken gap is that point itself, regardless of
+    // where silences A/B sit. Neither silence is consulted for placement.
+    expect(out[1]!.startTime).toBeCloseTo(1077.95, 6); // L|S1 boundary
+    expect(out[2]!.startTime).toBeCloseTo(1078.45, 6); // S1|S2 boundary — NOT silence A's 1078.37 centre
+    expect(out[3]!.startTime).toBeCloseTo(1079.65, 6); // S2|N  boundary — NOT silence B's 1079.60 centre
+    // The three INTERIOR durations are exactly the input's — 50/50 of nothing
+    // is nothing, which is the strongest possible statement that no starvation
+    // occurred: there was no redistribution at all. Only the LAST segment's
+    // duration differs, and only because the tail rule extends it to
+    // audioDuration (1085) — an unrelated, always-on rule, not a symptom of
+    // silence contention.
+    expect(out.slice(0, 3).map(s => s.duration)).toEqual(segments.slice(0, 3).map(s => s.duration));
+    expect(out[3]!.duration).toBeCloseTo(1085 - 1079.65, 6);
   });
 });
 

@@ -54,6 +54,7 @@ import {
   type SyncLogEntryType,
   type SyncRunSummary,
   type TranscriptToken,
+  type SyncFingerprintInput,
 } from './types';
 import { clearFrameRendererCache } from './services/frameRenderer';
 import {
@@ -70,7 +71,19 @@ import {
   MIN_PLAYBACK_SPEED,
   MAX_PLAYBACK_SPEED,
 } from './services/dragGeometry';
-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
+import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, type LockFinding } from './services/syncEngine';
+import {
+  enforceGaplessPartition,
+  findPartitionViolations,
+  canLockSegment,
+  type PartitionViolation,
+} from './services/timelinePartition';
+import {
+  computeSyncFingerprint,
+  carryForwardLocks,
+  describeFingerprintChange,
+  hashBlob,
+} from './services/projectFingerprint';
 import { syncMark } from './services/syncInstrument';
 import {
   computeCoverageSummary,
@@ -79,7 +92,7 @@ import {
   extractSegmentAlignments,
   type SegmentAlignment,
 } from './services/whisperService';
-import { snapCoveredBoundaries } from './services/snapBoundaries';
+import { snapCoveredBoundaries, type BreathClip } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
 import {
@@ -621,6 +634,8 @@ function getExportErrorSummary(error: ExportError): string {
       return 'Failed to concatenate segments into a single video.';
     case 'mux':
       return 'Failed to mux the audio track into the final video.';
+    case 'timeline_gap':
+      return error.message;
     case 'unknown':
       return 'An unexpected error occurred during export.';
   }
@@ -1604,6 +1619,30 @@ export default function App() {
 
   const { saveNow, lastSavedAt } = usePersistProject(project, !isHydrating);
 
+  // Model P — the dev-time tripwire (ruling §6.1 step 1: "add a dev-only
+  // assertion after every `segments` write... this alone would have caught
+  // K14's gap the day it shipped").
+  //
+  // Deliberately keyed on `project.segments` rather than placed inside each
+  // writer: an effect fires after EVERY committed segments array, including
+  // ones written by code that does not exist yet, which is the whole point of a
+  // tripwire. `findPartitionViolations` walks the array as given rather than
+  // re-running the constructor, so this is a genuine independent check and not
+  // the positioner agreeing with itself.
+  //
+  // DEV-only. A violation is a programming error, not a user-facing state — the
+  // user-facing half is the sync-log warning `handleApplySync` emits for the
+  // lock shapes that legitimately cannot be closed.
+  useEffect(() => {
+    if (!import.meta.env.DEV || isHydrating) return;
+    const violations = findPartitionViolations(project.segments);
+    if (violations.length === 0) return;
+    console.error(
+      '[partition] GAPLESS INVARIANT VIOLATED — segments are not a partition of the timeline.',
+      violations,
+    );
+  }, [project.segments, isHydrating]);
+
   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
     setProject(prev => ({
       ...prev,
@@ -1663,18 +1702,49 @@ export default function App() {
 
   const handleToggleLock = useCallback((segmentId: string): void => {
     speedBaselineRef.current = null;
+    // Model P, ruling §4.1(a) — a lock that would make the gapless invariant
+    // unsatisfiable is REFUSED at toggle time, with the conflict named.
+    //
+    // Ruling point 1 says gapless ALWAYS and point 3 says a lock never moves.
+    // Those collide in exactly one shape reachable from the UI: two ADJACENT
+    // locked segments with space between them. There is then no unlocked
+    // segment left to absorb that space, and closing it would mean moving one
+    // of the two walls. Refusing the second lock is the only resolution that
+    // keeps both points intact — and it fails loudly, in front of the user, at
+    // the moment they cause it, instead of leaving a silent gap that surfaces
+    // later as an audio/video offset in an export.
+    //
+    // Checked only in the LOCK direction. Unlocking removes a wall, which can
+    // only ever make the partition more satisfiable.
+    const current = projectRef.current.segments;
+    const idx = current.findIndex(s => s.id === segmentId);
+    const target = current[idx];
+    if (target && !target.locked) {
+      const refusal = canLockSegment(current, idx);
+      if (refusal) {
+        showToast(
+          `Can't lock segment ${idx + 1} — segment ${refusal.conflictIndex + 1} is already locked and there is ` +
+          `${refusal.amountSec.toFixed(2)}s between them that no segment could then cover. Unlock segment ` +
+          `${refusal.conflictIndex + 1} first.`,
+        );
+        return;
+      }
+    }
     setProject(prev => {
       const toggled = prev.segments.map(s =>
         s.id === segmentId ? { ...s, locked: !s.locked } : s
       );
       const audioDuration = resolveAudioDuration(audioRef.current, toggled);
       const findings: LockFinding[] = [];
+      // applyAnchorBasedTiming ends in `enforceGaplessPartition`, so this
+      // already returns a positioned, gapless array — the toggle needs no
+      // separate restack of its own.
       const segments = applyAnchorBasedTiming(toggled, audioDuration, f => findings.push(f));
       const withTiming: Project = { ...prev, segments };
       if (findings.length === 0) return withTiming;
       return appendSyncLogEntries(withTiming, buildLockFindingLogEntries(mintSyncLogId(), findings));
     });
-  }, []);
+  }, [showToast]);
 
   // Left-panel segment click: open the drawer AND jump the time-driven preview
   // to the segment, mirroring the timeline onSeek pattern (setCurrentTime + audio resync).
@@ -2313,8 +2383,45 @@ export default function App() {
 
     // 5. Parse project data with the fresh, complete data
     syncMark('assets+duration:done');
-    const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
+    const newSegmentsRawFresh = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
     syncMark('parseProjectData:done');
+
+    // 5b. LOCK LIFECYCLE (Model P, owner ruling task 2) — closes K13 /
+    //     decision 9 point 3 for the unmodified case.
+    //
+    //     `parseProjectData` is a clean-slate rebuild: it mints fresh segments
+    //     with fresh ids and never writes a `locked` field, so until now EVERY
+    //     Apply Sync silently destroyed every manual lock — the K13 defect
+    //     `scripts/phase4-step-w-k13-repro.test.ts` has asserted for weeks.
+    //
+    //     The fingerprint decides, and it is computed, never judged. Identical
+    //     to the last committed run → carry the locks forward by script
+    //     position, restoring `locked`/`startTime`/`duration`/`anchorStart`
+    //     together. Different → wipe, and say in the log which of the four
+    //     inputs moved. See services/projectFingerprint.ts for what each input
+    //     catches and for the two sensitivity limits.
+    //
+    //     This runs BEFORE alignment, deliberately: a lock has to be visible to
+    //     `alignScenestoTranscript`, `applyAnchorBasedTiming` and
+    //     `snapCoveredBoundaries` to act as the hard wall decision 9 requires.
+    //     Restoring it after the fact would produce a lock that survived in
+    //     name while its position was re-derived underneath it.
+    const voiceoverBlobForHash: Blob | undefined = voiceoverAsset
+      ? (voiceoverAsset.file ?? await fetch(voiceoverAsset.url).then(r => r.blob()).catch(() => undefined))
+      : undefined;
+    const fingerprintInput: SyncFingerprintInput = {
+      scriptText,
+      audioFileHash: voiceoverBlobForHash ? await hashBlob(voiceoverBlobForHash) : undefined,
+      audioDurationSec: audioDuration,
+      segmentCount: newSegmentsRawFresh.length,
+    };
+    const fingerprintHash = await computeSyncFingerprint(fingerprintInput);
+    const previousFingerprint = projectRef.current.syncFingerprint;
+    const fingerprintMatches = previousFingerprint?.hash === fingerprintHash;
+    const lockCarry = carryForwardLocks(newSegmentsRawFresh, previousSegments, fingerprintMatches);
+    const newSegmentsRaw = lockCarry.segments;
+    const previouslyLockedCount = previousSegments.filter(s => s.locked).length;
+    syncMark('lockCarryForward:done');
 
     // WS1b — empty scene-doc hard abort (doc §3.4/§3.11, S15). Always aborts
     // on zero parsed segments now, not only when previous segments existed —
@@ -2373,6 +2480,13 @@ export default function App() {
     // committed run always leaves exactly one summary behind.
     let pendingLogEntries: SyncLogEntry[] = [];
     let pendingLogSummary: SyncRunSummary | undefined;
+    // Model P observability — both collected during timing, both folded into
+    // the log below. `breathClips` is the ruling's flag-1 measurement (50/50
+    // boundaries landing inside a detected breath); `partitionViolations` is
+    // every span the positioner refused to reassign because a lock forbade it
+    // (timelinePartition.ts's three unsatisfiable shapes).
+    const breathClips: BreathClip[] = [];
+    const partitionViolations: PartitionViolation[] = [];
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
       const aligned = await alignFromCache(
@@ -2510,7 +2624,16 @@ export default function App() {
       // whenever anything was filtered.
       const transcriptTokens = aligned.tokens;
       finalTimedSegments = transcriptTokens.length > 0
-        ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
+        ? snapCoveredBoundaries(
+            kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration,
+            // Breath-clip audit (owner ruling flag 1) — every committed 50/50
+            // boundary that landed inside a silence the candidacy predicates
+            // classify as one side's own breath. Collected, logged, and never
+            // acted on: the rule is 50/50 by ruling, and this exists so the
+            // audible-inhale risk is a number the owner can see rather than
+            // something discovered by ear on clip C04 again.
+            clip => breathClips.push(clip),
+          )
         : retileCoveredSegments(kept, audioDuration);
       // Boundary-quality checker input (waveform-watcher program, Phase 1) —
       // only meaningful when snapCoveredBoundaries actually ran against real
@@ -2519,12 +2642,16 @@ export default function App() {
       if (transcriptTokens.length > 0) {
         pendingBoundaryCheckInput = { alignments: keptAlignments, tokens: transcriptTokens, silences: aligned.silences };
       }
-      // Head/tail symmetry (syncEngine.ts's headExtendFirstSegment): the last
-      // segment already runs to audioDuration (both branches above); the
-      // first segment's own startTime is untouched by either (it's still
-      // wherever the aligner's matched span put it — the first spoken word,
-      // not necessarily 0). Stretch it back to 0 the same way.
-      finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
+      // Model P — the single positioner. Replaces the former
+      // `headExtendFirstSegment` call that used to sit here: its head rule (pull
+      // segment 1 back to t=0, END held fixed) is now one of the three things
+      // `enforceGaplessPartition` does, alongside the tail rule and the
+      // contiguity `snapCoveredBoundaries` used to repair for itself. Every
+      // `startTime`/`anchorStart` this branch commits is written here and
+      // nowhere else.
+      finalTimedSegments = enforceGaplessPartition(
+        finalTimedSegments, audioDuration, v => partitionViolations.push(v),
+      );
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface
@@ -2585,6 +2712,61 @@ export default function App() {
       if (pendingLogSummary) pendingLogSummary = { ...pendingLogSummary, noAssetCount: noAssetNumbers.length };
     }
 
+    // ---- Model P observability (owner ruling, 2026-08-07) -------------------
+    // Three entries, all built on the existing 'info'/'warning' types so no new
+    // SyncLogEntryType member (and therefore no SyncLogPanel TYPE_STYLES case)
+    // is needed. Each is emitted only when it actually happened, so a clean run
+    // on an unchanged project logs exactly one of them — the lock line.
+    const modelPEntries: SyncLogEntry[] = [];
+
+    // 1. Lock lifecycle. Logged on every run that had locks to decide about, in
+    //    both directions — a silent wipe is exactly what K13 was.
+    if (previouslyLockedCount > 0 || lockCarry.restoredCount > 0) {
+      modelPEntries.push(lockCarry.preserved
+        ? makeSyncLogEntry(
+            syncRunId, 'info',
+            `Preserved ${lockCarry.restoredCount} manual lock(s) — the project's sync inputs are unchanged since the last run.`,
+            undefined, syncRunAt,
+          )
+        : makeSyncLogEntry(
+            syncRunId, 'warning',
+            `Cleared ${previouslyLockedCount} manual lock(s) — ${describeFingerprintChange(previousFingerprint?.input, fingerprintInput)} changed, so the previous positions no longer describe this audio.`,
+            { severity: 'warning', fixHint: 'Re-lock any segments you still want pinned, then re-run Apply Sync to keep them.' },
+            syncRunAt,
+          ));
+    }
+
+    // 2. Breath clipping. The measurement the ruling asked for in place of a
+    //    veto — the 50/50 rule is NOT altered by this, however large it gets.
+    if (breathClips.length > 0) {
+      const worst = [...breathClips].sort((a, b) => b.depthSec - a.depthSec).slice(0, 3);
+      modelPEntries.push(makeSyncLogEntry(
+        syncRunId, 'info',
+        `${breathClips.length} boundary/boundaries landed inside a detected breath (50/50 placement). ` +
+        `Deepest: ${worst.map(c => `${c.boundarySec.toFixed(2)}s (${c.depthSec.toFixed(2)}s in)`).join(', ')}.`,
+        undefined, syncRunAt,
+      ));
+    }
+
+    // 3. Partition violations. Ruling point 1 says gapless ALWAYS; the only
+    //    thing that can defeat it is a user lock (ruling point 3), and those
+    //    three shapes are reported rather than silently patched — patching one
+    //    means moving a lock.
+    if (partitionViolations.length > 0) {
+      modelPEntries.push(makeSyncLogEntry(
+        syncRunId, 'warning',
+        `${partitionViolations.length} span(s) on the timeline could not be assigned to a segment because a lock pins both sides: ` +
+        partitionViolations.map(v => `segment ${v.index + 1} (${v.kind}, ${v.amountSec.toFixed(3)}s)`).join('; ') + '.',
+        {
+          severity: 'warning',
+          fixHint: 'Unlock one of the segments on either side of the span, then re-run Apply Sync. An unassigned span exports as an audio/video offset.',
+        },
+        syncRunAt,
+      ));
+    }
+
+    if (modelPEntries.length > 0) pendingLogEntries = [...pendingLogEntries, ...modelPEntries];
+
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
     //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
@@ -2603,6 +2785,11 @@ export default function App() {
       voiceoverId: newVoiceoverId,
       segments: committedSegments,
       headings: clampHeadingsToDuration(prev.headings ?? [], audioDuration),
+      // Lock lifecycle — record what this run was computed FROM, so the next
+      // run can decide whether anything moved rather than guessing. Written on
+      // every committed run, including one that just wiped locks: the wiped
+      // state is now the baseline.
+      syncFingerprint: { hash: fingerprintHash, input: fingerprintInput },
     }));
     syncMark('setProject:called');
     // Post-commit paint boundary: rAF fires after React commits + the browser

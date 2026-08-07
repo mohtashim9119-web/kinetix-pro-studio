@@ -49,6 +49,7 @@
  */
 
 import type { TranscriptToken, VideoSegment } from '../types';
+import { enforceGaplessPartition } from './timelinePartition';
 
 /** Minimum timeline slot width, seconds. Moved here from `App.tsx` (K15) so the
  *  cascade and its callers read one constant; `App.tsx` imports it back. */
@@ -134,25 +135,27 @@ export function neighbourYieldableSec(
 }
 
 /**
- * Rewrites `startTime` (and, per K14's INVARIANT L2, `anchorStart` in lockstep
- * with it) for the inclusive index window `[lo, hi]` ONLY, restacking those
- * segments contiguously from `segs[lo]`'s own existing `startTime`.
+ * ---------------------------------------------------------------------------
+ * `restackWindow` — DELETED (Model P, 2026-08-07)
+ * ---------------------------------------------------------------------------
  *
- * `segs[lo].startTime` is by construction the edge the drag does not move — the
- * dragged segment's own start on a right-edge drag, or the far end of the
- * cascade on a left-edge drag — so the window is anchored to a fixed point and
- * nothing outside it needs to move. Segments outside `[lo, hi]` are returned
- * untouched, which is what preserves a pre-existing gap (K15a).
+ * K15a's window-local restack rewrote `startTime`/`anchorStart` for the touched
+ * index window only, "which is what preserves a pre-existing gap." Under the
+ * owner's Model P ruling a gap is not something to preserve — it is
+ * unrepresentable — so the function's entire justification is void and it has
+ * been removed rather than left as a second, disagreeing positioner.
+ *
+ * `enforceGaplessPartition` (services/timelinePartition.ts) replaces it. The
+ * ruling document's §6.1 already established the two are EQUIVALENT whenever
+ * the cascade conserves the touched window's total duration — which K15b's
+ * give-back guarantees, and which is asserted directly in `dragCascade.test.ts`
+ * — so this is a change of authority, not of arithmetic, on every array that
+ * was already a partition.
+ *
+ * K15a's locality survives where it actually mattered: `computeDragCascade`
+ * still touches only the neighbours it must, and the yield floor still bounds
+ * them. What it no longer does is decide where anything sits.
  */
-function restackWindow(segs: VideoSegment[], lo: number, hi: number): VideoSegment[] {
-  let acc = segs[lo]?.startTime ?? 0;
-  return segs.map((s, i) => {
-    if (i < lo || i > hi) return s;
-    const t = Number(acc.toFixed(3));
-    acc += s.duration;
-    return { ...s, startTime: t, anchorStart: t };
-  });
-}
 
 /**
  * Applies a drag-resize delta to `originalSegments`, cascading overflow into
@@ -254,9 +257,18 @@ export function computeDragCascade(
     };
   }
 
-  const lo = Math.min(draggedIdx, lastTouched);
-  const hi = Math.max(draggedIdx, lastTouched);
-  return restackWindow(segs, lo, hi);
+  // Model P — positioning is not this function's job. It has decided
+  // DURATIONS; the single constructor turns those into positions, and is the
+  // only writer of `startTime`/`anchorStart` on this path. `lastTouched` is no
+  // longer consulted for a window bound (see the `restackWindow` tombstone
+  // above) and remains only as the loop's own progress marker.
+  //
+  // No `audioDuration` is passed, deliberately: a drag must not re-stretch the
+  // last segment to the audio end mid-gesture — that would silently give the
+  // tail back whatever the drag just took from it. The tail rule belongs to the
+  // sync path, which is the only place total length is being decided.
+  void lastTouched;
+  return enforceGaplessPartition(segs);
 }
 
 /**

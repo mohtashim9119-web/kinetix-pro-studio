@@ -48,8 +48,9 @@ import {
   countTranscriptWords,
   type SegmentAlignment,
 } from '../src/services/whisperService';
-import { applyAnchorBasedTiming, headExtendFirstSegment } from '../src/services/syncEngine';
+import { applyAnchorBasedTiming } from '../src/services/syncEngine';
 import { snapCoveredBoundaries } from '../src/services/snapBoundaries';
+import { enforceGaplessPartition } from '../src/services/timelinePartition';
 import type { TranscriptToken, VideoSegment, Asset } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
@@ -181,8 +182,12 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
         ? snapCoveredBoundaries(kept, keptAlignments, usableTokens, silences, spec.audioDuration)
         : kept;
 
-      // 7. Head-extension (segment-1, 2026-07-31).
-      const finalTimedSegments: VideoSegment[] = headExtendFirstSegment(finalTimedSegmentsPreHead);
+      // 7. Model P — the single positioner (services/timelinePartition.ts).
+      //    Replaces the `headExtendFirstSegment` call this step used to make;
+      //    its head rule is now one of the three things the positioner does.
+      const finalTimedSegments: VideoSegment[] = enforceGaplessPartition(
+        finalTimedSegmentsPreHead, spec.audioDuration,
+      );
 
       const summary = {
         project: spec.key,

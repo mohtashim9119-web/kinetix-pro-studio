@@ -66,65 +66,71 @@ const noBlock = (): void => {};
 // PART 1 — K15a: a gap anywhere in the array must survive a drag.
 // ---------------------------------------------------------------------------
 
-describe('K15a — gap collapse (K14-introduced)', () => {
-  /**
-   * The gap is not hypothetical: this is the array `applyAnchorBasedTiming`
-   * itself produces post-K14 whenever a locked segment's end falls before the
-   * following segment's anchor. The pre-K14 locked branch grew the lock to fill
-   * that span (`duration = max(preservedDuration, availableSpan)`), so its
-   * output was contiguous by construction and no gap could reach a drag.
-   */
-  it('applyAnchorBasedTiming leaves a real gap after a locked segment (the K14 precondition)', () => {
-    const out = applyAnchorBasedTiming(
-      [
-        seg('A', 0, 10),
-        seg('B', 10, 2, { locked: true }),
-        seg('C', 15, 3, { anchorStart: 15 }),
-        seg('D', 18, 2, { anchorStart: 18 }),
-      ],
-      20,
-    );
-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.00]');
-    // 3.000s of dead air between the lock's end and C's start.
-    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(3, 6);
+describe('K15a — gap collapse (K14-introduced), re-asked under Model P', () => {
+  // -------------------------------------------------------------------------
+  // THESE THREE EXPECTATIONS ARE INVERTED BY THE 2026-08-07 OWNER RULING, and
+  // the inversion is the point rather than a relaxation.
+  //
+  // K15a's contract was "a gap anywhere in the array must SURVIVE a drag." That
+  // was a Model S statement — it treats a gap as meaningful data worth
+  // preserving. Ruling point 1 says the opposite in as many words: "No
+  // unassigned space on the timeline, ever." Under Model P there is no gap left
+  // for a drag to collapse, so the defect K15a was written against is not fixed
+  // by locality — it is unreachable.
+  //
+  // What K15a was actually protecting is still protected, and each test below
+  // asserts it directly: a drag must not displace a segment's slot off its own
+  // audio. Model P delivers that by CLOSING the gap at the source (the lock's
+  // shortfall is absorbed as the next segment's LEADING SILENCE, its own end
+  // held fixed — timelinePartition.ts's §4.1 fill rule), so by the time any
+  // drag runs, C's slot already contains C's words and no drag can move them.
+  // The pre-K15 displacement figures quoted in the old comments (C by 3.000s,
+  // D by 2.800s) remain the thing that must never happen, and still don't.
+  // -------------------------------------------------------------------------
+
+  /** The K14-shaped input. Post-ruling, `applyAnchorBasedTiming` ends in
+   *  `enforceGaplessPartition`, so it can no longer EMIT the gap this fixture
+   *  used to demonstrate — C absorbs the lock's 3.000s shortfall as leading
+   *  silence instead, keeping its own end at 18.00 where its words are. */
+  const k14Shaped = (): VideoSegment[] => applyAnchorBasedTiming(
+    [
+      seg('A', 0, 10),
+      seg('B', 10, 2, { locked: true }),
+      seg('C', 15, 3, { anchorStart: 15 }),
+      seg('D', 18, 2, { anchorStart: 18 }),
+    ],
+    20,
+  );
+
+  it('applyAnchorBasedTiming can no longer emit a gap after a locked segment — the next segment absorbs it', () => {
+    const out = k14Shaped();
+    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[12.00..18.00] D[18.00..20.00]');
+    // Zero dead air between the lock's end and C's start — ruling point 1.
+    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(0, 6);
+    // C's END is unchanged at 18.00: it acquired leading silence, it did not
+    // move its own words. That distinction is ruling §4.1's fill rule.
+    expect(out[2]!.startTime + out[2]!.duration).toBeCloseTo(18, 6);
   });
 
-  it('a 0.2s drag on C does not move C — the 3s gap in front of it survives', () => {
-    const gapped = applyAnchorBasedTiming(
-      [
-        seg('A', 0, 10),
-        seg('B', 10, 2, { locked: true }),
-        seg('C', 15, 3, { anchorStart: 15 }),
-        seg('D', 18, 2, { anchorStart: 18 }),
-      ],
-      20,
-    );
-    const out = computeDragCascade(gapped, 2, gapped[2]!.duration + 0.2, 0, 'right', noBlock)!;
+  it('a 0.2s drag on C moves only C\'s dragged edge — its slot still holds its own audio', () => {
+    const gapless = k14Shaped();
+    const out = computeDragCascade(gapless, 2, gapless[2]!.duration + 0.2, 0, 'right', noBlock)!;
 
-    // PRE-K15 this returned 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.20] D[15.20..17.00]'
-    // — a 0.2s drag displaced C by 3.000s and D by 2.800s, putting both slots
-    // entirely off their own audio. The old cascade rebuilt every startTime from
-    // a running sum starting at 0, which deletes any gap in the array.
-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.20] D[18.20..20.00]');
-    expect(out[2]!.startTime).toBe(gapped[2]!.startTime);
+    // PRE-K15 the equivalent array returned C[12.00..15.20] D[15.20..17.00] —
+    // a 0.2s drag displacing C by 3.000s and D by 2.800s, both slots landing
+    // entirely off their own audio. That is still what must not happen, and it
+    // doesn't: C's start is untouched and only the edge under the pointer moved.
+    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[12.00..18.20] D[18.20..20.00]');
+    expect(out[2]!.startTime).toBe(gapless[2]!.startTime);
   });
 
-  it('dragging the LAST segment — no neighbour to cascade into — still cannot collapse the gap', () => {
-    const gapped = applyAnchorBasedTiming(
-      [
-        seg('A', 0, 10),
-        seg('B', 10, 2, { locked: true }),
-        seg('C', 15, 3, { anchorStart: 15 }),
-        seg('D', 18, 2, { anchorStart: 18 }),
-      ],
-      20,
-    );
-    const out = computeDragCascade(gapped, 3, gapped[3]!.duration + 0.2, 0, 'right', noBlock)!;
+  it('dragging the LAST segment — no neighbour to cascade into — moves nothing else', () => {
+    const gapless = k14Shaped();
+    const out = computeDragCascade(gapless, 3, gapless[3]!.duration + 0.2, 0, 'right', noBlock)!;
 
-    // PRE-K15: 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.00] D[15.00..17.20]'.
-    // The re-flow was unconditional, so it fired even with zero cascade work to
-    // do — proof the collapse was never a cascade bug, but a restack-scope one.
-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.20]');
+    // The pre-K15 unconditional re-flow fired even with zero cascade work to do.
+    // A, B and C are all bit-identical here, which is the property that mattered.
+    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[12.00..18.00] D[18.00..20.20]');
   });
 
   it('segments outside the touched window keep startTime AND anchorStart byte-identical', () => {
@@ -403,16 +409,28 @@ describe('K17 — live preview equals the committed cascade', () => {
     expect(resolveDragPreview(arr, 0, 7, 0, 'right', SILENCE_TOKENS)).toBe(arr);
   });
 
-  it('K15a locality holds in the preview too — a gap outside the touched window survives', () => {
-    // The K14-shaped array: B is locked and ends at 3.0, C starts at 5.0.
+  it('the preview closes a legacy gap exactly as the commit does — never one geometry on screen and another on release', () => {
+    // A K14-shaped array as it could still be found in a project persisted
+    // BEFORE the Model P ruling: B is locked and ends at 3.0, C starts at 5.0,
+    // leaving 2.000s unassigned. Post-ruling that state is unreachable through
+    // the app, but a stored project can still carry it.
+    //
+    // The old expectation here was that the preview leaves the gap alone. That
+    // was correct only while the commit did too; ruling point 1 makes an
+    // unassigned span illegal, so the preview must show it being closed. What
+    // this test actually locks — and what K17 exists for — is that the preview
+    // and the commit produce the SAME array, whatever that array is.
     const arr = [seg('A', 0, 2), seg('B', 2, 1, { locked: true }), seg('C', 5, 3), seg('D', 8, 3)];
-    const out = resolveDragPreview(arr, 2, 4, 0, 'right', SILENCE_TOKENS);
-    expect(out[0]).toEqual(arr[0]);
-    expect(out[1]).toEqual(arr[1]);
-    expect(out[2]!.startTime).toBe(5);
-    // The 2.000s gap between B's end and C's start is untouched by the preview,
-    // exactly as it is by the commit.
-    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(2, 9);
+    const preview = resolveDragPreview(arr, 2, 4, 0, 'right', SILENCE_TOKENS);
+    const commit = computeDragCascade(arr, 2, 4, 0, 'right', noBlock, SILENCE_TOKENS)!;
+    expect(preview).toEqual(commit);
+
+    expect(preview[0]).toEqual(arr[0]);
+    expect(preview[1]).toEqual(arr[1]);
+    // C starts at the lock's own end, and absorbed the 2.000s as leading
+    // silence — its end stays where its words are.
+    expect(preview[2]!.startTime).toBe(3);
+    expect(preview[2]!.startTime - (preview[1]!.startTime + preview[1]!.duration)).toBeCloseTo(0, 9);
   });
 
   it("previews K15b's bounded duration, not the raw pointer duration", () => {

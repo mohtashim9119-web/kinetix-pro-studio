@@ -620,6 +620,30 @@ export function isBreathSilence(
 }
 
 /**
+ * One committed boundary that landed inside a silence the candidacy predicates
+ * classify as one side's own BREATH — the risk the owner flagged when ruling
+ * 50/50 (Phase 3 measured human inhales ending 60-140ms before word onset, and
+ * clip C04 was an audibly clipped breath). Reported, never acted on: the rule
+ * is 50/50 by ruling and this is measurement, not a veto.
+ */
+export interface BreathClip {
+  /** Pair index — the boundary between `kept[pairIndex]` and `kept[pairIndex+1]`. */
+  pairIndex: number;
+  currSegmentId: string;
+  nextSegmentId: string;
+  /** The committed 50/50 boundary, seconds. */
+  boundarySec: number;
+  /** The breath silence it landed inside. */
+  breathStartSec: number;
+  breathEndSec: number;
+  /** Which side's span the silence was classified as belonging to. */
+  side: 'curr' | 'next';
+  /** How far INSIDE the breath the boundary sits — `min(b - start, end - b)`.
+   *  0 would mean it grazed an edge; the larger this is, the deeper the cut. */
+  depthSec: number;
+}
+
+/**
  * Re-snaps the boundaries BETWEEN covered segments and derives each one's
  * duration from the result.
  *
@@ -627,26 +651,53 @@ export function isBreathSilence(
  * alignment for `kept[i]` (both come out of `filterToCoveredSegments`, which
  * collects them in one pass).
  *
+ * ---------------------------------------------------------------------------
+ * THE 50/50 RULE (owner ruling, 2026-08-07, ruling point 2)
+ * ---------------------------------------------------------------------------
+ *
  * Per adjacent pair (i, i+1):
  *  - `lastSpokenEnd`   = end of segment i's LAST matched transcript word
  *  - `nextSpokenStart` = start of segment i+1's FIRST matched transcript word
- *  - search a window centred on their midpoint for an unused detected silence;
- *    the boundary is the chosen silence's midpoint, or the two spoken edges'
- *    midpoint when no silence overlaps the window. A boundary that came from a
- *    real silence is never clamped — the silence is acoustic ground truth and
- *    outranks Whisper's ~300ms-error word timestamps; the no-silence fallback
- *    is simply the token midpoint, which inherently lies within the spoken-word
- *    range and needs no clamp post-processing
- *  - write it to both sides: `kept[i].duration` ends there, `kept[i+1].startTime`
- *    and `anchorStart` begin there
+ *  - **the boundary is exactly `(lastSpokenEnd + nextSpokenStart) / 2`.** The
+ *    silence between two speech events splits equally: the preceding segment
+ *    keeps half of it as trailing silence, the following segment keeps half as
+ *    leading silence.
  *
- * The last survivor extends to `audioDuration` — the audio is the source of
- * truth for total length.
+ * **What this REPLACED, stated plainly because it was ear-verified work.**
+ * Until this ruling the boundary was the midpoint of a DETECTED SILENCE chosen
+ * out of a search window — a three-predicate candidacy filter
+ * (`fillsTokenGapWithinSpan` / `isBreathSilence` / `isBoundarySilenceCandidate`)
+ * followed by a contention-aware assignment pass, the whole apparatus this
+ * file's header documents at length. That machinery placed 96.2% of cuts
+ * correctly on a manual full-timeline review of the 447-segment V6 project. The
+ * 50/50 rule discards its OUTPUT for placement — a deterministic midpoint
+ * cannot be steered by which silence a picker reached — and the ruling is
+ * explicit that this is intended ("Do not change the rule — I ruled 50/50").
+ *
+ * The predicates are NOT deleted, and neither is the silence input. They now
+ * do a different job: `collectBreathClips` below re-runs exactly the same
+ * classification against each COMMITTED boundary and reports every one that
+ * landed inside what those predicates call a breath. That is the measurement
+ * the ruling asked for in place of a veto — the two things a silence used to
+ * decide (where the cut goes, and whether it is a breath) are now separated,
+ * and only the second survives.
+ *
+ * **Deleted from this function at the same commit, as redundant enforcement**
+ * (see `timelinePartition.ts`, which now owns both):
+ *  - the appended contiguity fix (`if (contiguousStart > next.startTime) …`)
+ *  - the last-survivor extension to `audioDuration`
+ * Durations are instead walked from a running `cursor`, so this function's
+ * output is a partition of durations by construction and the positioner has
+ * nothing left to repair.
  *
  * LOCKED segments are authoritative and are never moved or shrunk: a pair with
- * a locked segment on either side is left exactly as the caller supplied it,
- * and a locked last segment keeps its duration. This mirrors the lock handling
- * in `alignScenestoTranscript` and `applyAnchorBasedTiming`.
+ * a locked segment on either side is left exactly as the caller supplied it.
+ * This mirrors the lock handling in `alignScenestoTranscript` and
+ * `applyAnchorBasedTiming`.
+ *
+ * `onBreathClip` receives every committed boundary that landed inside a breath.
+ * Omitting it costs nothing — the classification only runs when a sink is
+ * supplied, so the hot path is unchanged for callers that do not measure.
  *
  * Pure — no I/O, no mutation of the input array (segments are copied).
  */
@@ -656,17 +707,24 @@ export function snapCoveredBoundaries(
   tokens: TranscriptToken[],
   silences: SilenceInterval[],
   audioDuration: number,
+  onBreathClip?: (clip: BreathClip) => void,
 ): VideoSegment[] {
   if (kept.length === 0) return kept;
 
   const out: VideoSegment[] = kept.map(s => ({ ...s }));
 
-  // --- Pass 1 — compute every pair's search window up front ----------------
+  // --- Pass 1 — compute every pair's spoken edges up front ------------------
   // From `kept` (the pristine, pre-mutation snapshot the caller passed in),
   // never from `out` — an earlier pair's boundary write must not leak into a
-  // later pair's own window math. `null` marks a pair this function has never
-  // moved (locked on either side, or missing alignment data) — it carries no
-  // window and is never a candidate for any silence in Pass 2.
+  // later pair's own edge math. `null` marks a pair this function never moves
+  // (locked on either side, or missing alignment data).
+  //
+  // `searchStart`/`searchEnd` no longer select anything: under the 50/50 rule
+  // the boundary is `spokenMid` unconditionally. The window survives because
+  // the breath audit needs it — `isBreathSilence`/`fillsTokenGapWithinSpan`
+  // classify a silence relative to a pair, and bounding the audit to the same
+  // window the old picker used keeps the measurement about THIS boundary
+  // rather than about every silence in the project.
   interface PairPlan {
     lastSpokenEnd: number;
     nextSpokenStart: number;
@@ -674,14 +732,10 @@ export function snapCoveredBoundaries(
     spokenGapWidth: number;
     searchStart: number;
     searchEnd: number;
-    /** Every silence eligible to be THIS pair's boundary — not filling a gap
-     *  between two tokens of either segment's own matched span
-     *  (`fillsTokenGapWithinSpan`, alignment evidence), AND in the window AND
-     *  spanning the gap between the two segments' speech
-     *  (`isBoundarySilenceCandidate`, timestamp evidence). Still unfiltered
-     *  with respect to CONTENTION: assignment (Pass 2) reads this list to
-     *  decide which pair actually gets to use each one. */
-    overlapping: SilenceInterval[];
+    /** Every silence in this pair's window that the candidacy predicates
+     *  classify as one side's own BREATH, with the side that owns it. Purely
+     *  observational since the 50/50 ruling — see `BreathClip`. */
+    breaths: Array<{ silence: SilenceInterval; side: 'curr' | 'next' }>;
   }
 
   const plans: Array<PairPlan | null> = [];
@@ -720,14 +774,15 @@ export function snapCoveredBoundaries(
       lastSpokenEnd, nextSpokenStart, currFirstSpokenStart, nextLastSpokenEnd,
     );
 
-    // Token-gap (alignment evidence) FIRST and short-circuiting, then
-    // coverage-composite (independent alignment-adjacent evidence for the
-    // shapes token-gap cannot see), then the window/span/tolerance test
-    // (timestamp evidence) LAST. A silence filling a gap between two tokens
-    // of EITHER segment's own span, or scoring as that segment's own breath
-    // under the coverage-composite test, is out regardless of how shallow its
-    // intrusion is — an alignment fact must not be forgivable by a timestamp
-    // tolerance.
+    // BREATH CLASSIFICATION — the surviving job of the three candidacy
+    // predicates. Token-gap (alignment evidence) FIRST and short-circuiting,
+    // then coverage-composite (independent alignment-adjacent evidence for the
+    // shapes token-gap cannot see). A silence filling a gap between two tokens
+    // of one segment's own span, or scoring as that segment's own breath under
+    // the coverage-composite test, IS that segment's breath — and a 50/50
+    // boundary landing inside it is the audible-inhale-clip risk the ruling
+    // asked to be measured.
+    //
     // Index-based seam exemption input — NEXT-SIDE ONLY (see isBreathSilence's
     // CURR-SIDE DISABLED doc comment). next's own span is tested against
     // curr's own lastTokenIdx — genuinely adjacent to the silence, real seam
@@ -738,61 +793,53 @@ export function snapCoveredBoundaries(
     const currOtherSideLastTokenIdx = -1;
     const nextOtherSideLastTokenIdx = currAlign.lastTokenIdx;
 
-    const overlapping = silences.filter(s =>
-      !fillsTokenGapWithinSpan(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx) &&
-      !fillsTokenGapWithinSpan(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) &&
-      !isBreathSilence(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx, currOtherSideLastTokenIdx) &&
-      !isBreathSilence(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx, nextOtherSideLastTokenIdx) &&
-      isBoundarySilenceCandidate(s, searchStart, searchEnd),
-    );
-
-    plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, overlapping });
-  }
-
-  // --- Pass 2 — assign each contested silence to exactly one pair ----------
-  // A silence overlapped by no pair's window is simply unused, same as
-  // before. A silence overlapped by exactly one pair goes to it, same as
-  // before. A silence overlapped by MORE THAN ONE pair's window — the actual
-  // starvation scenario — goes to whichever pair's spoken midpoint it sits
-  // closest to, not to whichever pair happens to run first. Exact ties go to
-  // the later pair (deterministic — `<=` lets a later, equally-close pair
-  // overwrite an earlier one, and `plans` is walked in ascending order).
-  //
-  // Contention is read out of each plan's OWN candidate list (Pass 1's
-  // `isBoundarySilenceCandidate` result) rather than re-tested here — one
-  // predicate, one evaluation, no possibility of the window test and the
-  // assignment test disagreeing about what a candidate is.
-  const bestPairForSilence = new Map<SilenceInterval, { pairIdx: number; dist: number }>();
-  for (let i = 0; i < plans.length; i++) {
-    const plan = plans[i];
-    if (!plan) continue;
-    for (const s of plan.overlapping) {
-      const dist = Math.abs((s.startSec + s.endSec) / 2 - plan.spokenMid);
-      const best = bestPairForSilence.get(s);
-      if (best === undefined || dist <= best.dist) {
-        bestPairForSilence.set(s, { pairIdx: i, dist });
+    // Only computed when a sink is listening — the classification is O(silences
+    // × span length) and buys nothing for a caller that is not measuring.
+    const breaths: PairPlan['breaths'] = [];
+    if (onBreathClip) {
+      for (const s of silences) {
+        if (!isBoundarySilenceCandidate(s, searchStart, searchEnd)) continue;
+        const isCurrBreath =
+          fillsTokenGapWithinSpan(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx) ||
+          isBreathSilence(s, tokens, currAlign.firstTokenIdx, currAlign.lastTokenIdx, currOtherSideLastTokenIdx);
+        if (isCurrBreath) { breaths.push({ silence: s, side: 'curr' }); continue; }
+        const isNextBreath =
+          fillsTokenGapWithinSpan(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx) ||
+          isBreathSilence(s, tokens, nextAlign.firstTokenIdx, nextAlign.lastTokenIdx, nextOtherSideLastTokenIdx);
+        if (isNextBreath) breaths.push({ silence: s, side: 'next' });
       }
     }
+
+    plans.push({ lastSpokenEnd, nextSpokenStart, spokenMid, spokenGapWidth, searchStart, searchEnd, breaths });
   }
 
-  // Materialize per-pair candidate lists in the caller's silence order, which
-  // is what the closest-centre reduce in Pass 3 walks.
-  const assignment: SilenceInterval[][] = plans.map(() => []);
-  for (const s of silences) {
-    const best = bestPairForSilence.get(s);
-    if (best !== undefined) assignment[best.pairIdx]!.push(s);
-  }
-
-  // --- Pass 3 — resolve boundaries left-to-right ----------------------------
-  // Unchanged from before except for where the candidate list comes from:
-  // closest-centre pick among THIS pair's assigned silences, token-midpoint
-  // fallback when it has none, and the monotonic safety-net check.
+  // --- Pass 2 — resolve boundaries left-to-right ----------------------------
+  // The old contention-aware silence-assignment pass that used to sit here is
+  // DELETED: under the 50/50 rule no silence is selected, so there is nothing
+  // to contend over. What remains is the ruling's arithmetic, plus the two
+  // defense-in-depth guards that are about corrupted ALIGNMENT data rather
+  // than about silence (the degenerate-pair guard and the monotonic check),
+  // both unchanged.
+  //
+  // `cursor` is what makes this function's output a partition of DURATIONS:
+  // each segment's duration is measured from where the previous one actually
+  // ended, not from a `startTime` an earlier iteration may have written and a
+  // MIN_SEGMENT_DURATION floor may then have overrun. The appended contiguity
+  // fix that used to repair exactly that case afterwards is deleted with it —
+  // `timelinePartition.ts` owns positioning now, and it is handed durations
+  // that already add up.
   let prevBoundary: number | undefined;
+  let cursor = out[0]!.startTime;
   for (let i = 0; i < out.length - 1; i++) {
     const curr = out[i]!;
     const next = out[i + 1]!;
     const plan = plans[i];
-    if (!plan) continue;
+    if (!plan) {
+      // Locked pair (or missing alignment): this function writes nothing, so
+      // the cursor must follow the caller's own geometry across it.
+      cursor = round3(curr.startTime + curr.duration);
+      continue;
+    }
 
     const { lastSpokenEnd, nextSpokenStart, spokenMid } = plan;
 
@@ -824,77 +871,75 @@ export function snapCoveredBoundaries(
           i, i + 1, curr.id, lastSpokenEnd.toFixed(3), next.id, nextSpokenStart.toFixed(3),
         );
       }
+      cursor = round3(curr.startTime + curr.duration);
       continue;
     }
 
-    const candidates = assignment[i]!;
+    // ---- THE 50/50 RULE -------------------------------------------------
+    // The silence between the two speech events, split equally. `spokenMid`
+    // IS `(lastSpokenEnd + nextSpokenStart) / 2` (computeBoundarySearchWindow
+    // derives it); it is read from the plan rather than recomputed so this
+    // function and the audit below can never disagree about the midpoint.
+    let boundary = spokenMid;
 
-    let gap: SilenceInterval | undefined;
-    if (candidates.length > 0) {
-      gap = candidates.reduce((best, s) => {
-        const sCenter = (s.startSec + s.endSec) / 2;
-        const bestCenter = (best.startSec + best.endSec) / 2;
-        return Math.abs(sCenter - spokenMid) < Math.abs(bestCenter - spokenMid) ? s : best;
-      });
-    }
-
-    let boundary = gap
-      ? (gap.startSec + gap.endSec) / 2
-      : (lastSpokenEnd + nextSpokenStart) / 2;
-
-    // Monotonic sanity check: a boundary must not go backwards past the
-    // previous one. If it does, the chosen silence belongs to an earlier
-    // boundary — fall back to the token midpoint. Applies to BOTH the
-    // silence-centre and the token-midpoint boundary.
+    // Monotonic sanity check (unchanged in intent, simplified in form). A
+    // boundary must not go backwards past the previous one. There is no
+    // longer a silence-derived value to fall back FROM — 50/50 is already the
+    // fallback the old code substituted — so a backwards midpoint means
+    // corrupted/overlapping upstream alignment data (the same shape the
+    // degenerate-pair guard above exists for, just under its 5s threshold),
+    // and the only safe answer is to clamp. That collapses this pair to the
+    // MIN_SEGMENT_DURATION floor below, exactly as before, but the written
+    // boundary itself is always monotonic and never backwards.
     if (prevBoundary !== undefined && boundary < prevBoundary) {
-      boundary = (lastSpokenEnd + nextSpokenStart) / 2;
-
-      // Re-check (2026-08-02 fix, closes the deferred bug noted in
-      // project-state.md): the fallback midpoint above is this pair's OWN
-      // spoken edges, which carry no guarantee of sitting after a
-      // still-earlier COMMITTED boundary — corrupted/overlapping upstream
-      // alignment data (the same shape the degenerate-pair guard above
-      // exists for, just under its 5s threshold) can leave the substituted
-      // midpoint backwards too. The pre-fix code trusted the substitution
-      // unconditionally and could commit a backwards boundary silently.
-      // Clamping to prevBoundary instead collapses this pair to the
-      // MIN_SEGMENT_DURATION floor below — exactly what the pre-fix code
-      // would have produced by committing the backwards value and letting
-      // the `Math.max(MIN_SEGMENT_DURATION, ...)` duration floor absorb it —
-      // but the written boundary itself is now always monotonic, never
-      // backwards.
-      if (boundary < prevBoundary) {
-        if (import.meta.env.DEV) {
-          console.warn(
-            '[snap] monotonic fallback still backwards — pair (%d,%d): curr=%s next=%s fallback midpoint=%ss < prevBoundary=%ss; clamping to prevBoundary',
-            i, i + 1, curr.id, next.id, boundary.toFixed(3), prevBoundary.toFixed(3),
-          );
-        }
-        boundary = prevBoundary;
+      if (import.meta.env.DEV) {
+        console.warn(
+          '[snap] 50/50 midpoint is backwards — pair (%d,%d): curr=%s next=%s midpoint=%ss < prevBoundary=%ss; clamping to prevBoundary',
+          i, i + 1, curr.id, next.id, boundary.toFixed(3), prevBoundary.toFixed(3),
+        );
       }
+      boundary = prevBoundary;
     }
-
-    // No-silence fallback: boundary = token midpoint. The midpoint inherently
-    // lies within the spoken-word range; no clamp post-processing needed.
 
     const snapped = round3(boundary);
 
-    curr.duration = round3(Math.max(MIN_SEGMENT_DURATION, snapped - curr.startTime));
-    next.startTime = snapped;
-    next.anchorStart = snapped;
-
-    // Maintain contiguity: if the floor extended curr past snapped, push next's start
-    // so startTime[i] + duration[i] === startTime[i+1] always holds.
-    const contiguousStart = round3(curr.startTime + curr.duration);
-    if (contiguousStart > next.startTime) {
-      next.startTime = contiguousStart;
-      next.anchorStart = contiguousStart;
-    }
+    curr.duration = round3(Math.max(MIN_SEGMENT_DURATION, snapped - cursor));
+    cursor = round3(cursor + curr.duration);
+    next.startTime = cursor;
+    next.anchorStart = cursor;
     prevBoundary = boundary;
+
+    // ---- BREATH-CLIP AUDIT (ruling flag 1) -------------------------------
+    // Measurement only. Reports every committed 50/50 boundary that landed
+    // inside a silence the candidacy predicates call one side's own breath —
+    // the cut the owner could hear in Phase 3's clip C04. Deliberately does
+    // NOT move the boundary: the rule is 50/50 by ruling.
+    if (onBreathClip) {
+      for (const { silence, side } of plan.breaths) {
+        if (snapped <= silence.startSec || snapped >= silence.endSec) continue;
+        onBreathClip({
+          pairIndex: i,
+          currSegmentId: curr.id,
+          nextSegmentId: next.id,
+          boundarySec: snapped,
+          breathStartSec: silence.startSec,
+          breathEndSec: silence.endSec,
+          side,
+          depthSec: round3(Math.min(snapped - silence.startSec, silence.endSec - snapped)),
+        });
+      }
+    }
   }
 
   // Last survivor runs to the end of the audio (unless locked — locked
-  // durations are preserved).
+  // durations are preserved). This is a PRODUCER statement, not enforcement:
+  // it decides the last segment's duration from the audio, exactly as
+  // `retileCoveredSegments` decides every survivor's duration from the next
+  // one's start. `timelinePartition.ts`'s tail rule is the enforcement and is
+  // idempotent on this output. Kept here rather than deleted with the other
+  // two duplicates (applyAnchorBasedTiming PASS 3, headExtendFirstSegment)
+  // because those two wrote POSITIONS; this writes only a duration, which is
+  // the contract every producer now owes the positioner.
   const last = out[out.length - 1]!;
   if (!last.locked) {
     last.duration = round3(Math.max(MIN_SEGMENT_DURATION, audioDuration - last.startTime));

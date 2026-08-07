@@ -5,6 +5,7 @@
 
 import { Asset, VideoSegment } from '../types';
 import { canonicalizeForFilename } from './textNormalize';
+import { enforceGaplessPartition } from './timelinePartition';
 
 export const isFuzzyMatch = (search: string, target: string): boolean => {
   if (!search || !target) return false;
@@ -232,14 +233,18 @@ export function applyAnchorBasedTiming(
 
   const out: VideoSegment[] = segments.map(s => ({ ...s }));
 
-  // PASS 1 — normalize first-segment anchor to 0, UNLESS it is locked: a
-  // lock is a hard wall even at the very front of the timeline (decision 9
-  // point 3 is unconditional). A locked first segment's anchorStart is
-  // corrected below, in the main pass, to match its own untouched startTime.
+  // PASS 1 — provenance only, since Model P.
+  //
+  // This pass also used to force `out[0].anchorStart = 0`. That is DELETED:
+  // `enforceGaplessPartition`'s head rule (services/timelinePartition.ts) does
+  // it now, and does it for every caller rather than only this one. The two are
+  // arithmetically identical — zeroing the anchor first makes segment 0's
+  // derived duration `nextAnchor - 0`, while the head rule instead derives
+  // `nextAnchor - rawAnchor` here and adds `rawAnchor` back when it pulls the
+  // start to 0 — so this is a move of authority, not a change of output.
   const first = out[0];
-  if (first && !first.locked && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
-    if (first.anchorStart === undefined) first.anchorSource = 'estimate';
-    first.anchorStart = 0;
+  if (first && !first.locked && first.anchorStart === undefined) {
+    first.anchorSource = 'estimate';
   }
 
   for (let i = 1; i < out.length; i++) {
@@ -303,12 +308,26 @@ export function applyAnchorBasedTiming(
 
     const rawAnchor = seg.anchorStart ?? seg.startTime ?? 0;
     const prevLocked = i > 0 && out[i - 1]?.locked === true;
-    // Only a LOCKED predecessor's own end is a hard floor on this segment's
-    // start. An unlocked predecessor's (possibly floor-collapsed) end is
-    // deliberately NOT a floor here — that would re-introduce exactly the
-    // ripple the D16 backstop clamp above is designed to contain locally.
-    const lockFloor = prevLocked ? out[i - 1]!.startTime + out[i - 1]!.duration : -Infinity;
-    const effectiveStart = Math.max(rawAnchor, lockFloor);
+    // MODEL P (2026-08-07) — the predecessor's own end is a hard floor on this
+    // segment's start, LOCKED OR NOT.
+    //
+    // Pre-ruling this floor applied only to a locked predecessor, on the
+    // grounds that an unlocked one's floor-collapsed end must not ripple
+    // forward. Under Model P that reasoning is inverted: a start that sits
+    // BEFORE the predecessor's end is an overlap (illegal under both models),
+    // and a start that sits AFTER it is a gap (illegal under P, ruling point
+    // 1). Taking the max closes both, locally, in the one pass that derives
+    // spans — which is what "gapless by construction, not repaired later"
+    // means for this function.
+    //
+    // The D16 ripple this replaces is bounded, not unbounded: only a
+    // MIN-floored predecessor can push its successor forward at all, and the
+    // successor's own end is still pinned to `nextAnchor`, so the push is
+    // absorbed within one segment and cannot propagate. The lock case is
+    // unchanged in behaviour — a locked predecessor's end was already the
+    // floor — it is simply no longer a special case.
+    const prevEnd = i > 0 ? out[i - 1]!.startTime + out[i - 1]!.duration : -Infinity;
+    const effectiveStart = Math.max(rawAnchor, prevEnd);
     const boundedByLock = prevLocked || nextLocked;
     const availableSpan = nextAnchor - effectiveStart;
     const tooShort = boundedByLock && availableSpan < 0.1;
@@ -339,14 +358,20 @@ export function applyAnchorBasedTiming(
     }
   }
 
-  // PASS 3 — clamp last segment exactly to audioDuration, UNLESS it is
-  // locked (a hard wall, same as everywhere else in this pass).
-  const last = out[out.length - 1];
-  if (last && !last.locked) {
-    last.duration = Number(Math.max(0.1, audioDuration - last.startTime).toFixed(3));
-  }
-
-  return out;
+  // PASS 3 — DELETED (Model P). It clamped the last segment's duration to
+  // `audioDuration - last.startTime`; `enforceGaplessPartition`'s tail rule
+  // does exactly that, for every caller, and reads `startTime` AFTER
+  // positioning rather than mid-derivation. Two of the three copies of the
+  // tail rule are gone at this commit (this one and `snapCoveredBoundaries`'s
+  // is retained only as a producer statement — see its own note).
+  //
+  // Model P — hand the derived DURATIONS to the single positioner. This
+  // function's job ends at "how long is each segment"; where each one sits, and
+  // whether the array covers `[0, audioDuration]` without a hole, is
+  // `timelinePartition.ts`'s. Calling it here rather than at each of this
+  // function's call sites is deliberate: a caller cannot forget it, and there
+  // is no window in which a caller holds a positioned-but-unenforced array.
+  return enforceGaplessPartition(out, audioDuration);
 }
 
 /**
@@ -361,52 +386,23 @@ export function getFileIdentity(file: File): string {
 }
 
 /**
- * Head/tail symmetry for the finalized timeline (post-snap): the LAST
- * segment already runs all the way to `audioDuration` (snapCoveredBoundaries'
- * own tail extension, and applyAnchorBasedTiming's PASS 3) — the audio is the
- * source of truth for total length, not the last matched word. The FIRST
- * segment gets no equivalent treatment from `snapCoveredBoundaries`: that
- * function only ever writes `next.startTime` in its pair loop, so
- * `segments[0].startTime` passes through untouched, still sitting wherever
- * the aligner's own matched span put it — the first spoken WORD, which can
- * be a few tenths of a second after true t=0 (real lead-in silence before
- * narration starts).
+ * ---------------------------------------------------------------------------
+ * `headExtendFirstSegment` — DELETED (Model P, 2026-08-07)
+ * ---------------------------------------------------------------------------
  *
- * This is a thin, standalone post-pass rather than logic inside
- * `snapCoveredBoundaries` itself: that function is pair-boundary logic with
- * no notion of "is this really the timeline's first segment" — it's
- * exercised in tests on synthetic slices representing arbitrary MIDDLE pairs
- * of a larger project, where index 0 of the slice is not the timeline's true
- * first segment and must keep its own startTime. Only a caller holding the
- * full, ordered, post-snap array can safely make that call — so it belongs
- * here, applied once by App.tsx right after `snapCoveredBoundaries` /
- * `retileCoveredSegments`. Not needed after `applyAnchorBasedTiming` (the
- * no-transcript fallback branch) — that function already forces its own
- * first anchor to 0 in its PASS 1, so this would always be a no-op there.
+ * It stretched `segments[0]` back to `startTime 0`, growing its duration to
+ * absorb the lead-in silence while holding its END fixed. That is now
+ * `enforceGaplessPartition`'s HEAD RULE (services/timelinePartition.ts), byte
+ * for byte the same arithmetic, applied in the one place that positions the
+ * array — so it can no longer be forgotten at a call site, which is precisely
+ * what it was: an extra line App.tsx and the replay harness each had to
+ * remember after every snap.
  *
- * Stretches `segments[0]` back to start at 0 by growing its duration to
- * absorb the lead-in, so it covers the full head exactly as the last segment
- * covers the full tail. The segment's END (startTime + duration) is
- * unchanged, so this can never ripple into segment 2's startTime — no
- * contiguity check is needed beyond that invariant. Audio/exports are
- * unaffected: narration still physically begins at the original startTime
- * inside the (now longer) first segment. A locked first segment is
- * authoritative and is left untouched, matching every other lock exemption
- * in this pipeline. Pure; no-op (returns the same array reference) when
- * there's nothing to do.
+ * Its own doc comment argued it could not live inside `snapCoveredBoundaries`
+ * because that function is pair-local and has no notion of "the timeline's real
+ * first segment." That argument still holds and is exactly why the head rule
+ * belongs to the positioner, which by definition holds the whole ordered array.
  */
-export function headExtendFirstSegment(segments: VideoSegment[]): VideoSegment[] {
-  const first = segments[0];
-  if (!first || first.locked || first.startTime <= 0) return segments;
-
-  const stretched: VideoSegment = {
-    ...first,
-    startTime: 0,
-    duration: Number((first.duration + first.startTime).toFixed(3)),
-    anchorStart: 0,
-  };
-  return [stretched, ...segments.slice(1)];
-}
 
 export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
   segments.map(s => {

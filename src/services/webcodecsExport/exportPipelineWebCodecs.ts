@@ -82,6 +82,7 @@ import type {
   ExportResult,
   ProgressCallback,
 } from '../exportPipeline';
+import { checkTimelineIsGapless } from '../exportPipeline';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
 import type {
   ExportWorkerInboundMessage,
@@ -846,6 +847,16 @@ export async function exportProjectWebCodecs(
   if (segments.length === 0) {
     return { ok: false, error: { kind: 'encode', message: 'Project has no segments to export.' } };
   }
+
+  // TASK 4 (Model P, 2026-08-07) — same explicit gapless-partition guard as
+  // the legacy path (exportPipeline.ts's checkTimelineIsGapless doc comment
+  // has the full rationale). This path routes some or all segments through a
+  // completely different encoder (the GL worker), but the frame-count/
+  // concatenation contract it relies on is identical — durations only, array
+  // order — so the precondition and the guard are shared rather than
+  // reimplemented.
+  const gapError = checkTimelineIsGapless(segments);
+  if (gapError) return { ok: false, error: gapError };
 
   const assetMap = new Map<string, Asset>(project.assets.map((a) => [a.id, a]));
 
