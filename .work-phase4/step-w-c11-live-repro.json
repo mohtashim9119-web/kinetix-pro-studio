@@ -1,0 +1,20 @@
+{
+  "generatedAt": "2026-08-07T12:21:06.166Z",
+  "part1": {
+    "claim": "Apply Sync rebuilds the timeline clean-slate; the freshly minted segments carry no lock state at all, so no lock can reach the timing chain.",
+    "project": "173-seg (real corpus scene doc + script)",
+    "segmentsParsed": 175,
+    "segmentsCarryingAnyLockField": 0,
+    "verdict": "DEFECT CONFIRMED"
+  },
+  "part2": {
+    "claim": "applyAnchorBasedTiming honours `locked` — so losing the flag at Part 1 is not cosmetic, it changes the committed timeline.",
+    "segmentIndex": 1,
+    "baselineDurationSec": 4.96,
+    "durationWithLockSec": 4.96,
+    "durationWithoutLockSec": 4.06,
+    "divergenceMs": 900.0000000000003,
+    "verdict": "FLAG IS LOAD-BEARING"
+  },
+  "summary": "K13 confirmed live against production code and the real 173 corpus: locks cannot survive Apply Sync (Part 1), and the flag they lose materially changes committed durations (Part 2). C11 therefore checks a demonstrated defect, not an asserted one."
+}

@@ -1,0 +1,312 @@
+{
+  "project": "spanish",
+  "audioDuration": 92.04,
+  "gate": {
+    "aborted": false
+  },
+  "parsedSegmentCount": 27,
+  "keptSegmentCount": 26,
+  "skippedSegmentCount": 1,
+  "skipped": [
+    {
+      "segmentIndex": 0,
+      "segmentTag": "001_scylla_intro",
+      "segmentText": "Scylla.",
+      "matchedWords": 0,
+      "totalWords": 1,
+      "confidence": 0,
+      "longestRun": 0
+    }
+  ],
+  "malformedTokenCount": 0,
+  "totalTokenCount": 363,
+  "usedSilenceCount": 27,
+  "finalSegments": [
+    {
+      "order": 0,
+      "id": "5e91b220-573e-43bb-9740-d31181985f60",
+      "tag": "002_scylla_cliff_passage",
+      "text": "Scylla es un monstruo que vive dentro de un acantilado junto a un estrecho paso marítimo.",
+      "startTime": 0,
+      "duration": 6.05,
+      "endTime": 6.05,
+      "anchorStart": 0,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 1,
+      "id": "6d2238ac-eacb-4b0a-a9bb-21eab5ce7ed4",
+      "tag": "003_scylla_six_necks",
+      "text": "Tiene seis cuellos largos,",
+      "startTime": 6.05,
+      "duration": 2.16,
+      "endTime": 8.21,
+      "anchorStart": 6.05,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 2,
+      "id": "10c5c436-633b-490c-aa03-4d8653d5158b",
+      "tag": "004_scylla_mouth_teeth",
+      "text": "seis cabezas, tres hileras de dientes en cada boca",
+      "startTime": 8.21,
+      "duration": 2.58,
+      "endTime": 10.79,
+      "anchorStart": 8.21,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 3,
+      "id": "0c952a09-9858-40d2-abf6-8e2a614a00d6",
+      "tag": "005_scylla_twelve_legs",
+      "text": "y 12 patas debajo de su cuerpo.",
+      "startTime": 10.79,
+      "duration": 2.08,
+      "endTime": 12.87,
+      "anchorStart": 10.79,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 4,
+      "id": "ce024ef8-3be2-44f2-8f70-07967cdced9e",
+      "tag": "006_attack_setup",
+      "text": "Su ataque es sencillo.",
+      "startTime": 12.87,
+      "duration": 1.83,
+      "endTime": 14.7,
+      "anchorStart": 12.87,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 5,
+      "id": "8ffd6d71-9fc3-408c-a8de-3db0780d00ab",
+      "tag": "007_ship_approaching",
+      "text": "Cuando un barco pasa lo suficientemente cerca,",
+      "startTime": 14.7,
+      "duration": 2.57,
+      "endTime": 17.27,
+      "anchorStart": 14.7,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 6,
+      "id": "ab48f42b-ea2a-41dc-a6dc-1be592ce0c3b",
+      "tag": "008_heads_moving",
+      "text": "las seis cabezas se mueven al mismo tiempo.",
+      "startTime": 17.27,
+      "duration": 2.6,
+      "endTime": 19.87,
+      "anchorStart": 17.27,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 7,
+      "id": "fe7c5450-4f9b-47d4-a5ba-ca7c03db6760",
+      "tag": "009_grabbing_sailors",
+      "text": "Cada cabeza atrapa a un marinero de la cubierta.",
+      "startTime": 19.87,
+      "duration": 3.14,
+      "endTime": 23.01,
+      "anchorStart": 19.87,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 8,
+      "id": "daae95ff-49ab-496d-8e58-a62dad2ac1ed",
+      "tag": "010_six_sailors_lost",
+      "text": "Seis cabezas significan seis marineros que desaparecen en un solo ataque.",
+      "startTime": 23.01,
+      "duration": 4.51,
+      "endTime": 27.52,
+      "anchorStart": 23.01,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 9,
+      "id": "c19352d9-5192-455f-87d5-fdfa582a7870",
+      "tag": "011_scylla_limits",
+      "text": "El detalle importante es que Scylla no persigue a los barcos en mar abierto.",
+      "startTime": 27.52,
+      "duration": 4.68,
+      "endTime": 32.2,
+      "anchorStart": 27.52,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 10,
+      "id": "dfd1030c-c9c8-4ea2-a469-ddf177e163e4",
+      "tag": "012_scylla_stays",
+      "text": "Se mantiene cerca del acantilado.",
+      "startTime": 32.2,
+      "duration": 2.01,
+      "endTime": 34.21,
+      "anchorStart": 32.2,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 11,
+      "id": "91edb665-e507-4930-b131-ac13985d3da9",
+      "tag": "013_no_fighting_strategy",
+      "text": "Eso significa que la estrategia más segura no es luchar contra ella.",
+      "startTime": 34.21,
+      "duration": 3.665,
+      "endTime": 37.875,
+      "anchorStart": 34.21,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 12,
+      "id": "fba0435b-78b3-4663-8866-8c1018de5f3c",
+      "tag": "014_keep_moving",
+      "text": "Es seguir moviéndose antes de que pueda atacar de nuevo.",
+      "startTime": 37.875,
+      "duration": 3.565,
+      "endTime": 41.44,
+      "anchorStart": 37.875,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 13,
+      "id": "52ef0218-8911-4de3-adc9-5d0c376b910d",
+      "tag": "015_odysseus_warning",
+      "text": "Odiseo es advertido sobre esto antes de llegar al paso.",
+      "startTime": 41.44,
+      "duration": 3.46,
+      "endTime": 44.9,
+      "anchorStart": 41.44,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 14,
+      "id": "f84d5b2b-c9c3-4344-bccb-13bf96eaade6",
+      "tag": "016_prepares_weapons",
+      "text": "Aún así, prepara sus armas,",
+      "startTime": 44.9,
+      "duration": 2.17,
+      "endTime": 47.07,
+      "anchorStart": 44.9,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 15,
+      "id": "692c9cee-6de3-429c-86bd-a680d51a7732",
+      "tag": "017_useless_weapons",
+      "text": "pero resultan inútiles.",
+      "startTime": 47.07,
+      "duration": 1.6,
+      "endTime": 48.67,
+      "anchorStart": 47.07,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 16,
+      "id": "f103f80f-28ad-45e9-bad1-c3a119b2e1dc",
+      "tag": "018_scylla_attacks",
+      "text": "Scylla se lleva a seis de sus hombres mientras el barco continúa su marcha.",
+      "startTime": 48.67,
+      "duration": 4.39,
+      "endTime": 53.06,
+      "anchorStart": 48.67,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 17,
+      "id": "45d94501-f333-4e5d-8928-b4e2fd0c0fea",
+      "tag": "019_no_stopping",
+      "text": "Detenerse solo le daría otra oportunidad.",
+      "startTime": 53.06,
+      "duration": 2.77,
+      "endTime": 55.83,
+      "anchorStart": 53.06,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 18,
+      "id": "4cbea854-1371-49d8-8af8-60a00c436f86",
+      "tag": "020_the_passage_layout",
+      "text": "Scylla también comparte el paso con Caribdis,",
+      "startTime": 55.83,
+      "duration": 2.86,
+      "endTime": 58.69,
+      "anchorStart": 55.83,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 19,
+      "id": "71c56444-e1ed-44b2-8c8b-1b6a97c7a144",
+      "tag": "021_charybdis_whirlpool",
+      "text": "un remolino gigante en el lado opuesto,",
+      "startTime": 58.69,
+      "duration": 2.5,
+      "endTime": 61.19,
+      "anchorStart": 58.69,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 20,
+      "id": "38018f5b-a210-4953-af0a-d75175094a5a",
+      "tag": "022_ship_trapped",
+      "text": "por lo que la tripulación no puede simplemente alejarse más.",
+      "startTime": 61.19,
+      "duration": 3.93,
+      "endTime": 65.12,
+      "anchorStart": 61.19,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 21,
+      "id": "953ef075-4774-4c3d-98f0-6938962a6a8e",
+      "tag": "023_scylla_six_sailors",
+      "text": "Navegar cerca de Scylla cuesta seis marineros.",
+      "startTime": 65.12,
+      "duration": 3.21,
+      "endTime": 68.33,
+      "anchorStart": 65.12,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 22,
+      "id": "ce6dbbf3-ee3f-48d9-85d8-276a252bc112",
+      "tag": "024_whirlpool_ship_wreck",
+      "text": "Navegar cerca de Caribdis puede destruir el barco entero.",
+      "startTime": 68.33,
+      "duration": 3.63,
+      "endTime": 71.96,
+      "anchorStart": 68.33,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 23,
+      "id": "ccba2b87-470d-47eb-8724-cf44f30a0a61",
+      "tag": "025_odysseus_lesser_evil",
+      "text": "A Odiseo se le dice que elija a Scylla porque perder a seis personas es mejor que perderlo todo.",
+      "startTime": 71.96,
+      "duration": 5.45,
+      "endTime": 77.41,
+      "anchorStart": 71.96,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 24,
+      "id": "00ccac09-6b5e-4c59-9777-736e9205cd56",
+      "tag": "026_messina_strait_map",
+      "text": "Tradiciones posteriores situaron el paso en el estrecho de Mesina, entre Sicilia e Italia peninsular.",
+      "startTime": 77.41,
+      "duration": 6.54,
+      "endTime": 83.95,
+      "anchorStart": 77.41,
+      "anchorSource": "whisper"
+    },
+    {
+      "order": 25,
+      "id": "61ef8d95-afbe-4dde-8856-5ca3b43479c7",
+      "tag": "027_idiom_visualized",
+      "text": "La frase «entre Scylla y Caribdis» se convirtió en una forma de describir el estar atrapado entre dos opciones peligrosas.",
+      "startTime": 83.95,
+      "duration": 8.09,
+      "endTime": 92.04,
+      "anchorStart": 83.95,
+      "anchorSource": "whisper"
+    }
+  ]
+}

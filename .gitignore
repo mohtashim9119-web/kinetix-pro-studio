@@ -19,3 +19,10 @@ src-tauri/models/*.bin
 
 # WebCodecs Phase 0 spike — throwaway test asset, never committed (see docs/webcodecs-architecture-plan.md)
 public/_spike/
+
+# graphify tool output — regeneratable, not source (2026-08-07)
+graphify-out/
+
+# Python bytecode cache — regeneratable (2026-08-07)
+__pycache__/
+*.pyc

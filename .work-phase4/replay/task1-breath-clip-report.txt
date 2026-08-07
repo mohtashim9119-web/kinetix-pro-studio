@@ -1,0 +1,40 @@
+=== TASK 1 — BREATH-CLIP MEASUREMENT (owner ruling flag 1) ===
+
+-- MEASUREMENT A: 50/50 boundary lands in the Phase-3-calibrated
+   inhale-end zone (60-140ms before the next word), corroborated by a
+   real detected silence --
+   Total: 124
+     v6: 118
+     173: 3
+     spanish: 3
+
+   -- Worst 15 cases (closest to the 100ms centre of the measured 60-140ms range) --
+     [v6] pair 1 (002_skin_shelter): boundary 9.780s, 100ms before next word (9.880s), corroborating silence [9.540, 10.240]
+     [v6] pair 71 (075_rhythmic_movement): boundary 228.250s, 100ms before next word (228.350s), corroborating silence [227.820, 228.580]
+     [v6] pair 263 (267_leader_of_children): boundary 803.290s, 100ms before next word (803.390s), corroborating silence [802.840, 803.920]
+     [v6] pair 315 (319_eye_reflection_awareness): boundary 973.820s, 100ms before next word (973.920s), corroborating silence [973.760, 974.760]
+     [v6] pair 316 (320_body_warning_signal): boundary 979.800s, 100ms before next word (979.900s), corroborating silence [979.800, 980.540]
+     [v6] pair 283 (287_growing_responsibility): boundary 864.200s, 100ms before next word (864.300s), corroborating silence [864.220, 864.660]
+     [v6] pair 353 (357_sitting_quietly): boundary 1105.990s, 100ms before next word (1106.090s), corroborating silence [1105.700, 1107.060]
+     [v6] pair 238 (242_fen_excited_run): boundary 714.325s, 105ms before next word (714.430s), corroborating silence [714.140, 714.760]
+     [v6] pair 288 (292_distant_attack): boundary 881.045s, 105ms before next word (881.150s), corroborating silence [880.600, 881.400]
+     [v6] pair 104 (108_spear_measure): boundary 330.625s, 95ms before next word (330.720s), corroborating silence [330.520, 331.080]
+     [v6] pair 349 (353_gathering_bands): boundary 1095.015s, 95ms before next word (1095.110s), corroborating silence [1094.840, 1095.500]
+     [v6] pair 388 (392_young_hunters_fire): boundary 1235.185s, 95ms before next word (1235.280s), corroborating silence [1235.200, 1235.820]
+     [v6] pair 438 (442_scout_torch_wind): boundary 1408.535s, 95ms before next word (1408.630s), corroborating silence [1408.400, 1409.120]
+     [spanish] pair 8 (010_six_sailors_lost): boundary 27.615s, 105ms before next word (27.720s), corroborating silence [27.080, 27.960]
+     [spanish] pair 3 (005_scylla_twelve_legs): boundary 12.795s, 95ms before next word (12.890s), corroborating silence [12.620, 13.120]
+
+-- MEASUREMENT B: 50/50 boundary lands inside a silence the existing
+   fillsTokenGapWithinSpan/isBreathSilence predicates classify as one
+   side's own INTERIOR breath (a different, narrower shape than A) --
+   Total: 0
+   (Structurally expected to be near-zero: these predicates classify a
+    silence as INTERIOR to one segment's own matched span — i.e. strictly
+    before lastSpokenEnd or strictly after nextSpokenStart — while the
+    50/50 boundary sits, by construction, BETWEEN those two points. The
+    two measurements are answering different questions: A asks whether the
+    cut lands in the physiologically plausible inhale window immediately
+    before the next word (the C04 mechanism); B asks whether the cut
+    strayed into a segment's own unrelated internal pause. A is the
+    measurement that answers the owner's flag directly.)

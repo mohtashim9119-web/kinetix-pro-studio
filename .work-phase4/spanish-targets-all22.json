@@ -1,0 +1,112 @@
+[
+ {
+  "silence_start": 0.722688,
+  "silence_end": 1.426125,
+  "seg_display": "Scylla"
+ },
+ {
+  "silence_start": 5.82325,
+  "silence_end": 6.099125,
+  "seg_display": "Tiene"
+ },
+ {
+  "silence_start": 12.672562,
+  "silence_end": 13.00475,
+  "seg_display": "Su"
+ },
+ {
+  "silence_start": 14.517,
+  "silence_end": 14.865563,
+  "seg_display": "Cuando"
+ },
+ {
+  "silence_start": 17.124063,
+  "silence_end": 17.415,
+  "seg_display": "las"
+ },
+ {
+  "silence_start": 19.627125,
+  "silence_end": 20.170125,
+  "seg_display": "Cada"
+ },
+ {
+  "silence_start": 22.75125,
+  "silence_end": 23.272063,
+  "seg_display": "Seis"
+ },
+ {
+  "silence_start": 27.125063,
+  "silence_end": 27.815062,
+  "seg_display": "El"
+ },
+ {
+  "silence_start": 32.07675,
+  "silence_end": 32.333625,
+  "seg_display": "Se"
+ },
+ {
+  "silence_start": 34.027188,
+  "silence_end": 34.3495,
+  "seg_display": "Eso"
+ },
+ {
+  "silence_start": 41.190312,
+  "silence_end": 41.649875,
+  "seg_display": "Odiseo"
+ },
+ {
+  "silence_start": 44.550875,
+  "silence_end": 45.295063,
+  "seg_display": "A\u00fan"
+ },
+ {
+  "silence_start": 48.5165,
+  "silence_end": 48.8475,
+  "seg_display": "Scylla"
+ },
+ {
+  "silence_start": 52.833688,
+  "silence_end": 53.30475,
+  "seg_display": "Detenerse"
+ },
+ {
+  "silence_start": 55.520688,
+  "silence_end": 56.127063,
+  "seg_display": "Scylla"
+ },
+ {
+  "silence_start": 61.044187,
+  "silence_end": 61.314625,
+  "seg_display": "por"
+ },
+ {
+  "silence_start": 64.676625,
+  "silence_end": 65.335188,
+  "seg_display": "Navegar"
+ },
+ {
+  "silence_start": 68.18675,
+  "silence_end": 68.500625,
+  "seg_display": "Navegar"
+ },
+ {
+  "silence_start": 71.769125,
+  "silence_end": 72.202625,
+  "seg_display": "A"
+ },
+ {
+  "silence_start": 77.248937,
+  "silence_end": 77.561063,
+  "seg_display": "Tradiciones"
+ },
+ {
+  "silence_start": 81.094625,
+  "silence_end": 81.514437,
+  "seg_display": "entre"
+ },
+ {
+  "silence_start": 83.58775,
+  "silence_end": 84.204625,
+  "seg_display": "La"
+ }
+]
