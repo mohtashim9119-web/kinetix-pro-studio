@@ -113,7 +113,7 @@ import {
   buildLockRefusedLogEntry,
   mintSyncLogId,
 } from './services/syncLog';
-import { canLockSegment } from './services/timelinePartition';
+import { canLockSegment, findPartitionViolations } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -623,6 +623,11 @@ function getExportErrorSummary(error: ExportError): string {
       return 'Failed to concatenate segments into a single video.';
     case 'mux':
       return 'Failed to mux the audio track into the final video.';
+    case 'timeline_gap':
+      // The guard's own message already names the size and the segment, and is
+      // written for a user rather than a developer — pass it through instead of
+      // replacing it with something vaguer.
+      return error.message;
     case 'unknown':
       return 'An unexpected error occurred during export.';
   }
@@ -2704,6 +2709,51 @@ export default function App() {
 
     setIsProcessing(false);
   };
+
+  // MODEL P — dev-only gapless-partition assertion (ruling §6.1 step 1,
+  // compliance backlog item 3, 2026-08-07).
+  //
+  // Fires on the FIRST violation of `startTime[i] + duration[i] ===
+  // startTime[i+1]` to reach committed state. This is the check the ruling
+  // document asked for on the grounds that it "would have caught K14's gap the
+  // day it shipped" — K14 shipped green because every targeted test passed;
+  // none of them asked this question of the array as a whole.
+  //
+  // Deliberately ONE effect keyed on `project.segments` rather than an
+  // assertion threaded through each of the ~79 `setProject` call sites. An
+  // effect observes the committed result of every writer — including ones
+  // added later, and including writers that reach `segments` indirectly — so
+  // its coverage cannot rot as call sites are added or moved. Per-call-site
+  // assertions would have to be remembered every time, which is precisely the
+  // failure mode the ruling is reacting to.
+  //
+  // DEV-only and dead-code-eliminated in production (same `import.meta.env.DEV`
+  // convention as the dev panel and the calibration harness below). It never
+  // throws and never mutates: a violation here means the timeline is already
+  // wrong, and taking the editor down on top of that helps nobody. It reports
+  // and lets the user keep working.
+  //
+  // `audioDuration` is deliberately NOT passed — the head/tail clauses depend
+  // on a voiceover being loaded and settle asynchronously during hydration and
+  // Apply Sync, so including them would fire noisy false positives on states
+  // that are legitimately mid-flight. Adjacency is the clause that is
+  // unconditionally true of any committed array, and it is the one that breaks
+  // export (`segments-invariant-ruling.md` §1.3).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const violations = findPartitionViolations(project.segments)
+      .filter(v => v.kind === 'lock-lock-gap' || v.kind === 'lock-lock-overlap');
+    if (violations.length === 0) return;
+    const first = violations[0]!;
+    console.error(
+      `[model-p] GAPLESS INVARIANT VIOLATED — ${violations.length} site(s). `
+      + `First: ${first.kind === 'lock-lock-gap' ? 'gap' : 'overlap'} of `
+      + `${first.amountSec.toFixed(3)}s before segment ${first.index + 1} (id ${first.segmentId}). `
+      + `Model P requires startTime[i] + duration[i] === startTime[i+1]. `
+      + `See docs/decisions/2026-08-07-model-p-ruling.md.`,
+      violations,
+    );
+  }, [project.segments]);
 
   // Boundary-quality calibration harness (waveform-watcher program, Phase 1,
   // Step 6) — DEV-only, never bundled into a production build (dead-code
