@@ -308,17 +308,25 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     expect(checkTimelineIsGapless(second.segments)).toBeNull();
   });
 
-  it('a drag interrupted by pointercancel mid-gesture resolves through the SAME handleUp path as a release', () => {
+  it('a drag interrupted by pointercancel mid-gesture DISCARDS rather than commits (ruled 2026-08-08)', () => {
     const original = [seg('A', 0, 5), seg('B', 5, 5)];
     const h = harnessOf(original);
     h.grab('A', 'end').moveBy(1);
     const outcome = h.cancel();
-    // dragSession.ts wires 'pointercancel' to the identical handleUp used
-    // for 'pointerup' — a cancel mid-gesture COMMITS exactly like a release
-    // would, it does not discard the drag. Documented here as real,
-    // observed behavior of the extracted code, not asserted as "correct" UX.
-    expect(outcome.kind).toBe('committed');
-    expect(spans(outcome.segments)).toBe('A[0.00..6.00] B[6.00..10.00]');
+    // dragSession.ts wires 'pointercancel' to a dedicated handleCancel that
+    // sets wasCancelled before delegating to the shared handleUp — an
+    // involuntary OS-forced interruption must never silently commit a
+    // segment-timing change; see
+    // docs/decisions/2026-08-08-pointercancel-ruling.md. The segment array
+    // reverts to its pre-drag geometry, exactly as if the drag had never
+    // happened.
+    expect(outcome.kind).toBe('reverted-cancelled');
+    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00]');
+    // The original comment's concern ("must not leave the drag armed
+    // forever") still holds under discard — cleanup is unconditional in
+    // handleUp regardless of which branch (commit/revert-cancelled) ran.
+    expect(h.resizingIdValue).toBeNull();
+    expect(h.bodyHasResizingClass).toBe(false);
     // Listeners were properly torn down by the shared handleUp — a fresh
     // gesture right after works normally, proving no leak.
     const next = h.grab('B', 'end').moveBy(1).release();

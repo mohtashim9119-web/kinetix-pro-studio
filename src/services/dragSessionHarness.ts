@@ -72,6 +72,7 @@ export type DragOutcomeKind =
   | 'no-op-not-moved'
   | 'reverted-negligible'
   | 'reverted-blocked'
+  | 'reverted-cancelled'
   | 'committed';
 
 export interface DragOutcome {
@@ -116,6 +117,12 @@ export class DragSessionHarness {
   private reverted = false;
   private blockedIds: string[] = [];
   private disposed = false;
+  /** Set by `cancel()` for the CURRENT gesture only, reset on every `grab()` —
+   *  distinguishes a `reverted-cancelled` outcome (ruled 2026-08-08: a
+   *  pointercancel discards) from an ordinary `reverted-negligible` release,
+   *  since both resolve through `revertSegments` with `commitAttempted`
+   *  never having been set. */
+  private cancelledThisGesture = false;
 
   constructor(initialSegments: VideoSegment[], config: DragHarnessConfig = {}) {
     this.segments = initialSegments;
@@ -228,6 +235,7 @@ export class DragSessionHarness {
     this.assertNotDisposed();
     this.commitAttempted = false;
     this.reverted = false;
+    this.cancelledThisGesture = false;
     this.blockedIds = [];
     const segment = this.segments.find(s => s.id === id);
     const edgePx = segment ? segmentEdgeContentX(segment, edge, this.pixelsPerSecond) : 0;
@@ -281,6 +289,7 @@ export class DragSessionHarness {
   }
 
   cancel(): DragOutcome {
+    this.cancelledThisGesture = true;
     this.dispatchPointer('pointercancel');
     return this.resolveOutcome();
   }
@@ -288,7 +297,9 @@ export class DragSessionHarness {
   private resolveOutcome(): DragOutcome {
     let kind: DragOutcomeKind;
     if (!this.commitAttempted && !this.reverted) kind = 'no-op-not-moved';
-    else if (this.reverted && !this.commitAttempted) kind = 'reverted-negligible';
+    else if (this.reverted && !this.commitAttempted) {
+      kind = this.cancelledThisGesture ? 'reverted-cancelled' : 'reverted-negligible';
+    }
     else if (this.reverted && this.commitAttempted) kind = 'reverted-blocked';
     else kind = 'committed';
     return { kind, blockedIds: this.blockedIds, segments: this.segments };

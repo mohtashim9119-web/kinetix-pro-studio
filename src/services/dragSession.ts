@@ -135,6 +135,12 @@ export function startDragSession(
     else elsBySegId.set(segId, [el]);
   }
   let hasMoved = false;
+  // Set only by handleCancel, never by a genuine pointerup — distinguishes an
+  // OS-forced gesture takeover from a real user-completed release. See
+  // docs/decisions/2026-08-08-pointercancel-ruling.md: a cancelled gesture
+  // discards rather than commits, since a silent, unreviewed segment-timing
+  // change is worse for this app than losing one gesture the user can redo.
+  let wasCancelled = false;
   // Capture video context at drag-start for speed coupling.
   const dragAsset = deps.getAssets().find(a => a.id === originalTarget.assetId);
   const isVideoSeg = dragAsset?.type === 'video';
@@ -262,7 +268,7 @@ export function startDragSession(
     document.body.classList.remove('resizing');
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
-    window.removeEventListener('pointercancel', handleUp);
+    window.removeEventListener('pointercancel', handleCancel);
     // isResizingRef is cleared by the resizingId effect below,
     // not here — see D12 fix note there.
     // D12 fix (round 4) — the real cause of the "playhead jumps to
@@ -285,6 +291,15 @@ export function startDragSession(
       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
     }
     if (!hasMoved) return;
+    // Ruled 2026-08-08 (docs/decisions/2026-08-08-pointercancel-ruling.md): a
+    // cancelled gesture never commits, however far it moved before the OS
+    // took the pointer away — it reverts, exactly like a blocked/negligible
+    // drag below, so a segment-timing change can only ever land from a
+    // genuine user-completed release.
+    if (wasCancelled) {
+      deps.revertSegments(originalSegments);
+      return;
+    }
     // Commit — one pure call, the identical one the live frames used.
     const final = resolveDragEdge({
       segment: originalTarget,
@@ -315,10 +330,17 @@ export function startDragSession(
     // K17 this was a visible snap-back at release.
     if (!succeeded) deps.revertSegments(originalSegments);
   };
+  // A cancelled pointer (OS gesture takeover, device switch, system
+  // interruption) must not leave the drag armed forever — but unlike a real
+  // release, it must not commit either (ruled 2026-08-08, see the
+  // `wasCancelled` branch in `handleUp` above): this flag is the only way
+  // `handleUp` can tell a forced cancel apart from a genuine pointerup.
+  const handleCancel = (): void => {
+    wasCancelled = true;
+    handleUp();
+  };
   deps.setIsResizing(true);
   window.addEventListener('pointermove', handleMove);
   window.addEventListener('pointerup', handleUp);
-  // A cancelled pointer (OS gesture takeover, device switch) must not
-  // leave the drag armed forever; treat it as a release.
-  window.addEventListener('pointercancel', handleUp);
+  window.addEventListener('pointercancel', handleCancel);
 }

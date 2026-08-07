@@ -3326,3 +3326,80 @@ instruction — the fix remains future work, now with a concrete regression test
 **Verification.** 1442 → **1470 tests (1469 passing, 1 deliberately skipped), 59 files** (+28:
 27 new passing in `dragSessionHarness.test.ts` + 1 skipped bug-pin); `tsc --noEmit` clean. Step M
 golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3 unchanged.
+
+---
+
+## WS2 Task 3 — Manual WKWebView Checklist + the Pointercancel Ruling (2026-08-08)
+
+The third and final WS2 task, closing the workstream. Two parts: adopt the manual WKWebView
+drag checklist the assessment recommended (§6 Q3, the one item still marked "still open" after
+Model P settled the other two), and resolve — not merely record — the `pointercancel` question
+WS2 task 2 surfaced as an observation.
+
+**The checklist.** `docs/wkwebview-drag-checklist.md` — 10 numbered steps, each with an
+unambiguous expected result and an explicit note on what the automated suite (`dragSession.test.ts`,
+`dragSessionHarness.test.ts`) already covers numerically vs. what only a real WKWebView run can
+confirm. Grounded directly in the assessment's own §4.1-§4.6 gap analysis: no CSS layout engine
+in `jsdom` (constant-offset bugs, like the original K16 24px error, are structurally invisible to
+any headless-DOM test — every geometric fact in a test is supplied by the author, not measured);
+not WKWebView (the `overflow:hidden`+`border-radius`+`transform` bug that once rendered timeline
+cards fully black has no `jsdom` equivalent, nor does its sibling class of pointer-capture/
+`touchAction` quirks); `requestAnimationFrame` as a `setTimeout` shim (frame coalescing under a
+real `pointermove` flood isn't reproduced); no compositor/paint (jank and lag are unmeasurable
+headless). Steps 8 and 9 (dragging while the timeline is scrolled, and dragging past the visible
+edge) are called out as having the LEAST automated coverage — `timelineContentX`'s `scrollLeft`
+term is only ever exercised with hand-fed numbers in unit tests, never against a real scrolled
+viewport. Triggered before any release and after any change to `dragSession.ts`/`dragCascade.ts`/
+`dragGeometry.ts`/timeline CSS; includes a copy-paste pass/fail record block (date, build,
+platform, tester).
+
+**The pointercancel question.** Task 2 found, but did not rule on, that `dragSession.ts` wires
+`pointercancel` to the identical `handleUp` a `pointerup` uses — a cancelled gesture COMMITS
+exactly like a release, rather than discarding. Before arguing the merits, checked whether WS2
+task 1's extraction had introduced this: `git show pre-dragsession-2026-08-07:src/App.tsx` shows
+the pre-extraction code wired the identical listener to the identical function, with the exact
+same inline comment, word for word. **Task 1's neutrality claim holds — this is pre-existing
+behavior, not something the refactor changed or introduced.**
+
+Argued both readings honestly in `docs/decisions/2026-08-08-pointercancel-ruling.md` before
+asking: committing preserves visible user work that the OS, not the user, chose to interrupt;
+discarding treats the involuntary nature of `pointercancel` (a browser-forced gesture takeover,
+not a user-completed release) as disqualifying for a data-integrity-sensitive commit. Recommended
+discard — a silent, unreviewed segment-timing change is a worse failure mode for an app whose
+whole architecture (locked segments refused rather than silently violated, gaps a compile-time-
+checked forbidden state, export gated on gaplessness) treats precise, audio-synced timing as the
+thing worth protecting above gesture convenience. **Owner ruled: discard.**
+
+**Implementation.** `src/services/dragSession.ts`: a `wasCancelled` flag, set only by a new
+`handleCancel` wrapper (`pointercancel` now listens through it, not through `handleUp` directly,
+since `handleUp` alone can't tell which event fired it). Inside `handleUp`, right after the
+existing `!hasMoved` early return and before the negligible-drag/commit logic, a new branch:
+`if (wasCancelled) { deps.revertSegments(originalSegments); return; }` — so a cancelled gesture
+never reaches commit, however far it had moved. The pre-existing unconditional cleanup (clearing
+`resizingId`/`resizingType`, removing the `resizing` body class, tearing down all three window
+listeners) is untouched — still runs identically on commit, revert, or the new cancel-discard
+path, so the original comment's concern ("must not leave the drag armed forever") still holds
+under the new behavior.
+
+`src/services/dragSessionHarness.ts`: a new `DragOutcomeKind` member, `'reverted-cancelled'`,
+distinct from the pre-existing `'reverted-negligible'` — both resolve through `revertSegments`
+with `commitAttempted` never set, so a new `cancelledThisGesture` flag (set by `cancel()`, reset
+by `grab()`) is what lets `resolveOutcome()` tell them apart.
+
+`src/services/dragSessionHarness.test.ts`: the existing "pointercancel mid-gesture" test —
+previously titled around the commit behavior and asserting `'committed'` — now asserts
+`'reverted-cancelled'`, the segment array reverting to its exact pre-drag spans, and two new
+assertions that `resizingIdValue`/`bodyHasResizingClass` still clear normally afterward, proving
+the discard path performs the identical cleanup the commit path always did. The "pointercancel
+with no movement" test needed no change — `!hasMoved` already returns before any revert/commit
+call under either ruling, so it was already correct.
+
+No new tests were added; two existing assertions were inverted/extended in place, sized to match
+the actual behavior change. Full suite: still **1470 tests (1469 passing, 1 deliberately
+skipped), 59 files** — unchanged count, `tsc --noEmit` clean.
+
+**WS2 close-out.** All three WS2 tasks are now done: task 1 (extraction), task 2 (the Route 2
+harness), task 3 (this one). WS2 is closed as a workstream — see `project-state.md`'s Active
+Tasks and `docs/roadmap-2026-08-07.md`'s new §D7. What remains touching this code is the
+pre-existing, deliberately-unfixed stuck-`resizingId` bug (found by task 1, re-pinned by task
+2's harness) — a standing known bug, not a WS2 task, and not fixed by WS2 closing.
