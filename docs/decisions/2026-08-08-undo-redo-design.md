@@ -11,6 +11,134 @@
 
 ---
 
+## REVISION 2 — owner decisions folded in (2026-08-08, WS2 Stage 2)
+
+Revision 1 (everything below) was written as a set of recommendations. The owner has now
+ruled on all of them. This section records **what changed as a result**, so a reader can see
+which parts of the original text were superseded rather than having to diff two documents in
+their head. Where a ruling contradicted revision 1, the body sections below have been
+rewritten in place and are marked `[OWNER-RULED]`.
+
+| Question | Ruling | Effect on revision 1 |
+|---|---|---|
+| Lock conflict on undo | **Block the undo**, scroll to the locked segment, toast "Unlock to undo this change" | **New §5.1.** Revision 1 had no lock-conflict section; the option floated verbally ("skip the entry, leave the locked segment unchanged") was unimplementable — see §5.1 |
+| Is lock/unlock itself undoable? | **No** | **§4 corrected** — revision 1 wrongly listed locks as undoable |
+| Depth | **20 undo levels**, oldest silently evicted; redo bounded by what you have undone | **§6 corrected** — was 50 |
+| New edit after undo clears redo | Yes | §6 unchanged (already this) |
+| Undo scroll target | The segment the gesture **started** on, stored as an anchor id per entry | §5.2 — as recommended |
+| Scroll behaviour | Scroll **only if off-screen**; **always flash** the anchor | **New §5.2** |
+| Apply Sync | **One entry.** Undo once → pre-sync state; redo once → post-sync. Orphaned anchors fall back to no scroll | §5.3 — as recommended, semantics spelled out |
+| What clears history | In-memory only, zero storage. Cleared by app restart, project switch, **going back to the dashboard**, and **re-opening a project** | **§6.0, new.** One factual correction folded in: in-memory history cannot survive a page reload (the heap is gone), so "zero storage overhead" is taken as governing and a reload starts fresh — see §6.0 |
+| Coalescing | One entry per gesture; slider commits on **pointerup**, text on **blur or 500 ms idle** | **§3.2 rewritten** — was an 800 ms idle window for both |
+| `Cmd+Z` in a text field | Native text undo, not project undo | §7 unchanged (already this) |
+| Undo during playback | Keep playing | §4 — playhead stays non-undoable |
+| Buttons | Toolbar, **left of Apply Sync**, named tooltips | **§8 corrected** — was left of the zoom slider |
+| Platforms | **macOS and Windows both** | §7 — `Ctrl+Z`/`Ctrl+Y` are required, not optional extras |
+
+---
+
+## REVISION 2 — the three things revision 1 left open or wrong
+
+### R2.1 The memory number, measured at the ruled depth of 20 [MEASURED]
+
+Revision 1 gave JSON byte counts and estimated live heap as "2-4× JSON". That estimate was
+wrong in the conservative direction by two orders of magnitude, because **JSON cannot
+represent structural sharing** — serialising 20 snapshots writes all 444 segment objects 20
+times, whereas in memory they are one set of objects pointed at 20 times.
+
+Measured directly (`node --expose-gc`, `process.memoryUsage().heapUsed` deltas around forced
+GC, real v6 corpus project — 444 segments, its real 339 kB transcript-token array, a full
+per-segment field set including `overlayConfig`/`effectGrade`/every `effect*` slug):
+
+| Configuration, v6 (444 segments), depth 20 | Real retained heap |
+|---|---|
+| **Snapshots with structural sharing** (shallow `Project` copy + shallow `segments` copy; only edited segment objects are new) | **77,936 B — 0.07 MB** |
+| Naive `structuredClone` per entry (no sharing) | 20.71 MB |
+| Worst conceivable case: all 20 entries are **Apply Sync** commits, so all 444 segment objects are new in every entry | 12.18 MB (624 kB/entry) |
+
+The typical figure is ~3.9 kB per entry: a 444-pointer array copy (~3.6 kB) plus the one-to-
+four segment objects a drag cascade actually replaces. A realistic 20-entry session of drags
+and field edits therefore costs **well under 0.5 MB**, and the pathological all-Apply-Sync
+session costs 12 MB.
+
+For scale, this app already loads a **1.6 GB** Whisper model (`ggml-large-v3-turbo.bin`,
+1,624,555,275 B measured) with ~2.1-2.2 GiB peak during inference.
+
+**RULING: SNAPSHOTS. Not close.** A patch scheme would buy back at most ~12 MB in a case a
+user would have to work to reach, in exchange for hand-maintaining an inverse for every one
+of the 62 write sites, and would forfeit §9's structural golden-replay guarantee (a snapshot
+*restores* a value the pipeline produced; a patch *recomputes* one). Revision 1's JSON tables
+are retained below for provenance but the heap figures here are the ones that decide it.
+
+**What a snapshot contains — the `Project` document only.** Confirmed by reading
+`src/types.ts:274-345` field by field: `Project` holds strings, numbers, enums, and three
+object arrays (`segments`, `headings`, `assets`, `textLayers`, `syncLog`) plus
+`transcriptTokens`. **It holds no audio buffers, no decoded media, and no waveform peak
+arrays** — `grep -n "waveform\|peaks\|AudioBuffer\|Float32" src/types.ts` returns nothing.
+Those live elsewhere and are explicitly out of history:
+
+| Heavy thing | Where it actually lives | In a snapshot? |
+|---|---|---|
+| Waveform peak arrays | `waveformStore.ts` (IndexedDB) + App-level state | **No** |
+| Decoded `VideoFrame`s | `videoDecoderPool.ts` | **No** |
+| Audio `AudioBuffer` / PCM | `silenceDetector.ts` / `waveformPipeline.ts`, transient | **No** |
+| `transcriptTokens` | On `Project` — 214 kB JSON for v6 | Shared **by reference**, never copied, and excluded from restore (§5.3) |
+| `Asset.file?: File` | On `Project.assets` | Shared by reference. A `File` is a lazy handle whose bytes live in the blob store, not the JS heap, and the live project holds the same reference — so history adds nothing |
+
+### R2.2 The simplification revision 1 surfaced but did not exploit: segment identity is stable [MEASURED]
+
+There is no split, merge, insert, delete, reorder, or import of segments anywhere in the app.
+Verified by enumerating every `segments:` assignment in `App.tsx`
+(`grep -nE "segments:" src/App.tsx`, 24 real write sites): **every one is a
+`prev.segments.map(...)`** — same length, same ids, same order — except exactly three, none
+of which is an edit:
+
+- `App.tsx:2636` `segments: committedSegments` — **Apply Sync** (new ids: the one exception)
+- `App.tsx:3651` `segments: rehydratedSegments` — reload hydration
+- `App.tsx:583` `segments: []` — the blank project literal
+
+`Timeline.tsx`'s generic `onSegmentUpdate(updater)` escape hatch has exactly one consumer
+(`Timeline.tsx:607`, the trim drag) and it too is a `.map`. `applyDurationChange`'s
+`finalSegments` (`App.tsx:1552`) comes from `computeDragCascade`, which is length- and
+id-preserving by construction.
+
+**What that lets this design drop, concretely:**
+
+1. **No identity-migration layer in history entries.** An anchor segment id (§5.2) resolves
+   in every entry on the same side of an Apply Sync boundary. There is no need to store a
+   composite `index + text fingerprint` anchor with fallback resolution, which is the usual
+   cost of undo in an editor where a segment can become two.
+2. **Selection repair (§4) is an existence check, not a mapping question.** "Does this id
+   still exist?" — the exact `prev && segs.some(s => s.id === prev) ? prev : null` test
+   `handleSwitchProject` already performs. There is no "this segment became two, which one is
+   selected now?" case to answer.
+3. **Entry-to-entry diffing for labels and for no-op detection is a per-id field compare.**
+   No LCS/alignment pass is needed to know which segments an entry changed, which is what
+   makes a human label like "resize segment 12" derivable rather than hand-passed.
+4. **Coalescing keys (§3.2) stay valid for a whole session.** `grade:brightness:<segmentId>`
+   cannot be invalidated by its target acquiring a new id mid-gesture.
+5. **Redo can never resurrect a dead id.** Within a contiguous run of entries, the id set is
+   invariant.
+
+**The one exception, stated precisely: Apply Sync.** It replaces every segment with a fresh
+id, so anchors stored in pre-sync entries do not resolve in post-sync ones and vice versa.
+Per the owner's ruling this is not repaired — an unresolvable anchor falls back to **no
+scroll** (§5.2), never to an exception and never to a guessed segment. Note also that
+**headings** are genuinely inserted and deleted (`handleInsertHeading`/`handleDeleteHeading`),
+so heading identity is *not* stable — but the anchor is always a segment id, so nothing in
+§5.2 depends on heading identity.
+
+### R2.3 Lock conflict — revision 1's floated option was unimplementable
+
+See **§5.1**, new. The short version: "skip the entry but leave the locked segment unchanged"
+cannot be built. Under snapshots the older entry simply *contains* the locked segment's older
+value — there is nothing to skip, because there is no per-segment delta to omit. Under
+patches, applying some inverses and not others yields a state the pipeline never produced and
+can break the gapless invariant outright. The owner's chosen policy — **block the undo** — is
+the only one of the three that is both implementable and honest.
+
+---
+
 ## 1. The seam
 
 ### 1.1 `setProject` is the choke point — confirmed [MEASURED]
@@ -82,8 +210,12 @@ plumbing.
 
 ## 2. Snapshot vs. command/patch
 
-**Recommendation: SNAPSHOTS, with structural sharing.** Size does not rule them out — not
-close.
+> **SUPERSEDED IN PART BY R2.1.** The ruling is unchanged (snapshots) but the numbers below
+> are **JSON byte counts, and they overstate real cost by ~80×** because JSON cannot represent
+> structural sharing. R2.1's `heapUsed` measurements at the ruled depth of 20 are the figures
+> of record. This section is retained for provenance and for the argument in §2.3.
+
+**Ruling: SNAPSHOTS, with structural sharing.** Size does not rule them out — not close.
 
 ### 2.1 The measurement [MEASURED]
 
@@ -118,9 +250,12 @@ For contrast, a naive `structuredClone` of the whole `Project` per entry — no 
 
 ### 2.2 Reading the numbers honestly
 
-- These are **JSON byte counts, not V8 heap.** A live object graph typically runs 2-4× its
-  JSON size. So the recommended configuration (v6, depth 50, structural sharing) is
-  **14.6 MB of JSON ≈ 30-60 MB resident** in the worst realistic case.
+- These are **JSON byte counts, not V8 heap**, and this bullet's own estimate ("2-4× JSON",
+  giving 14.6 MB → 30-60 MB resident at depth 50) **was wrong in the conservative direction by
+  roughly two orders of magnitude** — see R2.1. JSON serialises every shared segment object
+  once per entry; the live heap points at one copy. The measured figure at the ruled depth of
+  20 is **0.07 MB**, not 30-60 MB. Retained here as the mistake it was, since "we estimated
+  and the estimate was 80× high" is the useful part.
 - Context for whether that is affordable: this app already loads a **1.6 GB** Whisper model
   (`ggml-large-v3-turbo.bin`, measured 1,624,555,275 bytes) with ~2.1-2.2 GiB peak during
   inference, and holds decoded `VideoFrame`s and waveform peak arrays for a 21-minute
@@ -177,32 +312,36 @@ that was already the top of history, so the entry is a **no-op duplicate**. Two 
 **Recommend (i).** It is explicit at the one call site that means it, and does not rely on
 reference identity surviving future refactors. (ii) is a reasonable belt-and-braces addition.
 
-### 3.2 Coalescing rule for continuous controls
+### 3.2 Coalescing rule for continuous controls `[OWNER-RULED]`
 
 Sliders and text fields fire many `setProject` calls per gesture and must not produce many
-entries.
+entries. **The ruling: one entry per gesture, with the gesture's END defined by the control's
+own natural boundary rather than by a single idle timer for everything.**
 
-**The rule:** an entry is opened by the first write carrying a given *coalescing key*, and
-stays open — absorbing every subsequent write with the same key — until either
-
-- **800 ms** elapse with no further write of that key, **or**
-- a write arrives with a *different* key, **or**
-- focus leaves the control, or the active segment/selection changes.
+| Control class | Entry closes on | Rationale |
+|---|---|---|
+| **Sliders** (grade brightness/contrast/saturation/temperature, playback speed) | **`pointerup`** | A slider gesture has an unambiguous end. A timer is a guess; the pointer release is the fact. Also removes the failure mode where a slow, deliberate drag crosses the idle window and splits into two entries |
+| **Text fields** (overlay text, project name, script/scene textareas, numeric duration) | **`blur`, or 500 ms idle**, whichever comes first | A text field has no release event, so an idle timer is unavoidable; `blur` closes it early when the user tabs or clicks away |
+| **Discrete actions** (button, toggle, Apply Sync, drag commit, apply-to-all) | Immediately — they open and close their own entry | No gesture to coalesce |
 
 The **coalescing key** is `(control identity, target identity)` — e.g.
 `grade:brightness:<segmentId>`, `overlayText:<segmentId>:<overlayId>`,
 `playbackSpeed:<segmentId>`. Keying on the target as well as the control is what makes
 "drag brightness on segment 5, then drag brightness on segment 9" two entries rather than
-one, which is what a user means.
+one, which is what a user means. An open entry is also force-closed by a write carrying a
+*different* key, so an interleaved edit can never be absorbed into the wrong entry.
 
-Discrete actions (a button, a toggle, a lock, Apply Sync, a drag commit) carry **no**
-coalescing key and always open and immediately close their own entry.
+Two implementation notes:
 
-Notes on the 800 ms figure: `EffectsPanel`'s grade sliders already debounce their writes at
-120 ms, so a continuous drag emits roughly 8 writes/second and 800 ms is comfortably longer
-than the inter-write gap while still short enough that a deliberate pause reads as a new
-edit. It is **chosen, not tuned against a real hand** — same honesty as the auto-scroll ramp
-constants — and should be revisited after first use.
+- **`pointerup` for sliders needs a real pointerup listener,** not an inference from "no
+  further writes". `EffectsPanel`'s grade sliders debounce their `setProject` at 120 ms
+  (`EffectsPanel.tsx`, `onGradeLive`), so the last write of a gesture lands up to 120 ms
+  *after* the release. The entry must therefore close on the release **and still absorb** that
+  trailing debounced write — i.e. the key stays claimable for one short grace period after
+  release rather than being closed hard. Getting this wrong produces exactly one spurious
+  one-write entry per slider gesture, which is the bug this section exists to prevent.
+- **500 ms** for text idle is the owner's figure and is **chosen, not tuned against a real
+  hand** — same honesty as the auto-scroll ramp constants. Revisit after first use.
 
 ---
 
@@ -217,12 +356,21 @@ constants — and should be revisited after first use.
 - global aesthetics — global transition/animation/filter/overlay config, apply-to-all
 - headings — insert, delete, move, resize, edit
 - text layers — add, edit, delete, per-segment toggle
-- locks — lock/unlock, lock-all/unlock-all
-- **Apply Sync** — see §5, this is the one with a caveat
+- **Apply Sync** — see §5.3, this is the one with a caveat
 
-**NOT undoable (deliberately — none of it is `Project` state):**
+**NOT undoable (deliberately):**
 
-- **playback position** (`currentTime`) and play/pause
+- **Locks — lock/unlock, lock-all/unlock-all.** `[OWNER-RULED]` Revision 1 listed these as
+  undoable, which was wrong. A lock is not an edit to the video; it is a *statement about how
+  future edits may behave*, and making it undoable creates a genuinely confusing interaction
+  with §5.1: undo would sometimes remove a lock and sometimes be blocked *by* one, and the
+  user could not predict which. Excluded. This means lock writes go through the silent setter
+  (§3.1 option (i)), which also removes any question about ordering between a lock toggle and
+  §5.1's block check.
+- **playback position** (`currentTime`) and play/pause. `[OWNER-RULED]` Undo **during
+  playback keeps playing** — the playhead is not history, so an undo mid-playback changes the
+  timeline under a still-running clock and does not pause it. (`currentTime` is still *clamped*
+  into the restored timeline's bounds — see below — which is repair, not restore.)
 - **zoom** (`sliderT`) and **timeline scroll** (`timelineScrollLeft`)
 - **selection** (`selectedSegmentId`, `selectedSegmentIds`, `selectedHeadingId`) and which
   tab/panel is open
@@ -265,7 +413,93 @@ One addition worth making explicit: the restore should assert **before** committ
 with the entry's index in the message. If history ever does contain a bad state, the useful
 information is *which* entry, and a violation surfacing only after the restore loses that.
 
-**The Apply Sync caveat.** Apply Sync is undoable as a single entry — but undoing it does
+**The duration-invariance guard does not apply to undo, and must not.** `DRAG_CASCADE_OPTIONS`
+(`dragCascade.ts`) sets `conserveTotalDuration`, which enforces "no drag changes total
+duration" — the last-segment-lock ruling of 2026-08-08. That switch is **opt-in and passed
+only by the drag path**: `applyDurationChange`'s `options` parameter is `undefined` for every
+other caller, and the speed slider deliberately relies on that (it legitimately changes the
+last segment's duration through the same `computeDragCascade`). Undo restores via
+`setProject` directly and never enters `computeDragCascade` at all, so it is structurally
+outside that guard — which is correct, because a restored state may legitimately have a
+different total duration than the current one (undoing an Apply Sync is the obvious case).
+**This must be verified explicitly, not assumed** (§10 item 10): a restore path that
+accidentally routed through the cascade would refuse legitimate undos.
+
+### 5.1 Lock conflict — undo is BLOCKED `[OWNER-RULED]`
+
+**The situation.** History entry *N* changed segment 12's timing. The user then locked
+segment 12. Pressing undo would move a segment the user has explicitly pinned.
+
+**The ruling: block the undo.** Do not restore, do not partially restore, do not silently
+unlock. Instead:
+
+1. Leave history untouched — the entry stays on the undo stack, and pressing undo again after
+   unlocking performs it normally. (Nothing is consumed by a blocked attempt.)
+2. Scroll the locked segment into view, using §5.2's machinery.
+3. Show the toast **"Unlock to undo this change"**, with the same **Unlock** action button
+   `applyDurationChange`'s locked-neighbour toast already offers (`App.tsx:1540-1545`) — so the
+   user can resolve it in one click from where they are.
+
+**Why the alternative was rejected.** The option floated in revision 1 — "skip the entry but
+leave the locked segment unchanged" — is not implementable in either representation:
+
+- **Under snapshots** there is nothing to skip. The older entry *is* a whole `Project`; the
+  locked segment's older value is simply part of it. "Restoring everything except segment 12"
+  would mean synthesising a hybrid of two states, and since segment timings are mutually
+  constrained (`startTime[i] + duration[i] === startTime[i+1]`), holding one segment at a
+  newer value while its neighbours go back to older ones **breaks the gapless invariant
+  directly** — the assertion in §5 would fire on our own write.
+- **Under patches** it is worse: applying a subset of inverses out of order produces a state
+  no version of the pipeline ever produced, with no guarantee of any invariant.
+
+Blocking is the only option that keeps every reachable state one the pipeline actually
+committed, which is the property §5 and §9 both rest on.
+
+**Detection.** A blocked undo is decided *before* the write: compare the target entry's
+segments against current state by id (cheap and exact — see R2.2 point 3), and if any segment
+whose timing differs is `locked` in **current** state, block. Locked-in-current is the right
+test, not locked-in-the-entry: the lock is a statement about the timeline as it stands now.
+
+### 5.2 Anchor scroll and flash `[OWNER-RULED]`
+
+Each history entry carries an **anchor segment id**: the segment the gesture **started** on,
+not the whole set it cascaded across. For a five-segment cascade from a drag on segment 12,
+the anchor is 12. This is captured at push time by the caller that knows the gesture (the
+drag session already has `id`), never inferred by diffing.
+
+On undo or redo:
+
+- **Scroll only if the anchor is off-screen.** If it is already visible, do not move the
+  timeline — a scroll the user did not need is the "haunted" feeling §4 warns about. When it
+  *is* off-screen, bring it into view.
+- **Always flash the anchor**, whether or not a scroll happened, so the change is visible
+  even when it is on-screen and subtle (a 0.2 s duration change is otherwise invisible).
+- **Reuse the existing scroll machinery** from `Timeline.tsx`'s segment-follow auto-scroll
+  (the Step 9 work), including its `didRestoreRef` gate. Do not write a second scroller: the
+  existing one already handles the reload-restore ordering trap that caused the visible
+  "0 then scroll" flash, and a parallel implementation would reintroduce it.
+- **Scroll position and selection are NOT undoable** (§4). The anchor scroll is a *reaction*
+  to an undo, not restored state — undoing twice and redoing twice must not replay a scroll
+  history.
+- **An unresolvable anchor falls back to no scroll and no flash.** It must not throw and must
+  not guess a nearby segment. This is reachable exactly across an Apply Sync boundary
+  (R2.2) — the ids in a pre-sync entry do not exist post-sync.
+
+### 5.3 Apply Sync `[OWNER-RULED]`
+
+**Apply Sync is one entry.** Undo once returns to the pre-sync state — including whatever
+messy manual edits were there; redo once returns to the post-sync state. That before/after
+toggle is the explicitly wanted behaviour: it lets the two states be compared directly.
+
+Two consequences worth stating so they are not mistaken for bugs:
+
+- Undoing past the Apply Sync entry continues into the pre-sync edit history normally (the
+  stack is a plain linear 20, not a special case). The owner's "one undo allowed" describes
+  what it takes to *get back* to the pre-sync state, not a cap.
+- Anchors do not survive the boundary in either direction (R2.2), so a sync undo/redo scrolls
+  nowhere and flashes nothing. Accepted.
+
+**The excluded-field caveat.** Apply Sync is undoable — but undoing it must
 not un-transcribe. `transcriptTokens` and the waveform are expensive derived data shared by
 reference across snapshots (§2), and a snapshot taken before Apply Sync would restore
 `transcriptTokens: undefined`, discarding a multi-minute Whisper run. **Recommendation:
@@ -279,43 +513,124 @@ what the user asked for by pressing Cmd+Z. This is a real exception to "restore 
 
 ## 6. Depth, eviction, and clearing
 
-- **Depth: 50 entries.** At v6's 293 kB/entry that is 14.6 MB JSON (§2.1) — the number the
-  recommendation is sized against. 50 is well past the ~10 the literature says users
-  actually reach, and it keeps the worst realistic project inside a budget that needs no
-  further argument.
-- **Eviction: FIFO from the oldest end**, on push past depth.
-- **Redo is discarded on any new edit** — the standard linear model. No redo tree.
-- **History is CLEARED on:** project load/switch, New Project, the DEV scale-fixture load,
-  and project deletion. All four are "this is a different project now"; an undo stack that
-  survived them could restore another project's segments onto this one's assets.
-- **Apply Sync does NOT clear history** — it pushes one entry like any other edit (with §5's
-  caveat). Undoing an Apply Sync you did not want is one of the most valuable things this
-  feature can offer.
+- **Depth: 20 undo levels.** `[OWNER-RULED]` (Revision 1 said 50.) At the measured ~3.9 kB per
+  typical entry that is well under 0.5 MB, and 12.18 MB in the pathological all-Apply-Sync
+  case (R2.1).
+- **Redo depth is not a second budget.** Redo can only ever hold what has been undone, so it
+  is bounded by the same 20 — "20 each" would be a misreading. The invariant is
+  `undoDepth + redoDepth <= 20`.
+- **Eviction: FIFO from the oldest end, silently**, on push past 20. No warning, no toast.
+- **Redo is discarded on any new edit** `[OWNER-RULED]` — the standard linear model. No redo
+  tree.
+- **History is CLEARED on:** project switch, New Project, app quit (trivially — nothing is
+  persisted across a process restart), the DEV scale-fixture load, and project deletion. Each
+  is "this is a different project now"; an undo stack that survived one could restore another
+  project's segments onto this one's assets.
+- **Apply Sync does NOT clear history** — it pushes one entry like any other edit (§5.3).
 
-### Persistence across reload: **NO. Recommended against.**
+### 6.0 RULED — in-memory only, zero storage `[OWNER-RULED 2026-08-08]`
 
-Three reasons, in order of weight:
+**The ruling, as given:** *"Undo history stays in memory during your active session… It only
+resets when the app restarts, user switch project or even go back to dashboard. Re-opening a
+project starts fresh. Fast, clean, and requires zero extra storage overhead."*
 
-1. **The blobs do not survive.** `Asset.url` is a `blob:` URL, deliberately stripped before
-   persistence (`projectStore.ts`) and reconstructed on load from IndexedDB. A persisted
-   history entry would carry stale asset references, and the hydration path's existing
-   drop-missing-asset logic would have to be re-run per entry — 50 times, on every load.
-2. **It changes what undo means.** In every editor users know, Cmd+Z reaches back through
-   *this session's* work. History surviving a reload invites undoing an edit from days ago
-   with no memory of what it was.
-3. **Cost with no matching benefit.** 14.6 MB into `localStorage` is not viable (it would
-   need IndexedDB and its own store, versioning, and migration), and the existing 500 ms
-   debounced project save would have to serialise it.
+So the decision is **reading (B) of §6.1 below: in-memory only, no persistence layer, nothing
+written to disk.** §6.1 is retained as the record of what (A) would have cost.
+
+**Clearing list, final:**
+
+| Event | History |
+|---|---|
+| Editing inside the currently-open project | **Kept** — this is the whole session |
+| Switching to another project | Cleared |
+| **Going back to the dashboard** | Cleared *(added by this ruling)* |
+| **Re-opening a project** (even the same one) | **Starts fresh** *(added by this ruling)* |
+| New Project | Cleared |
+| App restart | Cleared (nothing persisted, so this is automatic) |
+| DEV scale-fixture load, project deletion | Cleared |
+| Apply Sync | **Kept** — pushes one entry (§5.3) |
+
+**One factual correction to the ruling, because it changes what gets built.** The ruling says
+history *"does not reset if the page reloads during the active session."* That is not
+achievable together with "zero extra storage overhead": **a page reload discards the entire JS
+heap**, including the history stack, so in-memory history cannot survive one. There is no
+middle option — surviving a reload *is* persistence (§6.1(A)), with its own IndexedDB store
+and per-entry asset rehydration.
+
+Since the ruling also explicitly asks for zero storage overhead, and those two requirements
+are mutually exclusive, **zero-storage is taken as the governing constraint** and a reload
+therefore starts with empty history. Worth noting this costs very little in practice: in the
+shipped Tauri app a page reload is not a user-reachable action — there is no reload control;
+it is a dev-time `Cmd+R`. If surviving a reload turns out to matter, it is §6.1(A) and its own
+phase; flag it and it will be scoped rather than smuggled in.
+
+**The part of the reload concern that IS real, and must be implemented:** history must not be
+cleared by *incidental* project-state churn during a single session. Specifically, the
+clear-on-switch trigger must **not** fire on App's mount-time hydration, where a placeholder
+`Project` is swapped for the real persisted one. Keying the clear on `project.id` alone
+reproduces exactly the D15 bug the `sliderT` restore already had to fix
+(`hasSkippedHydrationResetRef`) — a first-run guard is consumed by the placeholder's id and
+then fires unguarded when the real project arrives. The same `isHydrating` gate applies here.
+At mount the stack is empty anyway, so this is about correctness of the trigger rather than
+about saving entries — but it is the kind of thing that silently starts eating history the
+moment hydration order changes.
+
+### 6.1 What persistence would have cost — retained for the record, NOT being built
+
+Revision 1 recommended that all four exits clear history, with no persistence. The owner
+accepted three and **excluded the fourth: "except page reload inside the project"** — i.e.
+reloading the page while staying in the same project should *keep* the undo stack.
+
+**This is the one ruling in the set that adds real, non-trivial work, and it is worth
+confirming the intent before building on it.** Flagging rather than silently deferring:
+
+- **It requires persistence.** There is no in-memory way to survive a reload; the JS heap is
+  gone. So this is not a small carve-out from "no persistence" — it *is* persistence, with a
+  storage layer, a schema version, and a migration story.
+- **`localStorage` will not hold it.** Serialised, history cannot use structural sharing (the
+  0.07 MB figure is a live-heap property, not a byte-count one), so 20 entries of v6 is
+  **6.02 MB of JSON** [MEASURED] against a ~5-10 MB origin quota that the project itself
+  already shares. It would need its own IndexedDB store, like `waveformStore.ts` has.
+- **Asset rehydration has to be re-run per entry.** `Asset.url` is a `blob:` URL stripped
+  before persistence (`projectStore.ts`) and rebuilt from IndexedDB on load. Every persisted
+  entry would need the same drop-missing-asset repair the hydration path performs — 20 times
+  per load — or entries would carry dead blob URLs that only fail when restored.
+- **Writing it is not free either.** The existing 500 ms debounced project save would have to
+  serialise up to 6 MB alongside the project on every edit.
+
+**Two readings of the ruling, and they cost very different amounts:**
+
+- **(A) Literal:** history genuinely survives a webview reload. Cost: a new IndexedDB store,
+  per-entry asset rehydration, schema versioning — a phase of its own, comparable in size to
+  Phases 1-3 combined.
+- **(B) "Do not gratuitously clear it":** the concern is that history must not be wiped by
+  *incidental* project-state churn — the reload-hydration effect writing `rehydratedSegments`
+  through the same seam, or the placeholder-project swap the `sliderT` D15 fix already had to
+  guard against (`hasSkippedHydrationResetRef`). Under this reading the requirement is that
+  **hydration must not be treated as a project switch**, which is a one-line gate, essentially
+  free, and closes a real bug the D15 fix's history says is easy to hit.
+
+**RESOLVED: (B).** See §6.0 above — the owner ruled for in-memory only with zero storage
+overhead. (A) is not being built. This subsection stays as the costing, so that if surviving a
+reload is ever wanted, the price is already known and does not have to be re-derived.
 
 ---
 
 ## 7. Keyboard shortcuts
 
-| Action | Binding |
-|---|---|
-| Undo | `Cmd+Z` (macOS) / `Ctrl+Z` (Windows) |
-| Redo | `Cmd+Shift+Z` / `Ctrl+Shift+Z` |
-| Redo (Windows convention) | `Ctrl+Y` — accepted **in addition**, not instead |
+`[OWNER-RULED]` **Both platforms are targets — macOS and Windows.** The Windows bindings are
+required, not optional extras, and `tauri.conf.json` already bundles an
+`x86_64-pc-windows-msvc` ffmpeg sidecar, so Windows is a real shipping target.
+
+| Action | macOS | Windows |
+|---|---|---|
+| Undo | `Cmd+Z` | `Ctrl+Z` |
+| Redo | `Cmd+Shift+Z` | `Ctrl+Shift+Z` **and** `Ctrl+Y` (both accepted) |
+
+Detect the modifier as `e.metaKey || e.ctrlKey` rather than branching on a platform sniff —
+one code path, and it matches how the existing keydown branches are written. `Ctrl+Y` is
+macOS-harmless (it is not a system binding there), so it can be accepted unconditionally
+rather than gated on platform.
 
 Implementation goes in the existing `window` `keydown` effect (`App.tsx:3391-3438`), as a
 new branch alongside Space / `+` / `-` / arrows / `F` / the DEV panel toggle.
@@ -367,10 +682,13 @@ single riskiest unknown in this document** (see §11).
 
 ## 8. Buttons
 
-- **Placement:** the timeline toolbar, immediately left of the zoom slider — the same
-  cluster as the other timeline-wide controls, and adjacent to where edits happen. Not in
-  the top bar, which is project-level (Export, Projects, Settings).
+- **Placement:** `[OWNER-RULED]` the toolbar, **immediately left of Apply Sync**. (Revision 1
+  proposed left of the zoom slider; superseded.)
 - **Icons:** lucide-react `Undo2` / `Redo2`, matching every other control in the app.
+- **Ignored while a drag gesture is live.** A click or shortcut arriving mid-drag does nothing
+  — the gesture owns the timeline until it resolves, and an undo landing between a drag's live
+  DOM writes and its commit would leave the preview and state disagreeing. Gate on the
+  existing `isResizingRef`, which is already the app's canonical "a drag is in progress" flag.
 - **Disabled state:** greyed and non-interactive when the respective stack is empty, using
   the app's existing disabled treatment. Disabled, not hidden — a control that disappears
   makes users hunt for it.
@@ -426,59 +744,67 @@ Minimum bar, all of it:
    movement each leave `historyDepth` unchanged; a genuine commit increments it by exactly 1.
    The harness already resolves all four outcomes, so this is a new assertion on existing
    machinery.
-5. **Coalescing.** 30 slider writes inside the window produce 1 entry; a write after the
-   window produces a second; a write with a different coalescing key produces a second
-   immediately.
+5. **Coalescing (§3.2).** A slider gesture of 30 writes produces 1 entry, closed by
+   `pointerup`, **including** the trailing 120 ms-debounced write that lands after the release;
+   a text field's writes produce 1 entry closed by `blur` or 500 ms idle; a write with a
+   different coalescing key opens a second entry immediately.
 6. **Invariant safety.** Every state reachable by undo/redo in the §3 property test passes
    `findPartitionViolations` — reusing the existing checker, not a new one.
-7. **Eviction and clearing.** Depth cap holds at 50; the oldest entry is evicted; project
-   switch/New Project/fixture load clear both stacks; a new edit after an undo discards redo.
-8. **Excluded-field merge (§5).** A snapshot taken before Apply Sync, restored, keeps the
+7. **Eviction and clearing.** Depth cap holds at **20**; the oldest entry is evicted silently;
+   `undoDepth + redoDepth <= 20` always; project switch/New Project/fixture load clear both
+   stacks; a new edit after an undo discards redo.
+8. **Excluded-field merge (§5.3).** A snapshot taken before Apply Sync, restored, keeps the
    current `transcriptTokens` and does not resurrect `undefined`.
 9. **Selection repair (§4).** Undoing past a heading's creation clears a selection pointing
    at it; `currentTime` is clamped into the restored bounds.
+10. **Undo is outside the duration-invariance guard (§5).** A restore whose total duration
+    differs from current state succeeds — asserted directly, since a restore accidentally
+    routed through `computeDragCascade` with `DRAG_CASCADE_OPTIONS` would refuse it. Undoing an
+    Apply Sync is the natural fixture: pre- and post-sync totals differ.
+11. **Lock conflict blocks (§5.1).** Undo against an entry that would move a currently-locked
+    segment does not write, does not consume the entry, and the same undo succeeds after the
+    segment is unlocked.
+12. **Locks are not undoable (§4).** A lock toggle pushes **zero** entries; undo after a lock
+    toggle reaches past it to the previous real edit.
 
 ---
 
 ## 11. Phased plan
 
-Smallest shippable slice first. Test-count deltas are estimates.
+`[OWNER-RULED]` Revision 1 proposed six phases. The owner's brief collapses them into
+**three**, which is the plan of record. Test-count deltas are estimates.
 
 | Phase | Scope | Ships? | Tests |
 |---|---|---|---|
-| **1 — the seam** | `historyStore.ts`: pure push/undo/redo/evict/clear over an opaque state type. No React, no `App.tsx` changes. Depth, eviction, redo-discard, clearing. | No (nothing wired) | **+20** |
-| **2 — wrapper + drags only** | `setProjectRaw`/`setProject` wrapper; `setProjectSilent` for the two revert paths. Only drag commits captured; everything else silent. Buttons rendered, no shortcuts. Item 4 of §10 in full. | **YES — the smallest useful slice.** Undo an unwanted drag, which is exactly step 10's mitigation. | **+18** |
-| **3 — full scope** | Every other edit captured. §5's excluded-field merge with its own test. §4's selection repair and `currentTime` clamp. Round-trip + redo identity across the edit vocabulary. | Yes | **+30** |
-| **4 — coalescing** | §3.2's key + 800 ms window for sliders and text fields. | Yes | **+12** |
-| **5 — shortcuts** | Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y, with §7's suppression. **Gated on a real-shell manual verification** that the keys arrive and the native menu does not eat them. | Yes | **+10** |
-| **6 — property test + labels** | §10 item 3's random N-operation round trip; entry labels and button tooltips. | Yes | **+8** |
+| **1 — history core, no UI** | `src/services/history.ts`: pure push/replace/undo/redo/evict/clear over an opaque state type, with explicit push-vs-replace semantics so callers state intent rather than the store inferring it. An entry carries the snapshot, a human label, and the anchor segment id. Capture wired at the `setProject` seam; `setProjectSilent` for the two revert paths and for lock writes. §10 items 1-4, 6, 7, 10, 12. | No UI | **+30** |
+| **2 — buttons and shortcuts** | **The WKWebView key-interception experiment runs FIRST, before the handler is written** (§12). Then: `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`, §7's text-field and modal suppression, toolbar buttons left of Apply Sync with disabled states and named tooltips, ignored while a drag is live. | Yes | **+18** |
+| **3 — anchor scroll, lock policy, coalescing** | §5.2's anchor scroll (reusing the Step 9 scroller) and flash; §5.1's lock block with its toast; §3.2's coalescing. §10 items 5, 9, 11. | Yes | **+25** |
 
-**Total: roughly +98 tests, 1530 → ~1628.** Golden replay must stay byte-identical at every
-phase boundary.
+**Total: roughly +73 tests, 1530 → ~1603.** Golden replay must stay byte-identical at every
+phase boundary — verified per stage, not once at the end.
+
+**Deferred, deliberately, and not in any of the three phases:** history persistence across a
+page reload (§6.1, pending a ruling between readings (A) and (B)); a history dropdown; a redo
+tree.
 
 ---
 
-## 12. The decision I am least confident about
+## 12. The decision I am least confident about — now scheduled as an experiment
 
-**§7(b) — whether the global `Cmd+Z` handler can own the shortcut at all in the real
-WKWebView/Tauri shell.**
+**§7's platform risk — whether the global `Cmd+Z` handler can own the shortcut at all in the
+real WKWebView/Tauri shell.**
 
 Everything else here is settled by measurement or by an existing pattern in the codebase.
 This one is a guess about a platform, and the codebase's own history is a warning: the
 browser Fullscreen API silently fails in this shell, keyboard focus does not return to the
 webview after a fullscreen exit without three layers of fallback, and a native macOS menu
-this app has never configured is presumed — not verified — to be binding `Cmd+Z` to the OS
-text responder. Any of those could mean the key never reaches `window`, or reaches it only
-sometimes depending on focus, which is worse.
+this app has never configured (`grep -n "menu"` finds nothing in `tauri.conf.json` or
+`lib.rs`) is presumed — not verified — to bind `Cmd+Z` to the OS text responder.
 
-**What would resolve it:** a ten-minute experiment in the real shell, before Phase 5 and
-ideally before Phase 2 — add a temporary `keydown` logger to the existing effect, run
-`npm run tauri:dev`, and press `Cmd+Z` in four states: (a) nothing focused, (b) a text field
-focused, (c) a range slider focused, (d) immediately after exiting fullscreen. Record which
-of the four reach the listener and whether the native Edit menu flashes. That single result
-decides between the `window`-listener design above and a Tauri-side global-shortcut or
-menu-accelerator design — and it is much cheaper to run now than to discover at Phase 5,
-after four phases have been built on the assumption.
-
-I did not run it in this session because Stage 3 is design-only and that experiment requires
-launching the real app.
+**This is no longer a note; it is Phase 2's first task, gating the handler.** The experiment:
+a temporary `keydown` logger in the existing effect, `npm run tauri:dev`, and `Cmd+Z` pressed
+in four states — (a) nothing focused, (b) a text field focused, (c) a range slider focused,
+(d) immediately after exiting fullscreen — recording which reach the listener and whether the
+native Edit menu flashes. If `Cmd+Z` never arrives at `window`, the finding is reported as
+such and the **native-menu / Tauri global-shortcut route** is proposed instead of working
+around it blindly.
