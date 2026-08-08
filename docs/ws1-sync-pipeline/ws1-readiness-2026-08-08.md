@@ -5,7 +5,7 @@
 > whether WS1 (sync) can start cleanly now that WS2 (editor) is complete and verified, and
 > to surface anything WS2 built that would get in its way.
 >
-> Scope note: this re-checks `docs/roadmap-2026-08-07.md` § D4's decoupling verdict against
+> Scope note: this re-checks `docs/ws1-sync-pipeline/roadmap-2026-08-07.md` § D4's decoupling verdict against
 > **current `main`**, not against the park commit it was originally measured on. Everything
 > WS2 landed since — the last-segment edge lock, the duration-invariance guard, Model P's
 > assertion, and undo/redo — arrived *after* D4 was written and none of it was in scope then.
@@ -203,7 +203,7 @@ projects run through `snapCoveredBoundaries`, so a placement change moves commit
 boundaries and `scripts/phase4-handoff-replay-sync.test.ts` will go from 3/3 to 0/3. **That
 is the harness working**, and it is the single most useful signal WS1 has. Plan for a
 deliberate, reviewed re-baseline with the per-boundary diff read and understood — never a
-blind regeneration. `docs/phase4-baseline-methodology.md` is the procedure.
+blind regeneration. `docs/measurements/phase4-baseline-methodology.md` is the procedure.
 
 ---
 

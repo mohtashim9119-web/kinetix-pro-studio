@@ -11,7 +11,7 @@ post-Phase-4 run.
 | Commit | `c4fc289939a14a94b5d93269ccbf4de147063755` (`feat(sync): Phase 3 blinded-batch scoring pass — Steps I-L...`), branch `webgl2-effects-engine` |
 | Whisper model | `ggml-large-v3-turbo.bin` (turbo), `-l` per-project (`en` for V6/173, `es` for Spanish), flash attention default-on, `--dtw`/`-np` both dropped per Phase 2a |
 | ffmpeg | 8.1.1-tessus (evermeet.cx), the same bundled `src-tauri/binaries/ffmpeg-x86_64-apple-darwin` sidecar the app ships |
-| Hardware | Intel Core i9-9980HK @ 2.40GHz (x86_64), macOS 26.5.2 (build 25F84), no GPU backend (matches every other measurement in `docs/sync-pipeline-v2-plan.md`) |
+| Hardware | Intel Core i9-9980HK @ 2.40GHz (x86_64), macOS 26.5.2 (build 25F84), no GPU backend (matches every other measurement in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`) |
 | Whisper token source | Turbo's own raw transcript, captured during Phase 2a Step 5's fresh resync (2026-08-04/05) — `docs/{V6,173,Spanish}-Smear-Phase2a.csv` and the full (un-1000-row-capped) transcript dumps at `/tmp/phase3/{v6,173,spanish}_raw_transcript*.json` (re-extracted here as `docs/phase4-baseline-{v6,173,spanish}-words.csv`) |
 
 ## Why this is a valid "current shipped pipeline" baseline despite being computed, not clicked through the UI
@@ -22,10 +22,10 @@ above) and this commit (2026-08-06) — every intervening pass (Phase 2b,
 Phase 3 Blockers 1-3, the data-cleaning pass, the reference-validity pass,
 the reference-correction pass, the blinded-batch scoring pass) is explicitly
 recorded as measurement-only with no `src/` edits (see each pass's own entry
-in `docs/sync-pipeline-v2-plan.md` / `project-state.md`). Determinism of the
+in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` / `project-state.md`). Determinism of the
 Whisper→Hirschberg→snap pipeline was independently re-verified on turbo
 (Phase 2a, byte-identical MD5s across repeated runs). Given that, and given
-`docs/sync-pipeline-v2-plan.md`'s own Blocker 3 statement that the sync
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s own Blocker 3 statement that the sync
 pipeline's alignment/boundary code is **pure and DOM/React-free**, replaying
 the exact, unmodified, currently-committed pipeline functions against the
 already-captured token data reproduces byte-for-byte what a fresh Apply Sync

@@ -5,7 +5,7 @@
 > working tree clean, suite at 1530 tests (1529 pass / 1 skip).
 >
 > **Why now.** Undo/redo is the stated mitigation for closing checklist step 10 as an
-> accepted limitation (`docs/wkwebview-drag-checklist.md`). It does not stop an interrupted
+> accepted limitation (`docs/checklists/wkwebview-drag-checklist.md`). It does not stop an interrupted
 > drag from dirtying state; it changes that state from unrecoverable to recoverable. That
 > is the trade the owner accepted, so this needs to be a real design, not a gesture at one.
 

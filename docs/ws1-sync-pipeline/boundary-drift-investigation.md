@@ -7,7 +7,7 @@
 > in the sync boundary-placement pipeline.
 >
 > **The word-shift defect this document documents is addressed by
-> `docs/sync-pipeline-v2-plan.md` Phases 3+5.** This document's own
+> `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Phases 3+5.** This document's own
 > DO NOT RE-INVESTIGATE list and dead-hypothesis measurements remain
 > authoritative and must be read before any related work.
 
@@ -76,7 +76,7 @@ good-cut segments, and they don't.
   and (b) **broke whisper-cli's stdout printing** in this build. Not usable
   as shipped.
   > **CORRECTED 2026-08-05 by Phase 2b's measurement**
-  > (`docs/sync-pipeline-v2-plan.md`, Phase 2b RESULTS):
+  > (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`, Phase 2b RESULTS):
   > - The silent-no-op claim is **CONFIRMED**, now with captured proof —
   >   whisper-cli's stderr prints `dtw_token_timestamps is not supported with
   >   flash_attn - disabling` / `dtw = 0`.
@@ -217,7 +217,7 @@ segment-index pairs:
 **The aligner itself is exonerated** — all 447 spans in the V6 project were
 independently confirmed correct at the alignment level. **Partial update
 (2026-08-04):** this exonerates the aligner's SPANS, not its TIMESTAMPS —
-`docs/sync-pipeline-v2-plan.md`'s Part L found that the 77-81 and 144-147
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Part L found that the 77-81 and 144-147
 cases in the list below are token-smear cascades, not (only) picker
 over-reach; see Part L before re-deriving a picker-only conclusion. The
 defect is
@@ -297,7 +297,7 @@ export/download feature exists for it in the app itself.
   timestamps by **exactly zero** (measured, 4,579 + 2,080 tokens). The
   "`-nfa` breaks stdout printing" half of this entry is **false** on the
   bundled binary and must not be used to scope future work. See
-  `docs/sync-pipeline-v2-plan.md`'s Phase 2b RESULTS.
+  `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 2b RESULTS.
 - `--vad` — needs an unbundled model file; not pursued.
 - The curr-side seam exemption variant — confirmed unsound on real data
   twice (segment 60 on V6, "They're the worst" on the 173-segment project).

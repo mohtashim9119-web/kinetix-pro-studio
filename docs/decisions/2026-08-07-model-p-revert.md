@@ -30,7 +30,7 @@ revert have actually thrown away, and why was it about to happen.
 
 **[MEASURED]** `18f5734` = `"feat(sync): Phase 4 readiness close-out — Steps Y-Z"`
 (2026-08-07 00:20), tagged `phase4-implementation-ready-2026-08-07`. It is the close-out
-commit for `docs/sync-pipeline-v2-plan.md`'s Phase 3 (forced-alignment) measurement
+commit for `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3 (forced-alignment) measurement
 programme — at this commit, `sync-pipeline-v2-plan.md`'s own Phase Status table records
 Phase 3 as **"IMPLEMENTATION-READY, not started... Integration not started."** Every
 commit from Phase 0 through this one is measurement/design only — the phrase "No `src/`
@@ -72,7 +72,7 @@ tests) at `6eae48e`.
 ## What the docs ruled
 
 **[MEASURED]** Two companion documents exist **only in the park commit** (not on `main`
-as of this consolidation, prior to it being folded in) — `docs/segments-invariant-ruling.md`
+as of this consolidation, prior to it being folded in) — `docs/decisions/segments-invariant-ruling.md`
 and `docs/drag-path-testability-assessment.md` — both stamped *"Written 2026-08-07, at
 HEAD `0e2ac5b` (K16)... Status: AWAITING OWNER RULING. Design only — no code written,
 no commit made."*
@@ -104,14 +104,14 @@ harness's central assertion depends on which model is ruled.
 
 **[MEASURED]** `6eae48e` (K17) was committed *after* the ruling doc was written, and its
 own message states it needed no ruling: *"An overlap is illegal under BOTH candidate
-models of `segments` (`docs/segments-invariant-ruling.md` §0), so this needed no
+models of `segments` (`docs/decisions/segments-invariant-ruling.md` §0), so this needed no
 ruling."* — consistent with the ruling doc's own §4.4 finding.
 
 **[MEASURED]** The park commit's own new code is written in Model P's vocabulary and
 cites numbered owner rulings dated the same day: `projectFingerprint.ts`'s docstring
 opens *"OWNER RULING (2026-08-07, task 2)..."*; `exportPipeline.ts`'s new
 `checkTimelineIsGapless` is headed *"TASK 4 (2026-08-07) — the export guard the ruling
-asked to be made explicit"* and cites `docs/segments-invariant-ruling.md` §1.3 and §4.1
+asked to be made explicit"* and cites `docs/decisions/segments-invariant-ruling.md` §1.3 and §4.1
 by name; `snapBoundaries.ts`'s 50/50 rule cites *"owner ruling (2026-08-07, ruling
 point 2)."* **This confirms the owner ruled Model P** sometime between the ruling doc's
 writing and the park commit (both 2026-08-07), and implementation of that ruling's
@@ -177,7 +177,7 @@ any case, **never carried out as a committed state anywhere in reachable history
   the pre-existing "K13" bug (`project-state.md`'s Deferred Known Bugs: lock
   preservation is broken across resync) — a real, independently-tracked defect, not
   invented for Model P.
-- **`docs/segments-invariant-ruling.md`'s Model P ruling itself** — the underlying
+- **`docs/decisions/segments-invariant-ruling.md`'s Model P ruling itself** — the underlying
   architectural question is real, well-evidenced (§1.3's export-desync trace), and
   independent of whether any specific patch survives. Re-implementing its migration
   steps (§6.1) cleanly, starting from the current `main` tip rather than a discarded

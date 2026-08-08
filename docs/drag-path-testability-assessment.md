@@ -1,7 +1,7 @@
 # Drag-Path Testability — Assessment and Recommendation
 
 > **STATUS UPDATE, 2026-08-07: the ruling this document was waiting on landed — Model P
-> (`docs/segments-invariant-ruling.md`, `docs/decisions/2026-08-07-model-p-ruling.md`).**
+> (`docs/decisions/segments-invariant-ruling.md`, `docs/decisions/2026-08-07-model-p-ruling.md`).**
 > What that settles and what's still open, item by item:
 > - **§6 Q1 (Approve Route 2, "alongside not before" sequencing) — SETTLED, approved.**
 >   The ruling this recommendation was conditioned on is now in. Route 2's central
@@ -29,7 +29,7 @@
 > Written 2026-08-07, at HEAD `0e2ac5b`, working tree clean apart from the
 > `package.json` test-gate change reported in Part 1.
 >
-> Companion to `docs/segments-invariant-ruling.md`.
+> Companion to `docs/decisions/segments-invariant-ruling.md`.
 
 ---
 

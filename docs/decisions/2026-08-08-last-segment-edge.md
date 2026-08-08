@@ -5,8 +5,8 @@
 >
 > Recorded here as the canonical, citable decision record. Cross-links:
 > `docs/decisions/2026-08-07-model-p-ruling.md` (the gapless-partition ruling this
-> completes), `docs/segments-invariant-ruling.md` (the analysis behind it), and
-> `docs/wkwebview-drag-checklist.md` step 4 (the manual test that failed twice and
+> completes), `docs/decisions/segments-invariant-ruling.md` (the analysis behind it), and
+> `docs/checklists/wkwebview-drag-checklist.md` step 4 (the manual test that failed twice and
 > forced the question).
 
 ---

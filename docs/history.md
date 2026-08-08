@@ -2584,7 +2584,7 @@ confirmed cuts now sit in pauses: **86.8% → 96.2% correct cuts**.
 **What this did not fix.** The investigation that produced this fix also surfaced a separate, still-
 open defect — word-shift, where a segment's cut point lands one or more words off from where the
 sentence actually breaks. Two candidate fixes for it (FENCE, QUIET) were tried and both failed. This
-remains open; see `docs/boundary-drift-investigation.md` for the full evidence, dead ends, and
+remains open; see `docs/ws1-sync-pipeline/boundary-drift-investigation.md` for the full evidence, dead ends, and
 tooling notes (this document does not repeat that content) and `project-state.md`'s Active Tasks for
 current status.
 
@@ -2699,7 +2699,7 @@ Started from the Pipeline Contract Program (`docs/sync-pipeline-contract-plan.md
 pending this work) and the boundary-quality checker. Ran through: `docs/sync-redesign-audit-
 report.md` and `docs/audit-verification-2026-08-03.md` (structural audits of the pre-existing
 sync pipeline); the index-based seam-exemption fix for `isBreathSilence` (ear-verified 86.8%→
-96.2% correct cuts, `docs/boundary-drift-investigation.md`); `docs/sync-pipeline-v2-plan.md`'s
+96.2% correct cuts, `docs/ws1-sync-pipeline/boundary-drift-investigation.md`); `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s
 acceptance as the live plan (Revision 2 same day — stage contracts, per-stage lock gates, the
 Russian descope, adversarial audit); Phases 0/1/1b/2a/2b closing (DTW abandoned, measured
 zero effect — Phase 3 becomes forced alignment); Phase 3's long forced-alignment measurement
@@ -2711,7 +2711,7 @@ built); Phase 4 readiness close-out (`18f5734`, Steps Y-Z — Option A ruled for
 replay harness restored after a fourth K8 `/tmp`-loss recurrence, a permanent tripwire added).
 **Every commit through `18f5734` is measurement, design, or docs — zero `src/` changes**, by
 explicit, repeated instruction. Full detail: `project-state.md`'s Current State field (the
-dense, dated chain) and `docs/sync-pipeline-v2-plan.md` itself.
+dense, dated chain) and `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` itself.
 
 **2. K14-K17 — a separate, explicitly-labeled workstream (2026-08-07, `ad70019`..`6eae48e`).**
 Real owner-reported bugs in the editor's lock/drag-cascade behavior, diagnosed and fixed with
@@ -2724,7 +2724,7 @@ frozen-neighbour overlap in the live drag preview). Suite reached 1365 tests, gr
 semantics, K13, K14 entries).
 
 **3. The `segments` invariant surfaces (2026-08-07, immediately after K16/K17).**
-`docs/segments-invariant-ruling.md` found that K14's hard-wall and K15a's `restackWindow`
+`docs/decisions/segments-invariant-ruling.md` found that K14's hard-wall and K15a's `restackWindow`
 locality had silently adopted "Model S" (independent slots, gaps legal) while nine other
 components — including both export paths — assume "Model P" (gapless partition) and cannot
 represent a gap. Recommended Model P; flagged a real, sourced export-desync risk. A companion,
@@ -2765,13 +2765,13 @@ file's own "Repository Consolidation" entry above. `docs/decisions/2026-08-07-mo
 supersedes its Model P conclusions.
 
 <details>
-<summary>Sync Pipeline — Structural Audit Report (Archived, migrated from the deleted docs/sync-redesign-audit-report.md, final source sha 53ff455) — read-only audit dated 2026-08-03, findings absorbed into docs/sync-pipeline-v2-plan.md</summary>
+<summary>Sync Pipeline — Structural Audit Report (Archived, migrated from the deleted docs/sync-redesign-audit-report.md, final source sha 53ff455) — read-only audit dated 2026-08-03, findings absorbed into docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md</summary>
 
 Read-only structural audit of the sync pipeline (`App.tsx`'s `handleApplySyncFromFiles`,
 `useWhisper.ts`, `whisperService.ts`, `snapBoundaries.ts`, `syncEngine.ts`, `syncContracts.ts`,
 `syncLog.ts`, `syncConstants.ts`, `silenceDetector.ts`, `boundaryQuality.ts`, `types.ts`) to
 support the sync-pipeline redesign. No files were modified. **Confirmed absorbed into
-`docs/sync-pipeline-v2-plan.md`** (spot-checked 2026-08-07: the pipeline's two-pass snap
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`** (spot-checked 2026-08-07: the pipeline's two-pass snap
 duplication, the token-index-vs-timestamp distinction, and the console-only silent-fallback
 inventory all appear in v2, the last as v2's Contract OUT required-additions table).
 
@@ -2832,7 +2832,7 @@ audit itself.
 </details>
 
 <details>
-<summary>Audit Verification Report — 2026-08-03 (Archived, migrated from the deleted docs/audit-verification-2026-08-03.md, final source sha 53ff455) — read-only verification against HEAD 8587cac, findings absorbed into docs/sync-pipeline-v2-plan.md</summary>
+<summary>Audit Verification Report — 2026-08-03 (Archived, migrated from the deleted docs/audit-verification-2026-08-03.md, final source sha 53ff455) — read-only verification against HEAD 8587cac, findings absorbed into docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md</summary>
 
 Independent, source-grounded verification pass re-deriving (not trusting) the structural
 audit's claims directly from code, plus five specific claims the task brief attributed to an
@@ -2874,7 +2874,7 @@ by mistuning.
 **FENCE/QUIET dead ends — no code trace anywhere, prose only.** Confirmed via `git log -S`,
 `git fsck --dangling`, and a repo-wide grep: neither term appears in any `.ts`/`.tsx` file,
 committed or dangling. The described mechanisms only ever existed as prose in
-`docs/boundary-drift-investigation.md` (still on `main`, KEEP — see that doc directly for the
+`docs/ws1-sync-pipeline/boundary-drift-investigation.md` (still on `main`, KEEP — see that doc directly for the
 quoted failure descriptions).
 
 **Determinism — the pipeline's own TypeScript is deterministic for identical inputs.**
@@ -2887,7 +2887,7 @@ UNVERIFIED at the time:** whisper-cli's own run-to-run determinism (native binar
 codebase's control), and Web Audio API `decodeAudioData` determinism (browser/WebView-
 dependent). **Both were later independently confirmed PASS** by Phase 0/2a's own determinism
 checks (byte-identical MD5s across repeated runs, base.en and turbo both) — see
-`docs/sync-pipeline-v2-plan.md`'s Phase 0/2a entries.
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 0/2a entries.
 
 **Test coverage of the 8 seam-exemption fixes — gap identified, not yet closed as of this
 archival.** Only 6 of the 8 production V6 fixes (segments 34, 96, 162, 316, 338, 352, 405, 412)
@@ -2899,13 +2899,13 @@ later work found in this repository as of 2026-08-07 — flagged here so it isn'
 </details>
 
 <details>
-<summary>Sync Pipeline Contract Plan — Working Document (Archived, migrated from the deleted docs/sync-pipeline-contract-plan.md, final source sha 124ad3d) — program paused 2026-08-03, superseded in sequencing by docs/sync-pipeline-v2-plan.md</summary>
+<summary>Sync Pipeline Contract Plan — Working Document (Archived, migrated from the deleted docs/sync-pipeline-contract-plan.md, final source sha 124ad3d) — program paused 2026-08-03, superseded in sequencing by docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md</summary>
 
 A stage-contract hardening program for the pre-v2, 7-stage sync pipeline (six handoffs + one
 input annex). **Paused 2026-08-03** when the boundary-drift investigation found and fixed a
 real defect (`isBreathSilence`'s seam exemption, `c593f1d`) this program's own Pair 1 analysis
 had not surfaced, and surfaced the still-open word-shift defect that took priority.
-`docs/sync-pipeline-v2-plan.md` (accepted the same day) absorbed this program's sequencing and
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` (accepted the same day) absorbed this program's sequencing and
 contract/validator concepts into its own Part J and Phase 7 — **this document remained the sole
 authority for its §2 assumption tables and risk register (R1-R14) until this archival**, since
 v2 explicitly does not restate them.
@@ -2981,7 +2981,7 @@ there in full.
 Three blinded listening batches, same core protocol each time: opaque clip naming, a
 script-text-only manifest (no timing/error/pass-fail data, so a listen-through can't be biased
 by which clips "should" be wrong), and a private answer key held outside the repo
-(`.answer-keys/`, gitignored — see the K8 pattern documented in `docs/sync-pipeline-v2-plan.md`
+(`.answer-keys/`, gitignored — see the K8 pattern documented in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
 and the "Research Artifact Directories" note in `project-state.md`). Listener instructions: for
 each clip, report clip-relative timestamps to roughly a tenth of a second — where the
 narrator's voice truly stops (last audible energy, not trailing breath/mouth noise) and where
@@ -2990,7 +2990,7 @@ the next word's speech genuinely begins (first audible articulation, not breath 
 
 **Step C — 12 clips (`clip_01`-`clip_12`.wav), V6 project, 1.0s padding each side.** Two
 timestamps per clip (stop/start). **Scored:** all 12 checked against the private answer key —
-see `docs/sync-pipeline-v2-plan.md`'s Phase 3 "Step C" section for the C1-C5 results (FA closer
+see `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3 "Step C" section for the C1-C5 results (FA closer
 to human than `silencedetect` on all 7 scored failures, 6x-78x, median ~15x; breath mechanism
 confirmed with direct evidence).
 
@@ -2999,7 +2999,7 @@ overlapping Step C's 12 (avoiding a circular confirmation).** 12 drawn from the 
 residuals under the Steps E+F corrected reference, 8 controls. Three timestamps per clip
 (stop/breath-window/start) — this batch added the explicit breath-window report Step C didn't
 ask for. Padding verified programmatically before export (all 20 exact to <5ms). **Scored via
-Step J** (`docs/sync-pipeline-v2-plan.md`'s "Blinded-batch scoring pass, Steps I-L" section) —
+Step J** (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s "Blinded-batch scoring pass, Steps I-L" section) —
 excluding two heading-recitation-contaminated outliers (Step K's finding), FA's worst error
 across the remaining 15 clips was 131.6ms, comfortably under the 250ms gate.
 
@@ -3011,10 +3011,10 @@ guess. **Pre-send integrity check (a direct fix motivated by Step H's own clip-1
 which only a human ear had caught):** every clip's padding/duration verified programmatically,
 and every clip transcribed with the production whisper-cli sidecar and matched against its
 manifest text on three tests (first-word present, lead-in matches the previous segment's tail,
-no foreign content) — **10/10 pass**, results in `docs/phase4-step-q-integrity-check.csv`. One
+no foreign content) — **10/10 pass**, results in `docs/measurements/phase4-step-q-integrity-check.csv`. One
 clip flagged in advance, without identifying it, as sitting at the corpus's very start (no left
 context, the same edge condition that excluded Step C's clip 3 from scoring). **Scored via Step
-U** (`docs/sync-pipeline-v2-plan.md`'s Phase 4 "Steps U-X" section) — against the Step F
+U** (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 4 "Steps U-X" section) — against the Step F
 breath-aware reference, the 22 Spanish pauses went from median 61.2ms/p95 282.1ms (FAIL) to
 median 30.3ms/p95 50.4ms (PASS) against the approved 250ms gate, with one genuine remaining FA
 error (clip3_06, -1084ms, a corpus-start unscripted-lead-in case) reported as one, not hidden.
@@ -3032,14 +3032,14 @@ content is now fully executed and scored, were archived here.
 ("Model P") — `startTime[0] === 0` and `startTime[i] + duration[i] === startTime[i+1]`
 for every adjacent pair, `startTime` a derived cache of the duration prefix-sum, never
 independently authoritative. Model S (independently-positioned slots, gaps legal) is
-rejected. This closes the question `docs/segments-invariant-ruling.md` posed the same
+rejected. This closes the question `docs/decisions/segments-invariant-ruling.md` posed the same
 day (written at HEAD `0e2ac5b`/K16, originally only on the never-merged
 `model-p-editor-work` branch, landed on `main` as part of the repository consolidation
 just ahead of this ruling) — eleven components had answered the question differently,
 with no decision ever recorded, and the answer had silently flipped five times across
 K13-K16-adjacent work. Full ruling record: `docs/decisions/2026-08-07-model-p-ruling.md`.
 Full original analysis, updated in place with the ruling stamped at the top:
-`docs/segments-invariant-ruling.md`.
+`docs/decisions/segments-invariant-ruling.md`.
 
 **The lock-shortfall rule (§4.1(a)) is confirmed as part of the same ruling:** an
 ordinary (satisfiable) shortfall against a locked segment is absorbed by the adjacent
@@ -3088,7 +3088,7 @@ code defect. Fixed by running the committed `scripts/phase4-restore-replay-input
 regenerated all three projects deterministically from committed sources and self-verified
 value-for-value against the Step M baseline (3989/1836/363 tokens, 547/239/27 silences). The
 tests were left untouched — their loud failure naming the fix is Step Y's design. Both
-external inputs the harness needs are now documented in `docs/phase4-baseline-methodology.md`.
+external inputs the harness needs are now documented in `docs/measurements/phase4-baseline-methodology.md`.
 
 **Item 1 — K14's lock hard wall (`2f25ab4`).** `applyAnchorBasedTiming` computed an unlocked
 successor's start as `Math.max(rawAnchor, lockFloor)`. A max is a FLOOR: it closes an overlap
@@ -3336,7 +3336,7 @@ drag checklist the assessment recommended (§6 Q3, the one item still marked "st
 Model P settled the other two), and resolve — not merely record — the `pointercancel` question
 WS2 task 2 surfaced as an observation.
 
-**The checklist.** `docs/wkwebview-drag-checklist.md` — 10 numbered steps, each with an
+**The checklist.** `docs/checklists/wkwebview-drag-checklist.md` — 10 numbered steps, each with an
 unambiguous expected result and an explicit note on what the automated suite (`dragSession.test.ts`,
 `dragSessionHarness.test.ts`) already covers numerically vs. what only a real WKWebView run can
 confirm. Grounded directly in the assessment's own §4.1-§4.6 gap analysis: no CSS layout engine
@@ -3400,14 +3400,14 @@ skipped), 59 files** — unchanged count, `tsc --noEmit` clean.
 
 **WS2 close-out.** All three WS2 tasks are now done: task 1 (extraction), task 2 (the Route 2
 harness), task 3 (this one). WS2 is closed as a workstream — see `project-state.md`'s Active
-Tasks and `docs/roadmap-2026-08-07.md`'s new §D7. What remains touching this code is the
+Tasks and `docs/ws1-sync-pipeline/roadmap-2026-08-07.md`'s new §D7. What remains touching this code is the
 pre-existing, deliberately-unfixed stuck-`resizingId` bug (found by task 1, re-pinned by task
 2's harness) — a standing known bug, not a WS2 task, and not fixed by WS2 closing.
 
 ## Manual-Failure Triage — Implementation Record (2026-08-08)
 
 WS2 closed 2026-08-07/08 with a fully green suite (1470 tests, `tsc` clean) and a new manual
-checklist (`docs/wkwebview-drag-checklist.md`, WS2 task 3). This entry records the FIRST actual
+checklist (`docs/checklists/wkwebview-drag-checklist.md`, WS2 task 3). This entry records the FIRST actual
 manual run against that checklist, performed the same day it was adopted, and its aftermath —
 because it found seven real defects, none caught by the suite the close-out had just described
 as complete.
@@ -3526,7 +3526,7 @@ untouched by any of the five fixes and were not implicated. The Step M golden re
 `whisperService.ts`), only the drag-cascade/timeline-zoom path.
 
 **Result.** 1491 passed, 1 expected fail (F3's auto-scroll repro, converted to `it.fails` so the deliberately unimplemented capability is documented without leaving the suite red), 1 skipped (1493 total), 60 files — net +23 over the 1470 baseline.
-`tsc --noEmit` clean. `docs/wkwebview-drag-checklist.md` gained two permanent steps (11: a
+`tsc --noEmit` clean. `docs/checklists/wkwebview-drag-checklist.md` gained two permanent steps (11: a
 locked segment's own edge; 12: a video-boundary drag, then play both sides) from failures this
 run found that weren't yet checklist steps, plus a full run-log entry recording this pass's
 per-step results. A second manual run — against the five fixes, plus the two new checklist
@@ -3547,7 +3547,7 @@ and a repo had diverged by five commits.
 the repo's own F-numbers (F4 = pointercancel, F2 = last-segment rescale), the brief's
 (F10 = pointercancel, F4 = last-segment rescale), and the checklist's step numbers (10 and 4).
 "F4" meant two different defects depending on the document. **Ruled: checklist step numbers
-are the only identifier** — see `docs/wkwebview-drag-checklist.md`'s "Failure numbering"
+are the only identifier** — see `docs/checklists/wkwebview-drag-checklist.md`'s "Failure numbering"
 section, which carries the cross-reference table.
 
 ### Stage 1′ — structural teardown + harness credibility (`eb8a911`)
@@ -3648,7 +3648,7 @@ asserted directly.
 
 ### Stage 4 — parking step 12 (`6d2b372`)
 
-Docs only. `docs/video-segment-investigation.md` separates three symptoms previously carried
+Docs only. `docs/ws3-video-segments/video-segment-investigation.md` separates three symptoms previously carried
 as one DEFERRED line: the preview freeze (the former "F6"), playback speed changing on a
 video-segment drag, and the drawer's slip-trim bar overflowing. There is no evidence they
 share a cause — only a trigger context, and two of the three do not involve the preview player
@@ -3953,7 +3953,7 @@ sweeps every edge of every segment through the real session harness with deltas 
 ### Doc-scope correction: step 12 covers one symptom, not the video path
 
 Step 12's PASS was being read as closing the whole video path. It closes one of three
-symptoms. Per-symptom status was written into `docs/video-segment-investigation.md`:
+symptoms. Per-symptom status was written into `docs/ws3-video-segments/video-segment-investigation.md`:
 
 1. **Preview freeze — VERIFIED RESOLVED**, and **cause not determined.** No commit in WS2
    touched either implicated module [MEASURED — newest commit on `useWebCodecsPreview.ts` is
@@ -3989,7 +3989,7 @@ cannot catch a regression because no corpus project exercises an interactive dra
 
 ### WS1 readiness — and the defect it found
 
-`docs/ws1-readiness-2026-08-08.md`. The 50/50 silence split was re-confirmed cleanly
+`docs/ws1-sync-pipeline/ws1-readiness-2026-08-08.md`. The 50/50 silence split was re-confirmed cleanly
 decoupled against **current `main`** rather than the park commit § D4 measured, since the
 last-segment lock, the duration-invariance guard, Model P's assertion and undo/redo all
 landed afterwards. None of the three reaches the sync path.

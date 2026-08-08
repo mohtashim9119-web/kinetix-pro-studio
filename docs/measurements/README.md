@@ -1,14 +1,26 @@
 # Measurement Data Index
 
 Raw output from completed, scored, or superseded measurement phases of the sync-pipeline
-research programme (Phase 2b through Phase 3's data-cleaning/reference-validity passes).
-Moved here 2026-08-07 during the documentation baseline cleanup — none of these files are
-referenced by hardcoded path in any script under `scripts/`, so moving them breaks nothing
-live. Everything still directly load-bearing for a re-runnable tool or test (e.g. the Step M
-golden baseline, `verification-baseline.csv`, the forced-alignment onset CSVs `phase4-step-w-
-trust.py`/`phase4-step-x-verify.py` read) remains in `docs/` — see `project-state.md`'s
-Documentation Map for that list. Nothing here was deleted or edited; content is unchanged from
-its original commit.
+research programme (Phase 2b through Phase 4's structural-check/scoring passes). Also holds
+one methodology document (`phase4-baseline-methodology.md`, prose, not data) — it's the
+companion explainer for the Step M golden-baseline CSVs still in `docs/` root (see "What
+stayed in `docs/` instead" below) and belongs beside the data it describes, not among the
+WS1/WS3 workstream docs. A future sweep should not fold or move it on sight of the `.md`
+extension among CSVs — it's meant to be here.
+
+Moved here 2026-08-07 (first batch) and 2026-08-09 (second batch, docs restructure Phase 2)
+during documentation cleanup passes. Everything in this folder was verified, file by file,
+to have no hardcoded path reference in any executable `scripts/*.py` or `scripts/*.ts` before
+being moved — read-only mentions in `.md` runbooks and CLI `help=`/docstring text don't count,
+since those can't break anything at run time. **This check matters: the 2026-08-09 move
+attempt initially included the Step M golden-baseline CSVs, `verification-baseline.csv`, the
+`*-Smear-Phase2a.csv` exports, and the core `phase3-onset-*-fa*.csv`/`*-smear-baseline.csv`
+files below, and broke 5 tests immediately (`phase4-handoff-replay-sync.test.ts`,
+`phase4-step-w-k13-repro.test.ts`, both of which read those CSVs by hardcoded path) — caught
+by running the suite before committing, reverted the same session.** Everything still directly
+load-bearing for a re-runnable tool or test remains in `docs/` root — see "What stayed in
+`docs/` instead" below for the exhaustive list. Nothing in this folder was deleted or edited;
+content is unchanged from its original commit.
 
 | File | Phase | Date | Purpose |
 |---|---|---|---|
@@ -32,6 +44,13 @@ its original commit.
 | `phase3-step2-targets-v6.json` | Phase 3 data-cleaning, Step 2 | 2026-08-05 | Target segment set for the Step 2 joint-context re-measurement. |
 | `phase3-step4-script-vs-whisper.csv` | Phase 3 data-cleaning, Step 4 | 2026-08-05 | Script-text-mode vs. whisper-text-mode FA comparison on the WER/CER-verified-faithful subset. |
 | `phase3-step4-wer-cer.csv` | Phase 3 data-cleaning, Step 4 | 2026-08-05 | WER/CER classification (V6/173/Spanish) establishing all three transcripts as faithful before any FA comparison. |
+| `phase3-step-a-threshold-sweep.csv` | Phase 3 reference-validity, Step A | 2026-08-05 | Full per-row, per-floor threshold sweep. Write-only output of `scripts/phase3-reference-validity-step-a-sweep.py`; no other script reads it back. |
+| `phase3-step-b-phoneme-bucket.csv` | Phase 3 reference-validity, Step B | 2026-08-05 | Every V6 boundary tagged by phoneme bucket. Write-only output of `scripts/phase3-reference-validity-step-b-phoneme.py`; no other script reads it back. |
+| `phase4-step-q-integrity-check.csv` | Phase 4, Step Q | 2026-08-06 | Spanish blinded-clip export-integrity check. Write-only output of `scripts/phase4-step-q-spanish-clips.py`; no other script reads it back. |
+| `phase4-step-q-spanish-manifest.csv` | Phase 4, Step Q | 2026-08-06 | Public manifest for the Spanish blinded-clip batch. Write-only output of `scripts/phase4-step-q-spanish-clips.py`; no other script reads it back. |
+| `phase4-step-s-check-results.csv` | Phase 4, Step S | 2026-08-06 | Structural-check results (V6/173/Spanish baselines). Write-only output of `scripts/phase4-step-s-structural-checks.py`; no other script reads it back. |
+| `phase4-step-u-spanish-scored.csv` | Phase 4, Step U | 2026-08-06 | Scored results for the Spanish blinded batch. Write-only output of `scripts/phase4-step-u-score-spanish.py`; no other script reads it back. |
+| `phase4-baseline-methodology.md` | Phase 4 (prose) | 2026-08-07 | Methodology explainer for the Step M golden-baseline CSVs (see below) — not raw data, kept here as their companion doc. |
 
 ## What stayed in `docs/` instead
 

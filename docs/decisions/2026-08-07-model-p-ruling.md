@@ -1,7 +1,7 @@
 # The Model P Ruling — Official and Locked
 
 > **OWNER RULING, 2026-08-07.** Recorded here as the canonical, citable decision record.
-> Full analysis and the reasoning that led here: `docs/segments-invariant-ruling.md`
+> Full analysis and the reasoning that led here: `docs/decisions/segments-invariant-ruling.md`
 > (updated the same day to point back at this doc). Context on the parked in-flight
 > implementation attempt and why it was never merged: `docs/decisions/2026-08-07-model-p-revert.md`.
 
@@ -110,7 +110,7 @@ rework.
 
 ## Consequences
 
-- `docs/segments-invariant-ruling.md`'s status is now RULED, not AWAITING OWNER RULING (§0
+- `docs/decisions/segments-invariant-ruling.md`'s status is now RULED, not AWAITING OWNER RULING (§0
   updated in place, full analysis retained).
 - `docs/drag-path-testability-assessment.md`'s Route 2 recommendation is now unconditionally
   approved, sequenced at step 5 of the P migration (`segments-invariant-ruling.md` §6.1),

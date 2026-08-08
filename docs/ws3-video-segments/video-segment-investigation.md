@@ -238,7 +238,7 @@ since overturned: **ruled a bug, 2026-08-08.**
 **Owner ruled: it is a bug** — i.e. option 3, decouple. Not fixed in the run that
 received the ruling, by explicit instruction: *scope it and roadmap it*. See "Scope of
 the fix" at the top of this section for what that fix actually entails, and
-`docs/roadmap-2026-08-07.md` § D12 for its place in the queue.
+`docs/ws1-sync-pipeline/roadmap-2026-08-07.md` § D12 for its place in the queue.
 
 The original warning still stands and is now more relevant, not less: silently
 decoupling would change committed timings for every video drag, and **the golden replay
@@ -453,7 +453,7 @@ construction (the same "coupling engaged ⇒ product ≤ srcDur" argument §2 al
 makes for the `'end'`-edge case would then also hold for `'start'`-edge). Doing (2)
 without (1) is the more complete fix; doing (1) without (2) is the faster one.
 
-**Manual checklist step 13** (`docs/wkwebview-drag-checklist.md`) currently exercises
+**Manual checklist step 13** (`docs/checklists/wkwebview-drag-checklist.md`) currently exercises
 only the `?? 60` / unknown-`sourceDuration` case last run fixed. It does not exercise
 a known-`sourceDuration` segment whose `trimStart` a left-edge drag has pushed out of
 range, so it would PASS today despite this symptom being open — the checklist itself
@@ -479,7 +479,7 @@ needs a new step for this case before it can be trusted to catch a regression he
 
 ## Related
 
-- `docs/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
+- `docs/checklists/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
   the `?? 60` case — see §3's fix-shape note on why it needs a second case).
 - `project-state.md` — Deferred Known Bugs ("known video-path gap"); WS3 (Video
   Segments) as of the 2026-08-09 restructure.
