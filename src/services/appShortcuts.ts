@@ -35,6 +35,24 @@ export interface AppShortcutContext {
    * first. This is the one place this module declines to do exactly what the key
    * says, and it is called out in `App.tsx` at the call site as well as here.
    *
+   * RATIFIED BY OWNER RULING, 2026-08-08: **keep the refusal.** This deviation
+   * shipped as an implementer's judgment call and was put to the owner precisely
+   * because refusing a key the user pressed is the kind of thing that should not
+   * be decided quietly. It is now a decision, not a default — do not "simplify"
+   * it away on the grounds that ⌘R should always mean reload.
+   *
+   * The rejected alternative, for the record: reload anyway and let the user
+   * live with it. Rejected because the work destroyed is unrecoverable and
+   * unbounded (a long export is minutes of GPU/CPU time), the keypress is very
+   * plausibly a reflex rather than an intent, and the cost of being wrong is
+   * wildly asymmetric — a refused reload costs one extra keystroke after
+   * cancelling; a performed one costs the whole export.
+   *
+   * The key is still CONSUMED (`'reload-blocked'` is deliberately distinct from
+   * `'ignore'`) so the webview's own reload cannot fire behind us — refusing the
+   * action while letting the platform perform it anyway would be the worst of
+   * both.
+   *
    * Devtools are unaffected — opening the inspector during an export is
    * harmless and occasionally exactly what someone wants.
    */
