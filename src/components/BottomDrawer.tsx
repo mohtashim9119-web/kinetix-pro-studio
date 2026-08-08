@@ -10,6 +10,7 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { SegmentControls } from './SegmentControls';
 import { labelOf, TRANSITIONS, ANIMATIONS, OVERLAYS, TRANSITION_NONE, ANIMATION_NONE, OVERLAY_NONE } from '../effectsOptions';
 import { DEFAULT_ZOOM_SCALE_RATE, isRateCapped } from '../services/zoomScale';
+import { computeSlipBarGeometry } from '../services/slipBarGeometry';
 
 interface Props {
   segment: VideoSegment | null;
@@ -71,11 +72,17 @@ export function BottomDrawer({
 
   const asset = s ? assets.find(a => a.id === s.assetId) : undefined;
   const isVideo = asset?.type === 'video';
-  const srcDur = s?.sourceDuration ?? 60;
   const trimStart = s?.trimStart ?? 0;
-  // Bar width is always fixed = segment.duration (slip model — only position slides)
-  const widthPct = srcDur > 0 && s ? (s.duration * (s.playbackSpeed ?? 1) / srcDur) * 100 : 0;
-  const leftPct  = srcDur > 0 ? (trimStart / srcDur) * 100 : 0;
+  // See slipBarGeometry.ts for why an unknown sourceDuration hides the bar
+  // (hasKnownSourceDuration: false) instead of guessing, and why widthPct/
+  // leftPct are clamped to [0, 100] regardless of input.
+  const { hasKnownSourceDuration, widthPct, leftPct } = computeSlipBarGeometry({
+    duration: s?.duration ?? 0,
+    playbackSpeed: s?.playbackSpeed,
+    trimStart,
+    sourceDuration: s?.sourceDuration,
+  });
+  const srcDur = s?.sourceDuration ?? 0;
 
   return (
     <AnimatePresence>
@@ -155,8 +162,10 @@ export function BottomDrawer({
               onOpenStockSearch={onOpenStockSearch}
             />
 
-            {/* Visual Trim Bar — video segments only (slip model) */}
-            {isVideo && s && (
+            {/* Visual Trim Bar — video segments only (slip model). Requires a known,
+                positive sourceDuration; see hasKnownSourceDuration's own comment above
+                for why an unknown source duration hides this instead of guessing. */}
+            {isVideo && s && hasKnownSourceDuration && (
               <div className="space-y-2 pt-1">
                 <label className="text-[7px] uppercase font-bold text-gray-500 block">Clip Trim</label>
 
