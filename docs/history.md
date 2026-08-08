@@ -4004,3 +4004,105 @@ because no test asserts history depth around Apply Sync, and this repo has no Ap
 integration harness.
 
 Made WS1's first slice, ahead of the 50/50 work.
+
+---
+
+## Dead-Code Cleanup Run (2026-08-08/09) — Two Passes
+
+Two-pass cleanup using `knip` (temp devDependency), `cargo clippy --all-targets`, targeted
+`grep` census, and manual cross-file verification (knip's cross-file-only view false-positives
+on symbols used within their own defining file — every finding below was hand-verified against
+real occurrence counts).
+
+**Pass 1 census, by disposition.** 33 build-artifact false positives (`src-tauri/target/**`,
+gitignored). 12 `src/dev/*` spike files kept — `CLAUDE.md` cites `webcodecsSpike/main.ts` by
+name as the source of two bugs still fixed in production. `autoprefixer` devDependency deleted
+(no `postcss.config.*` anywhere; Tailwind v4's `@tailwindcss/vite` handles prefixing). 29
+functions/consts + 15 types kept as cosmetic over-exports (real usage within their own file, not
+worth cross-file churn). Genuinely dead, deleted: `closeGesture` (`historyCoalesce.ts:145`),
+`_resetWaveformMirrorForTests` (`waveformStore.ts:107`), `__resetWebCodecsSupportCacheForTests`
+(`webcodecsSupport.ts:27`), `AudioExtension` (`audioFormats.ts:27`). Unused Rust dependency
+`serde_json` deleted — `grep -rl serde_json src-tauri/src/*.rs` (all 4 source files) → zero
+matches, Tauri depends on it transitively. Zero clippy warnings. Ungated debug
+`console.log('[dashboard] loaded metas:', data)` (`ProjectDashboard.tsx:29`, introduced by
+`1dba3a7`) deleted — fired on every launch, not DEV-gated. `scripts/*.test.ts` (4 files:
+`no-tmp-artifacts.test.ts`, `phase4-handoff-replay-sync.test.ts`,
+`phase4-step-aa-unlock-repro.test.ts`, `phase4-step-w-k13-repro.test.ts`) confirmed live —
+`npx vitest run scripts/` → 4 files/12 tests, all passing. Zero commented-out code blocks found
+(11 candidates scanned, all prose). Net Stage 5 deletion: 1 devDependency, 4 dead exports, 1
+Rust dependency, 1 ungated log — executed in 3 grouped commits, `cargo check`/`cargo clippy`/
+`tsc`/full suite clean after each.
+
+**Pass 1, bug fix — drawer slip-bar overflow.** `BottomDrawer.tsx`'s `widthPct` used
+`sourceDuration ?? 60` unclamped; an unprobed segment over 60s produced `widthPct > 100`. Fixed
+via a pure, tested `computeSlipBarGeometry` (`src/services/slipBarGeometry.ts`) clamping
+`widthPct`/`leftPct` to `[0,100]` and reporting `hasKnownSourceDuration: false` instead of
+guessing. 8 new tests. Commit `a7044c1`. Same bug class left unfixed at the time at
+`Timeline.tsx:654` (`(s.sourceDuration ?? 60) - s.duration`, feeds `maxTrim`) and `App.tsx:4949`
+(`editingSegment.sourceDuration ?? 60`) — closed in Pass 2 below.
+
+**Pass 1, bug fix — Apply Sync double history entry.** `handleApplySyncFromFiles` pushed
+history twice: the main commit `setProject` (~`App.tsx:2917`) and an unrelated keyless second
+`setProject` (~`App.tsx:3005`) for the post-hoc boundary-quality log append (a keyless write
+always pushes per `historyCoalesce.ts`'s discrete-write rule) — every Apply Sync cost two undo
+presses. Fixed by routing the second write through `setProjectSilent`. 4 new tests
+(`applySyncHistory.test.ts`). Commit `1b16a50`.
+
+**Pass 1, coverage — historyAnchor.** Zero test hits for `historyAnchor` across the suite before
+this stage [MEASURED]. Extracted `Timeline.tsx`'s undo/redo anchor decision into pure
+`resolveHistoryAnchorAction` (`timelineLayout.ts`), behavior-preserving, 5 new tests.
+
+**Pass 1, App.tsx extraction — partial.** App.tsx measured at 5134 lines pre-stage. The
+undo/redo pure logic was already extracted in earlier phases; the remaining cluster
+(`setProject`/`setProjectSilent`, `handleUndo`/`handleRedo`/`blockedByLock`) did not extract
+cleanly without either violating the "don't move `useState` wiring" constraint or moving
+untested orchestration on faith — deferred. One piece did extract cleanly:
+`applyRestoredState`'s post-restore selection/playhead repair → `historyRestore.ts`,
+characterized first with 15 tests before call sites touched. Net: App.tsx +3 lines (14
+insertions, 11 deletions), final 5137 lines. Golden replay byte-identical.
+
+**Pass 2, corrected blocker.** `jsdom` **is** a devDependency (`^30.0.1`) — five files already
+opt in per-file via `// @vitest-environment jsdom` (default env is `node`), including
+`dragSessionHarness.ts`. Only `@testing-library/react` is genuinely absent. Pass 1's "no
+jsdom/testing-library" blocker was overstated.
+
+**Pass 2 — the two remaining `?? 60` sites, fixed.** `Timeline.tsx:654`'s
+`(s.sourceDuration ?? 60) - s.duration` is a genuine data-correctness bug: for `duration > 60`
+with unknown `sourceDuration`, `maxTrim` collapses to 0, silently discarding any pre-existing
+valid `trimStart`; for `duration < 60`, the same fabricated bound permits a `trimStart` tens of
+seconds past the real source length. `App.tsx`'s `editingSegment.sourceDuration ?? 60` has the
+same two failure modes. Both sites sit behind state never set to a live value anywhere —
+`grep -rn "setTrimmingSegmentId(\|setIsAdjustingTrim("` matches only the two `useState`
+declarations, and `editingSegment` is never set to an actual segment anywhere — both trim-drag
+paths are currently unreachable in the shipped app, fixed anyway since `CLAUDE.md`'s Target
+Structure names `SegmentEditorModal.tsx` as a planned extraction target. Fix: added
+`maxTrimStartSec` to `slipBarGeometry.ts` (0 when `hasKnownSourceDuration` is false), reused
+`computeSlipBarGeometry` at both sites. 4 new tests (`slipBarGeometry.test.ts`). Commit
+`46d2304`.
+
+**Pass 2 — owner rulings on ambiguous exports.** Kept `getAsset`/`clearAllAssets` (documented
+full-CRUD pair in `assetStore.ts`); deleted `easeLinear` (`canvasAnimations.ts`), `renamePreset`
+(`presetService.ts`), `loadMostRecentMeta` (`projectStore.ts`) — each zero references anywhere.
+Kept `syncInstrument.ts`, fixed its stale header — it claimed "two call sites" but actually has
+14 (11 in `App.tsx`, 3 in `waveformPipeline.ts`); the prior audit's own summary said "13" while
+its own breakdown listed 11+3=14, itself arithmetically wrong, corrected here via fresh count.
+Commit `5f2e385`.
+
+**Pass 2 — history-cluster extraction, second attempt (succeeded).** Target: `setProject`/
+`setProjectSilent`, `applyRestoredState`, `blockedByLock`, `handleUndo`/`handleRedo`. This
+cluster never touches real DOM/`window` (unlike `dragSession.ts`), so its harness
+(`historySessionHarness.ts`) runs under the default `node` environment, no jsdom needed.
+`historySession.test.ts` PART 1 hand-transcribes pre-extraction `App.tsx` closures verbatim
+(cited by line number against commit `5f2e385`) as in-memory fakes — 15 tests covering the
+no-op-write skip, discrete-vs-coalesced pushes, `MAX_HISTORY_STATES` depth-cap eviction, the
+`isResizingRef` drag guard, lock-blocked-undo-leaves-history-untouched, redo-unreachable-after-
+new-edit, anchor propagation, and the DEV gapless-violation `console.error`. `historySession.ts`
+extracted as a byte-identical move; PART 2 re-runs the identical scenario tables against the
+real functions via the harness — byte-identical. Five `useCallback` bodies became thin
+call-ins; five now-dead imports removed. Results: 31 new tests, `tsc` clean, full suite green,
+golden replay 3/3 byte-identical both before and after. App.tsx: 5154 → 5070 lines (-84 net;
+30 insertions/114 deletions). New files: `historySession.ts` (228 lines),
+`historySessionHarness.ts` (238 lines), `historySession.test.ts` (503 lines).
+
+Full working notes (per-stage detail beyond what's above): were in `docs/_cleanup-findings.md`,
+folded here and removed.

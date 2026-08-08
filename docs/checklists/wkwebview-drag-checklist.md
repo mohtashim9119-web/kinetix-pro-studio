@@ -464,9 +464,10 @@ Recorded because a 12/12 is exactly the kind of result that gets over-read.
    behaviour on a real screen.
 
 2. **Step 12 scores symptom 1 only.** It does not score the `duration`↔`playbackSpeed`
-   coupling (silent, looks correct by eye — ruled a bug 2026-08-08, queued at roadmap § D12)
+   coupling (silent, looks correct by eye — ruled a bug 2026-08-08, scoped and queued at
+   `docs/ws3-video-segments/video-segment-investigation.md`'s Symptom 2 section)
    and it cannot reach the drawer slip-bar overflow (step 12 never opens the drawer). See
-   `docs/ws3-video-segments/video-segment-investigation.md`. Symptom 1's own resolution has **no identified
+   that same doc. Symptom 1's own resolution has **no identified
    cause** — no commit touched either implicated module — so a recurrence is expected rather
    than surprising.
 

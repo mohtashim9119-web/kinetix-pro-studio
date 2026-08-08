@@ -15,7 +15,7 @@ already been read once as closing the whole video path, and it does not.
 | # | Symptom | Status as of 2026-08-09 |
 |---|---|---|
 | 1 | Preview freeze after a boundary edit | **VERIFIED RESOLVED** — manual step 12 PASS. Cause **not determined**; see the honesty note in §1. |
-| 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN — RULED A BUG** (owner, 2026-08-08). Deliberately NOT fixed in that run; scoped in §2, roadmapped at `roadmap-2026-08-07.md` § D12. Predates all recent work. |
+| 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN — RULED A BUG** (owner, 2026-08-08). Deliberately NOT fixed in that run; scoped and sequenced in §2 below. Predates all recent work. |
 | 3 | Drawer slip-trim bar overflows the viewport | **OPEN — CONFIRMED BY SCREENSHOT, previous fix did not resolve it.** A 2026-08-08 run (commit `a7044c1`) fixed one root cause (an unknown `sourceDuration` fabricating a 60s denominator) and left a second, independent root cause untouched (an out-of-range `trimStart` committed by the live Timeline left-edge drag, with no clamp anywhere on the commit path). The owner's screenshot is the second cause, not the first. See §3 — rewritten this revision with a live, reproduced repro. |
 
 **What step 12 actually covers: symptom 1 only.** It drives a boundary drag between
@@ -237,12 +237,18 @@ since overturned: **ruled a bug, 2026-08-08.**
 
 **Owner ruled: it is a bug** — i.e. option 3, decouple. Not fixed in the run that
 received the ruling, by explicit instruction: *scope it and roadmap it*. See "Scope of
-the fix" at the top of this section for what that fix actually entails, and
-`docs/ws1-sync-pipeline/roadmap-2026-08-07.md` § D12 for its place in the queue.
+the fix" at the top of this section for what that fix actually entails.
 
 The original warning still stands and is now more relevant, not less: silently
 decoupling would change committed timings for every video drag, and **the golden replay
 would not catch it** — no corpus project exercises an interactive drag.
+
+**Suggested sequencing (carried from the roadmap's now-trimmed § D12, 2026-08-08):**
+symptom 3's clamp first (local to `BottomDrawer.tsx`, no ruling needed, no timing code
+touched), then the product answer on the tail-behaviour question above, then the
+decoupling itself. **Gate: manual checklist steps 1–4, 12, 13**
+(`docs/checklists/wkwebview-drag-checklist.md`). **Not scheduled against WS1** — this is
+editor-path work and does not block the sync pipeline.
 
 ---
 
