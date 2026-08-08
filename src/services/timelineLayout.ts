@@ -225,3 +225,54 @@ export function resolveOffscreenScrollLeft(args: {
   if (right > viewRight) return clamp(right - clientWidth + MARGIN_PX);
   return null;
 }
+
+/** What the undo/redo anchor effect (Timeline.tsx) should do for one anchor. */
+export interface HistoryAnchorAction {
+  /** The segment to flash, or `null` when there is nothing to act on — no
+   *  anchor was given, or its `segmentId` no longer resolves (reachable
+   *  across an Apply Sync boundary, where the whole id set changes). The
+   *  caller must neither scroll nor flash when this is `null`. */
+  segmentId: string | null;
+  /** Scroll target for `container.scrollTo`, or `null` when the segment is
+   *  already visible (or `segmentId` is `null`) — the caller flashes either
+   *  way; scrolling only happens for a genuinely off-screen segment. */
+  scrollTo: number | null;
+}
+
+/**
+ * Resolves the undo/redo ANCHOR SCROLL + flash decision (design §5.2, owner
+ * ruling: SCROLL ONLY IF OFF-SCREEN, ALWAYS FLASH) — extracted out of
+ * Timeline.tsx's own anchor effect (2026-08-08 cleanup run, Stage 4) so the
+ * degradation path (an anchor whose segment id no longer resolves) can be unit
+ * tested without a DOM harness. Behavior-preserving: the segment lookup and
+ * the `canScroll` gate (Timeline.tsx's `container && didRestoreRef.current`)
+ * are the exact conditions the inline effect used before this extraction.
+ */
+export function resolveHistoryAnchorAction(args: {
+  historyAnchor: { segmentId: string; nonce: number } | null | undefined;
+  segments: readonly { id: string; startTime: number; duration: number }[];
+  /** `container && didRestoreRef.current` in the real effect — when false,
+   *  the segment still resolves (and the caller still flashes it), but no
+   *  scroll target is computed. */
+  canScroll: boolean;
+  pixelsPerSecond: number;
+  scrollLeft: number;
+  clientWidth: number;
+  totalDuration: number;
+}): HistoryAnchorAction {
+  const { historyAnchor, segments, canScroll, pixelsPerSecond, scrollLeft, clientWidth, totalDuration } = args;
+  if (!historyAnchor) return { segmentId: null, scrollTo: null };
+  const seg = segments.find(s => s.id === historyAnchor.segmentId);
+  if (!seg) return { segmentId: null, scrollTo: null };
+  const scrollTo = canScroll
+    ? resolveOffscreenScrollLeft({
+        segmentStartTime: seg.startTime,
+        segmentDuration: seg.duration,
+        pixelsPerSecond,
+        scrollLeft,
+        clientWidth,
+        totalDuration,
+      })
+    : null;
+  return { segmentId: seg.id, scrollTo };
+}

@@ -21,7 +21,7 @@ import {
   computeHeadingLayout,
   computeSeekTimeFromClientX,
   computeTrimDrag,
-  resolveOffscreenScrollLeft,
+  resolveHistoryAnchorAction,
 } from '../services/timelineLayout';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
@@ -318,10 +318,13 @@ export function Timeline({
   // ---------------------------------------------------------------------------
   // UNDO/REDO ANCHOR — reveal and flash (design §5.2, owner ruling).
   //
-  // SCROLL ONLY IF OFF-SCREEN, ALWAYS FLASH. Reuses `resolveOffscreenScrollLeft`,
-  // which is the segment-follow effect's own decision extracted verbatim — the
-  // design doc is explicit that a second scroller must not be written, because the
-  // existing one already handles the reload-restore ordering trap
+  // SCROLL ONLY IF OFF-SCREEN, ALWAYS FLASH. The decision itself (segment
+  // lookup, unresolvable-anchor degradation, and reuse of
+  // `resolveOffscreenScrollLeft`) is `resolveHistoryAnchorAction`
+  // (timelineLayout.ts, extracted 2026-08-08 so the degradation path can be
+  // unit tested without a DOM harness — see that function's own tests). The
+  // design doc is explicit that a second scroller must not be written,
+  // because the existing one already handles the reload-restore ordering trap
   // (`didRestoreRef`) that once produced a visible "scroll to 0, then scroll
   // again" flash.
   //
@@ -331,24 +334,24 @@ export function Timeline({
   // ---------------------------------------------------------------------------
   const [flashSegmentId, setFlashSegmentId] = useState<string | null>(null);
   useEffect(() => {
-    if (!historyAnchor) return;
-    const seg = segments.find(s => s.id === historyAnchor.segmentId);
-    // An unresolvable anchor falls back to NO scroll and NO flash, never a throw
-    // — reachable across an Apply Sync boundary, where the whole id set changes.
-    if (!seg) return;
     const container = document.getElementById('timeline-scroll-area');
-    if (container && didRestoreRef.current) {
-      const target = resolveOffscreenScrollLeft({
-        segmentStartTime: seg.startTime,
-        segmentDuration: seg.duration,
-        pixelsPerSecond,
-        scrollLeft: container.scrollLeft,
-        clientWidth: container.clientWidth,
-        totalDuration,
-      });
-      if (target !== null) container.scrollTo({ left: target, behavior: 'smooth' });
+    const action = resolveHistoryAnchorAction({
+      historyAnchor,
+      segments,
+      canScroll: !!container && didRestoreRef.current,
+      pixelsPerSecond,
+      scrollLeft: container?.scrollLeft ?? 0,
+      clientWidth: container?.clientWidth ?? 0,
+      totalDuration,
+    });
+    // No anchor, or an unresolvable one (reachable across an Apply Sync
+    // boundary, where the whole id set changes): no scroll, no flash, never a
+    // throw.
+    if (!action.segmentId) return;
+    if (action.scrollTo !== null && container) {
+      container.scrollTo({ left: action.scrollTo, behavior: 'smooth' });
     }
-    setFlashSegmentId(historyAnchor.segmentId);
+    setFlashSegmentId(action.segmentId);
     const t = setTimeout(() => setFlashSegmentId(null), 700);
     return () => clearTimeout(t);
     // Keyed on the NONCE, not the id — see the prop's own comment.
