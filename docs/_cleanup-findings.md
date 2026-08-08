@@ -246,3 +246,109 @@ this codebase.
 (`serde_json`), 1 ungated debug `console.log`. Everything else in this census is
 either a proven false positive, protected by explicit instruction, or flagged
 AMBIGUOUS and left untouched pending a ruling.
+
+---
+
+## Stages 2-6 — Outcomes
+
+### Stage 2 — Drawer slip-bar overflow (fixed)
+
+Root cause: `BottomDrawer.tsx`'s `widthPct` was computed from
+`sourceDuration ?? 60` with no clamp. A video segment whose `sourceDuration`
+was never probed (undefined) silently used a fabricated 60s denominator — any
+such segment with a real duration over 60s produced `widthPct > 100`,
+overflowing the Clip Trim track container.
+
+Fix, both halves: (1) extracted the width/left math into a pure, tested
+`computeSlipBarGeometry` (`src/services/slipBarGeometry.ts`) that clamps
+`widthPct`/`leftPct` to `[0, 100]` unconditionally; (2) removed the `?? 60`
+fallback entirely — an unknown/zero/negative `sourceDuration` now reports
+`hasKnownSourceDuration: false` and `BottomDrawer.tsx` hides the Clip Trim bar
+rather than rendering a proportion against a fabricated number. Matches the
+existing convention at `App.tsx:2237`, which already declines to guess when
+`sourceDuration` is missing. 8 new tests, all passing.
+
+Related, NOT fixed (out of scope, same bug class, no confirmed repro at these
+sites): `Timeline.tsx:654` (`(s.sourceDuration ?? 60) - s.duration`, feeds
+`maxTrim` — `Math.max(0, ...)` prevents a negative value but still computes
+against a fabricated source length) and `App.tsx:4949`
+(`editingSegment.sourceDuration ?? 60`). Flagged for the final bug list.
+
+### Stage 3 — Apply Sync double history entry (fixed)
+
+Root cause confirmed: `handleApplySyncFromFiles` pushed history twice —
+the main commit (`setProject`, ~line 2917) and an unrelated, always-keyless
+second `setProject` (~line 3005) for the post-hoc boundary-quality log
+append, which runs after the async `buildVoiceoverWaveform` await. A keyless
+`setProject` always pushes (`historyCoalesce.ts`'s discrete-write rule), so
+every Apply Sync cost two undo presses, the first a visual no-op on the
+waveform-unavailable branch (which always produces exactly one log entry and
+nothing else).
+
+Fix: routed the second write through `setProjectSilent` instead —
+it is a continuation of the same edit that already has its entry, not a
+second user-authored one, matching `setProjectSilent`'s own documented
+"machine-driven write" category. No log entries are lost. 4 new tests
+(`applySyncHistory.test.ts`) exercise the real `history.ts`/
+`historyCoalesce.ts` modules through a harness that mirrors `App.tsx`'s
+`setProject`/`setProjectSilent` wrappers verbatim, since App.tsx itself has
+no test harness.
+
+### Stage 4 — historyAnchor coverage hole (closed)
+
+Confirmed [MEASURED]: grep for `historyAnchor` across every test file
+returned zero hits before this stage. Extracted `Timeline.tsx`'s undo/redo
+anchor effect's decision (segment lookup, unresolvable-anchor degradation,
+scroll-vs-flash) into a pure `resolveHistoryAnchorAction`
+(`timelineLayout.ts`), behavior-preserving. 5 new tests in a new PART 4 of
+`historyStage3.test.ts`: unresolvable anchor degrades to no-scroll without
+throwing, a resolvable off-screen anchor scrolls, an already-visible anchor
+resolves without scrolling (flash fires either way), and the `canScroll` gate
+(container/`didRestoreRef` not ready) still resolves the segment without a
+scroll target. No behavior change found or made.
+
+### Stage 5 — dead-code removal (done, 3 grouped commits)
+
+1. Unused deps: `autoprefixer` (JS devDependency), `serde_json` (Rust). Both
+   confirmed zero references; `cargo check`/`cargo clippy`/`tsc`/full suite
+   clean after removal.
+2. Unused exports: `closeGesture` (historyCoalesce.ts), 
+   `_resetWaveformMirrorForTests` (waveformStore.ts),
+   `__resetWebCodecsSupportCacheForTests` (webcodecsSupport.ts),
+   `AudioExtension` (audioFormats.ts). All confirmed zero references anywhere,
+   including within their own defining file.
+3. Instrumentation: removed the ungated `console.log('[dashboard] loaded
+   metas:', data)` in `ProjectDashboard.tsx` (fired on every app launch,
+   admitted as a "debug log" in its own introducing commit message).
+
+Left untouched, AMBIGUOUS, needs an owner ruling: `getAsset`/`clearAllAssets`
+(assetStore.ts), `easeLinear` (canvasAnimations.ts), `renamePreset`
+(presetService.ts), `loadMostRecentMeta` (projectStore.ts),
+`syncInstrument.ts` (13 call sites, self-described as removable after an
+audit whose completion cannot be confirmed from the repo alone).
+
+Zero commented-out code blocks and zero orphaned fixtures found — no commit
+needed for either category.
+
+### Stage 6 — App.tsx extraction (partial, honest)
+
+App.tsx measured at 5134 lines before this stage. Full survey result: the
+undo/redo wiring's pure logic was ALREADY extracted across Phases 1-3
+(`history.ts`, `historyCoalesce.ts`, `historyLockPolicy.ts`) plus this run's
+own Stage 4 (`resolveHistoryAnchorAction`). What remains in App.tsx —
+`setProject`/`setProjectSilent` (tied to `liveProjectRef`/`setProjectRaw` by
+explicit design constraint), `handleUndo`/`handleRedo`/`blockedByLock` (thin
+orchestration: ref reads, state setters, an inline toast — no test harness to
+characterize against before moving) — does not cleanly extract further
+without either violating the "don't move the useState wiring" constraint or
+moving untested orchestration logic on faith.
+
+One piece DID extract cleanly: `applyRestoredState`'s post-restore selection/
+playhead repair was pure computation wrapped in setState boilerplate. Pulled
+into `historyRestore.ts`, characterized first (15 tests, written before the
+call sites were touched — `dragSession.test.ts` precedent), then wired in
+with the exact same functional-updater call sites preserved. Net effect on
+App.tsx: **+3 lines** (14 insertions, 11 deletions) — the import block and a
+preserved doc comment outweigh the inlined logic removed. Final size: 5137
+lines. Golden replay byte-identical after the move. Reported honestly per the
+brief's own instruction: "a partial honest extraction beats a forced one."
