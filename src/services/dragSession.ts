@@ -398,6 +398,26 @@ export function startDragSession(
   };
 
   const handleMove = (e: PointerEvent): void => {
+    // ------------------------------------------------------------------
+    // UNIVERSAL BACKSTOP — a move with NO button held means the release
+    // happened while this app was not watching (checklist step 10, 2026-08-08).
+    //
+    // Reached when the user releases the mouse in another application and only
+    // then moves the pointer back over our window: no `pointerup` was ever
+    // delivered to us, so the session is still live and would otherwise keep
+    // previewing a drag nobody is holding — and then commit it on the next
+    // unrelated click. This condition needs no signal from the OS at all; it is
+    // derived from the event we are already handling, which is why it holds
+    // even on a platform that delivers nothing else.
+    //
+    // Resolves as a DISCARD, exactly as `handleBlur` below and for the same
+    // reason (docs/decisions/2026-08-08-pointercancel-ruling.md).
+    // ------------------------------------------------------------------
+    if (e.buttons === 0) {
+      wasCancelled = true;
+      handleUp();
+      return;
+    }
     pendingEvent = e;
     lastClientX = e.clientX;
     hasMoved = true;
@@ -449,6 +469,8 @@ export function startDragSession(
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
     window.removeEventListener('pointercancel', handleCancel);
+    window.removeEventListener('pointerdown', handleForeignPointerDown);
+    window.removeEventListener('blur', handleBlur);
     // isResizingRef is cleared by App.tsx's resizingId-keyed effect, not
     // here — see the D12 fix note there.
     if (!hasMoved) return;
@@ -541,8 +563,77 @@ export function startDragSession(
     wasCancelled = true;
     handleUp();
   };
+  // ---------------------------------------------------------------------
+  // WINDOW FOCUS LOSS — the signal WKWebView ACTUALLY delivers on ⌘+Tab
+  // (checklist step 10, fixed 2026-08-08 after three failed attempts at the
+  // `pointercancel` handler).
+  //
+  // MEASURED, in the real Tauri/WKWebView shell, for one ⌘+Tab away and back
+  // mid-drag with the button held:
+  //
+  //     +0ms     gesture-start
+  //     +5236ms  tauri:onFocusChanged  focused=false
+  //     +5239ms  window:blur           document.hasFocus()=false
+  //     +5996ms  pointerup             buttons=0
+  //     +5997ms  TEARDOWN RAN          hasMoved=true wasCancelled=false
+  //
+  // Two findings, both of which invalidate every previous attempt:
+  //
+  //  1. NO `pointercancel` IS EVER DELIVERED. Every prior fix patched
+  //     `handleCancel`, which this gesture never reaches. That is why each one
+  //     passed its synthetic test and failed the manual retest.
+  //  2. The gesture was NOT left dangling — it was COMMITTED. The release
+  //     eventually arrived as a plain `pointerup` (~760ms later, on return),
+  //     so `handleUp` ran with `wasCancelled === false` and took the commit
+  //     branch. The 2026-08-08 discard ruling was therefore dead code on this
+  //     path: an interrupted drag silently changed segment timings, which is
+  //     precisely the outcome that ruling exists to prevent.
+  //
+  // `blur` is the primary signal rather than Tauri's `onFocusChanged` even
+  // though the native event fires 3ms earlier: registering the Tauri listener
+  // requires an `await` on a dynamic import, so it cannot be guaranteed
+  // attached for a gesture that is interrupted immediately, whereas this is
+  // synchronous. It also keeps the fix working outside the Tauri shell.
+  //
+  // Resolves as a DISCARD, applying the existing pointercancel ruling to the
+  // signal that actually arrives: a drag whose gesture ended outside the user's
+  // attention must not commit a timing change they never reviewed.
+  //
+  // Non-capture is load-bearing: element `blur` does not bubble, so a focus
+  // change *inside* the page cannot reach this listener at all. The target
+  // check below is belt-and-braces for a future edit that adds capture.
+  //
+  // It tests "the target is NOT an in-page element" rather than the more
+  // obvious "the target IS `window`", because the latter cannot be verified:
+  // in jsdom under vitest, `e.target === window` is **false** even for an event
+  // dispatched directly on `window` (the `window` global is not identity-equal
+  // to the event's target), so the identity form is correct in a real browser
+  // and silently always-false under test — a guard no test can exercise. The
+  // `Element` form is correct in both: a window blur's target is never an
+  // Element, and an element blur's target always is.
+  // ---------------------------------------------------------------------
+  const handleBlur = (e: Event): void => {
+    if (e.target instanceof Element) return;
+    wasCancelled = true;
+    handleUp();
+  };
+  // Belt-and-braces half of the backstop, per the checklist's wording. Honest
+  // note: unlike the `pointermove` half in `handleMove`, this is not reachable
+  // in practice — a `pointerdown` carries the button being pressed, so its
+  // `buttons` is non-zero by definition. Kept because it costs nothing and the
+  // condition is the one being guarded against, not the event that carries it.
+  // (A `pointerdown` with a button DOWN while a session is live is a different
+  // thing entirely — a second overlapping gesture — and is deliberately left
+  // alone here rather than fixed in passing.)
+  const handleForeignPointerDown = (e: PointerEvent): void => {
+    if (e.buttons !== 0) return;
+    wasCancelled = true;
+    handleUp();
+  };
   deps.setIsResizing(true);
   window.addEventListener('pointermove', handleMove);
   window.addEventListener('pointerup', handleUp);
   window.addEventListener('pointercancel', handleCancel);
+  window.addEventListener('pointerdown', handleForeignPointerDown);
+  window.addEventListener('blur', handleBlur);
 }

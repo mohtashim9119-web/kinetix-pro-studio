@@ -559,6 +559,124 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     expect(checkTimelineIsGapless(outcome.segments)).toBeNull();
   });
 
+  // -------------------------------------------------------------------------
+  // PART 5 — the interrupted drag (manual checklist step 10), FIXED 2026-08-08
+  //
+  // Three previous attempts patched the `pointercancel` handler and all three
+  // passed their synthetic tests and failed the manual retest. Instrumenting
+  // the real Tauri/WKWebView shell for one ⌘+Tab-away-and-back mid-drag showed
+  // why — the captured log, in full:
+  //
+  //     +0ms     gesture-start
+  //     +5236ms  tauri:onFocusChanged  focused=false
+  //     +5239ms  window:blur           document.hasFocus()=false
+  //     +5996ms  pointerup             buttons=0
+  //     +5997ms  TEARDOWN RAN          hasMoved=true wasCancelled=false
+  //
+  // NO `pointercancel` is ever delivered, so `handleCancel` — the thing every
+  // prior fix edited — is not on this code path at all. And teardown was not
+  // missed: the release arrived ~760ms later as a plain `pointerup`, so the
+  // gesture took the COMMIT branch and silently changed segment timings, which
+  // is exactly what the 2026-08-08 discard ruling exists to prevent.
+  //
+  // These tests pin the two signals that actually resolve it. They are written
+  // against the same real `startDragSession` as the rest of this file — the
+  // only synthetic part is the event dispatch, which is what the harness is for.
+  // -------------------------------------------------------------------------
+  describe('PART 5 — interrupted drag: the signals WKWebView actually delivers', () => {
+    it('window blur mid-drag DISCARDS the gesture and clears all session state', () => {
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end').moveBy(1);
+      const outcome = h.blurWindow();
+      // Same resolution as a real pointercancel: revert, never commit.
+      expect(outcome.kind).toBe('reverted-cancelled');
+      expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+      // The residue the manual test reported — and `.resizing` carries BOTH
+      // `cursor: col-resize !important` and `user-select: none`
+      // (src/index.css:99-103), so this one class is the whole stuck cursor.
+      expect(h.resizingIdValue).toBeNull();
+      expect(h.resizingTypeValue).toBeNull();
+      expect(h.bodyHasResizingClass).toBe(false);
+      // And the listeners are gone, so the LATE pointerup the log shows
+      // arriving ~760ms later reaches nothing and cannot commit.
+      const late = h.release();
+      expect(late.kind).toBe('reverted-cancelled'); // unchanged by the late event
+      expect(spans(h.currentSegments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+      // A fresh gesture afterwards still works — no leak.
+      expect(h.grab('B', 'end').moveBy(1).release().kind).toBe('committed');
+    });
+
+    it('the late pointerup after a blur cannot resurrect the commit — the exact measured sequence', () => {
+      // Replays the captured log's ordering verbatim: move, blur, THEN pointerup.
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end').moveBy(2);       // +0ms .. a real drag, 2s of growth
+      h.blurWindow();                      // +5239ms window:blur
+      h.release();                         // +5996ms pointerup, buttons=0
+      // Pre-fix this committed A at 7.00 and stole 2s from B. It must not.
+      expect(spans(h.currentSegments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+    });
+
+    it('an ELEMENT blur inside the page does NOT resolve the drag', () => {
+      // The guard that keeps the fix from breaking every ordinary focus change:
+      // element blur does not bubble, and `handleBlur` also checks the target.
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end').moveBy(1);
+      h.blurElement();
+      // Still live: nothing reverted, nothing committed, state still armed.
+      expect(h.resizingIdValue).toBe('A');
+      expect(h.bodyHasResizingClass).toBe(true);
+      // And the gesture completes normally afterwards.
+      const outcome = h.release();
+      expect(outcome.kind).toBe('committed');
+      expect(spans(outcome.segments)).toBe('A[0.00..6.00] B[6.00..10.00] C[10.00..15.00]');
+    });
+
+    it('a pointermove with buttons=0 DISCARDS — the backstop for a release we never saw', () => {
+      // The case no OS signal covers: the user released the button in another
+      // application, so no pointerup reached us at all, and then moved the
+      // pointer back over our window. Derived purely from the event we are
+      // already handling, so it holds on any platform.
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end').moveBy(1);
+      const outcome = h.moveButtonUp(1);
+      expect(outcome.kind).toBe('reverted-cancelled');
+      expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+      expect(h.resizingIdValue).toBeNull();
+      expect(h.bodyHasResizingClass).toBe(false);
+      expect(h.grab('B', 'end').moveBy(1).release().kind).toBe('committed');
+    });
+
+    it('the backstop fires even on the FIRST move of a gesture, before anything moved', () => {
+      const original = [seg('A', 0, 5), seg('B', 5, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end');
+      const outcome = h.moveButtonUp(1);
+      // hasMoved was never set, so handleUp's `!hasMoved` early return applies:
+      // nothing to revert, and teardown still runs.
+      expect(outcome.kind).toBe('no-op-not-moved');
+      expect(h.resizingIdValue).toBeNull();
+      expect(h.bodyHasResizingClass).toBe(false);
+    });
+
+    it('a normal multi-frame drag is completely unaffected — buttons=1 throughout', () => {
+      // Non-vacuity guard in the other direction: the backstop must not fire on
+      // an ordinary gesture. If `dispatchPointer` ever regresses to buttons=0,
+      // this fails alongside the 22 tests that already caught it once.
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end');
+      for (const d of [0.4, 0.4, 0.4]) h.moveBy(d);
+      expect(h.resizingIdValue).toBe('A');
+      const outcome = h.release();
+      expect(outcome.kind).toBe('committed');
+      expect(checkTimelineIsGapless(outcome.segments)).toBeNull();
+    });
+  });
+
   it.skip(
     'BUG PIN (do not fix here) — an early-bail drag start should NOT leave resizingId/the resizing class stuck. ' +
     'Currently FAILS: dragSession.ts sets resizing state unconditionally before validating the dragged segment ' +

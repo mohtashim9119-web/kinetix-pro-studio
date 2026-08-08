@@ -498,12 +498,76 @@ export class DragSessionHarness {
     return this;
   }
 
-  private dispatchPointer(type: 'pointermove' | 'pointerup' | 'pointercancel'): void {
+  /**
+   * FIDELITY FIX (checklist step 10, 2026-08-08). `buttons` was previously left
+   * at `MouseEventInit`'s default of 0 on every dispatched event. For a
+   * `pointermove` that is not what a real drag looks like: a move made with the
+   * primary button held reports `buttons === 1`, and 0 specifically means "no
+   * button is down". The harness got away with it only because
+   * `dragSession.ts` did not read the field; once the step-10 backstop started
+   * treating `buttons === 0` on a move as "the release happened while we were
+   * not watching", every simulated gesture in this harness looked like an
+   * interrupted one and 22 tests failed.
+   *
+   * So `pointermove` now carries `buttons: 1`, which is what the real gesture
+   * the harness claims to reproduce actually carries. `pointerup` and
+   * `pointercancel` keep 0 — that is correct for both: the released button is
+   * excluded from `buttons` on the event that releases it.
+   *
+   * This makes the harness MORE faithful, not more permissive. `moveButtonUp`
+   * below is the deliberate way to produce the `buttons === 0` move.
+   */
+  private dispatchPointer(
+    type: 'pointermove' | 'pointerup' | 'pointercancel' | 'pointerdown',
+    buttons = type === 'pointermove' || type === 'pointerdown' ? 1 : 0,
+  ): void {
     window.dispatchEvent(new MouseEvent(type, {
       clientX: this.currentClientX,
+      buttons,
       bubbles: true,
       cancelable: true,
     }));
+  }
+
+  /**
+   * The step-10 real-world gesture: the user released the mouse button while
+   * ANOTHER APPLICATION had focus, so no `pointerup` was ever delivered here,
+   * and then moved the pointer back over our window. The move arrives with
+   * `buttons === 0`.
+   *
+   * Resolves the gesture through the same `handleUp` every other path uses, so
+   * it returns a `DragOutcome` like `release()`/`cancel()` do.
+   */
+  moveButtonUp(deltaSeconds = 0): DragOutcome {
+    this.currentClientX += deltaSeconds * this.pixelsPerSecond;
+    this.cancelledThisGesture = true;
+    this.dispatchPointer('pointermove', 0);
+    return this.resolveOutcome();
+  }
+
+  /**
+   * The OTHER half of step 10: the window losing focus mid-gesture (⌘+Tab),
+   * which is the ONLY signal WKWebView was measured to deliver — see
+   * `dragSession.ts`'s `handleBlur` for the captured event log.
+   *
+   * Dispatched on `window` with `window` as its target, matching the real
+   * window-level blur; an element blur does not bubble and must NOT resolve a
+   * drag, which `blurElement` below exists to pin.
+   */
+  blurWindow(): DragOutcome {
+    this.cancelledThisGesture = true;
+    window.dispatchEvent(new Event('blur'));
+    return this.resolveOutcome();
+  }
+
+  /**
+   * A focus change INSIDE the page (e.g. an input losing focus). Must not
+   * resolve the gesture. Dispatched on a real element so its `target` is that
+   * element rather than `window`.
+   */
+  blurElement(): void {
+    const el = this.timeline.querySelector('[data-seg-id]');
+    (el ?? this.timeline).dispatchEvent(new Event('blur', { bubbles: false }));
   }
 
   private flushFrame(): void {

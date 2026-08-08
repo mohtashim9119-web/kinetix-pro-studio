@@ -96,49 +96,89 @@ automated suite already covers so you're not re-checking it by eye.
 | 7 | Grab an edge, move the pointer **only a few pixels**, and release. | Nothing commits. The segment snaps back to its exact starting size with no visible flicker, no console error, and — importantly — releasing does **not** trigger an accidental seek or selection change (the ghost-click case). | Numbers only. The negligible-drag threshold and its "reverted" outcome are fully covered by `dragSessionHarness.test.ts`; the ghost-click swallow (`window.addEventListener('click', ..., {capture:true, once:true})`) is real-browser click-synthesis behavior that `jsdom`'s synthetic events don't reproduce — only the eye can confirm no stray seek happens. |
 | 8 | **Zoom in** until the timeline overflows its panel, **scroll right**, then drag a segment that is now positioned to the left of the original (unscrolled) viewport. | The drag tracks the pointer correctly relative to the *scrolled* position — no jump the instant the drag starts, and the edge stays under the pointer for the whole gesture. | **Nothing.** `jsdom` has no real scroll-affecting layout; `timelineContentX`'s `scrollLeft` term is only ever exercised with hand-fed numbers in unit tests, never against a real scrolled viewport. This is the single step with the least automated coverage (§4.1) — give it real attention. |
 | 9 | **MANUAL-ONLY (feel).** While zoomed in, drag a segment's edge **toward and past the visible right edge** of the timeline panel, and hold it there. Then bring it back inside. | **The timeline auto-scrolls** (implemented 2026-08-08 — this previously did nothing, which is what the last run found). It should start gently near the edge and speed up the further past it you go, keep scrolling while the pointer is held still, and stop the moment the pointer comes back inside. The dragged edge stays under the pointer throughout. No freeze, no clipped drag, no lost pointer, and nothing keeps scrolling after you release. | Logic only. `dragTriage.test.ts`'s F3 block covers ramp thresholds, proportionality, direction, clamping at both ends of the scroll range, teardown on all three resolutions, and the property that a drag reaching a content-x by scrolling commits identically to one reaching it by pointer motion. `dragGeometry.test.ts` PART 4 unit-tests the velocity curve. **None of it can measure comfort or smoothness** — the ramp constants (48px zone, 1200 px/s ceiling) were chosen, not tuned against a real hand. Say so in Notes if it feels wrong. |
-| 10 | **CLOSED — ACCEPTED LIMITATION (2026-08-08). Do not run as a pass/fail step.** Formerly: start a drag, then force an interruption — release the mouse button **outside the browser window**, or switch applications mid-drag (Cmd+Tab) so the OS takes the gesture away. | Formerly expected: the drag **discards**, springing back to its pre-drag geometry with no timing change (ruled 2026-08-08, `docs/decisions/2026-08-08-pointercancel-ruling.md`), and the session ends cleanly. **Observed, repeatedly: it does not.** See the closure note below the table. | Teardown IS audited automatically: every harness test runs a universal post-condition (2026-08-08) checking listener balance, ghost-click swallower count, auto-scroll teardown and residual session state — verified non-vacuous by reverting the fix and confirming it fires. `dragSessionHarness.test.ts` and `dragTriage.test.ts` also cover synthetic `pointercancel` end to end (discard, teardown, no stale speed baseline, no armed swallower). **All of that is retained.** What none of it reaches is the TRIGGER: `jsdom` can dispatch a synthetic `pointercancel`; it cannot make macOS take a gesture away, and the real interruption does not reliably produce that event in WKWebView. |
+| 10 | **REOPENED AND FIXED (2026-08-08).** Start a drag on a segment edge, keep the mouse button **held down**, then switch applications mid-drag (**Cmd+Tab**) and come back. Also: start a drag, release the button **outside the window**, then move the pointer back over the timeline. | The drag **discards** — the segment springs back to its pre-drag geometry with no timing change — and the session ends cleanly: the `col-resize` cursor is gone, text selection works again, and the next drag behaves normally. | Now covered at the logic layer by `dragSessionHarness.test.ts` PART 5 (6 tests, verified non-vacuous: 4 of 6 fail with the fix reverted). What remains manual is confirming the real shell still delivers `blur` on Cmd+Tab — that is the measured premise the fix rests on, and only the real shell can confirm it has not changed. |
 | 11 | Grab a **locked** segment's own edge (not a neighbour's — the segment itself) and try to drag it. | The segment does not move by even a pixel, in the live preview or after release. No console error. (Found 2026-08-08 by a manual run: `computeDragCascade` checked a locked absorbing NEIGHBOUR but never the dragged segment's own lock, so this drag silently succeeded — fixed in `dragCascade.ts`.) | Numbers only, as of the 2026-08-08 fix. `dragCascade.test.ts`/`dragSessionHarness.test.ts` assert the array and live preview never move; only the eye confirms the stop doesn't look broken. |
 | 12 | **DEFERRED — do not run as a pass/fail step.** Drag a boundary between two **video** segments (either edge), then let playback cross into both the segment you shrank and the one you grew, without navigating away from the preview. | Both segments play normally — no frozen/stuck frame on either side of the moved boundary. **Known to fail.** Parked with its findings in **[`docs/video-segment-investigation.md`](video-segment-investigation.md)**, which separates the three symptoms observed on the video path (preview freeze after a boundary edit; playback speed changing on a video-segment drag; the drawer's slip-trim bar overflowing) — they are probably not one bug and should not be investigated as one. The drag path itself is cleared: `dragCascade.ts`/`dragSession.ts` commit correct, gapless timing on every check. If you run this step anyway, add what you see to that document rather than marking it FAIL here. | Nothing. No automated coverage exists for the preview decode pool's response to a segment-timing change at all. |
 
-### Step 10 — CLOSED, accepted limitation (2026-08-08)
+### Step 10 — REOPENED AND FIXED (2026-08-08), by instrumenting instead of guessing
 
-**Status: closed by owner decision, not by fix.** Deprioritised as not fixable at
-acceptable cost. Do not score it; do not reopen it as a bug.
+**Status: fixed.** Previously closed as an accepted limitation. Reopened for one timeboxed
+attempt whose first action was to **stop patching and start measuring**, and that is what
+resolved it.
 
-**The symptom.** A drag interrupted by a real OS gesture takeover — releasing the mouse
-button outside the window, or Cmd+Tab'ing away mid-drag — does not reliably resolve. The
-session can be left dirty: the `resizing` cursor state persists, and the interrupted
-gesture's edit is neither cleanly committed nor cleanly discarded. Repeated manual runs
-found this unchanged after the pointercancel discard ruling and the structural `finally`
-teardown both landed.
+**Why three previous attempts failed.** All three edited the `pointercancel` handler. The
+real gesture never reaches it. Instrumenting the live Tauri/WKWebView shell for one Cmd+Tab
+away-and-back mid-drag produced this log [MEASURED, 2026-08-08]:
 
-**What IS covered, and stays covered.** Synthetic `pointercancel` is fully tested and every
-one of those tests is retained:
+```
++0ms     gesture-start        startDragSession entered
++5236ms  tauri:onFocusChanged focused=false
++5239ms  window:blur          document.hasFocus()=false
++5996ms  pointerup            buttons=0 type=mouse target=div
++5997ms  TEARDOWN RAN         hasMoved=true wasCancelled=false
+```
 
-- `dragSessionHarness.test.ts` PART 4 — a mid-gesture `pointercancel` discards rather than
-  commits, clears `resizingId`/the body class, leaks no listeners (a fresh gesture straight
-  after works), and a no-movement cancel is a harmless no-op;
-- `dragTriage.test.ts`'s F4 block — the discard itself, the cleared speed baseline, and the
-  ghost-click swallower NOT being left armed (a `pointercancel` produces no synthetic click,
-  so arming it there left a one-shot listener waiting to eat the user's next real click);
-- the **universal post-condition** that every harness test runs — listener balance, swallower
-  count, auto-scroll teardown, residual session state — which is what makes the coverage
-  structural rather than a list of remembered cases.
+Two findings, both of which invalidate the earlier diagnosis:
 
-**What is NOT covered, and is the accepted gap.** Whether a real WKWebView OS interruption
-fires `pointercancel` **at all**. `jsdom` has no OS. Every test above dispatches the event
-itself, so they prove the handler is correct given the event — not that the event arrives.
-If WKWebView does not emit it on app switch or on an out-of-window release, none of that
-code runs and the session is simply never told the gesture ended. That is a platform
-behaviour, reachable only through the real shell, and it is why this step existed.
+1. **No `pointercancel` is delivered at all.** The hypothesis was right. Every fix that
+   edited `handleCancel` was editing dead code for this gesture, which is exactly why each
+   one passed its synthetic test and failed the manual retest.
+2. **Teardown was NOT missed — the drag was COMMITTED.** The release eventually arrived as a
+   plain `pointerup` about 760ms later, on return, so `handleUp` ran with
+   `wasCancelled === false` and took the commit branch. The 2026-08-08 discard ruling was
+   therefore never in force on this path: an interrupted drag silently changed segment
+   timings, which is the precise outcome that ruling exists to prevent. The earlier
+   description of this step ("neither cleanly committed nor cleanly discarded") was wrong; it
+   was cleanly committed, which is worse.
 
-**The mitigation, and the trade that was made.** Undo/redo (designed 2026-08-08,
-`docs/decisions/2026-08-08-undo-redo-design.md`; not yet built) is the stated compensation.
-It does not stop the interruption — it changes the consequence. The failure mode today is
-that an interrupted drag can leave a timing change the user did not intend and cannot take
-back except by hand; with undo, that state is **recoverable rather than unrecoverable**, at
-the cost of one keystroke. The owner accepted that trade explicitly: undo/redo is worth more
-than a platform-level fix for this step, and was prioritised over it.
+**The fix — two signals, both in `dragSession.ts`:**
+
+- **`window` `blur` → discard.** This is the signal that actually arrives, and it arrives
+  immediately (+5239ms, i.e. at the Cmd+Tab, not 760ms later). Chosen over Tauri's
+  `onFocusChanged` — which fired 3ms *earlier* — because registering the Tauri listener needs
+  an `await` on a dynamic import and so cannot be guaranteed attached for a gesture
+  interrupted immediately, whereas the DOM listener is synchronous; it also keeps working
+  outside the Tauri shell. Non-capture, plus a target check, so an element focus change
+  inside the page can never resolve a drag.
+- **A universal backstop: a `pointermove` with `buttons === 0` → discard.** Covers the case
+  no OS signal reaches — the user releases the button in another application, so no
+  `pointerup` is ever delivered here, and only moves the pointer back afterwards. Derived
+  purely from the event already being handled, so it holds on any platform regardless of what
+  else is or is not emitted. (`pointerdown` with `buttons === 0` is also wired, per the
+  brief; honest note: it is unreachable in practice, since a `pointerdown` carries the button
+  being pressed.)
+
+Both resolve as a **discard**, applying the existing pointercancel ruling to the signals that
+actually arrive. The `pointercancel` handler is retained unchanged — it is still correct for
+genuine cancels (touch, stylus, gesture takeover).
+
+**The stuck cursor is covered by the same teardown.** `body.resizing` carries *both*
+`cursor: col-resize !important` and `user-select: none` (`src/index.css:99-103`), so the
+single `classList.remove('resizing')` already in `teardown()` reverts both. There is no
+separate cursor or selection mutation to undo.
+
+**A harness fidelity bug found on the way.** `dragSessionHarness.ts` dispatched every
+simulated pointer event with `buttons` left at `MouseEventInit`'s default of **0** — which for
+a `pointermove` is not what a real drag looks like (a move with the primary button held
+reports `1`; `0` specifically means no button is down). It went unnoticed because nothing read
+the field; the moment the backstop did, 22 existing tests failed. `pointermove` now carries
+`buttons: 1`. That makes the harness **more** faithful, not more permissive — and all 22 were
+restored byte-identical, none weakened.
+
+**A jsdom trap worth remembering.** `e.target === window` is **false** in jsdom under vitest
+even for an event dispatched directly on `window`. The obvious form of the blur guard is
+therefore correct in a real browser and silently always-false under test — a guard no test can
+exercise. It is written as "the target is not an `Element`" instead, which is correct in both.
+
+**Retained in full:** every pre-existing `pointercancel` test, and the universal
+post-condition every harness test runs (listener balance, swallower count, auto-scroll
+teardown, residual session state). Nothing was deleted or weakened.
+
+**Not the same bug as the stuck-`resizingId` pin.** Same *residue class* — `resizingId` and
+the body class left set — but a different root cause, and this fix provably does not touch it
+[MEASURED: the skipped pin still fails after the fix]. The pin's path sets that state and
+then early-returns **before any listener is installed**, so no signal — `blur`,
+`pointercancel`, or `buttons === 0` — can ever reach it. It remains open and **unruled**.
 
 ---
 
@@ -170,8 +210,8 @@ Step 6  (locks on both sides):               PASS / FAIL   Notes: __________
 Step 7  (negligible drag reverts):           PASS / FAIL   Notes: __________
 Step 8  (drag while scrolled):               PASS / FAIL   Notes: __________
 Step 9  (auto-scroll past visible edge):     PASS / FAIL   Notes: __________
-Step 10 (interrupted drag / pointercancel):  CLOSED — accepted limitation; do not
-                                              score. See the closure note above.
+Step 10 (interrupted drag / Cmd+Tab):        PASS / FAIL   Notes: __________
+                                              (reopened and FIXED 2026-08-08 — score it)
 Step 11 (locked segment, own edge):          PASS / FAIL   Notes: __________
 Step 12 (video boundary, both sides play):   DEFERRED — do not score; see
                                               docs/video-segment-investigation.md
@@ -268,3 +308,26 @@ desired behaviour was re-measured and still fails. It was left skipped deliberat
 fixing it means reordering the guards at the top of `startDragSession`, which would
 contradict a *passing* test that pins the current behaviour — a test change that needs a
 ruling rather than a drive-by edit.
+
+### 2026-08-08 (third pass) — manual retest of steps 4/5/6/10, and step 10 fixed by measurement
+
+A real manual run by the owner against the previous pass's fixes, followed by one timeboxed
+work session on the single remaining failure.
+
+| Step | Manual result | Outcome |
+|---|---|---|
+| 4 — last segment, right edge | **PASS** | Inert in both directions, no card shift anywhere in the timeline. The owner's semantic ruling (option (i): the last segment's right edge is not draggable at all — `docs/decisions/2026-08-08-last-segment-edge.md`) holds in the real shell. The last segment's **left** edge still drags normally, as intended. |
+| 5 — single locked neighbour | **PASS** | |
+| 6 — locks on both sides | **PASS** | |
+| 10 — interrupted drag (Cmd+Tab) | **FAIL → FIXED** | Failed a fourth time. Given one final timeboxed attempt whose first action was to instrument the real shell rather than patch the handler again — which is what resolved it. See the step 10 note above for the captured event log and the fix. |
+
+**The methodological lesson, stated plainly because it cost four attempts:** three prior fixes
+edited the `pointercancel` handler on the assumption that the event fires. Ten minutes of
+DEV-only instrumentation in the real shell showed it never does, and that the gesture was
+being **committed** rather than left dangling — a different defect from the one being fixed.
+Every one of those three attempts passed its synthetic test. **When a manual step fails
+repeatedly while its automated coverage is green, the next action is to measure what the
+platform actually delivers, not to edit the handler again.**
+
+**Test count after this pass: 1536 (1535 pass, 0 fail, 1 skip)**, from 1530. `tsc` clean,
+golden replay 3/3 byte-identical.
