@@ -46,6 +46,12 @@ import { afterEach } from 'vitest';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { startDragSession, type DragSessionDeps } from './dragSession';
 import { computeDragCascade } from './dragCascade';
+import {
+  emptyHistory,
+  pushEntry,
+  undoDepth,
+  type History,
+} from './history';
 import { segmentEdgeContentX, type DragEdge } from './dragGeometry';
 
 /**
@@ -169,6 +175,8 @@ export class DragSessionHarness {
   private transcriptTokens: TranscriptToken[] | undefined;
   private readonly rectLeft: number;
   private readonly timeline: HTMLDivElement;
+  /** Undo history, driven by the SAME push the app performs on commit. */
+  private history: History<VideoSegment[]> = emptyHistory<VideoSegment[]>();
   private readonly elsBySegId = new Map<string, HTMLElement[]>();
   private segments: VideoSegment[];
 
@@ -385,6 +393,17 @@ export class DragSessionHarness {
           this.blockedIds = blocked;
           return false;
         }
+        // UNDO/REDO (Phase 1, 2026-08-08) — mirrors `App.tsx`'s
+        // `applyDurationChange` exactly: ONE labelled, anchored entry, pushed
+        // only on the success path, holding the PRE-drag array. The `null`
+        // return above therefore pushes nothing, which is what makes the
+        // "a blocked drag costs no undo press" assertion real rather than
+        // asserted against a mock.
+        this.history = pushEntry(this.history, {
+          state: this.segments,
+          label: `resize segment ${draggedIdx + 1}`,
+          anchorSegmentId: segmentId,
+        });
         this.segments = additionalUpdates
           ? result.map(s => s.id === segmentId ? { ...s, ...additionalUpdates } : s)
           : result;
@@ -637,6 +656,17 @@ export class DragSessionHarness {
 
   get bodyHasResizingClass(): boolean {
     return document.body.classList.contains('resizing');
+  }
+
+  /** Number of undoable entries this harness's gestures have accumulated. */
+  get historyDepth(): number {
+    return undoDepth(this.history);
+  }
+
+  /** The newest undoable entry's label/anchor, for tooltip assertions. */
+  get newestHistoryEntry(): { label: string; anchorSegmentId?: string; state: VideoSegment[] } | undefined {
+    const e = this.history.past[this.history.past.length - 1];
+    return e ? { label: e.label, anchorSegmentId: e.anchorSegmentId, state: e.state } : undefined;
   }
 
   /** Number of `[data-seg-id]` elements mounted for `segId` (the real

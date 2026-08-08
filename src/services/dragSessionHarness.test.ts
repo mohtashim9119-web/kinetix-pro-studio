@@ -677,6 +677,94 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // PART 6 — undo/redo entry accounting, through the REAL drag session
+  //
+  // Design §10 item 4, and the brief's requirement that a discarded or reverted
+  // drag creates ZERO entries while a committed one creates EXACTLY one. These
+  // run against the real `startDragSession` and the real `computeDragCascade`,
+  // with the harness pushing history at the same point `App.tsx`'s
+  // `applyDurationChange` does — so what is being asserted is the app's own
+  // accounting, not a mock's.
+  // -------------------------------------------------------------------------
+  describe('PART 6 — history entry accounting per gesture', () => {
+    it('a committed drag creates EXACTLY one entry, however many frames it took', () => {
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)]);
+      expect(h.historyDepth).toBe(0);
+      h.grab('A', 'end');
+      // Sixty frames of live preview — the count must not track frames.
+      for (let i = 0; i < 60; i++) h.moveBy(0.01);
+      expect(h.historyDepth).toBe(0); // nothing committed yet
+      expect(h.release().kind).toBe('committed');
+      expect(h.historyDepth).toBe(1);
+    });
+
+    it('the entry holds the PRE-drag array and is labelled + anchored', () => {
+      const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+      const h = harnessOf(original);
+      h.grab('A', 'end').moveBy(1).release();
+      const entry = h.newestHistoryEntry!;
+      expect(spans(entry.state)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+      expect(entry.label).toBe('resize segment 1');
+      // The anchor is the segment the gesture STARTED on, even though the
+      // cascade also moved B — that is what design §5.2 scrolls back to.
+      expect(entry.anchorSegmentId).toBe('A');
+    });
+
+    it('a BLOCKED drag (locked neighbour) creates ZERO entries', () => {
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5, { locked: true }), seg('C', 10, 5)]);
+      const outcome = h.grab('A', 'end').moveBy(4).release();
+      expect(outcome.kind).toBe('reverted-blocked');
+      expect(h.historyDepth).toBe(0);
+    });
+
+    it('a DISCARDED drag (pointercancel) creates ZERO entries', () => {
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)]);
+      h.grab('A', 'end').moveBy(1);
+      expect(h.cancel().kind).toBe('reverted-cancelled');
+      expect(h.historyDepth).toBe(0);
+    });
+
+    it('an INTERRUPTED drag (window blur — the real step-10 case) creates ZERO entries', () => {
+      // This is the case undo/redo was accepted as the mitigation FOR. Now that
+      // the interruption discards (step 10 fixed 2026-08-08), it costs no undo
+      // press either — there is nothing to take back.
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)]);
+      h.grab('A', 'end').moveBy(2);
+      expect(h.blurWindow().kind).toBe('reverted-cancelled');
+      expect(h.historyDepth).toBe(0);
+      h.release(); // the measured late pointerup — still nothing
+      expect(h.historyDepth).toBe(0);
+    });
+
+    it('a release with NO movement creates ZERO entries', () => {
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5)]);
+      h.grab('A', 'end');
+      expect(h.release().kind).toBe('no-op-not-moved');
+      expect(h.historyDepth).toBe(0);
+    });
+
+    it('a refused drag on the locked LAST edge creates ZERO entries', () => {
+      // The affordance/defensive lock returns before any listener is wired, so
+      // there is no gesture at all to record.
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5)]);
+      expect(h.grab('B', 'end').release().kind).toBe('no-op-not-moved');
+      expect(h.historyDepth).toBe(0);
+    });
+
+    it('five gestures — three committed, two discarded — leave exactly three entries', () => {
+      const h = harnessOf([seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5), seg('D', 15, 5)]);
+      h.grab('A', 'end').moveBy(0.5).release();   // commit
+      h.grab('B', 'end').moveBy(0.5);
+      h.cancel();                                  // discard
+      h.grab('B', 'end').moveBy(-0.5).release();  // commit
+      h.grab('C', 'end').moveBy(0.5);
+      h.blurWindow();                              // discard
+      h.grab('C', 'end').moveBy(0.3).release();   // commit
+      expect(h.historyDepth).toBe(3);
+    });
+  });
+
   it.skip(
     'BUG PIN (do not fix here) — an early-bail drag start should NOT leave resizingId/the resizing class stuck. ' +
     'Currently FAILS: dragSession.ts sets resizing state unconditionally before validating the dragged segment ' +

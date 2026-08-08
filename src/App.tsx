@@ -66,6 +66,7 @@ import {
   MAX_PLAYBACK_SPEED,
 } from './services/dragGeometry';
 import { startDragSession } from './services/dragSession';
+import { emptyHistory, pushEntry, type History } from './services/history';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import {
@@ -1119,7 +1120,85 @@ function isTextEntryElement(el: Element | null): boolean {
 }
 
 export default function App() {
-  const [project, setProject] = useState<Project>(makeDefaultProject);
+  const [project, setProjectRaw] = useState<Project>(makeDefaultProject);
+
+  // -------------------------------------------------------------------------
+  // UNDO/REDO SEAM (Phase 1, 2026-08-08).
+  // Design: docs/decisions/2026-08-08-undo-redo-design.md §1.3, §3.1.
+  //
+  // `setProject` below is a WRAPPER around the raw setter. Every one of this
+  // file's ~61 existing `setProject(...)` call sites keeps its exact current
+  // syntax — only the identifier they resolve to changed — so capture is not a
+  // per-call-site obligation that rots the moment someone adds site 62. That is
+  // the same argument the Model P gapless assertion makes for being one effect
+  // rather than ~61 inline checks, and it applies here for the same reason.
+  //
+  // WHY A SYNCHRONOUS MIRROR (`liveProjectRef`) RATHER THAN `projectRef`.
+  // The wrapper has to know the PRE-edit project in order to store it.
+  // `projectRef` is written from a `useEffect`, so it holds the last COMMITTED
+  // project — which is correct for a single write, and wrong for two writes
+  // batched into one handler: the second would read the first's stale value and
+  // push a duplicate state, producing two history entries for one gesture.
+  // `liveProjectRef` is advanced synchronously inside the wrapper itself, so
+  // each call in a batch sees the value the previous call produced.
+  //
+  // The cost of that choice, stated plainly: an updater-form call now receives
+  // `liveProjectRef.current` rather than React's own queued state. Those agree
+  // only as long as EVERY write goes through here. `setProjectRaw` is therefore
+  // called in exactly two places outside this wrapper — the hydration commit and
+  // `setProjectSilent` — and both advance the mirror. Do not add a third.
+  // -------------------------------------------------------------------------
+  const liveProjectRef = useRef<Project>(project);
+  const [history, setHistory] = useState<History<Project>>(emptyHistory<Project>);
+
+  /**
+   * Writes the project WITHOUT recording history.
+   *
+   * For writes that are not user edits, or that would record a state the user
+   * never authored:
+   *  - the drag session's two revert paths (`revertSegments`) — they restore the
+   *    array that is already the top of history, so capturing them would push a
+   *    no-op duplicate and make one gesture cost two undos (design §3.1);
+   *  - lock/unlock, which the owner ruled NOT undoable (design §4);
+   *  - hydration, and any other machine-driven write.
+   */
+  const setProjectSilent = useCallback((action: React.SetStateAction<Project>): void => {
+    const prev = liveProjectRef.current;
+    const next = typeof action === 'function'
+      ? (action as (p: Project) => Project)(prev)
+      : action;
+    liveProjectRef.current = next;
+    setProjectRaw(next);
+  }, []);
+
+  /**
+   * The capturing setter — what all pre-existing `setProject` call sites now
+   * resolve to. `meta` is optional; a site that passes nothing still gets an
+   * undoable entry, just with a generic label.
+   */
+  const setProject = useCallback((
+    action: React.SetStateAction<Project>,
+    meta?: { label?: string; anchorSegmentId?: string; coalesceKey?: string },
+  ): void => {
+    const prev = liveProjectRef.current;
+    const next = typeof action === 'function'
+      ? (action as (p: Project) => Project)(prev)
+      : action;
+    // A write that changed nothing is not an edit. This is belt-and-braces on
+    // top of the explicit `setProjectSilent` sites above: several handlers
+    // legitimately return `prev` unchanged when they decline (the lock refusal
+    // in `handleToggleLock` is the clearest), and none of those should cost the
+    // user an undo press to get past.
+    if (next !== prev) {
+      setHistory(h => pushEntry(h, {
+        state: prev,
+        label: meta?.label ?? 'edit',
+        anchorSegmentId: meta?.anchorSegmentId,
+      }));
+    }
+    liveProjectRef.current = next;
+    setProjectRaw(next);
+  }, []);
 
   const [isHydrating, setIsHydrating] = useState(true);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -1538,7 +1617,8 @@ export default function App() {
           `Segment ${segIdx + 1} is locked. Unlock to continue resizing.`,
           lockedSeg ? {
             label: 'Unlock',
-            onClick: () => setProject(prev => ({
+            // SILENT — see handleToggleLock: locks are not undoable.
+            onClick: () => setProjectSilent(prev => ({
               ...prev,
               segments: prev.segments.map(s => s.id === segId ? { ...s, locked: false } : s),
             })),
@@ -1552,7 +1632,17 @@ export default function App() {
     const finalSegments = additionalUpdates
       ? cascadeResult.map(s => s.id === segmentId ? { ...s, ...additionalUpdates } : s)
       : cascadeResult;
-    setProject(prev => ({ ...prev, segments: finalSegments }));
+    // ONE history entry per committed gesture, labelled and anchored (design
+    // §5.2). The anchor is the segment the gesture STARTED on — not the whole
+    // set the cascade moved — so an undo of a five-segment cascade scrolls back
+    // to where the user's hand actually was. `cascadeResult === null` returned
+    // above without committing, so a blocked drag reaches this line never and
+    // pushes nothing; the live preview writes no state at all, so the ~60 frames
+    // of a gesture are structurally incapable of adding entries.
+    setProject(
+      prev => ({ ...prev, segments: finalSegments }),
+      { label: `resize segment ${draggedIdx + 1}`, anchorSegmentId: segmentId },
+    );
     return true;
   }, [showToast]);
 
@@ -1675,7 +1765,12 @@ export default function App() {
 
   const handleToggleLock = useCallback((segmentId: string): void => {
     speedBaselineRef.current = null;
-    setProject(prev => {
+    // SILENT — locks are NOT undoable (owner ruling 2026-08-08, design §4). A
+    // lock is a statement about how future edits may behave, not an edit to the
+    // video, and making it undoable interacts confusingly with §5.1's
+    // block-undo-on-locked-segment policy: undo would sometimes remove a lock
+    // and sometimes be blocked BY one, with no way for the user to predict which.
+    setProjectSilent(prev => {
       // MODEL P §4.1(a) (2026-08-07) — refuse a lock that would make the
       // gapless invariant unsatisfiable, rather than committing a gap.
       //
@@ -1863,7 +1958,8 @@ export default function App() {
   }, [project.segments, selectedSegmentIds]);
 
   const handleUnlockAll = useCallback((): void => {
-    setProject(prev => ({
+    // SILENT — see handleToggleLock: locks are not undoable.
+    setProjectSilent(prev => ({
       ...prev,
       segments: prev.segments.map(s => ({ ...s, locked: false })),
     }));
@@ -3580,7 +3676,11 @@ export default function App() {
       savedAt: Date.now(),
       segmentCount: 0,
     });
-    setProject(fresh);
+    // New Project clears history (design §6.0) — an undo stack that survived
+    // could restore the OUTGOING project's segments onto this one's assets.
+    // Silent, because the write itself is not a user edit of this project.
+    setProjectSilent(fresh);
+    setHistory(emptyHistory<Project>());
     setIsSynced(false);
     setCurrentTime(0);
     setGlobalPlaybackSpeed(1);
@@ -3645,7 +3745,16 @@ export default function App() {
       rehydratedVoiceoverId = undefined;
     }
 
-    setProject({
+    // SILENT, and history is cleared. This is the ONE write that serves both
+    // "the user opened a different project" and "the page reloaded and we are
+    // restoring the same one" — the two cases the owner ruled must behave
+    // DIFFERENTLY (§6.0: a switch clears, a reload keeps). They are told apart
+    // by `opts.preserveUiState`, which is already set only on the reload path
+    // (see the mount effect's handleSwitchProjectRef call). The reload branch's
+    // history restore lands in the persistence commit; here, both paths clear,
+    // so a switch is correct today and a reload is merely not-yet-restoring
+    // rather than wrong.
+    setProjectSilent({
       ...saved.project,
       assets: rehydratedAssets,
       segments: rehydratedSegments,
@@ -3654,6 +3763,7 @@ export default function App() {
       // so mark it as confirmed to enable auto-save going forward.
       confirmed: true,
     });
+    setHistory(emptyHistory<Project>());
     setLastOpenedProjectId(saved.project.id);
     setIsSynced(rehydratedSegments.length > 0);
     setIsPlaying(false);
@@ -3746,7 +3856,7 @@ export default function App() {
             applySyncDisabled={applySyncDisabled}
             onSegmentClick={handleSegmentClick}
             onToggleLock={handleToggleLock}
-            onLockAll={() => setProject(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
+            onLockAll={() => setProjectSilent(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
             onUnlockAll={handleUnlockAll}
             allLocked={project.segments.length > 0 && project.segments.every(s => s.locked === true)}
             onOpenReviewMapping={() => setShowReviewMapping(true)}
@@ -3993,8 +4103,13 @@ export default function App() {
                     setIsResizing: (value) => { isResizingRef.current = value; },
                     clearSpeedBaseline: () => { speedBaselineRef.current = null; },
                     commitDurationChange: applyDurationChange,
+                    // SILENT (undo/redo Phase 1, design §3.1). Both revert paths
+                    // — a locked-neighbour block and an interrupted/discarded
+                    // gesture — restore the array that is already the top of
+                    // history. Capturing them would push a no-op duplicate and
+                    // make one gesture cost two undo presses to escape.
                     revertSegments: (originalSegments) =>
-                      setProject(prev => ({ ...prev, segments: originalSegments })),
+                      setProjectSilent(prev => ({ ...prev, segments: originalSegments })),
                   });
                 }}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
