@@ -331,3 +331,64 @@ platform actually delivers, not to edit the handler again.**
 
 **Test count after this pass: 1536 (1535 pass, 0 fail, 1 skip)**, from 1530. `tsc` clean,
 golden replay 3/3 byte-identical.
+
+---
+
+## Undo / redo manual steps (added 2026-08-08)
+
+Built in WS2 stages 3-5. Run these in the real Tauri app alongside the drag steps
+above — the automated suite covers the logic (150 tests across `history.test.ts`,
+`historyPersist.test.ts`, `historyStage3.test.ts`, `undoShortcut.test.ts`,
+`appShortcuts.test.ts`, `dragSessionHarness.test.ts` PART 6) but cannot see the
+shell, the OS menu, or a flash on a real screen.
+
+| # | Step | Expected result (a "no" is a fail) | Already covered by automated tests? |
+|---|---|---|---|
+| U1 | Resize a segment edge, then press **⌘Z**. | The segment returns to its exact previous size, and so does every neighbour the cascade moved. One press undoes the WHOLE gesture, not one frame of it. | Entry accounting is covered through the real drag session (`dragSessionHarness.test.ts` PART 6: one commit = exactly 1 entry across 60 preview frames). Only the eye confirms the restored geometry looks right on screen. |
+| U2 | Press **⌘⇧Z**, then **⌘Y**. | Both redo. The segment returns to the resized state. | Chord table swept exhaustively (`undoShortcut.test.ts`). Confirmed once already in QA — re-check after any keydown-handler change. |
+| U3 | Make ~8 separate edits, then hold **⌘Z** through all of them and back with **⌘⇧Z**. | Every state comes back in order, nothing jumps or is skipped, and the timeline never shows a gap or an overlap between cards. | Round-trip identity and the gapless invariant on every reachable state are property-tested (42-case sweep). The **visual** gapless check is the part only you can do. |
+| U4 | Drag a segment, then **⌘+Tab away mid-drag** (button still held). Come back and press **⌘Z**. | The drag already discarded (step 10), so there is nothing to undo from it — undo reaches the edit BEFORE the drag. It must not undo a phantom entry. | `dragSessionHarness.test.ts` PART 6 asserts a blur-interrupted gesture pushes **zero** entries. |
+| U5 | **Lock** a segment, resize a DIFFERENT segment so the cascade would move the locked one, then try to undo back past a change that moved it. | The undo is **refused**: the locked segment is scrolled to and flashed, and a toast says "Segment N is locked. Unlock to undo this change." with an **Unlock** button. Click Unlock, press ⌘Z again — now it works, and the entry was not consumed by the refused attempt. | The decision is unit-tested (`historyStage3.test.ts` PART 1). Only the eye confirms the toast, the scroll, and that the flash lands on the right card. |
+| U6 | Undo an edit on a segment that is **scrolled off-screen**, then one that is **already visible**. | Off-screen: the timeline scrolls to reveal it. Already visible: **no scroll at all**, but it still **flashes**. A scroll you did not need is the failure mode here. | Pure decision unit-tested. The flash timing and whether it reads as a flash rather than a glitch are visual only. |
+| U7 | Drag a **grade slider** (Effects tab) across its range in one gesture, release, then press **⌘Z** once. | The grade returns to its pre-drag value in ONE press. Not thirty presses, and not a press that lands halfway through the drag. | Coalescing is unit-tested at exact millisecond boundaries, including the 120ms trailing debounced write. Only a real gesture confirms the wiring reaches it. |
+| U8 | Type in a text field, then press **⌘Z** while it still has focus. | The **field's own** text undo runs — the project is NOT undone. Click away first and ⌘Z undoes the project edit. | Suppression is unit-tested; confirmed once in QA. |
+| U9 | Make an edit, then **right-click → Reload**. After it comes back, press **⌘Z**. | History SURVIVED the reload and the undo works. | Persistence round-trip incl. the session-token gate is unit-tested, and was verified end-to-end in a dev-server reload. The real WKWebView reload is the part only you can run. |
+| U10 | Make an edit, **quit the app entirely**, relaunch, open the same project. | History is **EMPTY** — undo is greyed out. An app restart starts fresh (owner ruling); only a reload preserves. | The token gate is unit-tested and verified non-vacuous. Whether the real Rust process token behaves as expected across a genuine quit/relaunch is only checkable here. |
+| U11 | Go **back to the dashboard** and re-open the same project. | History is **EMPTY**. Re-opening a project starts fresh. | Clearing is wired; not render-tested. |
+| U12 | Make **more than 20** edits, then undo as far as it will go. | You get 20 undos and then the button greys out. The oldest states are silently gone — no warning, no error. | Depth cap and eviction unit-tested. |
+| U13 | Start a drag and, **without releasing**, press **⌘Z**. | Nothing happens. The drag continues normally and completes on release. | `dragging` stand-down unit-tested; only a real gesture confirms the ref is live at that moment. |
+| U14 | Press **⌘R** (and **F5**) with no export running, then again **during an export**. | No export: the app reloads. During an export: it does **NOT** reload, and toasts "Cancel the export before reloading." | Unit-tested. The export-in-flight case needs a real export. |
+| U15 | Press **⌘⌥I** (and **F12**). | The Web Inspector opens; pressing again closes it. | Cannot be tested — it is a Rust call into the OS webview. |
+| U16 | With an undo available, hover both toolbar buttons. | The tooltip NAMES the edit ("Undo resize segment 12"), and the button face shows only an icon — the row must not reflow as the label changes. | Static markup asserts the tooltip and the absence of face text. |
+
+### Scoring
+
+```
+U1  (drag undo, whole gesture):        PASS / FAIL   Notes: __________
+U2  (redo, both chords):               PASS / FAIL   Notes: __________
+U3  (8 deep, round trip, no gaps):     PASS / FAIL   Notes: __________
+U4  (interrupted drag pushes nothing): PASS / FAIL   Notes: __________
+U5  (locked segment blocks undo):      PASS / FAIL   Notes: __________
+U6  (scroll only if off-screen):       PASS / FAIL   Notes: __________
+U7  (slider = one entry):              PASS / FAIL   Notes: __________
+U8  (text field keeps native undo):    PASS / FAIL   Notes: __________
+U9  (history survives reload):         PASS / FAIL   Notes: __________
+U10 (app restart clears):              PASS / FAIL   Notes: __________
+U11 (dashboard return clears):         PASS / FAIL   Notes: __________
+U12 (20-deep cap):                     PASS / FAIL   Notes: __________
+U13 (undo inert mid-drag):             PASS / FAIL   Notes: __________
+U14 (reload; blocked during export):   PASS / FAIL   Notes: __________
+U15 (devtools toggle):                 PASS / FAIL   Notes: __________
+U16 (tooltips name the edit):          PASS / FAIL   Notes: __________
+```
+
+### Known, and NOT a failure
+
+- **The undo/redo BUTTONS are only on the Files tab** (they sit in the row with
+  Apply sync, per the owner's placement ruling, and that row is that tab's pinned
+  footer). The keyboard shortcuts work on every tab, so undo is never unreachable.
+  If always-visible buttons are wanted, the right panel header is the
+  always-mounted spot — that is a ruling, not a bug.
+- **Windows is unverified** for every shortcut in this section. `tauri.conf.json`
+  bundles a Windows ffmpeg sidecar so it is a real target, but no Windows hardware
+  has exercised any of this.

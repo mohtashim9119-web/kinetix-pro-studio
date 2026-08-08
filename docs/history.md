@@ -3793,3 +3793,112 @@ experiment specified to resolve it before the shortcuts phase ships.
 replay byte-identical. Step 4 is now closed by construction (the gesture it names no longer
 exists) rather than pending re-retest; step 10 is closed by decision; undo/redo is designed
 and on the roadmap, pending approval to build.
+
+---
+
+## WS2 (2026-08-08, fourth pass) — step 10 fixed by measurement; undo/redo built (stages 1-5)
+
+### Step 10 — four attempts, then ten minutes of instrumentation
+
+Checklist step 10 (a drag interrupted by ⌘+Tab) had failed four manual runs and been closed
+once as an accepted limitation. Three prior fixes had all edited the `pointercancel` handler.
+Reopened with a hard timebox and one rule: **measure first, patch second.** DEV-only
+instrumentation in the real Tauri/WKWebView shell logged, for one interrupted drag:
+
+```
++0ms     gesture-start
++5236ms  tauri:onFocusChanged  focused=false
++5239ms  window:blur           document.hasFocus()=false
++5996ms  pointerup             buttons=0
++5997ms  TEARDOWN RAN          hasMoved=true wasCancelled=false
+```
+
+Two findings, both of which invalidated the standing diagnosis:
+
+1. **No `pointercancel` is ever delivered.** Every prior fix had been editing a code path this
+   gesture does not reach — which is exactly why each one passed its synthetic test and failed
+   the manual retest.
+2. **Teardown was never missed. The drag was COMMITTED.** The release arrived ~760ms later as
+   a plain `pointerup`, so `handleUp` took the commit branch. The pointercancel discard ruling
+   was dead code on this path: an interrupted drag was silently changing segment timings — the
+   precise outcome that ruling exists to prevent. The old description of this defect
+   ("neither cleanly committed nor cleanly discarded") was simply wrong; it was cleanly
+   committed, which is worse.
+
+Fixed with the signal that actually arrives (`window` `blur` → discard) plus a
+platform-independent backstop (a `pointermove` with `buttons === 0` → discard, for the case
+where the button is released in another app and no event reaches us at all).
+
+**Two incidental findings worth more than the fix.** A harness fidelity bug:
+`dragSessionHarness` had been dispatching every pointer event with `buttons` at
+`MouseEventInit`'s default of **0**, which for a `pointermove` is not what a real drag looks
+like. It went unnoticed for as long as nothing read the field; the moment the backstop did, 22
+existing tests failed. And a jsdom trap: `e.target === window` is **false** under vitest even
+for an event dispatched directly on `window`, so the obvious form of the blur guard is correct
+in a browser and silently always-false under test — a guard no test can exercise.
+
+**The transferable lesson, stated because it cost four attempts:** when a manual step fails
+repeatedly while its automated coverage is green, the next action is to measure what the
+platform actually delivers, not to edit the handler again. The instrumentation took ten
+minutes and one round trip.
+
+### Undo/redo — built, stages 3-5
+
+Snapshots with structural sharing, at the owner-ruled depth of 20 total states
+(`undoDepth + redoDepth <= 20`). The design's revision-1 sizing estimate ("2-4× JSON, so
+30-60 MB") was wrong by **~80× in the conservative direction**, because JSON cannot represent
+sharing — it serialises every shared segment object once per entry while the live heap points
+at one copy. Measured with `--expose-gc` on the real 444-segment corpus project:
+
+| Configuration, depth 20 | Real retained heap |
+|---|---|
+| Snapshots + structural sharing | **0.07 MB** |
+| Naive `structuredClone` per entry | 20.71 MB |
+| Worst case: all 20 entries are Apply Syncs | 12.18 MB |
+
+Worth carrying forward: the estimate that was wrong was wrong in the *safe* direction and
+still nearly drove a more complex design. The measurement that corrected it took one throwaway
+script against a corpus that already existed for sync verification.
+
+**Two premises the owner corrected, both of which changed the build.** First: a page reload is
+user-reachable (the app has a right-click reload), so history dying on reload dies in ordinary
+use — persistence was built rather than argued against. Second: telling a reload from an app
+restart is impossible in the renderer (both hand you an empty JS heap), so the discriminator
+had to come from outside it — a Rust `app_session_token` minting a UUID once per process.
+`PerformanceNavigationTiming.type === 'reload'` was rejected (it describes how *this document*
+loaded, not whether the app is the same one) and `sessionStorage` relegated to the non-Tauri
+dev fallback (its WKWebView restart lifetime is unverified here, and guessing would defeat the
+purpose).
+
+**The design doc over-costed one thing**, recorded so the pattern is recognisable: it assumed
+20 per-entry asset rehydration passes per load. By restore time the live project has already
+rehydrated every asset, so entries are re-pointed by id through a `Map` with no I/O at all.
+
+**The lock-conflict policy is the one place the design's own floated option turned out to be
+unbuildable.** "Restore everything except the locked segment" cannot be done: under snapshots
+there is nothing to skip (an entry is a whole `Project`), and holding one segment at its new
+value while its neighbours go back breaks `startTime[i] + duration[i] === startTime[i+1]` by
+construction — the DEV gapless assertion would fire on our own write. Blocking the undo is the
+only option that keeps every reachable state one the pipeline actually committed.
+
+**Platform verification ran BEFORE the handler was written**, as the brief required, because
+step 10 had just demonstrated the cost of not doing that. ⌘Z and ⌘⇧Z both reach a `window`
+listener with `defaultPrevented === false` in every tested focus state. The macOS Edit menu
+*flashes* on both, which is what makes `preventDefault()` load-bearing rather than tidy: this
+app configures no menu, so Tauri's default one is live and its ⌘Z is bound to the OS text
+responder. That flash is also why the shortcut resolver returns four values rather than three —
+`'consume'` (our chord, cannot act now, still `preventDefault`) has to be distinguishable from
+`'ignore'` (leave it entirely alone so a focused text field keeps its own undo).
+
+### Result
+
+**1688 tests, 1687 passing, 1 skipped, 0 failing**, 66 files, from 1530. `tsc --noEmit` clean,
+`cargo check` clean, golden replay 3/3 byte-identical at every stage boundary. Every new
+behaviour verified non-vacuously by disabling it and confirming the tests fail: 4/6 for the
+step-10 fix, 55/70 for history capture, 9/26 for the lock block and coalescing, and the
+token gate carried by exactly the one test written for it. Undo/redo was additionally driven
+end-to-end in a running app, including a real page reload that preserved history.
+
+The stuck-`resizingId` bug remains **open and unruled**, and was re-measured: it still fails
+after the step-10 fix. Same residue class, different root cause — its path sets that state and
+early-returns *before any listener is installed*, so no signal can reach it.

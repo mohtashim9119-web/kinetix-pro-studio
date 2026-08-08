@@ -214,6 +214,103 @@ src/
                      #   (declared in vite/client.d.ts, no extra type declaration needed) and played
                      #   by services/notificationSound.ts.
   services/
+    history.ts       # Undo/redo PURE CORE (Phase 1, 2026-08-08; design:
+                     #   docs/decisions/2026-08-08-undo-redo-design.md). A snapshot ring plus a
+                     #   cursor — no React, no DOM, no IndexedDB, `Project` is an opaque type
+                     #   parameter. DEPTH IS 20 TOTAL STATES, not 20 each: history stores the
+                     #   states you can travel TO, the one you are looking at lives in
+                     #   `useState`, so the invariant is `undoDepth + redoDepth <=
+                     #   MAX_HISTORY_STATES`. Snapshots not patches, and the reason is measured,
+                     #   not aesthetic: 0.07 MB of REAL retained heap for 20 states of the
+                     #   444-segment corpus project (naive structuredClone: 20.71 MB; worst case,
+                     #   all 20 entries Apply Syncs: 12.18 MB). "Structural sharing" needs no
+                     #   library — an entry holds the very Project object that was committed, and
+                     #   every writer in this app is already immutable. THAT IS LOAD-BEARING: if a
+                     #   writer ever mutates a committed Project in place, history silently
+                     #   rewrites its own past, which is why history.test.ts asserts by reference
+                     #   that an edit shares every untouched segment object with the stored entry.
+                     #   `replaceEntry` is the coalescing primitive and deliberately does NOT
+                     #   overwrite the stored state (only label/anchor) — overwriting would land
+                     #   undo in the MIDDLE of a slider gesture instead of before it.
+    historyPersist.ts # Undo history across a PAGE RELOAD but not an app restart (owner ruling
+                     #   2026-08-08). The hard part is not storage: a reload and an app restart
+                     #   both hand the renderer an empty JS heap, so nothing in the frontend can
+                     #   distinguish them. The discriminator comes from OUTSIDE it — `lib.rs`'s
+                     #   `app_session_token`, a UUID minted once per Rust PROCESS via OnceLock. A
+                     #   reload reads back the same token; a restart mints a new one; history is
+                     #   tagged on write and discarded on load if it changed. Rejected
+                     #   alternatives, recorded so they are not retried: `Performance
+                     #   NavigationTiming.type === 'reload'` describes how THIS DOCUMENT loaded,
+                     #   not whether the app is the same one; `sessionStorage`'s lifetime across a
+                     #   WKWebView app restart is unverified here (it IS the non-Tauri dev
+                     #   fallback). Own IndexedDB database (`kinetix-history`), NOT localStorage —
+                     #   serialised, history cannot use structural sharing, so 20 entries of the
+                     #   largest corpus project is ~6 MB against a shared ~5-10 MB quota. Assets
+                     #   are stripped of `url`/`file` on save (a blob: URL dies with the document)
+                     #   and, on load, re-pointed at the LIVE project's already-rehydrated assets
+                     #   by id — one Map pass, NO I/O, which is why the design doc's assumed "20
+                     #   rehydration passes per load" cost never materialised. A missing asset id
+                     #   is dropped and its references nulled (segment.assetId, voiceoverId), the
+                     #   same repair handleSwitchProject performs; the SEGMENT always survives.
+                     #   NEVER THROWS — a storage failure warns and is swallowed, same policy
+                     #   waveformStore applies to its cache.
+    historyLockPolicy.ts # Undo/redo lock conflict — BLOCK the traversal (owner ruling, design
+                     #   §5.1). If travelling to a stored state would move a currently-LOCKED
+                     #   segment, do not travel: history is left untouched so the entry is NOT
+                     #   consumed (undo again after unlocking performs it normally), the offender
+                     #   is scrolled to and flashed, and a toast offers Unlock. THE OBVIOUS
+                     #   ALTERNATIVE IS NOT BUILDABLE and will be proposed again: "restore
+                     #   everything except the locked segment" has nothing to skip under snapshots
+                     #   (an entry is a whole Project), and holding one segment at its new value
+                     #   while its neighbours go back breaks `startTime[i] + duration[i] ===
+                     #   startTime[i+1]` by construction — the DEV gapless assertion would fire on
+                     #   our own write. Two scoping decisions: LOCKED-IN-CURRENT is the test (a
+                     #   lock is a statement about the timeline as it stands now, and it makes the
+                     #   check symmetric under redo), and ONLY TIMING counts (a lock has never
+                     #   meant "freeze every field" anywhere else in the pipeline, so undoing a
+                     #   grade or filter on a locked segment is allowed). A segment ABSENT from the
+                     #   target is not a conflict — that is the Apply Sync boundary, and treating
+                     #   it as one would make the most valuable undo in the app unreachable.
+    historyCoalesce.ts # One history entry per GESTURE (design §3.2). Sliders close on `pointerup`
+                     #   (a release is a fact; an idle timer is a guess, and a slow deliberate drag
+                     #   crossing it would split into two entries); text closes on blur or 500ms
+                     #   idle, since a text field has no release event. THE NON-OBVIOUS PART:
+                     #   EffectsPanel debounces its grade writes at 120ms, so a gesture's LAST
+                     #   write lands AFTER the pointer is up — closing hard at pointerup would push
+                     #   it as a spurious second entry, exactly one per slider gesture. So a
+                     #   released slider stays claimable for SLIDER_RELEASE_GRACE_MS (250ms), and a
+                     #   test asserts that constant exceeds the 120ms debounce so raising the
+                     #   debounce fails loudly. Pure and TIME-INJECTED (`nowMs` is a parameter,
+                     #   never Date.now() inside) so every window boundary is asserted at an exact
+                     #   millisecond instead of with a sleeping test.
+    undoShortcut.ts  # Undo/redo chord resolution. Returns FOUR values, and the fourth is the
+                     #   point: 'consume' (our chord, must not act now — a modal is open or a drag
+                     #   is live) still gets preventDefault, so the native macOS Edit menu cannot
+                     #   perform a text undo behind a modal the user is looking at; 'ignore' does
+                     #   NOT, so a focused text field keeps its own native undo. Collapsing the two
+                     #   either breaks every text field or leaks a stray OS undo. Text-entry focus
+                     #   is checked BEFORE suppression, so a field inside a modal still gets native
+                     #   undo. PLATFORM STATUS MEASURED IN THE REAL SHELL (recorded in the file's
+                     #   header): ⌘Z/⌘⇧Z/⌘Y all reach a window listener with defaultPrevented=false
+                     #   in every tested focus state, and the macOS Edit menu FLASHES — which is
+                     #   what makes preventDefault load-bearing rather than tidy, since this app
+                     #   configures no menu and Tauri's default one binds ⌘Z to the OS text
+                     #   responder. Windows remains unverified and is not claimed.
+    appShortcuts.ts  # Reload (⌘R / Ctrl+R / F5) and devtools toggle (⌘⌥I / Ctrl+Shift+I / F12),
+                     #   2026-08-08 owner request. Deliberate sibling of undoShortcut.ts, composed
+                     #   in the same App.tsx keydown handler; their key sets are disjoint and
+                     #   appShortcuts.test.ts SWEEPS both resolvers to assert no chord is ever
+                     #   claimed by both (a chord added to either could otherwise silently shadow
+                     #   the other with nothing in the suite noticing). NOT suppressed by a focused
+                     #   text field, unlike undo/redo — ⌘R and F12 are application actions with no
+                     #   text meaning to shadow. ONE DELIBERATE DEVIATION from "just reload": ⌘R
+                     #   during an EXPORT returns 'reload-blocked' and toasts instead, because a
+                     #   reload mid-export destroys unrecoverable work (the render dies with the
+                     #   page, the ffmpeg sidecar is left mid-run, its session temp dir orphaned).
+                     #   The key is still consumed so the webview's own reload cannot fire behind
+                     #   us — which is why 'reload-blocked' is distinct from 'ignore'. Devtools need
+                     #   a Rust command (`toggle_devtools`, lib.rs): Tauri exposes no JS API for
+                     #   them.
                      # `docs/sync-pipeline-v2-plan.md` is the accepted-architecture authority for the
                      #   in-progress sync pipeline restructure (accepted 2026-08-03, not yet
                      #   implemented) — see it before touching any file in this directory that
@@ -2234,6 +2331,15 @@ App.tsx                    — top-level state + orchestration only
 | Classifying breath-vs-boundary silence from token TIMESTAMPS, OR building a boundary search window from raw token TIMESTAMPS | Whisper timestamps blur 100-900ms across a real seam (measured); token INDICES (from the Hirschberg alignment pass) are exact and never smeared. `isBreathSilence`'s multi-fragment override was fixed 2026-08-03 to use index position instead — see `snapBoundaries.ts`'s entry and `docs/boundary-drift-investigation.md`. The WINDOW-CONSTRUCTION half of this problem (distinct from classification) is still open: segment 96's boundary picker widened its search window off a claimed gap built from raw timestamps — look ends 289.090, the next token ("A") is declared at 289.200, but the real silence is `[289.380, 289.960]` — the declared onset precedes the pause entirely, so a timestamp-built window can miss the real gap outright. Fix path: `docs/sync-pipeline-v2-plan.md` Part C. |
 | `FontFace.load(url)` inside the WebCodecs export Worker | Fails with a NetworkError against fonts.gstatic.com on real WKWebView (confirmed empirically, not theoretical) — fetch bytes on the main thread and pass an `ArrayBuffer`/`FontConfig.bytes` into the worker instead (`fontResolver.ts`) |
 | Assuming a canvas-source `VideoFrame`/`VideoEncoder` config accepts a `colorSpace` field | Only the buffer-source constructor overload has one — a canvas-source `VideoFrame` has no `colorSpace` API at all (confirmed against MDN and a real TS overload-rejection error); tag color space at MUX time instead (`muxOnly.ts`'s bt709 flags) |
+| Calling `setProjectRaw` anywhere outside `App.tsx`'s `setProject`/`setProjectSilent` wrappers | Undo history is captured at that seam, and the wrappers advance `liveProjectRef` — the SYNCHRONOUS mirror the wrapper reads to know the pre-edit state. A third raw call site desynchronises that mirror, and every subsequent updater-form `setProject` then receives a stale `prev`. There are exactly two: the hydration commit and `setProjectSilent`. |
+| Using `projectRef` (the effect-written mirror) to derive undo history's pre-edit state | It holds the last COMMITTED project, so two `setProject` calls batched into one handler both read the same value — the second pushes a duplicate state and one gesture costs two undo presses. Use `liveProjectRef`, advanced synchronously inside the wrapper. |
+| Making lock/unlock undoable | Owner ruling 2026-08-08. A lock is a statement about how future edits behave, not an edit to the video, and making it undoable interacts confusingly with the block-undo-on-locked-segment policy: undo would sometimes remove a lock and sometimes be blocked BY one, unpredictably. All lock writes go through `setProjectSilent`. |
+| "Restoring everything except the locked segment" on a blocked undo | Not buildable, and it will be proposed again. Under snapshots there is nothing to skip (an entry is a whole `Project`), and holding one segment at its new value while its neighbours revert breaks `startTime[i] + duration[i] === startTime[i+1]` by construction — the DEV gapless assertion fires on our own write. Block the traversal instead (`historyLockPolicy.ts`). |
+| Routing an undo/redo restore through `computeDragCascade` | `DRAG_CASCADE_OPTIONS`'s `conserveTotalDuration` would refuse a legitimate restore whose total duration differs from current state — undoing an Apply Sync is the obvious case. A restore is a plain `setProject`, deliberately outside that guard, and `history.test.ts` asserts a differing-total restore succeeds. |
+| Sizing a snapshot-history design from JSON byte counts | JSON cannot represent structural sharing — it serialises every shared object once per entry. The design doc's own estimate was ~80× too high this way (30-60 MB predicted vs. **0.07 MB** measured for 20 states of the 444-segment project). Measure real heap with `--expose-gc` around a forced GC. |
+| Assuming a real OS interruption fires `pointercancel` in WKWebView | [MEASURED 2026-08-08] It does not — a ⌘+Tab mid-drag delivers `blur` and then a LATE `pointerup`, and three fixes were spent editing a handler that gesture never reaches. See `dragSession.ts`'s `handleBlur` for the captured log. When a manual step fails repeatedly while its automated coverage is green, instrument the real shell before editing the handler again. |
+| `expect(e.target).toBe(window)` in a jsdom/vitest test, or a production guard shaped that way | [MEASURED] `e.target === window` is **false** under vitest even for an event dispatched directly on `window`, so such a guard is correct in a real browser and silently always-false under test — untestable by construction. Test "the target is not an `Element`" instead (`dragSession.ts`'s `handleBlur`). |
+| Dispatching a synthetic `pointermove` with `buttons` left at `MouseEventInit`'s default of 0 | That is not a drag — a move with the primary button held reports `1`, and `0` specifically means no button is down, which `dragSession.ts`'s step-10 backstop treats as "the release happened while we were not watching". `dragSessionHarness.ts` did this for months undetected because nothing read the field; when something did, 22 tests failed at once. |
 | Adding 4K (or any resolution tier) back without updating `RESOLUTION_TABLE` for all 3 aspect ratios | `resolutionConfig.ts`'s `Record<AspectRatio, Record<ResolutionTier, FrameDimensions>>` shape makes a missing cell a compile error, not a silent runtime hole — but every new tier still needs a deliberate dimension decision for `9:16` and `1:1`, not just `16:9` |
 | An ffmpeg concat-protocol invocation (`-i concat:a\|b\|c\|...`) to join the WebCodecs export path's AnnexB piece files | Opens every piece file simultaneously — exhausts macOS's default 256 per-process file-descriptor limit on large-segment exports (`Too many open files`, exit code 232, reproduced at 407 segments); use `TauriFfmpeg.concatAnnexbPieces` (Rust `ffmpeg_concat_annexb_pieces`) instead, which stream-copies with only 2 file descriptors open at once regardless of piece count (macOS EMFILE fix, 2026-07-23) |
 | Assume a segment's committed slot contains its own audio because the token timestamps say so | Whisper timestamps can land inside the preceding silence (segment 144: slot ~427.7-428.3s, but the token's real onset is after 428.300 per `docs/v6-smear-baseline.csv` row 1179) — a sub-1s segment can play entirely empty; see `docs/sync-pipeline-v2-plan.md`'s Part L |
