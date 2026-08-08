@@ -25,6 +25,16 @@ export interface SlipBarGeometry {
   hasKnownSourceDuration: boolean;
   widthPct: number;
   leftPct: number;
+  // Max legal `trimStart`, in source seconds. 0 whenever
+  // hasKnownSourceDuration is false — same "decline to guess, never
+  // fabricate a bound" rule as widthPct/leftPct above, reused by every
+  // trimStart-drag caller (Timeline.tsx's in-place drag, the segment
+  // editor's range slider) instead of each defaulting sourceDuration to a
+  // guessed constant. Deliberately NOT playbackSpeed-adjusted (matches the
+  // pre-existing callers' own `sourceDuration - duration` formula) — a
+  // playbackSpeed-aware bound is a separate, pre-existing question this
+  // fix does not touch.
+  maxTrimStartSec: number;
 }
 
 export function computeSlipBarGeometry({
@@ -42,6 +52,9 @@ export function computeSlipBarGeometry({
   const leftPct = hasKnownSourceDuration
     ? Math.min(100, Math.max(0, (trimStart / srcDur) * 100))
     : 0;
+  const maxTrimStartSec = hasKnownSourceDuration
+    ? Math.max(0, srcDur - duration)
+    : 0;
 
-  return { hasKnownSourceDuration, widthPct, leftPct };
+  return { hasKnownSourceDuration, widthPct, leftPct, maxTrimStartSec };
 }

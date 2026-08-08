@@ -69,6 +69,7 @@ import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
 import { findLockConflict, lockConflictMessage } from './services/historyLockPolicy';
+import { computeSlipBarGeometry } from './services/slipBarGeometry';
 import {
   clampCurrentTimeToRestoredEnd,
   repairSelectedHeadingId,
@@ -4961,7 +4962,23 @@ export default function App() {
                       </div>
 
                       {project.assets.find(a => a.id === editingSegment.assetId)?.type === 'video' && (() => {
-                        const srcDur = editingSegment.sourceDuration ?? 60;
+                        // An unknown sourceDuration has no real slider bound —
+                        // same "decline to guess" rule slipBarGeometry.ts's
+                        // header documents (a fabricated 60s default either
+                        // silently permitted a trim range beyond the real,
+                        // shorter, unprobed source, or clamped a genuinely
+                        // longer source down to 60s). Hide the trim controls
+                        // entirely rather than render against a guessed
+                        // bound — same precedent BottomDrawer.tsx's own slip
+                        // bar already follows for this exact case.
+                        const { hasKnownSourceDuration } = computeSlipBarGeometry({
+                          duration: editingSegment.duration,
+                          playbackSpeed: editingSegment.playbackSpeed,
+                          trimStart: editingSegment.trimStart ?? 0,
+                          sourceDuration: editingSegment.sourceDuration,
+                        });
+                        if (!hasKnownSourceDuration) return null;
+                        const srcDur = editingSegment.sourceDuration as number;
                         const trimStart = editingSegment.trimStart ?? 0;
                         const trimEnd = editingSegment.trimEnd ?? srcDur;
                         return (

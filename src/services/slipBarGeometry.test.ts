@@ -63,6 +63,47 @@ describe('computeSlipBarGeometry', () => {
     });
   });
 
+  describe('maxTrimStartSec (Timeline.tsx / App.tsx SegmentEditorModal trim-drag bound)', () => {
+    it('is 0 for an unknown sourceDuration with a long segment — previously fabricated a 60s default, silently zeroing/discarding any existing trimStart on drag (confirmed FAIL via direct computation, cleanup run 2026-08-08 Stage 1)', () => {
+      const geo = computeSlipBarGeometry({
+        duration: 70,
+        trimStart: 40,
+        sourceDuration: undefined,
+      });
+      expect(geo.hasKnownSourceDuration).toBe(false);
+      expect(geo.maxTrimStartSec).toBe(0);
+    });
+
+    it('is 0 for an unknown sourceDuration with a short segment too — previously fabricated a 60s default, permitting a committed trimStart far beyond the real (shorter, unprobed) source', () => {
+      const geo = computeSlipBarGeometry({
+        duration: 5,
+        trimStart: 0,
+        sourceDuration: undefined,
+      });
+      expect(geo.hasKnownSourceDuration).toBe(false);
+      expect(geo.maxTrimStartSec).toBe(0);
+    });
+
+    it('is unchanged (sourceDuration - duration) when sourceDuration is known', () => {
+      const geo = computeSlipBarGeometry({
+        duration: 20,
+        trimStart: 0,
+        sourceDuration: 90,
+      });
+      expect(geo.hasKnownSourceDuration).toBe(true);
+      expect(geo.maxTrimStartSec).toBe(70);
+    });
+
+    it('never goes negative when duration exceeds a known sourceDuration', () => {
+      const geo = computeSlipBarGeometry({
+        duration: 90,
+        trimStart: 0,
+        sourceDuration: 60,
+      });
+      expect(geo.maxTrimStartSec).toBe(0);
+    });
+  });
+
   describe('clamp is a hard backstop even with a known sourceDuration', () => {
     it('never exceeds 100 for widthPct when duration*playbackSpeed exceeds sourceDuration', () => {
       const geo = computeSlipBarGeometry({

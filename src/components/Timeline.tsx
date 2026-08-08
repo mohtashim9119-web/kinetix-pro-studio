@@ -12,6 +12,7 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
 import { isDragEdgeLocked } from '../services/dragCascade';
+import { computeSlipBarGeometry } from '../services/slipBarGeometry';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 import {
@@ -649,13 +650,29 @@ export function Timeline({
                     onMouseDown={(e) => {
                       if (isAdjustingTrim && trimmingSegmentId === s.id) {
                         e.stopPropagation();
+                        // An unknown sourceDuration has no real bound to drag
+                        // against — same "decline to guess" rule
+                        // slipBarGeometry.ts's own header documents (a
+                        // fabricated 60s default either silently discarded an
+                        // existing trimStart when duration > 60, or permitted
+                        // committing a trimStart past the real, shorter,
+                        // unprobed source — both confirmed via direct
+                        // computation). Bail out before attaching listeners
+                        // rather than dragging against a guessed maxTrim.
+                        const { hasKnownSourceDuration, maxTrimStartSec } = computeSlipBarGeometry({
+                          duration: s.duration,
+                          playbackSpeed: s.playbackSpeed,
+                          trimStart: s.trimStart ?? 0,
+                          sourceDuration: s.sourceDuration,
+                        });
+                        if (!hasKnownSourceDuration) return;
+
                         const startX = e.clientX;
                         const startTrim = s.trimStart ?? 0;
 
                         const handleMouseMove = (moveEvent: MouseEvent) => {
                           const deltaX = moveEvent.clientX - startX;
-                          const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
-                          const newTrim = computeTrimDrag(deltaX, pixelsPerSecond, startTrim, maxTrim);
+                          const newTrim = computeTrimDrag(deltaX, pixelsPerSecond, startTrim, maxTrimStartSec);
                           onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
                         };
                         const handleMouseUp = () => {
