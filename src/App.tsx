@@ -1185,7 +1185,11 @@ export default function App() {
    *    array that is already the top of history, so capturing them would push a
    *    no-op duplicate and make one gesture cost two undos (design §3.1);
    *  - lock/unlock, which the owner ruled NOT undoable (design §4);
-   *  - hydration, and any other machine-driven write.
+   *  - hydration, and any other machine-driven write;
+   *  - handleApplySyncFromFiles's post-hoc boundary-quality log append — a
+   *    continuation of the SAME Apply Sync edit that already pushed its own
+   *    entry via `setProject`, arriving after the async waveform build, not a
+   *    second user-authored edit (Stage 3, 2026-08-08 cleanup run).
    */
   const setProjectSilent = useCallback((action: React.SetStateAction<Project>): void => {
     const prev = liveProjectRef.current;
@@ -3002,7 +3006,15 @@ export default function App() {
             syncRunAt,
           )];
       if (boundaryLogEntries.length > 0) {
-        setProject(prev => appendSyncLogEntries(prev, boundaryLogEntries, undefined));
+        // setProjectSilent, not setProject: this is a post-hoc continuation of
+        // the SAME Apply Sync edit that already pushed a history entry above
+        // (step 8), arriving after the async waveform build rather than a new
+        // user-authored edit of its own. A second keyless setProject here
+        // always pushes (historyCoalesce.ts's discrete-write rule), so it used
+        // to cost the user two undo presses per Apply Sync — the first a
+        // visual no-op on the waveform-unavailable branch, since nothing but
+        // this log entry had changed. See docs/_cleanup-findings.md, Stage 3.
+        setProjectSilent(prev => appendSyncLogEntries(prev, boundaryLogEntries, undefined));
       }
     }
 
