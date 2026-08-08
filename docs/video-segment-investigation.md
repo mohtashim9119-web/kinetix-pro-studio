@@ -6,6 +6,28 @@
 
 ---
 
+## Status summary — READ THIS BEFORE CITING THIS DOCUMENT
+
+**This document is NOT resolved.** One of its three symptoms is; the other two are
+open. The distinction matters because step 12's PASS on the 2026-08-08 manual run has
+already been read once as closing the whole video path, and it does not.
+
+| # | Symptom | Status as of 2026-08-08 |
+|---|---|---|
+| 1 | Preview freeze after a boundary edit | **VERIFIED RESOLVED** — manual step 12 PASS. Cause **not determined**; see the honesty note in §1. |
+| 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN** — owner ruling pending (see §2). Predates all recent work. |
+| 3 | Drawer slip-trim bar overflows the viewport | **OPEN** — never manually exercised, by anyone, ever. See §3. |
+
+**What step 12 actually covers: symptom 1 only.** It drives a boundary drag between
+two video segments and watches playback cross it. That gesture cannot reach symptom 3
+(which needs the segment *drawer* opened on a segment with no `sourceDuration`), and it
+cannot *score* symptom 2 (the speed coupling is silent and by-design-looking — a tester
+watching for a freeze will not notice a clip re-timing unless told to look). A new
+manual step exists for symptom 3 as of this revision; symptom 2 needs a ruling, not a
+test.
+
+---
+
 ## Why this is one document and not one bug
 
 Manual checklist step 12 ("drag a boundary between two **video** segments, then let
@@ -30,8 +52,56 @@ just at release. Whatever these are, they are downstream of a correct commit.
 
 ## Symptom 1 — preview freeze after a boundary edit
 
-**Status:** investigated 2026-08-08, NOT fixed. Root cause located to a module, not
-to a line.
+**Status: VERIFIED RESOLVED**, manual checklist step 12, 2026-08-08, real Tauri/
+WKWebView shell, owner-run. Both adjacent video segments now play normally across a
+dragged boundary.
+
+### The honest part: nothing was fixed on purpose, and the cause is not known
+
+**No commit in WS2 touched either implicated module** [MEASURED]:
+
+```
+git log --oneline -- src/hooks/useWebCodecsPreview.ts
+  → newest is 2015218 "WebGL2 Phase 5 cutover" — long predates WS2
+git log --oneline -- src/services/videoDecoderPool.ts
+  → newest is e1f6985 "stop caching rejected session promises" — likewise
+```
+
+So this is **resolved by incidental change, not by a fix**, and it is tagged that way
+deliberately. The candidate explanations, none of them confirmed:
+
+- The drag path now commits *different* timings than it did when the freeze was
+  observed — K15b's yield-floor re-derivation, K16's pointer geometry, the step-10
+  interrupted-drag discard, and the last-segment edge lock all changed what lands in
+  the segment array after a drag. A decode session invalidated by a *wrong* commit
+  would stop being invalidated once the commit became right.
+- The original observation was made during a triage session in which several drag
+  defects were live at once (steps 1, 2, 4, 10, 11 all failing). It may have been a
+  downstream symptom of one of those rather than an independent defect.
+
+**What this does NOT license.** The gap that made this hard to diagnose is still
+exactly as wide as it was:
+
+- [ASSERTED] **There is still no automated coverage of the decode pool's response to
+  a segment-timing change.** Not thin — none. `videoDecoderPool.test.ts` covers the
+  pool's own session/eviction/coverage logic against a mock decoder; nothing exercises
+  "the segment array changed underneath a live session."
+- [ASSERTED] The pool has a documented history of *mock-invisible* defects. `getFrameAt`
+  awaiting a whole session's decode rather than enough coverage to answer the query
+  presented as a freeze on the outgoing segment's last frame, and was only caught once
+  a mock could separate `output` events from `flush()` settlement (`docs/history.md`,
+  Phase 3). The keyframe-after-`flush()` constraint was invisible to the mock suite
+  entirely while failing on real hardware. **A green `videoDecoderPool.test.ts` is weak
+  evidence about this module, and a single manual PASS is not strong evidence either.**
+
+**Therefore: treat this as resolved, but treat a recurrence as expected rather than
+surprising**, and re-run step 12 after any change to the preview decode path. If it
+recurs, the next step is unchanged from the original investigation: write a test that
+changes segment timings under a live decode session, and if it cannot be written
+against the current mock, *that is the finding* — extend the mock first, exactly as the
+Phase 3 fix had to.
+
+### Original report, retained
 
 **Reported behaviour.** After dragging a boundary that touches two video segments,
 **both** adjacent segments freeze in the preview player when playback crosses into
@@ -69,8 +139,20 @@ decode session. If it cannot be written against the current mock, that is the fi
 
 ## Symptom 2 — playback speed changes when a video segment is dragged
 
-**Status:** unreproduced here. Mechanism identified and it appears to be **working as
-designed**, which would make this a UX/discoverability problem rather than a defect.
+**Status: OPEN.** Awaiting an owner product ruling (the three options are enumerated
+under "Next step" below). Mechanism is fully identified; what is undecided is whether
+the identified mechanism is *wanted*.
+
+**Explicitly NOT closed by step 12's PASS.** Step 12 watches for a freeze. The speed
+coupling is silent, produces a perfectly smooth playing clip, and looks like correct
+behaviour to a tester who has not been told to look for it — so a step-12 PASS carries
+no information about this symptom at all.
+
+**Not introduced by any recent work** [MEASURED]. The coupling predates all K16/K17/WS2
+work and is pinned as timing-neutral by `dragGeometry.test.ts` PART 1, which asserts
+`resolveDragEdge` byte-identical to the pre-K16 commit expression across a 30-case
+sweep including video fixtures. Had any recent change introduced or altered it, that
+block would have failed.
 
 **Reported behaviour.** Dragging a video segment's edge changes its playback speed.
 
@@ -108,7 +190,21 @@ project exercises an interactive drag).
 
 ## Symptom 3 — drawer duration slider overflows the viewport
 
-**Status:** unreproduced here. A concrete, checkable mechanism is identified below.
+**Status: OPEN, and — the point worth recording — NEVER MANUALLY EXERCISED BY ANYONE.**
+
+This is not "unreproduced." It is untested. Until this revision there was **no manual
+step that opens the segment drawer at all**, so no run of the checklist could have
+found, confirmed, or refuted it, and its absence from a run log meant nothing. It has
+been sitting behind a step-12 entry that cannot reach it: step 12 is a boundary drag
+plus playback, and never opens the drawer.
+
+**Fixed as of this revision:** `docs/wkwebview-drag-checklist.md` **step 13** now
+exercises the drawer's slip-trim bar directly, against a segment with no
+`sourceDuration` and a duration past the hardcoded `?? 60` fallback — the exact
+condition the mechanism below predicts will overflow. Symptom 3 is therefore
+*scoreable* from the next manual run onward. It has not yet been scored.
+
+A concrete, checkable mechanism is identified below.
 
 **Reported behaviour.** The segment drawer's duration control overflows the viewport.
 
