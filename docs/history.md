@@ -3672,3 +3672,124 @@ drag path, and its commit-equivalence property exists precisely to keep it that 
 
 Steps 4, 9 and 10 remain **manual-only** for the slices the suite structurally cannot reach:
 visual lane alignment, scroll feel, and a real OS-triggered `pointercancel`.
+
+## WS2 — Last-Segment Lock, Step 10 Closure, Undo/Redo Design (2026-08-08, later still)
+
+Third pass the same day, driven by the manual retest of the two items the prior pass
+couldn't close automatically: step 4 (last-segment right-edge visual drift) still FAILED
+after the `zoomBasisDuration` freeze — twice — and step 10 (real OS `pointercancel`) was
+confirmed unreachable by any test the suite can run. Baseline gate: 1514 tests (1513
+pass/0 fail/1 skip), `tsc` clean, golden replay 3/3 — matched exactly, tagged
+`pre-last-segment-lock-2026-08-08`.
+
+### Stage 1 — the last segment's right edge is locked (`b41ebe1`)
+
+**Owner ruling, semantic option (i):** the last segment's right edge is not draggable, in
+either direction; the left edge is unaffected.
+`docs/decisions/2026-08-08-last-segment-edge.md` records the three candidate semantics and
+why (i) won — chiefly that (ii)/(iii) both keep an edge that moves total duration, which is
+structurally the same re-layout the freeze was fighting; (i) makes the fight impossible
+rather than won.
+
+**Enumerated before touching anything** (the brief's own requirement): 3 duration-changing
+paths are in scope for the lock (the reported edge, plus two never-tested entry points to
+the identical defect found by *reading* `dragCascade.ts` — a right-edge drag on segment N-2
+overshooting N-1's `MIN_SEGMENT_DURATION` floor, and a left-edge drag on segment 0 of a
+one-segment timeline, both reachable through the cascade's pre-existing `hi < segs.length -
+1` giveback exemption); 7 paths are legitimately out of scope (Apply Sync, the fallback
+retiler, the playback-speed slider, the segment-editor duration field, hydration, New
+Project, the DEV fixture) and were left untouched.
+
+**Two layers, one predicate.** `isDragEdgeLocked(segments, index, edge)`
+(`dragCascade.ts`) is the single definition of which (segment, edge) pairs are inert.
+`Timeline.tsx` consults it to skip rendering the resize handle at all (affordance);
+`dragSession.ts` consults it to refuse the gesture before wiring a single listener
+(defensive), placed *above* the `resizingId`/body-class writes specifically so it cannot
+reproduce the still-unruled early-bail stuck-state bug. A third layer —
+`DragCascadeOptions.conserveTotalDuration`, opt-in and OFF by default — closes the
+arithmetic hole the affordance lock alone would have left open at the two entry points
+above; it is set only by the drag path (`DRAG_CASCADE_OPTIONS`, shared verbatim between the
+live preview and the commit) and never by the speed slider, which legitimately changes the
+last segment's duration and would otherwise silently stop working there.
+
+**The generalised guard**, per the brief's explicit instruction to kill the bug class, not
+the instance: `dragDurationInvariant.test.ts`, "no drag gesture may change total timeline
+duration," swept over every index/edge/direction of arrays sized 1–5, with overshoot to
+±200s, with the K15b word floor active, with a lock in every position, at both the pure
+cascade and live-preview layers (PART 1), then re-proven end-to-end through the real
+`DragSessionHarness` including per-frame during a multi-frame drag, a 10-gesture chain with
+no reset, and a `pointercancel` discard (PART 2). **Verified non-vacuous**: disabling the
+guard failed 10 of 12 tests immediately.
+
+Every F2-block test in `dragTriage.test.ts` was **converted, not deleted** — including the
+300px → 259.0909px rescale pin, kept verbatim because it never drove the drag path (it's a
+pure computation over two hand-written arrays) and is now the numeric record of *why*
+option (i) was chosen: the rescale is still live for every OTHER duration-changing path,
+this just closed the one triggered by a mouse drag. Five `dragSessionHarness.test.ts` tests
+and one `gaplessInvariant.test.ts` test needed conversion too — three because a
+one-or-two-segment fixture happened to grab the now-locked edge for an unrelated assertion
+(unmounted-element skip, resizing-state side effects, a leak check), one because the
+preview/commit agreement test needs the real drag's options object to compare against, not
+the speed slider's. Also fixed in passing: `dragSessionHarness.ts`'s
+`commitDurationChange` was silently dropping the new options parameter, which would have
+made the harness run the drag path under the wrong semantics at exactly the tail index the
+ruling is about.
+
+**Result: 1514 → 1530 tests** (1529 pass / 0 fail / 1 skip). `tsc` clean. Golden replay
+byte-identical (no sync/timing/pipeline file touched — the change is confined to
+`dragCascade.ts`, `dragGeometry.ts`'s sibling `dragSession.ts`, and `Timeline.tsx`'s JSX).
+
+**1f — is the zoom-basis freeze still load-bearing?** Investigated by removing it and
+running the suite: [MEASURED] green, 1529/1/0, `tsc` clean — the suite cannot distinguish
+the two configurations, because nothing renders `Timeline` through a duration-changing
+gesture and inspects `pixelsPerSecond`. [ASSERTED] structurally it now suppresses nothing:
+its guard window is exactly the span `resizingId !== null`, and inside that span duration
+can no longer change under the ruling. [ASSUMED, not provable] that no *non-drag*
+duration-changing path can land while `resizingId !== null` — a claim about UI concurrency
+that stays unfalsified rather than proven. **Kept, deliberately**, because the still-open
+early-bail stuck-`resizingId` bug is a live counterexample to that assumption if it's ever
+triggered (a stuck `resizingId` would latch the freeze's ref and skip the next genuine
+Apply-Sync rebase) — recorded as a reason to revisit when that bug is ruled on, not a reason
+to remove the freeze in the same change the manual tester is about to re-score step 4
+against.
+
+### Stage 2 — step 10 closed by decision (`32fe35f`)
+
+Docs only, per the brief: not fixable at acceptable cost, deprioritised by the owner. The
+checklist's step 10 row and pass/fail record now read CLOSED rather than PASS/FAIL, with a
+dedicated closure note stating the symptom (a real OS interruption can leave the drag
+session dirty — neither cleanly committed nor cleanly discarded), the coverage split
+(synthetic `pointercancel` stays fully tested — `dragSessionHarness.test.ts` PART 4,
+`dragTriage.test.ts`'s F4 block, the universal post-condition — none of it deleted; what's
+missing is proof the real event fires at all in WKWebView), and the stated mitigation:
+undo/redo makes the dirtied state recoverable rather than unrecoverable, which is the trade
+the owner accepted in exchange for closing this step rather than continuing to chase it.
+
+### Stage 3 — undo/redo, design only (`7d2a7bb`)
+
+Zero production code, per the brief's hard stop. `docs/decisions/2026-08-08-undo-redo-design.md`
+answers all ten required questions. Highlights: `setProject` is confirmed a genuine single
+funnel — **62** write sites measured (correcting a stale "~79" cited in an existing
+`App.tsx` comment), zero direct-mutation bypasses found by grep; recommend a
+`setProjectRaw`/`setProject` wrapper rename rather than an effect, since only the wrapper
+can distinguish a user edit from a history restore. Snapshots recommended over patches,
+sized against the real corpus (v6/173/spanish, populated with the actual `VideoSegment`
+field set): worst case is 14.6 MB JSON at 50-deep history on the 444-segment v6 project —
+not a constraint next to the 1.6 GB Whisper model this app already loads, and snapshots make
+the golden-replay guarantee structural (restore replays a value the pipeline already
+produced) where a patch scheme would have to recompute. One gesture = one entry, riding
+directly on Stage 1′'s `finally` teardown so a drag produces exactly one entry on commit and
+zero on revert/discard. Apply Sync is undoable but explicitly excludes `transcriptTokens`/
+`language` from restore, so undoing a sync doesn't discard a multi-minute Whisper run.
+Two platform risks flagged for the shortcuts phase: WKWebView's documented history of
+swallowing input, and an unconfigured Tauri app that likely already carries a default macOS
+Edit menu binding `Cmd+Z`. Least-confident call, named explicitly: whether a `window`
+keydown listener can see `Cmd+Z` at all in the real shell — with a concrete ten-minute
+experiment specified to resolve it before the shortcuts phase ships.
+
+### Result
+
+**1530 tests, 1529 passing, 1 skipped, 0 failing**, 61 files. `tsc --noEmit` clean. Golden
+replay byte-identical. Step 4 is now closed by construction (the gesture it names no longer
+exists) rather than pending re-retest; step 10 is closed by decision; undo/redo is designed
+and on the roadmap, pending approval to build.
