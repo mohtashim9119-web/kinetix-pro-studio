@@ -12,11 +12,11 @@
 open. The distinction matters because step 12's PASS on the 2026-08-08 manual run has
 already been read once as closing the whole video path, and it does not.
 
-| # | Symptom | Status as of 2026-08-08 |
+| # | Symptom | Status as of 2026-08-09 |
 |---|---|---|
 | 1 | Preview freeze after a boundary edit | **VERIFIED RESOLVED** — manual step 12 PASS. Cause **not determined**; see the honesty note in §1. |
 | 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN — RULED A BUG** (owner, 2026-08-08). Deliberately NOT fixed in that run; scoped in §2, roadmapped at `roadmap-2026-08-07.md` § D12. Predates all recent work. |
-| 3 | Drawer slip-trim bar overflows the viewport | **OPEN** — never manually exercised, by anyone, ever. See §3. **Fix this with or before symptom 2** — the coupling is currently what contains it for video segments. |
+| 3 | Drawer slip-trim bar overflows the viewport | **OPEN — CONFIRMED BY SCREENSHOT, previous fix did not resolve it.** A 2026-08-08 run (commit `a7044c1`) fixed one root cause (an unknown `sourceDuration` fabricating a 60s denominator) and left a second, independent root cause untouched (an out-of-range `trimStart` committed by the live Timeline left-edge drag, with no clamp anywhere on the commit path). The owner's screenshot is the second cause, not the first. See §3 — rewritten this revision with a live, reproduced repro. |
 
 **What step 12 actually covers: symptom 1 only.** It drives a boundary drag between
 two video segments and watches playback cross it. That gesture cannot reach symptom 3
@@ -248,63 +248,229 @@ would not catch it** — no corpus project exercises an interactive drag.
 
 ## Symptom 3 — drawer duration slider overflows the viewport
 
-**Status: OPEN, and — the point worth recording — NEVER MANUALLY EXERCISED BY ANYONE.**
+**Status: OPEN — CONFIRMED BY SCREENSHOT, previous fix did not resolve it.**
 
-This is not "unreproduced." It is untested. Until this revision there was **no manual
-step that opens the segment drawer at all**, so no run of the checklist could have
-found, confirmed, or refuted it, and its absence from a run log meant nothing. It has
-been sitting behind a step-12 entry that cannot reach it: step 12 is a boundary drag
-plus playback, and never opens the drawer.
+### What last run actually did, and why it didn't land
 
-**Fixed as of this revision:** `docs/wkwebview-drag-checklist.md` **step 13** now
-exercises the drawer's slip-trim bar directly, against a segment with no
-`sourceDuration` and a duration past the hardcoded `?? 60` fallback — the exact
-condition the mechanism below predicts will overflow. Symptom 3 is therefore
-*scoreable* from the next manual run onward. It has not yet been scored.
+The 2026-08-08 run (commit `a7044c1`, "fix(drawer): clamp slip-bar width and stop
+guessing an unknown source duration") was a real fix for a real, confirmed FAIL
+(manual step 13) — but it closed exactly one of **two independent root causes** that
+both produce the identical visual symptom in the identical control. It closed the
+`sourceDuration ?? 60` fabrication (an *unknown* source duration guessed as 60s). It
+did not touch, and could not have touched, an *out-of-range* `trimStart` committed by
+the live Timeline drag path against a perfectly well-known `sourceDuration`. The
+owner's screenshot is the second cause. **This is a fix that did not fix the reported
+symptom — not "partially addressed," not "mostly resolved."** The control still
+overflows, today, on the current `main`, via an ordinary left-edge drag on a video
+segment.
 
-A concrete, checkable mechanism is identified below.
+### 1a — Which component actually overflows
 
-**Reported behaviour.** The segment drawer's duration control overflows the viewport.
+**`BottomDrawer.tsx`'s Clip Trim bar — the same component and the same control last
+run touched.** There is no fourth site and no misapplied-clamp confusion: the clamp
+last run added (`computeSlipBarGeometry`'s `widthPct`/`leftPct`, each individually
+bounded to `[0, 100]`) is applied to the right element. The gap is that **the right
+edge of the bar is a third, separate quantity — `leftPct + widthPct` — computed
+inline in `BottomDrawer.tsx` and never clamped at all**:
 
-**What is known.**
+```tsx
+// src/components/BottomDrawer.tsx — the active-zone fill div
+style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
 
-- [ASSERTED] The control is `BottomDrawer.tsx`'s **slip-trim bar**, not a
-  `<input type="range">` — there is no range input in that file. It is a
-  percentage-width div inside a fixed-width container:
+// the right-edge drag handle, a few lines later
+style={{ left: `calc(${leftPct + widthPct}% - 5px)`, width: '10px' }}
+```
 
-  ```
-  srcDur   = s.sourceDuration ?? 60          // note the fallback
-  widthPct = (s.duration * (s.playbackSpeed ?? 1) / srcDur) * 100
-  leftPct  = (trimStart / srcDur) * 100
-  ```
+`leftPct` and `widthPct` are each clamped to `[0, 100]` by `computeSlipBarGeometry` —
+that part of the 2026-08-08 fix works exactly as intended. But their **sum** is not
+clamped anywhere, by either the fix or anything that predates it, and can reach up to
+200%. When it exceeds 100%, the fill bar's right edge and the right-edge drag handle
+both render past the track's right edge — and, at a large enough sum, past the
+drawer's own right edge, into the surrounding page background. That is "running
+off-screen, out of sight": not a bar that's merely too wide for its track, but a
+drag handle that leaves the visible panel entirely.
 
-- [ASSERTED] Nothing clamps `widthPct` to 100. When speed coupling **is** engaged
-  the product `duration × playbackSpeed` equals the clip length, so `widthPct ≤ 100`
-  and the bar behaves. The overflow needs a case where coupling did **not** engage.
-- [ASSERTED] Two such cases exist, and a drag can reach both:
-  - **`sourceDuration` is undefined or 0.** `resolveDragEdge`'s coupling is gated on
-    `srcDur > 0`, so duration is then bounded only by `MIN_SEGMENT_DURATION` — while
-    this bar falls back to a hardcoded `?? 60`. Drag such a segment past 60s and the
-    bar is wider than its container by construction.
-  - **A non-video segment.** Same `?? 60` fallback, same unbounded duration.
+[MEASURED] Confirmed live, in the real (non-mock) app, via the Vite dev server
+(`kinetix-dev`, port 5180) with a hand-built project injected into
+`localStorage`/IndexedDB to match the exact state a real drag can produce (see 1b/1c
+below for why this state is reachable, not synthetic-only). One video segment:
+`duration: 5`, `sourceDuration: 60` (**known**, not the `?? 60` case), `trimStart:
+500`, `playbackSpeed: undefined`. Opening the drawer and reading the live DOM:
 
-**Leading hypothesis** [ASSUMED]. The `?? 60` fallback is the bug. It invents a
-source duration for a segment that has none, and the bar is then drawn as a fraction
-of a number that means nothing. The honest rendering for "no source duration" is
-probably to not draw a slip bar at all — slip-trimming a segment with no source clip
-is not a meaningful gesture.
+```
+leftPct  = min(100, 500/60*100)      = 100      (clamped correctly)
+widthPct = min(100, 5*1/60*100)      = 8.333    (clamped correctly)
+sum      = leftPct + widthPct        = 108.333  (NOT clamped — this is the bug)
 
-**Next step.** Cheap to confirm: open the drawer on an image segment (or any segment
-with no `sourceDuration`) that is longer than 60s. If the bar overflows, the
-hypothesis holds and the fix is local to `BottomDrawer.tsx` — it touches no timing
-code and needs no ruling.
+drawer's own right edge (getBoundingClientRect):  x = 902.25px
+right-edge handle's rendered position:             x = 924.0–934.0px
+```
+
+The handle renders **21.75–31.75px outside the drawer panel itself**, not just outside
+the trim track — past the drawer's own right border, into the black page background.
+This is the exact symptom the owner described, reproduced against the shipped
+control, not a mock.
+
+[MEASURED] `git log -S "leftPct + widthPct" -- src/components/BottomDrawer.tsx`
+shows this line was introduced by `7141e34` ("redesign BottomDrawer from ~38 controls
+to 8"), long before the 2026-08-08 fix, and `git show a7044c1` confirms its diff never
+touches this line — the fix commit's own patch clamps `widthPct`/`leftPct` inside
+`slipBarGeometry.ts` and gates the whole bar on `hasKnownSourceDuration`, but does not
+add or change anything about the handle's `left: calc(...)` expression. **The residual
+bug was never addressed because it wasn't the bug that was being fixed** — it's a
+different arithmetic gap in the same file, invisible to a fix aimed at the `?? 60`
+fallback because it doesn't require an unknown `sourceDuration` at all.
+
+[ASSERTED] No test exercises this. `slipBarGeometry.test.ts` asserts `widthPct` and
+`leftPct` individually never exceed 100 — correctly, and those assertions still pass —
+but nothing in the suite asserts `leftPct + widthPct <= 100`, and nothing renders
+`BottomDrawer.tsx` itself to check the handle's actual DOM position. A green
+`slipBarGeometry.test.ts` was accurate about the function it tests and silent about
+the bug in the component that consumes it.
+
+### 1b — The unreachable-UI finding: re-verified, and it HOLDS
+
+Last run's most load-bearing claim — that `isAdjustingTrim`/`trimmingSegmentId`
+(`App.tsx`, passed into `Timeline.tsx`) and `editingSegment` (`App.tsx`'s own inline
+full-edit modal) are **never set to a live value anywhere in the shipped app** — was
+re-checked from scratch this run, independently, because the owner's screenshot
+initially looked like it could falsify it (a reachable overflow would seem to argue a
+reachable trigger). It does not falsify it. Fresh greps against current `main`:
+
+```
+$ grep -rn "setTrimmingSegmentId(\|setIsAdjustingTrim(" src/ | grep -v test
+src/App.tsx:1246:  const [isAdjustingTrim, setIsAdjustingTrim] = useState(false);
+src/App.tsx:1492:  const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
+# — no other call site. Both stay at their initial false/null forever.
+
+$ grep -n "editingSegment" src/App.tsx | grep -v "editingSegment\." | grep -v "{\.\.\.editingSegment"
+src/App.tsx:1248:  const [editingSegment, setEditingSegment] = useState<VideoSegment | null>(null);
+src/App.tsx:4817:        {editingSegment && (
+# every setEditingSegment(...) call site either passes null, or spreads the
+# ALREADY-non-null editingSegment — none ever opens the modal with a fresh segment.
+```
+
+**[MEASURED] Both dead-code claims are correct, unchanged from last run.** The
+`Timeline.tsx` in-place trim-drag block and `App.tsx`'s inline full-edit modal
+(including its own, separately-clamped `maxTrimStartSec`-bounded range sliders — the
+*other* thing last run fixed) genuinely cannot open in the shipped app. The owner's
+screenshot is not evidence against this; it is evidence of a *third*, independent
+thing: `BottomDrawer.tsx`'s own Clip Trim bar, which is very much reachable, is the
+sole live segment-editing surface, and has its own unclamped arithmetic that neither
+of the two "?? 60" fixes touched. **All three findings are simultaneously true**: the
+dead code is dead, the dead code's fix was harmless-but-moot, and the live control
+still has a real, unfixed bug of a different shape.
+
+### 1c — Was this UI ever wired, and where did it die?
+
+[MEASURED] It was wired, and functional, at the initial commit. `git show
+7c17c5f:src/App.tsx` (the "Initial commit: migrated from Google AI Studio") contains
+both live triggers that are absent today:
+
+```
+1299:  onClick={() => setEditingSegment(s)}                    // "Expand to Full Edit Mode" button
+2384:  setTrimmingSegmentId(s.id);                              // Timeline row click
+2385:  setIsAdjustingTrim(true);
+```
+
+Both were lost the same day, three weeks before `BottomDrawer.tsx` existed, in two
+back-to-back component-extraction refactors:
+
+- **`1c8abf1`** ("refactor(components): extract SegmentEditorPanel", 2026-05-16
+  20:11) — moves the full-edit modal into its own `SegmentEditorPanel.tsx` file. The
+  diff for `src/App.tsx` shows the `setEditingSegment(s)` trigger button as a removed
+  (`-`) line, with no replacement added anywhere in the same commit. `git log -S
+  "setEditingSegment(s)"` confirms this is the last commit that ever added or removed
+  a call passing a *live* segment — every commit since only touches the
+  already-non-null spread form.
+- **`8182cba`** ("refactor(components): extract Timeline", 2026-05-16 20:20, nine
+  minutes later) — extracts `Timeline.tsx`. Same pattern: the diff shows
+  `setTrimmingSegmentId(s.id)`/`setIsAdjustingTrim(true)` as removed lines, no
+  replacement.
+
+Both commit messages describe mechanical "extract this JSX into its own file" moves
+with no mention of disabling or removing a trigger — this reads as **refactor
+collateral damage, not a deliberate removal**. `SegmentEditorPanel.tsx` (the extracted
+file) was itself later deleted as confirmed dead code by `209a8ef` ("refactor: remove
+dead components, unreachable handlers, and wire frame-cache purge", 2026-06-30 —
+"Delete SegmentEditorPanel.tsx and SettingsPanel.tsx (only reachable via `{false &&}`
+block)"). `App.tsx`'s own separate inline `editingSegment && (...)` block (today's
+~4817–5000) was never part of that extraction and was left behind, still compiling,
+still gated on the same never-set state — which is why it's still in `App.tsx` today
+and still dead.
+
+Separately, and **not** a reaction to the modal's death — `4ed6a04` ("feat(ux):
+unified drop zone + bottom drawer segment editor (task 9b-0)", 2026-06-04, three weeks
+*after* the modal's trigger was already gone) deliberately introduces
+`BottomDrawer.tsx` as the new, intended, sole segment-editing surface ("Adds
+BottomDrawer component — segment editor slides up from bottom when a segment is
+clicked on timeline or mapping list"). By the time this shipped, the old modal hadn't
+been openable for three weeks; `BottomDrawer.tsx` wasn't built to replace a working
+thing, it was built into a gap that already existed.
+
+**This refines, not just confirms, last run's framing.** Last run fixed the dead
+sites anyway and justified it by pointing at `CLAUDE.md`'s Target Structure section,
+which names `SegmentEditorModal.tsx` as a planned future extraction target — reading
+that as "this block is intended to stay/return, not vestigial cruft." The git history
+says otherwise: `CLAUDE.md`'s Target Structure is a forward-looking decomposition
+wishlist (a file that *should* exist after some future App.tsx breakup), not a claim
+about *this specific* mid-2026 code path, which is a fully superseded design that
+`BottomDrawer.tsx` already replaced in practice. The formula fix itself was harmless
+to keep either way — it just wasn't preserving a future feature, it was polishing
+code that has been unreachable since 2026-05-16 and whose job was already reassigned
+to the file this document is actually about.
+
+### Fix shape (not attempted this run, by instruction)
+
+Two candidates, not mutually exclusive:
+
+1. **Clamp the sum, in `BottomDrawer.tsx` or in `slipBarGeometry.ts`.** Cheapest,
+   most local, matches the existing "hard backstop regardless of input" precedent
+   `computeSlipBarGeometry` already sets for `widthPct`/`leftPct` individually — e.g.
+   clamp the handle's `left` to `min(leftPct + widthPct, 100)`. This alone stops the
+   handle (and the fill bar) from ever rendering outside the track, but leaves the
+   underlying `trimStart` value itself nonsensical (500s into a 60s clip) — cosmetic,
+   not a correctness fix.
+2. **Bound `trimStart` at the point it's committed, in `resolveDragEdge`
+   (`dragGeometry.ts`).** The real root cause: a left-edge (`'start'`) drag computes
+   `trimStart = Math.max(0, originalTrimStart + rawDelta)` with no upper bound tied to
+   `sourceDuration` or `trimEnd` at all — unlike `duration`, which the speed-coupling
+   block clamps into `[clipLen/MAX_SPEED, clipLen/MIN_SPEED]` when it engages.
+   `dragSession.ts`'s pointer-up handler (~line 552) passes `resolveDragEdge`'s
+   `trimStart` straight into `commitDurationChange` → `computeDragCascade`
+   (`dragCascade.ts:315`, `segs[draggedIdx] = { ...dragged, trimStart: finalTrimStart
+   }`) with no clamp anywhere on that path. This is the fix that actually prevents an
+   invalid `trimStart` from being committed in the first place, not just from being
+   drawn wrong — but it touches the same live drag-timing surface `dragGeometry.test.ts`
+   PART 1 pins byte-identical (see §2's own warning about this), so it needs the same
+   "update the pin deliberately, don't weaken it" discipline symptom 2's fix will need,
+   and arguably belongs in the same pass as that fix rather than a separate one.
+
+Recorded, not ruled on: which of these (or both) to do is a product/scope decision,
+not a technical one — (1) alone ships a UI patch over a data bug; (2) alone doesn't
+need (1) since a correctly-bounded `trimStart` makes the sum-overflow unreachable by
+construction (the same "coupling engaged ⇒ product ≤ srcDur" argument §2 already
+makes for the `'end'`-edge case would then also hold for `'start'`-edge). Doing (2)
+without (1) is the more complete fix; doing (1) without (2) is the faster one.
+
+**Manual checklist step 13** (`docs/wkwebview-drag-checklist.md`) currently exercises
+only the `?? 60` / unknown-`sourceDuration` case last run fixed. It does not exercise
+a known-`sourceDuration` segment whose `trimStart` a left-edge drag has pushed out of
+range, so it would PASS today despite this symptom being open — the checklist itself
+needs a new step for this case before it can be trusted to catch a regression here.
 
 ---
 
 ## What is NOT in scope here
 
-- The drag path (`dragSession.ts`, `dragCascade.ts`, `dragGeometry.ts`). Covered,
-  and cleared — see above.
+- The drag path's **gapless-timing invariant** (`dragSession.ts`, `dragCascade.ts`,
+  segment-to-segment contiguity). Covered, and cleared — see above. **Correction,
+  this revision:** `dragGeometry.ts`'s `resolveDragEdge` is NOT cleared as a whole —
+  see §3's 1a/fix-shape. Its `trimStart` computation on a `'start'`-edge drag is
+  implicated in symptom 3 as a live, reachable root cause. This was missed in the
+  earlier "cleared" pass because that pass checked timing/contiguity (the gapless
+  invariant), not `trimStart` bounds against `sourceDuration` — a different property
+  of the same function that nothing was asserting.
 - The export path. None of these symptoms have been observed in an export; both
   export paths derive their own frame timing and do not share the preview decode
   pool.
@@ -313,10 +479,22 @@ code and needs no ruling.
 
 ## Related
 
-- `docs/wkwebview-drag-checklist.md` — step 12, and the 2026-08-08 run log.
-- `project-state.md` — Deferred Known Bugs ("known video-path gap").
+- `docs/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
+  the `?? 60` case — see §3's fix-shape note on why it needs a second case).
+- `project-state.md` — Deferred Known Bugs ("known video-path gap"); WS3 (Video
+  Segments) as of the 2026-08-09 restructure.
 - `docs/history.md` — the 2026-08-08 triage record (symptom 1 as "F6"), and the two
   prior mock-invisible decode-pool defects.
 - `src/hooks/useWebCodecsPreview.ts`, `src/services/videoDecoderPool.ts` — symptom 1.
-- `src/services/dragGeometry.ts` — symptom 2's speed coupling.
-- `src/components/BottomDrawer.tsx` — symptom 3's slip bar.
+- `src/services/dragGeometry.ts` — symptom 2's speed coupling, AND (2026-08-09)
+  symptom 3's actual root cause: `resolveDragEdge`'s unbounded `trimStart` on a
+  `'start'`-edge drag.
+- `src/services/dragSession.ts:552` — where `resolveDragEdge`'s `trimStart` is
+  committed with no intervening clamp.
+- `src/services/dragCascade.ts:315` — where the unclamped `trimStart` is written
+  onto the segment array.
+- `src/components/BottomDrawer.tsx` — symptom 3's slip bar; the `?? 60` case (fixed)
+  and the `leftPct + widthPct` sum (not fixed) are both here.
+- `src/services/slipBarGeometry.ts` — the 2026-08-08 fix; correctly clamps
+  `widthPct`/`leftPct` individually, does not (and structurally cannot, from where
+  it's called) clamp their sum.

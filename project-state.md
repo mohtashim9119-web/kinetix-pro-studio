@@ -222,6 +222,75 @@ Four-threshold table result: **3 of 8 readings fail** (median passes both projec
 
 ## Active Tasks
 
+- **Workstream 3 — Video Segments (consolidated, 2026-08-09).** All video-segment
+  defects are one workstream, not scattered symptoms — full detail in
+  [`docs/video-segment-investigation.md`](docs/video-segment-investigation.md); this
+  entry is an index, not a copy. Sub-tasks:
+  - **`duration` ↔ `playbackSpeed` coupling on a video-segment drag** — OPEN, RULED A
+    BUG (owner, 2026-08-08, option 3/decouple). Confirmed-repro [MEASURED]; mechanism
+    identified in `resolveDragEdge` (`src/services/dragGeometry.ts`). Needs its own
+    implementation run with a purpose-built drag fixture — the golden replay cannot
+    catch a regression here, since no corpus project exercises an interactive drag.
+    Detail: investigation doc §2.
+  - **The 5.0s hard limit / stretch behavior** — STATUS UNKNOWN, not yet investigated.
+    [ASSUMED — no supporting evidence located] No reference to this by name was found
+    anywhere in the repo's code or docs during the 2026-08-09 pass. Flagged by the
+    owner but not yet reproduced, root-caused, or written up — needs an owner repro
+    or description before it can be investigated.
+  - **Bottom-drawer slip-trim bar overflow** — OPEN, CONFIRMED BY SCREENSHOT
+    (2026-08-09), previous fix did not resolve it. Two independent root causes in the
+    same control: an unknown `sourceDuration` fabricating a 60s denominator (FIXED,
+    commit `a7044c1`) and an unclamped `leftPct + widthPct` sum on the right-edge drag
+    handle, reachable via an ordinary left-edge Timeline drag with no upper bound on
+    `trimStart` in `resolveDragEdge` (NOT FIXED) [MEASURED, live-reproduced this run
+    in the real dev app]. No ruling needed to fix the sum-clamp; the deeper
+    `trimStart`-bound fix touches the same live drag-timing surface
+    `dragGeometry.test.ts` PART 1 pins, same discipline as the coupling fix above.
+    Detail: investigation doc §3.
+  - **Preview freeze after a boundary edit** — RESOLVED, cause never identified,
+    therefore unprotected against recurrence. No commit in WS2 touched either
+    implicated module (`useWebCodecsPreview.ts`, `videoDecoderPool.ts`); resolved by
+    incidental change elsewhere in the drag path. Zero automated coverage of the
+    decode pool's response to a segment-timing change, in a module with two prior
+    mock-invisible defects on record — re-run manual checklist step 12 after any
+    preview-decode change. Detail: investigation doc §1.
+  - **The unreachable trim/editor UI question** (`isAdjustingTrim`/
+    `trimmingSegmentId`/`editingSegment`) — CONFIRMED DEAD, re-verified 2026-08-09
+    [MEASURED]. Live and reachable at the initial commit; both triggers were dropped
+    as collateral damage in two same-day component-extraction refactors (`1c8abf1`,
+    `8182cba`, 2026-05-16), three weeks before `BottomDrawer.tsx` existed as the
+    replacement editing surface. Needs an owner ruling on whether to delete the dead
+    state/JSX now that its history is known — last run's stated reason to keep it
+    (reading it as CLAUDE.md's planned `SegmentEditorModal.tsx` extraction target in
+    waiting) is not supported by the git history: this is superseded-in-practice code,
+    not scaffolding for a future feature. Detail: investigation doc §3, subsection
+    "1c."
+- **Workstream 1 — Sync Pipeline Rewrite (consolidated, 2026-08-09).** Full assessment:
+  [`docs/ws1-readiness-2026-08-08.md`](docs/ws1-readiness-2026-08-08.md); this entry is
+  an index, not a copy. Sub-tasks:
+  - **Apply Sync history entry work (slice 1)** — DONE [MEASURED, commit `1b16a50`
+    "fix(history): Apply Sync pushes exactly one undo entry, not two", already on
+    `main`, tests in `src/services/applySyncHistory.test.ts`]. Routed the post-hoc
+    boundary-quality log write (`App.tsx:3005`) through `setProjectSilent` instead of
+    `setProject` — it reports on the edit, it isn't part of it. This supersedes the
+    still-open framing elsewhere in this file's older entries (see the Stage 3 audit
+    for exactly which).
+  - **The 50/50 silence-sharing split (slice 2)** — NOT STARTED. Re-derivation,
+    against current `main`, of the park-commit rule (`210855d`, ~319 changed lines in
+    `snapBoundaries.ts` plus ~25-30 lines of Apply-Sync plumbing in `App.tsx`) that
+    replaces `snapCoveredBoundaries`'s existing contention-aware silence-claiming pass.
+    Cleanly decoupled from the editor path as of current `main` [MEASURED,
+    `docs/ws1-readiness-2026-08-08.md` §1] — none of undo/redo, the duration-invariance
+    guard, or the last-segment lock reach it.
+  - **The golden-replay break slice 2 will deliberately cause** — EXPECTED, not yet
+    occurred (slice 2 hasn't started). Re-deriving the 50/50 rule against current
+    `main` will change committed boundary timings on some or all of the 3 corpus
+    projects; budget the per-boundary review as part of that work, never a blind
+    re-baseline of `docs/phase4-baseline-*-segments.csv`.
+  - **Stale-anchor scroll degradation** — ASSERTED, untested. An unresolvable history
+    anchor (e.g. after an id-set change) degrades to no-scroll rather than throwing,
+    confirmed by reading only [`docs/ws1-readiness-2026-08-08.md` §2b] — no dedicated
+    test yet; slice 1's test-count delta was scoped to include closing this gap.
 - **Undo/redo — DESIGNED, NOT BUILT (2026-08-08).** `docs/decisions/2026-08-08-undo-redo-design.md` — full design answering seam, snapshot-vs-patch (with real memory measurements against the v6/173/spanish corpus), granularity, scope, invariant safety, depth/eviction, shortcuts (two platform risks flagged), buttons, golden-replay risk, test strategy, and a 6-phase plan (~+98 tests, smallest useful slice — drag-only undo — at Phase 2). **Zero production code**, per the brief's explicit hard stop. Blocking on approval before Phase 1 starts. Named least-confident call: whether a `window` keydown listener sees `Cmd+Z` at all in the real WKWebView/Tauri shell, given this app's documented history of the shell swallowing input elsewhere (fullscreen API, post-fullscreen focus, ghost-clicks) — a concrete ten-minute real-shell experiment is specified to resolve it before the shortcuts phase, not assumed.
 - **Manual checklist step 10 (interrupted drag / real OS pointercancel) — CLOSED BY OWNER DECISION, not fixed (2026-08-08).** Not fixable at acceptable cost; deprioritised. `docs/wkwebview-drag-checklist.md` marks it CLOSED with a dedicated note. Synthetic-pointercancel coverage (`dragSessionHarness.test.ts` PART 4, `dragTriage.test.ts`'s F4 block, the universal post-condition) is fully retained — nothing was deleted or weakened. What stays permanently uncoverable by any `jsdom`-based test is whether a REAL OS interruption fires `pointercancel` in WKWebView at all. Stated mitigation, traded for closing this step: undo/redo (above) makes the resulting dirty state recoverable instead of unrecoverable.
 - **Last segment's right edge — LOCKED, both directions, by owner ruling (2026-08-08, commit `b41ebe1`).** Checklist step 4 (visual drift against the waveform on a last-segment right-edge drag) FAILED manual retest twice after the zoom-basis freeze fix, so the owner ruled semantic option (i): the operation itself is removed rather than re-fixed — see `docs/decisions/2026-08-08-last-segment-edge.md`. `segments[N-1].end === mediaDuration` is now a hard invariant with respect to drag, enforced at three layers (affordance in `Timeline.tsx`, defensive refusal in `dragSession.ts`, and a `computeDragCascade` opt-in `conserveTotalDuration` flag that also closes two further entry points to the same defect found by reading, not by test — a right-edge overshoot on segment N-2, and a left-edge drag on a one-segment timeline). New `dragDurationInvariant.test.ts` states "no drag changes total duration" as an exhaustive property, verified non-vacuous. Full detail: `docs/history.md`'s "WS2 — Last-Segment Lock, Step 10 Closure, Undo/Redo Design" entry. **Checklist step 4 is now closed by construction** — the gesture it names no longer exists — rather than pending another manual re-run; steps 5, 6, 9, 11 (which also touch the same drag path) should be spot-checked next time the app is run by hand, since this pass only re-verified via the automated suite and golden replay, not manually.
