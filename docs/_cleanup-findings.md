@@ -352,3 +352,118 @@ App.tsx: **+3 lines** (14 insertions, 11 deletions) — the import block and a
 preserved doc comment outweigh the inlined logic removed. Final size: 5137
 lines. Golden replay byte-identical after the move. Reported honestly per the
 brief's own instruction: "a partial honest extraction beats a forced one."
+
+---
+
+## Second run — App.tsx debt, second attempt
+
+### Stage 0 — jsdom/testing-library claim, corrected
+
+[MEASURED] `jsdom` **is** a devDependency (`^30.0.1`) and is already used —
+five files opt into it per-file via a `// @vitest-environment jsdom` docblock
+(the default environment is `node`), one of which is `dragSessionHarness.ts`
+itself. `@testing-library/react` is genuinely absent from `package.json`. The
+prior run's "no jsdom/testing-library in this repo" blocker was **overstated**
+— it conflated the two. jsdom is available and already proven out by the
+`dragSessionHarness.ts` pattern; the correct blocker (if any) was only ever
+the absence of testing-library, and `dragSessionHarness.ts` shows that gap
+doesn't actually block a harness built directly against real DOM events.
+
+### Stage 1 — the two remaining `?? 60` sites
+
+`Timeline.tsx:654`'s `(s.sourceDuration ?? 60) - s.duration` maxTrim bound is
+a **genuine data-correctness bug, not cosmetic** — [MEASURED] via direct
+computation of the formula: for a segment with `duration > 60` and an unknown
+`sourceDuration`, `maxTrim` collapses to `0`, so any drag (regardless of
+direction) clamps a pre-existing valid `trimStart` down to `0`, silently
+discarding it; for a segment with `duration < 60`, the same fabricated bound
+permits committing a `trimStart` tens of seconds past the real (shorter,
+unprobed) source length. `App.tsx`'s `editingSegment.sourceDuration ?? 60`
+site has the same two failure modes via its range-slider `max`.
+
+**Additional finding, not anticipated by the brief:** both sites sit behind
+state that is never set to a live value anywhere in the codebase.
+`isAdjustingTrim`/`trimmingSegmentId` (App.tsx `useState`, passed into
+`Timeline.tsx` as `onSetAdjustingTrim`/`onSetTrimmingSegment`) have zero call
+sites setting them to anything but their initial `false`/`null` — [MEASURED]
+`grep -rn "setTrimmingSegmentId(\|setIsAdjustingTrim("` across `src/` matches
+only the two `useState` declarations. Likewise `editingSegment` (which gates
+the entire `SegmentEditorModal`-shaped block containing the second site) is
+only ever set to `null` — [MEASURED] no call site anywhere calls
+`setEditingSegment` with an actual segment. Both trim-drag code paths are
+therefore currently **unreachable in the shipped app** — real today, but
+dormant. Fixed anyway (both are real bugs in the formula itself, and
+`CLAUDE.md`'s own Target Structure section names `SegmentEditorModal.tsx` as
+a planned extraction target, implying this block is intended to stay/return,
+not vestigial cruft to delete).
+
+Fix: widened `slipBarGeometry.ts` with `maxTrimStartSec` (0 whenever
+`hasKnownSourceDuration` is false, mirroring `widthPct`/`leftPct`'s existing
+"decline to guess" rule) and reused `computeSlipBarGeometry` at both sites —
+`Timeline.tsx` now bails out before attaching drag listeners when the source
+duration is unknown; `App.tsx` hides the trim controls entirely, matching
+`BottomDrawer.tsx`'s own precedent for this exact case. 4 new tests in
+`slipBarGeometry.test.ts`. Commit `46d2304`.
+
+### Stage 2 — owner rulings applied
+
+Ruling 1 (five dead-but-symmetric exports, delete three, keep the pair if it
+is one): kept `getAsset`/`clearAllAssets` (`assetStore.ts`) — the
+`CLAUDE.md`-documented full-CRUD pair. Deleted `easeLinear`
+(`canvasAnimations.ts`), `renamePreset` (`presetService.ts`),
+`loadMostRecentMeta` (`projectStore.ts`) — each confirmed zero references
+anywhere, no dedicated test file for any of the three modules to update.
+
+Ruling 2 (keep `syncInstrument.ts`, fix the stale header): header claimed
+"two call sites" — [MEASURED] actually 14 (11 in `App.tsx`, 3 in
+`waveformPipeline.ts`; note the *first* cleanup run's own Stage H summary
+sentence said "13" while its own breakdown listed 11+3=14 — that summary
+figure was itself arithmetically wrong, corrected here against a fresh
+count). Header now states the real count and an explicit revisit condition
+(delete the file and all 14 call sites together, once the owner confirms the
+Apply-Sync freeze audit is closed) so it reads as deliberately kept. Commit
+`5f2e385`.
+
+### Stage 3 — App.tsx history-cluster extraction, second attempt
+
+Target: `setProject`/`setProjectSilent`, `applyRestoredState`,
+`blockedByLock`, `handleUndo`/`handleRedo` — the cluster the first run
+declined to move for lack of a characterization harness (its own Stage 6:
+"does not cleanly extract further without... moving untested orchestration
+logic on faith").
+
+Unlike `dragSession.ts`, none of this cluster reaches the real DOM/`window` —
+it is pure ref/state-setter orchestration. So the harness
+(`historySessionHarness.ts`) does **not** need jsdom, unlike
+`dragSessionHarness.ts` — it runs under the repo's default `node`
+environment. jsdom being available (Stage 0) is what makes a DOM-touching
+harness like `dragSessionHarness.ts` possible in general; it doesn't mean
+every harness needs one.
+
+Order followed: (1) `historySession.test.ts` PART 1 hand-transcribes the
+pre-extraction `App.tsx` closures verbatim (cited by line number against
+commit `5f2e385`) as plain in-memory fakes — 15 tests pinning the no-op-write
+skip, discrete-vs-coalesced pushes, the `MAX_HISTORY_STATES` depth-cap
+eviction, the `isResizingRef` drag guard, a lock-blocked undo leaving history
+untouched (entry not consumed — undo again after unlocking works), redo
+being unreachable after a new edit discards the future branch, anchor
+propagation, and the DEV gapless-violation `console.error`. (2)
+`historySession.ts` extracted as a byte-identical move — `App.tsx` keeps
+every `useState`/`useRef` declaration, this module receives them only
+through explicit deps objects, same `DragSessionDeps` pattern. (3)
+`historySession.test.ts` PART 2 re-runs the identical scenario tables against
+the real functions (via `HistorySessionHarness`) — byte-identical. (4)
+`App.tsx`'s five `useCallback` bodies became thin call-ins; five now-dead
+imports (`findLockConflict`, `lockConflictMessage`, `coalesceWrite`,
+`pushEntry`, `replaceEntry`, `undo as undoHistory`, `redo as redoHistory`,
+and the whole `historyRestore.ts` import block) were removed since nothing in
+`App.tsx` calls them anymore. No behavior found to be wrong during
+characterization — the "awkward parts" (lock-block-leaves-history-untouched,
+drag guard, coalescing) all pinned exactly as documented in their own
+existing doc comments.
+
+31 new tests, `tsc` clean, full suite green, golden replay 3/3 byte-identical
+both before this stage started and after. `App.tsx`: 5154 → 5070 lines (-84,
+this stage only; 30 insertions/114 deletions). New files: `historySession.ts`
+(228 lines, the extracted logic), `historySessionHarness.ts` (238 lines, the
+harness), `historySession.test.ts` (503 lines, both PARTs).

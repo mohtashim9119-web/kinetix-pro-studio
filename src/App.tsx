@@ -68,16 +68,16 @@ import {
 import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
-import { findLockConflict, lockConflictMessage } from './services/historyLockPolicy';
 import { computeSlipBarGeometry } from './services/slipBarGeometry';
 import {
-  clampCurrentTimeToRestoredEnd,
-  repairSelectedHeadingId,
-  repairSelectedSegmentId,
-  repairSelectedSegmentIds,
-} from './services/historyRestore';
+  commitProjectSilent,
+  commitProject,
+  applyRestoredStateImpl,
+  isBlockedByLock,
+  performUndo,
+  performRedo,
+} from './services/historySession';
 import {
-  coalesceWrite,
   notePointerUp,
   type CoalesceClass,
   type OpenGesture,
@@ -88,10 +88,6 @@ import {
   emptyHistory,
   peekRedo,
   peekUndo,
-  pushEntry,
-  replaceEntry,
-  redo as redoHistory,
-  undo as undoHistory,
   type History,
 } from './services/history';
 import {
@@ -1199,12 +1195,7 @@ export default function App() {
    *    second user-authored edit (Stage 3, 2026-08-08 cleanup run).
    */
   const setProjectSilent = useCallback((action: React.SetStateAction<Project>): void => {
-    const prev = liveProjectRef.current;
-    const next = typeof action === 'function'
-      ? (action as (p: Project) => Project)(prev)
-      : action;
-    liveProjectRef.current = next;
-    setProjectRaw(next);
+    commitProjectSilent(action, { liveProjectRef, setProjectRaw });
   }, []);
 
   /**
@@ -1227,36 +1218,7 @@ export default function App() {
       coalesceKind?: CoalesceClass;
     },
   ): void => {
-    const prev = liveProjectRef.current;
-    const next = typeof action === 'function'
-      ? (action as (p: Project) => Project)(prev)
-      : action;
-    // A write that changed nothing is not an edit. This is belt-and-braces on
-    // top of the explicit `setProjectSilent` sites above: several handlers
-    // legitimately return `prev` unchanged when they decline (the lock refusal
-    // in `handleToggleLock` is the clearest), and none of those should cost the
-    // user an undo press to get past.
-    if (next !== prev) {
-      // COALESCING (design §3.2). A slider gesture emits many writes and must
-      // cost ONE undo press. `push` opens a new entry; `replace` absorbs into the
-      // open one, keeping the stored PRE-gesture state and refreshing only the
-      // label/anchor — so undo lands before the gesture, not inside it.
-      const { decision, open } = coalesceWrite({
-        open: openGestureRef.current,
-        key: meta?.coalesceKey,
-        kind: meta?.coalesceKind,
-        nowMs: Date.now(),
-      });
-      openGestureRef.current = open;
-      const entry = {
-        state: prev,
-        label: meta?.label ?? 'edit',
-        anchorSegmentId: meta?.anchorSegmentId,
-      };
-      setHistory(h => (decision === 'replace' ? replaceEntry(h, entry) : pushEntry(h, entry)));
-    }
-    liveProjectRef.current = next;
-    setProjectRaw(next);
+    commitProject(action, meta, { liveProjectRef, setProjectRaw, setHistory, openGestureRef });
   }, []);
 
   const [isHydrating, setIsHydrating] = useState(true);
@@ -1912,37 +1874,25 @@ export default function App() {
   // user pressed undo four more times on the same segment.
   const [historyAnchor, setHistoryAnchor] = useState<{ segmentId: string; nonce: number } | null>(null);
 
+  // Selection is NOT restored — that is the "haunted editor" failure mode
+  // (design §4): the user undoes a timing change and the editor jumps to a
+  // segment they were not looking at. But it IS repaired, because undoing past
+  // a heading's or segment's existence can leave a selection pointing at
+  // something that is now gone. Same shape as `handleSwitchProject`'s own
+  // repair. Playback position is not undoable either (owner ruling: undo
+  // during playback KEEPS PLAYING — the playhead is not history); it is only
+  // clamped into the restored timeline's bounds. Body moved to
+  // `historySession.ts`'s `applyRestoredStateImpl` (App.tsx debt cleanup,
+  // second attempt, 2026-08-08) — characterized in `historySession.test.ts`
+  // before this call-in existed.
   const applyRestoredState = useCallback((restored: Project, what: string): void => {
-    if (import.meta.env.DEV) {
-      const violations = findPartitionViolations(restored.segments)
-        .filter(v => v.kind === 'lock-lock-gap' || v.kind === 'lock-lock-overlap');
-      if (violations.length > 0) {
-        console.error(
-          `[history] ${what} would restore a state that VIOLATES the gapless invariant `
-          + `(${violations.length} site(s)). This means a bad state was captured, not that `
-          + `the traversal is wrong — look at the writer that produced it.`,
-          violations,
-        );
-      }
-    }
-    setProjectSilent(restored);
-    // Selection is NOT restored — that is the "haunted editor" failure mode
-    // (design §4): the user undoes a timing change and the editor jumps to a
-    // segment they were not looking at. But it IS repaired, because undoing past
-    // a heading's or segment's existence can leave a selection pointing at
-    // something that is now gone. Same shape as `handleSwitchProject`'s own
-    // repair. The repair computation itself lives in historyRestore.ts
-    // (Stage 6, 2026-08-08 cleanup run) — each setter still reads its own
-    // freshest `prev` via its functional updater, unchanged from before that
-    // extraction.
-    setSelectedSegmentId(prev => repairSelectedSegmentId(prev, restored));
-    setSelectedHeadingId(prev => repairSelectedHeadingId(prev, restored));
-    setSelectedSegmentIds(prev => repairSelectedSegmentIds(prev, restored));
-    // Playback position is not undoable either (owner ruling: undo during
-    // playback KEEPS PLAYING — the playhead is not history). It is only clamped
-    // into the restored timeline's bounds, so a shorter timeline cannot leave the
-    // playhead past its end.
-    setCurrentTime(prev => clampCurrentTimeToRestoredEnd(prev, restored));
+    applyRestoredStateImpl(restored, what, {
+      setProjectSilent,
+      setSelectedSegmentId,
+      setSelectedHeadingId,
+      setSelectedSegmentIds,
+      setCurrentTime,
+    });
   }, [setProjectSilent]);
 
   /**
@@ -1957,49 +1907,15 @@ export default function App() {
    * produced under patches).
    */
   const blockedByLock = useCallback((target: Project): boolean => {
-    const conflict = findLockConflict(liveProjectRef.current.segments, target.segments);
-    if (!conflict) return false;
-    // Scroll/flash the offender so "which segment?" needs no hunting, reusing the
-    // same anchor path a successful traversal uses.
-    setHistoryAnchor({ segmentId: conflict.segmentId, nonce: Date.now() });
-    showToast(lockConflictMessage(conflict), {
-      label: 'Unlock',
-      // Silent — locks are not undoable (design §4).
-      onClick: () => setProjectSilent(prev => ({
-        ...prev,
-        segments: prev.segments.map(sg =>
-          sg.id === conflict.segmentId ? { ...sg, locked: false } : sg),
-      })),
-    });
-    return true;
+    return isBlockedByLock(target, { liveProjectRef, setHistoryAnchor, showToast, setProjectSilent });
   }, [showToast, setProjectSilent]);
 
   const handleUndo = useCallback((): void => {
-    // A live drag owns the timeline until it resolves. An undo landing between a
-    // gesture's direct DOM writes and its commit would leave the preview and
-    // state disagreeing, with the drag's own release then committing on top of
-    // the restored array.
-    if (isResizingRef.current) return;
-    const t = undoHistory(history, liveProjectRef.current);
-    if (!t) return;
-    if (blockedByLock(t.entry.state)) return;
-    setHistory(t.history);
-    applyRestoredState(t.entry.state, `Undo ${t.entry.label}`);
-    if (t.entry.anchorSegmentId) {
-      setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
-    }
+    performUndo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
   }, [history, applyRestoredState, blockedByLock]);
 
   const handleRedo = useCallback((): void => {
-    if (isResizingRef.current) return;
-    const t = redoHistory(history, liveProjectRef.current);
-    if (!t) return;
-    if (blockedByLock(t.entry.state)) return;
-    setHistory(t.history);
-    applyRestoredState(t.entry.state, `Redo ${t.entry.label}`);
-    if (t.entry.anchorSegmentId) {
-      setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
-    }
+    performRedo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
   }, [history, applyRestoredState, blockedByLock]);
 
   const undoLabel = peekUndo(history)?.label;
