@@ -89,6 +89,59 @@ export function timelineContentX(
   return clientX - timelineRectLeft + scrollLeft;
 }
 
+// ---------------------------------------------------------------------------
+// Edge auto-scroll (manual WKWebView checklist step 9, 2026-08-08)
+// ---------------------------------------------------------------------------
+
+/** How close to a viewport edge the pointer must get before the timeline
+ *  starts scrolling itself, in CSS px. Also the width over which the scroll
+ *  ramps from zero to full speed, so entering the zone never jerks. */
+export const AUTOSCROLL_EDGE_ZONE_PX = 48;
+
+/** Ceiling on the self-scroll rate, in CSS px per second. Reached when the
+ *  pointer is at (or past) the viewport edge itself. */
+export const AUTOSCROLL_MAX_SPEED_PX_PER_SEC = 1200;
+
+/**
+ * Signed auto-scroll velocity in px/sec for a pointer at `pointerClientX`:
+ * negative to scroll left, positive right, and exactly 0 outside both edge
+ * zones (the caller treats 0 as "stop the loop", so this is the only
+ * termination condition).
+ *
+ * The ramp is linear in overshoot INTO the zone and saturates at the edge, so
+ * a pointer dragged well past the viewport does not accelerate without bound —
+ * past the edge it simply pins at `maxSpeedPxPerSec`. Deliberately expressed in
+ * px/SEC rather than px/frame: the caller multiplies by real elapsed time, so
+ * the scroll rate is the same whether frames arrive at 60Hz or 30Hz.
+ *
+ * Pure — no DOM. The viewport rect is supplied by the caller, which is what
+ * makes this unit-testable at all (jsdom has no layout engine).
+ */
+export function computeAutoScrollVelocity(
+  pointerClientX: number,
+  viewportLeft: number,
+  viewportWidth: number,
+  edgeZonePx: number = AUTOSCROLL_EDGE_ZONE_PX,
+  maxSpeedPxPerSec: number = AUTOSCROLL_MAX_SPEED_PX_PER_SEC,
+): number {
+  if (viewportWidth <= 0 || edgeZonePx <= 0) return 0;
+  // A viewport narrower than two zones would make the two overlap and fight;
+  // half the width each is the natural degenerate split.
+  const zone = Math.min(edgeZonePx, viewportWidth / 2);
+  const rightTrigger = viewportLeft + viewportWidth - zone;
+  const leftTrigger = viewportLeft + zone;
+
+  if (pointerClientX > rightTrigger) {
+    const overshoot = Math.min(pointerClientX - rightTrigger, zone);
+    return maxSpeedPxPerSec * (overshoot / zone);
+  }
+  if (pointerClientX < leftTrigger) {
+    const overshoot = Math.min(leftTrigger - pointerClientX, zone);
+    return -maxSpeedPxPerSec * (overshoot / zone);
+  }
+  return 0;
+}
+
 /** Content-space x of a segment's given edge at the current zoom. */
 export function segmentEdgeContentX(
   segment: Pick<VideoSegment, 'startTime' | 'duration'>,

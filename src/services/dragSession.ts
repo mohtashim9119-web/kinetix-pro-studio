@@ -43,6 +43,7 @@
 
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import {
+  computeAutoScrollVelocity,
   computeGrabOffsetPx,
   resolveDragEdge,
   segmentEdgeContentX,
@@ -50,6 +51,29 @@ import {
   type DragEdge,
 } from './dragGeometry';
 import { resolveDragPreview } from './dragCascade';
+
+/**
+ * The frame clock a drag runs on. Injected rather than called directly so the
+ * auto-scroll loop (checklist step 9) is deterministic under test: a real rAF
+ * ramp scrolls by however much wall-clock time happened to pass between frames,
+ * which is untestable, whereas a stub can advance time by an exact amount.
+ *
+ * The default delegates to the bare `requestAnimationFrame`/`cancelAnimationFrame`
+ * identifiers AT CALL TIME, so they still resolve through `globalThis` — which
+ * is what `dragSessionHarness.ts`'s existing manual-flush rAF stub overrides.
+ * Injecting nothing therefore preserves the pre-step-9 behaviour exactly.
+ */
+export interface DragScheduler {
+  requestFrame: (cb: (timeMs: number) => void) => number;
+  cancelFrame: (handle: number) => void;
+  now: () => number;
+}
+
+const defaultScheduler: DragScheduler = {
+  requestFrame: (cb) => requestAnimationFrame(cb),
+  cancelFrame: (handle) => cancelAnimationFrame(handle),
+  now: () => (typeof performance !== 'undefined' ? performance.now() : Date.now()),
+};
 
 export interface DragSessionDeps {
   /** Segment array snapshot at drag start — `projectRef.current.segments`. */
@@ -83,6 +107,8 @@ export interface DragSessionDeps {
   ) => boolean;
   /** `setProject(prev => ({ ...prev, segments: originalSegments }))`. */
   revertSegments: (originalSegments: VideoSegment[]) => void;
+  /** Frame clock. Omit in production — the default drives the real rAF. */
+  scheduler?: DragScheduler;
 }
 
 /**
@@ -231,10 +257,12 @@ export function startDragSession(
   // is touched, so no render and no timing recomputation until release.
   let rafId: number | null = null;
   let pendingEvent: PointerEvent | null = null;
-  const applyFrame = (): void => {
-    rafId = null;
-    if (!pendingEvent) return;
-    lastEdgeX = edgeXFor(pendingEvent.clientX);
+  /** Resolves the drag for a pointer position and writes the live preview.
+   *  Shared by the pointermove frame and the auto-scroll tick, so a gesture
+   *  driven by the scroll ramp resolves through exactly the same math as one
+   *  driven by pointer motion. */
+  const resolveAndWrite = (clientX: number): void => {
+    lastEdgeX = edgeXFor(clientX);
     // Same two functions the commit below resolves through, in the
     // same order, so the live preview cannot drift from what will
     // actually be committed:
@@ -261,10 +289,87 @@ export function startDragSession(
       deps.getTranscriptTokens(),
     ));
   };
+  const applyFrame = (): void => {
+    rafId = null;
+    if (!pendingEvent) return;
+    resolveAndWrite(pendingEvent.clientX);
+  };
+
+  // ---------------------------------------------------------------------
+  // EDGE AUTO-SCROLL (manual WKWebView checklist step 9, 2026-08-08)
+  //
+  // Dragging toward the edge of the timeline's visible area used to simply
+  // stop being useful: the pointer left the viewport and the drag could not
+  // reach anything further along the timeline.
+  //
+  // The coordinate correctness the brief warns about is structural here, not
+  // something this loop has to get right by hand. `timelineContentX` is
+  // `clientX - rectLeft + scrollLeft` and `edgeXFor` reads `timeline.scrollLeft`
+  // LIVE on every resolve, so content-space x already advances when the
+  // container scrolls under a stationary pointer. Auto-scroll therefore adds no
+  // delta arithmetic of its own — it moves `scrollLeft` and re-resolves through
+  // the SAME `resolveAndWrite` a pointermove uses. That is also why a drag that
+  // reaches a given content-x by scrolling commits identically to one that
+  // reaches it by pointer motion alone (pinned by a property test).
+  //
+  // It needs its own frame loop rather than riding on pointermove: a pointer
+  // HELD STILL at the edge emits no further pointermove events, and that is
+  // precisely the gesture that must keep scrolling.
+  // ---------------------------------------------------------------------
+  const scheduler = deps.scheduler ?? defaultScheduler;
+  let autoScrollHandle: number | null = null;
+  let autoScrollLastMs = 0;
+  let lastClientX = downClientX;
+
+  const stopAutoScroll = (): void => {
+    if (autoScrollHandle === null) return;
+    scheduler.cancelFrame(autoScrollHandle);
+    autoScrollHandle = null;
+  };
+
+  const autoScrollTick = (nowMs: number): void => {
+    autoScrollHandle = null;
+    const rect = timeline.getBoundingClientRect();
+    const velocity = computeAutoScrollVelocity(lastClientX, rect.left, timeline.clientWidth);
+    // Zero velocity = the pointer came back inside the viewport. This is the
+    // loop's only termination condition besides teardown.
+    if (velocity === 0) return;
+    // Clamp the delta so a stalled tab (or a debugger pause) cannot resume with
+    // one enormous jump.
+    const deltaSec = Math.min(0.05, Math.max(0, (nowMs - autoScrollLastMs) / 1000));
+    autoScrollLastMs = nowMs;
+    const maxScroll = Math.max(0, timeline.scrollWidth - timeline.clientWidth);
+    const before = timeline.scrollLeft;
+    const next = Math.max(0, Math.min(maxScroll, before + velocity * deltaSec));
+    if (next !== before) {
+      timeline.scrollLeft = next;
+      // The pointer has not moved, but content-space x has — re-resolve so the
+      // dragged edge tracks the newly-revealed timeline.
+      resolveAndWrite(lastClientX);
+    }
+    // Keep ticking even when pinned at a scroll limit, so backing off the limit
+    // resumes immediately rather than waiting for the next pointermove.
+    autoScrollHandle = scheduler.requestFrame(autoScrollTick);
+  };
+
+  const updateAutoScroll = (): void => {
+    const rect = timeline.getBoundingClientRect();
+    const velocity = computeAutoScrollVelocity(lastClientX, rect.left, timeline.clientWidth);
+    if (velocity === 0) {
+      stopAutoScroll();
+      return;
+    }
+    if (autoScrollHandle !== null) return;
+    autoScrollLastMs = scheduler.now();
+    autoScrollHandle = scheduler.requestFrame(autoScrollTick);
+  };
+
   const handleMove = (e: PointerEvent): void => {
     pendingEvent = e;
+    lastClientX = e.clientX;
     hasMoved = true;
     if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+    updateAutoScroll();
   };
   // ---------------------------------------------------------------------
   // TEARDOWN — the ONE place a gesture's side effects are undone, shared
@@ -299,6 +404,12 @@ export function startDragSession(
     if (torndown) return;
     torndown = true;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+    // Step 9's auto-scroll loop is self-perpetuating — it re-arms itself every
+    // tick and stops only when the pointer re-enters the viewport. A gesture
+    // that ends while the pointer is still parked in an edge zone would
+    // otherwise leave it scrolling forever. This is exactly the cleanup class
+    // the `finally` above exists to make unmissable.
+    stopAutoScroll();
     deps.setResizingId(null);
     deps.setResizingType(null);
     document.body.classList.remove('resizing');

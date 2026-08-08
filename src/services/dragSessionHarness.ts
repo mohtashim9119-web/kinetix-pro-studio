@@ -120,6 +120,14 @@ export interface DragHarnessConfig {
    *  `writeGeometry`'s defensive `if (!els) continue;` guard for a segment
    *  present in the array but not (yet) rendered in the DOM. */
   unmountedIds?: string[];
+  /** Simulated `#timeline-scroll-area`'s `clientWidth` — the visible viewport.
+   *  jsdom reports 0 (no layout engine), which disables edge auto-scroll
+   *  entirely, so a step-9 test must supply this. */
+  viewportWidth?: number;
+  /** Simulated `#timeline-scroll-area`'s `scrollWidth` — the full content
+   *  extent. `scrollWidth - clientWidth` is the scroll range auto-scroll
+   *  clamps against; leaving it at jsdom's 0 pins `scrollLeft` at 0. */
+  scrollWidth?: number;
 }
 
 /** Mirrors `dragSession.test.ts`'s reference `CommitOutcome`, historically —
@@ -195,6 +203,14 @@ export class DragSessionHarness {
    *  cannot be queried without a pointerId, and the harness dispatches
    *  MouseEvents that carry none. */
   private capturesOutstanding = 0;
+
+  // --- deterministic frame clock for edge auto-scroll (checklist step 9) ---
+  /** Live backing field behind the timeline's `scrollLeft` accessor. */
+  private scrollLeftValue = 0;
+  private readonly autoScrollFrames = new Map<number, (timeMs: number) => void>();
+  private autoScrollSeq = 0;
+  private virtualNowMs = 0;
+
   private movedThisGesture = false;
   private expectedSwallowers = 0;
   private acknowledgedResidue: string | null = null;
@@ -233,7 +249,25 @@ export class DragSessionHarness {
       width: 0, height: 0, x: this.rectLeft, y: 0,
       toJSON: () => ({}),
     }) as DOMRect;
-    this.timeline.scrollLeft = config.scrollLeft ?? 0;
+    // jsdom's scrollLeft/clientWidth/scrollWidth are all layout-derived and
+    // therefore inert (scrollLeft silently refuses writes, the other two are
+    // permanently 0). Backed by real fields here so the auto-scroll loop has a
+    // scroll range to move within and a viewport to measure against — supplied
+    // by the test, exactly like getBoundingClientRect above.
+    this.scrollLeftValue = config.scrollLeft ?? 0;
+    Object.defineProperty(this.timeline, 'scrollLeft', {
+      configurable: true,
+      get: () => this.scrollLeftValue,
+      set: (v: number) => { this.scrollLeftValue = v; },
+    });
+    Object.defineProperty(this.timeline, 'clientWidth', {
+      configurable: true,
+      get: () => config.viewportWidth ?? 0,
+    });
+    Object.defineProperty(this.timeline, 'scrollWidth', {
+      configurable: true,
+      get: () => config.scrollWidth ?? 0,
+    });
     this.instrumentPointerCapture(this.timeline);
     document.body.appendChild(this.timeline);
 
@@ -353,7 +387,69 @@ export class DragSessionHarness {
         this.reverted = true;
         this.segments = originalSegments;
       },
+      // Auto-scroll runs on THIS clock, not the globalThis rAF stub the live
+      // preview uses. Keeping them separate is deliberate: a test can advance
+      // scroll time without also flushing a preview frame, and the two loops
+      // cannot fight over the stub's single callback slot.
+      scheduler: {
+        requestFrame: (cb) => {
+          const handle = ++this.autoScrollSeq;
+          this.autoScrollFrames.set(handle, cb);
+          return handle;
+        },
+        cancelFrame: (handle) => { this.autoScrollFrames.delete(handle); },
+        now: () => this.virtualNowMs,
+      },
     };
+  }
+
+  /**
+   * Advances the virtual clock by `ms`, split across `frames` auto-scroll
+   * ticks, running each pending frame callback. One tick of a large `ms` and
+   * many ticks of a small one are both realistic; `dragSession.ts` clamps any
+   * single tick's delta to 50ms, so a coarse advance scrolls LESS than the same
+   * time split finely — which is itself worth asserting.
+   */
+  advanceTime(ms: number, frames = 1): this {
+    this.assertNotDisposed();
+    const perFrame = ms / frames;
+    for (let i = 0; i < frames; i++) {
+      this.virtualNowMs += perFrame;
+      const pending = [...this.autoScrollFrames.values()];
+      this.autoScrollFrames.clear();
+      for (const cb of pending) cb(this.virtualNowMs);
+    }
+    return this;
+  }
+
+  /** True while an auto-scroll frame is queued — i.e. the ramp is running. */
+  get autoScrollActive(): boolean {
+    return this.autoScrollFrames.size > 0;
+  }
+
+  /** Live `scrollLeft` of the simulated timeline container. */
+  get scrollLeft(): number {
+    return this.scrollLeftValue;
+  }
+
+  /** Sets `scrollLeft` directly, bypassing the ramp. For landing a scroll on an
+   *  exact boundary when a test needs to compare two gestures that reached the
+   *  same content-x by different routes — the ramp advances by a
+   *  velocity-and-elapsed-time product and will not stop on a round number. */
+  forceScrollLeft(px: number): this {
+    this.scrollLeftValue = px;
+    return this;
+  }
+
+  /** Moves the simulated pointer to an ABSOLUTE clientX (rather than by a
+   *  time delta), for parking it inside an edge zone where `moveBy`'s
+   *  time-relative framing does not read naturally. */
+  movePointerTo(clientX: number): this {
+    this.currentClientX = clientX;
+    this.movedThisGesture = true;
+    this.dispatchPointer('pointermove');
+    this.flushFrame();
+    return this;
   }
 
   /** Grabs `id`'s `edge` at its own current position (offset zero — the
@@ -572,6 +668,14 @@ export class DragSessionHarness {
       );
     }
 
+    if (this.autoScrollFrames.size > 0) {
+      problems.push(
+        `${this.autoScrollFrames.size} auto-scroll frame(s) still queued — the edge-scroll ramp ` +
+        're-arms itself every tick and stops only on pointer re-entry, so a gesture that ended ' +
+        'with the pointer parked in an edge zone would scroll the timeline forever',
+      );
+    }
+
     if (this.capturesOutstanding !== 0) {
       problems.push(
         `${this.capturesOutstanding} unreleased pointer capture(s) — setPointerCapture without a ` +
@@ -647,6 +751,7 @@ export class DragSessionHarness {
     for (const l of this.liveListeners.splice(0)) {
       this.prevRemoveListener(l.type, l.listener as EventListener, l.options);
     }
+    this.autoScrollFrames.clear();
     this.timeline.remove();
     document.body.classList.remove('resizing');
   }

@@ -20,6 +20,9 @@ import {
   segmentEdgeContentX,
   computeGrabOffsetPx,
   resolveDragEdge,
+  computeAutoScrollVelocity,
+  AUTOSCROLL_EDGE_ZONE_PX,
+  AUTOSCROLL_MAX_SPEED_PX_PER_SEC,
   MIN_PLAYBACK_SPEED,
   MAX_PLAYBACK_SPEED,
   type DragEdge,
@@ -241,5 +244,76 @@ describe('K16 PART 2 — pointer accuracy', () => {
         }
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PART 4 — computeAutoScrollVelocity (edge auto-scroll, checklist step 9).
+//
+// Pure, DOM-free: the viewport rect is a caller-supplied argument, which is the
+// only reason this is unit-testable at all (jsdom has no layout engine, so a
+// real element's clientWidth is permanently 0). The end-to-end behaviour —
+// ramp start/stop, teardown, and the commit-equivalence property that protects
+// golden replay — lives in dragTriage.test.ts's F3 block against the real
+// session. This file covers the arithmetic in isolation.
+// ---------------------------------------------------------------------------
+describe('PART 4 — computeAutoScrollVelocity', () => {
+  // A viewport occupying clientX 0..400, so the right zone is 352..400 and the
+  // left zone is 0..48 at the default 48px zone width.
+  const VIEWPORT_LEFT = 0;
+  const VIEWPORT_WIDTH = 400;
+  const v = (clientX: number): number =>
+    computeAutoScrollVelocity(clientX, VIEWPORT_LEFT, VIEWPORT_WIDTH);
+
+  it('is exactly zero anywhere between the two edge zones', () => {
+    for (const x of [48, 100, 200, 300, 352]) {
+      expect(v(x), `clientX ${x} should not scroll`).toBe(0);
+    }
+  });
+
+  it('ramps linearly from zero at the zone boundary to full speed at the viewport edge', () => {
+    expect(v(352)).toBe(0); // exactly on the boundary — still no scroll
+    expect(v(376)).toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC * 0.5, 9); // halfway
+    expect(v(400)).toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9); // at the edge
+  });
+
+  it('saturates rather than accelerating without bound past the edge', () => {
+    expect(v(500)).toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+    expect(v(100000)).toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+  });
+
+  it('is negative in the leading zone, mirroring the trailing one', () => {
+    expect(v(24)).toBeCloseTo(-AUTOSCROLL_MAX_SPEED_PX_PER_SEC * 0.5, 9);
+    expect(v(0)).toBeCloseTo(-AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+    expect(v(-999)).toBeCloseTo(-AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+  });
+
+  it('respects a non-zero viewport origin', () => {
+    // Same viewport shifted right by 1000px — every result must shift with it.
+    expect(computeAutoScrollVelocity(1400, 1000, 400))
+      .toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+    expect(computeAutoScrollVelocity(1200, 1000, 400)).toBe(0);
+  });
+
+  it('degrades safely on a viewport with no width — jsdom\'s default', () => {
+    // clientWidth 0 is what an unstubbed element reports, so this is the path
+    // every pre-existing drag test takes: auto-scroll must simply not engage.
+    expect(computeAutoScrollVelocity(395, 0, 0)).toBe(0);
+    expect(computeAutoScrollVelocity(0, 0, 0)).toBe(0);
+  });
+
+  it('splits a viewport narrower than two zones in half instead of letting them fight', () => {
+    // 60px wide: two 48px zones would overlap across the whole viewport and
+    // both trigger. The zone collapses to 30px each, so the midpoint is neutral.
+    expect(computeAutoScrollVelocity(30, 0, 60)).toBe(0);
+    expect(computeAutoScrollVelocity(60, 0, 60)).toBeCloseTo(AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+    expect(computeAutoScrollVelocity(0, 0, 60)).toBeCloseTo(-AUTOSCROLL_MAX_SPEED_PX_PER_SEC, 9);
+  });
+
+  it('the exported zone width is what the ramp is actually measured against', () => {
+    // Guards against the constant and the formula drifting apart.
+    const justInside = VIEWPORT_WIDTH - AUTOSCROLL_EDGE_ZONE_PX + 1;
+    expect(v(justInside)).toBeGreaterThan(0);
+    expect(v(VIEWPORT_WIDTH - AUTOSCROLL_EDGE_ZONE_PX)).toBe(0);
   });
 });

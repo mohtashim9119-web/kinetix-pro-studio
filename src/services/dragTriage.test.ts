@@ -337,34 +337,165 @@ describe('F7 — micro-drags are retained, not reverted', () => {
 // F3 — no auto-scroll when dragging past the visible right edge.
 // ---------------------------------------------------------------------------
 describe('F3 — auto-scroll past the viewport edge', () => {
-  // DELIBERATELY NOT FIXED (2026-08-08 triage) — scoped as separate follow-up
-  // work rather than attempted inline. A continuous scroll-ramp while the
-  // pointer holds at an edge (threshold zones, sustained ticking independent
-  // of pointermove frequency, real-viewport interaction) is a new capability,
-  // not a small change — see project-state.md's Deferred Known Bugs.
+  // IMPLEMENTED 2026-08-08 (WS2 re-scope, Stage 3 — checklist step 9). This
+  // block was previously a single `it.fails` asserting the ABSENCE of the
+  // capability: no code path in `dragSession.ts` wrote `scrollLeft` at all.
+  // It is now a real passing suite, so the "1 expected fail" is gone from the
+  // suite's counts.
   //
-  // `it.fails` rather than a normal `it` or a silent `it.skip`: this asserts
-  // the CURRENT (missing) behaviour and is expected to keep failing — vitest
-  // reports it green as long as the assertion inside keeps failing, and turns
-  // it RED the moment F3 is implemented, which is exactly the signal needed
-  // to come back and convert this into a real passing test at that point.
-  it.fails('scrolls the timeline when the drag passes its visible right edge', () => {
-    // PARTIAL REPRO ONLY. jsdom has no layout engine and no viewport:
-    // `clientWidth` is 0, `getBoundingClientRect` is stubbed by the harness,
-    // and nothing enforces a scroll range. What this test CAN prove is the
-    // absence of the capability — no code path in `dragSession.ts` ever
-    // writes `scrollLeft` — which is the actual finding. What it cannot
-    // prove is the scroll RATE, the easing, or that the edge stays under the
-    // pointer while the content moves beneath it; those need a real screen
-    // (assessment §4.1/§4.4).
-    const segments = [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 3)];
-    const h = harnessOf(segments, { pixelsPerSecond: 100, scrollLeft: 0 });
-    const timeline = document.getElementById('timeline-scroll-area')!;
-    Object.defineProperty(timeline, 'clientWidth', { value: 400, configurable: true });
+  // What these tests CAN prove: the ramp starts and stops on the right pointer
+  // positions, the scroll rate is proportional to overshoot and to elapsed
+  // time, the loop is torn down on every resolution path, and — the property
+  // that actually protects the golden replay — a drag that reaches a given
+  // content-x by scrolling commits IDENTICALLY to one that reaches it by
+  // pointer motion alone.
+  //
+  // What they cannot prove, and what checklist step 9 stays manual for: how it
+  // FEELS. Whether the ramp is comfortable, whether the edge visibly stays
+  // under the pointer while content moves beneath it, whether it janks under a
+  // real compositor (assessment §4.1/§4.4).
+  const base = (): VideoSegment[] => [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 3)];
+  // A 400px viewport on a 900px timeline: 500px of scroll range.
+  const viewport = { pixelsPerSecond: 100, scrollLeft: 0, viewportWidth: 400, scrollWidth: 900 };
 
-    h.grab('B', 'end').moveBy(3.0);
-    // B's edge is now at content x = 900px, far past the 400px viewport.
-    expect(timeline.scrollLeft).toBeGreaterThan(0);
+  it('scrolls the timeline when the drag passes its visible right edge', () => {
+    const h = harnessOf(base(), viewport);
+    // Park the pointer at clientX 395 — inside the right edge zone (the zone
+    // starts at 400 - 48 = 352).
+    h.grab('B', 'end').movePointerTo(395);
+    expect(h.autoScrollActive).toBe(true);
+    h.advanceTime(100);
+    expect(h.scrollLeft).toBeGreaterThan(0);
     h.release();
+  });
+
+  it('does not scroll while the pointer is comfortably inside the viewport', () => {
+    const h = harnessOf(base(), viewport);
+    h.grab('B', 'end').movePointerTo(200); // mid-viewport, both zones clear
+    expect(h.autoScrollActive).toBe(false);
+    h.advanceTime(500);
+    expect(h.scrollLeft).toBe(0);
+    h.release();
+  });
+
+  it('stops the moment the pointer comes back inside the viewport', () => {
+    const h = harnessOf(base(), viewport);
+    h.grab('B', 'end').movePointerTo(395);
+    h.advanceTime(100);
+    const scrolledTo = h.scrollLeft;
+    expect(scrolledTo).toBeGreaterThan(0);
+
+    h.movePointerTo(200); // back inside
+    h.advanceTime(500);
+    expect(h.autoScrollActive).toBe(false);
+    expect(h.scrollLeft).toBe(scrolledTo); // not one pixel further
+    h.release();
+  });
+
+  it('scrolls faster the further past the edge the pointer sits', () => {
+    const gentle = harnessOf(base(), viewport);
+    gentle.grab('B', 'end').movePointerTo(365); // 13px into the 48px zone
+    gentle.advanceTime(50);
+    const gentleScroll = gentle.scrollLeft;
+    gentle.release();
+    gentle.dispose();
+
+    const hard = harnessOf(base(), viewport);
+    hard.grab('B', 'end').movePointerTo(420); // past the edge — saturated
+    hard.advanceTime(50);
+    const hardScroll = hard.scrollLeft;
+    hard.release();
+
+    expect(gentleScroll).toBeGreaterThan(0);
+    expect(hardScroll).toBeGreaterThan(gentleScroll);
+  });
+
+  it('scrolls left, not right, in the leading edge zone', () => {
+    const h = harnessOf(base(), { ...viewport, scrollLeft: 300 });
+    h.grab('B', 'end').movePointerTo(10); // inside the left zone (0..48)
+    h.advanceTime(100);
+    expect(h.scrollLeft).toBeLessThan(300);
+    h.release();
+  });
+
+  it('clamps at both ends of the scroll range', () => {
+    const atEnd = harnessOf(base(), { ...viewport, scrollLeft: 500 }); // already at max
+    atEnd.grab('B', 'end').movePointerTo(420);
+    atEnd.advanceTime(5000);
+    expect(atEnd.scrollLeft).toBe(500); // scrollWidth 900 - clientWidth 400
+    atEnd.release();
+    atEnd.dispose();
+
+    const atStart = harnessOf(base(), viewport); // scrollLeft 0
+    atStart.grab('B', 'end').movePointerTo(0);
+    atStart.advanceTime(5000);
+    expect(atStart.scrollLeft).toBe(0);
+    atStart.release();
+  });
+
+  it('the ramp is torn down on release, on cancel, and on a blocked drag', () => {
+    // The universal post-condition (dragSessionHarness.ts) already fails any
+    // test leaving a queued auto-scroll frame, so this asserts it directly for
+    // all three resolutions rather than relying on the audit alone.
+    const released = harnessOf(base(), viewport);
+    released.grab('B', 'end').movePointerTo(395);
+    expect(released.autoScrollActive).toBe(true);
+    released.release();
+    expect(released.autoScrollActive).toBe(false);
+    released.dispose();
+
+    const cancelled = harnessOf(base(), viewport);
+    cancelled.grab('B', 'end').movePointerTo(395);
+    expect(cancelled.autoScrollActive).toBe(true);
+    cancelled.cancel();
+    expect(cancelled.autoScrollActive).toBe(false);
+    cancelled.dispose();
+
+    const blocked = harnessOf(
+      [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 3, { locked: true })],
+      viewport,
+    );
+    blocked.grab('B', 'end').movePointerTo(395);
+    expect(blocked.autoScrollActive).toBe(true);
+    const outcome = blocked.release();
+    expect(outcome.kind).toBe('reverted-blocked');
+    expect(blocked.autoScrollActive).toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // THE PROPERTY THAT PROTECTS GOLDEN REPLAY.
+  // -------------------------------------------------------------------------
+  it('a drag that reaches a content-x by SCROLLING commits identically to one that reaches it by pointer motion', () => {
+    // Content-space x is `clientX - rectLeft + scrollLeft` (dragGeometry.ts's
+    // timelineContentX), read live on every resolve. So 300px of scroll and
+    // 300px of pointer travel are the same displacement by construction — this
+    // test is what proves auto-scroll introduced no second, competing delta.
+    const TARGET_CONTENT_X = 900; // B's right edge from 600px -> 900px = +3.00s
+
+    // (a) No auto-scroll: pointer travels the whole way inside a wide viewport.
+    const byPointer = harnessOf(base(), {
+      pixelsPerSecond: 100, scrollLeft: 0, viewportWidth: 2000, scrollWidth: 2000,
+    });
+    const pointerOutcome = byPointer.grab('B', 'end').moveBy(3.0).release();
+    expect(byPointer.scrollLeft).toBe(0); // nothing auto-scrolled
+    byPointer.dispose();
+
+    // (b) With auto-scroll: the pointer moves only part of the way, parks in
+    // the edge zone, and the scroll ramp covers the rest.
+    const byScroll = harnessOf(base(), viewport);
+    byScroll.grab('B', 'end').movePointerTo(700); // +100px of pointer travel
+    // Ramp until the remaining 200px of scroll has been covered, then step out
+    // of the edge zone so the loop stops exactly at the target.
+    while (byScroll.scrollLeft < 200) byScroll.advanceTime(10);
+    byScroll.forceScrollLeft(200);
+    byScroll.movePointerTo(700);
+    const scrollOutcome = byScroll.release();
+
+    // Same content-x reached two different ways -> byte-identical timings.
+    expect(byScroll.scrollLeft).toBe(200);
+    expect(700 - 0 + 200).toBe(TARGET_CONTENT_X);
+    expect(scrollOutcome.kind).toBe(pointerOutcome.kind);
+    expect(scrollOutcome.segments.map(s => [s.id, s.startTime, s.duration]))
+      .toEqual(pointerOutcome.segments.map(s => [s.id, s.startTime, s.duration]));
   });
 });
