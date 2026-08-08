@@ -28,3 +28,16 @@ rfd = { version = "0.15", features = ["tokio"] }
 base64 = "0.22"
 reqwest = { version = "0.12", features = ["json"] }
 tauri-plugin-shell = "2"
+
+[features]
+# Opt-in devtools in a RELEASE build. Tauri's own
+# `open_devtools`/`close_devtools`/`is_devtools_open` are gated on
+# `any(debug_assertions, feature = "devtools")` — of *tauri's* feature — so
+# `lib.rs`'s `toggle_devtools` needs a matching feature on THIS crate for its own
+# cfg to mean anything. Without this declaration the cfg is always false in
+# release and cargo warns about an unexpected feature name.
+#
+# Not enabled by default: a shipped build should not carry the inspector unless
+# someone asks for it (`cargo build --features devtools`). Debug builds get
+# devtools regardless, via `debug_assertions`.
+devtools = ["tauri/devtools"]

@@ -22,9 +22,15 @@
  *    `preventDefault()` is load-bearing and not merely tidy: this app configures
  *    no menu, so Tauri's default one is live and its `Cmd+Z` is bound to the OS
  *    text responder, which would otherwise act alongside us.
- *  - UNVERIFIED, and not claimed: `Ctrl+Y` (the experiment logged no `key=y`
- *    event at all), Windows in general, and the text-field suppression path —
- *    the app had no textarea mounted at the time of the experiment.
+ *  - `Cmd+Shift+Z` AND `Cmd+Y` both perform redo — confirmed by manual QA on
+ *    macOS in a second pass. Retain both bindings. (The instrumented run had
+ *    logged no `key=y` event, so this was briefly recorded here as unverified;
+ *    the QA pass settled it.)
+ *  - Text-field isolation confirmed by the same QA pass: `Cmd+Z` inside a field
+ *    performs the field's own undo, not the project's.
+ *  - STILL UNVERIFIED, and not claimed: Windows. `tauri.conf.json` bundles a
+ *    Windows ffmpeg sidecar so it is a real target, but no Windows hardware has
+ *    exercised this.
  */
 
 /** The minimal shape of a `KeyboardEvent` this decision needs. */

@@ -67,6 +67,7 @@ import {
 } from './services/dragGeometry';
 import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
+import { resolveAppShortcut } from './services/appShortcuts';
 import {
   canRedo,
   canUndo,
@@ -1933,6 +1934,10 @@ export default function App() {
   handleUndoRef.current = handleUndo;
   handleRedoRef.current = handleRedo;
 
+  // App-level shortcuts (reload / devtools, 2026-08-08). Same ref pattern and
+  // the same reason: the keydown effect below keeps its empty dep array.
+  const isExportingRef = useRef(false);
+
 
   // Path B Phase 5 — left-panel heading row click: open the drawer's heading
   // editor AND jump the preview to the heading's time, mirroring handleSegmentClick.
@@ -3599,6 +3604,8 @@ export default function App() {
   // snapshotted). A focused text field is handled separately, inside the branch,
   // because there the correct behaviour is to leave the event alone entirely so
   // the OS's own text undo runs.
+  isExportingRef.current = exportState.isExporting;
+
   const shortcutsSuppressedRef = useRef(false);
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
@@ -3618,6 +3625,44 @@ export default function App() {
   // Add spacebar play/pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // APP SHORTCUTS — reload and the devtools toggle (2026-08-08, owner
+      // request). Resolved by `services/appShortcuts.ts`; see that file for the
+      // chord table and for why these — unlike undo/redo — are NOT suppressed by
+      // a focused text field (there is no "reload this text field" for them to
+      // shadow, whereas Cmd+Z genuinely has a text meaning).
+      //
+      // Placed ahead of undo/redo purely so reload is as unconditional as
+      // possible; the two key sets are disjoint, so the order cannot change any
+      // outcome (asserted in appShortcuts.test.ts).
+      const appAction = resolveAppShortcut(e, { exporting: isExportingRef.current });
+      if (appAction !== 'ignore') {
+        e.preventDefault();
+        if (appAction === 'reload') {
+          window.location.reload();
+        } else if (appAction === 'reload-blocked') {
+          // THE ONE PLACE THESE SHORTCUTS DECLINE TO DO WHAT THE KEY SAYS, and
+          // deliberately: a reload during an export destroys minutes of
+          // unrecoverable work — the render dies with the page, the ffmpeg
+          // sidecar is left mid-run, and its session temp dir is orphaned. The
+          // key is still consumed (preventDefault above) so the webview's own
+          // reload cannot fire behind us.
+          showToast('Cancel the export before reloading.');
+        } else {
+          // Devtools live on the Rust side — Tauri exposes no JS API for them.
+          // Fire-and-forget: a failure here (a release build without the
+          // `devtools` feature) is surfaced as a toast, never thrown.
+          void (async () => {
+            try {
+              const { invoke } = await import('@tauri-apps/api/core');
+              await invoke('toggle_devtools');
+            } catch (err) {
+              console.warn('[devtools] toggle unavailable:', err);
+              showToast('Developer tools are not available in this build.');
+            }
+          })();
+        }
+        return;
+      }
       // UNDO / REDO (Phase 2, 2026-08-08). The DECISION — which chord means
       // what, and when to stand down — lives in `services/undoShortcut.ts`,
       // where it is swept exhaustively by unit test rather than inspected by eye

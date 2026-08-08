@@ -53,6 +53,36 @@ async fn fetch_url_bytes(url: String) -> Result<String, String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
 }
 
+/// Toggles the webview's developer tools (Web Inspector).
+///
+/// Rust-side because there is no JS API for it: Tauri exposes devtools only
+/// through `WebviewWindow::open_devtools`/`close_devtools`/`is_devtools_open`,
+/// all gated on `any(debug_assertions, feature = "devtools")`. So this command
+/// exists in every build but is only FUNCTIONAL where those methods compile —
+/// debug builds today, since `devtools` is not enabled as a release feature.
+///
+/// Returns an explicit error string in a release build rather than silently
+/// doing nothing, so the caller can tell "not available in this build" apart
+/// from "toggled". Wired to Cmd+Alt+I / Ctrl+Shift+I / F12 (`appShortcuts.ts`).
+#[tauri::command]
+fn toggle_devtools(window: tauri::WebviewWindow) -> Result<bool, String> {
+    #[cfg(any(debug_assertions, feature = "devtools"))]
+    {
+        if window.is_devtools_open() {
+            window.close_devtools();
+            Ok(false)
+        } else {
+            window.open_devtools();
+            Ok(true)
+        }
+    }
+    #[cfg(not(any(debug_assertions, feature = "devtools")))]
+    {
+        let _ = window;
+        Err("Developer tools are not available in this build".to_string())
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -96,6 +126,7 @@ pub fn run() {
             whisper::whisper_cancel,
             fetch_url_bytes,
             app_session_token,
+            toggle_devtools,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
