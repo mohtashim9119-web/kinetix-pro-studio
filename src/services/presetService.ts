@@ -128,9 +128,3 @@ export function deletePreset(id: string): void {
   const existing = loadRaw();
   saveRaw(existing.filter(p => p.id !== id));
 }
-
-/** Rename a user preset. Built-in presets cannot be renamed. */
-export function renamePreset(id: string, name: string): void {
-  const existing = loadRaw();
-  saveRaw(existing.map(p => (p.id === id && !p.builtIn ? { ...p, name } : p)));
-}

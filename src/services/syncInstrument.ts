@@ -1,4 +1,6 @@
-// syncInstrument.ts — TEMP diagnostic instrumentation (Apply-Sync freeze audit).
+// syncInstrument.ts — diagnostic instrumentation for the Apply-Sync freeze
+// audit. KEPT (owner ruling, cleanup run 2026-08-08) — not abandoned; see the
+// revisit condition below.
 //
 // Gated on globalThis.__SYNC_INSTRUMENT__, dormant by default (mirrors the
 // __WF_INSTRUMENT__ / __ALIGN_INSTRUMENT__ convention in SegmentWaveform.tsx /
@@ -13,7 +15,19 @@
 //   globalThis.__SYNC_INSTRUMENT__ = true   // then click Apply Sync
 //   globalThis.__syncDump()                 // after the timeline settles
 //
-// Remove this file (and its two call sites) after the audit.
+// Call sites [MEASURED, cleanup run 2026-08-08]: 14 total — 11 in App.tsx
+// (waveform-mirror/build/commit marks plus the applySync:entry..first-paint
+// span) and 3 in services/waveformPipeline.ts (arrayBuffer-ready,
+// decodeAudioData-done, source-done). This file's own header previously
+// claimed "two call sites" — stale since whichever pass wired the waveform-
+// build marks in; count both here and in this file if it drifts again.
+//
+// Revisit condition: this file predates a confirmable "audit closed" signal
+// — nothing in the repo records whether the Apply-Sync freeze investigation
+// it was built for is done. Do not delete on a guess. Remove this file and
+// all 14 call sites together, in one pass, only once the owner confirms that
+// investigation is closed and this instrumentation is no longer needed to
+// re-diagnose a freeze/perf regression in the Apply-Sync path.
 
 interface SyncMark { label: string; t: number }
 

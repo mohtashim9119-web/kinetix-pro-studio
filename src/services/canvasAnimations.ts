@@ -40,8 +40,6 @@ const IMPLEMENTED_ANIMATIONS = new Set<AnimationType>([
 // Easing functions — t must be in [0, 1]
 // ---------------------------------------------------------------------------
 
-export const easeLinear = (t: number): number => t;
-
 export const easeOutQuad = (t: number): number => 1 - (1 - t) * (1 - t);
 
 export const easeInOutSine = (t: number): number =>

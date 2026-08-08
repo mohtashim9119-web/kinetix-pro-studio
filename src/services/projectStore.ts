@@ -101,12 +101,6 @@ export function loadAllMetas(): ProjectMeta[] {
   }
 }
 
-/** Returns the most-recently saved project meta, or null if registry is empty. */
-export function loadMostRecentMeta(): ProjectMeta | null {
-  const metas = loadAllMetas();
-  return metas[0] ?? null; // already sorted newest-first
-}
-
 /**
  * Upserts a single ProjectMeta entry in the registry without touching the
  * per-project JSON blob.  Use this to update lightweight meta (name, thumbnail,
