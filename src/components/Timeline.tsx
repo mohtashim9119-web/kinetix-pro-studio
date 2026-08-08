@@ -21,6 +21,7 @@ import {
   computeHeadingLayout,
   computeSeekTimeFromClientX,
   computeTrimDrag,
+  resolveOffscreenScrollLeft,
 } from '../services/timelineLayout';
 
 const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
@@ -52,6 +53,13 @@ interface Props {
   sliderT: number;
   onPixelsPerSecondChange: (pps: number) => void;
   globalPlaybackSpeed: number;
+  /** Undo/redo anchor (design §5.2) — the segment a traversal should reveal and
+   *  flash. The `nonce` is what makes a repeat traversal onto the SAME segment
+   *  re-fire the flash; keying on the id alone would light it once and then stay
+   *  silent while the user pressed undo four more times on the same segment.
+   *  `null` when no traversal has happened, or when the entry carried no anchor
+   *  (an apply-to-all, or an Apply Sync whose ids no longer resolve). */
+  historyAnchor?: { segmentId: string; nonce: number } | null;
   resizingId: string | null;
   resizingType: 'start' | 'end' | null;
   trimmingSegmentId: string | null;
@@ -92,6 +100,7 @@ export function Timeline({
   sliderT,
   onPixelsPerSecondChange,
   globalPlaybackSpeed,
+  historyAnchor,
   resizingId,
   resizingType,
   trimmingSegmentId,
@@ -305,6 +314,46 @@ export function Timeline({
       container.scrollTo({ left: Math.min(maxScroll, Math.max(0, right - container.clientWidth + 24)), behavior: 'smooth' });
     }
   }, [currentSegmentId, pixelsPerSecond, segments]);
+
+  // ---------------------------------------------------------------------------
+  // UNDO/REDO ANCHOR — reveal and flash (design §5.2, owner ruling).
+  //
+  // SCROLL ONLY IF OFF-SCREEN, ALWAYS FLASH. Reuses `resolveOffscreenScrollLeft`,
+  // which is the segment-follow effect's own decision extracted verbatim — the
+  // design doc is explicit that a second scroller must not be written, because the
+  // existing one already handles the reload-restore ordering trap
+  // (`didRestoreRef`) that once produced a visible "scroll to 0, then scroll
+  // again" flash.
+  //
+  // The flash fires even when no scroll happens, which is the point: a 0.2s
+  // duration change on a segment already in view is otherwise invisible, and the
+  // user would have no confirmation their undo did anything.
+  // ---------------------------------------------------------------------------
+  const [flashSegmentId, setFlashSegmentId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!historyAnchor) return;
+    const seg = segments.find(s => s.id === historyAnchor.segmentId);
+    // An unresolvable anchor falls back to NO scroll and NO flash, never a throw
+    // — reachable across an Apply Sync boundary, where the whole id set changes.
+    if (!seg) return;
+    const container = document.getElementById('timeline-scroll-area');
+    if (container && didRestoreRef.current) {
+      const target = resolveOffscreenScrollLeft({
+        segmentStartTime: seg.startTime,
+        segmentDuration: seg.duration,
+        pixelsPerSecond,
+        scrollLeft: container.scrollLeft,
+        clientWidth: container.clientWidth,
+        totalDuration,
+      });
+      if (target !== null) container.scrollTo({ left: target, behavior: 'smooth' });
+    }
+    setFlashSegmentId(historyAnchor.segmentId);
+    const t = setTimeout(() => setFlashSegmentId(null), 700);
+    return () => clearTimeout(t);
+    // Keyed on the NONCE, not the id — see the prop's own comment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyAnchor?.nonce]);
 
   // Center the active segment when the zoom slider moves. Fires ONLY on sliderT
   // change (not pixelsPerSecond/currentSegmentId/segments) so it never fights the
@@ -626,8 +675,17 @@ export function Timeline({
                       opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
                       filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
                       transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
-                      boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
-                      zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
+                      // The undo/redo flash reuses the SAME boxShadow channel the
+                      // trim-adjust highlight uses (a brighter, wider glow), rather
+                      // than adding a competing outline — the card already
+                      // transitions box-shadow, so the flash inherits that easing
+                      // for free and cannot fight the existing highlight.
+                      boxShadow: flashSegmentId === s.id
+                        ? '0 0 0 2px #F27D26, 0 0 36px rgba(242,125,38,0.55)'
+                        : (isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none'),
+                      zIndex: flashSegmentId === s.id
+                        ? 60
+                        : (isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1)),
                     }}
                     className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
                   >

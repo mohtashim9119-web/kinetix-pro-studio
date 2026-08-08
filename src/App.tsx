@@ -68,6 +68,13 @@ import {
 import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
+import { findLockConflict, lockConflictMessage } from './services/historyLockPolicy';
+import {
+  coalesceWrite,
+  notePointerUp,
+  type CoalesceClass,
+  type OpenGesture,
+} from './services/historyCoalesce';
 import {
   canRedo,
   canUndo,
@@ -75,6 +82,7 @@ import {
   peekRedo,
   peekUndo,
   pushEntry,
+  replaceEntry,
   redo as redoHistory,
   undo as undoHistory,
   type History,
@@ -1193,9 +1201,20 @@ export default function App() {
    * resolve to. `meta` is optional; a site that passes nothing still gets an
    * undoable entry, just with a generic label.
    */
+  // The open coalescing gesture (design §3.2). A ref, not state: it is consulted
+  // synchronously inside `setProject` and must never lag a batch.
+  const openGestureRef = useRef<OpenGesture | null>(null);
+
   const setProject = useCallback((
     action: React.SetStateAction<Project>,
-    meta?: { label?: string; anchorSegmentId?: string; coalesceKey?: string },
+    meta?: {
+      label?: string;
+      anchorSegmentId?: string;
+      /** `(control, target)` — e.g. `grade:brightness:<segId>`. Omit for a
+       *  discrete action, which always gets its own entry. */
+      coalesceKey?: string;
+      coalesceKind?: CoalesceClass;
+    },
   ): void => {
     const prev = liveProjectRef.current;
     const next = typeof action === 'function'
@@ -1207,11 +1226,23 @@ export default function App() {
     // in `handleToggleLock` is the clearest), and none of those should cost the
     // user an undo press to get past.
     if (next !== prev) {
-      setHistory(h => pushEntry(h, {
+      // COALESCING (design §3.2). A slider gesture emits many writes and must
+      // cost ONE undo press. `push` opens a new entry; `replace` absorbs into the
+      // open one, keeping the stored PRE-gesture state and refreshing only the
+      // label/anchor — so undo lands before the gesture, not inside it.
+      const { decision, open } = coalesceWrite({
+        open: openGestureRef.current,
+        key: meta?.coalesceKey,
+        kind: meta?.coalesceKind,
+        nowMs: Date.now(),
+      });
+      openGestureRef.current = open;
+      const entry = {
         state: prev,
         label: meta?.label ?? 'edit',
         anchorSegmentId: meta?.anchorSegmentId,
-      }));
+      };
+      setHistory(h => (decision === 'replace' ? replaceEntry(h, entry) : pushEntry(h, entry)));
     }
     liveProjectRef.current = next;
     setProjectRaw(next);
@@ -1864,6 +1895,12 @@ export default function App() {
   // all, and a restored state may legitimately differ in total duration from the
   // current one — undoing an Apply Sync is the obvious case.
   // -------------------------------------------------------------------------
+  // The segment a traversal should scroll to and flash (design §5.2). The nonce is
+  // what makes a REPEAT traversal onto the same anchor re-fire the flash — keying
+  // the effect on the id alone would light it once and then stay silent while the
+  // user pressed undo four more times on the same segment.
+  const [historyAnchor, setHistoryAnchor] = useState<{ segmentId: string; nonce: number } | null>(null);
+
   const applyRestoredState = useCallback((restored: Project, what: string): void => {
     if (import.meta.env.DEV) {
       const violations = findPartitionViolations(restored.segments)
@@ -1900,6 +1937,35 @@ export default function App() {
     setCurrentTime(prev => (prev > restoredEnd ? restoredEnd : prev));
   }, [setProjectSilent]);
 
+  /**
+   * LOCK CONFLICT — blocks a traversal that would move a locked segment (owner
+   * ruling, design §5.1). Returns true when blocked.
+   *
+   * History is left completely untouched, so the entry is NOT consumed: pressing
+   * undo again after unlocking performs it normally. The alternative the design
+   * doc rejects — restore everything except the locked segment — is not buildable;
+   * see `historyLockPolicy.ts`'s header for why (it breaks the gapless invariant
+   * by construction under snapshots, and produces a state the pipeline never
+   * produced under patches).
+   */
+  const blockedByLock = useCallback((target: Project): boolean => {
+    const conflict = findLockConflict(liveProjectRef.current.segments, target.segments);
+    if (!conflict) return false;
+    // Scroll/flash the offender so "which segment?" needs no hunting, reusing the
+    // same anchor path a successful traversal uses.
+    setHistoryAnchor({ segmentId: conflict.segmentId, nonce: Date.now() });
+    showToast(lockConflictMessage(conflict), {
+      label: 'Unlock',
+      // Silent — locks are not undoable (design §4).
+      onClick: () => setProjectSilent(prev => ({
+        ...prev,
+        segments: prev.segments.map(sg =>
+          sg.id === conflict.segmentId ? { ...sg, locked: false } : sg),
+      })),
+    });
+    return true;
+  }, [showToast, setProjectSilent]);
+
   const handleUndo = useCallback((): void => {
     // A live drag owns the timeline until it resolves. An undo landing between a
     // gesture's direct DOM writes and its commit would leave the preview and
@@ -1908,17 +1974,25 @@ export default function App() {
     if (isResizingRef.current) return;
     const t = undoHistory(history, liveProjectRef.current);
     if (!t) return;
+    if (blockedByLock(t.entry.state)) return;
     setHistory(t.history);
     applyRestoredState(t.entry.state, `Undo ${t.entry.label}`);
-  }, [history, applyRestoredState]);
+    if (t.entry.anchorSegmentId) {
+      setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
+    }
+  }, [history, applyRestoredState, blockedByLock]);
 
   const handleRedo = useCallback((): void => {
     if (isResizingRef.current) return;
     const t = redoHistory(history, liveProjectRef.current);
     if (!t) return;
+    if (blockedByLock(t.entry.state)) return;
     setHistory(t.history);
     applyRestoredState(t.entry.state, `Redo ${t.entry.label}`);
-  }, [history, applyRestoredState]);
+    if (t.entry.anchorSegmentId) {
+      setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
+    }
+  }, [history, applyRestoredState, blockedByLock]);
 
   const undoLabel = peekUndo(history)?.label;
   const redoLabel = peekRedo(history)?.label;
@@ -3469,10 +3543,27 @@ export default function App() {
   // dialed-in grade onto anything else.
   const handleGradeLive = useCallback((value: SegmentGrade): void => {
     if (!activeGradeSegmentId) return;
-    setProject(p => ({
-      ...p,
-      segments: p.segments.map(s => (s.id === activeGradeSegmentId ? { ...s, effectGrade: value } : s)),
-    }));
+    setProject(
+      p => ({
+        ...p,
+        segments: p.segments.map(s => (s.id === activeGradeSegmentId ? { ...s, effectGrade: value } : s)),
+      }),
+      {
+        label: `grade segment ${liveProjectRef.current.segments.findIndex(s => s.id === activeGradeSegmentId) + 1}`,
+        anchorSegmentId: activeGradeSegmentId,
+        // COALESCING (design §3.2). One entry per slider gesture, closed by
+        // pointerup. The key includes the TARGET, which is what makes "drag
+        // brightness on segment 5, then on segment 9" two entries rather than one.
+        //
+        // It deliberately does NOT include the channel: `EffectsPanel` writes all
+        // four grade values as one `SegmentGrade` object per debounced write, so
+        // from this seam a brightness drag and a contrast drag are
+        // indistinguishable — a per-channel key would be a fiction. One entry per
+        // grade gesture per segment is both achievable and what a user means.
+        coalesceKey: `grade:${activeGradeSegmentId}`,
+        coalesceKind: 'slider',
+      },
+    );
   }, [activeGradeSegmentId]);
 
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
@@ -3737,6 +3828,18 @@ export default function App() {
   // spacebar guard above) stuck on the slider indefinitely.
   useEffect(() => {
     const handler = (e: PointerEvent) => {
+      // COALESCING (design §3.2): a slider gesture's entry closes on its RELEASE,
+      // not on an idle timer — a release is a fact, a timer is a guess, and a slow
+      // deliberate drag crossing the timer would split into two entries. This
+      // starts the grace period rather than closing outright, because
+      // EffectsPanel debounces its grade writes at 120ms and the gesture's LAST
+      // write therefore lands after this point; closing hard here would push that
+      // trailing write as a spurious second entry.
+      //
+      // Folded into the EXISTING pointerup listener rather than adding a second
+      // one — same event, same moment, and one listener cannot get out of step
+      // with itself.
+      openGestureRef.current = notePointerUp(openGestureRef.current, Date.now());
       const target = e.target;
       if (target instanceof HTMLInputElement && target.type === 'range') {
         target.blur();
@@ -4345,6 +4448,7 @@ export default function App() {
                       setProjectSilent(prev => ({ ...prev, segments: originalSegments })),
                   });
                 }}
+                historyAnchor={historyAnchor}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
                 onSetTrimmingSegment={setTrimmingSegmentId}

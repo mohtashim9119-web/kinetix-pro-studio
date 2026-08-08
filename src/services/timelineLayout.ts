@@ -179,3 +179,49 @@ export function resolveDropGapIndex(
   }
   return rects.length;
 }
+
+/**
+ * Where to scroll so a segment is visible — or `null` if it already is.
+ *
+ * Extracted (2026-08-08) from `Timeline.tsx`'s segment-follow effect so the
+ * undo/redo ANCHOR SCROLL (design §5.2) reuses the same decision instead of
+ * reimplementing it. The design doc is explicit about that: the existing effect
+ * already handles the reload-restore ordering trap (`didRestoreRef`) that once
+ * produced a visible "scroll to 0 then scroll again" flash, and a parallel
+ * implementation would reintroduce it.
+ *
+ * Returns `null` for the common case — the segment is already on screen — which
+ * is exactly the owner's ruling: scroll ONLY if off-screen, never re-centre
+ * something the user can already see, because a scroll they did not need is what
+ * makes undo feel haunted.
+ *
+ * `MARGIN_PX` leaves the segment slightly inboard of the edge rather than flush
+ * against it, matching the original effect's `- 24` / `+ 24`.
+ */
+export function resolveOffscreenScrollLeft(args: {
+  segmentStartTime: number;
+  segmentDuration: number;
+  pixelsPerSecond: number;
+  /** Container's current `scrollLeft`. */
+  scrollLeft: number;
+  /** Container's visible width (`clientWidth`). */
+  clientWidth: number;
+  /** Whole timeline duration — the clamp is against CONTENT width, not
+   *  `scrollWidth`, because the decorative ruler overflows the content by a few
+   *  px and clamping to `scrollWidth` once let segment 1 scroll off the left. */
+  totalDuration: number;
+}): number | null {
+  const MARGIN_PX = 24;
+  const {
+    segmentStartTime, segmentDuration, pixelsPerSecond,
+    scrollLeft, clientWidth, totalDuration,
+  } = args;
+  const left = segmentStartTime * pixelsPerSecond;
+  const right = (segmentStartTime + segmentDuration) * pixelsPerSecond;
+  const viewRight = scrollLeft + clientWidth;
+  const maxScroll = Math.max(0, totalDuration * pixelsPerSecond - clientWidth);
+  const clamp = (x: number): number => Math.min(maxScroll, Math.max(0, x));
+  if (left < scrollLeft) return clamp(left - MARGIN_PX);
+  if (right > viewRight) return clamp(right - clientWidth + MARGIN_PX);
+  return null;
+}
