@@ -21,6 +21,15 @@
  * thin call-in: validate the drag-start guards that were always inline here
  * (dragged segment exists, timeline element exists), then hand off.
  *
+ * TEARDOWN IS STRUCTURAL, NOT POSITIONAL (WS2 re-scope, 2026-08-08). Every
+ * side effect a gesture leaves behind is undone in ONE `teardown()` function,
+ * invoked from `handleUp`'s `finally` — so commit, revert-blocked, and
+ * pointercancel-discard all unwind identically and no resolution path can
+ * return without it. It used to be an inline block at the top of `handleUp`,
+ * above that function's early returns: correct, but enforced by nothing, and
+ * broken twice in one day by edits that added a return above a cleanup step.
+ * See `teardown`'s own comment for the two failures and the ordering argument.
+ *
  * FOUND, NOT FIXED — a real bug preserved verbatim by this move (see
  * `project-state.md`): the original code set `resizingId`/`resizingType`/the
  * `resizing` body class UNCONDITIONALLY, before validating that the dragged
@@ -257,20 +266,48 @@ export function startDragSession(
     hasMoved = true;
     if (rafId === null) rafId = requestAnimationFrame(applyFrame);
   };
-  const handleUp = () => {
+  // ---------------------------------------------------------------------
+  // TEARDOWN — the ONE place a gesture's side effects are undone, shared
+  // verbatim by all three resolutions (commit, revert-blocked, discard).
+  //
+  // STRUCTURAL FIX (WS2 re-scope, 2026-08-08). This block used to sit inline
+  // at the top of `handleUp`, ABOVE that function's `!hasMoved` and
+  // `wasCancelled` early returns. That was correct, but only positionally:
+  // nothing enforced it, and the invariant "teardown is above every return"
+  // is exactly the kind a later edit silently breaks. It already had —
+  // twice. The 2026-08-08 discard ruling added the `wasCancelled` early
+  // return, which skipped the then-below-it `clearSpeedBaseline()` and
+  // stranded a stale speed baseline; and the ghost-click swallower armed on
+  // a cancel that produces no click, leaving a one-shot listener waiting to
+  // eat the user's next legitimate click anywhere in the app. Both were
+  // found by hand (manual checklist step 10), not by the suite.
+  //
+  // `handleUp` now calls this from a `finally`, so no resolution path — and
+  // no future one, and not even a throw out of `commitDurationChange` — can
+  // return without it running. Idempotent via `torndown`.
+  //
+  // ORDERING NOTE: this now runs AFTER the commit rather than before it. All
+  // four effects are order-independent with respect to `commitDurationChange`:
+  // the React setters land in the same batch either way; no pointer or click
+  // event can arrive during a synchronous handler, so listener removal and
+  // swallower arming cannot race it; no rAF frame can fire mid-body; and
+  // `applyDurationChange` (the real `commitDurationChange`) never reads
+  // `speedBaselineRef` — verified by grep over App.tsx, whose only readers are
+  // the separate speed-slider gesture in `handleSpeedChange`.
+  let torndown = false;
+  const teardown = (): void => {
+    if (torndown) return;
+    torndown = true;
     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-    // Ensure lastEdgeX reflects the final pointer position even if the
-    // last pointermove's rAF frame had not fired yet — so the committed
-    // size matches exactly where the user released.
-    if (pendingEvent) lastEdgeX = edgeXFor(pendingEvent.clientX);
     deps.setResizingId(null);
     deps.setResizingType(null);
     document.body.classList.remove('resizing');
     window.removeEventListener('pointermove', handleMove);
     window.removeEventListener('pointerup', handleUp);
     window.removeEventListener('pointercancel', handleCancel);
-    // isResizingRef is cleared by the resizingId effect below,
-    // not here — see D12 fix note there.
+    // isResizingRef is cleared by App.tsx's resizingId-keyed effect, not
+    // here — see the D12 fix note there.
+    if (!hasMoved) return;
     // D12 fix (round 4) — the real cause of the "playhead jumps to
     // wherever I dragged" report: the left-edge handle sits at a fixed
     // `left-0` inside the card, so after a left-edge drag the pointer
@@ -283,62 +320,67 @@ export function startDragSession(
     // which narrows but does not close this — the handle is only 8px
     // wide and the release can still land beside it — so the swallow
     // stays.)
-    // F4 (manual triage 2026-08-08) — armed ONLY for a genuine pointerup.
-    // The listener exists to eat the ONE synthetic click the browser
-    // synthesizes from a real release; a `pointercancel` produces no click at
-    // all, so arming it there left a one-shot swallower permanently armed,
-    // waiting to eat the user's next legitimate click anywhere in the app — a
-    // seek, a segment selection, a toolbar button. Pre-existing: a cancel ran
-    // this identical line before the 2026-08-08 discard ruling too.
-    if (hasMoved && !wasCancelled) {
+    // Manual triage 2026-08-08 (checklist step 10) — armed ONLY for a genuine
+    // pointerup. A `pointercancel` produces no synthetic click at all, so
+    // arming it there left the one-shot swallower permanently armed.
+    if (!wasCancelled) {
       const swallowGhostClick = (clickEvent: MouseEvent) => {
         clickEvent.stopPropagation();
         clickEvent.preventDefault();
       };
       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
     }
-    if (!hasMoved) return;
-    // This gesture moved, so its speed baseline is spent however it resolves —
-    // commit, cancel, or block. It used to be cleared only on the commit path,
-    // which the `wasCancelled` early return below (added with the discard
-    // ruling) then skipped, stranding a stale {segmentId, clipLen} for a
-    // segment the user may go on to re-time by other means.
+    // This gesture moved, so its speed baseline is spent however it resolved —
+    // commit, cancel, or block.
     deps.clearSpeedBaseline();
-    // Ruled 2026-08-08 (docs/decisions/2026-08-08-pointercancel-ruling.md): a
-    // cancelled gesture never commits, however far it moved before the OS
-    // took the pointer away — it reverts, exactly like a blocked/negligible
-    // drag below, so a segment-timing change can only ever land from a
-    // genuine user-completed release.
-    if (wasCancelled) {
-      deps.revertSegments(originalSegments);
-      return;
+  };
+
+  const handleUp = () => {
+    try {
+      // Ensure lastEdgeX reflects the final pointer position even if the
+      // last pointermove's rAF frame had not fired yet — so the committed
+      // size matches exactly where the user released. Must run before the
+      // commit below, so it is gesture input, not teardown.
+      if (pendingEvent) lastEdgeX = edgeXFor(pendingEvent.clientX);
+      if (!hasMoved) return;
+      // Ruled 2026-08-08 (docs/decisions/2026-08-08-pointercancel-ruling.md): a
+      // cancelled gesture never commits, however far it moved before the OS
+      // took the pointer away — it reverts, exactly like a blocked drag below,
+      // so a segment-timing change can only ever land from a genuine
+      // user-completed release.
+      if (wasCancelled) {
+        deps.revertSegments(originalSegments);
+        return;
+      }
+      // Commit — one pure call, the identical one the live frames used.
+      const final = resolveDragEdge({
+        segment: originalTarget,
+        edge: type,
+        edgeContentX: lastEdgeX,
+        pixelsPerSecond: pps,
+        isVideo: isVideoSeg,
+      });
+      const speedUpdate = final.playbackSpeed === undefined
+        ? undefined
+        : { playbackSpeed: final.playbackSpeed };
+      // F7, OWNER RULING 2026-08-08 — there is no negligible-drag threshold any
+      // more. A drag that moved is committed however small it was: fine
+      // adjustment at high zoom is a real editing gesture, and silently
+      // discarding it made the timeline feel like it was ignoring the user. The
+      // guard against a plain CLICK committing anything is `hasMoved` above,
+      // which is unaffected — it requires an actual pointermove, not a distance.
+      const succeeded = deps.commitDurationChange(
+        originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
+      );
+      // null cascade → locked neighbour blocked. K17: the preview frames
+      // resolved the same block to the same `originalSegments`, so the
+      // cards are already sitting at their pre-drag geometry and this
+      // revert moves nothing on screen — it only re-syncs state. Before
+      // K17 this was a visible snap-back at release.
+      if (!succeeded) deps.revertSegments(originalSegments);
+    } finally {
+      teardown();
     }
-    // Commit — one pure call, the identical one the live frames used.
-    const final = resolveDragEdge({
-      segment: originalTarget,
-      edge: type,
-      edgeContentX: lastEdgeX,
-      pixelsPerSecond: pps,
-      isVideo: isVideoSeg,
-    });
-    const speedUpdate = final.playbackSpeed === undefined
-      ? undefined
-      : { playbackSpeed: final.playbackSpeed };
-    // F7, OWNER RULING 2026-08-08 — there is no negligible-drag threshold any
-    // more. A drag that moved is committed however small it was: fine
-    // adjustment at high zoom is a real editing gesture, and silently
-    // discarding it made the timeline feel like it was ignoring the user. The
-    // guard against a plain CLICK committing anything is `hasMoved` above,
-    // which is unaffected — it requires an actual pointermove, not a distance.
-    const succeeded = deps.commitDurationChange(
-      originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
-    );
-    // null cascade → locked neighbour blocked. K17: the preview frames
-    // resolved the same block to the same `originalSegments`, so the
-    // cards are already sitting at their pre-drag geometry and this
-    // revert moves nothing on screen — it only re-syncs state. Before
-    // K17 this was a visible snap-back at release.
-    if (!succeeded) deps.revertSegments(originalSegments);
   };
   // A cancelled pointer (OS gesture takeover, device switch, system
   // interruption) must not leave the drag armed forever — but unlike a real

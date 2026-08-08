@@ -234,6 +234,18 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
     it('sets resizing state unconditionally, even for an out-of-range dragged id — and NEVER attaches listeners, so nothing can ever clear it', () => {
       const original = [seg('A', 0, 5)];
       const h = harnessOf(original);
+      // This test PINS a known, deliberately-unfixed bug, so it is the one
+      // place in the suite that ends with dirty session state on purpose. The
+      // universal post-condition (dragSessionHarness.ts) would otherwise fail
+      // it — correctly. Declaring it here keeps the audit switched on for every
+      // other test while making this exception explicit and greppable rather
+      // than a silent hole. The declaration itself fails if the residue stops
+      // appearing, so whoever fixes the bug is forced back to this test.
+      h.acknowledgeKnownResidue(
+        'early-bail drag start leaves resizingId/resizingType/body.resizing stuck — ' +
+        'the "FOUND, NOT FIXED" bug in dragSession.ts\'s header; the desired behaviour is ' +
+        'pinned by the skipped BUG PIN test at the end of PART 4',
+      );
       h.grab('ZZZ-does-not-exist', 'end');
       expect(h.resizingIdValue).toBe('ZZZ-does-not-exist');
       expect(h.resizingTypeValue).toBe('end');

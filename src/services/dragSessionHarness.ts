@@ -42,10 +42,66 @@
  * `dragSession.test.ts`'s reference `CommitOutcome` type already names.
  */
 
+import { afterEach } from 'vitest';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { startDragSession, type DragSessionDeps } from './dragSession';
 import { computeDragCascade } from './dragCascade';
 import { segmentEdgeContentX, type DragEdge } from './dragGeometry';
+
+/**
+ * Every harness constructed since the last test boundary. Populated by the
+ * constructor, drained by the universal post-condition below. This module is
+ * imported ONLY by test files (verified: `dragTriage.test.ts` and
+ * `dragSessionHarness.test.ts`; nothing in the app's import graph reaches it),
+ * which is what makes the top-level `afterEach` import legitimate here.
+ */
+const harnessRegistry: DragSessionHarness[] = [];
+let harnessSeq = 0;
+
+/**
+ * THE UNIVERSAL POST-CONDITION (WS2 re-scope, 2026-08-08).
+ *
+ * Registered at module scope, so it runs after EVERY test in EVERY file that
+ * imports this harness — there is no per-test opt-in, and no way to use the
+ * harness without it. That is the point. Manual checklist step 10 found a
+ * `pointercancel` leaving two pieces of state dirty (an armed ghost-click
+ * swallower and a stale speed baseline) while the harness's own pointercancel
+ * test passed, because that test asserted on the resulting SEGMENT ARRAY and
+ * never on teardown. A green suite that cannot see leaked listeners is not
+ * evidence of a clean teardown; this closes that gap by construction.
+ *
+ * HOOK-ORDER SAFETY: vitest runs `afterEach` hooks in reverse registration
+ * order, so a test file's own `afterEach(() => harness.dispose())` — registered
+ * later, at file evaluation — runs BEFORE this one. `dispose()` clears the very
+ * state being audited (notably the `resizing` body class), so checking here
+ * would read a cleaned-up world and pass vacuously. `dispose()` therefore
+ * SNAPSHOTS its residue before cleaning, and this hook reads that snapshot.
+ * Correct regardless of which hook wins.
+ */
+afterEach(() => {
+  const failures: string[] = [];
+  // Reverse order: harnesses stack their global patches (rAF, window listener
+  // pair) at construction, so they must be unwound LIFO for the restore chain
+  // to be correct when two are alive at once.
+  for (let i = harnessRegistry.length - 1; i >= 0; i--) {
+    const harness = harnessRegistry[i]!;
+    const residue = harness.collectResidueAndDispose();
+    if (residue.length > 0) {
+      failures.push(`${harness.harnessLabel}:\n      - ${residue.join('\n      - ')}`);
+    }
+  }
+  harnessRegistry.length = 0;
+  if (failures.length > 0) {
+    throw new Error(
+      'DragSessionHarness universal post-condition FAILED — the drag session left residue ' +
+      'after this test:\n    ' + failures.join('\n    ') +
+      '\n\n  This hook audits teardown, not behaviour: a test can assert the right segment ' +
+      'array and still leak listeners or session state (manual checklist step 10). If the ' +
+      'residue is deliberate and pinned by this test, declare it with ' +
+      '`harness.acknowledgeKnownResidue(reason)` rather than suppressing this hook.',
+    );
+  }
+});
 
 export interface DragHarnessConfig {
   /** Timeline zoom. Defaults to 100 px/s, matching every existing drag test. */
@@ -118,6 +174,32 @@ export class DragSessionHarness {
   private readonly prevRaf: typeof requestAnimationFrame;
   private readonly prevCancelRaf: typeof cancelAnimationFrame;
 
+  // --- universal post-condition instrumentation (see the module-level hook) ---
+  readonly harnessLabel: string;
+  private readonly prevAddListener: typeof window.addEventListener;
+  private readonly prevRemoveListener: typeof window.removeEventListener;
+  /** Window listeners added but not yet removed, in add order. A pointer-event
+   *  listener surviving a resolved gesture is a leak; a `click` one is the
+   *  ghost-click swallower and is expected exactly `expectedSwallowers` times. */
+  private readonly liveListeners: Array<{
+    type: string;
+    listener: EventListenerOrEventListenerObject | null;
+    options?: boolean | AddEventListenerOptions;
+  }> = [];
+  /** Net setPointerCapture-minus-releasePointerCapture across this harness's
+   *  elements. `startDragSession` never captures today (the real app captures
+   *  on the Timeline HANDLE, in `Timeline.tsx`, which this harness does not
+   *  mount) — so this check is VACUOUS for the current code path, and is here
+   *  to fail loudly if capture is ever moved into the session without a
+   *  matching release. Counted, not inferred: jsdom's `hasPointerCapture`
+   *  cannot be queried without a pointerId, and the harness dispatches
+   *  MouseEvents that carry none. */
+  private capturesOutstanding = 0;
+  private movedThisGesture = false;
+  private expectedSwallowers = 0;
+  private acknowledgedResidue: string | null = null;
+  private residueSnapshot: string[] | null = null;
+
   private currentClientX = 0;
   private commitAttempted = false;
   private reverted = false;
@@ -152,6 +234,7 @@ export class DragSessionHarness {
       toJSON: () => ({}),
     }) as DOMRect;
     this.timeline.scrollLeft = config.scrollLeft ?? 0;
+    this.instrumentPointerCapture(this.timeline);
     document.body.appendChild(this.timeline);
 
     const perSeg = config.elementsPerSegment ?? 2;
@@ -177,6 +260,33 @@ export class DragSessionHarness {
     globalThis.cancelAnimationFrame = ((handle: number): void => {
       if (handle === this.rafHandle) this.rafCallback = null;
     }) as typeof cancelAnimationFrame;
+
+    // Window listener bookkeeping for the universal post-condition. Wrapping
+    // rather than counting after the fact, because the question is not "how
+    // many listeners exist" (jsdom exposes no registry) but "did every add get
+    // a matching remove" — which only the call pairs can answer.
+    this.harnessLabel = `harness#${++harnessSeq} [${initialSegments.map(s => s.id).join(',')}]`;
+    this.prevAddListener = window.addEventListener.bind(window);
+    this.prevRemoveListener = window.removeEventListener.bind(window);
+    window.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | AddEventListenerOptions,
+    ): void => {
+      this.liveListeners.push({ type, listener, options });
+      this.prevAddListener(type, listener as EventListener, options);
+    }) as typeof window.addEventListener;
+    window.removeEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject | null,
+      options?: boolean | EventListenerOptions,
+    ): void => {
+      const idx = this.liveListeners.findIndex(l => l.type === type && l.listener === listener);
+      if (idx >= 0) this.liveListeners.splice(idx, 1);
+      this.prevRemoveListener(type, listener as EventListener, options);
+    }) as typeof window.removeEventListener;
+
+    harnessRegistry.push(this);
   }
 
   private mountElementsFor(segId: string, count: number): void {
@@ -184,10 +294,18 @@ export class DragSessionHarness {
     for (let i = 0; i < count; i++) {
       const el = document.createElement('div');
       el.dataset.segId = segId;
+      this.instrumentPointerCapture(el);
       this.timeline.appendChild(el);
       els.push(el);
     }
     this.elsBySegId.set(segId, els);
+  }
+
+  /** See `capturesOutstanding` — jsdom does not implement the pointer-capture
+   *  pair on HTMLElement, so these are defined rather than wrapped. */
+  private instrumentPointerCapture(el: HTMLElement): void {
+    el.setPointerCapture = (): void => { this.capturesOutstanding++; };
+    el.releasePointerCapture = (): void => { this.capturesOutstanding--; };
   }
 
   /** Mounts an extra `[data-seg-id]`-less element into the timeline, to
@@ -247,6 +365,7 @@ export class DragSessionHarness {
     this.commitAttempted = false;
     this.reverted = false;
     this.cancelledThisGesture = false;
+    this.movedThisGesture = false;
     this.blockedIds = [];
     const segment = this.segments.find(s => s.id === id);
     const edgePx = segment ? segmentEdgeContentX(segment, edge, this.pixelsPerSecond) : 0;
@@ -260,6 +379,7 @@ export class DragSessionHarness {
    *  frame — mirroring one real `pointermove` reaching one real rAF tick. */
   moveBy(deltaSeconds: number): this {
     this.currentClientX += deltaSeconds * this.pixelsPerSecond;
+    this.movedThisGesture = true;
     this.dispatchPointer('pointermove');
     this.flushFrame();
     return this;
@@ -270,6 +390,7 @@ export class DragSessionHarness {
    *  last frame hadn't fired yet" fallback (`edgeXFor(pendingEvent.clientX)`). */
   moveByWithoutFlush(deltaSeconds: number): this {
     this.currentClientX += deltaSeconds * this.pixelsPerSecond;
+    this.movedThisGesture = true;
     this.dispatchPointer('pointermove');
     return this;
   }
@@ -295,6 +416,15 @@ export class DragSessionHarness {
   }
 
   release(): DragOutcome {
+    // A genuine release of a gesture that MOVED arms one ghost-click swallower
+    // (`dragSession.ts`'s teardown). It is `{once: true}` and the harness never
+    // dispatches a click to consume it, so it legitimately outlives the
+    // gesture — the post-condition expects exactly this many, no more and no
+    // fewer. An early-bail `grab` never attached listeners and so never arms
+    // one, which is why liveness is read from the DOM rather than assumed.
+    if (this.movedThisGesture && this.liveListeners.some(l => l.type === 'pointermove')) {
+      this.expectedSwallowers++;
+    }
     this.dispatchPointer('pointerup');
     return this.resolveOutcome();
   }
@@ -396,6 +526,102 @@ export class DragSessionHarness {
     if (this.disposed) throw new Error('DragSessionHarness used after dispose()');
   }
 
+  /**
+   * Declares that THIS test deliberately leaves session state dirty, so the
+   * universal post-condition reports it as expected rather than as a failure.
+   *
+   * Deliberately narrow: it whitelists only the stuck `resizingId`/
+   * `resizingType`/`resizing`-class trio (the documented early-bail bug — see
+   * `dragSession.ts`'s "FOUND, NOT FIXED" header note). Leaked listeners and
+   * unbalanced pointer captures are never acknowledgeable, because no test has
+   * a legitimate reason to leave those behind.
+   *
+   * It also fails if the residue is NOT present, so the acknowledgement cannot
+   * quietly rot into a no-op once the underlying bug is fixed — whoever fixes
+   * it is forced to come back here.
+   */
+  acknowledgeKnownResidue(reason: string): void {
+    this.acknowledgedResidue = reason;
+  }
+
+  /** The audit the universal post-condition runs. Pure read — no cleanup. */
+  private computeResidue(): string[] {
+    const problems: string[] = [];
+
+    const leakedPointerListeners = this.liveListeners.filter(
+      l => l.type === 'pointermove' || l.type === 'pointerup' || l.type === 'pointercancel',
+    );
+    if (leakedPointerListeners.length > 0) {
+      problems.push(
+        `${leakedPointerListeners.length} window pointer listener(s) added but never removed ` +
+        `(${[...new Set(leakedPointerListeners.map(l => l.type))].join(', ')}) — the drag ` +
+        `session is still armed and will react to pointer events after the gesture ended`,
+      );
+    }
+
+    const swallowers = this.liveListeners.filter(l => l.type === 'click').length;
+    if (swallowers !== this.expectedSwallowers) {
+      problems.push(
+        `${swallowers} ghost-click swallower(s) armed, expected ${this.expectedSwallowers} ` +
+        `(one per gesture that moved and ended in a genuine pointerup). ` +
+        (swallowers > this.expectedSwallowers
+          ? 'A surplus one will silently eat the user\'s next real click anywhere in the app — ' +
+            'this is manual checklist step 10\'s exact failure.'
+          : 'A missing one means the D12 ghost-click swallow no longer happens and a left-edge ' +
+            'drag will fire a stray seek on release.'),
+      );
+    }
+
+    if (this.capturesOutstanding !== 0) {
+      problems.push(
+        `${this.capturesOutstanding} unreleased pointer capture(s) — setPointerCapture without a ` +
+        'matching releasePointerCapture strands the pointer on a detached element',
+      );
+    }
+
+    const stateResidue: string[] = [];
+    if (this.resizingId !== null) stateResidue.push(`resizingId still ${JSON.stringify(this.resizingId)}`);
+    if (this.resizingType !== null) stateResidue.push(`resizingType still ${JSON.stringify(this.resizingType)}`);
+    if (document.body.classList.contains('resizing')) stateResidue.push("<body> still has the 'resizing' class");
+
+    if (this.acknowledgedResidue !== null) {
+      if (stateResidue.length === 0) {
+        problems.push(
+          `acknowledgeKnownResidue(${JSON.stringify(this.acknowledgedResidue)}) was called, but no ` +
+          'residual session state was found. The acknowledged bug appears to be FIXED — remove the ' +
+          'acknowledgement and assert the clean behaviour instead.',
+        );
+      }
+    } else if (stateResidue.length > 0) {
+      problems.push(
+        `residual session state: ${stateResidue.join('; ')} — the next drag starts against a dirty ` +
+        'session, and the resizing cursor stays stuck on the document',
+      );
+    }
+
+    if (document.querySelectorAll('#timeline-scroll-area').length > 1) {
+      problems.push(
+        'more than one #timeline-scroll-area is attached to the document — a previous harness leaked ' +
+        'its DOM, and getElementById will resolve to the wrong one',
+      );
+    }
+
+    return problems;
+  }
+
+  /**
+   * Audits, then disposes. Idempotent, and safe to call after a test file's own
+   * `afterEach` already disposed this harness — `dispose()` snapshots the audit
+   * before cleaning up, precisely so the result does not depend on which hook
+   * ran first (see the module-level hook's HOOK-ORDER SAFETY note).
+   */
+  collectResidueAndDispose(): string[] {
+    if (this.residueSnapshot === null) this.residueSnapshot = this.computeResidue();
+    const snapshot = this.residueSnapshot;
+    this.dispose();
+    return snapshot;
+  }
+
   /** Restores the global rAF pair and removes this harness's DOM subtree —
    *  required between tests in the same file, since vitest's jsdom
    *  environment is shared per FILE, not reset per test: a second harness's
@@ -404,9 +630,23 @@ export class DragSessionHarness {
    *  first match in document order). Idempotent. */
   dispose(): void {
     if (this.disposed) return;
+    // Snapshot the audit BEFORE any cleanup — the lines below deliberately
+    // erase the very residue the universal post-condition exists to find (the
+    // body class especially), and a test file's own afterEach may well call
+    // this first. See the module-level hook's HOOK-ORDER SAFETY note.
+    if (this.residueSnapshot === null) this.residueSnapshot = this.computeResidue();
     this.disposed = true;
     globalThis.requestAnimationFrame = this.prevRaf;
     globalThis.cancelAnimationFrame = this.prevCancelRaf;
+    window.addEventListener = this.prevAddListener;
+    window.removeEventListener = this.prevRemoveListener;
+    // Remove anything the session left armed — chiefly the {once:true}
+    // ghost-click swallowers, which no click ever consumes in a harness run and
+    // which would otherwise survive into the next test (jsdom's window is
+    // per-FILE, not per-test).
+    for (const l of this.liveListeners.splice(0)) {
+      this.prevRemoveListener(l.type, l.listener as EventListener, l.options);
+    }
     this.timeline.remove();
     document.body.classList.remove('resizing');
   }
