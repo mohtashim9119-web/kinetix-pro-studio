@@ -70,6 +70,12 @@ import { resolveShortcutAction } from './services/undoShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
 import { findLockConflict, lockConflictMessage } from './services/historyLockPolicy';
 import {
+  clampCurrentTimeToRestoredEnd,
+  repairSelectedHeadingId,
+  repairSelectedSegmentId,
+  repairSelectedSegmentIds,
+} from './services/historyRestore';
+import {
   coalesceWrite,
   notePointerUp,
   type CoalesceClass,
@@ -1924,21 +1930,18 @@ export default function App() {
     // segment they were not looking at. But it IS repaired, because undoing past
     // a heading's or segment's existence can leave a selection pointing at
     // something that is now gone. Same shape as `handleSwitchProject`'s own
-    // repair.
-    setSelectedSegmentId(prev => (prev && restored.segments.some(sg => sg.id === prev) ? prev : null));
-    setSelectedHeadingId(prev =>
-      prev && (restored.headings ?? []).some(hd => hd.id === prev) ? prev : null);
-    setSelectedSegmentIds(prev => {
-      const alive = new Set([...prev].filter(id => restored.segments.some(sg => sg.id === id)));
-      return alive.size === prev.size ? prev : alive;
-    });
+    // repair. The repair computation itself lives in historyRestore.ts
+    // (Stage 6, 2026-08-08 cleanup run) — each setter still reads its own
+    // freshest `prev` via its functional updater, unchanged from before that
+    // extraction.
+    setSelectedSegmentId(prev => repairSelectedSegmentId(prev, restored));
+    setSelectedHeadingId(prev => repairSelectedHeadingId(prev, restored));
+    setSelectedSegmentIds(prev => repairSelectedSegmentIds(prev, restored));
     // Playback position is not undoable either (owner ruling: undo during
     // playback KEEPS PLAYING — the playhead is not history). It is only clamped
     // into the restored timeline's bounds, so a shorter timeline cannot leave the
     // playhead past its end.
-    const restoredEnd = restored.segments.reduce(
-      (acc, sg) => Math.max(acc, sg.startTime + sg.duration), 0);
-    setCurrentTime(prev => (prev > restoredEnd ? restoredEnd : prev));
+    setCurrentTime(prev => clampCurrentTimeToRestoredEnd(prev, restored));
   }, [setProjectSilent]);
 
   /**
