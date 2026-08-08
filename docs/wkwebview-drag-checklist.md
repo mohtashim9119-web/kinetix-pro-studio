@@ -90,13 +90,13 @@ automated suite already covers so you're not re-checking it by eye.
 | 1 | Drag a **middle segment's right edge**, a moderate distance (~1s of timeline width). | The dragged edge tracks the pointer with no visible lag or snap. The **next segment's left edge visibly moves during the drag itself**, not only after release. Releasing causes no jump/flash on any segment. | Numbers only. `dragSessionHarness.test.ts`'s live-preview tests assert the DOM style values written per frame are correct; they cannot confirm this *reads* as smooth motion under real paint (§4.4) or that nothing lags under a real event flood (§4.3). |
 | 2 | Drag a **middle segment's left edge**. | Mirrored: the left edge tracks the pointer; the **preceding** segment's right edge visibly follows live; no jump on release. | Numbers only — this is the exact shape of the K16 fault-3 regression (a left-edge drag that silently moved the wrong edge). `dragGeometry.test.ts`/`dragSession.test.ts` assert `style.left` is written correctly; only the eye confirms it doesn't visually lag the pointer. |
 | 3 | Drag **segment 0's left edge** (the very first segment — no predecessor). | The edge moves smoothly up to true `t=0` and stops there — no gap opens before segment 0, and nothing glitches or vanishes at the boundary. | Logic only. `dragCascade.test.ts` covers the off-the-end math (this is also where the real K14/K15a gap-collapse bug lived); only the eye confirms the on-screen boundary doesn't visually glitch. |
-| 4 | Drag the **last segment's right edge**, both growing and shrinking. | Growing extends the timeline's total length smoothly (the scrollable width / total-duration readout updates); shrinking leaves no stray gap after the new end. | Logic only. `dragSessionHarness.test.ts` PART 4 has an explicit "grow AND shrink on the timeline's last segment" case; only the eye confirms the scrollbar/total-width chrome actually updates on screen. |
+| 4 | **MANUAL-ONLY (visual).** Drag the **last segment's right edge**, both growing and shrinking. Watch the segment cards against the waveform lane beneath them. | Growing extends the timeline's total length smoothly (the scrollable width / total-duration readout updates); shrinking leaves no stray gap after the new end. **No card drifts out of alignment with the waveform**, and nothing before the dragged segment moves at all. | Arithmetic only, and that is now well covered: `dragTriage.test.ts`'s F2 block pins the rendered position of earlier segments and the measured 300px → 259.0909px rescale; `timelineLayout.test.ts` and `timeline.render.test.tsx` add cross-layer agreement guards (2026-08-08). **None of it can see pixels.** `jsdom` has no layout engine, so whether the two lanes LOOK aligned on a real screen is unprovable by the suite — this step is the only check of that. |
 | 5 | Lock the segment immediately **beside** the one you're dragging, then drag toward it until you'd need to cross into its slot. | The drag stops exactly at the locked neighbour's edge. The locked segment does not move by even a pixel. No console error. Hitting the limit should feel like hitting a wall — no visible jump or desync between the pointer and the edge once it's stopped. | Numbers only. `modelPLockSemantics.test.ts`/`dragCascade.test.ts` assert the numeric floor is respected; only the eye confirms the stop doesn't look broken (a pointer that keeps moving 40px past an edge that stopped moving reads as a bug even when the math is right). |
 | 6 | Lock **both** neighbours of the segment you're dragging, then drag each edge toward its limit. | The segment can move only within the space between its two locks. Both locked segments stay visibly immovable. Hitting a limit on either side simply stops the drag — no snapping, no negative-duration flash. | Numbers only. `dragSessionHarness.test.ts` has dedicated "locks on BOTH immediate neighbours" cases (both a left-edge and right-edge shrink variant); the eye confirms no flicker/flash at either limit. |
 | 7 | Grab an edge, move the pointer **only a few pixels**, and release. | Nothing commits. The segment snaps back to its exact starting size with no visible flicker, no console error, and — importantly — releasing does **not** trigger an accidental seek or selection change (the ghost-click case). | Numbers only. The negligible-drag threshold and its "reverted" outcome are fully covered by `dragSessionHarness.test.ts`; the ghost-click swallow (`window.addEventListener('click', ..., {capture:true, once:true})`) is real-browser click-synthesis behavior that `jsdom`'s synthetic events don't reproduce — only the eye can confirm no stray seek happens. |
 | 8 | **Zoom in** until the timeline overflows its panel, **scroll right**, then drag a segment that is now positioned to the left of the original (unscrolled) viewport. | The drag tracks the pointer correctly relative to the *scrolled* position — no jump the instant the drag starts, and the edge stays under the pointer for the whole gesture. | **Nothing.** `jsdom` has no real scroll-affecting layout; `timelineContentX`'s `scrollLeft` term is only ever exercised with hand-fed numbers in unit tests, never against a real scrolled viewport. This is the single step with the least automated coverage (§4.1) — give it real attention. |
-| 9 | While zoomed in, drag a segment's edge **toward and past the visible right edge** of the timeline panel. | The drag keeps tracking correctly (or the timeline auto-scrolls, if that's the intended behavior — note which one actually happens). The UI must not freeze, clip the drag, or lose the pointer. | **Nothing.** This is real-viewport, real-scroll behavior with no `jsdom` equivalent at all. |
-| 10 | Start a drag, then force an interruption: release the mouse button **outside the browser window**, or switch applications mid-drag (Cmd+Tab) so the OS takes the gesture away. | The drag **discards** — the edge springs back to its pre-drag geometry, no timing change lands (ruled 2026-08-08, `docs/decisions/2026-08-08-pointercancel-ruling.md`). The drag session must end cleanly — no stuck cursor, no stuck "resizing" state that blocks the next drag, no leaked listeners (immediately try a normal drag on another segment right after; it must work normally), and no armed ghost-click swallower left over to eat your next real click anywhere in the app. | Partial. `dragSessionHarness.test.ts` PART 4 pins the *code path* — a synthetic `pointercancel` event resolves through the identical `handleUp` a `pointerup` does — but it cannot produce a **real** OS-triggered `pointercancel` (window-switch, device change, gesture takeover). This step is the only way to confirm the real trigger fires the same listener at all. |
+| 9 | **MANUAL-ONLY (feel).** While zoomed in, drag a segment's edge **toward and past the visible right edge** of the timeline panel, and hold it there. Then bring it back inside. | **The timeline auto-scrolls** (implemented 2026-08-08 — this previously did nothing, which is what the last run found). It should start gently near the edge and speed up the further past it you go, keep scrolling while the pointer is held still, and stop the moment the pointer comes back inside. The dragged edge stays under the pointer throughout. No freeze, no clipped drag, no lost pointer, and nothing keeps scrolling after you release. | Logic only. `dragTriage.test.ts`'s F3 block covers ramp thresholds, proportionality, direction, clamping at both ends of the scroll range, teardown on all three resolutions, and the property that a drag reaching a content-x by scrolling commits identically to one reaching it by pointer motion. `dragGeometry.test.ts` PART 4 unit-tests the velocity curve. **None of it can measure comfort or smoothness** — the ramp constants (48px zone, 1200 px/s ceiling) were chosen, not tuned against a real hand. Say so in Notes if it feels wrong. |
+| 10 | **MANUAL-ONLY (real OS trigger).** Start a drag, then force an interruption: release the mouse button **outside the browser window**, or switch applications mid-drag (Cmd+Tab) so the OS takes the gesture away. | The drag **discards** — the edge springs back to its pre-drag geometry, no timing change lands (ruled 2026-08-08, `docs/decisions/2026-08-08-pointercancel-ruling.md`). The session must end cleanly: no stuck cursor, no stuck "resizing" state blocking the next drag, no leaked listeners (immediately try a normal drag on another segment — it must work normally), no armed ghost-click swallower eating your next real click anywhere in the app, and no timeline left auto-scrolling. | Teardown is now audited automatically: every harness test runs a universal post-condition (2026-08-08) checking listener balance, ghost-click swallower count, auto-scroll teardown and residual session state — verified non-vacuous by reverting the fix and confirming it fires. **What stays unprovable is the trigger.** `jsdom` can dispatch a synthetic `pointercancel`; it cannot make macOS take the gesture away. This step is the only confirmation that a REAL OS interruption fires that listener at all. |
 | 11 | Grab a **locked** segment's own edge (not a neighbour's — the segment itself) and try to drag it. | The segment does not move by even a pixel, in the live preview or after release. No console error. (Found 2026-08-08 by a manual run: `computeDragCascade` checked a locked absorbing NEIGHBOUR but never the dragged segment's own lock, so this drag silently succeeded — fixed in `dragCascade.ts`.) | Numbers only, as of the 2026-08-08 fix. `dragCascade.test.ts`/`dragSessionHarness.test.ts` assert the array and live preview never move; only the eye confirms the stop doesn't look broken. |
 | 12 | **DEFERRED — do not run as a pass/fail step.** Drag a boundary between two **video** segments (either edge), then let playback cross into both the segment you shrank and the one you grew, without navigating away from the preview. | Both segments play normally — no frozen/stuck frame on either side of the moved boundary. **Known to fail.** Parked with its findings in **[`docs/video-segment-investigation.md`](video-segment-investigation.md)**, which separates the three symptoms observed on the video path (preview freeze after a boundary edit; playback speed changing on a video-segment drag; the drawer's slip-trim bar overflowing) — they are probably not one bug and should not be investigated as one. The drag path itself is cleared: `dragCascade.ts`/`dragSession.ts` commit correct, gapless timing on every check. If you run this step anyway, add what you see to that document rather than marking it FAIL here. | Nothing. No automated coverage exists for the preview decode pool's response to a segment-timing change at all. |
 
@@ -127,15 +127,44 @@ Step 5  (single locked neighbour):           PASS / FAIL   Notes: __________
 Step 6  (locks on both sides):               PASS / FAIL   Notes: __________
 Step 7  (negligible drag reverts):           PASS / FAIL   Notes: __________
 Step 8  (drag while scrolled):               PASS / FAIL   Notes: __________
-Step 9  (drag past visible edge):            PASS / FAIL   Notes: __________
+Step 9  (auto-scroll past visible edge):     PASS / FAIL   Notes: __________
 Step 10 (interrupted drag / pointercancel):  PASS / FAIL   Notes: __________
                                               Observed behavior: commit / discard (circle one)
 Step 11 (locked segment, own edge):          PASS / FAIL   Notes: __________
-Step 12 (video boundary, both sides play):   PASS / FAIL   Notes: __________
+Step 12 (video boundary, both sides play):   DEFERRED — do not score; see
+                                              docs/video-segment-investigation.md
 
 Overall: PASS / FAIL
 Follow-up filed (if any): __________
 ```
+
+---
+
+## Failure numbering — ONE scheme, and it is the step number
+
+**Refer to a failure by its CHECKLIST STEP NUMBER. Nothing else.**
+
+This is a ruling, not a preference, because three incompatible numbering schemes have
+already been in simultaneous use for the same defects:
+
+| Defect | Checklist step (**use this**) | Repo's own "F" number | A later brief's "F" number |
+|---|---|---|---|
+| Pointercancel left state dirty | **10** | F4 (commit `38fad08`) | F10 |
+| Last segment drag rescaled the timeline | **4** | F2 (commit `9cd7b4f`) | F4 |
+| No auto-scroll past the viewport edge | **9** | F3 | F9 |
+
+Note what that table shows: **"F4" means two different defects** depending on which
+document you are reading, and the repo's F2 is another document's F4. This cost real
+time on 2026-08-08 — a re-scoped brief was written against failure numbers that had
+drifted, and the mismatch was only caught by a baseline test-count check.
+
+The "F" numbers were per-run labels for one triage session's findings. They were never
+stable identifiers and should not be treated as such. Step numbers are stable, they are
+what a tester actually reads off the table above, and they are what commit messages,
+`project-state.md`, and `docs/history.md` should cite from here on.
+
+If a future run finds a defect that is not yet a checklist step, **add the step first**,
+then refer to it by its new number — exactly as steps 11 and 12 were added on 2026-08-08.
 
 ---
 
@@ -165,3 +194,35 @@ Steps 3, 5, 6, 8 were not reported as failing in this run.
 Follow-up filed: step 9 (auto-scroll) needs separate scoping; step 12 (video freeze) needs its
 own investigation into the WebCodecs preview decode pool. A second manual run against the
 fixes above (plus the two new steps 11/12) is warranted before the next release.
+
+### 2026-08-08 (later the same day) — automated follow-up pass, no new manual run
+
+Not a manual run. A follow-up work session against the failures the run above left
+open, plus the structural gaps that run exposed in the automated suite itself. Recorded
+here because it changes what several steps are worth and what still needs a human.
+
+**Standing status after this pass: 8 PASS (from the run above, unchanged) / 1 step
+implemented and awaiting its first manual confirmation (9) / 1 step DEFERRED (12) /
+2 steps needing re-confirmation by hand (4, 10).**
+
+| Step | What changed | Still needs a human? |
+|---|---|---|
+| 4 | Already fixed in the earlier pass. Now *locked*: cross-layer agreement guards added in `timelineLayout.test.ts` (pure arithmetic, incl. a divergence test proving the guard has teeth) and `timeline.render.test.tsx` (both lanes place each segment identically). The render-level guard's scope was mutation-tested and its limits written into the test file rather than assumed. | **Yes** — visual alignment. `jsdom` has no layout engine; the suite asserts arithmetic, never pixels. |
+| 9 | **Implemented.** Edge auto-scroll now exists (`dragSession.ts` + `computeAutoScrollVelocity` in `dragGeometry.ts`). The `it.fails` placeholder is now a real 8-test passing suite, including the property that a drag reaching a content-x by scrolling commits identically to one reaching it by pointer motion. | **Yes** — feel. The ramp constants were chosen, not tuned against a real hand. |
+| 10 | Already fixed in the earlier pass. The *credibility* gap it exposed is now closed: teardown in `dragSession.ts` is one function called from a `finally` shared by commit/revert/discard, and every harness test now runs a universal post-condition auditing listener balance, swallower count, auto-scroll teardown and residual session state. Verified non-vacuous by reverting the fix and confirming the audit fires. | **Yes** — only a real OS interruption can prove the real trigger reaches that listener. |
+| 12 | **DEFERRED properly.** Parked in `docs/video-segment-investigation.md` with its three symptoms separated. Do not score this step. | No — do not run it as pass/fail; add observations to that document. |
+
+**A finding worth keeping.** When the universal post-condition was switched on for the
+first time, **exactly one existing test failed** — the one that deliberately pins the
+known early-bail stuck-`resizingId` bug. No hidden leaks existed anywhere else in the
+harness suite. That is a genuinely good result for the suite, and it is also the reason
+the audit had to be validated separately by reverting a real fix: a post-condition that
+finds nothing is indistinguishable from one that checks nothing until you make it fail
+on purpose.
+
+**Still open, unchanged by this pass:** the early-bail stuck-`resizingId` bug (see the
+"Known issue, not a checklist failure" note above). The skipped test asserting the
+desired behaviour was re-measured and still fails. It was left skipped deliberately:
+fixing it means reordering the guards at the top of `startDragSession`, which would
+contradict a *passing* test that pins the current behaviour — a test change that needs a
+ruling rather than a drive-by edit.

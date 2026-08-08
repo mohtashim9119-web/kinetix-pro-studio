@@ -3531,3 +3531,144 @@ locked segment's own edge; 12: a video-boundary drag, then play both sides) from
 run found that weren't yet checklist steps, plus a full run-log entry recording this pass's
 per-step results. A second manual run — against the five fixes, plus the two new checklist
 steps — is warranted before the next release; F3 and F6 remain open.
+
+---
+
+## WS2 manual-triage re-scope (2026-08-08, later the same day)
+
+Follow-up to the manual-failure triage recorded above. The brief for this pass was written
+against pre-`f2b4c6c` state and assigned three failures that had substantially already been
+fixed; the Stage 0 baseline gate caught it (expected 1470 tests, measured 1493) and the work
+was re-scoped by the owner before any code was written. **Recorded here mainly because the
+baseline check is what caught it** — a test-count mismatch was the only signal that a brief
+and a repo had diverged by five commits.
+
+**Failure-numbering collision, now ruled.** Three schemes were in play for the same defects:
+the repo's own F-numbers (F4 = pointercancel, F2 = last-segment rescale), the brief's
+(F10 = pointercancel, F4 = last-segment rescale), and the checklist's step numbers (10 and 4).
+"F4" meant two different defects depending on the document. **Ruled: checklist step numbers
+are the only identifier** — see `docs/wkwebview-drag-checklist.md`'s "Failure numbering"
+section, which carries the cross-reference table.
+
+### Stage 1′ — structural teardown + harness credibility (`eb8a911`)
+
+**`dragSession.ts`.** Commit, revert-blocked and pointercancel-discard now share ONE
+`teardown()` invoked from `handleUp`'s `finally`. Previously an inline block at the top of
+`handleUp`, above that function's early returns — correct, but positional, with nothing
+enforcing it, and **already broken twice in a single day** by edits that added a return above
+a cleanup step (the discard ruling skipping `clearSpeedBaseline()`; the ghost-click swallower
+arming on a cancel that produces no click). Both were found by hand, not by CI.
+
+Teardown now runs *after* the commit rather than before. Each effect was argued
+order-independent, and the one load-bearing fact was verified rather than assumed:
+`applyDurationChange` contains zero `speedBaselineRef` reads (grep over `App.tsx` — the only
+readers are the separate speed-slider gesture in `handleSpeedChange`), so relocating
+`clearSpeedBaseline()` past the commit is inert.
+
+**`dragSessionHarness.ts` — the universal post-condition.** A module-scope `afterEach` that
+runs after every test in every file importing the harness, with no per-test opt-in. Audits
+window-listener balance, ghost-click swallower count against what the gesture should have
+armed, pointer-capture balance, residual `resizingId`/`resizingType`/body class, and duplicate
+`#timeline-scroll-area`.
+
+Hook-order safety turned out to be load-bearing: vitest runs `afterEach` in *reverse*
+registration order, so a test file's own `dispose()` hook runs FIRST and erases the residue
+being audited. `dispose()` therefore snapshots the audit before cleaning, and the hook reads
+that snapshot.
+
+**Two measurements worth keeping.** (1) Enabling the post-condition failed **exactly one**
+existing test — the one deliberately pinning the known early-bail bug. No hidden leaks
+existed. (2) Because a passing audit proves nothing on its own, it was validated by
+temporarily reverting the step-10 fix: the pointercancel test, which passes on its
+segment-array assertions alone, then failed naming the surplus armed swallower. That is the
+gap this closes, demonstrated rather than claimed.
+
+**The skipped stuck-`resizingId` test stays skipped**, measured not assumed — unskipping it
+still fails (`resizingId` is `'does-not-exist'`, not null). The teardown refactor cannot reach
+it: `startDragSession`'s two drag-start guards return before any listener is attached, so
+`handleUp` never runs on that path. Fixing it means reordering those guards above the
+`setResizingId`/`classList.add` calls, which would contradict a *passing* pin of the current
+behaviour in PART 3 — flagged for a ruling rather than changed. The PART 3 pin now declares
+its intentional residue through a narrow `acknowledgeKnownResidue()` hatch that itself fails
+if the residue disappears, so the acknowledgement cannot rot into a no-op once the bug is
+fixed.
+
+### Stage 2′ — locking the step 4 fix (`9cd6f3b`)
+
+Tests only. The stage's own audit question — were the step 10 and step 4 fixes
+regression-covered or manual-only? — answered: **both were already covered**
+(`dragTriage.test.ts`'s F4 block, five tests; its F2 block, three, including a numeric pin of
+the measured 300px → 259.0909px displacement). Nothing needed backfilling.
+
+What was missing was the cross-layer property. Added in `timelineLayout.test.ts` (one shared
+`pixelsPerSecond` makes both layers span the identical extent; each tile is exactly its own
+duration wide; **a divergence test proving the guard has teeth** — two independently-derived
+zooms diverge by >50px, asserted as a floor so it stays a statement about the failure mode)
+and `timeline.render.test.tsx` (both lanes place each segment identically).
+
+The render-level guard was mutation-tested in both directions and **its limits written into
+the file rather than glossed**: it CATCHES a lane switching layout formula (verified, +3px
+cumulative-flow `left` fails both tests) and does NOT catch a lane deriving its own
+`pixelsPerSecond` (verified — both tests still passed). `renderToStaticMarkup` structurally
+cannot see the latter: `containerWidth` is 0 and `zoomBasisDuration` is seeded from
+`totalDuration`, so on a first render every derivation collapses to the same number. That half
+stays covered by the F2 block rather than being faked here.
+
+### Stage 3 — edge auto-scroll (`72d6b3b`)
+
+Implements checklist step 9's missing capability. **1499 → 1514 tests, and the "1 expected
+fail" is gone** — the `it.fails` placeholder is now a real 8-test passing suite.
+
+The content-coordinate correctness the brief warned about is structural rather than
+hand-rolled: `timelineContentX` is `clientX - rectLeft + scrollLeft` and `edgeXFor` reads
+`scrollLeft` live on every resolve, so content-space x already advances when the container
+scrolls under a stationary pointer. Auto-scroll adds no delta arithmetic of its own — it moves
+`scrollLeft` and re-resolves through the SAME `resolveAndWrite` a pointermove uses.
+
+`computeAutoScrollVelocity` (`dragGeometry.ts`) is pure and DOM-free, with the viewport rect as
+an argument — the only reason it is unit-testable at all, since jsdom reports `clientWidth` 0
+forever. Linear ramp over a 48px zone, saturating at 1200 px/s, expressed in px/**sec** and
+multiplied by real elapsed time so the rate is frame-rate independent.
+
+The ramp needs its own frame loop rather than riding on pointermove, because a pointer held
+still at the edge emits no further events — and that is exactly the gesture that must keep
+scrolling. Frames come from an injected `DragScheduler` whose default delegates to the bare
+rAF identifiers at call time, so production is unchanged and the harness's existing
+`globalThis` stub still intercepts the live-preview path. The two loops are deliberately
+separate so they cannot fight over the stub's single callback slot.
+
+**Teardown stops the ramp — the first real payoff of Stage 1′'s `finally`.** A
+self-perpetuating loop that ends only on pointer re-entry would otherwise scroll forever when
+a gesture ends with the pointer parked in an edge zone. The post-condition also now fails any
+test leaving an auto-scroll frame queued.
+
+The required property — a drag reaching a given content-x by scrolling commits byte-identical
+timings to one reaching it by pointer motion — is what protects the golden replay, and is
+asserted directly.
+
+### Stage 4 — parking step 12 (`6d2b372`)
+
+Docs only. `docs/video-segment-investigation.md` separates three symptoms previously carried
+as one DEFERRED line: the preview freeze (the former "F6"), playback speed changing on a
+video-segment drag, and the drawer's slip-trim bar overflowing. There is no evidence they
+share a cause — only a trigger context, and two of the three do not involve the preview player
+at all.
+
+Two are newly diagnosed. The speed change is the **deliberate** duration↔`playbackSpeed`
+coupling in `resolveDragEdge`, pinned timing-neutral by `dragGeometry.test.ts` PART 1 and
+therefore not introduced by any recent drag work — filed as needing an owner ruling, with an
+explicit warning that silently decoupling would change committed timings for every video drag
+and the golden replay would not catch it (no corpus project exercises an interactive drag).
+The overflow has a concrete mechanism: `BottomDrawer.tsx` computes `widthPct` against
+`sourceDuration ?? 60` with no clamp, so any segment lacking a real `sourceDuration` and
+longer than 60s draws a bar wider than its container.
+
+### Result
+
+**1514 tests, 1513 passing, 1 skipped, ZERO expected-fail** (from 1493 / 1491 / 1 expected-fail
+/ 1 skipped), 60 files. `tsc --noEmit` clean. **Step M golden replay byte-identical** at every
+stage — no sync/timing code was touched at any point; the auto-scroll work is confined to the
+drag path, and its commit-equivalence property exists precisely to keep it that way.
+
+Steps 4, 9 and 10 remain **manual-only** for the slices the suite structurally cannot reach:
+visual lane alignment, scroll feel, and a real OS-triggered `pointercancel`.
