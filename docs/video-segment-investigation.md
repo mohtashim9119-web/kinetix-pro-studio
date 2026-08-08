@@ -15,8 +15,8 @@ already been read once as closing the whole video path, and it does not.
 | # | Symptom | Status as of 2026-08-08 |
 |---|---|---|
 | 1 | Preview freeze after a boundary edit | **VERIFIED RESOLVED** — manual step 12 PASS. Cause **not determined**; see the honesty note in §1. |
-| 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN** — owner ruling pending (see §2). Predates all recent work. |
-| 3 | Drawer slip-trim bar overflows the viewport | **OPEN** — never manually exercised, by anyone, ever. See §3. |
+| 2 | `duration` ↔ `playbackSpeed` coupling on a video-segment drag | **OPEN — RULED A BUG** (owner, 2026-08-08). Deliberately NOT fixed in that run; scoped in §2, roadmapped at `roadmap-2026-08-07.md` § D12. Predates all recent work. |
+| 3 | Drawer slip-trim bar overflows the viewport | **OPEN** — never manually exercised, by anyone, ever. See §3. **Fix this with or before symptom 2** — the coupling is currently what contains it for video segments. |
 
 **What step 12 actually covers: symptom 1 only.** It drives a boundary drag between
 two video segments and watches playback cross it. That gesture cannot reach symptom 3
@@ -139,9 +139,59 @@ decode session. If it cannot be written against the current mock, that is the fi
 
 ## Symptom 2 — playback speed changes when a video segment is dragged
 
-**Status: OPEN.** Awaiting an owner product ruling (the three options are enumerated
-under "Next step" below). Mechanism is fully identified; what is undecided is whether
-the identified mechanism is *wanted*.
+**Status: OPEN — RULED A BUG by the owner, 2026-08-08. NOT FIXED IN THIS RUN, by
+instruction.** Scoped below and carried on the roadmap.
+
+The earlier assessment in this document — "probably not a bug in the code… working as
+designed" — is **superseded**. The mechanism was correctly identified; the judgement
+that it was therefore acceptable was the owner's to make, and the owner has made the
+opposite one. Option 3 of the three below (decouple) is the ruled direction.
+
+### Scope of the fix — read before attempting it
+
+This is deliberately not a small change, which is why it was not attempted in the
+close-out run that received the ruling.
+
+**Where it lives.** `resolveDragEdge` (`src/services/dragGeometry.ts`), the block gated
+on `isVideo && srcDur > 0`. It does **two** things, and they are separable:
+
+```
+clipLen = (trimEnd ?? srcDur) - trimStart
+(a) duration      = clamp(duration, clipLen/MAX_SPEED, clipLen/MIN_SPEED)   // 0.5x..2.0x window
+(b) playbackSpeed = clamp(clipLen / duration, MIN_SPEED, MAX_SPEED)
+```
+
+(b) is the reported symptom. **(a) is the part that will surprise whoever fixes this:**
+a video segment's drag range is currently bounded by its clip length and the speed
+clamps, *not* by `MIN_SEGMENT_DURATION`. Remove (b) but keep (a) and the speed stops
+changing while the drag mysteriously refuses to go past 2× the clip length. Remove both
+and video segments become as freely draggable as images.
+
+**The open product question the fix inherits.** If a video segment can be dragged
+*longer than its own clip* with speed held at 1×, what plays in the tail? Freeze the
+last frame, loop, or black? **There is no defined behaviour for this today**, in either
+preview or either export path, because (a) has always made the state unreachable. This
+question must be answered before the code change, not discovered after it.
+
+**What it will break, and how to break it honestly.** `dragGeometry.test.ts` **PART 1**
+pins `resolveDragEdge` byte-identical to the pre-K16 expression across a 30-case sweep
+*including video fixtures*. A decoupling **will** fail that block — and that is PART 1
+working, not PART 1 being in the way: its entire job is to make a change in what an
+`edgeContentX` *means* impossible to land silently. Update it deliberately and visibly,
+with the old values retained in comments as the record of what changed. **Do not weaken
+or delete it.**
+
+**The golden replay will not protect you here.** No corpus project exercises an
+interactive drag, so a decoupling can change every future video drag's committed timing
+with the replay still 3/3 byte-identical. This is the one change in the drag path with
+no automated backstop.
+
+**Interaction with symptom 3 — do not miss this.** The slip-trim bar overflow in §3 is
+currently *contained* for video segments precisely **because** of the coupling: while
+(a)+(b) are engaged, `duration × playbackSpeed === clipLen`, so `widthPct ≤ 100` holds
+by construction. Decoupling removes that guarantee and **makes symptom 3 reachable for
+video segments too**, not just for segments with no `sourceDuration`. §3's clamp should
+therefore land *before or with* this fix, not after.
 
 **Explicitly NOT closed by step 12's PASS.** Step 12 watches for a freeze. The speed
 coupling is silent, produces a perfectly smooth playing clip, and looks like correct
@@ -170,21 +220,29 @@ block would have failed.
   video fixtures. **So this behaviour cannot have been introduced by any recent drag
   work** — the tests would have failed.
 
-**Assessment** [ASSUMED]. Probably not a bug in the code. It is plausibly a bug in
-the product: a user dragging a segment to re-time the timeline may not expect the
-clip to also play faster, and nothing in the UI signals that a video edge-drag means
-something different from an image edge-drag. There is a speed badge, but it is not
-adjacent to the gesture.
+**Assessment — SUPERSEDED, retained for the record.** [ASSUMED at the time] "Probably
+not a bug in the code. It is plausibly a bug in the product: a user dragging a segment
+to re-time the timeline may not expect the clip to also play faster, and nothing in the
+UI signals that a video edge-drag means something different from an image edge-drag.
+There is a speed badge, but it is not adjacent to the gesture."
 
-**Next step.** This needs an **owner ruling**, not an investigation:
+The second half of that read correctly. The first half was a judgement the owner has
+since overturned: **ruled a bug, 2026-08-08.**
+
+**The ruling.** These were the three options put forward:
 
 1. Keep as-is (speed coupling is the point — it is how you fit a clip to a slot).
 2. Keep, but surface it during the drag (live speed readout on the dragged card).
 3. Decouple, and require speed to be set explicitly.
 
-Do not "fix" this without a ruling — silently decoupling would change committed
-timings for every video drag, and the golden replay would not catch it (no corpus
-project exercises an interactive drag).
+**Owner ruled: it is a bug** — i.e. option 3, decouple. Not fixed in the run that
+received the ruling, by explicit instruction: *scope it and roadmap it*. See "Scope of
+the fix" at the top of this section for what that fix actually entails, and
+`docs/roadmap-2026-08-07.md` § D12 for its place in the queue.
+
+The original warning still stands and is now more relevant, not less: silently
+decoupling would change committed timings for every video drag, and **the golden replay
+would not catch it** — no corpus project exercises an interactive drag.
 
 ---
 
