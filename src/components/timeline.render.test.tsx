@@ -140,6 +140,10 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     segments: [],
     headings: [],
     assets: [],
+    onUndo: noop,
+    onRedo: noop,
+    canUndo: false,
+    canRedo: false,
     voiceoverId: undefined,
     script: '',
     persistedScript: '',
@@ -318,5 +322,70 @@ describe('Timeline static markup — card lane and waveform lane agree (checklis
     // must equal the card extent — a mismatch is the two layers having derived
     // pixels-per-second (or total duration) independently.
     expect(html).toContain(`width:${cardExtent}px`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Undo/redo buttons (Phase 2, 2026-08-08)
+//
+// `renderToStaticMarkup` cannot click, so these pin what static markup CAN
+// prove: that both controls render on the tab that hosts them, that the
+// disabled state tracks the stacks rather than being decorative, and that the
+// tooltip names the specific edit — which is the thing that makes a 20-deep
+// stack navigable and the thing most likely to be silently dropped in a later
+// refactor. Click BEHAVIOUR is covered where it actually lives: the pure
+// resolver in `undoShortcut.test.ts`, and entry accounting in
+// `dragSessionHarness.test.ts` PART 6.
+// ---------------------------------------------------------------------------
+describe('DropZonePanel static markup — undo/redo buttons', () => {
+  const filesTab = (over: Partial<DropZonePanelProps> = {}) =>
+    renderToStaticMarkup(
+      <DropZonePanel {...makeDropZonePanelProps({ activeLeftTab: 'files', ...over })} />,
+    );
+
+  it('renders both buttons on the tab that hosts Apply sync', () => {
+    const html = filesTab();
+    expect(html).toContain('Apply sync');
+    expect(html).toMatch(/aria-label="(Undo [^"]*|Nothing to undo)"/);
+    expect(html).toMatch(/aria-label="(Redo [^"]*|Nothing to redo)"/);
+  });
+
+  it('both are DISABLED when both stacks are empty — disabled, not hidden', () => {
+    // A control that disappears makes users hunt for it (design §8).
+    const html = filesTab({ canUndo: false, canRedo: false });
+    expect(html).toContain('aria-label="Nothing to undo"');
+    expect(html).toContain('aria-label="Nothing to redo"');
+    // Two disabled buttons besides whatever else the tab disables.
+    const disabledCount = (html.match(/disabled=""/g) ?? []).length;
+    expect(disabledCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('the tooltip NAMES the pending edit, per stack, and only when enabled', () => {
+    const html = filesTab({
+      canUndo: true, canRedo: true,
+      undoLabel: 'resize segment 12', redoLabel: 'grade segment 4',
+    });
+    expect(html).toContain('Undo resize segment 12');
+    expect(html).toContain('Redo grade segment 4');
+    // The label must NOT be on the button face — it would change width on every
+    // edit and reflow the row (design §8). The icons are SVGs, so the only text
+    // in the row is Apply sync's own.
+    expect(html).not.toMatch(/>Undo resize segment 12</);
+  });
+
+  it('an enabled stack with no label still reads sensibly rather than "undefined"', () => {
+    const html = filesTab({ canUndo: true, canRedo: true });
+    expect(html).toContain('Undo last change');
+    expect(html).toContain('Redo last change');
+    expect(html).not.toContain('undefined');
+  });
+
+  it('each stack is disabled independently', () => {
+    const undoOnly = filesTab({ canUndo: true, canRedo: false, undoLabel: 'x' });
+    expect(undoOnly).toContain('Undo x');
+    expect(undoOnly).toContain('aria-label="Nothing to redo"');
+    const redoOnly = filesTab({ canUndo: false, canRedo: true, redoLabel: 'y' });
+    expect(redoOnly).toContain('aria-label="Nothing to undo"');
+    expect(redoOnly).toContain('Redo y');
   });
 });

@@ -23,6 +23,8 @@ import {
   Square,
   Plus,
   RefreshCw,
+  Undo2,
+  Redo2,
   Search,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, HeadingOverlay, type SegmentGrade } from '../types';
@@ -332,6 +334,21 @@ interface Props {
   onVoiceoverUnstaged: () => void;
   /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
   applySyncDisabled: boolean;
+  /** Undo/redo (Phase 2, 2026-08-08). Placed here — immediately left of Apply
+   *  sync — per the owner's ruling on button placement. Note the consequence,
+   *  stated rather than hidden: this row is the Script tab's pinned footer, so
+   *  the BUTTONS are only visible on that tab. The keyboard shortcuts
+   *  (Cmd/Ctrl+Z / Shift+Z / Ctrl+Y, wired in App.tsx) work on every tab, so
+   *  undo is never unreachable — but if the buttons should be always-visible,
+   *  the right panel's header is the always-mounted spot. */
+  onUndo: () => void;
+  onRedo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  /** Human label of the edit each button would act on, for the tooltip —
+   *  "resize segment 12". Undefined when the respective stack is empty. */
+  undoLabel?: string;
+  redoLabel?: string;
   // Segment actions
   onSegmentClick: (segmentId: string) => void;
   onToggleLock: (segmentId: string) => void;
@@ -435,6 +452,12 @@ export function DropZonePanel({
   onVoiceoverStaged,
   onVoiceoverUnstaged,
   applySyncDisabled,
+  onUndo,
+  onRedo,
+  canUndo,
+  canRedo,
+  undoLabel,
+  redoLabel,
   onSegmentClick,
   onToggleLock,
   onLockAll,
@@ -1200,6 +1223,40 @@ export function DropZonePanel({
               <span className="text-[var(--kx-muted)] font-medium">{formatTime(totalDuration)}</span>
               {' '}timeline
             </p>
+            <div className="flex items-stretch gap-2">
+            {/* Undo / Redo — disabled, not hidden: a control that disappears
+                makes users hunt for it. The tooltip names the specific edit,
+                which is what makes a 20-deep stack navigable; the label is
+                deliberately NOT on the button face, where it would change width
+                on every edit and reflow the row. */}
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              title={canUndo ? `Undo ${undoLabel ?? 'last change'} (⌘Z)` : 'Nothing to undo'}
+              aria-label={canUndo ? `Undo ${undoLabel ?? 'last change'}` : 'Nothing to undo'}
+              className="flex-shrink-0 w-12 h-12 rounded-[13px] flex items-center justify-center
+                         bg-[var(--kx-surface-2)] text-[var(--kx-muted)]
+                         hover:text-[var(--kx-accent)] hover:brightness-125 active:scale-[.97]
+                         disabled:text-[var(--kx-faint)] disabled:hover:text-[var(--kx-faint)]
+                         disabled:brightness-100 disabled:cursor-not-allowed
+                         transition-all"
+            >
+              <Undo2 size={17} />
+            </button>
+            <button
+              onClick={onRedo}
+              disabled={!canRedo}
+              title={canRedo ? `Redo ${redoLabel ?? 'last change'} (⌘⇧Z)` : 'Nothing to redo'}
+              aria-label={canRedo ? `Redo ${redoLabel ?? 'last change'}` : 'Nothing to redo'}
+              className="flex-shrink-0 w-12 h-12 rounded-[13px] flex items-center justify-center
+                         bg-[var(--kx-surface-2)] text-[var(--kx-muted)]
+                         hover:text-[var(--kx-accent)] hover:brightness-125 active:scale-[.97]
+                         disabled:text-[var(--kx-faint)] disabled:hover:text-[var(--kx-faint)]
+                         disabled:brightness-100 disabled:cursor-not-allowed
+                         transition-all"
+            >
+              <Redo2 size={17} />
+            </button>
             <button
               onClick={handleApplySync}
               disabled={applySyncDisabled || isStagedEmpty}
@@ -1210,7 +1267,7 @@ export function DropZonePanel({
                     ? 'Stage a new file to sync'
                     : undefined
               }
-              className="w-full h-12 rounded-[13px] flex items-center justify-center gap-2.5
+              className="flex-1 min-w-0 h-12 rounded-[13px] flex items-center justify-center gap-2.5
                          font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]
                          bg-gradient-to-b from-[var(--kx-accent-2)] to-[var(--kx-accent)]
                          shadow-[0_6px_20px_rgba(255,138,60,.28),inset_0_1px_0_rgba(255,255,255,.22)]
@@ -1222,6 +1279,7 @@ export function DropZonePanel({
               <RefreshCw size={17} className={applySyncDisabled ? 'animate-spin' : ''} />
               {applySyncDisabled ? 'Syncing…' : 'Apply sync'}
             </button>
+            </div>
           </div>
 
         </div>

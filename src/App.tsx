@@ -66,7 +66,18 @@ import {
   MAX_PLAYBACK_SPEED,
 } from './services/dragGeometry';
 import { startDragSession } from './services/dragSession';
-import { emptyHistory, pushEntry, type History } from './services/history';
+import { resolveShortcutAction } from './services/undoShortcut';
+import {
+  canRedo,
+  canUndo,
+  emptyHistory,
+  peekRedo,
+  peekUndo,
+  pushEntry,
+  redo as redoHistory,
+  undo as undoHistory,
+  type History,
+} from './services/history';
 import {
   clearPersistedHistory,
   loadHistory,
@@ -1835,6 +1846,93 @@ export default function App() {
     return () => clearTimeout(t);
   }, [history, isHydrating]);
 
+  // -------------------------------------------------------------------------
+  // UNDO / REDO TRAVERSAL (Phase 2, 2026-08-08). Design §4, §5.
+  //
+  // The restore goes through `setProjectSilent`, NOT `setProject`: travelling to
+  // a stored state must not itself become a new undoable entry, or undo would
+  // never make progress. The stored states were all produced by writers that
+  // already satisfied the DEV gapless assertion, which is what makes the
+  // invariant question nearly vacuous here (design §5) — but "nearly" is not
+  // "entirely", so the assertion below runs BEFORE the commit, naming the entry,
+  // because a violation surfacing only afterwards loses the one useful fact.
+  //
+  // NOT subject to the drag path's duration-invariance guard, and that is
+  // correct: `conserveTotalDuration` is opt-in via `DRAG_CASCADE_OPTIONS` and is
+  // passed only by the drag path. A restore never enters `computeDragCascade` at
+  // all, and a restored state may legitimately differ in total duration from the
+  // current one — undoing an Apply Sync is the obvious case.
+  // -------------------------------------------------------------------------
+  const applyRestoredState = useCallback((restored: Project, what: string): void => {
+    if (import.meta.env.DEV) {
+      const violations = findPartitionViolations(restored.segments)
+        .filter(v => v.kind === 'lock-lock-gap' || v.kind === 'lock-lock-overlap');
+      if (violations.length > 0) {
+        console.error(
+          `[history] ${what} would restore a state that VIOLATES the gapless invariant `
+          + `(${violations.length} site(s)). This means a bad state was captured, not that `
+          + `the traversal is wrong — look at the writer that produced it.`,
+          violations,
+        );
+      }
+    }
+    setProjectSilent(restored);
+    // Selection is NOT restored — that is the "haunted editor" failure mode
+    // (design §4): the user undoes a timing change and the editor jumps to a
+    // segment they were not looking at. But it IS repaired, because undoing past
+    // a heading's or segment's existence can leave a selection pointing at
+    // something that is now gone. Same shape as `handleSwitchProject`'s own
+    // repair.
+    setSelectedSegmentId(prev => (prev && restored.segments.some(sg => sg.id === prev) ? prev : null));
+    setSelectedHeadingId(prev =>
+      prev && (restored.headings ?? []).some(hd => hd.id === prev) ? prev : null);
+    setSelectedSegmentIds(prev => {
+      const alive = new Set([...prev].filter(id => restored.segments.some(sg => sg.id === id)));
+      return alive.size === prev.size ? prev : alive;
+    });
+    // Playback position is not undoable either (owner ruling: undo during
+    // playback KEEPS PLAYING — the playhead is not history). It is only clamped
+    // into the restored timeline's bounds, so a shorter timeline cannot leave the
+    // playhead past its end.
+    const restoredEnd = restored.segments.reduce(
+      (acc, sg) => Math.max(acc, sg.startTime + sg.duration), 0);
+    setCurrentTime(prev => (prev > restoredEnd ? restoredEnd : prev));
+  }, [setProjectSilent]);
+
+  const handleUndo = useCallback((): void => {
+    // A live drag owns the timeline until it resolves. An undo landing between a
+    // gesture's direct DOM writes and its commit would leave the preview and
+    // state disagreeing, with the drag's own release then committing on top of
+    // the restored array.
+    if (isResizingRef.current) return;
+    const t = undoHistory(history, liveProjectRef.current);
+    if (!t) return;
+    setHistory(t.history);
+    applyRestoredState(t.entry.state, `Undo ${t.entry.label}`);
+  }, [history, applyRestoredState]);
+
+  const handleRedo = useCallback((): void => {
+    if (isResizingRef.current) return;
+    const t = redoHistory(history, liveProjectRef.current);
+    if (!t) return;
+    setHistory(t.history);
+    applyRestoredState(t.entry.state, `Redo ${t.entry.label}`);
+  }, [history, applyRestoredState]);
+
+  const undoLabel = peekUndo(history)?.label;
+  const redoLabel = peekRedo(history)?.label;
+  const undoAvailable = canUndo(history);
+  const redoAvailable = canRedo(history);
+
+  // The global keydown effect below keeps its deliberately-empty dep array (a
+  // stale-closure trap this file has been bitten by before — see the togglePlay
+  // note in CLAUDE.md), so the shortcut branch reaches the live handlers and the
+  // live suppression condition through refs rather than through its closure.
+  const handleUndoRef = useRef(handleUndo);
+  const handleRedoRef = useRef(handleRedo);
+  handleUndoRef.current = handleUndo;
+  handleRedoRef.current = handleRedo;
+
 
   // Path B Phase 5 — left-panel heading row click: open the drawer's heading
   // editor AND jump the preview to the heading's time, mirroring handleSegmentClick.
@@ -3494,6 +3592,19 @@ export default function App() {
   const isLanguageUnsupported =
     project.language !== undefined && !SUPPORTED_LANGUAGE_CODES.includes(project.language);
 
+  // Shortcut suppression (design §7). Undo/redo must stand down whenever another
+  // surface legitimately owns the keyboard: any of the five modals that run their
+  // own keydown listeners, the DEV panel, or an export in flight (undoing a
+  // timing change mid-render is meaningless — the pipeline has already
+  // snapshotted). A focused text field is handled separately, inside the branch,
+  // because there the correct behaviour is to leave the event alone entirely so
+  // the OS's own text undo runs.
+  const shortcutsSuppressedRef = useRef(false);
+  shortcutsSuppressedRef.current =
+    showStockSearch || showNewProjectModal || showProjectSettingsModal
+    || showExportSettingsModal || showReviewMapping || devPanelOpen
+    || exportState.isExporting;
+
   const togglePlay = () => setIsPlaying(p => !p);
 
   const handleSpeedClick = useCallback(() => {
@@ -3507,6 +3618,29 @@ export default function App() {
   // Add spacebar play/pause
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // UNDO / REDO (Phase 2, 2026-08-08). The DECISION — which chord means
+      // what, and when to stand down — lives in `services/undoShortcut.ts`,
+      // where it is swept exhaustively by unit test rather than inspected by eye
+      // inside this ~120-line handler. That file's header records the real-shell
+      // measurement this design rests on, and what remains unverified.
+      //
+      // `preventDefault()` on 'consume' as well as on undo/redo is deliberate:
+      // this app configures no menu, so Tauri's default macOS Edit menu is live
+      // (it was observed to FLASH on both chords) and its Cmd+Z is bound to the
+      // OS text responder. Leaving the event alone while a modal is open would
+      // let that responder perform a text undo behind the modal the user is
+      // looking at.
+      const shortcut = resolveShortcutAction(e, {
+        isTextEntry: isTextEntryElement(document.activeElement),
+        suppressed: shortcutsSuppressedRef.current,
+        dragging: isResizingRef.current,
+      });
+      if (shortcut !== 'ignore') {
+        e.preventDefault();
+        if (shortcut === 'undo') handleUndoRef.current();
+        else if (shortcut === 'redo') handleRedoRef.current();
+        return;
+      }
       if (e.code === 'Space') {
         if (!isTextEntryElement(document.activeElement)) {
           e.preventDefault();
@@ -3893,6 +4027,12 @@ export default function App() {
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}
             applySyncDisabled={applySyncDisabled}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            canUndo={undoAvailable}
+            canRedo={redoAvailable}
+            undoLabel={undoLabel}
+            redoLabel={redoLabel}
             onSegmentClick={handleSegmentClick}
             onToggleLock={handleToggleLock}
             onLockAll={() => setProjectSilent(p => ({ ...p, segments: p.segments.map(s => ({ ...s, locked: true })) }))}
