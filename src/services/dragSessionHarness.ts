@@ -361,7 +361,7 @@ export class DragSessionHarness {
       setResizingType: (type) => { this.resizingType = type; },
       setIsResizing: (value) => { this.isResizingFlag = value; },
       clearSpeedBaseline: () => { this.speedBaselineCleared = true; },
-      commitDurationChange: (originalSegments, segmentId, newDuration, finalTrimStart, fromSide, additionalUpdates) => {
+      commitDurationChange: (originalSegments, segmentId, newDuration, finalTrimStart, fromSide, additionalUpdates, options) => {
         this.commitAttempted = true;
         const draggedIdx = originalSegments.findIndex(s => s.id === segmentId);
         const blocked: string[] = [];
@@ -373,6 +373,13 @@ export class DragSessionHarness {
           fromSide,
           (_segIdx, segId) => blocked.push(segId),
           this.transcriptTokens,
+          // Forwarded, not dropped (owner ruling 2026-08-08). `App.tsx`'s real
+          // `applyDurationChange` forwards this param, so a harness that
+          // swallowed it would run the drag path under the playback-speed
+          // slider's semantics — silently, and precisely at the tail index the
+          // ruling is about. The harness's entire value is that its commit is
+          // the same call the app makes.
+          options,
         );
         if (result === null) {
           this.blockedIds = blocked;

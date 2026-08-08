@@ -11,6 +11,7 @@ import {
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
+import { isDragEdgeLocked } from '../services/dragCascade';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 import {
@@ -28,7 +29,13 @@ const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
 // actual rightmost segment edge, not just the sum of durations — the two
 // only coincide when segments are gapless/contiguous. Falls back to the
 // duration sum (still gapless-safe) when there are no segments at all.
-export function computeTotalDuration(segments: VideoSegment[]): number {
+// Parameter widened to the two fields it actually reads (2026-08-08) — same
+// structural-typing convention `timelinePartition.ts`'s checkers already use,
+// and for the same reason: the total-duration invariant guard must be able to
+// ask this question of a live-DOM readback (`readLiveSegments`), which carries
+// timing but not text/transition/animation. Type-only; no runtime change, and
+// every existing `VideoSegment[]` caller still satisfies it.
+export function computeTotalDuration(segments: Pick<VideoSegment, 'startTime' | 'duration'>[]): number {
   if (segments.length === 0) return 1;
   const maxEnd = segments.reduce((acc, s) => Math.max(acc, s.startTime + s.duration), 0);
   return maxEnd || segments.reduce((acc, s) => acc + s.duration, 0) || 1;
@@ -140,6 +147,49 @@ export function Timeline({
   // resized. Everything else on this component — lane widths, scroll extent,
   // marker and card positions — still reads live `totalDuration`; only the
   // zoom formula reads the basis.
+  //
+  // ---------------------------------------------------------------------
+  // IS THIS STILL LOAD-BEARING AFTER THE 2026-08-08 RULING? — investigated,
+  // answer: PROBABLY NOT, BUT NOT PROVABLY SO. KEPT.
+  // (docs/decisions/2026-08-08-last-segment-edge.md)
+  //
+  // The ruling makes total timeline duration immutable via drag, which is
+  // the only thing this freeze suppresses — so the obvious reading is that
+  // it is now dead code. It was removed and measured:
+  //
+  //   [MEASURED] With the freeze deleted (`zoomBasisDuration = totalDuration`),
+  //   the full suite is GREEN — 1529 passed / 1 skipped, `tsc` clean. So the
+  //   suite cannot distinguish the two, which is expected: nothing renders
+  //   this component through a duration-changing gesture and measures the
+  //   resulting `pixelsPerSecond`.
+  //
+  //   [ASSERTED] Structurally it now suppresses nothing. Its guard is
+  //   `resizingId !== null`, and `resizingId` is written in exactly two
+  //   places, both in `dragSession.ts` (set at gesture start, cleared in
+  //   `teardown`) — verified by grep. So the suppression window is precisely
+  //   one drag gesture, and inside that window `totalDuration` can no longer
+  //   change. Every OTHER duration-changing path in the enumeration (Apply
+  //   Sync, `retileCoveredSegments`, the playback-speed slider, the segment
+  //   editor's numeric duration field, project hydration, New Project, the
+  //   DEV fixture) runs with `resizingId === null` and rebases the basis
+  //   normally, exactly as if this code were absent.
+  //
+  //   [ASSUMED] — and this is why it stays. That argument depends on no
+  //   non-drag duration change ever landing while `resizingId !== null`,
+  //   which is a claim about UI concurrency that cannot be proven, only
+  //   not-yet-falsified. It is also actively falsifiable by the still-UNRULED
+  //   early-bail stuck-`resizingId` bug (`dragSession.ts`'s header,
+  //   project-state.md): with `resizingId` stuck non-null, this effect
+  //   latches `resizeTouchedZoomRef` and would skip the NEXT genuine rebase —
+  //   an Apply Sync onto a completely different project length — leaving the
+  //   zoom basis stale. That is a latent harm of KEEPING it, recorded here
+  //   deliberately; it is not a reason to remove it in the same change the
+  //   manual tester is about to re-run step 4 against, which would put an
+  //   unrequested render-path variable inside the measurement.
+  //
+  // Revisit when the stuck-`resizingId` bug is ruled on. If it is fixed, the
+  // last reachable path to a stale basis closes and this block can go.
+  // ---------------------------------------------------------------------
   const [zoomBasisDuration, setZoomBasisDuration] = useState(totalDuration);
   const resizeTouchedZoomRef = useRef(false);
   useEffect(() => {
@@ -606,15 +656,30 @@ export function Timeline({
                       }}
                       onClick={(e) => e.stopPropagation()}
                     />
-                    <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
-                      style={{ touchAction: 'none' }}
-                      onPointerDown={(e) => {
-                        e.stopPropagation();
-                        e.currentTarget.setPointerCapture(e.pointerId);
-                        onResizeStart(s.id, 'end', e.clientX);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                    />
+                    {/* AFFORDANCE LAYER — the last segment's right edge has no
+                        resize handle at all (owner ruling 2026-08-08,
+                        docs/decisions/2026-08-08-last-segment-edge.md). Not a
+                        disabled handle: no hit target, no `col-resize` cursor,
+                        and no hover highlight, so it is visually apparent that
+                        the edge is fixed rather than broken. A handle that
+                        renders and silently does nothing is the worse of the
+                        two failures.
+
+                        `isDragEdgeLocked` (services/dragCascade.ts) is the ONE
+                        definition of which edges are inert; `dragSession.ts`
+                        consults the same function to refuse the gesture even if
+                        a future edit re-adds a hit target here. */}
+                    {!isDragEdgeLocked(segments, i, 'end') && (
+                      <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+                        style={{ touchAction: 'none' }}
+                        onPointerDown={(e) => {
+                          e.stopPropagation();
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                          onResizeStart(s.id, 'end', e.clientX);
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    )}
 
                     <div className="flex-1 relative bg-black/50">
                       {asset?.url ? (

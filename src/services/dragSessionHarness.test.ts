@@ -155,7 +155,12 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
     });
 
     it('a segment with no known (unmounted) element is silently skipped — the drag still resolves', () => {
-      const original = [seg('A', 0, 5)];
+      // CONVERTED 2026-08-08: was a ONE-segment array dragging 'A' end, which
+      // is now the locked last edge and would make this assert the ruling
+      // rather than the unmounted-element skip it exists for. A trailing 'B'
+      // makes A's end an ordinary boundary again; A is still the unmounted one,
+      // so the behaviour under test is unchanged.
+      const original = [seg('A', 0, 5), seg('B', 5, 5)];
       const h = harnessOf(original, { unmountedIds: ['A'] });
       expect(() => h.grab('A', 'end').moveBy(1)).not.toThrow();
       const outcome = h.release();
@@ -260,7 +265,14 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
     });
 
     it('the same side effects run on the success path too — and THIS path DOES clear them on release', () => {
-      const original = [seg('A', 0, 5)];
+      // CONVERTED 2026-08-08: was a ONE-segment array. 'A' end is now the
+      // locked last edge, on which startDragSession returns BEFORE setting
+      // resizingId/resizingType/the body class at all — so the side effects
+      // this test is about would never be set and it would pass vacuously. A
+      // trailing 'B' restores an ordinary boundary drag; the assertions are
+      // unchanged. (The locked edge's own "sets nothing" behaviour is asserted
+      // separately, just below.)
+      const original = [seg('A', 0, 5), seg('B', 5, 5)];
       const h = harnessOf(original);
       h.grab('A', 'end');
       expect(h.resizingIdValue).toBe('A');
@@ -270,6 +282,23 @@ describe('PART 3 — ported characterization tests, via the real session (proof 
       // A real gesture's handleUp clears resizingId/Type/class UNCONDITIONALLY
       // at its top, before the hasMoved branch — contrast with the early-bail
       // case above, which can never reach handleUp at all.
+      expect(h.resizingIdValue).toBeNull();
+      expect(h.bodyHasResizingClass).toBe(false);
+    });
+
+    it('the LOCKED last edge sets no session state at all — nothing to leave stuck', () => {
+      // The defensive guard (owner ruling 2026-08-08) is placed ABOVE the
+      // resizingId/resizingType/body-class writes precisely so it cannot
+      // reproduce the still-unruled early-bail stuck-state bug those writes
+      // cause on the two pre-existing bail paths. This pins that placement:
+      // move the guard below them and this test fails immediately.
+      const original = [seg('A', 0, 5), seg('B', 5, 5)];
+      const h = harnessOf(original);
+      h.grab('B', 'end'); // B is last — locked edge
+      expect(h.resizingIdValue).toBeNull();
+      expect(h.resizingTypeValue).toBeNull();
+      expect(h.bodyHasResizingClass).toBe(false);
+      h.release();
       expect(h.resizingIdValue).toBeNull();
       expect(h.bodyHasResizingClass).toBe(false);
     });
@@ -336,7 +365,13 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
   });
 
   it('a drag interrupted by pointercancel mid-gesture DISCARDS rather than commits (ruled 2026-08-08)', () => {
-    const original = [seg('A', 0, 5), seg('B', 5, 5)];
+    // CONVERTED 2026-08-08 (array only): a third segment 'C' was added so that
+    // the "a fresh gesture right after works normally" check at the end can
+    // still grab an ordinary end edge. It previously grabbed 'B' end, which is
+    // now the locked last edge and would have made the leak check vacuous. The
+    // pointercancel behaviour under test — and every assertion about it — is
+    // unchanged.
+    const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
     const h = harnessOf(original);
     h.grab('A', 'end').moveBy(1);
     const outcome = h.cancel();
@@ -348,7 +383,7 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     // reverts to its pre-drag geometry, exactly as if the drag had never
     // happened.
     expect(outcome.kind).toBe('reverted-cancelled');
-    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00]');
+    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
     // The original comment's concern ("must not leave the drag armed
     // forever") still holds under discard — cleanup is unconditional in
     // handleUp regardless of which branch (commit/revert-cancelled) ran.
@@ -433,23 +468,61 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     expect(outcome.segments[0]!.duration).toBeCloseTo(5.003, 6);
   });
 
-  it('a drag on the final segment\'s right edge has no neighbour to cascade into, and stays gapless', () => {
+  // -------------------------------------------------------------------------
+  // CONVERTED 2026-08-08 by owner ruling — the final segment's right edge is
+  // now INERT in both directions (docs/decisions/2026-08-08-last-segment-edge.md,
+  // semantic option (i)).
+  //
+  // These two tests previously asserted the GROW and SHRINK behaviour of that
+  // edge: that a grow was uncontested (C: 5 -> 8, lengthening the timeline) and
+  // that a shrink was clamped only by MIN_SEGMENT_DURATION (C -> 0.3s). Both
+  // operations no longer exist. They are converted rather than deleted because
+  // the two directions are exactly what the ruling names — "not draggable, in
+  // either direction" — so they remain the most direct statement of it, and a
+  // regression that resurrected either would fail here by name.
+  // -------------------------------------------------------------------------
+  it('a GROW on the final segment\'s right edge is inert — the gesture never starts', () => {
     const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
     const h = harnessOf(original);
-    const outcome = h.grab('C', 'end').moveBy(3).release(); // C: 5 -> 8, nothing after it
-    expect(outcome.kind).toBe('committed');
-    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..18.00]');
+    const outcome = h.grab('C', 'end').moveBy(3).release();
+    // The defensive guard in startDragSession returns before wiring a single
+    // listener, so nothing ever registers as having moved.
+    expect(outcome.kind).toBe('no-op-not-moved');
+    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..10.00] C[10.00..15.00]');
+    expect(checkTimelineIsGapless(outcome.segments)).toBeNull();
+    // No live DOM write either — the card does not even flex during the gesture.
+    expect(h.liveGeometryFor('C')).toEqual({ leftPx: null, widthPx: null });
+  });
+
+  it('a SHRINK on the final segment\'s right edge is equally inert', () => {
+    const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+    const h = harnessOf(original);
+    const outcome = h.grab('C', 'end').moveBy(-4.8).release();
+    expect(outcome.kind).toBe('no-op-not-moved');
+    expect(outcome.segments[2]!.duration).toBeCloseTo(5, 6);
     expect(checkTimelineIsGapless(outcome.segments)).toBeNull();
   });
 
-  it('a SHRINK on the final segment\'s right edge is also uncontested — clamped only by MIN_SEGMENT_DURATION', () => {
+  it('the final segment\'s LEFT edge is unaffected and still drags normally', () => {
+    // The ruling locks one edge, not the segment. Without this, "inert" could
+    // silently widen to the whole last card and nothing would catch it.
     const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
     const h = harnessOf(original);
-    const outcome = h.grab('C', 'end').moveBy(-4.8).release(); // wants duration ~0.2, floored at 0.3
+    const outcome = h.grab('C', 'start').moveBy(-2).release(); // C grows leftward, B yields
     expect(outcome.kind).toBe('committed');
-    const last = outcome.segments[2]!;
-    expect(last.duration).toBeCloseTo(0.3, 6);
+    expect(spans(outcome.segments)).toBe('A[0.00..5.00] B[5.00..8.00] C[8.00..15.00]');
     expect(checkTimelineIsGapless(outcome.segments)).toBeNull();
+  });
+
+  it('no drag anywhere in the array can start a gesture on the locked edge', () => {
+    // The predicate is index-based, so it must follow the array rather than any
+    // one segment id: after a gesture that does not reorder anything, the SAME
+    // last index stays locked and every other end edge stays live.
+    const original = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+    const h = harnessOf(original);
+    expect(h.grab('A', 'end').moveBy(1).release().kind).toBe('committed');
+    expect(h.grab('B', 'end').moveBy(1).release().kind).toBe('committed');
+    expect(h.grab('C', 'end').moveBy(1).release().kind).toBe('no-op-not-moved');
   });
 
   it('the gapless invariant holds after EVERY individual frame of a multi-frame drag, not just at release', () => {

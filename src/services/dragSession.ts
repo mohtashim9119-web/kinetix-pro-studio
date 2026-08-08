@@ -50,7 +50,12 @@ import {
   timelineContentX,
   type DragEdge,
 } from './dragGeometry';
-import { resolveDragPreview } from './dragCascade';
+import {
+  DRAG_CASCADE_OPTIONS,
+  isDragEdgeLocked,
+  resolveDragPreview,
+  type DragCascadeOptions,
+} from './dragCascade';
 
 /**
  * The frame clock a drag runs on. Injected rather than called directly so the
@@ -104,6 +109,10 @@ export interface DragSessionDeps {
     finalTrimStart: number,
     fromSide: 'left' | 'right',
     additionalUpdates?: Partial<VideoSegment>,
+    /** Cascade switches. The drag path passes `DRAG_CASCADE_OPTIONS` so the
+     *  commit conserves total duration exactly as the live preview did; the
+     *  speed slider, which shares `applyDurationChange`, passes nothing. */
+    options?: DragCascadeOptions,
   ) => boolean;
   /** `setProject(prev => ({ ...prev, segments: originalSegments }))`. */
   revertSegments: (originalSegments: VideoSegment[]) => void;
@@ -129,6 +138,30 @@ export function startDragSession(
   downClientX: number,
   deps: DragSessionDeps,
 ): void {
+  // ---------------------------------------------------------------------
+  // DEFENSIVE LAYER — the last segment's right edge is inert (owner ruling
+  // 2026-08-08, docs/decisions/2026-08-08-last-segment-edge.md).
+  //
+  // `Timeline.tsx` already declines to render a hit target there, so in the
+  // shipped UI this is unreachable. That is exactly why it is here: an
+  // affordance-only lock is undone the first time someone refactors the JSX
+  // or adds a second way to start a drag (a keyboard nudge, a context menu,
+  // a test harness), and nothing would fail. Both layers read the SAME
+  // predicate, so they cannot disagree about which edges are inert.
+  //
+  // Placed ABOVE the `setResizingId`/`setResizingType`/body-class writes on
+  // purpose. Those three run unconditionally in the original code and are
+  // never cleared on the two early-bail paths just below — a real, still
+  // UNRULED bug this extraction preserved verbatim (see this file's header
+  // and project-state.md). Returning before them means this new refusal
+  // cannot leave that stuck state behind, and does not disturb the existing
+  // bug in either direction.
+  // ---------------------------------------------------------------------
+  const segmentsAtStart = deps.getSegments();
+  if (isDragEdgeLocked(segmentsAtStart, segmentsAtStart.findIndex(s => s.id === id), type)) {
+    return;
+  }
+
   deps.setResizingId(id);
   deps.setResizingType(type);
   document.body.classList.add('resizing');
@@ -482,6 +515,12 @@ export function startDragSession(
       // which is unaffected — it requires an actual pointermove, not a distance.
       const succeeded = deps.commitDurationChange(
         originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
+        // The SAME options object `resolveDragPreview` used for every frame of
+        // this gesture. Preview and commit must resolve identically or the
+        // cards jump on release (K17) — and here specifically, a commit that
+        // did not conserve would lengthen the timeline after a preview that
+        // showed it not lengthening.
+        DRAG_CASCADE_OPTIONS,
       );
       // null cascade → locked neighbour blocked. K17: the preview frames
       // resolved the same block to the same `originalSegments`, so the

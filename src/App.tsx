@@ -59,6 +59,7 @@ import { clearFrameRendererCache } from './services/frameRenderer';
 import {
   computeDragCascade,
   MIN_SEGMENT_DURATION,
+  type DragCascadeOptions,
 } from './services/dragCascade';
 import {
   MIN_PLAYBACK_SPEED,
@@ -1514,6 +1515,14 @@ export default function App() {
     finalTrimStart: number,
     fromSide: 'left' | 'right',
     additionalUpdates?: Partial<VideoSegment>,
+    // Cascade switches (owner ruling 2026-08-08). The DRAG path passes
+    // `DRAG_CASCADE_OPTIONS` — the same object its live preview resolved
+    // through — so a drag can never change total timeline duration. The
+    // playback-speed slider, this function's other caller, passes NOTHING and
+    // keeps byte-identical pre-ruling behaviour, including on the last
+    // segment where it legitimately does change total duration. See
+    // docs/decisions/2026-08-08-last-segment-edge.md §4.
+    cascadeOptions?: DragCascadeOptions,
   ): boolean => {
     const draggedIdx = originalSegments.findIndex(s => s.id === segmentId);
     if (draggedIdx < 0) return false;
@@ -1537,6 +1546,7 @@ export default function App() {
         );
       },
       projectRef.current.transcriptTokens,
+      cascadeOptions,
     );
     if (cascadeResult === null) return false;
     const finalSegments = additionalUpdates

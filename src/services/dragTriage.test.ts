@@ -141,26 +141,52 @@ describe('F1 — outward drag on a middle segment stalls', () => {
 // ---------------------------------------------------------------------------
 // F2 — dragging the LAST segment's right edge stretches it and also moves
 //      every earlier segment on screen.
+//
+// RESOLVED BY RULING, NOT BY FIX (2026-08-08) —
+// `docs/decisions/2026-08-08-last-segment-edge.md`, semantic option (i).
+//
+// The three tests below were written against an operation that no longer
+// exists: the last segment's right edge is now inert in both directions. They
+// are CONVERTED rather than deleted, because between them they still state the
+// three things worth protecting, and each would catch a real regression:
+//
+//   1. the array-level claim  -> now: the gesture commits nothing at all;
+//   2. the render-level claim -> now: the same, proven through the layout math
+//                                that produced the visible drift;
+//   3. the mechanism pin      -> KEPT VERBATIM, including the 300px ->
+//                                259.0909px rescale numbers. It never drove
+//                                the drag path — it is a pure computation over
+//                                two hand-written arrays — and it is now the
+//                                record of WHY the operation was removed rather
+//                                than merely re-fixed. See its own note below.
 // ---------------------------------------------------------------------------
-describe('F2 — dragging the last segment moves earlier segments', () => {
+describe('F2 — the last segment\'s right edge is inert (ruled 2026-08-08)', () => {
   const base = (): VideoSegment[] => [seg('A', 0, 3), seg('B', 3, 3), seg('C', 6, 3)];
 
-  it('the committed ARRAY leaves every earlier segment byte-identical', () => {
+  it('the gesture commits nothing — every segment, dragged one included, is byte-identical', () => {
+    // BEFORE: asserted the drag COMMITTED and that only earlier segments were
+    // untouched (`out.kind === 'committed'`, A and B unchanged, C grown).
+    // AFTER: the whole array is unchanged, including C. The earlier claim is
+    // strictly implied by this one, so nothing is lost by strengthening it.
     const h = harnessOf(base());
     const before = base();
     const out = h.grab('C', 'end').moveBy(2.0).release();
 
-    expect(out.kind).toBe('committed');
+    expect(out.kind).toBe('no-op-not-moved');
     expect(byId(out.segments, 'A')).toEqual(before[0]);
     expect(byId(out.segments, 'B')).toEqual(before[1]);
+    expect(byId(out.segments, 'C')).toEqual(before[2]);
   });
 
-  it('the RENDERED position of earlier segments must not move either', () => {
-    // The real defect the tester saw. `Timeline.tsx` derives
-    // pixelsPerSecond from computeTotalDuration(segments) — a fit-to-width
-    // term — so growing the LAST segment lengthens the timeline, shrinks
-    // pixelsPerSecond, and re-lays out every card at a new `left`. Nothing
-    // before the dragged segment should ever move.
+  it('total timeline duration is unchanged, so nothing can be re-laid-out at all', () => {
+    // BEFORE: computed each card's rendered `left` before and after the drag
+    // against a FROZEN zoom basis, and asserted B had not moved. That test
+    // could only ever pass — it evaluated the same basis on both sides — so it
+    // was really asserting the freeze's existence, not the drag's safety.
+    // AFTER: asserts the thing the freeze was compensating for. If total
+    // duration cannot move, `computeZoomPixelsPerSecond` cannot rebase, and no
+    // card can be re-laid-out, whether or not the basis is frozen. That is a
+    // claim about the operation rather than about one mitigation of it.
     const containerWidth = 1000;
     const sliderT = 0.0;
     const before = base();
@@ -168,22 +194,33 @@ describe('F2 — dragging the last segment moves earlier segments', () => {
     const h = harnessOf(base());
     const out = h.grab('C', 'end').moveBy(2.0).release();
 
-    // Evaluated exactly as Timeline.tsx now does it: against a zoom BASIS that
-    // a resize drag never moves, so a drag re-lays out nothing.
-    const zoomBasis = computeTotalDuration(before);
-    const ppsBefore = computeZoomPixelsPerSecond(zoomBasis, containerWidth, sliderT);
-    const ppsAfter = computeZoomPixelsPerSecond(zoomBasis, containerWidth, sliderT);
+    expect(computeTotalDuration(out.segments)).toBeCloseTo(computeTotalDuration(before), 9);
 
-    const leftOfBBefore = byId(before, 'B').startTime * ppsBefore;
-    const leftOfBAfter = byId(out.segments, 'B').startTime * ppsAfter;
-
-    expect(leftOfBAfter).toBeCloseTo(leftOfBBefore, 3);
+    // And therefore, evaluated against LIVE total duration on both sides — the
+    // formula as it behaves with no freeze at all — every card lands where it
+    // started.
+    const ppsBefore = computeZoomPixelsPerSecond(computeTotalDuration(before), containerWidth, sliderT);
+    const ppsAfter = computeZoomPixelsPerSecond(computeTotalDuration(out.segments), containerWidth, sliderT);
+    expect(ppsAfter).toBeCloseTo(ppsBefore, 9);
+    expect(byId(out.segments, 'B').startTime * ppsAfter)
+      .toBeCloseTo(byId(before, 'B').startTime * ppsBefore, 9);
   });
 
-  it('pins the MECHANISM: rebasing zoom on the new total duration is what moved them', () => {
-    // Locks WHY the basis exists. If a future change lets the zoom formula read
-    // live totalDuration again, this records the consequence in numbers rather
-    // than leaving the whole timeline layout to regress silently.
+  it('pins the MECHANISM: rebasing zoom on a new total duration is what moved them', () => {
+    // KEPT VERBATIM, deliberately — including the 300px -> 259.0909px numbers.
+    //
+    // Its intent is unchanged and it never exercised the drag path: it is a
+    // pure computation over two hand-written arrays, `before` and `after`,
+    // neither produced by a gesture. What it measures is what the fit-to-width
+    // zoom term DOES when total duration changes by any means — and total
+    // duration is still changed by Apply Sync, by the playback-speed slider, by
+    // the segment editor's numeric duration field, and by project load
+    // (`docs/decisions/2026-08-08-last-segment-edge.md` §4). So the rescale is
+    // still live; the ruling removed one way of triggering it, not the effect.
+    //
+    // It is also now the numeric record of why option (i) was chosen over (ii)
+    // and (iii): both of those keep an edge that moves total duration, and this
+    // is the size of the visual consequence when it does.
     const containerWidth = 1000;
     const sliderT = 0.0;
     const before = base();
@@ -195,6 +232,20 @@ describe('F2 — dragging the last segment moves earlier segments', () => {
     // B's own timing is identical in both arrays, yet it would move on screen.
     expect(byId(before, 'B').startTime * frozen).toBeCloseTo(300, 3);
     expect(byId(after, 'B').startTime * rebased).toBeCloseTo(259.0909, 3);
+  });
+
+  it('the last segment\'s LEFT edge still drags — the ruling locks one edge, not the card', () => {
+    // NEW. Without it, "the last segment is inert" could widen silently to the
+    // whole card and the suite would not notice; the ruling is explicit that
+    // the left edge "remains fully draggable".
+    const h = harnessOf(base());
+    const out = h.grab('C', 'start').moveBy(-1.0).release();
+
+    expect(out.kind).toBe('committed');
+    expect(byId(out.segments, 'C').duration).toBeCloseTo(4.0, 2);
+    expect(byId(out.segments, 'B').duration).toBeCloseTo(2.0, 2);
+    // …and even this one does not change total duration.
+    expect(computeTotalDuration(out.segments)).toBeCloseTo(9, 6);
   });
 });
 

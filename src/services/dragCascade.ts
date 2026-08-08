@@ -64,6 +64,81 @@ const EPSILON_SEC = 0.001;
  *  the PREVIOUS segment's end earlier — that neighbour yields from its TAIL. */
 export type YieldSide = 'head' | 'tail';
 
+// ---------------------------------------------------------------------------
+// THE LAST SEGMENT'S RIGHT EDGE IS FIXED
+// (owner ruling 2026-08-08, `docs/decisions/2026-08-08-last-segment-edge.md`)
+// ---------------------------------------------------------------------------
+
+/** Which edge of a segment card a drag grabbed. Mirrors `dragGeometry.ts`'s
+ *  `DragEdge`; restated here rather than imported so this module keeps its
+ *  dependency direction (`dragGeometry.ts` imports FROM this file, not the
+ *  other way round) and stays free of any geometry concern. */
+export type DragEdgeSide = 'start' | 'end';
+
+/**
+ * Is this (segment, edge) pair one no drag gesture may grab?
+ *
+ * Exactly one pair qualifies: the LAST segment's `end` edge. Every other edge
+ * in the array — including the last segment's `start` edge — is a boundary
+ * between two segments, and dragging it trades seconds between them. The last
+ * segment's right edge is not a boundary at all; it has no neighbour on the far
+ * side, so a drag there is not a trade but an assertion about the timeline's
+ * total length. Owner ruling 2026-08-08 (semantic option (i)) is that the
+ * timeline's length is the AUDIO's to state, never a mouse gesture's — see the
+ * decision doc for the two rejected alternatives and why.
+ *
+ * This is the SINGLE definition of that rule, deliberately. `Timeline.tsx`
+ * consults it to decide whether to render a resize handle at all (the
+ * affordance layer), and `dragSession.ts` consults it to refuse the gesture
+ * before wiring a single listener (the defensive layer). One function means the
+ * two can never disagree about which edges are inert, and re-adding a hit
+ * target by hand in the JSX cannot resurrect the operation.
+ *
+ * Pure and total: an out-of-range index or an empty array is not lockable, and
+ * returns false rather than throwing.
+ */
+export function isDragEdgeLocked(
+  segments: readonly unknown[],
+  index: number,
+  edge: DragEdgeSide,
+): boolean {
+  if (segments.length === 0) return false;
+  if (index < 0 || index >= segments.length) return false;
+  return edge === 'end' && index === segments.length - 1;
+}
+
+/** Opt-in behaviour switches for `computeDragCascade`. Every field is OFF by
+ *  default, so a caller that omits this object gets byte-identical pre-ruling
+ *  behaviour — which is what keeps the playback-speed slider (the cascade's
+ *  other, non-drag caller) untouched by the 2026-08-08 ruling. */
+export interface DragCascadeOptions {
+  /**
+   * Conserve the touched window's total duration even when that window ends at
+   * the LAST segment — i.e. make the whole gesture unable to change total
+   * timeline duration.
+   *
+   * Set ONLY by the drag path (`resolveDragPreview` for the live preview, and
+   * `dragSession.ts` → `applyDurationChange` for the commit). NOT set by
+   * `handlePlaybackSpeedChange`, which reaches this same function through
+   * `applyDurationChange` and legitimately changes the last segment's duration
+   * — see the decision doc's §4 table.
+   *
+   * Without it, the giveback below is scoped `hi < segs.length - 1` and the
+   * tail is a hole in the rule: a right-edge drag on segment N-2 that overshoots
+   * segment N-1's `MIN_SEGMENT_DURATION` floor keeps the unabsorbed remainder
+   * and grows the timeline, and so does a left-edge drag on segment 0 of a
+   * single-segment timeline. Locking the affordance alone would have left both
+   * of those live, which is exactly why the ruling is implemented as a property
+   * over all drags rather than a special case for one edge.
+   */
+  conserveTotalDuration?: boolean;
+}
+
+/** The options every DRAG resolves through — live preview and pointerup commit
+ *  alike. Exported so `App.tsx`'s commit path passes this identical object
+ *  rather than a hand-written duplicate that could drift from the preview's. */
+export const DRAG_CASCADE_OPTIONS: DragCascadeOptions = { conserveTotalDuration: true };
+
 function isUsableToken(t: TranscriptToken): boolean {
   return Number.isFinite(t.startSec) && Number.isFinite(t.endSec) && t.endSec > t.startSec;
 }
@@ -214,6 +289,7 @@ export function computeDragCascade(
   direction: 'right' | 'left',
   onLockedBlock: (segIndex: number, segId: string) => void,
   tokens?: TranscriptToken[],
+  options?: DragCascadeOptions,
 ): VideoSegment[] | null {
   const segs = originalSegments.map(s => ({ ...s }));
   const dragged = segs[draggedIdx];
@@ -332,15 +408,28 @@ export function computeDragCascade(
   // with — the same "refuse what no neighbour gave up" rule K15b already
   // applies to its word-onset floor, and the same CapCut/Premiere feel.
   //
-  // Scoped deliberately to `hi < segs.length - 1`. When the window ends at the
+  // Scoped to `hi < segs.length - 1` BY DEFAULT. When the window ends at the
   // LAST segment there is no following segment to be disjoint from, so no
-  // adjacency is broken and the pre-K15 off-the-end behaviour (explicitly
-  // preserved above, and pinned by this file's own last-segment test) is left
-  // exactly as it was. Model P's separate tail clause — the last segment ends
-  // at `audioDuration` — cannot be enforced here in any case: this function is
-  // not given the audio length, by design, so that a drag never re-stretches
-  // the timeline mid-gesture.
-  if (Math.abs(remaining) > EPSILON_SEC && hi < segs.length - 1) {
+  // adjacency is broken, and the pre-K15 off-the-end behaviour is left exactly
+  // as it was for the cascade's non-drag caller (the playback-speed slider,
+  // which legitimately changes the last segment's duration).
+  //
+  // `options.conserveTotalDuration` (owner ruling 2026-08-08) removes that
+  // scoping for the DRAG path, where the tail is not a harmless exemption but
+  // the last hole in "no drag gesture may change total timeline duration": with
+  // the scoping in place, a right-edge drag on segment N-2 that overshoots
+  // segment N-1's `MIN_SEGMENT_DURATION` floor keeps the unabsorbed remainder
+  // and lengthens the timeline, and so does a left-edge drag on segment 0 of a
+  // single-segment timeline. Neither goes anywhere near the edge the ruling
+  // names, which is why the affordance lock alone is not the fix.
+  //
+  // Model P's tail clause — the last segment ends at `audioDuration` — still
+  // cannot be enforced here: this function is not given the audio length, by
+  // design, so that a drag never re-stretches the timeline mid-gesture. What
+  // this flag enforces is the weaker but sufficient statement that a drag never
+  // MOVES the tail, whatever it currently is.
+  const conserveAtTail = options?.conserveTotalDuration === true;
+  if (Math.abs(remaining) > EPSILON_SEC && (conserveAtTail || hi < segs.length - 1)) {
     const cur = segs[draggedIdx]!;
     segs[draggedIdx] = {
       ...cur,
@@ -432,5 +521,14 @@ export function resolveDragPreview(
     direction,
     () => undefined,
     tokens,
+    // This function IS the drag path — there is no other caller and no other
+    // meaning for it — so the 2026-08-08 conservation rule applies to every
+    // frame it draws. Passed explicitly rather than defaulted on inside
+    // `computeDragCascade`, so the one call site that must NOT conserve (the
+    // playback-speed slider) is a visible omission rather than a silent one.
+    // The commit path (`dragSession.ts` → `applyDurationChange`) passes the
+    // same option; if these two ever disagree the preview lies about what will
+    // be committed, which is the exact defect K17 exists to prevent.
+    DRAG_CASCADE_OPTIONS,
   ) ?? originalSegments;
 }

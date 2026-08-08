@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { computeDragCascade, resolveDragPreview, MIN_SEGMENT_DURATION } from './dragCascade';
+import {
+  computeDragCascade,
+  resolveDragPreview,
+  DRAG_CASCADE_OPTIONS,
+  MIN_SEGMENT_DURATION,
+} from './dragCascade';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { findPartitionViolations, checkTimelineIsGapless, PARTITION_EPSILON_SEC } from './timelinePartition';
 import type { VideoSegment, TranscriptToken } from '../types';
@@ -132,11 +137,20 @@ describe('gapless invariant — the drag path (computeDragCascade / restackWindo
     // resolveDragPreview delegates to computeDragCascade precisely so the two
     // cannot drift (K17). Pinning that here means a future "preview-only
     // shortcut" optimisation cannot silently reintroduce a preview-side gap.
+    //
+    // The commit side must pass DRAG_CASCADE_OPTIONS (owner ruling 2026-08-08)
+    // because that is what the REAL commit path passes: `dragSession.ts`'s
+    // `handleUp` hands the same object to `applyDurationChange`. Comparing the
+    // preview against an option-less cascade call would be comparing it against
+    // the playback-speed slider's semantics, not the drag's — and the two now
+    // differ at the last index, which is exactly where this loop reaches.
     const arr = gaplessArray(5);
     for (let idx = 0; idx < 5; idx++) {
       for (const direction of ['right', 'left'] as const) {
         const preview = resolveDragPreview(arr, idx, arr[idx]!.duration + 1.5, 0, direction);
-        const commit = computeDragCascade(arr, idx, arr[idx]!.duration + 1.5, 0, direction, noBlock);
+        const commit = computeDragCascade(
+          arr, idx, arr[idx]!.duration + 1.5, 0, direction, noBlock, undefined, DRAG_CASCADE_OPTIONS,
+        );
         expect(preview).toEqual(commit);
         if (preview) assertGapless(preview, `preview ${direction} at ${idx}`);
       }
