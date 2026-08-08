@@ -30,15 +30,44 @@
  * broken twice in one day by edits that added a return above a cleanup step.
  * See `teardown`'s own comment for the two failures and the ordering argument.
  *
- * FOUND, NOT FIXED — a real bug preserved verbatim by this move (see
- * `project-state.md`): the original code set `resizingId`/`resizingType`/the
- * `resizing` body class UNCONDITIONALLY, before validating that the dragged
- * segment or the timeline element actually exist, and nothing on that early
- * bail path ever clears them. A drag that starts against a stale segment id
- * or before the timeline DOM node exists would leave `resizingId` stuck
- * non-null and the `resizing` cursor class stuck on `<body>` forever. Left
- * exactly as it was — a fix here would be a second, unverifiable behaviour
- * change riding along with a refactor whose whole point is to have none.
+ * WONTFIX (OWNER RULING, 2026-08-08) — the "stuck `resizingId`" bug. Previously
+ * carried here as "FOUND, NOT FIXED" and tracked as an open item; it is now a
+ * closed decision and should not be re-triaged.
+ *
+ * WHAT IT IS. The code below sets `resizingId`/`resizingType`/the `resizing`
+ * body class UNCONDITIONALLY, before validating that the dragged segment or the
+ * timeline element actually exist, and nothing on either early-bail path clears
+ * them. Worse, those bails return BEFORE any `window.addEventListener`, so no
+ * pointerup, pointercancel, or blur can ever reach a teardown — the state is
+ * stuck for the life of the page, not just the gesture.
+ *
+ * WHY IT STAYS. Two reasons, and the second is the load-bearing one:
+ *   1. It is UNREACHABLE through the UI. Both bails need something a real
+ *      gesture cannot produce — a drag on a segment id not in the array, or a
+ *      drag begun before `#timeline-scroll-area` mounts. A real drag starts
+ *      from an already-rendered segment card inside an already-rendered
+ *      timeline; the card IS the event target, so the id resolves and the
+ *      container exists by construction.
+ *   2. Fixing it would CONTRADICT A PASSING TEST. The current behaviour is
+ *      pinned by a characterization test written and passing BEFORE the WS2
+ *      task-1 extraction and byte-identical after — which is exactly what
+ *      proved that extraction behaviour-preserving. A fix flips that pin to
+ *      failing, so it is not a one-line clear: it means retiring the pin and
+ *      re-establishing the extraction's proof another way, for a state no user
+ *      can reach.
+ *
+ * The desired behaviour is not lost — it is kept as a deliberately skipped
+ * specification test at the end of `dragSessionHarness.test.ts` PART 4, and the
+ * residue is actively audited via that file's `acknowledgeKnownResidue`
+ * declaration, which itself FAILS if the residue ever stops appearing.
+ *
+ * THIS RULING LAPSES if the path becomes reachable — e.g. drags gain a
+ * programmatic entry point, or the timeline begins mounting after a drag can
+ * start. Unskip the pin and build to it then.
+ *
+ * NOT the same bug as the step-10 interrupted-drag fix (commit c2f8698): same
+ * residue class, different cause, and that one has a live listener to fix it
+ * through [MEASURED: this pin still fails after that fix].
  */
 
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
@@ -151,11 +180,12 @@ export function startDragSession(
   //
   // Placed ABOVE the `setResizingId`/`setResizingType`/body-class writes on
   // purpose. Those three run unconditionally in the original code and are
-  // never cleared on the two early-bail paths just below — a real, still
-  // UNRULED bug this extraction preserved verbatim (see this file's header
-  // and project-state.md). Returning before them means this new refusal
-  // cannot leave that stuck state behind, and does not disturb the existing
-  // bug in either direction.
+  // never cleared on the two early-bail paths just below — the stuck-
+  // `resizingId` bug, ruled WONTFIX by the owner on 2026-08-08 (see this
+  // file's header for the full reasoning: unreachable through the UI, and a
+  // fix would contradict a passing characterization pin). Returning before
+  // them means this refusal cannot leave that stuck state behind, and does
+  // not disturb the WONTFIX'd behaviour in either direction.
   // ---------------------------------------------------------------------
   const segmentsAtStart = deps.getSegments();
   if (isDragEdgeLocked(segmentsAtStart, segmentsAtStart.findIndex(s => s.id === id), type)) {

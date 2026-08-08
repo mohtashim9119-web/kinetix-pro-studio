@@ -765,11 +765,63 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // WONTFIX — OWNER RULING, 2026-08-08. This is not an open bug and should stop
+  // being triaged as one.
+  //
+  // WHAT IT IS. `startDragSession` writes `resizingId`/`resizingType`/
+  // `document.body.classList.add('resizing')` unconditionally, and only THEN
+  // validates that the dragged segment id resolves and the timeline DOM exists.
+  // On either early-bail path it returns without clearing them, and — the part
+  // that makes it permanent — it returns BEFORE `window.addEventListener`, so no
+  // pointerup, pointercancel, or blur can ever reach a teardown. The state is
+  // stuck for the life of the page.
+  //
+  // WHY IT IS RULED WONTFIX, and not merely deprioritised:
+  //
+  //   1. IT IS UNREACHABLE THROUGH THE UI. Both bails require something that
+  //      cannot happen from a real gesture: a drag on a segment id that is not
+  //      in the array, or a drag started before `#timeline-scroll-area` exists.
+  //      A real drag always starts from an already-rendered segment card inside
+  //      an already-rendered timeline — the card IS the event target, so its id
+  //      resolves and its container exists by construction. There is no user
+  //      input that produces this state.
+  //
+  //   2. FIXING IT WOULD CONTRADICT A PASSING TEST. The CURRENT behaviour is
+  //      deliberately pinned, by name, in the 'ports of "onResizeStart
+  //      top-of-closure bug"' describe block above — a characterization test
+  //      written and passing BEFORE the WS2 task-1 extraction and byte-identical
+  //      after, which is precisely what proved that extraction behaviour-
+  //      preserving. Changing the production path flips that test to failing.
+  //      Fixing this therefore is not a one-line clear; it means retiring a
+  //      characterization pin and re-establishing the extraction's proof by
+  //      other means, for a state no user can reach.
+  //
+  //   3. THE RESIDUE IT LEAVES IS ALREADY AUDITED. The harness's universal
+  //      post-condition catches leaked session state everywhere else in this
+  //      suite; this one site declares itself via `acknowledgeKnownResidue`, and
+  //      THAT DECLARATION FAILS IF THE RESIDUE STOPS APPEARING. So the exception
+  //      is greppable, switched on, and self-invalidating rather than a silent
+  //      hole.
+  //
+  // NOT the same bug as the step-10 interrupted-drag fix (commit c2f8698), which
+  // shares the residue class (`resizingId` + body class left set) but has a
+  // different cause and a live listener to fix it through [MEASURED: this pin
+  // still fails after that fix].
+  //
+  // IF THIS EVER BECOMES REACHABLE — e.g. drags gain a programmatic entry point,
+  // or the timeline starts mounting after a drag can begin — this ruling lapses
+  // and the test below is the specification to build against. Unskip it then.
+  // Until then it stays skipped and stays here: it documents the desired
+  // behaviour without asserting it.
+  // ---------------------------------------------------------------------------
   it.skip(
-    'BUG PIN (do not fix here) — an early-bail drag start should NOT leave resizingId/the resizing class stuck. ' +
-    'Currently FAILS: dragSession.ts sets resizing state unconditionally before validating the dragged segment ' +
-    'exists, and nothing on that early-return path clears it (see project-state.md, WS2 task 1 note, and the ' +
-    'passing pin of the CURRENT behavior two describe blocks above). Unskip once fixed.',
+    'WONTFIX (owner ruling 2026-08-08) — an early-bail drag start leaves resizingId/the resizing class ' +
+    'stuck. Deliberately NOT fixed: unreachable through the UI (requires a nonexistent segment id or a ' +
+    'missing timeline DOM, neither producible by a real gesture), and the fix would flip the passing ' +
+    'characterization pin of the current behaviour two describe blocks above. Kept skipped as the ' +
+    'specification to build against IF the path ever becomes reachable. See the comment above, ' +
+    'project-state.md, and dragSession.ts\'s header.',
     () => {
       const original = [seg('A', 0, 5)];
       const h = harnessOf(original);

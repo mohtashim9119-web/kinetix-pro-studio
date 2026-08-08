@@ -183,12 +183,14 @@ then early-returns **before any listener is installed**, so no signal — `blur`
 
 ---
 
-**Known issue, not a checklist failure:** dragging a segment id that doesn't exist, or
-starting a drag before the timeline DOM exists, is a documented, deliberately-unfixed bug
-(the "stuck `resizingId`" bug — see `project-state.md`'s Deferred Known Bugs). It is not
-reachable through normal UI use (a drag always starts from an already-rendered segment
-against an already-rendered timeline), so it is not a checklist step — don't spend time
-trying to trigger it here.
+**Known issue, not a checklist failure — RULED WONTFIX 2026-08-08:** dragging a segment id
+that doesn't exist, or starting a drag before the timeline DOM exists, leaves `resizingId`
+and the `resizing` body class stuck (the "stuck `resizingId`" bug). This is now a **closed
+owner decision**, not an open bug — it is unreachable through normal UI use (a drag always
+starts from an already-rendered segment against an already-rendered timeline), and a fix
+would contradict a passing characterization pin. See `project-state.md`'s Deferred Known
+Bugs and `dragSession.ts`'s header for the full reasoning. It is not a checklist step —
+don't spend time trying to trigger it here.
 
 ---
 
