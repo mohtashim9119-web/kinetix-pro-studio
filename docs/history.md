@@ -3902,3 +3902,105 @@ end-to-end in a running app, including a real page reload that preserved history
 The stuck-`resizingId` bug remains **open and unruled**, and was re-measured: it still fails
 after the step-10 fix. Same residue class, different root cause — its path sets that state and
 early-returns *before any listener is installed*, so no signal can reach it.
+
+---
+
+## WS2 close-out and verified baseline (2026-08-08)
+
+> The pass that ended WS2. No new features — close-out, correction, and four owner rulings.
+> Live state lives in `project-state.md`; this is the archival record.
+
+### The baseline that was locked
+
+Tag **`verified-baseline-2026-08-08`**. The distinguishing property, and the reason it was
+worth a tag: it is the **first state in this repo's history where the automated suite AND
+the full manual checklist are both green in the real WKWebView shell.** Every prior green
+tag recorded a passing suite only — a bar this project has repeatedly proven insufficient,
+most sharply when the first manual run against the drag checklist found seven real defects
+behind a fully-green 1470-test suite.
+
+[MEASURED 2026-08-08, macOS Intel] `vitest` 66 files / 1688 tests (1687 pass, 0 fail,
+1 skip); `tsc --noEmit` clean; `cargo check` clean; golden replay 3/3 byte-identical;
+manual drag checklist steps 1–12 all PASS; undo/redo U1–U16 all PASS.
+
+### The ambiguity that was resolved before the baseline was accepted
+
+The manual report for step 4 read *"Left edge/inward drag resizes normally,"* which is
+ambiguous between two readings — one correct, one a violation of the last-segment-edge
+ruling (which locked that edge in **both** directions, since shrinking also changes total
+duration).
+
+**Resolved: the last segment's right edge is inert INWARD, and the report describes the
+LEFT edge.** [MEASURED] The evidence is structural rather than behavioural, which is the
+strongest form available here: `isDragEdgeLocked` (`dragCascade.ts:100-108`) is
+`edge === 'end' && index === segments.length - 1` — it takes **no direction or delta
+argument at all** — and it is evaluated at gesture *start* (`dragSession.ts:161`), before a
+pointer has moved and before direction is even knowable. Two independent layers enforce it:
+`Timeline.tsx:730` renders no hit target, and `dragSession.ts:161` refuses before wiring a
+listener.
+
+Pinned by name in `dragSessionHarness.test.ts` — *"a GROW on the final segment's right edge
+is inert"*, *"a SHRINK … is equally inert"* (`moveBy(-4.8)` → `no-op-not-moved`), and *"the
+final segment's LEFT edge is unaffected and still drags normally"*.
+
+**A coverage subtlety worth recording**, because it reads the wrong way at a glance:
+`dragDurationInvariant.test.ts` **PART 1** deliberately *skips* the locked edge
+(`if (isDragEdgeLocked(...)) continue`) — correctly, since the cascade is never asked about
+an edge no gesture can reach. Inward overshoot on that edge is covered by **PART 2**, which
+sweeps every edge of every segment through the real session harness with deltas including
+−100, and does *not* skip it.
+
+### Doc-scope correction: step 12 covers one symptom, not the video path
+
+Step 12's PASS was being read as closing the whole video path. It closes one of three
+symptoms. Per-symptom status was written into `docs/video-segment-investigation.md`:
+
+1. **Preview freeze — VERIFIED RESOLVED**, and **cause not determined.** No commit in WS2
+   touched either implicated module [MEASURED — newest commit on `useWebCodecsPreview.ts` is
+   `2015218`, on `videoDecoderPool.ts` is `e1f6985`, both long predating WS2]. Recorded as
+   resolved by *incidental* change, most plausibly because the drag path now commits correct
+   timings where it previously did not. **The coverage gap is unchanged** — still zero
+   automated coverage of the decode pool's response to a segment-timing change, in a module
+   with two prior *mock-invisible* defects on record — so a recurrence is expected rather
+   than surprising.
+2. **Speed coupling — ruled a bug**, scoped, queued, not fixed (below).
+3. **Drawer slip-bar overflow — the real finding was that it had never been manually
+   exercised.** No checklist step opened the drawer at all, so its absence from every prior
+   run log carried no information. New **step 13** exercises it directly against a segment
+   with no `sourceDuration` past the hardcoded `?? 60` fallback.
+
+### The four owner rulings
+
+| Ruling | Outcome |
+|---|---|
+| **stuck-`resizingId`** | **WONTFIX.** Unreachable through the UI, and a fix would flip a *passing* characterization pin — the one that proved the WS2 task-1 extraction behaviour-preserving. The skipped spec test is retained as the thing to build against **if the path ever becomes reachable**; the ruling explicitly lapses then. Residue stays audited by `acknowledgeKnownResidue`, which fails if the residue stops appearing. |
+| **⌘R during export** | **Keep the refusal.** No behaviour change; its *status* changed from implementer's judgment call to ratified decision. The rejected alternative and the asymmetry argument were recorded at the definition so it is not "simplified" away later. |
+| **`App.tsx` extraction** | **Accepted, and sized.** 4,660 → 5,122 = **+462** [MEASURED]. Stated plainly: WS2 reduced `App.tsx` by 216 lines via one extraction, then added 462 back. Roadmap § D11 carries the shape (a `useProjectHistory` hook), the estimate (~350–420 lines, +0–8 tests), and the risk (the seam — `liveProjectRef` is advanced *synchronously*). |
+| **Video speed coupling** | **It is a bug** (option 3, decouple). Not fixed this run, by instruction. Roadmap § D12. |
+
+**Scoping the speed coupling turned up something that would have bitten the fix:** symptom
+3's slip-bar overflow is currently *contained* for video segments **by** the coupling —
+while it is engaged, `duration × playbackSpeed === clipLen`, forcing `widthPct ≤ 100`.
+Decoupling makes symptom 3 reachable for video too, so §3's clamp must land **with or
+before** §2's fix. Also recorded: the fix inherits an undefined product question (what plays
+when a video segment is dragged longer than its clip at 1×), it will legitimately fail
+`dragGeometry.test.ts` PART 1 (update deliberately, do not weaken), and the golden replay
+cannot catch a regression because no corpus project exercises an interactive drag.
+
+### WS1 readiness — and the defect it found
+
+`docs/ws1-readiness-2026-08-08.md`. The 50/50 silence split was re-confirmed cleanly
+decoupled against **current `main`** rather than the park commit § D4 measured, since the
+last-segment lock, the duration-invariance guard, Model P's assertion and undo/redo all
+landed afterwards. None of the three reaches the sync path.
+
+**The assessment found a real, pre-existing defect [MEASURED by reading; no test covers
+it]: Apply Sync pushes TWO history entries, not one.** `App.tsx:2917` commits the timeline;
+`App.tsx:3005` makes a second `setProject` for post-hoc boundary-quality log entries, and a
+keyless write always pushes (`historyCoalesce.ts:88-92`). Undoing an Apply Sync therefore
+costs two presses, the first a visual no-op — guaranteed every run on the
+waveform-unavailable branch, whose entry array is built unconditionally. Nothing caught it
+because no test asserts history depth around Apply Sync, and this repo has no App-level
+integration harness.
+
+Made WS1's first slice, ahead of the 50/50 work.

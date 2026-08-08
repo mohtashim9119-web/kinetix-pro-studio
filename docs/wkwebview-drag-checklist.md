@@ -407,3 +407,71 @@ U16 (tooltips name the edit):          PASS / FAIL   Notes: __________
 - **Windows is unverified** for every shortcut in this section. `tauri.conf.json`
   bundles a Windows ffmpeg sidecar so it is a real target, but no Windows hardware
   has exercised any of this.
+
+---
+
+### 2026-08-08 (close-out) — FULL PASS, first fully-green run
+
+**The first run in this checklist's history where every scoreable step passed.**
+
+```
+Date:          2026-08-08
+Build:         dev shell (npm run tauri:dev), commit 432a224
+Platform:      macOS Intel (x86_64)
+Tester:        app owner
+
+Step 1  (middle segment, right edge):        PASS
+Step 2  (middle segment, left edge):         PASS
+Step 3  (segment 0, left edge):              PASS
+Step 4  (last segment, right edge):          PASS  — see note below
+Step 5  (single locked neighbour):           PASS
+Step 6  (locks on both sides):               PASS
+Step 7  (negligible drag reverts):           PASS
+Step 8  (drag while scrolled):               PASS
+Step 9  (auto-scroll past visible edge):     PASS
+Step 10 (interrupted drag / Cmd+Tab):        PASS
+Step 11 (locked segment, own edge):          PASS
+Step 12 (video boundary, both sides play):   PASS  — SYMPTOM 1 ONLY
+Step 13 (drawer slip bar):                   NOT RUN — added after this run
+
+U1-U16 (undo / redo):                        ALL PASS
+
+Overall: PASS (12 of 12 scoreable steps; step 13 postdates the run)
+```
+
+**Automated gates at the same commit** [MEASURED]: 66 files, 1688 tests
+(1687 pass / 0 fail / 1 skip), `tsc --noEmit` clean, `cargo check` clean, golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) 3/3 byte-identical.
+
+Tagged **`verified-baseline-2026-08-08`** — the first state where the automated suite AND
+the full manual checklist are both green in the real shell, which is what distinguishes it
+from every earlier green-suite tag.
+
+#### Three things this PASS does NOT mean
+
+Recorded because a 12/12 is exactly the kind of result that gets over-read.
+
+1. **Step 4's PASS is the LEFT edge behaving, not the right edge being tested.** The
+   original report — *"Left edge/inward drag resizes normally"* — was ambiguous and was
+   resolved before this run was accepted. The last segment's **right edge is inert in both
+   directions**, by construction, not by behaviour: `isDragEdgeLocked`
+   (`dragCascade.ts:100-108`) takes no direction or delta argument, and is evaluated at
+   gesture *start* (`dragSession.ts:161`) before a pointer has moved. Two independent layers
+   enforce it — `Timeline.tsx:730` renders no hit target, and `dragSession.ts:161` refuses
+   before wiring a listener. Directly pinned by name in `dragSessionHarness.test.ts`: *"a
+   GROW … is inert"* and *"a SHRINK … is equally inert"*, plus *"the final segment's LEFT
+   edge is unaffected and still drags normally"*. What step 4 confirms is that third test's
+   behaviour on a real screen.
+
+2. **Step 12 scores symptom 1 only.** It does not score the `duration`↔`playbackSpeed`
+   coupling (silent, looks correct by eye — ruled a bug 2026-08-08, queued at roadmap § D12)
+   and it cannot reach the drawer slip-bar overflow (step 12 never opens the drawer). See
+   `docs/video-segment-investigation.md`. Symptom 1's own resolution has **no identified
+   cause** — no commit touched either implicated module — so a recurrence is expected rather
+   than surprising.
+
+3. **Step 13 has never been run by anyone.** It was added *after* this run precisely because
+   the drawer had no manual coverage at all, which is why symptom 3's absence from every
+   prior run log meant nothing. Its first score is still outstanding.
+
+**Windows remains unverified** for every drag step and every keyboard shortcut.
