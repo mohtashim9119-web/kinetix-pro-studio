@@ -26,7 +26,6 @@ export function ProjectDashboard({
 
   useEffect(() => {
     const data = loadAllMetas();
-    console.log('[dashboard] loaded metas:', data);
     // Sort by lastOpened descending
     data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
     setMetas(data);
