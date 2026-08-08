@@ -67,6 +67,11 @@ import {
 } from './services/dragGeometry';
 import { startDragSession } from './services/dragSession';
 import { emptyHistory, pushEntry, type History } from './services/history';
+import {
+  clearPersistedHistory,
+  loadHistory,
+  saveHistory,
+} from './services/historyPersist';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import {
@@ -1814,6 +1819,22 @@ export default function App() {
       if (audioRef.current) audioRef.current.currentTime = seg.startTime;
     }
   }, [project.segments]);
+
+  // Persist history so it survives a PAGE RELOAD but not an app restart (owner
+  // ruling 2026-08-08, design §6.0). The reload/restart discriminator is a
+  // per-process token from Rust — see `historyPersist.ts`'s header for why
+  // nothing in the renderer can make that distinction on its own.
+  //
+  // Debounced at 400ms, just under `usePersistProject`'s own 500ms, so a burst
+  // of edits writes once. Keyed on the history object's identity rather than on
+  // `project`, so a SILENT write (a lock, a drag revert) triggers no save.
+  useEffect(() => {
+    if (isHydrating) return;
+    const id = liveProjectRef.current.id;
+    const t = setTimeout(() => { void saveHistory(id, history); }, 400);
+    return () => clearTimeout(t);
+  }, [history, isHydrating]);
+
 
   // Path B Phase 5 — left-panel heading row click: open the drawer's heading
   // editor AND jump the preview to the heading's time, mirroring handleSegmentClick.
@@ -3679,8 +3700,10 @@ export default function App() {
     // New Project clears history (design §6.0) — an undo stack that survived
     // could restore the OUTGOING project's segments onto this one's assets.
     // Silent, because the write itself is not a user edit of this project.
+    const outgoingId = liveProjectRef.current.id;
     setProjectSilent(fresh);
     setHistory(emptyHistory<Project>());
+    void clearPersistedHistory(outgoingId);
     setIsSynced(false);
     setCurrentTime(0);
     setGlobalPlaybackSpeed(1);
@@ -3763,7 +3786,23 @@ export default function App() {
       // so mark it as confirmed to enable auto-save going forward.
       confirmed: true,
     });
-    setHistory(emptyHistory<Project>());
+    // HISTORY (design §6.0). A genuine project switch CLEARS; a page RELOAD of
+    // the same project RESTORES. `opts.preserveUiState` is already set only on
+    // the reload path (the mount effect passes it; no user-initiated switch
+    // does), so it is the existing, load-bearing discriminator rather than a new
+    // flag that could drift out of step with it.
+    //
+    // `loadHistory` applies the real gate — a per-app-process token — so even
+    // here an APP RESTART restores nothing. Both conditions must hold: the same
+    // project reopened by a reload, AND the same app process.
+    if (opts?.preserveUiState) {
+      void loadHistory(saved.project.id, rehydratedAssets).then(restored => {
+        if (restored) setHistory(restored);
+      });
+    } else {
+      setHistory(emptyHistory<Project>());
+      void clearPersistedHistory(saved.project.id);
+    }
     setLastOpenedProjectId(saved.project.id);
     setIsSynced(rehydratedSegments.length > 0);
     setIsPlaying(false);
@@ -3900,7 +3939,16 @@ export default function App() {
             onApplyAnimationPreset={(v) => setProject(p => ({ ...p, globalAnimation: v as AnimationType }))}
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
             onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
-            onBackToProjects={() => { if (project.confirmed) saveNow(); clearLastOpenedProjectId(); setShowDashboard(true); }}
+            onBackToProjects={() => {
+              if (project.confirmed) saveNow();
+              clearLastOpenedProjectId();
+              // Owner ruling 2026-08-08: returning to the dashboard clears
+              // history, and re-opening a project starts fresh — so the
+              // persisted copy goes too, not just the in-memory stack.
+              setHistory(emptyHistory<Project>());
+              void clearPersistedHistory(project.id);
+              setShowDashboard(true);
+            }}
             projectName={project.name}
             onRename={(name) => setProject(p => ({ ...p, name }))}
             activeLeftTab={activeLeftTab}

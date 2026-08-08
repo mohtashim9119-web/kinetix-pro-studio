@@ -2,6 +2,31 @@ mod ffmpeg;
 mod whisper;
 
 use base64::Engine as _;
+use std::sync::OnceLock;
+
+/// A UUID minted ONCE per app process, on first request.
+///
+/// This is the only reliable way the frontend can tell a **page reload** apart
+/// from an **app restart** (undo/redo persistence, 2026-08-08): both produce a
+/// fresh webview with an empty JS heap, so nothing in the renderer can
+/// distinguish them. A reload keeps the same Rust process and therefore reads
+/// back the same token; a restart is a new process and mints a new one.
+///
+/// The frontend tags its persisted undo history with the token it saw, and
+/// discards the history on load if the token no longer matches — which is
+/// exactly the owner-ruled policy: history survives a reload, and an app restart
+/// starts fresh (`docs/decisions/2026-08-08-undo-redo-design.md` §6.0).
+///
+/// `OnceLock` rather than managed state so it cannot be reset by anything, and
+/// so it has no initialisation ordering relationship with `run()`'s builder.
+static APP_SESSION_TOKEN: OnceLock<String> = OnceLock::new();
+
+#[tauri::command]
+fn app_session_token() -> String {
+    APP_SESSION_TOKEN
+        .get_or_init(|| uuid::Uuid::new_v4().to_string())
+        .clone()
+}
 
 #[tauri::command]
 async fn fetch_url_bytes(url: String) -> Result<String, String> {
@@ -70,6 +95,7 @@ pub fn run() {
             whisper::whisper_transcribe,
             whisper::whisper_cancel,
             fetch_url_bytes,
+            app_session_token,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
