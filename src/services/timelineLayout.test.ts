@@ -277,3 +277,105 @@ describe('resolveDropGapIndex (supplementary)', () => {
     expect(resolveDropGapIndex(rects, 35)).toBe(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Manual WKWebView checklist STEP 4 guard — the card layer and the waveform
+// layer must derive their time->pixel mapping from ONE source.
+//
+// The failure this pins is real and was found by hand, not by CI: growing the
+// LAST segment's right edge is the only drag that changes the timeline's total
+// duration, and `computeZoomPixelsPerSecond`'s lower bound is a FIT-TO-WIDTH
+// term — `(width * 0.95) / totalDuration`. So a longer timeline meant a smaller
+// pixelsPerSecond, and every card's `left = startTime * pixelsPerSecond` moved,
+// while the segment ARRAY was provably untouched outside the dragged index
+// (dragTriage.test.ts's F2 block pins both halves, including the measured
+// 300px -> 259.0909px displacement).
+//
+// The fix froze the zoom BASIS across a resize drag (Timeline.tsx's
+// `zoomBasisDuration`). These tests guard the property that fix depends on: the
+// two layers cannot be allowed to derive pixels-per-second independently, or
+// they will disagree the moment one of them rebases and the other does not.
+// jsdom has no layout engine, so this asserts the pixel ARITHMETIC both layers
+// consume — visual alignment itself stays a manual-only check (checklist step 4).
+// ---------------------------------------------------------------------------
+describe('card lane / waveform lane time->pixel agreement (checklist step 4 guard)', () => {
+  const segments = [makeSeg('a', 0, 30), makeSeg('b', 30, 45), makeSeg('c', 75, 25)];
+  const containerWidth = 1000;
+  const DPR = 2;
+  const MAX_CANVAS = 16384;
+
+  it('one shared pixelsPerSecond makes both layers span the identical pixel extent', () => {
+    const totalDuration = computeTotalDuration(segments); // 100
+    const pps = computeZoomPixelsPerSecond(totalDuration, containerWidth, 0.6);
+
+    // Card layer: the timeline's full extent is the last card's right edge.
+    const cardExtentPx = segments
+      .map(s => computeSegmentLayout(s, pps))
+      .reduce((max, l) => Math.max(max, l.left + l.width), 0);
+
+    // Waveform layer: the lane is `totalDuration * pps` wide and is filled by
+    // tiles laid end to end (Timeline.tsx's backgroundPosition/-Size lists).
+    const tiles = computeWaveformTileSpecs(totalDuration, pps, DPR, MAX_CANVAS);
+    const tileExtentPx = tiles.reduce((sum, t) => sum + t.tileWidthCss, 0);
+
+    expect(tileExtentPx).toBeCloseTo(cardExtentPx, 6);
+    expect(tileExtentPx).toBeCloseTo(totalDuration * pps, 6);
+  });
+
+  it('every tile is exactly its own duration wide at the shared zoom, so a time maps to one x in both layers', () => {
+    const totalDuration = computeTotalDuration(segments);
+    const pps = computeZoomPixelsPerSecond(totalDuration, containerWidth, 0.6);
+    const tiles = computeWaveformTileSpecs(totalDuration, pps, DPR, MAX_CANVAS);
+
+    for (const t of tiles) {
+      expect(t.tileWidthCss).toBeCloseTo((t.tileEndTime - t.tileStartTime) * pps, 6);
+    }
+
+    // Each interior segment boundary resolves to the same x under the card
+    // layer's formula and under the waveform layer's tile-offset arithmetic.
+    for (const s of segments.slice(1)) {
+      const cardLeft = computeSegmentLayout(s, pps).left;
+      const tile = tiles.find(t => s.startTime >= t.tileStartTime && s.startTime < t.tileEndTime)
+        ?? tiles[tiles.length - 1]!;
+      const waveformX = tile.tileStartTime * pps + (s.startTime - tile.tileStartTime) * pps;
+      expect(waveformX).toBeCloseTo(cardLeft, 6);
+    }
+  });
+
+  it('PROOF THE GUARD HAS TEETH — two independently-derived zooms make the layers diverge', () => {
+    // Exactly the checklist step 4 shape: the last segment grows by 20s. If the
+    // card layer holds a frozen zoom basis while the waveform layer rebases on
+    // the new live totalDuration (or vice versa), the two stop agreeing — which
+    // is what "the cards drift against the waveform" looked like on screen.
+    const grown = [makeSeg('a', 0, 30), makeSeg('b', 30, 45), makeSeg('c', 75, 45)];
+
+    const frozenPps = computeZoomPixelsPerSecond(computeTotalDuration(segments), containerWidth, 0.6);
+    const rebasedPps = computeZoomPixelsPerSecond(computeTotalDuration(grown), containerWidth, 0.6);
+    expect(rebasedPps).toBeLessThan(frozenPps);
+
+    const cardExtentPx = grown
+      .map(s => computeSegmentLayout(s, frozenPps))
+      .reduce((max, l) => Math.max(max, l.left + l.width), 0);
+    const tileExtentPx = computeWaveformTileSpecs(computeTotalDuration(grown), rebasedPps, DPR, MAX_CANVAS)
+      .reduce((sum, t) => sum + t.tileWidthCss, 0);
+
+    // Divergence is not a rounding artifact — it is a visible fraction of the
+    // lane. Asserting a floor rather than an exact figure keeps this a
+    // statement about the failure MODE, not about today's constants.
+    expect(Math.abs(tileExtentPx - cardExtentPx)).toBeGreaterThan(50);
+  });
+
+  it('the fit-to-width lower bound is what couples zoom to total duration — pinned directly', () => {
+    // The mechanism itself, isolated from any layer. sliderT=0 selects ppsMin,
+    // and ppsMin is monotonically decreasing in totalDuration until it saturates
+    // at ppsMax=100 for content short enough to already fit.
+    expect(computeZoomPixelsPerSecond(100, 1000, 0)).toBeCloseTo((1000 * 0.95) / 100, 9);
+    expect(computeZoomPixelsPerSecond(120, 1000, 0)).toBeCloseTo((1000 * 0.95) / 120, 9);
+    expect(computeZoomPixelsPerSecond(120, 1000, 0))
+      .toBeLessThan(computeZoomPixelsPerSecond(100, 1000, 0));
+    // Saturation: 5s of content fits 1000px many times over, so the fit term is
+    // clamped and a duration change no longer moves the zoom at all.
+    expect(computeZoomPixelsPerSecond(5, 1000, 0)).toBe(100);
+    expect(computeZoomPixelsPerSecond(8, 1000, 0)).toBe(100);
+  });
+});

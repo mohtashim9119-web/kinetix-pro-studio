@@ -236,3 +236,87 @@ describe('DropZonePanel static markup — segments tab spacing (Test 9)', () => 
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Manual WKWebView checklist STEP 4 guard, render level — the segment-card lane
+// and the waveform lane must place the SAME segment at the SAME pixels.
+//
+// SCOPE, MEASURED BY MUTATION — do not over-read these two tests:
+//
+//   CAUGHT: either lane switching to a different layout formula or different
+//   segment fields. Verified by giving the waveform lane a cumulative-flow
+//   `left` (+3px); both tests fail, naming the 3px.
+//
+//   NOT CAUGHT: either lane deriving its OWN `pixelsPerSecond`. Verified by
+//   replacing the waveform lane's shared `pixelsPerSecond` with its own
+//   `computeZoomPixelsPerSecond(totalDuration, containerWidth, sliderT)` call —
+//   both tests still passed. They structurally cannot catch it: in a static
+//   render `containerWidth` is 0 (no ResizeObserver), and `zoomBasisDuration`
+//   is seeded from `totalDuration`, so on a first render every possible
+//   derivation collapses to the same number. The divergence only appears after
+//   a drag mutates state, which `renderToStaticMarkup` cannot reach.
+//
+// The uncaught half is covered elsewhere and deliberately not duplicated here:
+// `dragTriage.test.ts`'s F2 block pins frozen-vs-rebased zoom numerically
+// (300px -> 259.0909px), and `timelineLayout.test.ts`'s companion block proves
+// two independently-derived zooms make the layers' pixel extents diverge.
+//
+// The waveform lane only renders when `voiceoverName` is set, which is why the
+// other tests in this file (voiceoverName: undefined) see one element per
+// segment and this one sees two.
+// ---------------------------------------------------------------------------
+interface RenderedCell { left: number; width: number }
+
+function cellsBySegId(html: string): Map<string, RenderedCell[]> {
+  const byId = new Map<string, RenderedCell[]>();
+  for (const m of html.matchAll(/data-seg-id="([^"]+)"\s+style="([^"]*)"/g)) {
+    const [, id, style] = m;
+    const left = style!.match(/left:(-?[\d.]+)px/);
+    const width = style!.match(/width:(-?[\d.]+)px/);
+    if (!left || !width) continue;
+    const bucket = byId.get(id!) ?? [];
+    bucket.push({ left: parseFloat(left[1]!), width: parseFloat(width[1]!) });
+    byId.set(id!, bucket);
+  }
+  return byId;
+}
+
+describe('Timeline static markup — card lane and waveform lane agree (checklist step 4 guard)', () => {
+  const segments = [makeSeg('s1', 0, 5), makeSeg('s2', 5, 3), makeSeg('s3', 8, 7)];
+
+  it('renders each segment in BOTH lanes at identical left/width', () => {
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments, sliderT: 1, voiceoverName: 'vo.mp3' })} />,
+    );
+    const byId = cellsBySegId(html);
+
+    for (const s of segments) {
+      const cells = byId.get(s.id);
+      // One thumbnail-lane cell + one waveform-lane cell. Both carry
+      // data-seg-id because App's resize drag writes live geometry to both
+      // (Timeline.tsx's K16 note) — if they disagree, the drag visibly tears.
+      expect(cells, `segment ${s.id} should render in both lanes`).toHaveLength(2);
+      expect(cells![0]!.left).toBeCloseTo(cells![1]!.left, 6);
+      expect(cells![0]!.width).toBeCloseTo(cells![1]!.width, 6);
+      // sliderT=1 pins pixelsPerSecond to ppsMax=100, so these are exact.
+      expect(cells![0]!.left).toBeCloseTo(s.startTime * 100, 6);
+      expect(cells![0]!.width).toBeCloseTo(s.duration * 100, 6);
+    }
+  });
+
+  it('the waveform lane container spans exactly the card lane extent', () => {
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments, sliderT: 1, voiceoverName: 'vo.mp3' })} />,
+    );
+    const byId = cellsBySegId(html);
+    const cardExtent = [...byId.values()]
+      .flat()
+      .reduce((max, c) => Math.max(max, c.left + c.width), 0);
+    expect(cardExtent).toBeCloseTo(15 * 100, 6); // totalDuration 15s at 100 px/s
+
+    // The lane's own container is sized `totalDuration * pixelsPerSecond`. It
+    // must equal the card extent — a mismatch is the two layers having derived
+    // pixels-per-second (or total duration) independently.
+    expect(html).toContain(`width:${cardExtent}px`);
+  });
+});
