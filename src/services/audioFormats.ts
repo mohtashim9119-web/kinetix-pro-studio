@@ -24,8 +24,6 @@ export const AUDIO_EXTENSIONS = [
   'aif',
 ] as const;
 
-export type AudioExtension = (typeof AUDIO_EXTENSIONS)[number];
-
 /** Lowercased trailing extension of a filename, or '' if there is none. */
 function fileExtension(name: string): string {
   const idx = name.lastIndexOf('.');

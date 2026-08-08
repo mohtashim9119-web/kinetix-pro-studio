@@ -136,12 +136,3 @@ export function notePointerUp(
   if (open.releasedAtMs !== undefined) return open;
   return { ...open, releasedAtMs: nowMs };
 }
-
-/**
- * Closes an open gesture unconditionally — a text field's `blur`, or any moment
- * the caller knows the gesture is over (the active segment changed, a modal
- * opened, the project switched).
- */
-export function closeGesture(): OpenGesture | null {
-  return null;
-}

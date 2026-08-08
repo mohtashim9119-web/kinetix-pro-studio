@@ -103,10 +103,6 @@ export function peekWaveform(assetId: string, blobSize: number): WaveformSource 
   return hit;
 }
 
-/** Test-only: reset the in-memory mirror between unit tests. */
-export function _resetWaveformMirrorForTests(): void {
-  mirror.clear();
-}
 // ---------------------------------------------------------------------------
 
 function openWaveformDB(): Promise<IDBDatabase> {

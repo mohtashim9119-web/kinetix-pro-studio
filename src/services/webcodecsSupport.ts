@@ -22,8 +22,3 @@ export function isWebCodecsPreviewSupported(): boolean {
     'EncodedVideoChunk' in window;
   return cachedSupport;
 }
-
-/** Test-only: clears the memoized result so a test can simulate a different runtime. */
-export function __resetWebCodecsSupportCacheForTests(): void {
-  cachedSupport = null;
-}
