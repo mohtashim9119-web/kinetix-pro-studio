@@ -9,7 +9,7 @@
 | Field | Value |
 |---|---|
 | Branch | `main` (trunk; `webgl2-effects-engine` tracks it, name is historical) |
-| HEAD | `7f5fc7b`, 2026-08-09 — docs-restructure work, no `src/` changes since the last code commit (`dcbd2cd`) |
+| HEAD | `54bfb51`, 2026-08-09 — docs-restructure Phase 4 close-out, no `src/` changes since the last code commit (`dcbd2cd`) |
 | `vitest` | 1755 tests — 1754 pass, 0 fail, 1 skip — 70 files |
 | `tsc --noEmit` | clean |
 | `cargo check` | clean |
