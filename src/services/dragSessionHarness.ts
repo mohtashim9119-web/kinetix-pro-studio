@@ -43,7 +43,7 @@
  */
 
 import { afterEach } from 'vitest';
-import type { Asset, TranscriptToken, VideoSegment } from '../types';
+import type { TranscriptToken, VideoSegment } from '../types';
 import { startDragSession, type DragSessionDeps } from './dragSession';
 import { computeDragCascade } from './dragCascade';
 import {
@@ -112,7 +112,6 @@ afterEach(() => {
 export interface DragHarnessConfig {
   /** Timeline zoom. Defaults to 100 px/s, matching every existing drag test. */
   pixelsPerSecond?: number;
-  assets?: Asset[];
   transcriptTokens?: TranscriptToken[];
   /** Simulated `#timeline-scroll-area`'s `getBoundingClientRect().left`. */
   rectLeft?: number;
@@ -134,6 +133,11 @@ export interface DragHarnessConfig {
    *  extent. `scrollWidth - clientWidth` is the scroll range auto-scroll
    *  clamps against; leaving it at jsdom's 0 pins `scrollLeft` at 0. */
   scrollWidth?: number;
+  /** Clip length per segment id — the harness's stand-in for the real app's
+   *  `assets.find(a => a.id === segment.assetId)?.duration` lookup. Supply an
+   *  entry to make a segment behave as a video with a known source clip
+   *  (engaging resolveDragEdge's trimStart clamp); omit it for an image. */
+  sourceDurationById?: Record<string, number>;
 }
 
 /** Mirrors `dragSession.test.ts`'s reference `CommitOutcome`, historically —
@@ -171,8 +175,8 @@ export interface LiveGeometry {
 
 export class DragSessionHarness {
   readonly pixelsPerSecond: number;
-  private assets: Asset[];
   private transcriptTokens: TranscriptToken[] | undefined;
+  private sourceDurationById: Record<string, number>;
   private readonly rectLeft: number;
   private readonly timeline: HTMLDivElement;
   /** Undo history, driven by the SAME push the app performs on commit. */
@@ -183,7 +187,6 @@ export class DragSessionHarness {
   private resizingId: string | null = null;
   private resizingType: DragEdge | null = null;
   private isResizingFlag = false;
-  private speedBaselineCleared = false;
 
   private rafCallback: FrameRequestCallback | null = null;
   private rafHandle = 0;
@@ -244,8 +247,8 @@ export class DragSessionHarness {
   constructor(initialSegments: VideoSegment[], config: DragHarnessConfig = {}) {
     this.segments = initialSegments;
     this.pixelsPerSecond = config.pixelsPerSecond ?? 100;
-    this.assets = config.assets ?? [];
     this.transcriptTokens = config.transcriptTokens;
+    this.sourceDurationById = config.sourceDurationById ?? {};
     this.rectLeft = config.rectLeft ?? 0;
 
     this.timeline = document.createElement('div');
@@ -363,13 +366,12 @@ export class DragSessionHarness {
     return {
       getSegments: () => this.segments,
       getPixelsPerSecond: () => this.pixelsPerSecond,
-      getAssets: () => this.assets,
       getTranscriptTokens: () => this.transcriptTokens,
+      getSourceDuration: (segment) => this.sourceDurationById[segment.id],
       setResizingId: (id) => { this.resizingId = id; },
       setResizingType: (type) => { this.resizingType = type; },
       setIsResizing: (value) => { this.isResizingFlag = value; },
-      clearSpeedBaseline: () => { this.speedBaselineCleared = true; },
-      commitDurationChange: (originalSegments, segmentId, newDuration, finalTrimStart, fromSide, additionalUpdates, options) => {
+      commitDurationChange: (originalSegments, segmentId, newDuration, finalTrimStart, fromSide, options) => {
         this.commitAttempted = true;
         const draggedIdx = originalSegments.findIndex(s => s.id === segmentId);
         const blocked: string[] = [];
@@ -381,12 +383,6 @@ export class DragSessionHarness {
           fromSide,
           (_segIdx, segId) => blocked.push(segId),
           this.transcriptTokens,
-          // Forwarded, not dropped (owner ruling 2026-08-08). `App.tsx`'s real
-          // `applyDurationChange` forwards this param, so a harness that
-          // swallowed it would run the drag path under the playback-speed
-          // slider's semantics — silently, and precisely at the tail index the
-          // ruling is about. The harness's entire value is that its commit is
-          // the same call the app makes.
           options,
         );
         if (result === null) {
@@ -404,9 +400,7 @@ export class DragSessionHarness {
           label: `resize segment ${draggedIdx + 1}`,
           anchorSegmentId: segmentId,
         });
-        this.segments = additionalUpdates
-          ? result.map(s => s.id === segmentId ? { ...s, ...additionalUpdates } : s)
-          : result;
+        this.segments = result;
         return true;
       },
       revertSegments: (originalSegments) => {
@@ -648,10 +642,6 @@ export class DragSessionHarness {
 
   get isResizingValue(): boolean {
     return this.isResizingFlag;
-  }
-
-  get speedBaselineWasCleared(): boolean {
-    return this.speedBaselineCleared;
   }
 
   get bodyHasResizingClass(): boolean {

@@ -12,7 +12,6 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
 import { isDragEdgeLocked } from '../services/dragCascade';
-import { computeSlipBarGeometry } from '../services/slipBarGeometry';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 import {
@@ -21,7 +20,6 @@ import {
   computeSegmentLayout,
   computeHeadingLayout,
   computeSeekTimeFromClientX,
-  computeTrimDrag,
   resolveHistoryAnchorAction,
 } from '../services/timelineLayout';
 
@@ -63,8 +61,6 @@ interface Props {
   historyAnchor?: { segmentId: string; nonce: number } | null;
   resizingId: string | null;
   resizingType: 'start' | 'end' | null;
-  trimmingSegmentId: string | null;
-  isAdjustingTrim: boolean;
   voiceoverName: string | undefined;
   // Waveform peaks are built ONCE upfront in App.tsx's Apply-Sync flow (and a
   // reload effect) via services/waveformPipeline, then passed in here. Timeline
@@ -83,8 +79,6 @@ interface Props {
   onResizeStart: (id: string, type: 'start' | 'end', clientX: number) => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
-  onSetTrimmingSegment: (id: string | null) => void;
-  onSetAdjustingTrim: (v: boolean) => void;
   onSelectSegment?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
@@ -104,8 +98,6 @@ export function Timeline({
   historyAnchor,
   resizingId,
   resizingType,
-  trimmingSegmentId,
-  isAdjustingTrim,
   voiceoverName,
   waveformSource,
   onTogglePlay,
@@ -113,8 +105,6 @@ export function Timeline({
   onResizeStart,
   onSegmentUpdate,
   onOpenStockSearch,
-  onSetTrimmingSegment,
-  onSetAdjustingTrim,
   onSelectSegment,
   onHeadingResizeCommit,
   initialScrollLeft,
@@ -648,73 +638,30 @@ export function Timeline({
                     onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
                     onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
                     onMouseDown={(e) => {
-                      if (isAdjustingTrim && trimmingSegmentId === s.id) {
-                        e.stopPropagation();
-                        // An unknown sourceDuration has no real bound to drag
-                        // against — same "decline to guess" rule
-                        // slipBarGeometry.ts's own header documents (a
-                        // fabricated 60s default either silently discarded an
-                        // existing trimStart when duration > 60, or permitted
-                        // committing a trimStart past the real, shorter,
-                        // unprobed source — both confirmed via direct
-                        // computation). Bail out before attaching listeners
-                        // rather than dragging against a guessed maxTrim.
-                        const { hasKnownSourceDuration, maxTrimStartSec } = computeSlipBarGeometry({
-                          duration: s.duration,
-                          playbackSpeed: s.playbackSpeed,
-                          trimStart: s.trimStart ?? 0,
-                          sourceDuration: s.sourceDuration,
-                        });
-                        if (!hasKnownSourceDuration) return;
-
-                        const startX = e.clientX;
-                        const startTrim = s.trimStart ?? 0;
-
-                        const handleMouseMove = (moveEvent: MouseEvent) => {
-                          const deltaX = moveEvent.clientX - startX;
-                          const newTrim = computeTrimDrag(deltaX, pixelsPerSecond, startTrim, maxTrimStartSec);
-                          onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
-                        };
-                        const handleMouseUp = () => {
-                          window.removeEventListener('mousemove', handleMouseMove);
-                          window.removeEventListener('mouseup', handleMouseUp);
-                        };
-                        window.addEventListener('mousemove', handleMouseMove);
-                        window.addEventListener('mouseup', handleMouseUp);
-                      } else {
-                        e.stopPropagation();
-                        if (resizingId) return;
-                        onSeek(s.startTime);
-                      }
+                      e.stopPropagation();
+                      if (resizingId) return;
+                      onSeek(s.startTime);
                     }}
                     style={{
                       position: 'absolute',
                       left: `${segLayout.left}px`,
                       width: `${segLayout.width}px`,
                       height: '80px',
-                      opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
-                      filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
-                      transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
-                      // The undo/redo flash reuses the SAME boxShadow channel the
-                      // trim-adjust highlight uses (a brighter, wider glow), rather
-                      // than adding a competing outline — the card already
-                      // transitions box-shadow, so the flash inherits that easing
-                      // for free and cannot fight the existing highlight.
+                      opacity: 1,
+                      filter: 'none',
+                      transform: 'scale(1)',
+                      // The undo/redo flash uses boxShadow rather than a
+                      // competing outline — the card already transitions
+                      // box-shadow, so the flash inherits that easing for free.
                       boxShadow: flashSegmentId === s.id
                         ? '0 0 0 2px #F27D26, 0 0 36px rgba(242,125,38,0.55)'
-                        : (isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none'),
+                        : 'none',
                       zIndex: flashSegmentId === s.id
                         ? 60
-                        : (isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1)),
+                        : (isActive ? 10 : 1),
                     }}
-                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
+                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
                   >
-                    {isAdjustingTrim && trimmingSegmentId === s.id && (
-                      <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
-                        <span className="text-[7px] font-black uppercase tracking-widest text-black">Drag to Slip Content (Start: {(s.trimStart ?? 0).toFixed(2)}s)</span>
-                      </div>
-                    )}
-
                     {/* K16 — pointer events + pointer capture, not mousedown.
                         Capture guarantees this element keeps receiving
                         pointermove/pointerup for the whole gesture even when the
@@ -776,11 +723,6 @@ export function Timeline({
                         <div className="flex justify-between items-start">
                           <div className="flex flex-col gap-1">
                             <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">#{i + 1}</span>
-                            {s.playbackSpeed !== 1 && (
-                              <span className="px-1 py-0.5 bg-[#F27D26]/20 text-[#F27D26] rounded-sm text-[6px] font-mono">
-                                {(s.playbackSpeed ?? 1).toFixed(2)}x
-                              </span>
-                            )}
                             {(s.trimStart ?? 0) > 0 && (
                               <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
                                 Slip: {(s.trimStart ?? 0).toFixed(1)}s

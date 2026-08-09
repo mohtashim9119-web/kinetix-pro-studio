@@ -7,6 +7,56 @@ vi.mock('./videoDemuxer', () => ({
 import { getOrCreateDemux } from './videoDemuxer';
 import { VideoDecoderPool, findChunkRange } from './videoDecoderPool';
 
+/** Builds a chunk list in DECODE order, timestamped by PRESENTATION time,
+ *  reproducing the real inversion pattern `videoDemuxer.ts` produces for a
+ *  B-frame source: within each GOP, the key frame decodes first (cts ==
+ *  GOP base), a P-frame decodes second but displays LAST in the GOP (cts ==
+ *  GOP base + (framesPerGop-1) frames — jumps ahead), and the B-frames that
+ *  follow it in decode order display BEFORE it (cts strictly lower than the
+ *  P-frame's own cts) — the actual inversion. Mirrors WS3 Stage 3's live
+ *  instrumentation finding (119 inversions / 240 chunks on a real 10s clip;
+ *  `docs/ws3-video-segments/ws3-audit.md`'s Part A). */
+function makeReorderedChunks(numGops: number, framesPerGop: number, fps = 30): EncodedVideoChunk[] {
+  const frameDurUs = Math.round(1e6 / fps);
+  const chunks: { type: string; timestamp: number; duration: number; data: Uint8Array }[] = [];
+  for (let g = 0; g < numGops; g++) {
+    const gopBaseUs = g * framesPerGop * frameDurUs;
+    chunks.push({ type: 'key', timestamp: gopBaseUs, duration: frameDurUs, data: new Uint8Array() });
+    if (framesPerGop > 1) {
+      chunks.push({ type: 'delta', timestamp: gopBaseUs + (framesPerGop - 1) * frameDurUs, duration: frameDurUs, data: new Uint8Array() });
+      for (let i = 1; i < framesPerGop - 1; i++) {
+        chunks.push({ type: 'delta', timestamp: gopBaseUs + i * frameDurUs, duration: frameDurUs, data: new Uint8Array() });
+      }
+    }
+  }
+  return chunks as unknown as EncodedVideoChunk[];
+}
+
+/** Otherwise-monotonic multi-GOP chunks with ONE early, non-keyframe sample's
+ *  timestamp spiked far ahead — matching the live-instrumentation trace's
+ *  exact shape (`docs/ws3-video-segments/ws3-audit.md`'s Part A/Stage 4:
+ *  `firstInversionIndex: 2` on a real 10s clip). This is the fixture that
+ *  actually discriminates the fix: `makeReorderedChunks`'s PER-GOP pattern
+ *  above, verified by directly reverting the source and re-running, does
+ *  NOT trip the pre-fix algorithm's early break for a target in the LAST
+ *  GOP (each GOP's own spike stays below a large target until the scan is
+ *  already inside the correct GOP) — an early spike large enough to exceed
+ *  the target on its own does. */
+function makeChunksWithEarlyInversion(numGops: number, framesPerGop: number, fps = 30): EncodedVideoChunk[] {
+  const frameDurUs = Math.round(1e6 / fps);
+  const totalChunks = numGops * framesPerGop;
+  const chunks = Array.from({ length: totalChunks }, (_, i) => ({
+    type: i % framesPerGop === 0 ? 'key' : 'delta',
+    timestamp: i * frameDurUs,
+    duration: frameDurUs,
+    data: new Uint8Array(),
+  }));
+  if (chunks.length > 1) {
+    chunks[1]!.timestamp = (totalChunks - 2) * frameDurUs; // spike near the very end
+  }
+  return chunks as unknown as EncodedVideoChunk[];
+}
+
 // --- findChunkRange (pure logic) ---------------------------------------------
 
 describe('findChunkRange', () => {
@@ -40,6 +90,50 @@ describe('findChunkRange', () => {
 
   it('returns an empty range for an empty chunk list', () => {
     expect(findChunkRange([], 0, 1)).toEqual({ startIndex: 0, endIndex: -1 });
+  });
+
+  // Non-regression check against a REALISTIC per-GOP B-frame reordering
+  // pattern (`makeReorderedChunks`) — every GOP's own decode-order-ahead
+  // P-frame is present, so this is genuine, expected reordering, not a
+  // contrived edge case. Note: verified (by directly reverting the source
+  // and re-running) that this specific fixture does NOT actually trip the
+  // pre-fix bug for this target — each GOP's own reorder spike stays below
+  // 9.6144s until the scan is already inside the correct (last) GOP, so the
+  // old naive algorithm happens to still land correctly here. Kept as a
+  // sanity check that the fix doesn't regress ordinary reordering; the
+  // actually-discriminating regression is the test below.
+  it('resolves the correct keyframe for a deep target on a realistically-reordered clip', () => {
+    const chunks = makeReorderedChunks(5, 60, 30); // 5 GOPs x 2s = 10s clip
+    const { startIndex } = findChunkRange(chunks, 9.6144, 10);
+    // The last GOP starts at index 240 (4 * 60 frames * 33_333us/frame,
+    // Math.round(1e6/30) — 7_999_920us, not an exact 8.0s given the integer
+    // rounding) — the correct answer.
+    expect(startIndex).toBe(240);
+    expect(chunks[startIndex]!.timestamp).toBe(7_999_920);
+    expect(chunks[startIndex]!.type).toBe('key');
+  });
+
+  it('does not regress on a target at the very start of a reordered clip', () => {
+    const chunks = makeReorderedChunks(5, 60, 30);
+    const { startIndex } = findChunkRange(chunks, 0, 2);
+    expect(startIndex).toBe(0);
+    expect(chunks[0]!.timestamp).toBe(0);
+  });
+
+  // WS3 Stage 3/4 regression, ACTUALLY discriminating (docs/ws3-video-segments/
+  // ws3-audit.md's Part A): live instrumentation on a real 10s clip recorded
+  // `firstInversionIndex: 2` — a single early, non-keyframe sample whose
+  // presentation timestamp spikes far ahead of its decode-order position.
+  // Reproduces exactly that shape. Verified to fail against the pre-fix
+  // source (resolves to index 0 / 0s — the "stale early frame" class of
+  // symptom) and pass with the fix (keyframe-only scanning ignores the
+  // non-keyframe spike entirely).
+  it('resolves the correct keyframe for a deep target despite an early non-keyframe timestamp spike', () => {
+    const chunks = makeChunksWithEarlyInversion(5, 60, 30); // 5 GOPs x 2s = 10s clip
+    const { startIndex } = findChunkRange(chunks, 9.6144, 10);
+    expect(startIndex).toBe(240);
+    expect(chunks[startIndex]!.timestamp).toBe(7_999_920);
+    expect(chunks[startIndex]!.type).toBe('key');
   });
 });
 
@@ -904,5 +998,325 @@ describe('VideoDecoderPool — LRU eviction under a session/frame budget (Phase 
 
     expect(pool.hasSession('a')).toBe(false);
     for (const f of framesForA) expect(f.closed).toBe(true);
+  });
+});
+
+/**
+ * WS3 Batch B tail defect, THIRD then FOURTH pass.
+ *
+ * Third pass finding: getFrameAt was NOT re-entrant per session, and nothing
+ * in the class enforced that. The module header stated the invariant callers
+ * must uphold ("at most one getFrameAt call in flight per session"), and
+ * useWebCodecsPreview.ts upheld it with a chase mutex — but that mutex was
+ * per-CHASE, not per-session, and useGlPreview.ts owns two more chases
+ * against the same pool. When two of them targeted one session concurrently
+ * (the outgoing chase during the pre-boundary half of a centered transition
+ * window, where the outgoing segment is still `currentSegment`), the preview
+ * froze on the previous segment's frame, dropped boundary transitions, or
+ * went black. At the time, the fix lived entirely upstream, in
+ * useGlPreview.ts's canChaseTransitionFrame guard, which kept the callers
+ * disjoint — the tests below originally CHARACTERIZED the hazard (pinned the
+ * buggy outcome), with an explicit note that they should start FAILING, and
+ * that failure would be the signal, if this class were ever made genuinely
+ * re-entrant by serializing per session.
+ *
+ * WS3 baseline cleanup note: canChaseTransitionFrame and its guard were
+ * removed from useGlPreview.ts — the owner's later manual testing (observation
+ * 2, "removing all transitions changed nothing") falsified the theory that
+ * this transition-chase collision was the cause of the reported preview
+ * stall, so the speculative upstream guard was deleted along with the rest of
+ * that theory's work. The concurrency itself (outgoing chase and the
+ * current-segment pull targeting one session at once) is real and unchanged —
+ * only the fix's location moved. This serialization layer is now the SOLE
+ * protection against it, not a backstop behind the upstream guard.
+ *
+ * Fourth pass (restoration option 2): that serialization now exists —
+ * getFrameAt itself enforces "at most one call in flight per session" (see
+ * its own doc comment in videoDecoderPool.ts). The tests below are rewritten
+ * to assert the CORRECT outcome directly, rather than pinning the bug — with
+ * one honestly-reported caveat, verified empirically (not assumed) while
+ * writing this pass:
+ *
+ * - The DIVERGENT-target test (below) is a genuine, reliably red-before/
+ *   green-after regression test: run against the pre-serialization code it
+ *   fails with the exact ~8.0s wrong-keyframe answer this pass's own
+ *   investigation found; against the fix it passes. This is the strongest,
+ *   most severe symptom (a caller answered over a second wrong) and it is
+ *   fully closed.
+ * - The CLOSE-target ("neither caller...closed") test passes against BOTH
+ *   the pre- and post-serialization code with this file's synchronous
+ *   `AsyncOutputDecoder` mock — it does NOT discriminate the fix, verified by
+ *   running it against the pre-fix source directly. Root cause, traced
+ *   during this pass: `getFrameAtInternal`'s post-`fillWindow` tail (select +
+ *   evict-older + return) is fully synchronous with no `await` inside it, so
+ *   two DIFFERENT calls' tails can never literally interleave statement-by-
+ *   statement in JS's single-threaded model regardless of serialization —
+ *   whichever call's `fillWindow` settles first runs its entire tail
+ *   atomically before the other's tail can begin. The production symptom
+ *   this test was meant to pin most likely depends on real, non-deterministic
+ *   WebCodecs decode/paint timing (a caller not consuming its frame
+ *   synchronously before a sibling's later, legitimate eviction reclaims it)
+ *   that this synchronous mock cannot reproduce for two overlapping,
+ *   non-reset-triggering targets. The test is kept because it still verifies
+ *   a real, desirable post-fix invariant (no caller's frame is closed at the
+ *   instant its own call settles) — just not as a red/green discriminator.
+ *   See this comment block's own "WS3 baseline cleanup note" above and
+ *   docs/ws3-video-segments/ws3-audit.md's "fourth pass" note for why this
+ *   serialization layer, not an upstream guard, is what's relied on now.
+ */
+describe('VideoDecoderPool — getFrameAt serialization per session (WS3 fourth pass, restoration)', () => {
+  class AsyncOutputDecoder {
+    static instances: AsyncOutputDecoder[] = [];
+    outputCb: (frame: MockVideoFrame) => void;
+    resetCalls = 0;
+    private needsKey = true;
+    private closed = false;
+    private pending = new Set<ReturnType<typeof setTimeout>>();
+
+    constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
+      this.outputCb = init.output;
+      AsyncOutputDecoder.instances.push(this);
+    }
+    configure(): void { this.needsKey = true; }
+    decode(chunk: { timestamp: number; type: string }): void {
+      if (this.closed) return;
+      if (this.needsKey) {
+        if (chunk.type !== 'key') throw new Error('A key frame is required after configure() or flush()');
+        this.needsKey = false;
+      }
+      // Real decoders deliver output asynchronously — the synchronous mocks
+      // used above cannot expose an interleaving hazard at all.
+      const h = setTimeout(() => {
+        this.pending.delete(h);
+        if (!this.closed) this.outputCb(new MockVideoFrame(chunk.timestamp));
+      }, 0);
+      this.pending.add(h);
+    }
+    async flush(): Promise<void> {
+      await new Promise((r) => setTimeout(r, 1));
+      this.needsKey = true;
+    }
+    reset(): void {
+      this.resetCalls++;
+      for (const h of this.pending) clearTimeout(h);
+      this.pending.clear();
+      this.needsKey = true;
+    }
+    close(): void {
+      this.closed = true;
+      for (const h of this.pending) clearTimeout(h);
+      this.pending.clear();
+    }
+  }
+
+  beforeEach(() => {
+    AsyncOutputDecoder.instances = [];
+    MockVideoFrame.instances = [];
+    vi.stubGlobal('VideoDecoder', AsyncOutputDecoder);
+    // 10s @30fps, keyframe every 2s — the reported repro's shape (a long clip
+    // hosting a short, slipped segment).
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeLongDemuxed(300, 60));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('two concurrent calls on ONE session: neither caller is ever handed an already-closed frame (invariant check — see this describe block\'s own doc comment: passes both before and after the fix with this synchronous mock, not a red/green discriminator)', async () => {
+    const pool = new VideoDecoderPool();
+    pool.setProtectedIds(['seg']);
+    await pool.ensureSession('seg', 'blob:v', 6.6, 10, 6.6);
+    await pool.getFrameAt('seg', 6.6); // warm, as steady playback would
+
+    // Capture each frame's `.closed` state AT THE MOMENT its own call
+    // settles, not after both have settled — a later call's forward eviction
+    // legitimately closes an earlier, now-stale frame afterward (ordinary
+    // playback lifecycle), which is not the bug. The bug was a caller
+    // receiving a frame that was ALREADY closed by the time it got it.
+    let aClosedAtSettle: boolean | undefined;
+    let bClosedAtSettle: boolean | undefined;
+    const pa = pool.getFrameAt('seg', 9.9).then((f) => {
+      aClosedAtSettle = (f as unknown as MockVideoFrame | null)?.closed;
+      return f;
+    });
+    const pb = pool.getFrameAt('seg', 9.95).then((f) => {
+      bClosedAtSettle = (f as unknown as MockVideoFrame | null)?.closed;
+      return f;
+    });
+
+    const [a, b] = (await Promise.all([pa, pb])) as unknown as [MockVideoFrame | null, MockVideoFrame | null];
+
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(aClosedAtSettle).toBe(false);
+    expect(bClosedAtSettle).toBe(false);
+  });
+
+  it('two concurrent calls with DIVERGENT targets: each caller gets the frame for its OWN target, not the sibling reset\'s keyframe', async () => {
+    const pool = new VideoDecoderPool();
+    pool.setProtectedIds(['seg']);
+    await pool.ensureSession('seg', 'blob:v', 6.6, 10, 6.6);
+    await pool.getFrameAt('seg', 6.6);
+
+    // 6.7 is the outgoing/current segment's real playhead; 9.9 is the other
+    // chase running ahead. Pre-fix, the far target's needsReset discarded the
+    // near call's buffer mid-flight and re-seeded at ITS keyframe (~8.0s),
+    // answering the near caller more than a second wrong. Serialized, the
+    // near call runs to full completion against its own target before the
+    // far call's reset can ever happen.
+    const [near, far] = (await Promise.all([
+      pool.getFrameAt('seg', 6.7),
+      pool.getFrameAt('seg', 9.9),
+    ])) as unknown as [MockVideoFrame | null, MockVideoFrame | null];
+
+    expect(near).not.toBeNull();
+    expect(far).not.toBeNull();
+    expect(near!.timestamp / 1e6).toBeGreaterThan(6.6);
+    expect(near!.timestamp / 1e6).toBeLessThanOrEqual(6.7 + 1e-6);
+    expect(far!.timestamp / 1e6).toBeGreaterThan(9.8);
+    expect(far!.timestamp / 1e6).toBeLessThanOrEqual(9.9 + 1e-6);
+  });
+
+  it('sequential calls on the same session are correct — unaffected by the serialization change', async () => {
+    const pool = new VideoDecoderPool();
+    pool.setProtectedIds(['seg']);
+    await pool.ensureSession('seg', 'blob:v', 6.6, 10, 6.6);
+    await pool.getFrameAt('seg', 6.6);
+
+    const near = (await pool.getFrameAt('seg', 6.7)) as unknown as MockVideoFrame;
+    expect(near.timestamp / 1e6).toBeGreaterThan(6.6);
+    expect(near.timestamp / 1e6).toBeLessThanOrEqual(6.7);
+
+    const far = (await pool.getFrameAt('seg', 9.9)) as unknown as MockVideoFrame;
+    expect(far.timestamp / 1e6).toBeGreaterThan(9.8);
+    expect(far.timestamp / 1e6).toBeLessThanOrEqual(9.9);
+  });
+
+  it('two different sessions still decode concurrently — session B does not queue behind session A', async () => {
+    // Switch to ControllableVideoDecoder for this test specifically — it
+    // gives per-instance manual control over WHEN output arrives (unlike
+    // AsyncOutputDecoder's automatic setTimeout(0) emission), which is what's
+    // needed to leave session A's call permanently pending while proving
+    // session B still settles.
+    ControllableVideoDecoder.instances = [];
+    vi.stubGlobal('VideoDecoder', ControllableVideoDecoder);
+    const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    const readyA = pool.ensureSession('a', 'blob:a', 0, 0.1);
+    const readyB = pool.ensureSession('b', 'blob:b', 0, 0.1);
+    await Promise.resolve(); // let both startSession calls run up to (but not past) their own initial fillWindow wait
+
+    const [decoderA, decoderB] = ControllableVideoDecoder.instances;
+    expect(decoderA).toBeDefined();
+    expect(decoderB).toBeDefined();
+
+    // Issue a call on EACH session, but only ever feed output to session B's
+    // decoder — session A's call is left permanently pending (never emits,
+    // never resolves on its own). If the two sessions shared one
+    // serialization queue (a global, not per-session, bug), session B would
+    // be stuck behind session A's still-pending turn and this test would
+    // hang until the default timeout.
+    const framePromiseA = pool.getFrameAt('a', 0.02);
+    let bResolved = false;
+    const framePromiseB = pool.getFrameAt('b', 0.02).then((f) => {
+      bResolved = true;
+      return f;
+    });
+
+    decoderB!.emit(0);
+    decoderB!.emit(33_333);
+    const frameB = await framePromiseB;
+    expect(bResolved).toBe(true);
+    expect(frameB?.timestamp).toBe(0);
+
+    // Clean up session A without ever giving it output — releaseSession
+    // force-settles its still-pending internal waiters so framePromiseA
+    // resolves (to null) instead of leaking a dangling promise past this test.
+    pool.releaseSession('a');
+    await framePromiseA;
+    await Promise.all([readyA, readyB]);
+    pool.dispose();
+  });
+});
+
+/**
+ * WS3 Stage 3/4 — end-to-end regression for the confirmed root cause
+ * (docs/ws3-video-segments/ws3-audit.md's Part A / "fourth pass" fix):
+ * `findChunkRange` resolving a deep target to a stale, much-earlier frame on
+ * a B-frame-reordered chunk array. Live instrumentation on a real 10s clip
+ * recorded target 9.6144s resolving to 3.7916s (119 inversions / 240
+ * chunks); this drives `VideoDecoderPool.getFrameAt` itself (not just the
+ * pure `findChunkRange` function above) through the same shape of clip and
+ * asserts the resolved frame lands near the requested target.
+ */
+describe('VideoDecoderPool — B-frame timestamp inversions no longer resolve to a stale frame (WS3 Stage 3/4)', () => {
+  // Plain MockVideoDecoder emits synchronously in DECODE-call order, not
+  // presentation order — accurate for the OTHER describe blocks' monotonic
+  // fixtures, but NOT a faithful stand-in for a real decoder against a
+  // deliberately-reordered chunk array: a real decoder buffers and reorders
+  // output to presentation order. This mock approximates that by buffering
+  // every decode() call and emitting the batch sorted by timestamp on
+  // flush() — good enough to validate that `session.frames` ends up in the
+  // ascending order `getFrameAtInternal`'s selection logic requires, for a
+  // batch that reaches the session's true end (this test's scenario, where
+  // `fullyFed` becomes true within the one initial batch and `feedWindow`'s
+  // own redesign already guarantees a flush() there — see feedWindow's own
+  // doc comment).
+  class ReorderBufferVideoDecoder {
+    static instances: ReorderBufferVideoDecoder[] = [];
+    outputCb: (frame: MockVideoFrame) => void;
+    private needsKey = true;
+    private pending: { timestamp: number; type: string }[] = [];
+    resetCalls = 0;
+    closed = false;
+    constructor(init: { output: (frame: MockVideoFrame) => void; error: (e: Error) => void }) {
+      this.outputCb = init.output;
+      ReorderBufferVideoDecoder.instances.push(this);
+    }
+    configure(): void { this.needsKey = true; }
+    decode(chunk: { timestamp: number; type: string }): void {
+      if (this.needsKey && chunk.type !== 'key') throw new Error('A key frame is required after configure() or flush().');
+      this.needsKey = false;
+      this.pending.push(chunk);
+    }
+    async flush(): Promise<void> {
+      const batch = [...this.pending].sort((a, b) => a.timestamp - b.timestamp);
+      this.pending = [];
+      for (const c of batch) this.outputCb(new MockVideoFrame(c.timestamp));
+      this.needsKey = true;
+    }
+    reset(): void { this.resetCalls++; this.pending = []; this.needsKey = true; }
+    close(): void { this.closed = true; }
+  }
+
+  beforeEach(() => {
+    ReorderBufferVideoDecoder.instances = [];
+    vi.stubGlobal('VideoDecoder', ReorderBufferVideoDecoder);
+  });
+
+  it('getFrameAt near a clip\'s end resolves close to the requested target, not a stale early frame, despite chunk timestamp inversions', async () => {
+    const demuxed = {
+      config: { codec: 'avc1.640020', codedWidth: 1280, codedHeight: 720, description: new Uint8Array() },
+      // The early-spike fixture, not the per-GOP one — see this file's own
+      // comment on makeReorderedChunks' non-regression test above for why
+      // that one doesn't actually discriminate the fix.
+      chunks: makeChunksWithEarlyInversion(5, 60, 30), // 5 GOPs x 2s = 10s clip, matching the reported repro's shape
+      durationSec: 10,
+    };
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 9.6144);
+    const frame = (await pool.getFrameAt('seg', 9.6144)) as unknown as MockVideoFrame;
+
+    expect(frame).not.toBeNull();
+    // Pre-fix this resolved to ~3.79s (a stale frame from many GOPs
+    // earlier) — the reported defect. Post-fix it must land within the
+    // correct (last, ~[8.0, 10.0)) GOP — 7.9999 not an exact 8.0 given the
+    // fixture's own integer-microsecond frame-duration rounding.
+    expect(frame.timestamp / 1e6).toBeGreaterThanOrEqual(7.999);
+    expect(frame.timestamp / 1e6).toBeLessThanOrEqual(9.6144 + 1e-6);
   });
 });

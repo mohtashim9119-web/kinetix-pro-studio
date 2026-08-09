@@ -120,6 +120,16 @@ interface FrameWaiter {
   settle: () => void;
 }
 
+/** The next `getFrameAt` turn queued behind a session's currently-running one
+ *  (WS3 concurrent-decode fix — see the class's `getFrameAt` doc comment). At
+ *  most one of these ever exists per session: a call that arrives while one
+ *  is already queued coalesces into it by overwriting `targetSec` and adding
+ *  its own resolver, rather than queuing a separate turn. */
+interface PendingCall {
+  targetSec: number;
+  resolvers: Array<(frame: VideoFrame | null) => void>;
+}
+
 /** Wraps a single VideoDecoder so it can be handed from one session to the
  *  next (Section 4.2 decoder reuse). The output/error callbacks are bound
  *  once, at construction, to this handle — never to a session directly —
@@ -179,14 +189,56 @@ interface DecodeSession {
   ready: Promise<void>;
   closed: boolean;
   waiters: FrameWaiter[];
+
+  /** Tail of this session's `getFrameAt` serialization chain (WS3
+   *  concurrent-decode fix) — always settled; the next turn chains onto it so
+   *  it only starts once the previous one has fully finished. Independent per
+   *  session, so two different sessions still decode concurrently. */
+  queueTail: Promise<void>;
+  /** True only while a turn's own body (`getFrameAtInternal`) is actively
+   *  executing for this session — set at the start of that body, cleared at
+   *  the end. A call arriving while this is true queues behind it
+   *  (`pendingCall`); a call arriving while it's false becomes the next turn
+   *  on `queueTail` directly. */
+  turnRunning: boolean;
+  /** The turn queued behind the currently-running one, if any — see
+   *  `PendingCall`'s own doc comment. Only ever populated while
+   *  `turnRunning` is true; a call that arrives with nothing running becomes
+   *  its own turn on `queueTail` instead of populating this. */
+  pendingCall: PendingCall | null;
 }
 
 /** Finds the chunk range [startIndex, endIndex] (inclusive) to feed a decoder
  *  so it can produce frames covering source time [startSec, endSec].
  *  VideoDecoder can only begin decoding at a sync (key) sample, so
  *  startIndex backs up to the last keyframe at or before startSec.
- *  endIndex includes one chunk past endSec as a margin (B-frame GOPs can
- *  need a little source data beyond the last requested presentation time). */
+ *  endIndex includes one GOP of margin past endSec (B-frame GOPs can need a
+ *  little source data beyond the last requested presentation time).
+ *
+ * WS3 Stage 3/4 fix (docs/ws3-video-segments/ws3-audit.md): `chunks` is in
+ * DECODE (container) order but timestamped by PRESENTATION time
+ * (`videoDemuxer.ts`'s `sample.cts`) — for any real source with B-frames
+ * this makes the array locally non-monotonic (confirmed via live
+ * instrumentation on a real 10s clip: 119 timestamp inversions across 240
+ * chunks). The previous version of this function did a single linear scan
+ * that `break`s at the first chunk whose timestamp exceeds the target,
+ * which assumes ascending order to be correct — on a non-monotonic array an
+ * early out-of-order sample can trip that break many GOPs too soon,
+ * resolving a deep target (e.g. 9.61s) to a stale, much-earlier frame (the
+ * reproduced defect: 3.79s).
+ *
+ * This scans keyframes only, never a delta/B-frame timestamp, and does not
+ * early-`break` on the first exceedance — it takes the LAST keyframe whose
+ * own timestamp is still at-or-before the target. That's a materially
+ * weaker, safer assumption than "the whole array is ascending": within a
+ * well-formed GOP structure, keyframe (I-frame) presentation timestamps are
+ * reliably non-decreasing across the whole file even though delta-frame
+ * timestamps inside a GOP are not — B-frame reordering is confined within a
+ * GOP, never across a GOP boundary. `endIndex` is found the same way (the
+ * last keyframe at-or-before `endSec`), then extended one GOP further as
+ * margin — the GOP-granular equivalent of the original "one chunk of
+ * margin," since a per-chunk margin isn't a meaningful concept against a
+ * non-monotonic array. */
 export function findChunkRange(
   chunks: readonly EncodedVideoChunk[],
   startSec: number,
@@ -196,20 +248,25 @@ export function findChunkRange(
   const startUs = startSec * 1e6;
   const endUs = endSec * 1e6;
 
-  let startIndex = 0;
+  const keyIndices: number[] = [];
   for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i]!;
-    if (chunk.timestamp > startUs) break;
-    if (chunk.type === 'key') startIndex = i;
+    if (chunks[i]!.type === 'key') keyIndices.push(i);
+  }
+  if (keyIndices.length === 0) keyIndices.push(0); // malformed/keyless stream — decode from the very start
+
+  let startIndex = keyIndices[0]!;
+  for (const keyIdx of keyIndices) {
+    if (chunks[keyIdx]!.timestamp > startUs) break; // keyframes are reliably ordered — safe to stop here
+    startIndex = keyIdx;
   }
 
-  let endIndex = chunks.length - 1;
-  for (let i = startIndex; i < chunks.length; i++) {
-    if (chunks[i]!.timestamp > endUs) {
-      endIndex = i;
-      break;
-    }
+  let endGopOrdinal = 0;
+  for (let k = 0; k < keyIndices.length; k++) {
+    if (chunks[keyIndices[k]!]!.timestamp > endUs) break;
+    endGopOrdinal = k;
   }
+  const marginKeyIndex = keyIndices[endGopOrdinal + 1];
+  let endIndex = marginKeyIndex !== undefined ? marginKeyIndex : chunks.length - 1;
 
   endIndex = Math.min(endIndex, startIndex + MAX_SESSION_FRAMES - 1, chunks.length - 1);
   return { startIndex, endIndex };
@@ -286,6 +343,9 @@ export class VideoDecoderPool {
       ready: Promise.resolve(),
       closed: false,
       waiters: [],
+      queueTail: Promise.resolve(),
+      turnRunning: false,
+      pendingCall: null,
     };
     session.ready = this.startSession(session, assetUrl, endSec, initialTargetSec).catch((err) => {
       // Don't poison the session cache with a failed startSession — allow a
@@ -601,12 +661,105 @@ export class VideoDecoderPool {
    * current window — this is what makes both backward scrub and a big
    * forward jump within an already-warm segment resolve correctly instead
    * of returning whatever stale frame happens to still be buffered.
+   *
+   * **Serialization (WS3 concurrent-decode fix).** This method is not safe
+   * to run twice at once against the same session: a second call's
+   * `needsReset` check can discard the frame buffer a first call is about to
+   * return, and per-call eviction can close a frame already handed to
+   * another caller (`docs/ws3-video-segments/ws3-audit.md`'s "third pass"
+   * traces the two production failure shapes this caused — a caller handed
+   * an already-closed frame, and a caller answered with the wrong frame
+   * entirely after a sibling's divergent target triggered a reset). Rather
+   * than leaning on every caller to uphold "at most one call in flight per
+   * session" itself (three independent chases against this pool have,
+   * historically, not), this method enforces it structurally: each session
+   * has its own serialization queue (`queueTail` + `turnRunning`), keyed by
+   * segment id, so two different sessions still decode fully concurrently.
+   *
+   * A call that arrives while nothing is running for this session becomes
+   * the next turn on `queueTail` directly. A call that arrives while a turn
+   * IS actively running (`turnRunning`) queues behind it (`pendingCall`); a
+   * further call arriving before that queued turn has actually started
+   * coalesces into it by overwriting its target, rather than queuing a
+   * separate turn — bounding the queue at one running + one pending turn
+   * regardless of how many calls arrive while something is genuinely
+   * mid-decode. This is a deliberate trade-off: scrubbing and slip-dragging
+   * generate many rapid, quickly-stale targets over the course of a gesture,
+   * and running every one of them in turn would add real, visible lag (each
+   * queued turn can involve a real decode wait) for callers whose target is
+   * already obsolete by the time their turn comes. A coalesced caller
+   * resolves with whichever frame the LATEST target (at the time the queued
+   * turn actually runs) produces, not its own original target — acceptable
+   * here because every caller of this pool wants "the frame for wherever the
+   * gesture/playhead is now," not a specific historical target. Two (or
+   * more) calls that arrive in the same synchronous tick — before either has
+   * had a chance to actually start running — do NOT coalesce with each
+   * other (each becomes its own turn, chained sequentially); this only
+   * matters for a genuinely-synchronous burst, which none of this pool's
+   * real callers produce, and it stays fully correct either way, since
+   * strict sequencing is what actually fixes the two failure shapes above —
+   * coalescing is purely a latency optimization on top of that, not a
+   * correctness requirement.
+   *
+   * A rejected/throwing turn still lets the next queued turn run (the
+   * internal `.catch` below settles that turn's own callers with `null` and
+   * lets `queueTail` proceed rather than leaving it permanently rejected).
+   * Session teardown mid-queue cannot leave a caller waiting forever either:
+   * `closeSession` force-settles the in-flight turn's internal waiters (see
+   * `fillWindow`'s `while (!session.closed)` loop), which resolves
+   * `queueTail` promptly and lets any queued turn immediately observe
+   * `session.closed` and resolve `null`.
    */
-  async getFrameAt(segmentId: string, targetSec: number): Promise<VideoFrame | null> {
+  getFrameAt(segmentId: string, targetSec: number): Promise<VideoFrame | null> {
     const session = this.sessions.get(segmentId);
-    if (!session || session.closed) return null;
+    if (!session || session.closed) return Promise.resolve(null);
     this.touch(segmentId);
 
+    if (session.pendingCall) {
+      // Coalesce: a turn is already queued behind the in-flight one — retarget
+      // it to this newer request and share its eventual result rather than
+      // queuing a second turn (see this method's doc comment).
+      session.pendingCall.targetSec = targetSec;
+      return new Promise((resolve) => session.pendingCall!.resolvers.push(resolve));
+    }
+
+    return new Promise<VideoFrame | null>((resolve) => {
+      const pending: PendingCall = { targetSec, resolvers: [resolve] };
+      // Only queue behind an ACTUALLY-RUNNING turn — a call arriving while
+      // nothing has started yet (even if another call already committed to
+      // running next) becomes its own sequential turn instead, per this
+      // method's doc comment on same-tick bursts.
+      if (session.turnRunning) session.pendingCall = pending;
+
+      session.queueTail = session.queueTail
+        .then(async () => {
+          // Clear it from the session BEFORE running, but only if it's still
+          // THIS turn's own pending record — a same-tick sibling turn ahead
+          // of us on the chain must not clobber a genuinely later coalesced
+          // pendingCall that was set after we were dispatched.
+          if (session.pendingCall === pending) session.pendingCall = null;
+          session.turnRunning = true;
+          const frame = session.closed ? null : await this.getFrameAtInternal(session, pending.targetSec);
+          session.turnRunning = false;
+          for (const r of pending.resolvers) r(frame);
+        })
+        .catch(() => {
+          // getFrameAtInternal doesn't itself throw (existing session/decoder
+          // failures are already swallowed inside it), but this guarantees a
+          // genuinely unexpected throw still settles this turn's callers and
+          // leaves `queueTail` resolved, not permanently rejected — otherwise
+          // every future call on this session would wait on a dead chain.
+          if (session.pendingCall === pending) session.pendingCall = null;
+          session.turnRunning = false;
+          for (const r of pending.resolvers) r(null);
+        });
+    });
+  }
+
+  /** The actual per-call decode/selection body — see `getFrameAt`'s doc
+   *  comment for why this is never invoked more than once at a time for the
+   *  same `session`. */
+  private async getFrameAtInternal(session: DecodeSession, targetSec: number): Promise<VideoFrame | null> {
     // Phase 5 fix (docs/webcodecs-architecture-plan.md): ensureSession() is
     // always called fire-and-forget by useWebCodecsPreview.ts (its own
     // decode-ahead effect never awaits it), and a separate effect in the

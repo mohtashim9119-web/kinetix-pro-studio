@@ -556,9 +556,14 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
       drawImageCover(ctx, img, w, h);
     } else if (asset.type === 'video') {
       const videoEl = getOrCreateVideo(asset.url, useBlendVideoCache);
-      const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
-      // undefined trimEnd = "play to end of media"; seekVideo clamps to el.duration internally
-      const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
+      // A video clip always plays at its native rate (WS3 Batch B) — clamped
+      // at sourceDuration (the clip's real end), matching toSourceTime's
+      // freeze-last-frame rationale (useWebCodecsPreview.ts); seekVideo also
+      // clamps to el.duration internally as a second backstop.
+      const rawTime = (segment.trimStart ?? 0) + timeInSegment;
+      const videoTime = asset.duration !== undefined
+        ? Math.min(rawTime, asset.duration)
+        : rawTime;
       await seekVideo(videoEl, videoTime);
       drawImageCover(ctx, videoEl, w, h);
     }

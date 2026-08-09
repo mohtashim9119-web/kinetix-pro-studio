@@ -832,3 +832,64 @@ describe('PART 4 — coverage gaps closed by the real session harness', () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// PART 5 — video-segment fixture (WS3 Batch B). PART 3/4 above have zero
+// video cases (no fixture ever sets `sourceDuration`) — this closes that gap
+// at the live multi-frame session/DOM layer, which the pure-math layer
+// (dragGeometry.test.ts) cannot reach. Confirms `playbackSpeed` is never
+// written (it no longer exists as a concept) and that `trimStart` stays
+// inside the Piece 3 clamp across several simulated frames of a real drag.
+// ---------------------------------------------------------------------------
+describe('PART 5 — video-segment fixture (WS3 Batch B, playbackSpeed removal + trimStart clamp)', () => {
+  it('a right-edge drag on a video segment past 2x its clip length is NOT speed-clamped — the live width and the committed duration both track the raw drag distance, and no playbackSpeed field is ever written', () => {
+    // sourceDuration 12, trimStart 1 → clipLen 11 at 1x. The OLD speed
+    // coupling would have capped duration at clipLen/MIN_SPEED = 22; this
+    // drag asks for 25 across several frames to prove that cap is gone. B is
+    // given plenty of its own duration so the cascade's absorbing-neighbour
+    // floor (MIN_SEGMENT_DURATION) never becomes the binding constraint
+    // instead — this test is about the speed clamp, not the cascade's own
+    // unrelated floor.
+    const original = [
+      seg('A', 0, 5, { trimStart: 1 }),
+      seg('B', 5, 30),
+    ];
+    // The clip length reaches resolveDragEdge through the harness's own
+    // asset-duration lookup now, not off the segment.
+    const h = harnessOf(original, { sourceDurationById: { A: 12 } });
+    h.grab('A', 'end').moveBy(15); // frame 1: 20s — inside the old 22s cap
+    expect(h.liveGeometryFor('A').widthPx).toBeCloseTo(20 * h.pixelsPerSecond, 5);
+
+    h.moveBy(5); // frame 2: cumulative 25s — the old code would have clamped this to 22
+    expect(h.liveGeometryFor('A').widthPx).toBeCloseTo(25 * h.pixelsPerSecond, 5);
+
+    const outcome = h.release();
+    expect(outcome.kind).toBe('committed');
+    const committed = h.currentSegments.find(s => s.id === 'A')!;
+    expect(committed.duration).toBeCloseTo(25, 5); // NOT clamped to 22
+    expect('playbackSpeed' in committed).toBe(false);
+  });
+
+  it('a left-edge drag on a video segment keeps the COMMITTED trimStart inside [0, sourceDuration - duration], even when the raw candidate (and the un-clamped live width) would overflow it', () => {
+    // sourceDuration 4, trimStart 0, spans 10..15 (duration 5) — a rightward
+    // left-edge drag (shrinking from the left) pushes the raw trimStart
+    // candidate past what the 4s clip actually has, exactly the investigation
+    // doc §3 overflow shape. Driven across two frames before release, since
+    // the harness can only observe trimStart once it lands in the committed
+    // segment array (the live preview writes only left/width to the DOM,
+    // never trimStart — see writeGeometry).
+    const original = [
+      seg('P', 0, 10),
+      seg('A', 10, 5, { trimStart: 0 }),
+    ];
+    const h = harnessOf(original, { sourceDurationById: { A: 4 } });
+    h.grab('A', 'start').moveBy(2); // frame 1: partway toward the overflow region
+    h.moveBy(2.8); // frame 2: well into the region the old (unclamped) code would overflow
+
+    const outcome = h.release();
+    expect(outcome.kind).toBe('committed');
+    const committed = h.currentSegments.find(s => s.id === 'A')!;
+    expect(committed.trimStart ?? 0).toBeGreaterThanOrEqual(0);
+    expect((committed.trimStart ?? 0) + committed.duration).toBeLessThanOrEqual(4 + 1e-9);
+  });
+});

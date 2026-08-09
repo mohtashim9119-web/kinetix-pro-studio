@@ -432,8 +432,27 @@ export function headExtendFirstSegment(segments: VideoSegment[]): VideoSegment[]
   return [stretched, ...segments.slice(1)];
 }
 
-export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] =>
-  segments.map(s => {
+/**
+ * WS3 Batch B, Piece 4 — never auto-assigns an assetId another segment
+ * already holds. Explicit bracket tags (parseProjectData's own exact/
+ * contiguous-word tiers) remain allowed to repeat by design — two tags
+ * naming the same asset legitimately share it. This function only ever
+ * fuzzy-matches (the embedded-bracket path below) or context-matches — both
+ * automatic, neither an explicit tag — and the owner's "no duplication in
+ * automatic matching" ruling applies to both. `usedAssetIds` is seeded from
+ * every segment that already has an assetId (so a fresh auto-match can never
+ * collide with one parseProjectData already assigned) and grown as this pass
+ * assigns its own, so two segments processed in the same call can't collide
+ * with each other either. A segment whose only candidates are already used
+ * is left unassigned — surfaced by App.tsx's buildNoAssetSummaryEntry, which
+ * is computed from the final committed segments, downstream of this call.
+ */
+export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): VideoSegment[] => {
+  const usedAssetIds = new Set(
+    segments.map(s => s.assetId).filter((id): id is string => !!id),
+  );
+
+  return segments.map(s => {
     if (s.assetId) return s;
 
     // A segment that carried an EXPLICIT bracket tag whose filename failed
@@ -447,12 +466,19 @@ export const autoMatchSegments = (assets: Asset[], segments: VideoSegment[]): Vi
     const bracketMatch = s.text.match(/\[(.*?):?\s*(.*?)\]/);
     if (bracketMatch) {
       const name = (bracketMatch[2] ?? '').trim();
-      const asset = assets.find(a => isFuzzyMatch(name, a.name));
-      if (asset) return { ...s, assetId: asset.id };
+      const asset = assets.find(a => isFuzzyMatch(name, a.name) && !usedAssetIds.has(a.id));
+      if (asset) {
+        usedAssetIds.add(asset.id);
+        return { ...s, assetId: asset.id };
+      }
     }
 
-    const contextAsset = findAssetByContext(s.text, assets);
-    if (contextAsset) return { ...s, assetId: contextAsset.id };
+    const contextAsset = findAssetByContext(s.text, assets.filter(a => !usedAssetIds.has(a.id)));
+    if (contextAsset) {
+      usedAssetIds.add(contextAsset.id);
+      return { ...s, assetId: contextAsset.id };
+    }
 
     return s;
   });
+};

@@ -40,6 +40,7 @@ async function loadSampleAsset(): Promise<{ projectId: string; asset: Asset }> {
     url: URL.createObjectURL(blob),
     type: 'video',
     addedAt: Date.now(),
+    duration: SAMPLE_DURATION_SEC,
   };
   return { projectId, asset };
 }
@@ -60,7 +61,6 @@ export async function buildSingleSegmentFixture(): Promise<{ projectId: string }
       order: 0,
       trimStart: 0,
       trimEnd: SAMPLE_DURATION_SEC,
-      sourceDuration: SAMPLE_DURATION_SEC,
     },
   ];
 
@@ -106,7 +106,6 @@ export async function buildBoundaryFixture(): Promise<{ projectId: string }> {
       order: i,
       trimStart: 0,
       trimEnd: dur,
-      sourceDuration: SAMPLE_DURATION_SEC,
     };
     t += dur;
     return seg;

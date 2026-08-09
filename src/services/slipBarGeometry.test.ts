@@ -45,21 +45,57 @@ describe('computeSlipBarGeometry', () => {
       expect(geo.leftPct).toBeCloseTo((10 / 60) * 100, 5);
     });
 
-    it('factors in playbackSpeed (defaults to 1 when omitted)', () => {
-      const withSpeed = computeSlipBarGeometry({
+    it('widthPct is a plain duration/sourceDuration proportion — playbackSpeed no longer exists (WS3 Batch B)', () => {
+      const geo = computeSlipBarGeometry({
         duration: 20,
-        playbackSpeed: 2,
         trimStart: 0,
         sourceDuration: 40,
       });
-      expect(withSpeed.widthPct).toBeCloseTo(100, 5);
+      expect(geo.widthPct).toBeCloseTo(50, 5);
+    });
+  });
 
-      const noSpeed = computeSlipBarGeometry({
-        duration: 20,
-        trimStart: 0,
-        sourceDuration: 40,
-      });
-      expect(noSpeed.widthPct).toBeCloseTo(50, 5);
+  describe('isInert (WS3 Batch B, Piece 3 — Case A, freeze-last-frame)', () => {
+    it('is true when the clip is shorter than the segment', () => {
+      const geo = computeSlipBarGeometry({ duration: 10, trimStart: 0, sourceDuration: 4 });
+      expect(geo.isInert).toBe(true);
+    });
+
+    it('is true when the clip is exactly as long as the segment (nothing to choose)', () => {
+      const geo = computeSlipBarGeometry({ duration: 10, trimStart: 0, sourceDuration: 10 });
+      expect(geo.isInert).toBe(true);
+    });
+
+    it('is false when the clip is longer than the segment (a real window to trim)', () => {
+      const geo = computeSlipBarGeometry({ duration: 10, trimStart: 0, sourceDuration: 10.001 });
+      expect(geo.isInert).toBe(false);
+    });
+
+    it('is false when sourceDuration is unknown — nothing to judge either way', () => {
+      const geo = computeSlipBarGeometry({ duration: 10, trimStart: 0, sourceDuration: undefined });
+      expect(geo.isInert).toBe(false);
+    });
+  });
+
+  describe('rightPct (WS3 Batch B, Piece 3 — the actual overflow bug: leftPct + widthPct, composed and clamped ONCE, here)', () => {
+    it('equals leftPct + widthPct in the ordinary case', () => {
+      const geo = computeSlipBarGeometry({ duration: 20, trimStart: 10, sourceDuration: 60 });
+      expect(geo.rightPct).toBeCloseTo(geo.leftPct + geo.widthPct, 9);
+    });
+
+    it('never exceeds 100 even when leftPct + widthPct individually sum past it', () => {
+      // leftPct = 90, widthPct = 50 → sum 140 without the clamp this function exists to add.
+      const geo = computeSlipBarGeometry({ duration: 30, trimStart: 54, sourceDuration: 60 });
+      expect(geo.leftPct).toBeCloseTo(90, 5);
+      expect(geo.widthPct).toBeCloseTo(50, 5);
+      expect(geo.rightPct).toBe(100);
+    });
+
+    it('closes the exact investigation-doc repro: duration 5, sourceDuration 60, trimStart 500 (leftPct+widthPct = 108.33)', () => {
+      const geo = computeSlipBarGeometry({ duration: 5, trimStart: 500, sourceDuration: 60 });
+      expect(geo.leftPct).toBe(100); // already clamped individually
+      expect(geo.widthPct).toBeCloseTo(8.333, 2);
+      expect(geo.rightPct).toBe(100); // the sum, clamped — this is the fix
     });
   });
 

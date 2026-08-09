@@ -25,6 +25,12 @@ function makeImageSegment(partial: Partial<VideoSegment> & { id: string }): Vide
   return makeSegment({ assetId: 'i1', ...partial });
 }
 
+/** A project whose video asset carries `clipLen` as its probed duration —
+ *  the clip length now lives on the asset, not the segment. */
+function makeProjectWithClip(clipLen: number, partial: Partial<Project> = {}): Project {
+  return makeProject({ assets: [{ ...VIDEO_ASSET, duration: clipLen }, IMAGE_ASSET], ...partial });
+}
+
 function makeProject(partial: Partial<Project> = {}): Project {
   return {
     id: 'p1',
@@ -153,14 +159,26 @@ describe('isPlainVideoSegment', () => {
     expect(isPlainVideoSegment(seg, undefined, next, project)).toBe(false);
   });
 
-  it('false when playbackSpeed differs from 1', () => {
-    const seg = makeSegment({ id: 's', playbackSpeed: 2 });
-    expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(false);
+  it('false when the clip is shorter than the segment (freeze-last-frame — encodePlainVideoSegment cannot pad, WS3 Batch B)', () => {
+    const seg = makeSegment({ id: 's', duration: 5, trimStart: 0 });
+    expect(isPlainVideoSegment(seg, undefined, undefined, makeProjectWithClip(3))).toBe(false);
   });
 
-  it('stays plain when playbackSpeed is explicitly 1', () => {
-    const seg = makeSegment({ id: 's', playbackSpeed: 1 });
+  it('stays plain when the clip is at least as long as the segment (plain trim window)', () => {
+    const seg = makeSegment({ id: 's', duration: 3, trimStart: 0 });
+    expect(isPlainVideoSegment(seg, undefined, undefined, makeProjectWithClip(60))).toBe(true);
+  });
+
+  it('stays plain when the asset has no probed duration (no freeze possible to detect)', () => {
+    const seg = makeSegment({ id: 's', duration: 3 });
+    expect(VIDEO_ASSET.duration).toBeUndefined();
     expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
+  it('false when trimStart eats into an otherwise-sufficient clip, leaving less than the segment needs', () => {
+    // clip 10s, trimStart 8 → only 2s of clip left, but duration is 3.
+    const seg = makeSegment({ id: 's', duration: 3, trimStart: 8 });
+    expect(isPlainVideoSegment(seg, undefined, undefined, makeProjectWithClip(10))).toBe(false);
   });
 });
 

@@ -453,7 +453,6 @@ describe('PART 2 — multi-step gesture snapshot (live preview vs. committed res
       edge: direction,
       edgeContentX: 1200,
       pixelsPerSecond: pps,
-      isVideo: false,
     });
     const preview1 = resolveDragPreview(original, draggedIdx, finalFrame1.duration, finalFrame1.trimStart, 'right');
     expect(spans(preview1)).toBe('A[0.00..5.00] B[5.00..12.00] C[12.00..15.00] D[15.00..20.00]');
@@ -466,7 +465,6 @@ describe('PART 2 — multi-step gesture snapshot (live preview vs. committed res
       edge: direction,
       edgeContentX: 1400,
       pixelsPerSecond: pps,
-      isVideo: false,
     });
     const preview2 = resolveDragPreview(original, draggedIdx, finalFrame2.duration, finalFrame2.trimStart, 'right');
     expect(spans(preview2)).toBe('A[0.00..5.00] B[5.00..14.00] C[14.00..15.00] D[15.00..20.00]');
@@ -484,7 +482,6 @@ describe('PART 2 — multi-step gesture snapshot (live preview vs. committed res
       edge: 'end',
       edgeContentX: 600,
       pixelsPerSecond: 100,
-      isVideo: false,
     });
     const preview = resolveDragPreview(original, 0, final.duration, final.trimStart, 'right');
     expect(preview).toBe(original); // reference equality — resolveDragPreview's own documented no-op path

@@ -36,6 +36,7 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
     url: URL.createObjectURL(blob),
     type: 'video',
     addedAt: Date.now(),
+    duration: SAMPLE_DURATION_SEC,
   };
 
   const SEG_DUR = 4;
@@ -62,7 +63,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 0,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
       effectAnimation: 'sepia',
     },
     // 2. True camera-dynamics animation only (legacy AnimationType enum)
@@ -77,7 +77,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 1,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
     },
     // 3. Ken Burns zoom (effectAnimation slug that IS a real AnimationType motion case)
     {
@@ -91,7 +90,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 2,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
       effectAnimation: 'ken-burns',
     },
     // 4. Extra overlay + caption only, no filter/animation
@@ -106,7 +104,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 3,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
       showOverlay: true,
       extraOverlays: [overlay(4)],
     },
@@ -123,7 +120,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 4,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
       showOverlay: true,
       extraOverlays: [overlay(5)],
     },
@@ -139,7 +135,6 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
       order: 5,
       trimStart: 0,
       trimEnd: SEG_DUR,
-      sourceDuration: SAMPLE_DURATION_SEC,
       effectAnimation: 'gaussian-blur',
       showOverlay: true,
       extraOverlays: [overlay(6)],

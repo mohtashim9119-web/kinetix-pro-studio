@@ -42,9 +42,12 @@
  * deliberately NOT checked — the GL text renderer (plan §4.3, Step 6) will
  * render all of it; this predicate only decides whether the MEDIA/transition
  * compositing for a segment is GL-expressible today.
- * `playbackSpeed !== 1` is deliberately NOT checked — sequential decode maps
- * segment-local time to source time exactly like `toSourceTime` does for
- * preview, independent of speed.
+ * A short/long clip relative to the segment's own duration is deliberately
+ * NOT checked (`playbackSpeed` no longer exists as a concept — WS3 Batch B)
+ * — sequential decode maps segment-local time to source time exactly like
+ * `toSourceTime` does for preview, freeze-last-frame and trimmed-window
+ * cases included, so neither disqualifies a segment from GL-expressible
+ * export.
  * Grade never disqualifies — it is GL-native (`compositeParams.ts`'s own
  * per-segment `effectGrade` resolution).
  */

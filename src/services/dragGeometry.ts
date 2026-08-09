@@ -62,12 +62,6 @@
 import type { VideoSegment } from '../types';
 import { MIN_SEGMENT_DURATION } from './dragCascade';
 
-/** Playback-speed clamp for a video segment whose duration is stretched or
- *  squeezed by a drag. Moved here from `App.tsx` (K16) alongside the math that
- *  uses them; `App.tsx` imports them back for the speed slider. */
-export const MIN_PLAYBACK_SPEED = 0.5;
-export const MAX_PLAYBACK_SPEED = 2.0;
-
 /** Which edge of the segment card the user grabbed. */
 export type DragEdge = 'start' | 'end';
 
@@ -171,22 +165,21 @@ export function computeGrabOffsetPx(
 
 export interface DragEdgeInput {
   /** The segment as it was at drag START — never a partially-dragged copy. */
-  segment: Pick<VideoSegment, 'startTime' | 'duration' | 'trimStart' | 'trimEnd' | 'sourceDuration'>;
+  segment: Pick<VideoSegment, 'startTime' | 'duration' | 'trimStart' | 'trimEnd'>;
+  /** The clip's own length, resolved by the caller from the asset the segment
+   *  points at (`Asset.duration`). Undefined for an image segment, or when
+   *  the probe failed — the Piece 3 trimStart clamp below simply doesn't
+   *  engage then, rather than guessing a bound. */
+  sourceDuration?: number;
   edge: DragEdge;
   /** Content-space x the grabbed edge should sit at (grab offset already removed). */
   edgeContentX: number;
   pixelsPerSecond: number;
-  /** True only for a segment backed by a video asset with a known source
-   *  duration — gates the playback-speed coupling exactly as before. */
-  isVideo: boolean;
 }
 
 export interface DragEdgeResult {
   duration: number;
   trimStart: number;
-  /** Present only when the speed coupling engaged, matching the pre-K16
-   *  `speedUpdate` variable's own presence rule exactly. */
-  playbackSpeed?: number;
   /** Content-space left edge, px — what the card's `style.left` must become.
    *  Unchanged from the segment's own start on an end-edge drag; on a
    *  start-edge drag the right edge is pinned, so this is
@@ -199,15 +192,27 @@ export interface DragEdgeResult {
  * the live preview and the committed result.
  *
  * Every arithmetic step below is carried over verbatim from `App.tsx`'s
- * pre-K16 `handleUp`, including the order of the clamps and the exact
- * `finalClipLen > 0` gate on the speed coupling. `dragGeometry.test.ts` pins it
- * against a literal transcription of that expression: for the same
- * `edgeContentX`, this must return what the old code returned. K16 changes which
- * `edgeContentX` a given pointer position produces — it does not change what any
- * given `edgeContentX` means.
+ * pre-K16 `handleUp`, EXCEPT the video speed-coupling block, removed here
+ * (WS3 Batch B, Piece 2 — owner ruling: a video clip always plays at its
+ * native rate, "duration ↔ playbackSpeed" is no longer a concept). A video
+ * segment's duration is now exactly as freely draggable as an image's; what
+ * plays when the dragged duration no longer matches the clip length is a
+ * preview/export-time concern (freeze-last-frame for a too-short clip, a
+ * `trimStart`-positioned window for a too-long one — see toSourceTime in
+ * useWebCodecsPreview.ts and its mirrors), not a constraint on the drag
+ * itself. `dragGeometry.test.ts` PART 1 was updated deliberately for this —
+ * see its own comments for the old vs. new expected values.
+ *
+ * Piece 3 (same pass) — a `'start'`-edge drag's `trimStart` is now clamped to
+ * `[0, max(0, sourceDuration - duration)]`, the root-cause fix for the
+ * slip-trim bar overflow (investigation doc §3): previously unbounded here,
+ * an ordinary left-edge drag on a video segment could push `trimStart`
+ * arbitrarily high. The clamp only ever engages for a segment with a known,
+ * positive `sourceDuration` (i.e. a video segment) — an image segment has
+ * none and is unaffected.
  */
 export function resolveDragEdge(input: DragEdgeInput): DragEdgeResult {
-  const { segment, edge, edgeContentX, pixelsPerSecond, isVideo } = input;
+  const { segment, sourceDuration, edge, edgeContentX, pixelsPerSecond } = input;
   const edgeSec = edgeContentX / pixelsPerSecond;
   const originalTrimStart = segment.trimStart ?? 0;
   const originalEnd = segment.startTime + segment.duration;
@@ -220,20 +225,9 @@ export function resolveDragEdge(input: DragEdgeInput): DragEdgeResult {
     const rawDelta = edgeSec - segment.startTime;
     duration = Math.max(MIN_SEGMENT_DURATION, segment.duration - rawDelta);
     trimStart = Math.max(0, originalTrimStart + rawDelta);
-  }
-
-  let playbackSpeed: number | undefined;
-  const srcDur = segment.sourceDuration ?? 0;
-  if (isVideo && srcDur > 0) {
-    const clipLen = (segment.trimEnd ?? srcDur) - trimStart;
-    if (clipLen > 0) {
-      const maxDur = clipLen / MIN_PLAYBACK_SPEED;
-      const minDur = Math.max(MIN_SEGMENT_DURATION, clipLen / MAX_PLAYBACK_SPEED);
-      duration = Math.max(minDur, Math.min(maxDur, duration));
-      playbackSpeed = Math.max(
-        MIN_PLAYBACK_SPEED,
-        Math.min(MAX_PLAYBACK_SPEED, clipLen / duration),
-      );
+    const srcDur = sourceDuration ?? 0;
+    if (srcDur > 0) {
+      trimStart = Math.min(trimStart, Math.max(0, srcDur - duration));
     }
   }
 
@@ -245,5 +239,5 @@ export function resolveDragEdge(input: DragEdgeInput): DragEdgeResult {
     ? (originalEnd - duration) * pixelsPerSecond
     : segment.startTime * pixelsPerSecond;
 
-  return { duration, trimStart, playbackSpeed, segmentLeftPx };
+  return { duration, trimStart, segmentLeftPx };
 }

@@ -302,15 +302,6 @@ describe('F4 — pointercancel leaves state dirty', () => {
     expect(clickReachesTarget()).toBe(true);   // one-shot: the next one lands
   });
 
-  it('clears the playback-speed baseline on cancel, as every other resolution path does', () => {
-    // `deps.clearSpeedBaseline()` sits inside the commit branch, AFTER the
-    // `wasCancelled` early return — so a cancelled drag leaves
-    // `speedBaselineRef` holding the pre-drag clipLen for a segment whose
-    // duration the user may go on to change by other means.
-    const h = harnessOf(base());
-    h.grab('B', 'end').moveBy(1.0).cancel();
-    expect(h.speedBaselineWasCleared).toBe(true);
-  });
 });
 
 // ---------------------------------------------------------------------------

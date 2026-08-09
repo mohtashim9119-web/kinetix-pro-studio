@@ -167,17 +167,30 @@ function errMessage(e: unknown): string {
 // exactly the drift class Section 4 of the plan exists to prevent.
 // ---------------------------------------------------------------------------
 
-function toSourceTime(segment: VideoSegment, currentTime: number): number {
+// WS3 Batch B — `playbackSpeed` no longer exists on VideoSegment (a video
+// clip always plays at its native rate); mirrors exportWorker.ts's own fix.
+function toSourceTime(
+  segment: VideoSegment,
+  currentTime: number,
+  sourceDuration: number | undefined,
+): number {
   const segmentProgress = currentTime - (segment.startTime ?? 0);
-  const rawTime = (segment.trimStart || 0) + segmentProgress * (segment.playbackSpeed || 1);
-  const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
+  const rawTime = (segment.trimStart || 0) + segmentProgress;
+  const videoTime = sourceDuration !== undefined
+    ? Math.min(rawTime, sourceDuration)
+    : rawTime;
   return Math.max(0, videoTime);
 }
 
-function sourceRange(segment: VideoSegment): { start: number; end: number } {
+function sourceRange(
+  segment: VideoSegment,
+  sourceDuration: number | undefined,
+): { start: number; end: number } {
   const start = segment.trimStart || 0;
-  const speed = segment.playbackSpeed || 1;
-  const end = segment.trimEnd ?? start + segment.duration * speed;
+  const rawEnd = start + segment.duration;
+  const end = sourceDuration !== undefined
+    ? Math.min(rawEnd, sourceDuration)
+    : rawEnd;
   return { start, end };
 }
 
@@ -207,8 +220,8 @@ interface DecodeCursor {
   exhausted: boolean;
 }
 
-function openCursor(segment: VideoSegment, assetUrl: string): DecodeCursor {
-  const { start, end } = sourceRange(segment);
+function openCursor(segment: VideoSegment, assetUrl: string, sourceDuration: number | undefined): DecodeCursor {
+  const { start, end } = sourceRange(segment, sourceDuration);
   return { gen: decodeSegmentFrames(assetUrl, start, end), pending: null, current: null, exhausted: false };
 }
 
@@ -294,10 +307,10 @@ class RunState {
     if (asset.type === 'video') {
       let cursor = this.cursors.get(seg.id);
       if (!cursor) {
-        cursor = openCursor(seg, asset.url);
+        cursor = openCursor(seg, asset.url, asset.duration);
         this.cursors.set(seg.id, cursor);
       }
-      const targetSec = toSourceTime(seg, currentTime);
+      const targetSec = toSourceTime(seg, currentTime, asset.duration);
       const frame = await frameAt(cursor, targetSec);
       if (!frame) return null;
       const w = frame.displayWidth;

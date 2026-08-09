@@ -611,8 +611,8 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
       if (asset.type === 'image') {
         source = await loadImageForSampling(asset.url);
       } else if (asset.type === 'video') {
-        const { start, end } = sourceRange(segment);
-        const target = toSourceTime(segment, segment.startTime);
+        const { start, end } = sourceRange(segment, asset.duration);
+        const target = toSourceTime(segment, segment.startTime, asset.duration);
         try {
           await autoGradePool.ensureSession(segment.id, asset.url, start, end, target);
           source = await autoGradePool.getFrameAt(segment.id, target);
@@ -929,16 +929,16 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
       warmedSegmentIdRef.current[newSlot] = null;
     }
 
-    // Seek to the correct intra-segment position.
-    const segmentProgress = currentTimeRef.current - (currentSegment.startTime ?? 0);
-    const rawTime = (currentSegment.trimStart || 0) + segmentProgress * (currentSegment.playbackSpeed || 1);
-    const videoTime = currentSegment.trimEnd !== undefined
-      ? Math.min(rawTime, currentSegment.trimEnd)
-      : rawTime;
-    const clampedVideoTime = Math.max(0, videoTime);
+    // Seek to the correct intra-segment position. A video clip always plays
+    // at its native rate (WS3 Batch B) — the clamp is at sourceDuration (the
+    // clip's real end), not trimEnd, so a segment whose clip is shorter than
+    // its own duration holds its last frame instead of running past the end
+    // of the source. See toSourceTime's own comment (useWebCodecsPreview.ts)
+    // for the full freeze-vs-trimmed-window rationale this mirrors.
+    const clampedVideoTime = toSourceTime(currentSegment, currentTimeRef.current, currentAsset.duration);
     seekToTime(activeEl, clampedVideoTime);
 
-    activeEl.playbackRate = (currentSegment.playbackSpeed || 1) * globalPlaybackSpeed;
+    activeEl.playbackRate = globalPlaybackSpeed;
 
     if (isPlaying) {
       activeEl.play().catch(() => {});
@@ -1039,13 +1039,15 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     }
   }, [isPlaying]);
 
-  // Sync playbackRate whenever playbackSpeed or global speed changes
-  // without re-seeking (seek only happens on segment transition above).
+  // Sync playbackRate whenever the global speed changes, without re-seeking
+  // (seek only happens on segment transition above). A video clip always
+  // plays at its native rate (WS3 Batch B) — only the global scrub speed
+  // applies here now.
   useEffect(() => {
     const activeEl = activeSlotRef.current === 'a' ? videoARef.current : videoBRef.current;
     if (!activeEl) return;
-    activeEl.playbackRate = (currentSegment?.playbackSpeed || 1) * globalPlaybackSpeed;
-  }, [currentSegment?.playbackSpeed, globalPlaybackSpeed]);
+    activeEl.playbackRate = globalPlaybackSpeed;
+  }, [globalPlaybackSpeed]);
 
   // Observe the stage element once (it is always mounted for the lifetime of
   // PreviewStage). Fires on divider-drag resize AND on fullscreen enter/exit

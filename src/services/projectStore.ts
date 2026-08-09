@@ -1,4 +1,4 @@
-import type { Asset, Project, ProjectMeta } from '../types';
+import type { Asset, Project, ProjectMeta, VideoSegment } from '../types';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
@@ -80,6 +80,27 @@ export function loadProject(id: string): { project: Project; savedAt: number } |
     // Path B heading layer (Decision 5): no migration — just default to [] when
     // absent, for projects saved before the `headings` field existed.
     const project = { headings: [], ...stored.project } as unknown as Project;
+    // WS3 Batch B, Piece 2 back-compat — `playbackSpeed` was removed as a
+    // concept (a video clip always plays at its native rate). A project
+    // saved before this change may still carry a per-segment value; strip it
+    // on load rather than migrate it into anything, and leave the segment's
+    // duration untouched — an old sped-up segment keeps its current length
+    // and now freezes or trims per Piece 2's Case A/B instead.
+    //
+    // `sourceDuration` is stripped for a sharper reason: it was a per-segment
+    // CACHE of the clip length, and nothing refreshed it when a segment was
+    // pointed at a different asset, so a stored value is not merely redundant
+    // — it can be wrong. The clip length now lives on `Asset.duration` and is
+    // resolved through the segment's current `assetId` at every read. Keeping
+    // a stale copy alive would be the exact defect this replaced.
+    project.segments = project.segments.map(s => {
+      const {
+        playbackSpeed: _legacyPlaybackSpeed,
+        sourceDuration: _legacySourceDuration,
+        ...rest
+      } = s as VideoSegment & { playbackSpeed?: number; sourceDuration?: number };
+      return rest;
+    });
     return { project, savedAt: stored.savedAt };
   } catch {
     return null;

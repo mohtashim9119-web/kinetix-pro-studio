@@ -112,6 +112,7 @@ Standing rules that are true today and must not be broken. (Pulled out of the ol
 - Removing an asset must call `deleteAsset` and `URL.revokeObjectURL`.
 - `Project` never stores `width`/`height` directly — dimensions are always derived via `resolutionConfig.ts`'s `resolveDimensions(aspectRatio, resolutionTier)`.
 - `aspectRatio` is locked forever at project creation and is never an editable UI field; `resolutionTier` is the only editable-later dimension field.
+- **`Asset.duration` is the single source of truth for a video clip's own length** — no `VideoSegment` field caches it; every trim/slip bound and every segment-local→source-time clamp (`toSourceTime`/`sourceRange`, `resolveDragEdge`, `plainSegment.ts`, `buildFreezeFrameEntries`) resolves it from the asset a segment currently points at, via `assetId`. Probed once per video asset at every creation site (mirroring the existing `nativeFps` pattern), plus a back-compat backfill on rehydration. Undefined when the asset isn't a video or the probe failed — callers must decline to guess (hide the trim bar, skip the clamp) rather than fabricate a length.
 
 **Sync / Whisper**
 - Boundary/breath classification must use token *indices* (from the Hirschberg alignment pass), never raw Whisper timestamps — timestamps can smear 100–900ms across a real silence seam.

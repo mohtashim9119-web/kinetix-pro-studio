@@ -217,9 +217,10 @@ export async function encodeSegment(
     }
 
     // NOTE: for segments with a trailingExtension, the video element may be seeked
-    // past trimStart + duration * playbackSpeed. The video element holds its last
-    // decoded frame in that case, which is acceptable since the segment is being faded
-    // out and visually replaced by the incoming side.
+    // past trimStart + duration (or past sourceDuration for a clip shorter than its
+    // segment — the WS3 Batch B freeze-last-frame case). The video element holds its
+    // last decoded frame in either case, which is acceptable since the segment is
+    // being faded out and visually replaced by the incoming side.
     await renderSegmentFrame({
       segment,
       asset,

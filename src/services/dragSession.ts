@@ -70,7 +70,7 @@
  * through [MEASURED: this pin still fails after that fix].
  */
 
-import type { Asset, TranscriptToken, VideoSegment } from '../types';
+import type { TranscriptToken, VideoSegment } from '../types';
 import {
   computeAutoScrollVelocity,
   computeGrabOffsetPx,
@@ -114,21 +114,22 @@ export interface DragSessionDeps {
   getSegments: () => VideoSegment[];
   /** Current timeline zoom — `pixelsPerSecondRef.current`. */
   getPixelsPerSecond: () => number;
-  /** Current asset list — `assetsRef.current` — to resolve the dragged
-   *  segment's asset type for the video speed-coupling gate. */
-  getAssets: () => Asset[];
   /** Live transcript tokens — `projectRef.current.transcriptTokens` — read
    *  fresh on EVERY preview frame (not snapshotted at drag start), so the
    *  preview's yield floor matches what the commit will read. */
   getTranscriptTokens: () => TranscriptToken[] | undefined;
+  /** The dragged segment's clip length, resolved from the asset it points at
+   *  (`Asset.duration`). Undefined for an image segment or a failed probe —
+   *  resolveDragEdge's trimStart clamp then simply doesn't engage. Read
+   *  through a dep rather than off the segment: a segment carries no cached
+   *  copy of its clip length (see Asset.duration's doc). */
+  getSourceDuration: (segment: VideoSegment) => number | undefined;
   setResizingId: (id: string | null) => void;
   setResizingType: (type: DragEdge | null) => void;
   /** `isResizingRef.current = true`. Only ever called with `true` here — the
    *  `false` clear lives in App.tsx's `resizingId`-keyed effect (D12 fix),
    *  untouched by this extraction. */
   setIsResizing: (value: boolean) => void;
-  /** `speedBaselineRef.current = null`. */
-  clearSpeedBaseline: () => void;
   /** = `applyDurationChange`. Returns true on success, false if a locked
    *  neighbour blocked the cascade. */
   commitDurationChange: (
@@ -137,10 +138,8 @@ export interface DragSessionDeps {
     newDuration: number,
     finalTrimStart: number,
     fromSide: 'left' | 'right',
-    additionalUpdates?: Partial<VideoSegment>,
     /** Cascade switches. The drag path passes `DRAG_CASCADE_OPTIONS` so the
-     *  commit conserves total duration exactly as the live preview did; the
-     *  speed slider, which shares `applyDurationChange`, passes nothing. */
+     *  commit conserves total duration exactly as the live preview did. */
     options?: DragCascadeOptions,
   ) => boolean;
   /** `setProject(prev => ({ ...prev, segments: originalSegments }))`. */
@@ -239,9 +238,6 @@ export function startDragSession(
   // discards rather than commits, since a silent, unreviewed segment-timing
   // change is worse for this app than losing one gesture the user can redo.
   let wasCancelled = false;
-  // Capture video context at drag-start for speed coupling.
-  const dragAsset = deps.getAssets().find(a => a.id === originalTarget.assetId);
-  const isVideoSeg = dragAsset?.type === 'video';
 
   // K16 — how far the pointer sat from the edge it grabbed, held
   // constant for the whole gesture. Subtracting it on every move is
@@ -335,10 +331,10 @@ export function startDragSession(
     // under the grabbed point of the handle.
     const live = resolveDragEdge({
       segment: originalTarget,
+      sourceDuration: deps.getSourceDuration(originalTarget),
       edge: type,
       edgeContentX: lastEdgeX,
       pixelsPerSecond: pps,
-      isVideo: isVideoSeg,
     });
     // Read the tokens live rather than closing over a drag-start copy,
     // so the preview's yield floor is the same input applyDurationChange
@@ -463,25 +459,24 @@ export function startDragSession(
   // `wasCancelled` early returns. That was correct, but only positionally:
   // nothing enforced it, and the invariant "teardown is above every return"
   // is exactly the kind a later edit silently breaks. It already had —
-  // twice. The 2026-08-08 discard ruling added the `wasCancelled` early
-  // return, which skipped the then-below-it `clearSpeedBaseline()` and
-  // stranded a stale speed baseline; and the ghost-click swallower armed on
-  // a cancel that produces no click, leaving a one-shot listener waiting to
-  // eat the user's next legitimate click anywhere in the app. Both were
-  // found by hand (manual checklist step 10), not by the suite.
+  // twice: once by the 2026-08-08 discard ruling's new `wasCancelled` early
+  // return (which at the time skipped a since-removed `clearSpeedBaseline()`
+  // call — WS3 Batch B deleted the speed-slider feature that call served,
+  // per-segment `playbackSpeed` no longer exists), and once by the ghost-
+  // click swallower arming on a cancel that produces no click, leaving a
+  // one-shot listener waiting to eat the user's next legitimate click
+  // anywhere in the app. Both were found by hand (manual checklist step 10),
+  // not by the suite.
   //
   // `handleUp` now calls this from a `finally`, so no resolution path — and
   // no future one, and not even a throw out of `commitDurationChange` — can
   // return without it running. Idempotent via `torndown`.
   //
-  // ORDERING NOTE: this now runs AFTER the commit rather than before it. All
-  // four effects are order-independent with respect to `commitDurationChange`:
-  // the React setters land in the same batch either way; no pointer or click
-  // event can arrive during a synchronous handler, so listener removal and
-  // swallower arming cannot race it; no rAF frame can fire mid-body; and
-  // `applyDurationChange` (the real `commitDurationChange`) never reads
-  // `speedBaselineRef` — verified by grep over App.tsx, whose only readers are
-  // the separate speed-slider gesture in `handleSpeedChange`.
+  // ORDERING NOTE: this now runs AFTER the commit rather than before it. Both
+  // remaining effects are order-independent with respect to
+  // `commitDurationChange`: the React setters land in the same batch either
+  // way, and no pointer or click event can arrive during a synchronous
+  // handler, so listener removal and swallower arming cannot race it.
   let torndown = false;
   const teardown = (): void => {
     if (torndown) return;
@@ -526,9 +521,6 @@ export function startDragSession(
       };
       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
     }
-    // This gesture moved, so its speed baseline is spent however it resolved —
-    // commit, cancel, or block.
-    deps.clearSpeedBaseline();
   };
 
   const handleUp = () => {
@@ -551,14 +543,11 @@ export function startDragSession(
       // Commit — one pure call, the identical one the live frames used.
       const final = resolveDragEdge({
         segment: originalTarget,
+        sourceDuration: deps.getSourceDuration(originalTarget),
         edge: type,
         edgeContentX: lastEdgeX,
         pixelsPerSecond: pps,
-        isVideo: isVideoSeg,
       });
-      const speedUpdate = final.playbackSpeed === undefined
-        ? undefined
-        : { playbackSpeed: final.playbackSpeed };
       // F7, OWNER RULING 2026-08-08 — there is no negligible-drag threshold any
       // more. A drag that moved is committed however small it was: fine
       // adjustment at high zoom is a real editing gesture, and silently
@@ -566,7 +555,7 @@ export function startDragSession(
       // guard against a plain CLICK committing anything is `hasMoved` above,
       // which is unaffected — it requires an actual pointermove, not a distance.
       const succeeded = deps.commitDurationChange(
-        originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
+        originalSegments, id, final.duration, final.trimStart, direction,
         // The SAME options object `resolveDragPreview` used for every frame of
         // this gesture. Preview and commit must resolve identically or the
         // cards jump on release (K17) — and here specifically, a commit that

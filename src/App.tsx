@@ -61,10 +61,6 @@ import {
   MIN_SEGMENT_DURATION,
   type DragCascadeOptions,
 } from './services/dragCascade';
-import {
-  MIN_PLAYBACK_SPEED,
-  MAX_PLAYBACK_SPEED,
-} from './services/dragGeometry';
 import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
@@ -208,10 +204,8 @@ interface RawSegment {
   unmatchedExplicitTag?: boolean;
   transition: TransitionType;
   animation: AnimationType;
-  playbackSpeed: number;
   trimStart: number;
   extraOverlays: TextOverlay[];
-  sourceDuration?: number;
 }
 
 const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number> => {
@@ -289,7 +283,8 @@ async function persistFileToAsset(
     return null;
   }
   const nativeFps = type === 'video' ? await resolveVideoNativeFps(file) : undefined;
-  return { id, name: file.name, url, type, file, addedAt: Date.now(), nativeFps };
+  const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
+  return { id, name: file.name, url, type, file, addedAt: Date.now(), nativeFps, duration };
 }
 
 /**
@@ -340,7 +335,9 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
         return;
       }
       const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
-      newAssets.push({ id, name, url: URL.createObjectURL(blob), type, file: new File([blob], filename), nativeFps });
+      const url = URL.createObjectURL(blob);
+      const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
+      newAssets.push({ id, name, url, type, file: new File([blob], filename), nativeFps, duration });
     });
     await Promise.all(filePromises);
   } catch (err) {
@@ -351,9 +348,6 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
 
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
-// NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
-// MIN_PLAYBACK_SPEED / MAX_PLAYBACK_SPEED moved to services/dragGeometry.ts (K16),
-// alongside the drag math that applies them; imported back at the top of this file.
 const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
 
 // Enhanced parser that handles heading-voiceover logic
@@ -437,7 +431,6 @@ export const parseProjectData = async (
       text,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
-      playbackSpeed: 1,
       trimStart: 0,
       extraOverlays: [],
     };
@@ -503,8 +496,14 @@ export const parseProjectData = async (
     }
 
     if (!current.assetId && !hasExplicitTagName && text) {
+      // No fallback to the full `assets` array once the unused pool is
+      // exhausted — that used to silently re-assign an asset another
+      // segment already claimed this same pass. An exhausted pool leaves
+      // the segment unmatched instead (surfaced via the grouped sync-log
+      // entry surfaced by buildNoAssetSummaryEntry, computed later from the
+      // run's final committed segments).
       const availableAssets = assets.filter(a => !usedAssetIdsTotal.has(a.id) && a.type !== 'audio');
-      const contextualAsset = findAssetByContext(text, availableAssets.length > 0 ? availableAssets : assets);
+      const contextualAsset = availableAssets.length > 0 ? findAssetByContext(text, availableAssets) : undefined;
       if (contextualAsset) {
         current.assetId = contextualAsset.id;
         usedAssetIdsTotal.add(contextualAsset.id);
@@ -541,17 +540,15 @@ export const parseProjectData = async (
       targetDuration = voDuration / Math.max(1, rawSegments.length);
     }
 
-    const asset = assets.find(a => a.id === s.assetId);
-    let playbackSpeed = 1;
-    let sourceDuration: number | undefined;
-
-    if (asset?.type === 'video') {
-      sourceDuration = await getMediaDuration(asset.url, 'video');
-      if (sourceDuration > 0 && targetDuration > sourceDuration) {
-        playbackSpeed = sourceDuration / targetDuration;
-      }
-    }
-
+    // A video clip always plays at its native rate (owner ruling, WS3 Batch
+    // B) — no speed-fit-to-slot computation here. If the clip runs short or
+    // long of targetDuration, that's resolved at preview/export time (freeze
+    // the last frame, or play a trimStart-positioned window — see
+    // buildFreezeFrameEntries and toSourceTime's clamp), not by re-timing the
+    // source. The clip's length itself is NOT captured onto the segment: it
+    // lives on `Asset.duration` and is resolved through `assetId` at every
+    // read, so pointing this segment at a different asset later can't leave a
+    // stale length behind (see Asset.duration's doc).
     const segment: VideoSegment = {
       ...s,
       id: crypto.randomUUID(),
@@ -560,13 +557,11 @@ export const parseProjectData = async (
       anchorStart: Number(currentTimeAccumulator.toFixed(3)), // character-weight bootstrap anchor
       anchorSource: 'estimate' as const,
       trimStart: 0,
-      playbackSpeed,
       order: i,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
       showOverlay: false,
       extraOverlays: [],
-      sourceDuration,
     };
 
     if (i === rawSegments.length - 1 && voiceoverDuration > 0) {
@@ -1034,25 +1029,91 @@ export function buildSyncAbortEntry(
 }
 
 /**
- * One summary entry for a successful run's committed segments with no
- * matched asset (1-based positions, compacted into ranges via
- * compactRanges). Returns undefined when every segment has an asset — the
- * caller never appends a zero entry.
+ * WS3 Batch B, Piece 1 — the single "this segment ended up with no asset"
+ * summary entry, replacing two emitters that used to cover overlapping
+ * ground: a pre-existing one computed from the run's final committed
+ * segments ("No asset matched…", no asset-count context) and a Batch A
+ * addition computed from parseProjectData's own output right after the
+ * parse pass ("No asset available…", richer — asset-count context alongside
+ * the range-collapsed segment numbers), before autoMatchSegments got a
+ * chance to fill any of the gap.
+ *
+ * Both checked the identical `!segment.assetId` predicate — the only
+ * difference was WHEN in the pipeline they checked it, not what cause they
+ * detected (an explicit tag that never resolved and an exhausted untagged-
+ * fallback pool both looked the same to either one). Computing pre-
+ * autoMatchSegments risked a false positive: a segment the parse pass left
+ * unassigned that autoMatchSegments went on to fill would still have been
+ * reported as unassigned. Computing on the final committed segments (this
+ * function's contract) is the strictly correct question — "did this segment
+ * end up with no asset" — and never misses a cause the old parse-pass-only
+ * entry caught, since autoMatchSegments only ever fills gaps, never removes
+ * an assignment. Keeps the richer Batch A wording. 1-based positions,
+ * compacted into ranges via compactRanges. Returns undefined when every
+ * segment has an asset — the caller never appends a zero entry.
  */
 export function buildNoAssetSummaryEntry(
   syncRunId: string,
   noAssetSegmentNumbers: number[],
   totalSegments: number,
+  availableAssetCount: number,
   timestamp: number = Date.now(),
 ): SyncLogEntry | undefined {
   if (noAssetSegmentNumbers.length === 0) return undefined;
   return makeSyncLogEntry(
     syncRunId,
     'no-asset',
-    `No asset matched for ${noAssetSegmentNumbers.length} of ${totalSegments} segments: ${compactRanges(noAssetSegmentNumbers)}.`,
+    `No asset available for ${noAssetSegmentNumbers.length} of ${totalSegments} segments `
+    + `(${availableAssetCount} asset${availableAssetCount === 1 ? '' : 's'} for ${totalSegments} segments): `
+    + `${compactRanges(noAssetSegmentNumbers)}.`,
     undefined,
     timestamp,
   );
+}
+
+/**
+ * WS3 Batch B, Piece 2, Case A — one 'warning' entry per committed video
+ * segment whose source clip is shorter than the segment's own duration.
+ * Owner ruling: a video clip always plays at its native rate; when it runs
+ * out before the segment does, the final frame holds for the remainder (see
+ * toSourceTime's clamp in useWebCodecsPreview.ts and its three mirrors —
+ * PreviewStage.tsx, frameRenderer.ts, exportWorker.ts). This entry is purely
+ * informational — the freeze itself needs no user action — so it mirrors
+ * buildSkipLogEntries' per-item shape rather than a grouped range summary
+ * (unlike buildNoAssetSummaryEntry): each affected segment gets its own line
+ * naming exactly which one and by how much, matching the wording an owner
+ * report already used as the target: "Segment #4: source clip (1.2s) is
+ * shorter than the segment duration (2.5s); the final frame will hold for
+ * the remaining 1.3s." Computed from the run's final committed segments (not
+ * parseProjectData's own estimate) because Whisper alignment can still
+ * change a segment's duration after the parse pass. `availableClipLen`
+ * accounts for `trimStart` so a manually-trimmed segment is evaluated
+ * against what's actually left of the clip, not its full source length.
+ */
+export function buildFreezeFrameEntries(
+  syncRunId: string,
+  segments: VideoSegment[],
+  assets: Asset[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  const entries: SyncLogEntry[] = [];
+  segments.forEach((s, i) => {
+    const srcDur = s.assetId ? assets.find(a => a.id === s.assetId)?.duration : undefined;
+    if (srcDur === undefined || srcDur <= 0) return;
+    const availableClipLen = srcDur - (s.trimStart ?? 0);
+    if (availableClipLen >= s.duration) return; // Case B (or exact fit) — nothing to warn about
+    const heldFor = s.duration - availableClipLen;
+    entries.push(makeSyncLogEntry(
+      syncRunId,
+      'warning',
+      `Segment #${i + 1}: source clip (${availableClipLen.toFixed(1)}s) is shorter than the `
+      + `segment duration (${s.duration.toFixed(1)}s); the final frame will hold for the `
+      + `remaining ${heldFor.toFixed(1)}s.`,
+      { segmentIndex: i },
+      timestamp,
+    ));
+  });
+  return entries;
 }
 
 /**
@@ -1243,11 +1304,8 @@ export default function App() {
     pixelsPerSecondRef.current = pps;
   }, []);
   const [globalPlaybackSpeed, setGlobalPlaybackSpeed] = useState(1);
-  const [isAdjustingTrim, setIsAdjustingTrim] = useState(false);
   const [syncStep, setSyncStep] = useState<0 | 1 | 2 | 3 | 4>(0);
-  const [editingSegment, setEditingSegment] = useState<VideoSegment | null>(null);
   const exportModalTrapRef = useFocusTrap<HTMLDivElement>();
-  const segmentEditorTrapRef = useFocusTrap<HTMLDivElement>();
   const [isSynced, setIsSynced] = useState(false);
 
   // Voiceover waveform data, built ONCE upfront (services/waveformPipeline) instead
@@ -1489,7 +1547,6 @@ export default function App() {
     message: string;
     action?: { label: string; onClick: () => void };
   } | null>(null);
-  const [trimmingSegmentId, setTrimmingSegmentId] = useState<string | null>(null);
   const [showStockSearch, setShowStockSearch] = useState(false);
   const [stockTarget, setStockTarget] = useState<string | null>(null);
   const [showReviewMapping, setShowReviewMapping] = useState(false);
@@ -1573,12 +1630,6 @@ export default function App() {
     }
   }, [resizingId]);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Baseline for speed-slider drag: captured on the FIRST tick of a new drag gesture
-  // so that all subsequent ticks divide by the same original clipLen, preventing the
-  // feedback loop where each tick reads the previous tick's just-written duration.
-  const speedBaselineRef = useRef<{ segmentId: string; clipLen: number } | null>(null);
-
-
 
   // Ref bridge so the mount-only hydration effect ([] deps) can call
   // handleSwitchProject, which is defined later in the component body.
@@ -1596,9 +1647,8 @@ export default function App() {
 
   /**
    * Applies a duration change for one segment with the same cascade semantics
-   * as a drag-resize. Shared by the drag-resize handler and the playback-speed
-   * slider. Returns true if the cascade succeeded, false if a locked neighbor
-   * blocked it (caller must revert live-preview state if any).
+   * as a drag-resize. Returns true if the cascade succeeded, false if a
+   * locked neighbor blocked it (caller must revert live-preview state if any).
    *
    * The project's `transcriptTokens` are forwarded to the cascade as the source
    * of each absorbing neighbour's yield floor (K15b — services/dragCascade.ts's
@@ -1614,14 +1664,9 @@ export default function App() {
     newDuration: number,
     finalTrimStart: number,
     fromSide: 'left' | 'right',
-    additionalUpdates?: Partial<VideoSegment>,
-    // Cascade switches (owner ruling 2026-08-08). The DRAG path passes
+    // Cascade switches (owner ruling 2026-08-08). The drag path passes
     // `DRAG_CASCADE_OPTIONS` — the same object its live preview resolved
-    // through — so a drag can never change total timeline duration. The
-    // playback-speed slider, this function's other caller, passes NOTHING and
-    // keeps byte-identical pre-ruling behaviour, including on the last
-    // segment where it legitimately does change total duration. See
-    // docs/decisions/2026-08-08-last-segment-edge.md §4.
+    // through — so a drag can never change total timeline duration.
     cascadeOptions?: DragCascadeOptions,
   ): boolean => {
     const draggedIdx = originalSegments.findIndex(s => s.id === segmentId);
@@ -1650,9 +1695,6 @@ export default function App() {
       cascadeOptions,
     );
     if (cascadeResult === null) return false;
-    const finalSegments = additionalUpdates
-      ? cascadeResult.map(s => s.id === segmentId ? { ...s, ...additionalUpdates } : s)
-      : cascadeResult;
     // ONE history entry per committed gesture, labelled and anchored (design
     // §5.2). The anchor is the segment the gesture STARTED on — not the whole
     // set the cascade moved — so an undo of a five-segment cascade scrolls back
@@ -1661,7 +1703,7 @@ export default function App() {
     // pushes nothing; the live preview writes no state at all, so the ~60 frames
     // of a gesture are structurally incapable of adding entries.
     setProject(
-      prev => ({ ...prev, segments: finalSegments }),
+      prev => ({ ...prev, segments: cascadeResult }),
       { label: `resize segment ${draggedIdx + 1}`, anchorSegmentId: segmentId },
     );
     return true;
@@ -1785,7 +1827,6 @@ export default function App() {
   );
 
   const handleToggleLock = useCallback((segmentId: string): void => {
-    speedBaselineRef.current = null;
     // SILENT — locks are NOT undoable (owner ruling 2026-08-08, design §4). A
     // lock is a statement about how future edits may behave, not an edit to the
     // video, and making it undoable interacts confusingly with §5.1's
@@ -2137,63 +2178,6 @@ export default function App() {
       headings: (prev.headings ?? []).map(h => h.id === headingId ? { ...h, ...updates } : h),
     }));
   }, []);
-
-  const handlePlaybackSpeedChange = useCallback((segIdx: number, newSpeed: number): void => {
-    const seg = projectRef.current.segments[segIdx];
-    if (!seg) return;
-
-    // No-op if speed hasn't changed — don't capture a baseline yet either.
-    if (Math.abs(newSpeed - (seg.playbackSpeed ?? 1)) < 0.001) return;
-
-    const clampedSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, newSpeed));
-
-    // Locked segment: honor speed update but keep duration fixed.
-    if (seg.locked) {
-      setProject(prev => ({
-        ...prev,
-        segments: prev.segments.map((s, i) => i === segIdx ? { ...s, playbackSpeed: clampedSpeed } : s),
-      }));
-      return;
-    }
-
-    // Non-video or unknown sourceDuration: fall back to simple update.
-    const asset = assetsRef.current.find(a => a.id === seg.assetId);
-    if (asset?.type !== 'video' || !seg.sourceDuration || seg.sourceDuration <= 0) {
-      setProject(prev => ({
-        ...prev,
-        segments: prev.segments.map((s, i) => i === segIdx ? { ...s, playbackSpeed: clampedSpeed } : s),
-      }));
-      return;
-    }
-
-    // Compute or reuse the speed-drag baseline. Baseline = the original (duration × speed)
-    // captured on the FIRST tick of a drag gesture. Reusing it across ticks prevents the
-    // feedback loop where each tick reads the previous tick's just-written duration.
-    let clipLen: number;
-    if (speedBaselineRef.current?.segmentId === seg.id) {
-      clipLen = speedBaselineRef.current.clipLen;
-    } else {
-      const fullClipLen = (seg.trimEnd ?? seg.sourceDuration) - (seg.trimStart ?? 0);
-      clipLen = Math.min(seg.duration * (seg.playbackSpeed ?? 1), fullClipLen);
-      speedBaselineRef.current = { segmentId: seg.id, clipLen };
-    }
-    if (clipLen <= 0) return;
-    const newDuration = Math.max(MIN_SEGMENT_DURATION, clipLen / clampedSpeed);
-    const success = applyDurationChange(
-      projectRef.current.segments,
-      seg.id,
-      newDuration,
-      seg.trimStart ?? 0,
-      'right',
-      { playbackSpeed: clampedSpeed },
-    );
-    if (success) {
-      // Prevent currentTime from sitting past the segment's new shorter end,
-      // which would evict the currentSegment to an image/heading and freeze the video.
-      const newEnd = seg.startTime + newDuration;
-      setCurrentTime(t => Math.min(t, newEnd - 0.01));
-    }
-  }, [applyDurationChange]);
 
   const handleAddTextLayer = useCallback((): void => {
     setProject(prev => ({
@@ -2825,14 +2809,33 @@ export default function App() {
     // WS-logs — one summary entry for committed segments with no matched
     // asset (success paths only; the abort path above returns before this
     // point and owes no such entry). Segment numbers are 1-based positions
-    // in committedSegments, matching the Segments-tab row numbering.
+    // in committedSegments, matching the Segments-tab row numbering. Piece 1
+    // (WS3 Batch B) — this is now the SOLE "no asset" emitter; see
+    // buildNoAssetSummaryEntry's own comment for why computing it here, on
+    // the final committed segments, is strictly correct and why the
+    // parse-pass-only snapshot this replaced is redundant with it.
     const noAssetNumbers = committedSegments
       .map((s, i) => (s.assetId ? null : i + 1))
       .filter((n): n is number => n !== null);
     if (noAssetNumbers.length > 0) {
-      const noAssetEntry = buildNoAssetSummaryEntry(syncRunId, noAssetNumbers, committedSegments.length, syncRunAt);
+      const availableAssetCount = allAssets.filter(a => a.type !== 'audio').length;
+      const noAssetEntry = buildNoAssetSummaryEntry(
+        syncRunId,
+        noAssetNumbers,
+        committedSegments.length,
+        availableAssetCount,
+        syncRunAt,
+      );
       if (noAssetEntry) pendingLogEntries = [...pendingLogEntries, noAssetEntry];
       if (pendingLogSummary) pendingLogSummary = { ...pendingLogSummary, noAssetCount: noAssetNumbers.length };
+    }
+
+    // Piece 2, Case A — one warning per committed video segment whose clip
+    // runs out before the segment does (freeze-last-frame). See
+    // buildFreezeFrameEntries' own comment for why this is computed here.
+    const freezeFrameEntries = buildFreezeFrameEntries(syncRunId, committedSegments, allAssets, syncRunAt);
+    if (freezeFrameEntries.length > 0) {
+      pendingLogEntries = [...pendingLogEntries, ...freezeFrameEntries];
     }
 
     // 8. Single atomic state update — segments are already final.
@@ -3309,7 +3312,14 @@ export default function App() {
       URL.revokeObjectURL(url);
       return;
     }
-    const newAsset: Asset = { id, name: file.name, url, type: detectedType, file };
+    const newAsset: Asset = {
+      id,
+      name: file.name,
+      url,
+      type: detectedType,
+      file,
+      duration: detectedType === 'video' ? await getMediaDuration(url, 'video') : undefined,
+    };
 
     // When replacing with a new audio file, evict the existing audio asset so
     // the assets list never accumulates more than one voiceover entry.
@@ -3374,12 +3384,14 @@ export default function App() {
           console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
           return;
         }
+        const zipUrl = URL.createObjectURL(blob);
         newAssets.push({
           id,
           name,
-          url: URL.createObjectURL(blob),
+          url: zipUrl,
           type,
           file: new File([blob], filename),
+          duration: type === 'video' ? await getMediaDuration(zipUrl, 'video') : undefined,
         });
       });
 
@@ -3954,8 +3966,8 @@ export default function App() {
     const blobMap = new Map(storedAssets.map(a => [a.id, a]));
 
     const droppedIds = new Set<string>();
-    const rehydratedAssets = saved.project.assets
-      .map(asset => {
+    const rehydratedAssets = (await Promise.all(
+      saved.project.assets.map(async asset => {
         const stored = blobMap.get(asset.id);
         if (!stored) {
           console.warn(
@@ -3966,9 +3978,17 @@ export default function App() {
         }
         const rehydratedUrl = URL.createObjectURL(stored.blob);
         const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
-        return { ...asset, url: rehydratedUrl, file: rehydratedFile };
-      })
-      .filter((a): a is NonNullable<typeof a> => a !== null);
+        // Back-compat backfill: a project saved before Asset.duration existed
+        // carries no clip length. This is the one place every stored asset's
+        // blob URL is recreated, so probing here is what keeps the trim bar
+        // and the source-time clamps working on an older project instead of
+        // declining for the whole session.
+        const duration = asset.type === 'video' && asset.duration === undefined
+          ? await getMediaDuration(rehydratedUrl, 'video')
+          : asset.duration;
+        return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration };
+      }),
+    )).filter((a): a is NonNullable<typeof a> => a !== null);
 
     const rehydratedSegments = saved.project.segments.map(seg => {
       if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
@@ -4348,8 +4368,6 @@ export default function App() {
                 globalPlaybackSpeed={globalPlaybackSpeed}
                 resizingId={resizingId}
                 resizingType={resizingType}
-                trimmingSegmentId={trimmingSegmentId}
-                isAdjustingTrim={isAdjustingTrim}
                 voiceoverName={voiceover?.name}
                 waveformSource={waveformSource}
                 onTogglePlay={togglePlay}
@@ -4364,12 +4382,13 @@ export default function App() {
                   startDragSession(id, type, downClientX, {
                     getSegments: () => projectRef.current.segments,
                     getPixelsPerSecond: () => pixelsPerSecondRef.current,
-                    getAssets: () => assetsRef.current,
                     getTranscriptTokens: () => projectRef.current.transcriptTokens,
+                    getSourceDuration: (segment) => segment.assetId
+                      ? projectRef.current.assets.find(a => a.id === segment.assetId)?.duration
+                      : undefined,
                     setResizingId,
                     setResizingType,
                     setIsResizing: (value) => { isResizingRef.current = value; },
-                    clearSpeedBaseline: () => { speedBaselineRef.current = null; },
                     commitDurationChange: applyDurationChange,
                     // SILENT (undo/redo Phase 1, design §3.1). Both revert paths
                     // — a locked-neighbour block and an interrupted/discarded
@@ -4383,8 +4402,6 @@ export default function App() {
                 historyAnchor={historyAnchor}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
-                onSetTrimmingSegment={setTrimmingSegmentId}
-                onSetAdjustingTrim={setIsAdjustingTrim}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
                 onHeadingResizeCommit={(id, next) => {
                   setProject(prev => ({
@@ -4734,18 +4751,20 @@ export default function App() {
                 return;
               }
               const nativeFps = stock.type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
+              const stockUrl = URL.createObjectURL(blob);
               const newAsset: Asset = {
                 id,
                 name: stock.name,
-                url: URL.createObjectURL(blob),
+                url: stockUrl,
                 type: stock.type,
                 nativeFps,
+                duration: stock.type === 'video' ? await getMediaDuration(stockUrl, 'video') : undefined,
               };
               setProject(p => {
                 const newAssets = [...p.assets, newAsset];
                 const afterTarget = p.segments.map(s =>
                   s.id === targetId
-                    ? { ...s, assetId: newAsset.id, playbackSpeed: 1, trimStart: 0 }
+                    ? { ...s, assetId: newAsset.id, trimStart: 0 }
                     : s
                 );
                 return {
@@ -4811,192 +4830,6 @@ export default function App() {
           </button>
         </div>
       )}
-
-      {/* Double-click Scene Editor Modal */}
-      <AnimatePresence>
-        {editingSegment && (
-           <div className="fixed inset-0 z-[5000] flex items-center justify-center p-12 bg-black/90 backdrop-blur-2xl">
-             <motion.div
-               ref={segmentEditorTrapRef}
-               initial={{ opacity: 0, scale: 0.9, y: 30 }}
-               animate={{ opacity: 1, scale: 1, y: 0 }}
-               exit={{ opacity: 0, scale: 0.9, y: 30 }}
-               className="w-full max-w-7xl bg-[#080808] border border-white/5 rounded-[40px] overflow-hidden flex h-[90vh] shadow-2xl"
-             >
-                {/* Visual Preview Section */}
-                <div className="flex-1 bg-black relative flex items-center justify-center p-12">
-                   <div className="w-full aspect-video rounded-3xl overflow-hidden shadow-2xl border border-white/10 relative">
-                      {project.assets.find(a => a.id === editingSegment.assetId) ? (
-                        project.assets.find(a => a.id === editingSegment.assetId)!.type === 'video' ? (
-                          <video src={project.assets.find(a => a.id === editingSegment.assetId)!.url} className="w-full h-full object-cover" autoPlay muted loop />
-                        ) : (
-                          <img src={project.assets.find(a => a.id === editingSegment.assetId)!.url} className="w-full h-full object-cover" />
-                        )
-                      ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center bg-[#0A0A0A] text-gray-800">
-                           <AlertCircle size={64} />
-                           <span className="text-xl font-bold mt-4 uppercase tracking-[0.3em]">No Asset Linked</span>
-                        </div>
-                      )}
-                      
-                      <div className="absolute inset-x-0 bottom-0 p-12 bg-gradient-to-t from-black/80 to-transparent">
-                          <h2 className="text-3xl font-black uppercase tracking-tighter text-white mb-2">Untitled Scene</h2>
-                          <p className="text-lg text-gray-300 italic leading-relaxed line-clamp-2">"{editingSegment.text}"</p>
-                      </div>
-                   </div>
-                </div>
-
-                {/* Controls Section */}
-                <div className="w-[450px] border-left border-white/5 flex flex-col p-12 space-y-10 bg-[#0A0A0A]">
-                   <div className="flex justify-between items-start">
-                      <div>
-                        <h3 className="text-2xl font-black text-white uppercase tracking-tighter">Edit Scene</h3>
-                        <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest mt-1">Precise Timing & Visual Controls</p>
-                      </div>
-                      <button onClick={() => setEditingSegment(null)} aria-label="Close segment editor" className="p-4 bg-white/5 rounded-2xl hover:bg-red-500 hover:text-white transition-all"><X size={24}/></button>
-                   </div>
-
-                   <div className="space-y-8 flex-1 overflow-y-auto pr-4 custom-scrollbar">
-                      <div className="space-y-4">
-                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#F27D26]">Scene Duration</label>
-                         <div className="grid grid-cols-2 gap-4">
-                            <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-2">
-                               <span className="text-[9px] font-bold text-gray-500 uppercase">Start Time</span>
-                               <p className="text-2xl font-mono font-bold">{editingSegment.startTime.toFixed(2)}s</p>
-                            </div>
-                            <div className="p-4 rounded-2xl bg-white/5 border border-white/5 space-y-2">
-                               <span className="text-[9px] font-bold text-gray-500 uppercase">Duration</span>
-                               <input 
-                                 type="number" 
-                                 step="0.1" 
-                                 value={editingSegment.duration} 
-                                 onChange={(e) => setEditingSegment({...editingSegment, duration: parseFloat(e.target.value) || 0.1})}
-                                 className="bg-transparent border-none outline-none text-2xl font-mono font-bold w-full text-[#F27D26]"
-                               />
-                            </div>
-                         </div>
-                      </div>
-
-                      {project.assets.find(a => a.id === editingSegment.assetId)?.type === 'video' && (() => {
-                        // An unknown sourceDuration has no real slider bound —
-                        // same "decline to guess" rule slipBarGeometry.ts's
-                        // header documents (a fabricated 60s default either
-                        // silently permitted a trim range beyond the real,
-                        // shorter, unprobed source, or clamped a genuinely
-                        // longer source down to 60s). Hide the trim controls
-                        // entirely rather than render against a guessed
-                        // bound — same precedent BottomDrawer.tsx's own slip
-                        // bar already follows for this exact case.
-                        const { hasKnownSourceDuration } = computeSlipBarGeometry({
-                          duration: editingSegment.duration,
-                          playbackSpeed: editingSegment.playbackSpeed,
-                          trimStart: editingSegment.trimStart ?? 0,
-                          sourceDuration: editingSegment.sourceDuration,
-                        });
-                        if (!hasKnownSourceDuration) return null;
-                        const srcDur = editingSegment.sourceDuration as number;
-                        const trimStart = editingSegment.trimStart ?? 0;
-                        const trimEnd = editingSegment.trimEnd ?? srcDur;
-                        return (
-                          <div className="space-y-4">
-                            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-500">Visual Trimming (Slip)</label>
-                            <div className="p-6 rounded-3xl bg-white/5 border border-white/5 space-y-6">
-                              <div className="flex justify-between text-[11px] font-mono">
-                                <span className="text-gray-500">Video Start</span>
-                                <span className="text-blue-400 font-bold">{trimStart.toFixed(2)}s</span>
-                              </div>
-                              <input
-                                type="range" min="0" max={srcDur} step="0.1"
-                                value={trimStart}
-                                onChange={(e) => {
-                                  const val = parseFloat(e.target.value);
-                                  const next = { ...editingSegment, trimStart: val };
-                                  if (editingSegment.trimEnd !== undefined && val >= editingSegment.trimEnd) {
-                                    next.trimEnd = Math.min(srcDur, val + 0.1);
-                                  }
-                                  setEditingSegment(next);
-                                }}
-                                className="w-full accent-blue-500"
-                              />
-                              <div className="flex justify-between text-[11px] font-mono">
-                                <span className="text-gray-500">Video End</span>
-                                <span className="text-purple-400 font-bold">
-                                  {editingSegment.trimEnd !== undefined
-                                    ? `${editingSegment.trimEnd.toFixed(2)}s`
-                                    : 'end of media'}
-                                </span>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <input
-                                  type="range" min={trimStart + 0.1} max={srcDur} step="0.1"
-                                  value={trimEnd}
-                                  onChange={(e) => {
-                                    const val = parseFloat(e.target.value);
-                                    setEditingSegment({ ...editingSegment, trimEnd: Math.max(trimStart + 0.1, val) });
-                                  }}
-                                  className="flex-1 accent-purple-500"
-                                />
-                                {editingSegment.trimEnd !== undefined && (
-                                  <button
-                                    onClick={() => setEditingSegment({ ...editingSegment, trimEnd: undefined })}
-                                    title="Reset to end of media"
-                                    className="text-base font-black text-gray-400 hover:text-red-400 transition-colors px-2"
-                                    aria-label="Reset trim end to end of media"
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      <div className="space-y-4">
-                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Playback Speed</label>
-                         <div className="flex items-center gap-4">
-                            <div className="flex-1 p-3 bg-black rounded-xl border border-white/5 text-center">
-                               <span className="text-[9px] font-bold text-gray-600 block uppercase mb-1">Speed</span>
-                               <span className="text-sm font-bold text-white">{editingSegment.playbackSpeed?.toFixed(2)}x</span>
-                            </div>
-                            <div className="flex gap-2">
-                               <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.max(0.2, (editingSegment.playbackSpeed || 1) - 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">-</button>
-                               <button onClick={() => setEditingSegment({...editingSegment, playbackSpeed: Math.min(3, (editingSegment.playbackSpeed || 1) + 0.1)})} className="p-3 bg-white/5 rounded-xl hover:bg-white/10 transition-all">+</button>
-                            </div>
-                         </div>
-                      </div>
-
-                      <div className="space-y-4">
-                         <label className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Script</label>
-                         <textarea
-                            value={editingSegment.text} 
-                            onChange={(e) => setEditingSegment({...editingSegment, text: e.target.value})}
-                            className="w-full bg-white/5 border border-white/5 p-4 rounded-2xl h-32 outline-none focus:border-[#F27D26]/50 text-sm leading-relaxed"
-                         />
-                      </div>
-                   </div>
-
-                   <div className="pt-10 flex gap-4">
-                      <button 
-                         onClick={() => setEditingSegment(null)}
-                         className="flex-1 py-5 rounded-3xl text-[10px] uppercase font-black tracking-widest text-gray-500 hover:bg-white/5 transition-all"
-                      >Cancel</button>
-                      <button 
-                         onClick={() => {
-                            setProject(p => ({
-                               ...p,
-                               segments: p.segments.map(s => s.id === editingSegment.id ? editingSegment : s)
-                            }));
-                            setEditingSegment(null);
-                         }}
-                         className="flex-1 py-5 bg-[#F27D26] text-white rounded-3xl text-[10px] uppercase font-black tracking-widest shadow-2xl shadow-[#F27D26]/30 hover:scale-[1.02] transition-all"
-                      >Apply Changes</button>
-                   </div>
-                </div>
-             </motion.div>
-           </div>
-        )}
-      </AnimatePresence>
 
       {/* Export success toast — bottom-right, auto-dismisses after EXPORT_SUCCESS_TOAST_DURATION_MS */}
       <AnimatePresence>

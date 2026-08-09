@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { parseProjectData, evaluateCoverageGate, filterToCoveredSegments } from '../App';
+import { parseProjectData, evaluateCoverageGate, filterToCoveredSegments, buildNoAssetSummaryEntry } from '../App';
 import { normalizeForMatch, isExactFilenameMatch, contiguousWordMatch, stripMediaExtension, cleanTagName, autoMatchSegments } from './syncEngine';
 import { extractSegmentAlignments, countTranscriptWords } from './whisperService';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
@@ -815,6 +815,84 @@ describe('R5/N4 — mid-line brackets split blocks (known defect, locked)', () =
 
     expect(segments).toHaveLength(2);
     expect(segments[1]?.assetId).toBe('a1');
+  });
+});
+
+// ===========================================================================
+// WS3 Task 5 — the untagged/context fallback (App.tsx's parseProjectData,
+// `!current.assetId && !hasExplicitTagName && text` branch) used to fall
+// back to matching against the FULL `assets` array once its own unused-asset
+// pool (`availableAssets`) was exhausted, silently re-assigning an asset an
+// earlier scene in the same pass had already claimed. Owner ruling: remove
+// the fallback — an exhausted pool leaves the segment unmatched instead.
+//
+// Fixture: 3 untagged (`[]`) scenes, each context-matching a distinct one of
+// 3 image assets by a word in its text. Scene 3's text deliberately contains
+// BOTH its own asset's word ("river") AND scene 1's asset's word
+// ("mountain") — after river.jpg is removed, this is what would have let
+// the OLD fallback silently re-match scene 3 to scene 1's already-claimed
+// mountain.jpg (both words are present; the old code just searched the full
+// array again once the pool ran dry).
+// ===========================================================================
+describe('parseProjectData — Task 5: exhausted context-fallback pool leaves a segment unassigned, never a duplicate', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const scenes =
+    '[]\nA view of the mountain peak.\n' +
+    '[]\nDeep within the forest trail.\n' +
+    '[]\nThe river guide points toward a mountain summit.';
+
+  it('baseline: all 3 assets present — 3 untagged scenes match 3 distinct assets', async () => {
+    const assets = [
+      makeAsset({ id: 'a1', name: 'mountain.jpg' }),
+      makeAsset({ id: 'a2', name: 'river.jpg' }),
+      makeAsset({ id: 'a3', name: 'forest.jpg' }),
+    ];
+    const segments = await parseProjectData('', scenes, assets, 10);
+    expect(segments).toHaveLength(3);
+    const assetIds = segments.map(s => s.assetId);
+    expect(assetIds).toEqual(['a1', 'a3', 'a2']);
+    expect(new Set(assetIds).size).toBe(3);
+  });
+
+  it('after removing river.jpg (scene 3\'s asset), scene 3 (pinned) is left unassigned — zero duplicates', async () => {
+    // Simulates handleDeleteAsset removing river.jpg without a re-sync, then
+    // Apply Sync's clean-slate parseProjectData rebuild running against the
+    // now-shorter asset list.
+    const assets = [
+      makeAsset({ id: 'a1', name: 'mountain.jpg' }),
+      makeAsset({ id: 'a3', name: 'forest.jpg' }),
+    ];
+    const segments = await parseProjectData('', scenes, assets, 10);
+    expect(segments).toHaveLength(3);
+    expect(segments[0]?.assetId).toBe('a1'); // scene 1: mountain — unaffected
+    expect(segments[1]?.assetId).toBe('a3'); // scene 2: forest — unaffected
+    expect(segments[2]?.assetId).toBeUndefined(); // scene 3 (pinned): pool exhausted, no fallback
+
+    const assignedIds = segments.map(s => s.assetId).filter((id): id is string => id !== undefined);
+    expect(assignedIds).toHaveLength(2);
+    expect(new Set(assignedIds).size).toBe(assignedIds.length); // zero duplicates
+  });
+
+  it('the grouped sync-log entry fires once, naming segment 3 and the available-asset count', async () => {
+    const assets = [
+      makeAsset({ id: 'a1', name: 'mountain.jpg' }),
+      makeAsset({ id: 'a3', name: 'forest.jpg' }),
+    ];
+    const segments = await parseProjectData('', scenes, assets, 10);
+    // Mirrors App.tsx's handleApplySyncFromFiles: computed from parseProjectData's
+    // own output right after the parse pass, independent of any later stage.
+    const unassignedNumbers = segments
+      .map((s, i) => (s.assetId ? null : i + 1))
+      .filter((n): n is number => n !== null);
+
+    const entry = buildNoAssetSummaryEntry('run-1', unassignedNumbers, segments.length, assets.length);
+    expect(entry).toBeDefined();
+    expect(entry?.type).toBe('no-asset');
+    expect(entry?.message).toBe('No asset available for 1 of 3 segments (2 assets for 3 segments): 3.');
+
+    // A second call with no unassigned segments never appends a zero entry.
+    expect(buildNoAssetSummaryEntry('run-2', [], 3, 3)).toBeUndefined();
   });
 });
 

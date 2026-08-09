@@ -134,6 +134,20 @@ export interface Asset {
    *  resolveVideoNativeFps in App.tsx). Used only to auto-suggest exportFps;
    *  never fed into per-segment retiming. */
   nativeFps?: number;
+  /** Video-only: the clip's own length in seconds, probed once at
+   *  import/stage time. The single source of truth for "how long is this
+   *  clip" — every trim/slip bound and every segment-local→source-time clamp
+   *  resolves it from here, through the asset a segment currently points at.
+   *  A segment must never cache its own copy: `VideoSegment.sourceDuration`
+   *  used to, and went stale the moment a segment was pointed at a different
+   *  asset (the drawer's asset dropdown, stock search, and autoMatchSegments
+   *  all reassign `assetId` and none of them refreshed it), which let the
+   *  slip bar hand out a `trimStart` past the real media and froze the
+   *  WebCodecs preview on one frame for the whole segment. Undefined when the
+   *  asset isn't a video, or when the probe failed — callers must decline to
+   *  guess (hide the trim bar, skip the clamp) rather than fabricate a
+   *  length. */
+  duration?: number;
 }
 
 /**
@@ -192,7 +206,6 @@ export interface VideoSegment {
     y?: number; // percent 0-100, default 78 (lower-third)
   };
   extraOverlays?: TextOverlay[];
-  playbackSpeed?: number;
   transitionDuration?: number;
   trimStart?: number;
   trimEnd?: number;
@@ -212,7 +225,6 @@ export interface VideoSegment {
    *  (red missing tile) instead of being wrong-guessed from its spoken text.
    *  Recomputed fresh every Apply Sync; recovery is via re-sync. Internal. */
   unmatchedExplicitTag?: boolean;
-  sourceDuration?: number;
   /** Effects Tab Rebuild — slug-valued per-segment effect selections (effectsOptions.ts
    *  values, e.g. 'cross-dissolve', 'ken-burns'). Additive alongside the legacy
    *  enum fields above; carried across Apply Sync by unique-assetId match. */

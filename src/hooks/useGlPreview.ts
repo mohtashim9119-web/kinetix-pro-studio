@@ -283,6 +283,19 @@ export function useGlPreview({
   const outgoingEpochKeyRef = useRef<string | null>(null);
   const outgoingGenerationRef = useRef(0);
 
+  // This chase and useWebCodecsPreview.ts's current-segment pull CAN target
+  // the same session concurrently: a centered transition window (D7) opens
+  // duration/2 BEFORE the A/B boundary, so for that whole pre-boundary half
+  // currentTime is still bounds-inside the OUTGOING segment
+  // (`currentSegment.id === outgoingVideoSeg.id`), and useWebCodecsPreview.ts
+  // is already chasing that very session via `currentFrame`. This is not
+  // avoided here (an earlier revision tried gating the two calls apart, but
+  // that was built on a theory `docs/ws3-video-segments/ws3-audit.md`'s
+  // "fourth pass" owner testing falsified as the cause of the reported
+  // preview stall — removing all transitions didn't change the bug). The
+  // concurrency itself is real, but it's made safe at the source:
+  // `videoDecoderPool.ts`'s `getFrameAt` now serializes calls per session, so
+  // two callers targeting one session never race each other's buffer/reset.
   useEffect(() => {
     if (!enabled || !outgoingVideoSeg) {
       outgoingEpochKeyRef.current = null;
@@ -300,7 +313,7 @@ export function useGlPreview({
     // segment's nominal end during a blend, so this continues its source time
     // forward (the same reasoning the deleted useTransitionPreview.ts's
     // outgoing pull used).
-    outgoingLatestTargetRef.current = toSourceTime(outgoingVideoSeg, currentTime);
+    outgoingLatestTargetRef.current = toSourceTime(outgoingVideoSeg, currentTime, outgoingAsset?.duration);
 
     startChaseIfIdle(
       outgoingChaseMutexRef.current,
@@ -364,7 +377,7 @@ export function useGlPreview({
     // pulls the incoming segment's opening frame (source time 0 / trimStart),
     // exactly the frame it should fade in on. It advances into real source time
     // naturally as currentTime approaches the boundary.
-    incomingLatestTargetRef.current = toSourceTime(incomingVideoSeg, currentTime);
+    incomingLatestTargetRef.current = toSourceTime(incomingVideoSeg, currentTime, incomingAsset?.duration);
 
     startChaseIfIdle(
       incomingChaseMutexRef.current,
@@ -419,10 +432,18 @@ export function useGlPreview({
     //   3. this hook's INCOMING chased frame (the segment a transition fades
     //      to, before currentTime crosses the boundary — see the incoming
     //      chase effect above for why `currentFrame` can't cover it yet).
-    // The three tags never collide for the same seg at the same tick: (1) is
-    // whichever segment is bounds-current, (2) is always the pre-boundary
-    // segment, (3) always the post-boundary segment; and (1) is checked first
-    // so it wins the instant currentFrame catches up to the incoming segment.
+    // (1) and (2) DO both describe the same segment during the pre-boundary
+    // half of a centered window — the outgoing segment is still the
+    // bounds-current one there, and the outgoing chase keeps issuing its own
+    // concurrent getFrameAt against that same session throughout (it has no
+    // guard against this — see its own effect above). That overlap is
+    // resolved by ORDER here ((1) wins), and the underlying concurrent-call
+    // race is resolved at the pool level: videoDecoderPool.ts's getFrameAt
+    // serializes calls per session, so the two callers never corrupt each
+    // other's result even though both are genuinely in flight. (3) is always
+    // the post-boundary segment and is genuinely disjoint from (1), which is
+    // why (1) wins the instant currentFrame catches up to the incoming
+    // segment.
     //
     // Fixes the post-transition-centering (D7) no-blend gap: the centered
     // window opens duration/2 ahead of the A/B boundary while currentTime is

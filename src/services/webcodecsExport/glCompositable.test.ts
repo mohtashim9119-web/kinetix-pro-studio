@@ -273,8 +273,13 @@ describe('isGlCompositableSegment — non-disqualifiers (text, speed)', () => {
     expect(isGlCompositableSegment(seg, project, {})).toBe(true);
   });
 
-  it('true with playbackSpeed = 2', () => {
-    const seg = makeSegment({ id: 's0', playbackSpeed: 2 });
+  it('true for a freeze-tail segment (clip shorter than duration — WS3 Batch B Case A)', () => {
+    const seg = makeSegment({ id: 's0', duration: 5, trimStart: 0 });
+    expect(isGlCompositableSegment(seg, makeProject(), {})).toBe(true);
+  });
+
+  it('true for a trimmed-window segment (clip longer than duration — WS3 Batch B Case B)', () => {
+    const seg = makeSegment({ id: 's0', duration: 3, trimStart: 10 });
     expect(isGlCompositableSegment(seg, makeProject(), {})).toBe(true);
   });
 });

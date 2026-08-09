@@ -40,8 +40,6 @@ function makeTimelineProps(overrides: Partial<TimelineProps> = {}): TimelineProp
     globalPlaybackSpeed: 1,
     resizingId: null,
     resizingType: null,
-    trimmingSegmentId: null,
-    isAdjustingTrim: false,
     voiceoverName: undefined,
     waveformSource: null,
     onTogglePlay: () => {},
@@ -49,8 +47,6 @@ function makeTimelineProps(overrides: Partial<TimelineProps> = {}): TimelineProp
     onResizeStart: () => {},
     onSegmentUpdate: () => {},
     onOpenStockSearch: () => {},
-    onSetTrimmingSegment: () => {},
-    onSetAdjustingTrim: () => {},
     ...overrides,
   };
 }

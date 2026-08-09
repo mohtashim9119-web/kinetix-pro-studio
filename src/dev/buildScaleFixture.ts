@@ -71,6 +71,7 @@ export async function buildScaleFixture(segmentCount = 500): Promise<ScaleFixtur
     url: URL.createObjectURL(blob),
     type: 'video',
     addedAt: Date.now(),
+    duration: SAMPLE_DURATION_SEC,
   };
 
   // Each segment is a short (~0.6s) on-timeline slice, trimmed from a
@@ -95,7 +96,6 @@ export async function buildScaleFixture(segmentCount = 500): Promise<ScaleFixtur
       order: i,
       trimStart,
       trimEnd: trimStart + SEGMENT_TRIM_DURATION_SEC,
-      sourceDuration: SAMPLE_DURATION_SEC,
     });
   }
 

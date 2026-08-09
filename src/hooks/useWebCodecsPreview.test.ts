@@ -55,9 +55,9 @@ describe('toSourceTime — long-timeline, no accumulating drift', () => {
     let maxError = 0;
     // Simulate ~10 minutes of playback at a steady RAF cadence.
     for (let t = 0; t < 600; t += tickSeconds) {
-      const source = toSourceTime(segment, t);
-      // With playbackSpeed=1 and no trim, source time should equal currentTime
-      // exactly (pure arithmetic, no rounding accumulation possible).
+      const source = toSourceTime(segment, t, undefined);
+      // With no trim and no sourceDuration clamp, source time should equal
+      // currentTime exactly (pure arithmetic, no rounding accumulation possible).
       const error = Math.abs(source - t);
       maxError = Math.max(maxError, error);
     }
@@ -77,7 +77,7 @@ describe('toSourceTime — long-timeline, no accumulating drift', () => {
       // Sample at start, middle, and end of each segment's timeline span.
       for (const frac of [0, 0.5, 0.999]) {
         const t = (segment.startTime ?? 0) + segment.duration * frac;
-        const source = toSourceTime(segment, t);
+        const source = toSourceTime(segment, t, undefined);
         const expected = (segment.trimStart || 0) + frac * segment.duration;
         expect(Math.abs(source - expected)).toBeLessThan(FRAME_DURATION_30FPS);
       }
@@ -90,22 +90,22 @@ describe('toSourceTime — pause/resume', () => {
     const segment = makeSegment({ startTime: 10, duration: 5, trimStart: 1 });
     const pausedAt = 12.345;
 
-    const results = Array.from({ length: 20 }, () => toSourceTime(segment, pausedAt));
+    const results = Array.from({ length: 20 }, () => toSourceTime(segment, pausedAt, undefined));
     expect(new Set(results).size).toBe(1); // every call agrees — no drift while "frozen"
   });
 
   it('resuming after a pause (currentTime jump back to the audio element position) resolves to the correct frame, not a stale or skipped one', () => {
     const segment = makeSegment({ startTime: 0, duration: 10, trimStart: 0 });
 
-    const beforePause = toSourceTime(segment, 4.0);
+    const beforePause = toSourceTime(segment, 4.0, undefined);
     // Audio was paused for a while in real time; currentTime does not advance.
     // On resume, usePlayback.ts's rAF loop reads audio.currentTime again —
     // simulate it reporting the exact same position (no seek happened).
-    const afterResume = toSourceTime(segment, 4.0);
+    const afterResume = toSourceTime(segment, 4.0, undefined);
     expect(afterResume).toBe(beforePause);
 
     // Playback then continues normally from that point.
-    const nextTick = toSourceTime(segment, 4.0 + 1 / 60);
+    const nextTick = toSourceTime(segment, 4.0 + 1 / 60, undefined);
     expect(nextTick).toBeGreaterThan(afterResume);
     expect(nextTick - afterResume).toBeLessThan(FRAME_DURATION_30FPS);
   });
@@ -116,12 +116,12 @@ describe('toSourceTime — pause/resume', () => {
 
     // Paused right at the boundary — currentSegment could be either during
     // the instant of the switch; both must map sensibly for their own segment.
-    expect(toSourceTime(segA, 5.0)).toBeCloseTo(5.0, 5); // end of A's own source range
-    expect(toSourceTime(segB, 5.0)).toBeCloseTo(0.0, 5); // start of B's own source range
+    expect(toSourceTime(segA, 5.0, undefined)).toBeCloseTo(5.0, 5); // end of A's own source range
+    expect(toSourceTime(segB, 5.0, undefined)).toBeCloseTo(0.0, 5); // start of B's own source range
   });
 });
 
-describe('toSourceTime — playbackRate / speed changes', () => {
+describe('toSourceTime — playbackRate changes (global only — WS3 Batch B removed per-segment speed)', () => {
   it('is independent of how large the currentTime delta between calls is (i.e. independent of wall-clock playback rate)', () => {
     const segment = makeSegment({ startTime: 0, duration: 10, trimStart: 0 });
 
@@ -130,36 +130,43 @@ describe('toSourceTime — playbackRate / speed changes', () => {
     // because toSourceTime only ever reads the absolute currentTime, never a
     // delta or wall-clock rate.
     const targets = [0, 1, 2, 5, 9.9];
-    const viaSmallDeltas = targets.map((t) => toSourceTime(segment, t));
-    const viaLargeDeltas = targets.map((t) => toSourceTime(segment, t)); // same math, no hidden rate state
+    const viaSmallDeltas = targets.map((t) => toSourceTime(segment, t, undefined));
+    const viaLargeDeltas = targets.map((t) => toSourceTime(segment, t, undefined)); // same math, no hidden rate state
     expect(viaLargeDeltas).toEqual(viaSmallDeltas);
   });
+});
 
-  it('reflects a per-segment playbackSpeed change mid-playback immediately (next call, no lag)', () => {
-    const base = makeSegment({ startTime: 0, duration: 10, trimStart: 0, playbackSpeed: 1 });
-    const sped = { ...base, playbackSpeed: 2 };
-
-    // Same currentTime, different segment.playbackSpeed (as if the user
-    // adjusted the segment's speed via the editor mid-playback) — source
-    // time mapping must react immediately, proportionally.
-    const t = 3;
-    expect(toSourceTime(base, t)).toBeCloseTo(3, 5);
-    expect(toSourceTime(sped, t)).toBeCloseTo(6, 5);
+describe('toSourceTime / sourceRange — freeze-last-frame (Case A) vs trimmed-window (Case B), WS3 Batch B Piece 2', () => {
+  // `sourceDuration` is now a parameter resolved by the caller from
+  // `Asset.duration`, never a field on the segment — see Asset.duration's doc
+  // for why the segment's former cached copy was removed.
+  it('Case A: a clip shorter than the segment holds its last frame for the remainder — clamped at sourceDuration', () => {
+    // clip 4s < duration 10 — the clip runs out 4s into a 10s segment.
+    const segment = makeSegment({ startTime: 0, duration: 10, trimStart: 0 });
+    expect(toSourceTime(segment, 3.999, 4)).toBeCloseTo(3.999, 5); // still within the real clip
+    expect(toSourceTime(segment, 4.0, 4)).toBeCloseTo(4.0, 5);     // exactly at the clip's end
+    expect(toSourceTime(segment, 7.0, 4)).toBe(4);                  // held — same query as at 4.0
+    expect(toSourceTime(segment, 9.999, 4)).toBe(4);                // still held, all the way to segment end
   });
 
-  it('sourceRange grows with playbackSpeed so a sped-up segment does not truncate its decode session before the last displayed frame', () => {
-    const slow = makeSegment({ duration: 4, trimStart: 0, playbackSpeed: 1 });
-    const fast = makeSegment({ duration: 4, trimStart: 0, playbackSpeed: 2 });
-
-    expect(sourceRange(slow).end).toBeCloseTo(4, 5);
-    expect(sourceRange(fast).end).toBeCloseTo(8, 5);
+  it('Case A: sourceRange never asks the decode session to cover past the real clip end', () => {
+    const segment = makeSegment({ duration: 10, trimStart: 0 });
+    // Without the clamp this would be [0, 10] — the clip length must win.
+    expect(sourceRange(segment, 4).end).toBe(4);
   });
 
-  it('clamps to trimEnd regardless of playbackSpeed, matching the legacy <video> path and the exporter', () => {
-    const segment = makeSegment({ duration: 10, trimStart: 0, trimEnd: 3, playbackSpeed: 2 });
-    // Without the clamp this would be 2 * 10 = 20 — trimEnd must win.
-    expect(toSourceTime(segment, 9.999)).toBeLessThanOrEqual(3);
-    expect(sourceRange(segment).end).toBe(3);
+  it('Case B: a clip longer than the segment plays a trimStart-positioned window, un-clamped within the segment span', () => {
+    // clip 60s >> duration 5 — trimStart picks where the window starts.
+    const segment = makeSegment({ startTime: 0, duration: 5, trimStart: 20 });
+    expect(toSourceTime(segment, 0, 60)).toBeCloseTo(20, 5);
+    expect(toSourceTime(segment, 4.999, 60)).toBeCloseTo(24.999, 5); // never reaches the clip end — clamp is a no-op
+    expect(sourceRange(segment, 60)).toEqual({ start: 20, end: 25 });
+  });
+
+  it('an unknown clip length (image, or an unprobed video) applies no clamp at all', () => {
+    const segment = makeSegment({ duration: 10, trimStart: 0 });
+    expect(toSourceTime(segment, 9.999, undefined)).toBeCloseTo(9.999, 5);
+    expect(sourceRange(segment, undefined).end).toBe(10);
   });
 });
 
@@ -183,7 +190,7 @@ describe('toSourceTime — rapid segment-boundary crossing (short segments)', ()
         (s) => t >= (s.startTime ?? 0) && t < (s.startTime ?? 0) + s.duration,
       );
       if (!owner) continue;
-      const source = toSourceTime(owner, t);
+      const source = toSourceTime(owner, t, undefined);
       expect(source).toBeGreaterThanOrEqual(0);
       expect(source).toBeLessThanOrEqual(owner.duration + 1e-9);
     }

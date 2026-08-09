@@ -1,13 +1,18 @@
 /**
  * K16 — drag geometry tests.
  *
- * PART 1 is the constraint the owner set for this commit, discharged directly:
- * **the smoothness/structure work must not alter any timing value.** The pre-K16
- * commit expression is transcribed literally below, from `App.tsx`'s `handleUp`
- * at commit f8aef7d, and `resolveDragEdge` is asserted equal to it across a
- * sweep of edge positions, both edges, video and non-video, so the equality is
- * not a single lucky point. If `resolveDragEdge` is ever changed such that a
- * given `edgeContentX` means something different, PART 1 fails.
+ * PART 1 originally pinned `resolveDragEdge` byte-identical to the pre-K16
+ * commit math (video speed-coupling included) across a full sweep. WS3
+ * Batch B deliberately breaks that pin: the owner ruled `playbackSpeed`
+ * removed as a concept (a video clip always plays at its native rate), so
+ * `resolveDragEdge` no longer computes a speed-coupled duration/speed pair
+ * at all, and gained a new clamp instead — a `'start'`-edge drag's
+ * `trimStart` is now bounded to `[0, max(0, sourceDuration - duration)]`
+ * (Piece 3, the slip-trim-bar-overflow root-cause fix). This section is
+ * updated deliberately, not weakened: the sweep now pins `resolveDragEdge`
+ * against `postBatchBCommit`, a literal transcription of the NEW math, and a
+ * separate "what changed" block below states the old vs. new value for every
+ * case where the two functions actually disagree, with the reason.
  *
  * PART 2 covers the pointer-accuracy fix itself, which DOES change which
  * `edgeContentX` a given pointer position produces — that is the defect being
@@ -23,8 +28,6 @@ import {
   computeAutoScrollVelocity,
   AUTOSCROLL_EDGE_ZONE_PX,
   AUTOSCROLL_MAX_SPEED_PX_PER_SEC,
-  MIN_PLAYBACK_SPEED,
-  MAX_PLAYBACK_SPEED,
   type DragEdge,
 } from './dragGeometry';
 import { MIN_SEGMENT_DURATION } from './dragCascade';
@@ -44,22 +47,24 @@ function seg(extra: Partial<VideoSegment> = {}): VideoSegment {
 }
 
 // ---------------------------------------------------------------------------
-// PART 1 — timing neutrality.
+// PART 1 — timing neutrality (WS3 Batch B — updated deliberately, see header).
 // ---------------------------------------------------------------------------
 
-/**
- * `App.tsx`'s pre-K16 commit math, transcribed verbatim (commit f8aef7d,
- * `handleUp`). `lastX` there is the content-space x this takes as `x`. Only the
- * variable names are changed; every operation, clamp, and ordering is as it was.
- */
-function preK16Commit(
+/** Historical reference only — the pre-K16 / pre-Batch-B commit math,
+ *  including the now-removed video speed coupling. Used below purely to
+ *  compute "what the old code would have said" for the explicit before/after
+ *  callouts; no longer the sweep's own oracle (see postBatchBCommit). */
+function preBatchBCommit(
   originalTarget: VideoSegment,
   type: DragEdge,
   x: number,
   pps: number,
   isVideoSeg: boolean,
+  sourceDuration?: number,
 ): { finalDuration: number; finalTrimStart: number; speedUpdate?: { playbackSpeed: number } } {
-  const srcDur = originalTarget.sourceDuration ?? 0;
+  const MIN_PLAYBACK_SPEED = 0.5;
+  const MAX_PLAYBACK_SPEED = 2.0;
+  const srcDur = sourceDuration ?? 0;
   let finalDuration: number;
   let finalTrimStart: number = originalTarget.trimStart ?? 0;
   if (type === 'end') {
@@ -86,28 +91,57 @@ function preK16Commit(
   return { finalDuration, finalTrimStart, speedUpdate };
 }
 
-describe('K16 PART 1 — resolveDragEdge is timing-identical to the pre-K16 commit math', () => {
-  const fixtures: { name: string; segment: VideoSegment; isVideo: boolean }[] = [
-    { name: 'image segment (no speed coupling)', segment: seg(), isVideo: false },
+/**
+ * The CURRENT `resolveDragEdge` math, transcribed literally as the sweep's
+ * oracle — no speed coupling, plus the Piece 3 `trimStart` clamp against
+ * `sourceDuration` on a `'start'`-edge drag.
+ */
+function postBatchBCommit(
+  originalTarget: VideoSegment,
+  type: DragEdge,
+  x: number,
+  pps: number,
+  sourceDuration?: number,
+): { finalDuration: number; finalTrimStart: number } {
+  const srcDur = sourceDuration ?? 0;
+  let finalDuration: number;
+  let finalTrimStart: number = originalTarget.trimStart ?? 0;
+  if (type === 'end') {
+    finalDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
+  } else {
+    const rawDelta = (x / pps) - originalTarget.startTime;
+    finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+    finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+    if (srcDur > 0) {
+      finalTrimStart = Math.min(finalTrimStart, Math.max(0, srcDur - finalDuration));
+    }
+  }
+  return { finalDuration, finalTrimStart };
+}
+
+describe('WS3 Batch B PART 1 — resolveDragEdge is timing-identical to the current (post-speed-removal) commit math', () => {
+  // The clip length is no longer a segment field — it is resolved from the
+  // asset and handed to resolveDragEdge as its own input, so fixtures carry it
+  // beside the segment rather than on it.
+  const fixtures: { name: string; segment: VideoSegment; sourceDuration?: number }[] = [
+    { name: 'image segment (never had speed coupling)', segment: seg() },
     {
-      name: 'video segment with sourceDuration',
-      segment: seg({ sourceDuration: 12, trimStart: 1 }),
-      isVideo: true,
+      name: 'video segment with a known clip length',
+      segment: seg({ trimStart: 1 }),
+      sourceDuration: 12,
     },
     {
       name: 'video segment with an explicit trimEnd',
-      segment: seg({ sourceDuration: 30, trimStart: 2, trimEnd: 9 }),
-      isVideo: true,
+      segment: seg({ trimStart: 2, trimEnd: 9 }),
+      sourceDuration: 30,
     },
     {
-      name: 'video-flagged segment with NO sourceDuration (coupling must stay off)',
+      name: 'segment with NO known clip length (trimStart clamp must stay off)',
       segment: seg(),
-      isVideo: true,
     },
     {
       name: 'segment already at the minimum slot width',
       segment: seg({ duration: MIN_SEGMENT_DURATION }),
-      isVideo: false,
     },
   ];
   const edges: DragEdge[] = ['start', 'end'];
@@ -121,31 +155,115 @@ describe('K16 PART 1 — resolveDragEdge is timing-identical to the pre-K16 comm
           // every clamp branch is exercised rather than just the happy path.
           for (let sec = 0; sec <= 25; sec += 0.25) {
             const x = sec * pps;
-            const old = preK16Commit(f.segment, edge, x, pps, f.isVideo);
+            const old = postBatchBCommit(f.segment, edge, x, pps, f.sourceDuration);
             const now = resolveDragEdge({
               segment: f.segment,
+              sourceDuration: f.sourceDuration,
               edge,
               edgeContentX: x,
               pixelsPerSecond: pps,
-              isVideo: f.isVideo,
             });
             expect(now.duration).toBe(old.finalDuration);
             expect(now.trimStart).toBe(old.finalTrimStart);
-            expect(now.playbackSpeed).toBe(old.speedUpdate?.playbackSpeed);
           }
         });
       }
     }
   }
 
-  it('the live-preview duration and the committed duration are now one value, not two copies', () => {
-    // Pre-K16, `liveDurationForX` and `handleUp` each computed this from their
-    // own copy of the expression. Same call, same inputs, same answer — the
-    // preview cannot drift from what gets committed.
-    const s = seg({ sourceDuration: 12, trimStart: 1 });
-    const args = { segment: s, edge: 'end' as const, edgeContentX: 1740, pixelsPerSecond: 100, isVideo: true };
+  it('the live-preview duration and the committed duration are still one value, not two copies', () => {
+    const s = seg({ trimStart: 1 });
+    const args = { segment: s, sourceDuration: 12, edge: 'end' as const, edgeContentX: 1740, pixelsPerSecond: 100 };
     expect(resolveDragEdge(args).duration).toBe(resolveDragEdge(args).duration);
     expect(resolveDragEdge(args)).toEqual(resolveDragEdge(args));
+  });
+});
+
+describe('WS3 Batch B PART 1b — explicit before/after callouts for every case that changed', () => {
+  it('a video segment dragged to stretch past 2x clip length: OLD clamped duration + set a speed, NEW leaves duration alone and never touches speed', () => {
+    // sourceDuration 12, trimStart 1 → clipLen 11 at 1x. Dragging the end edge
+    // out to 35s of raw content-space asks for duration 25 (startTime 10 → 35).
+    const s = seg({ trimStart: 1 });
+    const pps = 100;
+    const x = 35 * pps;
+    const old = preBatchBCommit(s, 'end', x, pps, /* isVideoSeg */ true, 12);
+    // OLD: raw duration 25 exceeds clipLen/MIN_SPEED = 11/0.5 = 22, the max
+    // duration the speed coupling allowed, so duration was clamped to 22 and
+    // speed set to 0.5.
+    expect(old.finalDuration).toBe(22);
+    expect(old.speedUpdate?.playbackSpeed).toBe(0.5);
+
+    const now = resolveDragEdge({ segment: s, sourceDuration: 12, edge: 'end', edgeContentX: x, pixelsPerSecond: pps });
+    // NEW: no clamp tied to clip length at all — duration is exactly the raw
+    // drag distance (25s), and there is no playbackSpeed field any more.
+    expect(now.duration).toBe(25);
+    expect('playbackSpeed' in now).toBe(false);
+  });
+
+  it('a video segment dragged to squeeze below 0.5x clip length: OLD floored duration + set a speed, NEW leaves duration alone', () => {
+    // sourceDuration 12, trimStart 1 → clipLen 11 at 1x. Dragging the end edge
+    // in to 12s of raw content-space asks for duration 2 (startTime 10 → 12).
+    const s = seg({ trimStart: 1 });
+    const pps = 100;
+    const x = 12 * pps;
+    const old = preBatchBCommit(s, 'end', x, pps, /* isVideoSeg */ true, 12);
+    // OLD: clipLen/MAX_SPEED = 11/2.0 = 5.5 is the min duration the speed
+    // coupling allowed, so duration was floored to 5.5 and speed set to 2.0.
+    expect(old.finalDuration).toBe(5.5);
+    expect(old.speedUpdate?.playbackSpeed).toBe(2.0);
+
+    const now = resolveDragEdge({ segment: s, sourceDuration: 12, edge: 'end', edgeContentX: x, pixelsPerSecond: pps });
+    // NEW: duration is exactly the raw drag distance (2s) — no speed floor.
+    expect(now.duration).toBe(2);
+    expect('playbackSpeed' in now).toBe(false);
+  });
+
+  it('a start-edge drag pushing trimStart past the clip end: OLD left it unbounded, NEW clamps it to sourceDuration - duration (Piece 3)', () => {
+    // sourceDuration 12, trimStart 1, startTime 10, duration 5 (spans 10..15).
+    // Dragging the start edge far left (content-space 0) asks for
+    // finalTrimStart = 1 + (0 - 10) = -9 → clamped by the >=0 floor to... no,
+    // rawDelta = -10, so trimStart candidate = max(0, 1 + -10) = 0 in this
+    // direction — use a RIGHTWARD start-edge drag instead, which is the
+    // actual overflow-producing direction (investigation doc §3): drag the
+    // start edge to content-space 14.9s, just shy of the segment's own end.
+    const s = seg({ trimStart: 1, startTime: 10, duration: 5 });
+    const pps = 100;
+    const x = 14.9 * pps;
+    const old = preBatchBCommit(s, 'start', x, pps, /* isVideoSeg */ true, 12);
+    // rawDelta = 14.9 - 10 = 4.9; finalDuration = max(MIN, 5 - 4.9) = 0.3
+    // (MIN_SEGMENT_DURATION); OLD finalTrimStart = max(0, 1 + 4.9) = 5.9 —
+    // unbounded against sourceDuration, and 5.9 + 0.3 = 6.2 <= 12 so it
+    // happens not to overflow THIS clip, but nothing stopped it from doing so
+    // for a shorter clip (this is exactly the bug Piece 3 closes).
+    expect(old.finalTrimStart).toBeCloseTo(5.9, 9);
+
+    const now = resolveDragEdge({ segment: s, sourceDuration: 12, edge: 'start', edgeContentX: x, pixelsPerSecond: pps });
+    // NEW: same raw candidate (5.9), but now clamped to
+    // max(0, sourceDuration - duration) = max(0, 12 - 0.3) = 11.7 — a no-op
+    // here since 5.9 < 11.7. The clamp becomes visible in the next test,
+    // where sourceDuration is short enough for it to actually bite.
+    expect(now.trimStart).toBeCloseTo(5.9, 9);
+  });
+
+  it('a start-edge drag whose unclamped trimStart WOULD exceed sourceDuration - duration: NEW clamps it, closing the slip-bar overflow', () => {
+    // A short clip (sourceDuration 4) makes the unclamped candidate exceed
+    // the legal bound: trimStart 0, startTime 10, duration 5 (spans 10..15).
+    // Drag the start edge to content-space 14.9s.
+    const s = seg({ trimStart: 0, startTime: 10, duration: 5 });
+    const pps = 100;
+    const x = 14.9 * pps;
+    const old = preBatchBCommit(s, 'start', x, pps, /* isVideoSeg */ true, 4);
+    // rawDelta = 4.9; OLD finalTrimStart = max(0, 0 + 4.9) = 4.9 — already
+    // past the clip's own 4s length, with nothing to stop it.
+    expect(old.finalTrimStart).toBeCloseTo(4.9, 9);
+
+    const now = resolveDragEdge({ segment: s, sourceDuration: 4, edge: 'start', edgeContentX: x, pixelsPerSecond: pps });
+    // NEW: clamped to max(0, sourceDuration - duration) = max(0, 4 - 0.3) =
+    // 3.7 (duration itself floors to MIN_SEGMENT_DURATION=0.3 here, same as
+    // OLD) — trimStart can no longer land past what the clip actually has,
+    // which is the root-cause fix for the slip-trim-bar overflow.
+    expect(now.trimStart).toBeCloseTo(3.7, 9);
+    expect(now.trimStart + now.duration).toBeLessThanOrEqual(4);
   });
 });
 
@@ -206,7 +324,7 @@ describe('K16 PART 2 — pointer accuracy', () => {
     // equalled the whole drag distance. Both properties are now derived here.
     const s = seg({ startTime: 10, duration: 5 }); // spans 1000..1500 px @100
     const r = resolveDragEdge({
-      segment: s, edge: 'start', edgeContentX: 800, pixelsPerSecond: 100, isVideo: false,
+      segment: s, edge: 'start', edgeContentX: 800, pixelsPerSecond: 100,
     });
     expect(r.segmentLeftPx).toBe(800);                                 // left edge follows the pointer
     expect(r.segmentLeftPx + r.duration * 100).toBeCloseTo(1500, 9);   // right edge pinned
@@ -215,7 +333,7 @@ describe('K16 PART 2 — pointer accuracy', () => {
   it('an end-edge drag leaves the card\'s left edge exactly where it was', () => {
     const s = seg({ startTime: 10, duration: 5 });
     const r = resolveDragEdge({
-      segment: s, edge: 'end', edgeContentX: 1700, pixelsPerSecond: 100, isVideo: false,
+      segment: s, edge: 'end', edgeContentX: 1700, pixelsPerSecond: 100,
     });
     expect(r.segmentLeftPx).toBe(1000);
     expect(r.segmentLeftPx + r.duration * 100).toBeCloseTo(1700, 9);
@@ -231,7 +349,7 @@ describe('K16 PART 2 — pointer accuracy', () => {
           const pointer = edge0 + 3 + move;
           const edgeX = pointer - grab;
           const r = resolveDragEdge({
-            segment: s, edge, edgeContentX: edgeX, pixelsPerSecond: pps, isVideo: false,
+            segment: s, edge, edgeContentX: edgeX, pixelsPerSecond: pps,
           });
           const renderedEdge = edge === 'start'
             ? r.segmentLeftPx

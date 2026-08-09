@@ -105,14 +105,15 @@ export interface UseWebCodecsPreviewResult {
 
 /**
  * Maps a segment-local playhead position to the source video's own time,
- * honoring trimStart/trimEnd/playbackSpeed — mirrors the identical math in
- * PreviewStage.tsx's legacy seek effect and frameRenderer.ts's export path,
- * so the two video paths cannot diverge in what "the right frame" means.
+ * honoring trimStart and the clip's own length — mirrors the identical math
+ * in PreviewStage.tsx's legacy seek effect, frameRenderer.ts's export path,
+ * and exportWorker.ts's duplicated copy, so all four video paths cannot
+ * diverge in what "the right frame" means.
  *
- * Phase 3 note (audio-sync hardening — docs/webcodecs-architecture-plan.md):
- * this function takes `currentTime` verbatim from the caller and does NOT
- * multiply by `globalPlaybackSpeed`. That's intentional, not a gap — the
- * legacy path's `activeEl.playbackRate = segment.playbackSpeed *
+ * WS3 Batch B, Piece 2 — a video clip always plays at its native rate
+ * (`segment.playbackSpeed` no longer exists as a concept), so this function
+ * takes `currentTime` verbatim from the caller and does NOT multiply by
+ * `globalPlaybackSpeed`: the legacy path's `activeEl.playbackRate =
  * globalPlaybackSpeed` (PreviewStage.tsx) exists only because a `<video>`
  * element runs its own internal clock and that clock's *real-time* advance
  * rate has to be told to match how fast `currentTime` itself is advancing
@@ -120,26 +121,52 @@ export interface UseWebCodecsPreviewResult {
  * = globalPlaybackSpeed`). This hook has no internal clock to keep in step:
  * every call is a pull ("what frame corresponds to this currentTime"), and
  * `currentTime` handed in already reflects whatever real-time pace the audio
- * element is advancing at. So a `globalPlaybackSpeed` change mid-playback
- * needs no reinterpretation here — only `segment.playbackSpeed` (the
- * per-segment source-time stretch baked into how a segment maps its own
- * span to source time) belongs in this formula, exactly as before. Verified
- * with the pause/resume/rate-change cases in useWebCodecsPreview.test.ts.
+ * element is advancing at.
+ *
+ * Clamped at `sourceDuration` (the clip's actual end), not `trimEnd` — this
+ * is the freeze-last-frame mechanism: for a segment whose clip is shorter
+ * than its own duration (Case A), `rawTime` keeps growing past
+ * `sourceDuration` for the remainder of the segment, and the clamp holds the
+ * query at the clip's last frame the whole time. For a segment whose clip is
+ * longer (Case B, a `trimStart`-positioned window), `rawTime` never reaches
+ * `sourceDuration` within the segment's own span, so the clamp is a no-op
+ * and playback is just the plain trimmed window. Verified with the
+ * pause/resume/rate-change cases in useWebCodecsPreview.test.ts.
+ *
+ * `sourceDuration` is a PARAMETER, resolved by the caller from the asset the
+ * segment currently points at (`Asset.duration`) — never read off the
+ * segment. See Asset.duration's own doc for why the segment's former cached
+ * copy was removed.
  */
-export function toSourceTime(segment: VideoSegment, currentTime: number): number {
+export function toSourceTime(
+  segment: VideoSegment,
+  currentTime: number,
+  sourceDuration: number | undefined,
+): number {
   const segmentProgress = currentTime - (segment.startTime ?? 0);
-  const rawTime = (segment.trimStart || 0) + segmentProgress * (segment.playbackSpeed || 1);
-  const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
+  const rawTime = (segment.trimStart || 0) + segmentProgress;
+  const videoTime = sourceDuration !== undefined
+    ? Math.min(rawTime, sourceDuration)
+    : rawTime;
   return Math.max(0, videoTime);
 }
 
-/** Source-time range [start, end] a segment's decode session must cover —
- *  end accounts for playbackSpeed the same way toSourceTime does, so a
- *  sped-up segment's session isn't truncated before its last displayed frame. */
-export function sourceRange(segment: VideoSegment): { start: number; end: number } {
+/** Source-time range [start, end] a segment's decode session must cover.
+ *  `end` is clamped at `sourceDuration` the same way toSourceTime clamps its
+ *  query — a segment whose clip is shorter than its own duration (Case A)
+ *  must never ask the decode session to cover past the clip's real end; the
+ *  freeze is achieved by toSourceTime repeatedly querying that same clamped
+ *  end, which always resolves to the last decoded frame. Same
+ *  caller-resolves-it rule for `sourceDuration` as toSourceTime above. */
+export function sourceRange(
+  segment: VideoSegment,
+  sourceDuration: number | undefined,
+): { start: number; end: number } {
   const start = segment.trimStart || 0;
-  const speed = segment.playbackSpeed || 1;
-  const end = segment.trimEnd ?? start + segment.duration * speed;
+  const rawEnd = start + segment.duration;
+  const end = sourceDuration !== undefined
+    ? Math.min(rawEnd, sourceDuration)
+    : rawEnd;
   return { start, end };
 }
 
@@ -535,7 +562,7 @@ export function useWebCodecsPreview({
     const pool = poolRef.current!;
 
     if (currentSegment && isVideoSegment && currentAsset) {
-      const { start, end } = sourceRange(currentSegment);
+      const { start, end } = sourceRange(currentSegment, currentAsset.duration);
       // Deliberately reads `currentTime` without listing it as a dependency
       // — this effect must NOT re-run on every playback tick (that would
       // defeat the decode-ahead warm-up and needlessly re-call
@@ -545,13 +572,13 @@ export function useWebCodecsPreview({
       // Subsequent ticks are handled entirely by the frame-pull effect
       // below, which does depend on currentTime.
       // eslint-disable-next-line react-hooks/exhaustive-deps
-      const initialTarget = toSourceTime(currentSegment, currentTime);
+      const initialTarget = toSourceTime(currentSegment, currentTime, currentAsset.duration);
       void pool.ensureSession(currentSegment.id, currentAsset.url, start, end, initialTarget).catch((err) => {
         setError(err instanceof Error ? err.message : String(err));
       });
     }
     if (nextSegment && nextIsVideo && nextAsset) {
-      const { start, end } = sourceRange(nextSegment);
+      const { start, end } = sourceRange(nextSegment, nextAsset.duration);
       // Decode-ahead failures for the *next* segment are non-fatal here —
       // when it becomes the current segment its own ensureSession call
       // above gets a fresh attempt and surfaces the error then. No
@@ -638,7 +665,7 @@ export function useWebCodecsPreview({
       resetChaseMutex(chaseMutexRef.current);
     }
     const generation = generationRef.current;
-    latestTargetRef.current = toSourceTime(currentSegment, currentTime);
+    latestTargetRef.current = toSourceTime(currentSegment, currentTime, currentAsset.duration);
 
     startChaseIfIdle(
       chaseMutexRef.current,

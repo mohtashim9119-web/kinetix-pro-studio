@@ -42,8 +42,9 @@ export function isPlainVideoSegment(
  * Shares every condition with isPlainVideoSegment via isPlainMediaSegment; the
  * only difference is the required asset type ('image'). Unlike video, an image
  * media draw has no time dependence at all, so the same no-caption/no-overlay/
- * no-global-layer/no-animation/no-filter/no-transition-edge/normal-speed gates
- * are sufficient to guarantee frame-identity.
+ * no-global-layer/no-animation/no-filter/no-transition-edge/no-freeze-tail
+ * gates are sufficient to guarantee frame-identity (the freeze-tail gate is a
+ * no-op for images — they never carry a `sourceDuration`).
  *
  * Pure: no I/O, no mutation. Returns false for anything it is not certain is
  * plain — the canvas path remains the safe default.
@@ -129,9 +130,25 @@ function isPlainMediaSegment(
     : 0;
   if (incomingDuration !== 0 || outgoingDuration !== 0) return false;
 
-  // Normal playback rate (a speed change would re-time the source frames).
-  if (segment.playbackSpeed !== undefined && segment.playbackSpeed !== 1) {
-    return false;
+  // WS3 Batch B — `playbackSpeed` no longer exists, so this is no longer a
+  // speed-change exclusion. It is now a freeze-last-frame exclusion: when the
+  // source clip is shorter than the segment's own duration, the segment
+  // needs to hold its last frame for the remainder (see
+  // buildFreezeFrameEntries/toSourceTime), which the Tier-1 fast path
+  // (`encodePlainVideoSegment`, segmentEncoder.ts) cannot do — it is a single
+  // `ffmpeg -ss trimStart -t duration` trim+scale call that has no padding
+  // step, so asking it for more than the clip actually has just produces a
+  // SHORTER output file than `duration`, silently breaking the
+  // Σ segment duration = voiceoverDuration invariant. A clip that's LONGER
+  // than the segment (a plain trimmed window) has no such problem and stays
+  // fast-path eligible — do not widen this further without re-checking
+  // encodePlainVideoSegment's own behaviour first.
+  const srcDur = segment.assetId
+    ? project.assets.find(a => a.id === segment.assetId)?.duration
+    : undefined;
+  if (srcDur !== undefined && srcDur > 0) {
+    const availableClipLen = srcDur - (segment.trimStart ?? 0);
+    if (availableClipLen < segment.duration) return false;
   }
 
   return true;
