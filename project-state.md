@@ -22,23 +22,10 @@ App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar exp
 
 ## 2. Active Workstreams
 
-**WS1 — Sync Pipeline (forced-alignment timing-source upgrade).** Full state: [`docs/ws1-sync-pipeline/`](docs/ws1-sync-pipeline/) — `sync-pipeline-v2-plan.md` (the accepted 4-stage restructure plan), `ws1-readiness-2026-08-08.md` (starting-conditions assessment), `roadmap-2026-08-07.md` (live WS1 scheduling), `boundary-drift-investigation.md` (word-shift defect evidence).
+Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md), not here.
 
-- **Slice 1 (Apply Sync history-entry fix) — DONE**, commit `1b16a50`.
-- **Slice 2 (50/50 silence-split re-derivation) — NOT STARTED.** Re-derive the park-commit rule (`210855d`, `snapBoundaries.ts` + Apply-Sync plumbing) against current `main`. **Will deliberately break the golden replay** — budget a per-boundary review, never a blind re-baseline of `docs/phase4-baseline-*-segments.csv`.
-- **Stale-anchor scroll degradation** — asserted correct by code reading, no dedicated test yet.
-- **Word-shift defect** — 3 cases remain (down from 11, narrowed by the Phase 2a model swap): `does the same || what the job`, `s youngest scout || a girl of` (both fixable by the v2 timing-source upgrade), `seasons than you || can count and` (a script-vs-narration authority conflict — **not** fixable by any timing-source change). Full evidence: `docs/ws1-sync-pipeline/boundary-drift-investigation.md`.
-- **Rust integration for forced alignment has not started.** Per `docs/history.md`'s "Sync Pipeline v2 Research Programme" entry: Phase 3's measurement work is done and the 250ms p95 gate is approved, but Spanish's p95 (282.1ms) narrowly fails it on an unlistened Step Q batch — that's the next thing to resolve before Rust work begins. Heading-wildcard assignment is ruled (Option A — see Rulings In Force) but blocks Phase 5, not Phase 3.
-- **Pipeline Contract Program stays paused**, pending the word-shift fix above (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Part J).
-- **Boundary-quality watcher** — a prior implementation attempt was reverted (a safety-bound failure, a React render loop, an uncalibrated formula); the full diff is preserved at `docs/ws1-sync-pipeline/watcher-revert-2026-08-03.diff` as a resumption point for a future attempt, not source to reintroduce as-is.
-
-**WS3 — Video Segments.** Full state: [`docs/ws3-video-segments/video-segment-investigation.md`](docs/ws3-video-segments/video-segment-investigation.md).
-
-- **`duration`↔`playbackSpeed` coupling on a video-segment drag** — ruled a bug (owner, 2026-08-08, decouple), not yet fixed. Mechanism in `resolveDragEdge` (`src/services/dragGeometry.ts`); no corpus project exercises an interactive drag, so the golden replay can't catch a regression here — needs a purpose-built drag fixture. Suggested sequencing, gate, and scheduling note: investigation doc §2.
-- **Bottom-drawer slip-trim bar overflow** — confirmed by screenshot, a prior fix (commit `a7044c1`) only closed one of two independent root causes. Remaining cause: an unclamped `leftPct + widthPct` sum reachable via an ordinary left-edge Timeline drag. Detail: investigation doc §3.
-- **The 5.0s hard limit / stretch behavior** — status unknown, not yet investigated; no reference found anywhere in the repo. Needs an owner repro before it can be worked.
-- **The unreachable trim/editor UI** (`isAdjustingTrim`/`trimmingSegmentId`/`editingSegment`) — confirmed dead code (superseded by `BottomDrawer.tsx`, not scaffolding for a future feature). Needs an owner ruling on deletion.
-- **Duplicate-asset assignment on re-sync** — unverified, needs a fresh check against the current matcher (`syncEngine.ts`'s `isFuzzyMatch`/`findAssetByContext`/`autoMatchSegments`). A pre-rewrite version of this mechanism was confirmed real; whether an equivalent gap still exists is unknown. Repro hypothesis: stage N segments each matched to a distinct asset, delete one asset without resyncing, re-run Apply Sync, check whether two segments silently share an `assetId`.
+- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** 1/7 tasks done — Slice 2 (50/50 silence-split re-derivation) is next. See `docs/work-in-progress.md`.
+- **WS3 — Video Segments:** 0/5 tasks done. See `docs/work-in-progress.md`.
 
 ---
 
