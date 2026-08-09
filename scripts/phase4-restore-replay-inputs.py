@@ -16,7 +16,7 @@ Both are regenerated from sources that are COMMITTED to this repo or are the
 corpus audio itself — no whisper-cli run is required, and none should be
 substituted for this path:
 
-  * transcript_tokens.json comes from `docs/{V6,173,Spanish}-Smear-Phase2a.csv`
+  * transcript_tokens.json comes from `scripts/fixtures/{V6,173,Spanish}-Smear-Phase2a.csv`
     (the Phase 2a transcript-inspector exports, committed) via the committed
     `scripts/extract-full-transcript.py`. This is the SAME derivation the
     original `/tmp/phase3/*_raw_transcript*.json` files came from, so the
@@ -33,8 +33,8 @@ substituted for this path:
     used.
 
 Every regenerated artifact is then verified, value for value, against the
-committed Step M outputs it must reproduce (`docs/phase4-baseline-*-words.csv`
-and `docs/phase4-baseline-*-silences.csv`). A mismatch is a hard failure here,
+committed Step M outputs it must reproduce (`scripts/fixtures/phase4-baseline-*-words.csv`
+and `scripts/fixtures/phase4-baseline-*-silences.csv`). A mismatch is a hard failure here,
 before the replay harness ever runs — so a silently-wrong restoration cannot be
 mistaken for a real pipeline change downstream.
 
@@ -57,21 +57,21 @@ FFMPEG = REPO / "src-tauri" / "binaries" / "ffmpeg-x86_64-apple-darwin"
 PROJECTS = [
     {
         "key": "v6",
-        "smear_csv": REPO / "docs" / "V6-Smear-Phase2a.csv",
+        "smear_csv": REPO / "scripts" / "fixtures" / "V6-Smear-Phase2a.csv",
         "audio": CORPUS / "V6 Natural Long Pause Segs" / "6.m4a",
         "expect_tokens": 3989,
         "expect_silences": 547,
     },
     {
         "key": "173",
-        "smear_csv": REPO / "docs" / "173-Smear-Phase2a.csv",
+        "smear_csv": REPO / "scripts" / "fixtures" / "173-Smear-Phase2a.csv",
         "audio": CORPUS / "173 Segs Project" / "voiceover.m4a",
         "expect_tokens": 1836,
         "expect_silences": 239,
     },
     {
         "key": "spanish",
-        "smear_csv": REPO / "docs" / "Spanish-Smear-Phase2a.csv",
+        "smear_csv": REPO / "scripts" / "fixtures" / "Spanish-Smear-Phase2a.csv",
         "audio": CORPUS / "Spanish Project" / "Spanish VOiceover.m4a",
         "expect_tokens": 363,
         "expect_silences": 27,
@@ -123,7 +123,7 @@ def verify(p: dict) -> list:
         return [f"{p['key']}: {tok_path} does not exist"]
     tokens = json.loads(tok_path.read_text())
     words_csv = list(csv.DictReader(
-        (REPO / "docs" / f"phase4-baseline-{p['key']}-words.csv").open()))
+        (REPO / "scripts" / "fixtures" / f"phase4-baseline-{p['key']}-words.csv").open()))
     if len(tokens) != p["expect_tokens"] or len(tokens) != len(words_csv):
         failures.append(
             f"{p['key']}: token count {len(tokens)}, expected {p['expect_tokens']} "
@@ -142,7 +142,7 @@ def verify(p: dict) -> list:
         return failures + [f"{p['key']}: {sil_path} does not exist"]
     silences = json.loads(sil_path.read_text())["silences"]
     sil_csv = list(csv.DictReader(
-        (REPO / "docs" / f"phase4-baseline-{p['key']}-silences.csv").open()))
+        (REPO / "scripts" / "fixtures" / f"phase4-baseline-{p['key']}-silences.csv").open()))
     if len(silences) != p["expect_silences"] or len(silences) != len(sil_csv):
         failures.append(
             f"{p['key']}: silence count {len(silences)}, expected {p['expect_silences']} "
@@ -178,7 +178,7 @@ def main() -> int:
         else:
             print(f"[restore] OK    {p['key']}: {p['expect_tokens']} tokens, "
                   f"{p['expect_silences']} silences — value-for-value identical to "
-                  f"docs/phase4-baseline-{p['key']}-{{words,silences}}.csv")
+                  f"scripts/fixtures/phase4-baseline-{p['key']}-{{words,silences}}.csv")
 
     if all_failures:
         print(f"\n[restore] {len(all_failures)} verification failure(s). The restored inputs "

@@ -110,7 +110,7 @@ def main():
                   "orig_silence_start_-45", "orig_silence_end_-45", "orig_onset_error_-45"]
     for floor in FLOORS:
         fieldnames += [f"end_{floor}", f"err_{floor}", f"method_{floor}"]
-    with open("docs/phase3-step-a-threshold-sweep.csv", "w", newline="") as f:
+    with open("docs/ws1-sync-pipeline/measurements/phase3-step-a-threshold-sweep.csv", "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
         w.writeheader()
         for r in rows:
@@ -135,7 +135,7 @@ def main():
         print(f"{label:>8} {n:>8} {med*1000:>10.1f} {p95*1000:>10.1f} {mean*1000:>10.1f} {n_fb:>11}")
 
     json.dump(sweeps, open("/tmp/phase3/v6/step_a_sweeps.json", "w"), indent=0)
-    print("\nWrote docs/phase3-step-a-threshold-sweep.csv and /tmp/phase3/v6/step_a_sweeps.json")
+    print("\nWrote docs/ws1-sync-pipeline/measurements/phase3-step-a-threshold-sweep.csv and /tmp/phase3/v6/step_a_sweeps.json")
 
 
 if __name__ == "__main__":

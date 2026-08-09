@@ -30,8 +30,8 @@ Usage:
         --segments /path/to/v6-segments-full.json \
         --silences /path/to/silences.json \
         --fa-tokens /path/to/tokens_fa2.json \
-        --onset-errors /path/to/phase3-onset-v6-fa-step1-2-corrected.csv \
-        --out-csv docs/phase3-step-e-stale-pause-audit.csv \
+        --onset-errors scripts/fixtures/phase3-onset-v6-fa-step1-2-corrected.csv \
+        --out-csv docs/ws1-sync-pipeline/measurements/phase3-step-e-stale-pause-audit.csv \
         --max-plausible-error 1.0
 """
 

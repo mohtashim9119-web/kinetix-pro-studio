@@ -20,7 +20,7 @@ import { applyAnchorBasedTiming } from '../src/services/syncEngine';
 import type { VideoSegment } from '../src/types';
 
 const PROJ = '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project';
-const BASELINE = 'docs/phase4-baseline-173-segments.csv';
+const BASELINE = 'scripts/fixtures/phase4-baseline-173-segments.csv';
 const OUT_DIR = '.work-phase4';
 const OUT = `${OUT_DIR}/step-w-c11-live-repro.json`;
 const AUDIO_DURATION = 709.01;

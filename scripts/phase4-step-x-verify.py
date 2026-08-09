@@ -40,7 +40,7 @@ import unicodedata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DOCS = REPO / "docs"
+FIXTURES = REPO / "scripts" / "fixtures"
 WORK = REPO / ".work-phase4"
 CLIPS = WORK / "step-x-clips"
 C11_ARTIFACT = WORK / "step-w-c11-live-repro.json"
@@ -128,7 +128,7 @@ def fa_rows(proj, corrected=False):
 
 def ear_verified():
     """Latest owner verdict per boundary, resolved to segment indices."""
-    rows = list(csv.DictReader((DOCS / "verification-baseline.csv").open()))
+    rows = list(csv.DictReader((FIXTURES / "verification-baseline.csv").open()))
     latest = {}
     for r in rows:
         latest[(r["script_word_key"], r["project"])] = r
@@ -331,7 +331,7 @@ def run_c04():
              "clean,\n             not that the rule would catch a dirty one")
     ear_line("173 \u201cThey\u2019re the || worst\u201d (segment 5-6) — owner verdict word-shifted, the exact "
              "fixture the\n                   curr-side seam exemption was disabled over "
-             "(docs/verification-baseline.csv)")
+             "(scripts/fixtures/verification-baseline.csv)")
     ear_line("Spanish Step U labels — audible breaths at clip3_02 1.571-1.758s, clip3_03 "
              "1.652-1.804s,\n                   clip3_07 1.211-1.423s, clip3_08 1.227-1.375s, "
              "clip3_09 1.240-1.433s (.listening-clips/spanish-batch/)")

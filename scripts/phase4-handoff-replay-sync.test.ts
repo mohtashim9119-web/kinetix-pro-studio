@@ -17,7 +17,7 @@
 //
 //  1. INPUTS MOVED OFF /tmp. This harness previously read its transcripts and
 //     silences from /tmp/phase3/..., which macOS purged — the fourth K8
-//     recurrence (docs/sync-pipeline-v2-plan.md Part K). Inputs now live under
+//     recurrence (docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md Part K). Inputs now live under
 //     .work-phase4/replay/ (gitignored, durable, resolved relative to this
 //     file, not to cwd) and are regenerated deterministically from COMMITTED
 //     sources by `python3 scripts/phase4-restore-replay-inputs.py`. A missing
@@ -26,7 +26,7 @@
 //  2. IT NOW ASSERTS. The original harness wrote a summary and asserted almost
 //     nothing ("not a correctness test"). It now diffs every replayed segment
 //     against the committed Step M golden values in
-//     docs/phase4-baseline-<key>-segments.csv (start/duration/end to 1e-9, plus
+//     scripts/fixtures/phase4-baseline-<key>-segments.csv (start/duration/end to 1e-9, plus
 //     tag/text/order) and the skip set against -skipped.csv. That is what makes
 //     it a usable per-boundary reference for the Phase 3 timing-source swap: a
 //     post-swap run diffs against these same rows, and any boundary that moved
@@ -137,7 +137,7 @@ function parseCsv(text: string): Record<string, string>[] {
 }
 
 function loadBaselineCsv(name: string): Record<string, string>[] {
-  return parseCsv(readFileSync(resolve(REPO, 'docs', name), 'utf-8'));
+  return parseCsv(readFileSync(resolve(REPO, 'scripts', 'fixtures', name), 'utf-8'));
 }
 
 describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
@@ -262,7 +262,7 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
         drifted.slice(0, 25).join('\n') + (drifted.length > 25 ? `\n… and ${drifted.length - 25} more` : '') +
         `\n\nThis is the Phase 3 timing-source swap's per-boundary reference. If a src/ change ` +
         `caused this, that is the signal it was built to give — investigate the diff before ` +
-        `re-baselining docs/phase4-baseline-${spec.key}-segments.csv.`,
+        `re-baselining scripts/fixtures/phase4-baseline-${spec.key}-segments.csv.`,
       ).toEqual([]);
 
       // Skip set must match by segment index AND reason numbers — the three

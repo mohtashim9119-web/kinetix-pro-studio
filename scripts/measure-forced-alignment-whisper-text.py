@@ -20,7 +20,7 @@ by timestamp, instead of segments[i].text).
 INPUT: a project's committed segments (project.json-shaped or bare array,
 for per-segment startTime/duration timing only) plus the FULL Whisper turbo
 transcript for the same audio, as a flat JSON array of {text, start, end}
-tokens (see this repo's docs/*-Smear-Phase2a.csv transcript-inspector
+tokens (see this repo's scripts/fixtures/*-Smear-Phase2a.csv transcript-inspector
 exports — parse_full_transcript in this script's own test/companion .md
 documents the exact extraction, since those CSVs embed the complete token
 list inside a second, console-log-dump section rather than their capped

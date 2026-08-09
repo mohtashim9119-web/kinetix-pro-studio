@@ -58,13 +58,13 @@ WHISPER = str(REPO / "src-tauri/binaries/whisper-x86_64-apple-darwin")
 MODEL = str(REPO / "src-tauri/models/ggml-large-v3-turbo.bin")
 
 SRC = "/Users/mohtashim/Downloads/All Projects Test Data/Spanish Project/Spanish VOiceover.m4a"
-ONSET_CSV = REPO / "docs/phase3-onset-spanish-fa.csv"
-SEGMENTS_CSV = REPO / "docs/phase4-baseline-spanish-segments.csv"
+ONSET_CSV = REPO / "scripts/fixtures/phase3-onset-spanish-fa.csv"
+SEGMENTS_CSV = REPO / "scripts/fixtures/phase4-baseline-spanish-segments.csv"
 
 OUTDIR = REPO / ".listening-clips/spanish-batch"
 KEYDIR = REPO / ".answer-keys"
-MANIFEST = REPO / "docs/phase4-step-q-spanish-manifest.csv"
-INTEGRITY_CSV = REPO / "docs/phase4-step-q-integrity-check.csv"
+MANIFEST = REPO / "docs/ws1-sync-pipeline/measurements/phase4-step-q-spanish-manifest.csv"
+INTEGRITY_CSV = REPO / "docs/ws1-sync-pipeline/measurements/phase4-step-q-integrity-check.csv"
 
 DURATION = 92.04
 PAD = 1.0

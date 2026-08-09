@@ -45,6 +45,7 @@ Chronological by section date, except the pre-2026-06-24 blocks at the top (labe
 - [Dead-Code Cleanup Run (2026-08-08/09) — Two Passes](#dead-code-cleanup-run-2026-08-0809--two-passes)
 - [Sync Pipeline v2 Research Programme — Phase 2a Model Swap Through Phase 4 Pre-Implementation (2026-08-04 to 2026-08-07)](#sync-pipeline-v2-research-programme--phase-2a-model-swap-through-phase-4-pre-implementation-2026-08-04-to-2026-08-07)
 - [File Map Archive — Pre-Restructure CLAUDE.md, Through 2026-08-09](#file-map-archive--pre-restructure-claudemd-through-2026-08-09)
+- [Docs Restructure Phase 5 — Fixture Relocation Out of `docs/` (2026-08-09)](#docs-restructure-phase-5--fixture-relocation-out-of-docs-2026-08-09)
 
 **Note on the 2026-08-09 docs-restructure dedup pass:** deduplication across this file was targeted, not exhaustive — it covered `App.tsx`, `syncEngine.ts`, `whisper.rs`, `resolutionConfig.ts`, `snapBoundaries.ts`, `ExportSettingsModal.tsx`, and `NewProjectModal.tsx`'s File Map entries, plus an automated SHA-identical and near-duplicate-sentence scan across the whole file. A narrative-vs-data prune (removing archived material whose content, as opposed to its exact wording, is superseded by a later section) was not performed. A future session should treat this as the known scope rather than infer it.
 
@@ -6285,3 +6286,84 @@ src-tauri/
 .env.example         # VITE_PEXELS_API_KEY, VITE_PIXABAY_API_KEY, VITE_COVERR_API_KEY
 metadata.json        # Google AI Studio project metadata — not used by Vite
 ```
+
+---
+
+## Docs Restructure Phase 5 — Fixture Relocation Out of `docs/` (2026-08-09)
+
+### Background: the 2026-08-07/08-09 partial moves and why 24 CSVs stayed pinned in `docs/` root
+
+`docs/measurements/` was created 2026-08-07 (first batch) and grew 2026-08-09
+(second batch, docs-restructure Phase 2) as WS1 research-phase CSV/JSON
+output was moved out of `docs/` root during documentation cleanup passes.
+Every file moved there was verified, file by file, to have no hardcoded path
+reference in any executable `scripts/*.py` or `scripts/*.ts` before being
+moved — read-only mentions in `.md` runbooks and CLI `help=`/docstring text
+didn't count, since those can't break anything at run time.
+
+**This check mattered: the 2026-08-09 Phase 2 move attempt initially included
+the Step M golden-baseline CSVs, `verification-baseline.csv`, the
+`*-Smear-Phase2a.csv` exports, and the core `phase3-onset-*-fa*.csv`/
+`*-smear-baseline.csv` files, and broke 5 tests immediately
+(`phase4-handoff-replay-sync.test.ts`, `phase4-step-w-k13-repro.test.ts`,
+both of which read those CSVs by hardcoded path) — caught by running the
+suite before committing, reverted the same session.** Everything still
+directly load-bearing for a re-runnable tool or test was left in `docs/`
+root, `docs/measurements/README.md` recorded the exhaustive "what stayed"
+list, and `CLAUDE.md`'s do-not-list carried a standing rule: "CSV/measurement
+files in `docs/` root are permanent — do not move them."
+
+`v6-smear-baseline.csv`/`173-smear-baseline.csv` were part of that pinned
+set too, but for a different reason than the other 22 — no script reads
+them by hardcoded path (or at all); `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
+cites a specific row number in `v6-smear-baseline.csv` (row 1179, the
+segment-144 smear-mechanism writeup) as narrative evidence, and moving the
+file without updating that citation risked leaving it silently wrong.
+
+### What changed this pass
+
+Docs Restructure Phase 5 (this session) reclassified all 24 root CSVs plus
+the 26 files already in `docs/measurements/` as test fixtures, not
+documentation, and did the move `CLAUDE.md`'s prior rule explicitly deferred
+— but this time by updating every hardcoded reference in the same commit
+instead of leaving the files pinned:
+
+- **22 code-referenced files** (the Step M golden baseline, the forced-alignment
+  ground truth, the `*-Smear-Phase2a.csv` transcript-inspector exports, and
+  `verification-baseline.csv`) moved to `scripts/fixtures/`, beside the
+  scripts and tests that read them by hardcoded path. Every hardcoded path
+  literal in `scripts/phase4-handoff-replay-sync.test.ts`,
+  `scripts/phase4-step-w-k13-repro.test.ts`,
+  `scripts/phase4-restore-replay-inputs.py`, `scripts/phase4-step-w-trust.py`,
+  `scripts/phase4-step-x-verify.py`, `scripts/phase4-step-s-structural-checks.py`,
+  `scripts/phase4-step-q-spanish-clips.py`, `scripts/phase4-step-u-score-spanish.py`,
+  and `scripts/phase3-reference-validity-step-b-phoneme.py` was updated in the
+  same commit. `scripts/fixtures/README.md` (companion index + the former
+  `phase4-baseline-methodology.md`, paths updated) documents what's there.
+  Golden replay re-verified 3/3 byte-identical after the move (see
+  `project-state.md`/commit log for the run that confirmed it).
+- **The 26 `docs/measurements/` files plus `v6-smear-baseline.csv`/
+  `173-smear-baseline.csv`** (28 total — none read by hardcoded path in any
+  script) moved to `docs/ws1-sync-pipeline/measurements/`, since they're WS1
+  research data, not documentation prose. `docs/ws1-sync-pipeline/measurements/README.md`
+  is the new index (the old `docs/measurements/README.md`'s per-file table,
+  carried forward). The `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` row-1179
+  citation was updated to the new path.
+- Several WS1 scripts' *write-target* paths for already-generated,
+  write-only output CSVs (`phase3-step-a-threshold-sweep.csv`,
+  `phase3-step-b-phoneme-bucket.csv`, `phase4-step-q-spanish-manifest.csv`,
+  `phase4-step-q-integrity-check.csv`, `phase4-step-u-spanish-scored.csv`,
+  `phase4-step-s-check-results.csv`) were repointed at
+  `docs/ws1-sync-pipeline/measurements/` too, so a future re-run of those
+  scripts writes beside the archived copy instead of back to `docs/` root.
+- `docs/measurements/` (now empty) was deleted. `CLAUDE.md`'s "CSV/measurement
+  files in `docs/` root are permanent" rule was replaced with the new
+  fixtures/research-data split (see `CLAUDE.md` §7).
+
+Comment-only mentions of moved `.md` plan documents inside `src/*.ts` (e.g.
+`docs/webcodecs-architecture-plan.md`, `docs/sync-pipeline-contract-plan.md`)
+were deliberately left untouched, consistent with how every earlier
+plan-doc archival in this project has been handled — those files were
+already folded into this archive in prior sessions without a pass to update
+every citing comment, and this session's scope was fixture paths, not a
+general src/ comment sweep.

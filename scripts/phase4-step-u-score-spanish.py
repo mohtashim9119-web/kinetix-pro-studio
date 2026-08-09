@@ -8,7 +8,7 @@ Settles ONE question: is Spanish's 282.1ms p95 `silencedetect` REFERENCE BIAS
 
 Inputs, all pre-existing and unmodified by this script:
   .answer-keys/step_q_answer_key.json    — the private Step Q key (clip -> abs times)
-  docs/phase3-onset-spanish-fa.csv       — the 22-pause Spanish FA dataset
+  scripts/fixtures/phase3-onset-spanish-fa.csv — the 22-pause Spanish FA dataset
   .work-phase4/spanish-breath-ref.json   — output of scripts/phase3-breath-aware-reference.py
                                            run UNMODIFIED (Step F thresholds, fixed for
                                            English before Spanish labels existed)
@@ -27,9 +27,9 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 KEY = REPO / ".answer-keys" / "step_q_answer_key.json"
-FA_CSV = REPO / "docs" / "phase3-onset-spanish-fa.csv"
+FA_CSV = REPO / "scripts" / "fixtures" / "phase3-onset-spanish-fa.csv"
 BREATH = REPO / ".work-phase4" / "spanish-breath-ref.json"
-OUT = REPO / "docs" / "phase4-step-u-spanish-scored.csv"
+OUT = REPO / "docs" / "ws1-sync-pipeline" / "measurements" / "phase4-step-u-spanish-scored.csv"
 
 # The owner's listening pass, verbatim. Clip-local seconds.
 #   a_end   — where segment A's speech actually stops

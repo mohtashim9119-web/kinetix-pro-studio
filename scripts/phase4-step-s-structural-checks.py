@@ -9,7 +9,7 @@ case and (b) run clean against the three real corpus projects except where a
 known real defect exists.
 
 Inputs are the Step M golden baselines, already committed:
-    docs/phase4-baseline-{v6,173,spanish}-{segments,words,skipped,silences}.csv
+    scripts/fixtures/phase4-baseline-{v6,173,spanish}-{segments,words,skipped,silences}.csv
 plus one extra REAL fixture used only by the segment-320 question:
     v6-segments-full.json  (the STALE base.en-era snapshot every Phase 3 forced-
     alignment measurement windowed against)
@@ -45,7 +45,8 @@ from pathlib import Path
 from statistics import median
 
 REPO = Path(__file__).resolve().parent.parent
-DOCS = REPO / "docs"
+FIXTURES = REPO / "scripts" / "fixtures"
+MEASUREMENTS = REPO / "docs" / "ws1-sync-pipeline" / "measurements"
 STALE_V6 = Path("/Users/mohtashim/Downloads/All Projects Test Data/"
                 "Projects Backend Data/v6-segments-full.json")
 
@@ -147,16 +148,16 @@ class Corpus:
 
 def load_corpus(name: str) -> Corpus:
     c = Corpus(name)
-    with open(DOCS / f"phase4-baseline-{name}-segments.csv") as f:
+    with open(FIXTURES / f"phase4-baseline-{name}-segments.csv") as f:
         c.segments = [dict(order=int(r["order"]), tag=r["tag"], text=r["text"],
                            start=float(r["startTime"]), dur=float(r["duration"]),
                            end=float(r["endTime"])) for r in csv.DictReader(f)]
-    with open(DOCS / f"phase4-baseline-{name}-words.csv") as f:
+    with open(FIXTURES / f"phase4-baseline-{name}-words.csv") as f:
         c.words = [dict(idx=int(r["idx"]), text=r["text"],
                         s=float(r["startSec"]), e=float(r["endSec"])) for r in csv.DictReader(f)]
-    with open(DOCS / f"phase4-baseline-{name}-silences.csv") as f:
+    with open(FIXTURES / f"phase4-baseline-{name}-silences.csv") as f:
         c.silences = [(float(r["startSec"]), float(r["endSec"])) for r in csv.DictReader(f)]
-    with open(DOCS / f"phase4-baseline-{name}-skipped.csv") as f:
+    with open(FIXTURES / f"phase4-baseline-{name}-skipped.csv") as f:
         c.skipped = [dict(index=int(r["segmentIndex"]), tag=r["segmentTag"],
                           text=r["segmentText"], matched=int(r["matchedWords"]),
                           total=int(r["totalWords"]), conf=float(r["confidence"]),
@@ -303,7 +304,7 @@ def c05_scorer_gate(rows):
           findings were that gaplessness, not the defect. The defect is defined
           over whole words with real gaps — i.e. over FORCED-ALIGNMENT output.
           Those arrays are partially committed after all:
-          docs/phase3-onset-{v6,173}-fa.csv is the PRE-FIX (ungated) attribution
+          scripts/fixtures/phase3-onset-{v6,173}-fa.csv is the PRE-FIX (ungated) attribution
           per scored pause and ...-fa-corrected.csv is the POST-FIX (gated) one.
 
       (2) WRONG PREDICATE. It tested an overlap FRACTION (>=50% of the pause
@@ -338,7 +339,7 @@ def c05_scorer_gate(rows):
 
 def load_fa_rows(proj: str, corrected: bool = False):
     suffix = "-fa-corrected" if corrected else "-fa"
-    with open(DOCS / f"phase3-onset-{proj}{suffix}.csv") as f:
+    with open(FIXTURES / f"phase3-onset-{proj}{suffix}.csv") as f:
         return list(csv.DictReader(f))
 
 
@@ -697,7 +698,7 @@ def cmd_real():
             if len(fs) > 6:
                 print(f"          [{name}] ... and {len(fs)-6} more")
     print("\n  C05  scorer short-trailing-word misattribution — run against the RECOVERED")
-    print("       FA arrays (docs/phase3-onset-{v6,173}-fa.csv), not the corpus baselines:")
+    print("       FA arrays (scripts/fixtures/phase3-onset-{v6,173}-fa.csv), not the corpus baselines:")
     for proj in ("v6", "173"):
         rows = load_fa_rows(proj)
         truth = c05_labelled_truth(proj)
@@ -771,7 +772,7 @@ def cmd_csv():
             for f in fn(c):
                 rows.append({"check": cid, "check_label": label, "project": name,
                              "subject": f.subject, "detail": f.detail})
-    out = DOCS / "phase4-step-s-check-results.csv"
+    out = MEASUREMENTS / "phase4-step-s-check-results.csv"
     with open(out, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["check", "check_label", "project", "subject", "detail"])
         w.writeheader()

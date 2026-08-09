@@ -12,13 +12,13 @@ this repository, and the verdict for each is CI-IN or CI-OUT.
         fragmented and gapless, so 59-100% of its 189 findings were the gapless
         pause-absorption signature rather than the defect. The FA arrays Step S
         said were lost with /tmp/phase3 are in fact partially committed:
-        docs/phase3-onset-{v6,173}-fa.csv is the PRE-FIX (ungated) attribution
+        scripts/fixtures/phase3-onset-{v6,173}-fa.csv is the PRE-FIX (ungated) attribution
         for every scored pause, with real FA word spans, and
-        docs/phase3-onset-{v6,173}-fa-corrected.csv is the POST-FIX (gated) one.
+        scripts/fixtures/phase3-onset-{v6,173}-fa-corrected.csv is the POST-FIX (gated) one.
         Their disagreement IS the labelled ground truth — Step 1's 12 instances.
 
   C10 — route taken: EAR-VERIFIED CORPUS CASES.
-        Scored against docs/verification-baseline.csv, the owner's own listening
+        Scored against scripts/fixtures/verification-baseline.csv, the owner's own listening
         verdicts, by resolving each ear-verified boundary to its segment index.
 
   C11 — route taken: LIVE K13 REPRO, in scripts/phase4-step-w-k13-repro.test.ts
@@ -35,7 +35,7 @@ import unicodedata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-DOCS = REPO / "docs"
+FIXTURES = REPO / "scripts" / "fixtures"
 C11_ARTIFACT = REPO / ".work-phase4" / "step-w-c11-live-repro.json"
 
 _STEPS = None
@@ -83,8 +83,8 @@ def c05_report():
 
     total_tp = total_fn = total_fp = total_rows = 0
     for proj in ("v6", "173"):
-        pre = list(csv.DictReader((DOCS / f"phase3-onset-{proj}-fa.csv").open()))
-        post = list(csv.DictReader((DOCS / f"phase3-onset-{proj}-fa-corrected.csv").open()))
+        pre = list(csv.DictReader((FIXTURES / f"phase3-onset-{proj}-fa.csv").open()))
+        post = list(csv.DictReader((FIXTURES / f"phase3-onset-{proj}-fa-corrected.csv").open()))
         post_by = {round(float(r["silence_start"]), 6): r for r in post}
 
         truth = set()
@@ -125,7 +125,7 @@ def c05_report():
 # ---------------------------------------------------------------- C10
 
 def load_segments(name):
-    return list(csv.DictReader((DOCS / f"phase4-baseline-{name}-segments.csv").open()))
+    return list(csv.DictReader((FIXTURES / f"phase4-baseline-{name}-segments.csv").open()))
 
 
 def boundary_keys(name):
@@ -142,11 +142,11 @@ def c10_report(c10_findings_by_proj):
     print("\n" + "=" * 92)
     print("C10 — seam cross-attribution (script break vs acoustic break)")
     print("=" * 92)
-    print("""  Route: EAR-VERIFIED CORPUS CASES (docs/verification-baseline.csv, the owner's
+    print("""  Route: EAR-VERIFIED CORPUS CASES (scripts/fixtures/verification-baseline.csv, the owner's
   own listening verdicts). Each verified boundary is resolved to a segment index
   by rebuilding its script-word key from the committed baseline segments.""")
 
-    rows = list(csv.DictReader((DOCS / "verification-baseline.csv").open()))
+    rows = list(csv.DictReader((FIXTURES / "verification-baseline.csv").open()))
     latest = {}
     for r in rows:
         latest[(r["script_word_key"], r["project"])] = r
@@ -329,8 +329,8 @@ def mechanism_report(stepS):
           f"""new {len(stepS.c02_dead_to_script(corpora['v6']))} — detection NOT weakened""")
 
     # --- C05
-    pre_v6 = list(csv.DictReader((DOCS / "phase3-onset-v6-fa.csv").open()))
-    pre_173 = list(csv.DictReader((DOCS / "phase3-onset-173-fa.csv").open()))
+    pre_v6 = list(csv.DictReader((FIXTURES / "phase3-onset-v6-fa.csv").open()))
+    pre_173 = list(csv.DictReader((FIXTURES / "phase3-onset-173-fa.csv").open()))
     old_fp = len(c05_old_ungated_everything(pre_v6)) + len(c05_old_ungated_everything(pre_173))
     new_hits = len(c05_v2_findings(pre_v6)) + len(c05_v2_findings(pre_173))
     p05_new = [f for f in poisons["C05"]() if f.check == "C05"]

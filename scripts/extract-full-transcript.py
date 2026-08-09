@@ -3,7 +3,7 @@
 extract-full-transcript.py — Phase 3 data-cleaning pass, Step 4 helper
 (sync-pipeline-v2-plan.md).
 
-The Phase 2a transcript-inspector CSV exports (docs/{V6,173,Spanish}-Smear-
+The Phase 2a transcript-inspector CSV exports (scripts/fixtures/{V6,173,Spanish}-Smear-
 Phase2a.csv) each contain TWO sections: a UI-table section capped at 1000
 rows (the inspector's own on-screen table limit), then a full raw
 console-log dump — one browser console.log call's worth of CSV text pasted
@@ -43,7 +43,7 @@ def parse_full_transcript(csv_path: str) -> list:
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--csv", required=True, help="a docs/*-Smear-Phase2a.csv transcript-inspector export")
+    p.add_argument("--csv", required=True, help="a scripts/fixtures/*-Smear-Phase2a.csv transcript-inspector export")
     p.add_argument("--out", required=True, help="output path for the flat {text,start,end} JSON array")
     args = p.parse_args()
 

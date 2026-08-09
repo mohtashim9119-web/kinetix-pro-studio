@@ -5,7 +5,7 @@ phase3-step-i-l-audit.py — Phase 3 Steps I-L (sync-pipeline-v2-plan.md).
 Four subcommands, run in the order the plan's Steps I-L brief specifies:
 
   extract-raw-transcript   Parse the FULL, untruncated V6 turbo transcript
-                            out of docs/V6-Smear-Phase2a.csv's second
+                            out of scripts/fixtures/V6-Smear-Phase2a.csv's second
                             section (the console-log CSV dump past the
                             1000-row UI table cap — see Phase 3's Step 4
                             entry for why the FIRST section alone silently
@@ -304,16 +304,16 @@ def build_parser():
     sub = p.add_subparsers(required=True)
 
     p1 = sub.add_parser("extract-raw-transcript")
-    p1.add_argument("--smear-csv", required=True, help="docs/V6-Smear-Phase2a.csv")
+    p1.add_argument("--smear-csv", required=True, help="scripts/fixtures/V6-Smear-Phase2a.csv")
     p1.add_argument("--out-json", required=True)
     p1.set_defaults(func=cmd_extract_raw_transcript)
 
     p2 = sub.add_parser("transcript-audit")
     p2.add_argument("--raw-transcript", required=True)
     p2.add_argument("--batch1-answer-key", required=True, help="/tmp/phase3/v6/step_c_answer_key.json")
-    p2.add_argument("--batch1-manifest", required=True, help="docs/phase3-step-c-clips-manifest.csv")
+    p2.add_argument("--batch1-manifest", required=True, help="docs/ws1-sync-pipeline/measurements/phase3-step-c-clips-manifest.csv")
     p2.add_argument("--batch2-answer-key", required=True, help="/tmp/phase3/v6/step_h_answer_key.json")
-    p2.add_argument("--batch2-manifest", required=True, help="docs/phase3-step-h-batch2-manifest.csv")
+    p2.add_argument("--batch2-manifest", required=True, help="docs/ws1-sync-pipeline/measurements/phase3-step-h-batch2-manifest.csv")
     p2.add_argument("--prefix-n", type=int, default=4)
     p2.add_argument("--out-csv", default=None)
     p2.set_defaults(func=cmd_transcript_audit)

@@ -63,7 +63,7 @@ def classify_word(word):
 
 def main():
     rows = list(csv.DictReader(open(
-        "docs/phase3-onset-v6-fa-step1-2-corrected.csv")))
+        "scripts/fixtures/phase3-onset-v6-fa-step1-2-corrected.csv")))
 
     out_rows = []
     unknown_words = set()
@@ -79,7 +79,7 @@ def main():
     print(f"unclassified (not in CMUdict): {sum(1 for o in out_rows if o['phone_class'] is None)}")
     print(f"sample unclassified words: {sorted(unknown_words)[:30]}")
 
-    with open("docs/phase3-step-b-phoneme-bucket.csv", "w", newline="") as f:
+    with open("docs/ws1-sync-pipeline/measurements/phase3-step-b-phoneme-bucket.csv", "w", newline="") as f:
         fn = list(out_rows[0].keys())
         w = csv.DictWriter(f, fieldnames=fn)
         w.writeheader()
