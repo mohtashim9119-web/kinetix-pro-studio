@@ -81,7 +81,7 @@ is read at exactly one place — `dragCascade.ts:431-432`'s `conserveAtTail`. It
 only via the shared `DRAG_CASCADE_OPTIONS` constant (`dragCascade.ts:140`), and only by the
 drag path. **Apply Sync never calls `computeDragCascade` at all**, so the guard is not
 merely disabled on that path — it is not on it. This was a deliberate design choice recorded
-at the time: `docs/decisions/2026-08-08-last-segment-edge.md` § 4 enumerates Apply Sync
+at the time: `docs/history.md`'s "The Last Segment's Right Edge" ruling entry § 4 enumerates Apply Sync
 first in its table of paths that legitimately still change total duration.
 
 **The last-segment edge lock — does not apply.** `isDragEdgeLocked`

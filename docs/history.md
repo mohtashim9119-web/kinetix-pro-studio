@@ -46,6 +46,13 @@ Chronological by section date, except the pre-2026-06-24 blocks at the top (labe
 - [Sync Pipeline v2 Research Programme — Phase 2a Model Swap Through Phase 4 Pre-Implementation (2026-08-04 to 2026-08-07)](#sync-pipeline-v2-research-programme--phase-2a-model-swap-through-phase-4-pre-implementation-2026-08-04-to-2026-08-07)
 - [File Map Archive — Pre-Restructure CLAUDE.md, Through 2026-08-09](#file-map-archive--pre-restructure-claudemd-through-2026-08-09)
 - [Docs Restructure Phase 5 — Fixture Relocation Out of `docs/` (2026-08-09)](#docs-restructure-phase-5--fixture-relocation-out-of-docs-2026-08-09)
+- [Decisions Log — Dissolved from `docs/decisions/` (2026-08-09)](#decisions-log--dissolved-from-docsdecisions-2026-08-09)
+  - [The Model P Revert — What Actually Happened (2026-08-07)](#the-model-p-revert--what-actually-happened-2026-08-07)
+  - [The Model P Ruling — Official and Locked (2026-08-07)](#the-model-p-ruling--official-and-locked-2026-08-07)
+  - [The `segments` Invariant — Ruling Document (2026-08-07)](#the-segments-invariant--ruling-document-2026-08-07)
+  - [The Last Segment's Right Edge — Official and Locked (2026-08-08)](#the-last-segments-right-edge--official-and-locked-2026-08-08)
+  - [The Pointercancel Question — RULED: Discard (2026-08-08)](#the-pointercancel-question--ruled-discard-2026-08-08)
+  - [Undo / Redo — Design (2026-08-08)](#undo--redo--design-2026-08-08)
 
 **Note on the 2026-08-09 docs-restructure dedup pass:** deduplication across this file was targeted, not exhaustive — it covered `App.tsx`, `syncEngine.ts`, `whisper.rs`, `resolutionConfig.ts`, `snapBoundaries.ts`, `ExportSettingsModal.tsx`, and `NewProjectModal.tsx`'s File Map entries, plus an automated SHA-identical and near-duplicate-sentence scan across the whole file. A narrative-vs-data prune (removing archived material whose content, as opposed to its exact wording, is superseded by a later section) was not performed. A future session should treat this as the known scope rather than infer it.
 
@@ -6367,3 +6374,1855 @@ plan-doc archival in this project has been handled — those files were
 already folded into this archive in prior sessions without a pass to update
 every citing comment, and this session's scope was fixture paths, not a
 general src/ comment sweep.
+
+---
+
+## Decisions Log — Dissolved from `docs/decisions/` (2026-08-09)
+
+> `docs/decisions/` (6 files) is dissolved this pass, per the docs-restructure Phase 5
+> plan (Stage 2). Each ruling's operative rule is now a one-liner in `CLAUDE.md` §4
+> Invariants; the full rationale is preserved verbatim below, under a dated heading with
+> its own TOC anchor, so `project-state.md`'s "Rulings In Force" section and any other
+> citation can link precisely to one ruling. Content is unchanged from each file's
+> original commit except for this note and the heading-level adjustment needed to nest
+> them under this section.
+
+### The Model P Revert — What Actually Happened (2026-08-07)
+
+
+> Written 2026-08-07, during repository consolidation (Parts 1-2), as Part A of a
+> follow-up investigation into the "Model P" revert flagged as an unresolved question
+> by an earlier same-day investigation (`docs/context-report-2026-08-07.md`).
+> Tags used below: **[MEASURED]** — read directly from git/source. **[ASSERTED]** —
+> a claim already recorded somewhere in the tree, cited. **[ASSUMED]** — inference,
+> with the reasoning stated so it can be checked.
+
+---
+
+## Context
+
+An earlier report this same day characterized "Model P" as *"a large follow-on
+effort... 48 commits / 137 files / +57,423 −1,438 lines... built on top of `HEAD`
+and then fully reverted the same day,"* and flagged the revert's rationale as
+*"the single largest unresolved question this report surfaces"* — it had deliberately
+not read `model-p-editor-work`'s own file contents, including `docs/`.
+
+Part 2 of this consolidation already corrected the headline framing: `model-p-editor-work`
+(`210855d`) is not 48 commits of independent work — it is `webgl2-effects-engine`'s tip
+(`6eae48e`) **plus exactly one commit**, the "park" commit, whose own message says it
+captures uncommitted work *"immediately before `src/` was reverted to `18f5734`."*
+This document answers the two questions that framing leaves open: what would that
+revert have actually thrown away, and why was it about to happen.
+
+---
+
+## What `18f5734` is
+
+**[MEASURED]** `18f5734` = `"feat(sync): Phase 4 readiness close-out — Steps Y-Z"`
+(2026-08-07 00:20), tagged `phase4-implementation-ready-2026-08-07`. It is the close-out
+commit for `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3 (forced-alignment) measurement
+programme — at this commit, `sync-pipeline-v2-plan.md`'s own Phase Status table records
+Phase 3 as **"IMPLEMENTATION-READY, not started... Integration not started."** Every
+commit from Phase 0 through this one is measurement/design only — the phrase "No `src/`
+changes" (or equivalent) appears in nearly every one of their bodies.
+
+**[MEASURED]** `18f5734` sits **5 commits behind** the current tip `6eae48e`. The
+intervening 5 commits are a *different, explicitly separate* workstream:
+
+| Commit | What |
+|---|---|
+| `ad70019` | Design doc — manual lock semantics, Steps AA-AD (own message: *"separate workstream from the timing-source swap"*) |
+| `c52e67a` | **K14** — lock hard-wall semantics, implementation |
+| `f8aef7d` | **K15** — bound and localize the drag cascade (fixes K15a, introduced by K14; and K15b, which predates K14) |
+| `0e2ac5b` | **K16** — drag pointer accuracy (3 real, measured pointer-math faults) |
+| `6eae48e` | **K17** — move every cascaded segment in the live drag preview |
+
+**So a literal revert of `src/` to `18f5734` would have discarded K14/K15/K16/K17 —
+four already-committed, tested, owner-reported-bug-driven fixes — in addition to
+whatever uncommitted Model P work existed at park time.** Nothing in any commit body,
+doc, or code comment states a defect in K14-K17 themselves. Suite was green (1365
+tests) at `6eae48e`.
+
+---
+
+## What the park commit holds — the five named items, checked individually
+
+**[MEASURED]**, via `git diff 6eae48e 210855d` per file:
+
+| Item (from the park commit's own message) | Status |
+|---|---|
+| Model P gapless timeline partition (`timelinePartition.ts`) | **(i) Only in the park commit.** File does not exist at `6eae48e`. |
+| Lock fingerprint (`projectFingerprint.ts` + test) | **(i) Only in the park commit.** File does not exist at `6eae48e`. |
+| 50/50 silence split (`snapBoundaries.ts`) | **(iii) Partially both.** The file itself is core, pre-existing sync-engine code; the "50/50 rule" content is new (confirmed: every `50/50`-referencing line in the diff is a `+` addition). |
+| Export gap guard (`exportPipeline.ts`, `exportPipelineWebCodecs.ts`) | **(iii) Partially both.** Both files are the established export pipeline; the new `checkTimelineIsGapless` function and its two call sites are new. |
+| Writer consolidation (`App.tsx` / `syncEngine.ts` / `dragCascade.ts`) | **(iii) Partially both.** All three files are heavily used at `6eae48e`; the consolidation diffs (App.tsx +209/−, `syncEngine.ts` and `dragCascade.ts` rewrites) are new. |
+
+---
+
+## What the docs ruled
+
+**[MEASURED]** Two companion documents exist **only in the park commit** (not on `main`
+as of this consolidation, prior to it being folded in) — `docs/decisions/segments-invariant-ruling.md`
+and `docs/drag-path-testability-assessment.md` — both stamped *"Written 2026-08-07, at
+HEAD `0e2ac5b` (K16)... Status: AWAITING OWNER RULING. Design only — no code written,
+no commit made."*
+
+**`segments-invariant-ruling.md`** poses one question: is `project.segments` a
+**gapless partition** ("Model P" — `startTime[i]+duration[i]===startTime[i+1]`) or an
+**ordered list of independently positioned slots** ("Model S" — gaps legal)? [ASSERTED,
+`segments-invariant-ruling.md` §0-1] Eleven components in the codebase answer this
+differently, and the answer had silently flipped five times across recent history with
+no decision ever recorded — most recently, K14's lock hard-wall and K15a's
+`restackWindow` locality had (unnoticed) adopted Model S, while nine other components,
+**including both export paths**, assume Model P and cannot represent a gap at all
+[ASSERTED, §1.3]. The doc traces a concrete, sourced (not reproduced end-to-end)
+mechanism by which a gap under a locked segment desyncs an exported video — headings
+select by `startTime` while export positions by a `duration`-prefix-sum, and with a
+gap those disagree [ASSERTED, §1.3].
+
+The doc's own recommendation (§5): **Model P**, with the counter-argument stated in
+full (§5.2 — under P a lock can never be unconditionally inert, "the entire point of
+K14"). Its migration table (§6.3) states plainly: under Model P, **"K14 — lock hard
+wall / growth exemption withdrawn: Needs rework. Must gain the §4.1 filling rule, and
+must refuse unsatisfiable locks."** K15a/K15b/K16 all "survive" under P; only K14's
+specific hard-wall implementation is named as needing to be rebuilt.
+
+**`drag-path-testability-assessment.md`** is a companion doc, same status/HEAD stamp,
+recommending a scoped drag-session test harness ("Route 2") be built **alongside** the
+Model-P migration's step 5 (the K17 live-drag-preview fix), not before — because the
+harness's central assertion depends on which model is ruled.
+
+**[MEASURED]** `6eae48e` (K17) was committed *after* the ruling doc was written, and its
+own message states it needed no ruling: *"An overlap is illegal under BOTH candidate
+models of `segments` (`docs/decisions/segments-invariant-ruling.md` §0), so this needed no
+ruling."* — consistent with the ruling doc's own §4.4 finding.
+
+**[MEASURED]** The park commit's own new code is written in Model P's vocabulary and
+cites numbered owner rulings dated the same day: `projectFingerprint.ts`'s docstring
+opens *"OWNER RULING (2026-08-07, task 2)..."*; `exportPipeline.ts`'s new
+`checkTimelineIsGapless` is headed *"TASK 4 (2026-08-07) — the export guard the ruling
+asked to be made explicit"* and cites `docs/decisions/segments-invariant-ruling.md` §1.3 and §4.1
+by name; `snapBoundaries.ts`'s 50/50 rule cites *"owner ruling (2026-08-07, ruling
+point 2)."* **This confirms the owner ruled Model P** sometime between the ruling doc's
+writing and the park commit (both 2026-08-07), and implementation of that ruling's
+migration (§6.1: write the invariant, confirm/refute export desync, rule the
+lock-shortfall case, amend `applyAnchorBasedTiming`, fix the live drag preview) is what
+the park commit contains in flight. **Also resolves an open question from the earlier
+report** — "Model P" is not an internal codename of undocumented origin; it is
+literally the "Model P" (gapless-Partition) name from `segments-invariant-ruling.md`
+§2, and the branch `model-p-editor-work` is named after implementing it.
+
+The "task N" numbering (`task 2`, `task 4`) does not match `segments-invariant-ruling.md`
+§6.1's own step numbering — it most plausibly reflects a separate, session-level
+numbered task list (referenced obliquely by `drag-path-testability-assessment.md`'s
+own *"working tree clean apart from the `package.json` test-gate change reported in
+Part 1"*) that is not itself a committed document in this repository. **[ASSUMED]**
+this list existed only in conversation/session context and was never persisted —
+flagged, not invented; nothing here should be read as reconstructing its exact contents.
+
+---
+
+## Why the revert happened
+
+**[ASSUMED — inference from the evidence above, not stated verbatim anywhere]**
+
+No commit, doc, or comment states outright "revert to `18f5734` because X." But the
+evidence supports a specific, coherent reading over the alternatives:
+
+- **Not a rejection of K14-K17's quality.** All four are real, owner-reported-bug
+  fixes with before/after measurement and a green suite; nothing calls their
+  correctness into question.
+- **Not a rejection of the in-flight Model P work either** — the park commit exists
+  specifically so that work is *not* lost.
+- **Most consistent reading: `18f5734` (immediately before K14) was chosen as the
+  clean starting point to redo lock/drag semantics correctly under the just-ruled
+  Model P, rather than patch K14's already-shipped Model-S-flavored implementation.**
+  This is exactly what `segments-invariant-ruling.md` §6.3 itself calls for — K14
+  specifically ("needs rework... must gain the §4.1 filling rule") — while K15/K16/K17
+  are declared to "survive" under P (§6.3), so a clean re-derivation from before K14
+  would let their logic be re-applied on top of a correctly-ruled foundation rather
+  than layered as further patches on a model nobody had chosen yet.
+- **The commit's own framing supports "park the WIP, land it properly later" over
+  "reject the work."** *"Not a reviewed commit — a preservation snapshot so nothing
+  is lost by the revert"* describes a safety step ahead of an action, not a verdict
+  on what was wrong with the thing being reverted.
+
+**This reading is an inference, not a recovered fact.** No text anywhere says "redo
+K14 under Model P" in those words. If the owner recalls a different reason, that
+should supersede this section — but per the earlier report's own instruction (A6),
+this consolidation had a specific, well-cited alternative available and did not need
+to stop and ask blind.
+
+**[MEASURED, from Part 1/2 of this consolidation]** The revert-to-`18f5734` was, in
+any case, **never carried out as a committed state anywhere in reachable history** —
+`model-p-editor-work` stops at the park commit; `main`/`webgl2-effects-engine` sit at
+`6eae48e` today, with K14-K17 fully intact.
+
+---
+
+## What is safe to revive
+
+- **`projectFingerprint.ts`** (lock-fingerprint persistence across resync) — additive,
+  narrowly scoped, cites its own owner ruling verbatim in its doc comment. Also closes
+  the pre-existing "K13" bug (`project-state.md`'s Deferred Known Bugs: lock
+  preservation is broken across resync) — a real, independently-tracked defect, not
+  invented for Model P.
+- **`docs/decisions/segments-invariant-ruling.md`'s Model P ruling itself** — the underlying
+  architectural question is real, well-evidenced (§1.3's export-desync trace), and
+  independent of whether any specific patch survives. Re-implementing its migration
+  steps (§6.1) cleanly, starting from the current `main` tip rather than a discarded
+  branch, is lower-risk than reviving the park commit's diff wholesale (which predates
+  K17's already-shipped drag-preview fix by one commit and was never reviewed).
+- **`timelinePartition.ts`'s `enforceGaplessPartition`/`findPartitionViolations`** and
+  the export gap guard concept — both implement §6.1 steps 1/3/4, but should be
+  re-derived against current `main` (which now includes K17) rather than cherry-picked,
+  since the park commit's own diff base (`6eae48e`) is now `main`'s own tip and a clean
+  re-apply is low-cost.
+
+## What must not be retried and why
+
+- **A blanket revert of K14-K17 to reach `18f5734`.** Per the evidence above, this
+  would discard four tested, owner-verified bug fixes with no stated defect in them.
+  If lock semantics need rework under Model P, that is scoped to K14's *lock hard-wall
+  branch* specifically (`segments-invariant-ruling.md` §6.3), not the whole cluster.
+- **Reviving Model S ("independent slots") without first re-reading §5.2's
+  counter-argument in full.** The ruling doc itself states Model S is the only model
+  that makes a lock genuinely inert — a real, stated trade-off, not a settled loss.
+- **Committing the park commit's diff as-is.** It predates K17 by one commit
+  chronologically in the sense that it was written on top of `6eae48e` before that
+  commit was `main`'s tip in this consolidated history, was never reviewed, and its
+  own message explicitly disclaims review ("Not a reviewed commit").
+
+---
+
+### The Model P Ruling — Official and Locked (2026-08-07)
+
+
+> **OWNER RULING, 2026-08-07.** Recorded here as the canonical, citable decision record.
+> Full analysis and the reasoning that led here: `docs/decisions/segments-invariant-ruling.md`
+> (updated the same day to point back at this doc). Context on the parked in-flight
+> implementation attempt and why it was never merged: `docs/decisions/2026-08-07-model-p-revert.md`.
+
+---
+
+## The ruling
+
+**Model P (gapless partition) is OFFICIAL and LOCKED. Model S (independent slots) is
+REJECTED.**
+
+## The invariant, stated precisely
+
+For `project.segments`, an ordered array indexed `0..n-1`:
+
+```
+startTime[0] === 0
+startTime[i] + duration[i] === startTime[i+1]     for every i in [0, n-2]
+startTime[n-1] + duration[n-1] === audioDuration
+```
+
+`startTime` is a **derived cache** of the running prefix-sum of durations, never an
+independent fact that can drift from it. Overlaps were already illegal under both
+candidate models and remain illegal. What this ruling settles is narrower and was
+previously undecided: **a gap — `startTime[i] + duration[i] < startTime[i+1]` — is now
+also illegal**, for every adjacent pair, unconditionally.
+
+## What it forbids
+
+- Any transformation of `segments` that leaves `startTime[i] + duration[i] < startTime[i+1]`
+  for any `i`, even transiently as a committed (non-preview) state.
+- A locked segment whose position leaves a shortfall that nothing absorbs (see the
+  lock-shortfall rule below — this is now a **refusal**, not a silent gap).
+- Treating `startTime` as independently authoritative anywhere it is *written* — it may
+  still be *read* directly (most call sites do, and that's fine) as long as nothing
+  ever writes a `startTime` that isn't the prefix sum of everything before it.
+
+## The lock-shortfall rule (§4.1(a), now confirmed)
+
+When a locked segment's hard-wall position would leave an unsatisfiable shortfall against
+an adjacent locked segment (lock A ends before lock B starts, with no unlocked segment
+between them to absorb the gap), **the second lock is refused at toggle time**, with a
+clear message naming the conflict. This was `segments-invariant-ruling.md` §4.1's
+resolution (a), the only one of the three offered resolutions consistent with both Model P
+and owner decision 9 ("a locked segment is an immovable anchor"). Resolutions (b) (let the
+earlier lock's slot grow — reopens the pre-K14 growth exemption K14 withdrew on purpose)
+and (c) (permit a gap between two locks as a first-class exception — Model S through a side
+door) are both rejected.
+
+In the ordinary, satisfiable case — one lock, or two locks with room between them — the
+segment adjacent to the shortfall absorbs it as leading/trailing silence. This is not a new
+mechanism; it is the same operation `headExtendFirstSegment` already performs for segment 1
+against the timeline start, and the same operation Option A (owner decision 8) performs for
+unscripted-heading audio in the other direction.
+
+## Which components already assume Model P
+
+Per `segments-invariant-ruling.md` §1.1's inventory, **9 of 11 named components already
+implement or assume Model P** — this ruling formalizes what most of the codebase already
+does, not a departure from it:
+
+| # | Component | Model P status |
+|---|---|---|
+| 1 | `recomputeStartTimes` (legacy global re-flow) | Assumes P — deleting gaps was its stated purpose |
+| 2 | `applyAnchorBasedTiming`, locked branch, **pre-K14** | Assumed P (growth exemption existed to keep output contiguous) |
+| 3 | `snapCoveredBoundaries` (`src/services/snapBoundaries.ts`) | Assumes P — carries an explicit appended contiguity fix |
+| 4 | `headExtendFirstSegment` (`src/services/syncEngine.ts`) | Assumes P — holds the segment's END fixed so nothing ripples |
+| 5 | Timeline flexbox layout (pre-2026-07-31) | Assumed P structurally — a gap was unrepresentable |
+| 6 | **Both export paths** — `src/services/exportPipeline.ts` and `src/services/webcodecsExport/exportPipelineWebCodecs.ts` | Assume P as a hard requirement — position a segment by prefix-sum of `duration`, never consult `startTime` to place output. Cannot represent a gap at all; see §1.3 of the ruling doc for the concrete editor/export desync and heading-drift mechanism this produces if a gap ever reaches export. |
+| 7 | Timeline absolute positioning (2026-07-31 redesign) | Neutral reader — renders each card at its own `startTime`; exposes a violation, prevents none |
+| 9 | Preview `currentSegment` lookup (playback) | S-shaped *read* only (derives active segment from `currentTime` against `startTime`) — becomes provably correct once P holds everywhere `startTime` is written |
+
+Named 9 components (not 11) above because #8 (live drag preview) and #10/#11 (K14's lock
+hard wall, K15a's `restackWindow`) are exactly the components this ruling requires rework
+of — see the compliance backlog below, not this "already compliant" list.
+
+## What must be reworked to comply
+
+**K14's lock hard-wall semantics is the known, named case.** `applyAnchorBasedTiming`'s
+locked branch (`src/services/syncEngine.ts`, the `if (seg.locked) { ...; continue; }`
+block) currently pins a locked segment's `startTime`/`duration` unconditionally and never
+makes it absorb or be absorbed by a neighbour's shortfall — that is Model S's hard-wall
+behaviour, adopted silently when K14 withdrew the pre-K14 growth exemption to stop a lock
+from being pushed around by neighbours. Under Model P this must change to:
+
+1. On an ordinary (satisfiable) shortfall, the adjacent unlocked segment absorbs the gap
+   (extends to meet the lock), per the rule above.
+2. On an unsatisfiable shortfall (locked segment on both sides of the gap), the second
+   lock-toggle is refused outright rather than allowed to create a gap.
+
+K15a's `restackWindow` locality (`src/services/dragCascade.ts`) is *not* broken by this
+ruling — per `segments-invariant-ruling.md` §2's own table, "when the total is conserved,
+`restackWindow` and a global `recomputeStartTimes` produce identical results," so K15a's
+locality survives **as an optimisation**; only its justification changes, from "preserves a
+legitimate gap" (Model S framing, no longer valid) to "produces the same contiguous result
+as a full re-flow, cheaper." It remains correct only because nothing upstream is allowed to
+hand it a pre-existing gap to preserve — which is exactly what closing K14's compliance gap
+guarantees.
+
+K15b (word-onset yield floor) and K16 (drag pointer geometry) require no change — both are
+already orthogonal to the gap question (§6.3 of the ruling doc).
+
+The compliance backlog — every site currently capable of creating or silently propagating a
+gap — is enumerated with file:line in `project-state.md`'s Open Decisions section (moved
+there from this ruling doc so it has one home); see that list before starting any of this
+rework.
+
+## Consequences
+
+- `docs/decisions/segments-invariant-ruling.md`'s status is now RULED, not AWAITING OWNER RULING (§0
+  updated in place, full analysis retained).
+- `docs/drag-path-testability-assessment.md`'s Route 2 recommendation is now unconditionally
+  approved, sequenced at step 5 of the P migration (`segments-invariant-ruling.md` §6.1),
+  alongside — not before — the K14 rework above, per that document's own sequencing
+  argument (the harness's central assertion needs to encode Model P's shrink-side behaviour,
+  which was only just settled).
+- The park commit's (`210855d`, `model-p-editor-work`) in-flight rework —
+  `timelinePartition.ts`'s gapless-partition enforcer, the export gapless-timeline guard,
+  the `snapBoundaries.ts` 50/50 silence-split rule — is now confirmed as work in the
+  *correct* direction, but per `docs/decisions/2026-08-07-model-p-revert.md`'s own
+  recommendation, should be **re-derived against current `main`** (which already includes
+  K17) rather than cherry-picked from a diff that predates it and was never reviewed.
+- No `src/` change lands as part of this ruling. This document records the decision only;
+  implementation is tracked separately (see `project-state.md`'s Active Tasks and the
+  compliance backlog in Open Decisions).
+
+---
+
+### The `segments` Invariant — Ruling Document (2026-08-07)
+
+
+> **STATUS: RULED — MODEL P, 2026-08-07.** Owner ruling, recorded formally the same day
+> as this document's consolidation onto `main`: `project.segments` IS a gapless partition.
+> `startTime[0] === 0` and `startTime[i] + duration[i] === startTime[i+1]` for every `i`
+> is now the official, locked invariant; Model S (§3 below) is rejected. The analysis
+> below is kept in full as the record of how the ruling was reached — it is no longer
+> "awaiting" anything, but every section's reasoning stands and should be read before
+> touching lock/drag-cascade code. See `docs/decisions/2026-08-07-model-p-ruling.md` for
+> the ruling itself, what it forbids, and the compliance backlog it opens; §4.1's answer
+> below (rule (a), refuse an unsatisfiable lock) is confirmed as the lock-shortfall rule.
+
+> **Provenance:** originally authored on commit `210855d` (`model-p-editor-work`'s "park"
+> commit), which was never merged to `main`. Brought onto `main` 2026-08-07 as a docs-only
+> change — content unmodified, byte-identical to the source, no code landed alongside it.
+> See `docs/decisions/2026-08-07-model-p-revert.md` for the full context.
+
+> Written 2026-08-07, at HEAD `0e2ac5b` (K16), working tree clean.
+>
+> This document exists because the question below had never been decided, and
+> eleven components in this codebase answered it differently. Every one of K14,
+> K15a, K15b and K16 was downstream of it. Reverting them would not have resolved it.
+
+---
+
+## 0. The question being decided
+
+> **Is `project.segments` a GAPLESS PARTITION of the timeline — `startTime[0] === 0`
+> and `startTime[i] + duration[i] === startTime[i+1]` for every `i` — or is it an
+> ORDERED LIST OF INDEPENDENTLY POSITIONED SLOTS, in which a gap between two
+> segments is legal and meaningful?**
+
+Call them **Model P** (partition) and **Model S** (slots). Overlaps are illegal
+under both; only gaps are in question.
+
+This is not a style preference. The two models make different things impossible,
+require different enforcement, and — as §1.3 shows — one of them is already
+being violated in shipping code in a way that can corrupt an export.
+
+---
+
+## 1. Why this needs a ruling
+
+### 1.1 Eleven components, five silent flips
+
+| # | Component | Its implicit answer | When |
+|---|---|---|---|
+| 1 | `recomputeStartTimes` (original) | **P, and I enforce it** — rebuilds every `startTime` from a running duration sum from 0. Deleting gaps is its purpose, not a bug. | original |
+| 2 | `applyAnchorBasedTiming`, locked branch, pre-K14 | **P** — `duration = max(preserved, nextAnchor - startTime)`. The growth exemption exists *precisely* to keep output contiguous. | pre-K14 |
+| 3 | `snapCoveredBoundaries` | **P** — carries an explicit appended contiguity fix. | 2026-07-31 |
+| 4 | `headExtendFirstSegment` | **P** — deliberately holds the segment's END fixed "so this can never ripple." | 2026-07-31 |
+| 5 | Timeline flexbox layout | **P, structurally** — a card's left edge *was* the sum of predecessors' widths. Violations were unrepresentable. | pre-2026-07-31 |
+| 6 | **Export pipeline (both paths)** | **P, as a hard requirement** — see §1.3. Cannot represent a gap at all. | original |
+| 7 | Timeline absolute positioning | **Neutral** — renders each card at its own `startTime`. Exposes violations; prevents none. | 2026-07-31 |
+| 8 | Live drag preview (`f4da926`) | **Violates both, transiently** — moves one card, freezes neighbours, for the duration of the gesture. | 2026-07 |
+| 9 | Preview `currentSegment` lookup | **S-shaped read** — derives the active segment from `currentTime` against `startTime`, never a prefix sum. | original |
+| 10 | `applyAnchorBasedTiming`, locked branch, post-K14 | **S** — a lock is a hard wall and may leave a real gap. | K14 |
+| 11 | `restackWindow` (K15a) | **S, emphatically** — restacks only the touched window *so that a gap outside it survives*. The exact opposite of #1. | K15a |
+
+Read the "answer" column top to bottom. It flips five times. **Not one flip was
+recorded as a decision** — each was a local consequence of a local fix.
+
+### 1.2 Consequence: K15a is not really a cascade bug
+
+Under #1's own frame, the global re-flow is correct behaviour. What made it
+"catastrophic" was #10 changing the answer underneath it. K15a fixed the writer
+that was still obeying the old contract, rather than the change that broke the
+contract. That is why the fix felt disproportionate to the defect.
+
+### 1.3 The finding that was not in the original audit — export cannot represent a gap
+
+I verified this directly in the source rather than inferring it.
+
+**Export determines a segment's frame count from `duration` alone:**
+- `segmentEncoder.ts:528` — `totalFrames = max(1, round(segment.duration * fps))`
+- `exportPipeline.ts:139` — `round((segment.duration - startTimeOffset + trailingExtension) * fps)`
+  (`startTimeOffset` here is a *transition-window* offset, not the segment's timeline position)
+
+**Segments are then concatenated back to back.** So a segment's position in the
+exported video is `Σ durations[0..i-1]` — a prefix sum. **`segment.startTime` is
+never consulted to position anything in the output.**
+
+Two consequences follow, and both are live at HEAD:
+
+1. **Editor/export divergence.** The editor preview locates the playhead's
+   segment via `startTime` (#9). The export locates it via prefix sum (#6). These
+   agree if and only if Model P holds. With a gap present, every segment after
+   the gap appears **earlier in the exported video than in the editor**, by the
+   gap's width, while the voiceover — muxed whole — does not move. That is
+   straightforward audio/video desync. K15a's own measured gap was **3.000s**.
+
+2. **Headings drift within the export itself.** `segmentEncoder.ts` passes
+   `absoluteTime: segment.startTime + timeInSegment` into the renderer, and
+   `frameRenderer.ts:459` uses it to select the active heading
+   (`getActiveHeadingAt`). So inside a single export, *video position* uses the
+   prefix sum while *heading selection* uses `startTime`. With a gap, headings
+   land on the wrong frames.
+
+**This is the sharpest argument in the document.** K14 made gaps producible;
+K15a made them persist. Neither considered export. The result is a shipping path
+where a locked segment can silently desync an exported video — a defect nobody
+has reported yet only because locks are rare and K13 clears them on every Apply
+Sync.
+
+> I have **not** reproduced this end-to-end with a real export. It is derived
+> from the source, and stated at that strength. Confirming it would take one
+> locked segment positioned to leave a gap, then an export — worth doing before
+> ruling, if you want it at ear-verified strength.
+
+---
+
+## 2. Model P — Gapless Partition
+
+**Statement.** `startTime[0] === 0`; `startTime[i] + duration[i] === startTime[i+1]`
+for all `i`; `Σ duration === audioDuration`. `startTime` is a **derived cache** of
+the prefix sum, never an independent fact.
+
+### What it makes true by construction
+- Editor preview and export agree, always and trivially — both are prefix sums.
+- Heading `absoluteTime` selection is correct in export by definition.
+- `Σ duration === timeline length === audio length`. Key Invariant (b) holds for free.
+- The question "what is on screen during a gap?" cannot be asked.
+- The entire K14 stale-anchor defect family becomes **unrepresentable**: if
+  `startTime` is derived, it cannot go stale relative to `duration`.
+
+### What it makes impossible
+- Gaps. K15a is unreachable by construction, not by patch.
+- **A lock that is simultaneously (a) an immovable anchor and (b) free of side
+  effects on its neighbours.** Under P these cannot both hold. This is P's real
+  cost and it is discussed at §4.1.
+
+### What enforces it, and where
+One chokepoint. Exactly one function converts `(durations, constraints)` into a
+positioned array, and it is the **only** writer of `startTime` in the codebase.
+`recomputeStartTimes` is that function, promoted from drag-local helper to
+canonical constructor.
+
+Strongest available form: remove `startTime` from the persisted `VideoSegment`
+shape entirely and derive it on read. That makes violation a type error rather
+than a convention. It is also the largest migration; it is not required for the
+ruling and can be a later step.
+
+Cheap immediate form: a dev-only assertion run after every array write, which
+fires on the first violation. This alone would have caught K14's gap the day it
+shipped.
+
+### Effect on the four named components
+| Component | Under P |
+|---|---|
+| `recomputeStartTimes` | **Promoted.** Becomes the single enforcement point. Its global re-flow is *correct*, not catastrophic. |
+| `applyAnchorBasedTiming` | Must always emit contiguous output. Needs an explicit rule for the lock-shortfall case (§4.1). |
+| Drag cascade | Must conserve the touched window's total duration — **K15b's give-back already does this.** Note: *when the total is conserved, `restackWindow` and a global `recomputeStartTimes` produce identical results.* So K15a's locality can stay as an optimisation; only its justification changes. |
+| Live preview | Must move every segment the cascade touches, every frame. Frozen neighbour is an **unambiguous bug**. |
+
+### What breaks on adoption
+- K14's hard-wall lock, in the shortfall case, must gain a filling rule.
+- Two adjacent locks with a gap between them become **unsatisfiable** (§4.1).
+- Nothing else. Components 1–6 already assume P.
+
+---
+
+## 3. Model S — Independent Slots
+
+**Statement.** Segments are ordered and non-overlapping. `startTime` is
+authoritative and independent of neighbours' durations. A gap is legal and means
+"no segment is on screen here."
+
+### What it makes true by construction
+- Decision 9 is honoured **literally**: a locked segment is immovable in both
+  directions with zero side effects on any neighbour.
+- Every segment's slot can match its own audio exactly, regardless of what its
+  neighbours do. No segment is ever forced to hold silence that belongs to a
+  neighbour's shortfall.
+- Component #9's `startTime`-based preview lookup becomes correct by definition.
+- A drag that shrinks a segment can simply leave a gap — no forced cascade.
+
+### What it makes impossible
+- Concatenation-based export, **as currently built**. Export must become
+  timeline-positioned.
+- The assumption `Σ duration === timeline length`, which several call sites make.
+
+### What enforces it, and where
+A **validator**, not a constructor: assert ordering and non-overlap; permit
+gaps. Cheaper to write than P's chokepoint — but the enforcement burden moves
+downstream, into export.
+
+### Effect on the four named components
+| Component | Under S |
+|---|---|
+| `recomputeStartTimes` | **Must be deleted.** It is unconditionally wrong under S — it destroys the very thing S declares meaningful. |
+| `applyAnchorBasedTiming` | Largely correct already. Each segment takes its anchor; K14's hard wall is S's natural expression. |
+| Drag cascade | K15a's locality is **correct and principled.** K15b's give-back becomes optional — a refused shrink could legitimately open a gap instead. |
+| Live preview | Moving only the dragged segment is **defensible on the shrink side** (an opening gap is honest). Overlap on the grow side remains a bug — S forbids overlaps too. |
+
+### What breaks on adoption
+- **Both export paths** — legacy `exportPipeline.ts` and
+  `webcodecsExport/exportPipelineWebCodecs.ts` — need gap semantics: what is
+  rendered, for how many frames, in a gap. This is the highest-verified,
+  highest-risk code in the project (frame-count guards, annexb concat, the
+  macOS EMFILE fix).
+- `absoluteTime`/heading selection needs re-derivation against real output
+  position.
+- Every site assuming `Σ duration === timeline length` must be audited.
+
+---
+
+## 4. The four specific questions
+
+### 4.1 Decision 9's immovable lock, under Model P: what fills the shortfall?
+
+**Answer: the following segment starts early, at the lock's actual end, and
+absorbs the space.** Its own first word does not move — it simply acquires
+leading silence.
+
+This is not an invention; it is the rule this codebase already applies twice:
+- `headExtendFirstSegment` gives segment 1 the entire lead-in silence.
+- **Decision 8 / Option A** gives unscripted-heading audio to the preceding
+  segment, which is the same operation in the other direction.
+
+So P's fill rule is: **the neighbour adjacent to the shortfall absorbs it, and
+absorbing silence is normal in this pipeline.**
+
+**When neighbours cannot stretch — stated plainly, because this is P's genuine
+weakness.** The rule fails when the segment on the other side of the gap is
+*also* locked. Lock A ends at 10.0, lock B starts at 15.0, and both are declared
+immovable. Under P that array is **unsatisfiable**. Three resolutions, none free:
+
+| Resolution | Cost |
+|---|---|
+| (a) **Refuse the second lock** at toggle time, with a clear message naming the conflict. | Locks become conditionally available. Honest and cheap, but the user can be told "no." |
+| (b) **Let the earlier lock's slot grow** to meet the later one. | Directly re-opens the pre-K14 growth exemption that K14 withdrew on purpose. Contradicts decision 9. |
+| (c) **Permit a gap between two locks as an explicit, first-class exception.** | This is Model S admitted through a side door. If you take (c), take S honestly instead. |
+
+**My reading: (a) is the only resolution consistent with both P and decision 9.**
+It is also the only one that fails loudly rather than silently. But it does mean
+that under P, *a lock is not unconditionally grantable* — and you should rule
+knowing that.
+
+### 4.2 Is Option A consistent with both models, or does it presuppose one?
+
+**It is implementable under both, but it is written in P's vocabulary and its
+stated guarantees only hold under P.**
+
+Decision 8's own words: *"the preceding segment **absorbs** the full duration…
+**Total timeline length unchanged.** Segment count unchanged."*
+
+- Under **P**, that is the complete set of available answers: the space must go
+  to *someone*, and A says who. "Total length unchanged" is automatic.
+- Under **S**, A is still expressible — extend the preceding segment — but it is
+  now one of *three* options, because S makes available a third that P forbids:
+  **leave the unscripted audio as a genuine gap and render nothing (or a held
+  frame).** Step V enumerated five options and none of them was "leave it
+  empty," because under P that is not a thing you can do.
+
+So: **Option A does not force the ruling, and it survives either way.** But the
+framing that produced it assumed P. If you rule S, decision 8 should be
+re-examined — not reversed, but re-asked with the third option on the table.
+
+### 4.3 Does absolute positioning force the answer?
+
+**No. It is independent, and this is worth being precise about.**
+
+The 2026-07-31 renderer change **removed a constraint; it did not express a
+preference.** Flexbox could *only* render P — a violation was unrepresentable.
+Absolute positioning can render either faithfully: adjacent boxes under P,
+visible holes under S.
+
+What it did do is **surface the question**: the frozen-neighbour drag preview and
+K14's gaps were both invisible before it and visible after. It is the reason you
+are seeing the problem, not the reason the problem exists.
+
+One caveat in the other direction: absolute positioning made S *cheap to render*,
+which may be why K14/K15a drifted toward S without anyone noticing they had. A
+constraint that used to fail loudly now fails quietly.
+
+### 4.4 Correct live-drag preview per model — and is frozen-neighbour overlap a bug?
+
+**The most useful finding in this section: frozen-neighbour overlap is a bug
+under BOTH models.** Overlap is illegal in P (violates contiguity) and illegal in
+S (S permits gaps, not overlaps). So **fixing the drag preview does not depend on
+this ruling** and can proceed independently.
+
+| | Model P | Model S |
+|---|---|---|
+| **Grow side** (dragged segment expands into neighbour) | Neighbour must visibly shrink/shift in the same frame. Run the real cascade per frame and write geometry for the whole touched window. | Same — the neighbour must move or the drag must stop at its edge. Overlap is never acceptable. |
+| **Shrink side** (dragged segment contracts) | Neighbour must visibly grow to close the space, same frame. | Neighbour *may* stay put and a gap opens — showing that gap live is **honest and correct**. |
+| **Frozen neighbour** | **Bug**, both directions. | **Bug on grow. Correct on shrink.** |
+| **Implementation** | Per-frame `computeDragCascade` over the touched window, writing `left`/`width` for every touched segment. This is exactly what the abandoned K17 attempt was building. | Per-frame cascade on grow only; shrink writes the dragged segment alone. |
+
+Note that the uncommitted K17 attempt — the one that broke the tree — was
+building P's version. Whoever wrote it had implicitly ruled P.
+
+---
+
+## 5. Recommendation
+
+> ### ⭐ RECOMMENDATION: **Model P — gapless partition.**
+> Marked clearly as a recommendation. The counter-argument is at §5.2 and it is
+> real.
+
+### 5.1 The argument for P
+
+1. **Export already is P, and cannot be anything else without a rewrite** (§1.3).
+   Model S requires touching both export paths — the most heavily verified,
+   highest-consequence code in the project. Model P requires touching none of it.
+2. **The product has no meaning for a gap.** This is a slideshow over one
+   continuous voiceover. There is no editorial concept of "nothing on screen for
+   3 seconds"; the audio never stops. S buys expressive power the product does
+   not use.
+3. **6 of the 11 components already implement P**, several with explicit,
+   deliberate machinery to maintain it (`snapCoveredBoundaries`'s appended
+   contiguity fix; `headExtendFirstSegment`'s fixed END). Only #10 and #11 — both
+   from the last 48 hours, both implicated in the breakage you reported — move
+   toward S.
+4. **P eliminates a whole bug family by construction.** If `startTime` is
+   derived, K14's stale-anchor mechanism cannot exist. That is a structurally
+   better outcome than K14's fix, which keeps two facts in sync by discipline.
+5. **Decision 8 is already ruled in P's vocabulary**, and Key Invariant (b)
+   ("total timeline length unchanged") is a P statement.
+
+### 5.2 The strongest argument AGAINST P — stated fully
+
+**Under P, a lock can never be inert, and that was the entire point of K14.**
+
+Decision 9 says a locked segment is an immovable anchor. P can deliver
+immovability, but only by making *some neighbour* move — and in the
+two-adjacent-locks case it cannot deliver it at all without refusing the lock
+(§4.1(a)). So under P:
+
+- "This segment is locked" always carries an implicit "…and something else will
+  be adjusted to make that possible."
+- The user can be told **no** when locking a second segment near the first.
+- The pre-K14 growth exemption — withdrawn deliberately, for good reasons
+  documented across Steps AA-AD — is arguably the *natural* P solution, which
+  means P pulls back toward the very behaviour that produced the original
+  lock-overlap complaints.
+
+If your priority is that **a lock be a genuinely inert, side-effect-free
+declaration** — which is a defensible and arguably correct product position, and
+is what K14 was reaching for — then **Model S is the only model that delivers
+it**, and the price is an export rewrite. That is a real trade, not a technicality.
+
+**In short:** P is right if the timeline is fundamentally a continuous filmstrip.
+S is right if locks are fundamentally inviolable. You cannot have both.
+
+---
+
+## 6. Migration
+
+### 6.1 Under Model P — in order
+
+| Step | Action | Risk |
+|---|---|---|
+| 1 | **Write the invariant down** and add a dev-only assertion after every `segments` write. Nothing else changes. Immediately catches every future violation. | None |
+| 2 | Run it against a real project with a lock. **Confirm or refute §1.3's export desync** empirically. | None |
+| 3 | Rule the lock-shortfall case: adopt §4.1(a) — next segment absorbs; refuse a lock that would create an unsatisfiable gap; log it. | Behavioural, lock-only |
+| 4 | Amend `applyAnchorBasedTiming`'s locked branch to emit contiguous output under that rule. | Medium — this is K14's site |
+| 5 | Fix the live drag preview to move the whole touched window (K17 done properly). | Low, self-contained |
+| 6 | *(Optional, later)* Derive `startTime` rather than store it — makes violation a type error. | Large, deferrable |
+
+`recomputeStartTimes`/`restackWindow` need **no change** — they are equivalent
+whenever the cascade conserves the window total, which K15b already guarantees.
+
+### 6.2 Under Model S — in order
+
+| Step | Action | Risk |
+|---|---|---|
+| 1 | Write the invariant down; add a validator (ordering + non-overlap; gaps legal). | None |
+| 2 | **Define gap semantics for export**: what renders, for how many frames. | Design |
+| 3 | Rework `exportPipeline.ts` to position rather than concatenate. | **High** |
+| 4 | Rework `exportPipelineWebCodecs.ts` likewise, including its frame-count guard. | **High** |
+| 5 | Re-derive `absoluteTime`/heading selection against true output position. | Medium |
+| 6 | Delete `recomputeStartTimes`. Audit every `Σ duration === length` assumption. | Medium |
+| 7 | Re-ask decision 8 with the third option available (§4.2). | Design |
+
+### 6.3 Which of K14 / K15a / K15b / K16 survive
+
+| Fix | Under **P** | Under **S** |
+|---|---|---|
+| **K14** — anchorStart lockstep | **Survives.** Becomes redundant at step 6 (derived `startTime` makes staleness impossible) but is correct meanwhile. | **Survives.** |
+| **K14** — lock hard wall / growth exemption withdrawn | **Needs rework.** Must gain the §4.1 filling rule, and must refuse unsatisfiable locks. | **Survives as-is.** S is its natural home. |
+| **K15a** — `restackWindow` locality | **Survives as code, discarded as rationale.** Equivalent to a global restack under conserved totals; the gap-preservation justification is void. | **Survives, and is correct.** |
+| **K15b** — word-onset yield floor | **Survives.** Orthogonal to gaps — it bounds how much a neighbour yields, not whether space is left behind. And its give-back is what makes P's locality safe. | **Survives**, though give-back becomes optional. |
+| **K16** — pointer geometry | **Survives entirely.** Pure coordinate math, invariant-independent. | **Survives entirely.** |
+
+**Note the asymmetry:** under S everything survives and the cost lands on export.
+Under P the recent lock work needs rework and export is untouched. That is the
+clearest way to see what you are actually choosing between.
+
+---
+
+## 7. What I could not determine
+
+Stated so it is not assumed settled:
+
+1. **§1.3's export desync is derived from source, not reproduced.** I read the
+   frame-count and concat logic and traced `absoluteTime`; I did not run an
+   export with a gap present. Migration step 2 exists to close this.
+2. **Whether any shipped project currently contains a gap.** K13 clears locks on
+   every Apply Sync, so gaps may be unreachable in practice today — which would
+   mean K14's defect is latent rather than active. I did not audit saved projects.
+3. **Whether decision 9 was intended to survive contact with §4.1(a).** "Immovable
+   anchor" may or may not have been meant to include "and may therefore be
+   refused." That is yours to say, not mine to infer.
+
+---
+
+## 8. What I need from you — ANSWERED, 2026-08-07
+
+1. ~~**P or S.**~~ → **P.** Official and locked. See §0 status banner and
+   `docs/decisions/2026-08-07-model-p-ruling.md`.
+2. ~~If **P**: confirm §4.1(a)~~ → **Confirmed.** Refuse a lock that would create
+   an unsatisfiable gap is the lock-shortfall rule.
+3. If **S**: N/A — S was rejected.
+4. Independently of 1–3: **the drag-preview fix (§4.4) is a bug under both
+   models** and was already authorised/shipped as K17, ahead of this ruling.
+
+---
+
+### The Last Segment's Right Edge — Official and Locked (2026-08-08)
+
+
+> **OWNER RULING, 2026-08-08.** Semantic option **(i)**: the last segment's right edge is
+> **not draggable, in either direction**. Its left edge remains fully draggable.
+>
+> Recorded here as the canonical, citable decision record. Cross-links:
+> `docs/decisions/2026-08-07-model-p-ruling.md` (the gapless-partition ruling this
+> completes), `docs/decisions/segments-invariant-ruling.md` (the analysis behind it), and
+> `docs/checklists/wkwebview-drag-checklist.md` step 4 (the manual test that failed twice and
+> forced the question).
+
+---
+
+## 0. The question being decided
+
+> **What does dragging the LAST segment's right edge mean?**
+
+Every other segment edge has an unambiguous meaning: it is a *boundary* between two
+segments, and moving it trades seconds between them. The last segment's right edge is
+not a boundary. It has no neighbour on the far side. So a drag there is not a trade —
+it is an assertion about how long the whole timeline is, which is a different kind of
+statement and had never been ruled on.
+
+## 1. The three candidate semantics
+
+> **Provenance note, stated plainly:** the original Stage 2a checkpoint that enumerated
+> these was a working-session artifact and was never committed to this repository. The
+> three below are reconstructed from the ruling's own framing and from the shape of the
+> code paths involved (`dragCascade.ts`'s `hi < segs.length - 1` scoping comment names
+> exactly this gap). They are faithful to the decision that was made; they are not a
+> verbatim quotation of a recorded source, and this document does not claim to be one.
+
+**(i) The edge is fixed. — CHOSEN.**
+The last segment's right edge is not grabbable. Total timeline duration becomes
+immutable via drag. `segments[N-1].end === mediaDuration` is promoted from a
+post-condition that Apply Sync happens to establish, into a hard invariant that no
+drag gesture may break.
+
+**(ii) The edge is draggable and total length follows it.**
+Growing lengthens the timeline past the media; shrinking ends it early. The timeline
+becomes an independent length that can disagree with the voiceover.
+
+**(iii) The edge is draggable but clamped at `mediaDuration`.**
+Shrink allowed, grow refused. The timeline may end early but never late.
+
+## 2. Why (i), and why now
+
+The immediate trigger is that **the render fix failed manual retest twice.** Checklist
+step 4 reports cards drifting out of alignment with the waveform lane on a
+last-segment right-edge drag. The first attempt at a fix was `Timeline.tsx`'s zoom
+basis freeze (`zoomBasisDuration`, F2, 2026-08-08), which stops the fit-to-width zoom
+term rebasing mid-drag. It is correct as far as it goes — `dragTriage.test.ts`'s F2
+block measures the 300px → 259.0909px rescale it prevents — and step 4 still failed
+after it. The second attempt failed the same way.
+
+That is the practical argument. The structural one is stronger:
+
+- **(ii) contradicts Model P's tail clause outright.** The ruling states
+  `startTime[n-1] + duration[n-1] === audioDuration`. Option (ii) makes that clause
+  violable by an ordinary mouse gesture, which would leave the invariant enforced
+  nowhere and asserted everywhere.
+- **(ii) and (iii) both require the whole timeline to re-lay-out during a drag,** because
+  the fit-to-width zoom term reads total duration. That re-layout is precisely the
+  visual defect step 4 keeps reporting. Fixing the symptom while keeping the operation
+  that causes it means fighting the same class of bug indefinitely.
+- **(iii) buys very little for its complexity.** It still moves total duration, so it
+  still re-lays-out; it merely bounds the direction. It also invents a new state — a
+  timeline that ends before its own audio — with no defined playback, export, or
+  re-sync behaviour.
+- **The audio is the authority on total length.** That is already true everywhere else
+  in this pipeline: `retileCoveredSegments` extends the last survivor to `audioDuration`,
+  `applyAnchorBasedTiming` PASS 3 does the same, and `headExtendFirstSegment` performs
+  the mirror operation at the head. Option (i) simply stops the editor from contradicting
+  that, rather than adding a rule.
+
+## 3. What this makes true
+
+**`segments[N-1].end === mediaDuration` is a hard invariant with respect to drag.**
+
+The generalised statement — and the one that is actually tested — is stronger and
+simpler:
+
+> **No drag gesture may change total timeline duration.**
+
+That covers the reported instance and two further entry points to the same defect that
+reading (not testing) found, both of which reach it through `computeDragCascade`'s
+giveback being scoped `hi < segs.length - 1`:
+
+- a **right-edge drag on segment N-2** that overshoots segment N-1's
+  `MIN_SEGMENT_DURATION` floor — the unabsorbed remainder is kept, and total duration
+  grows;
+- a **left-edge drag on segment 0 in a single-segment timeline**, where the touched
+  window is also the last index.
+
+Locking only the affordance would have left both of those live. This is why the ruling
+is implemented as a property over all drags rather than as a special case for one edge.
+
+## 4. What this does NOT change
+
+Total timeline duration remains fully mutable by every non-drag path. These were
+enumerated before any code changed and are deliberately untouched:
+
+| Path | Still changes total duration |
+|---|---|
+| Apply Sync commit (`App.tsx`, via `applyAnchorBasedTiming` / `snapCoveredBoundaries` / `headExtendFirstSegment`) | Yes — it *sets* it, to `audioDuration` |
+| `retileCoveredSegments` (Apply Sync fallback) | Yes |
+| Playback-speed slider (`handlePlaybackSpeedChange`) | Yes, on the last segment |
+| Segment edit modal's numeric Duration field | Yes — writes the segment object directly, bypassing the cascade |
+| Project hydration / project switch | Yes |
+| New Project, DEV scale fixture | Yes |
+
+The playback-speed slider is the one that constrains the implementation: it reaches the
+**same** `computeDragCascade` the drag path does, via `applyDurationChange`. So the
+conservation rule cannot be a change to the cascade's default behaviour — it is an
+explicit, drag-only opt-in (`DragCascadeOptions.conserveTotalDuration`), and every
+pre-existing caller keeps byte-identical behaviour by omitting it.
+
+## 5. Consequences the owner accepts
+
+1. **A user who wants a longer or shorter timeline must change the voiceover, re-run
+   Apply Sync, or use the segment editor's numeric duration field.** There is no drag
+   gesture for it any more.
+2. **The last segment's right edge shows no resize affordance at all** — no hit target,
+   no `col-resize` cursor, no hover highlight. It is visually apparent that it is fixed,
+   which is the point: a disabled-looking handle that silently does nothing is worse
+   than no handle.
+3. **The last segment's LEFT edge is unaffected** and remains a normal boundary drag
+   against segment N-2.
+
+---
+
+### The Pointercancel Question — RULED: Discard (2026-08-08)
+
+
+> Raised by WS2 task 2 (the Route 2 drag-path harness, 2026-08-07) as an observation, not a
+> ruling — the harness found and pinned the CURRENT behavior of `dragSession.ts` without
+> anyone having decided it was the CORRECT behavior. WS2 task 3 turned it into a decision.
+>
+> **OWNER RULING, 2026-08-08: discard.** Implemented the same task, with tests — see
+> "What was implemented" at the bottom.
+
+---
+
+## The question
+
+When a `pointercancel` fires mid-drag (the browser hands the gesture away — an OS-level
+scroll/zoom takeover, a system interruption like an incoming call or notification-center
+swipe, or the pointer being invalidated by a device change), `dragSession.ts` currently wires
+`pointercancel` to the exact same `handleUp` function `pointerup` uses:
+
+```ts
+window.addEventListener('pointerup', handleUp);
+// A cancelled pointer (OS gesture takeover, device switch) must not
+// leave the drag armed forever; treat it as a release.
+window.addEventListener('pointercancel', handleUp);
+```
+
+`handleUp` **commits** the drag (unless the move was negligible or a locked neighbour
+blocked it, the same two escape hatches a normal release has). So today: **a `pointercancel`
+commits the drag at whatever position the pointer last reported, exactly like a normal
+release would.**
+
+## Argued both ways
+
+**The case for committing (current behavior).** A drag that has already moved — the user has
+visibly dragged an edge, seen the neighbour absorb the change, and the gesture is then cut
+off by something outside the app's control — arguably *should* land where it visibly was.
+Discarding it would mean the user did real, visible work (dragged the edge, watched the
+preview update) and then silently lost it because their OS decided to interrupt the pointer.
+From the user's point of view, nothing about *their* intent changed; only the browser's
+bookkeeping did. The comment already in the code makes exactly this argument: "must not leave
+the drag armed forever; treat it as a release."
+
+**The case for discarding.** `pointercancel`'s defining property is that it means the browser
+took the gesture away *involuntarily* — this is not the user's own pointerup, it is the
+platform saying "this gesture no longer means what you think it means." The pointer's last
+reported position at that moment was never intentionally released there; it's wherever the
+interruption happened to catch it. Committing on an event whose entire semantic content is
+"this was not a real, user-completed action" changes project state — segment timings, which
+this app treats as precise, audio-synced data — off the back of an event the user didn't
+choose. A silent timing change with no visible confirmation step is a worse failure mode for
+this app specifically than losing an in-progress edit: the user may not even notice the
+commit happened, and a shifted segment boundary can desync from its own voiceover exactly the
+class of bug `segments-invariant-ruling.md` treats as serious enough to gate exports on.
+
+**Which is safer for this app.** Discarding is safer for *this* app's actual stakes.
+Segment timing precision is the core data integrity property under active protection
+elsewhere in this codebase — locked segments are refused rather than silently violated, a
+gap in the timeline is a compile-time-checked forbidden state, export refuses to run over a
+gap. A discarded drag costs the user a re-do of one gesture, which they will notice
+immediately because the edge visibly springs back. A committed drag from an involuntary
+interruption costs the user a silent, unreviewed timing change they may not notice until
+playback or export — closer in kind to the exact failure class this project has spent the
+most effort eliminating elsewhere.
+
+## Did the extraction change this? (Stage 2b, task-1 neutrality check)
+
+**No. Checked directly — behavior is byte-identical pre- and post-extraction.**
+
+```
+git show pre-dragsession-2026-08-07:src/App.tsx | sed -n '4195,4204p'
+```
+
+```ts
+                    if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
+                  };
+                  isResizingRef.current = true;
+                  window.addEventListener('pointermove', handleMove);
+                  window.addEventListener('pointerup', handleUp);
+                  // A cancelled pointer (OS gesture takeover, device switch) must not
+                  // leave the drag armed forever; treat it as a release.
+                  window.addEventListener('pointercancel', handleUp);
+```
+
+Same wiring, same comment, word for word, as `dragSession.ts`'s current version. **WS2 task
+1's neutrality claim holds** — the extraction moved this behavior verbatim; it did not
+introduce, change, or newly discover a behavior that used to differ. What WS2 task 2 did was
+*observe* pre-existing behavior for the first time via a harness capable of exercising it —
+nobody had looked at what `pointercancel` actually did before that task, extraction or not.
+
+## Recommendation
+
+**Discard on `pointercancel`, not commit.** The involuntary nature of the event is the whole
+point of its existence as a distinct event from `pointerup`, and a silent, unreviewed
+segment-timing change is a worse outcome for this app than losing one in-progress gesture the
+user can simply redo (and will immediately see was discarded, since the edge visibly
+reverts). This does trade away the "don't leave the drag armed forever" concern the existing
+comment raises — but that concern is about *cleanup* (listeners, `resizingId`, the `resizing`
+body class), not about *committing*, and a discard path can and should still perform that
+same cleanup; it just calls `revertSegments` instead of running the commit branch.
+
+## What was implemented (2026-08-08, same task as the ruling)
+
+`src/services/dragSession.ts`: a new `wasCancelled` flag, set only by a dedicated
+`handleCancel` wrapper (`pointercancel` now listens through `handleCancel`, not `handleUp`
+directly — `handleUp` alone has no way to tell which event invoked it). Inside `handleUp`,
+right after the existing `!hasMoved` early return, a new branch: `if (wasCancelled) {
+deps.revertSegments(originalSegments); return; }` — checked *before* the negligible-drag and
+commit logic, so a cancelled gesture never reaches either, however far it had moved. The
+pre-existing cleanup (clearing `resizingId`/`resizingType`, removing the `resizing` body
+class, tearing down all three window listeners) is unconditional and untouched — it still
+runs identically on commit, revert, or cancel, so the original comment's concern ("must not
+leave the drag armed forever") still holds.
+
+`src/services/dragSessionHarness.ts`: a new `DragOutcomeKind` member,
+`'reverted-cancelled'`, distinct from the pre-existing `'reverted-negligible'` — both resolve
+through `revertSegments` with `commitAttempted` never set, so a new `cancelledThisGesture`
+flag (set by `cancel()`, reset by `grab()`) is what lets `resolveOutcome()` tell them apart.
+
+`src/services/dragSessionHarness.test.ts`: the existing "pointercancel mid-gesture" test
+(previously asserting `'committed'`) now asserts `'reverted-cancelled'`, the segment array
+reverting to its exact pre-drag spans, and — new — that `resizingIdValue`/
+`bodyHasResizingClass` still clear normally afterward, proving the discard path performs the
+same cleanup the commit path always did. The "pointercancel with no movement" test was
+already correct under either ruling (no revert is ever called when `!hasMoved`, so it stays a
+`'no-op-not-moved'`) and needed no change.
+
+Full suite after the change: 1470 tests (1469 passing, 1 pre-existing deliberately-skipped),
+`tsc --noEmit` clean — no new tests added, two existing assertions inverted/extended in
+place, matching the size of the behavior change.
+
+## Status
+
+**RULED — discard, implemented 2026-08-08.** No longer an open question.
+
+---
+
+### Undo / Redo — Design (2026-08-08)
+
+
+> **STATUS: DESIGN ONLY. NOTHING IS BUILT.** No production code was written for this
+> document and none should be until it is approved. Written 2026-08-08 at HEAD `32fe35f`,
+> working tree clean, suite at 1530 tests (1529 pass / 1 skip).
+>
+> **Why now.** Undo/redo is the stated mitigation for closing checklist step 10 as an
+> accepted limitation (`docs/checklists/wkwebview-drag-checklist.md`). It does not stop an interrupted
+> drag from dirtying state; it changes that state from unrecoverable to recoverable. That
+> is the trade the owner accepted, so this needs to be a real design, not a gesture at one.
+
+---
+
+## REVISION 2 — owner decisions folded in (2026-08-08, WS2 Stage 2)
+
+Revision 1 (everything below) was written as a set of recommendations. The owner has now
+ruled on all of them. This section records **what changed as a result**, so a reader can see
+which parts of the original text were superseded rather than having to diff two documents in
+their head. Where a ruling contradicted revision 1, the body sections below have been
+rewritten in place and are marked `[OWNER-RULED]`.
+
+| Question | Ruling | Effect on revision 1 |
+|---|---|---|
+| Lock conflict on undo | **Block the undo**, scroll to the locked segment, toast "Unlock to undo this change" | **New §5.1.** Revision 1 had no lock-conflict section; the option floated verbally ("skip the entry, leave the locked segment unchanged") was unimplementable — see §5.1 |
+| Is lock/unlock itself undoable? | **No** | **§4 corrected** — revision 1 wrongly listed locks as undoable |
+| Depth | **20 undo levels**, oldest silently evicted; redo bounded by what you have undone | **§6 corrected** — was 50 |
+| New edit after undo clears redo | Yes | §6 unchanged (already this) |
+| Undo scroll target | The segment the gesture **started** on, stored as an anchor id per entry | §5.2 — as recommended |
+| Scroll behaviour | Scroll **only if off-screen**; **always flash** the anchor | **New §5.2** |
+| Apply Sync | **One entry.** Undo once → pre-sync state; redo once → post-sync. Orphaned anchors fall back to no scroll | §5.3 — as recommended, semantics spelled out |
+| What clears history | In-memory only, zero storage. Cleared by app restart, project switch, **going back to the dashboard**, and **re-opening a project** | **§6.0, new.** One factual correction folded in: in-memory history cannot survive a page reload (the heap is gone), so "zero storage overhead" is taken as governing and a reload starts fresh — see §6.0 |
+| Coalescing | One entry per gesture; slider commits on **pointerup**, text on **blur or 500 ms idle** | **§3.2 rewritten** — was an 800 ms idle window for both |
+| `Cmd+Z` in a text field | Native text undo, not project undo | §7 unchanged (already this) |
+| Undo during playback | Keep playing | §4 — playhead stays non-undoable |
+| Buttons | Toolbar, **left of Apply Sync**, named tooltips | **§8 corrected** — was left of the zoom slider |
+| Platforms | **macOS and Windows both** | §7 — `Ctrl+Z`/`Ctrl+Y` are required, not optional extras |
+
+---
+
+## REVISION 2 — the three things revision 1 left open or wrong
+
+### R2.1 The memory number, measured at the ruled depth of 20 [MEASURED]
+
+Revision 1 gave JSON byte counts and estimated live heap as "2-4× JSON". That estimate was
+wrong in the conservative direction by two orders of magnitude, because **JSON cannot
+represent structural sharing** — serialising 20 snapshots writes all 444 segment objects 20
+times, whereas in memory they are one set of objects pointed at 20 times.
+
+Measured directly (`node --expose-gc`, `process.memoryUsage().heapUsed` deltas around forced
+GC, real v6 corpus project — 444 segments, its real 339 kB transcript-token array, a full
+per-segment field set including `overlayConfig`/`effectGrade`/every `effect*` slug):
+
+| Configuration, v6 (444 segments), depth 20 | Real retained heap |
+|---|---|
+| **Snapshots with structural sharing** (shallow `Project` copy + shallow `segments` copy; only edited segment objects are new) | **77,936 B — 0.07 MB** |
+| Naive `structuredClone` per entry (no sharing) | 20.71 MB |
+| Worst conceivable case: all 20 entries are **Apply Sync** commits, so all 444 segment objects are new in every entry | 12.18 MB (624 kB/entry) |
+
+The typical figure is ~3.9 kB per entry: a 444-pointer array copy (~3.6 kB) plus the one-to-
+four segment objects a drag cascade actually replaces. A realistic 20-entry session of drags
+and field edits therefore costs **well under 0.5 MB**, and the pathological all-Apply-Sync
+session costs 12 MB.
+
+For scale, this app already loads a **1.6 GB** Whisper model (`ggml-large-v3-turbo.bin`,
+1,624,555,275 B measured) with ~2.1-2.2 GiB peak during inference.
+
+**RULING: SNAPSHOTS. Not close.** A patch scheme would buy back at most ~12 MB in a case a
+user would have to work to reach, in exchange for hand-maintaining an inverse for every one
+of the 62 write sites, and would forfeit §9's structural golden-replay guarantee (a snapshot
+*restores* a value the pipeline produced; a patch *recomputes* one). Revision 1's JSON tables
+are retained below for provenance but the heap figures here are the ones that decide it.
+
+**What a snapshot contains — the `Project` document only.** Confirmed by reading
+`src/types.ts:274-345` field by field: `Project` holds strings, numbers, enums, and three
+object arrays (`segments`, `headings`, `assets`, `textLayers`, `syncLog`) plus
+`transcriptTokens`. **It holds no audio buffers, no decoded media, and no waveform peak
+arrays** — `grep -n "waveform\|peaks\|AudioBuffer\|Float32" src/types.ts` returns nothing.
+Those live elsewhere and are explicitly out of history:
+
+| Heavy thing | Where it actually lives | In a snapshot? |
+|---|---|---|
+| Waveform peak arrays | `waveformStore.ts` (IndexedDB) + App-level state | **No** |
+| Decoded `VideoFrame`s | `videoDecoderPool.ts` | **No** |
+| Audio `AudioBuffer` / PCM | `silenceDetector.ts` / `waveformPipeline.ts`, transient | **No** |
+| `transcriptTokens` | On `Project` — 214 kB JSON for v6 | Shared **by reference**, never copied, and excluded from restore (§5.3) |
+| `Asset.file?: File` | On `Project.assets` | Shared by reference. A `File` is a lazy handle whose bytes live in the blob store, not the JS heap, and the live project holds the same reference — so history adds nothing |
+
+### R2.2 The simplification revision 1 surfaced but did not exploit: segment identity is stable [MEASURED]
+
+There is no split, merge, insert, delete, reorder, or import of segments anywhere in the app.
+Verified by enumerating every `segments:` assignment in `App.tsx`
+(`grep -nE "segments:" src/App.tsx`, 24 real write sites): **every one is a
+`prev.segments.map(...)`** — same length, same ids, same order — except exactly three, none
+of which is an edit:
+
+- `App.tsx:2636` `segments: committedSegments` — **Apply Sync** (new ids: the one exception)
+- `App.tsx:3651` `segments: rehydratedSegments` — reload hydration
+- `App.tsx:583` `segments: []` — the blank project literal
+
+`Timeline.tsx`'s generic `onSegmentUpdate(updater)` escape hatch has exactly one consumer
+(`Timeline.tsx:607`, the trim drag) and it too is a `.map`. `applyDurationChange`'s
+`finalSegments` (`App.tsx:1552`) comes from `computeDragCascade`, which is length- and
+id-preserving by construction.
+
+**What that lets this design drop, concretely:**
+
+1. **No identity-migration layer in history entries.** An anchor segment id (§5.2) resolves
+   in every entry on the same side of an Apply Sync boundary. There is no need to store a
+   composite `index + text fingerprint` anchor with fallback resolution, which is the usual
+   cost of undo in an editor where a segment can become two.
+2. **Selection repair (§4) is an existence check, not a mapping question.** "Does this id
+   still exist?" — the exact `prev && segs.some(s => s.id === prev) ? prev : null` test
+   `handleSwitchProject` already performs. There is no "this segment became two, which one is
+   selected now?" case to answer.
+3. **Entry-to-entry diffing for labels and for no-op detection is a per-id field compare.**
+   No LCS/alignment pass is needed to know which segments an entry changed, which is what
+   makes a human label like "resize segment 12" derivable rather than hand-passed.
+4. **Coalescing keys (§3.2) stay valid for a whole session.** `grade:brightness:<segmentId>`
+   cannot be invalidated by its target acquiring a new id mid-gesture.
+5. **Redo can never resurrect a dead id.** Within a contiguous run of entries, the id set is
+   invariant.
+
+**The one exception, stated precisely: Apply Sync.** It replaces every segment with a fresh
+id, so anchors stored in pre-sync entries do not resolve in post-sync ones and vice versa.
+Per the owner's ruling this is not repaired — an unresolvable anchor falls back to **no
+scroll** (§5.2), never to an exception and never to a guessed segment. Note also that
+**headings** are genuinely inserted and deleted (`handleInsertHeading`/`handleDeleteHeading`),
+so heading identity is *not* stable — but the anchor is always a segment id, so nothing in
+§5.2 depends on heading identity.
+
+### R2.3 Lock conflict — revision 1's floated option was unimplementable
+
+See **§5.1**, new. The short version: "skip the entry but leave the locked segment unchanged"
+cannot be built. Under snapshots the older entry simply *contains* the locked segment's older
+value — there is nothing to skip, because there is no per-segment delta to omit. Under
+patches, applying some inverses and not others yields a state the pipeline never produced and
+can break the gapless invariant outright. The owner's chosen policy — **block the undo** — is
+the only one of the three that is both implementable and honest.
+
+---
+
+## 1. The seam
+
+### 1.1 `setProject` is the choke point — confirmed [MEASURED]
+
+`project` is a single `useState<Project>` declared once, at `src/App.tsx:1122`. Every
+mutation of the project — segments, headings, assets, text layers, sync log, settings —
+goes through its setter.
+
+| Measurement | Count | Source |
+|---|---|---|
+| `setProject(` call sites in `src/App.tsx` | **61** | `grep -c "setProject(" src/App.tsx` |
+| `setProject(` call sites elsewhere in `src/` (non-test) | **1** | `DevTestPanel.tsx:89` |
+| **Total real write sites** | **62** | |
+| Writers of `projectRef.current` | 1 (`App.tsx:3268`, a read-only mirror) | `grep -n "projectRef.current ="` |
+
+**Correction to the brief's figure.** The brief says "~79 write sites", which is the number
+written in `App.tsx`'s own gapless-assertion comment (line ~2718). The actual count today is
+**62**. The comment is stale; nothing depends on the number, but it should be corrected when
+that region is next touched, and this document uses the measured figure.
+
+The one call site outside `App.tsx` is not a second setter. `DevTestPanel.tsx` receives
+App's own setter as a prop (`App.tsx:4654`, wrapped as
+`(p) => { setProject(p); setShowDashboard(false); }`), so it funnels through the same state.
+
+### 1.2 Bypassing paths — none found [MEASURED]
+
+Searched for direct mutation of the committed project graph:
+
+- `grep -rnE "project\.segments\[.+\]\.[a-zA-Z]+ ="` over all of `src/` (excluding tests) —
+  **zero hits.** The repo's immutable-update convention (`CLAUDE.md`'s DO-NOT-DO table) is
+  actually held.
+- `projectRef.current` is assigned in exactly one place, from `project`, inside an effect.
+  It is a read mirror for non-rendering consumers (the drag session, the sync pipeline); no
+  code writes *through* it.
+- `setEditingSegment` (the full-edit modal) and the drag session's live DOM writes are the
+  two places state appears to change outside `setProject`. Neither is a real bypass:
+  `setEditingSegment` holds a **draft** that is committed via `setProject` on "Apply Changes"
+  (`App.tsx:~4590`), and the drag session writes `style.left`/`style.width` **only** —
+  deliberately behind React's back for the live preview, discarded on release, and always
+  resolved into a real `setProject` (commit) or a revert.
+
+**Conclusion: `setProject` is a genuine single funnel, and there are no silent history
+holes.** The DEV-only gapless assertion already relies on exactly this property, and has
+done since 2026-08-07 without a counterexample.
+
+### 1.3 The capture mechanism, and the one thing that must not be done
+
+Capture must **not** be threaded through all 62 call sites. That is the failure mode the
+gapless assertion explicitly rejected — a per-call-site obligation rots the moment someone
+adds site 63 — and its reasoning applies identically here.
+
+Two shapes work:
+
+**(a) A wrapper setter.** Rename the raw setter to `setProjectRaw` and export a
+`setProject` that pushes the previous value onto the undo stack before delegating. All 62
+sites keep their exact current syntax; only the identifier they resolve to changes.
+
+**(b) An effect keyed on `project`,** mirroring the gapless assertion's own structure.
+
+**(a) is the recommendation**, for one reason: an effect cannot tell whether a change was a
+user edit or an undo/redo restoring one, so it would need a suppression flag anyway — and a
+suppression flag read from an effect is a race, whereas the wrapper knows synchronously at
+the call. (b) also cannot distinguish gesture boundaries, which §3 needs.
+
+The wrapper is where §3's coalescing and §4's invariant check live, so it is not merely
+plumbing.
+
+---
+
+## 2. Snapshot vs. command/patch
+
+> **SUPERSEDED IN PART BY R2.1.** The ruling is unchanged (snapshots) but the numbers below
+> are **JSON byte counts, and they overstate real cost by ~80×** because JSON cannot represent
+> structural sharing. R2.1's `heapUsed` measurements at the ruled depth of 20 are the figures
+> of record. This section is retained for provenance and for the argument in §2.3.
+
+**Ruling: SNAPSHOTS, with structural sharing.** Size does not rule them out — not close.
+
+### 2.1 The measurement [MEASURED]
+
+Built from the real corpus projects (`docs/phase4-baseline-*-segments.csv` for the committed
+segment arrays, `.work-phase4/replay/*/transcript_tokens.json` for the real token arrays),
+populated with the field set `App.tsx` actually writes onto a synced `VideoSegment`
+(`overlayConfig`, `effectGrade`, `effect*` slugs, trim/speed/source duration, anchors).
+Figures are JSON bytes.
+
+| Project | Segments | `segments[]` | `transcriptTokens` | Whole `Project` |
+|---|---|---|---|---|
+| **v6** (largest corpus project) | 444 | 292,806 B | 219,431 B | 563,445 B |
+| **173** | 172 | 115,854 B | 100,455 B | 267,517 B |
+| **spanish** | 26 | 17,239 B | 18,308 B | 83,457 B |
+
+History cost, **structural sharing** — a snapshot is a shallow `Project` copy; only the
+sub-objects an edit actually replaced are new, and `transcriptTokens` (the single largest
+field, never touched by an edit) is shared by reference across every entry:
+
+| Project | Per entry | Depth 50 | Depth 100 | Depth 200 |
+|---|---|---|---|---|
+| v6 (444 segs) | 293 kB | **14.6 MB** | 29.3 MB | 58.6 MB |
+| 173 | 116 kB | 5.8 MB | 11.6 MB | 23.2 MB |
+| spanish | 17 kB | 0.9 MB | 1.7 MB | 3.4 MB |
+
+For contrast, a naive `structuredClone` of the whole `Project` per entry — no sharing at all:
+
+| Project | Per entry | Depth 50 | Depth 100 |
+|---|---|---|---|
+| v6 | 563 kB | 28.2 MB | 56.3 MB |
+| 173 | 268 kB | 13.4 MB | 26.8 MB |
+
+### 2.2 Reading the numbers honestly
+
+- These are **JSON byte counts, not V8 heap**, and this bullet's own estimate ("2-4× JSON",
+  giving 14.6 MB → 30-60 MB resident at depth 50) **was wrong in the conservative direction by
+  roughly two orders of magnitude** — see R2.1. JSON serialises every shared segment object
+  once per entry; the live heap points at one copy. The measured figure at the ruled depth of
+  20 is **0.07 MB**, not 30-60 MB. Retained here as the mistake it was, since "we estimated
+  and the estimate was 80× high" is the useful part.
+- Context for whether that is affordable: this app already loads a **1.6 GB** Whisper model
+  (`ggml-large-v3-turbo.bin`, measured 1,624,555,275 bytes) with ~2.1-2.2 GiB peak during
+  inference, and holds decoded `VideoFrame`s and waveform peak arrays for a 21-minute
+  voiceover. 30-60 MB is not the constraint.
+- **The number is dominated by `segments[]`, and `segments[]` is what an edit changes.**
+  So a patch scheme would not save the bulk of it either — only the difference between "the
+  whole array" and "the changed elements", which for a drag is 2-4 segments out of 444. A
+  patch scheme is roughly 100× smaller per entry. It is also enormously more complex, and
+  buys that saving in a place where 14.6 MB is already fine.
+
+### 2.3 Why snapshots win beyond size
+
+1. **Restore is `setProject(entry)`.** There is no inverse operation to write, per edit
+   type, and no inverse to get subtly wrong. With 62 write sites of very different shapes
+   (Apply Sync commits an entire re-derived project; the drag commits a cascade; a grade
+   slider writes one field), a command scheme means 62 inverses maintained by hand.
+2. **§8's golden-replay guarantee is trivial under snapshots and hard under patches.** A
+   snapshot restores a value the pipeline itself produced; a patch *recomputes* one.
+3. **§4's invariant check is a single call on a whole array.** Patches would need it after
+   each application.
+
+**Stated plainly, as asked: size does not rule snapshots out.** Recommend snapshots.
+
+---
+
+## 3. Granularity
+
+**The rule: one user gesture = one history entry.**
+
+### 3.1 Drags — one entry on commit, zero otherwise
+
+This rides directly on the Stage 1′ `finally` teardown in `dragSession.ts`. A drag has
+exactly three resolutions and they already funnel through one `handleUp`:
+
+| Resolution | `setProject` called? | History entry |
+|---|---|---|
+| **Commit** (genuine pointerup, moved) | yes — `commitDurationChange` | **exactly 1** |
+| **Revert-blocked** (locked neighbour) | yes — `revertSegments(originalSegments)` | **0** |
+| **Discard** (`pointercancel`) | yes — `revertSegments(originalSegments)` | **0** |
+| No movement at all | no | **0** |
+
+The live preview writes no state at all — it writes `style.left`/`style.width` directly —
+so the 60 frames of a gesture are structurally incapable of producing entries. That is a
+property of the existing architecture, not something this design has to add.
+
+The two revert paths **do** call `setProject`, so a naive wrapper would record them. The
+handling: `revertSegments` restores `originalSegments`, which is by definition the array
+that was already the top of history, so the entry is a **no-op duplicate**. Two options —
+
+- **(i)** have `revertSegments` call a `setProjectSilent` that bypasses capture;
+- **(ii)** have the wrapper drop an entry whose `segments` array is reference-identical to
+  the current top.
+
+**Recommend (i).** It is explicit at the one call site that means it, and does not rely on
+reference identity surviving future refactors. (ii) is a reasonable belt-and-braces addition.
+
+### 3.2 Coalescing rule for continuous controls `[OWNER-RULED]`
+
+Sliders and text fields fire many `setProject` calls per gesture and must not produce many
+entries. **The ruling: one entry per gesture, with the gesture's END defined by the control's
+own natural boundary rather than by a single idle timer for everything.**
+
+| Control class | Entry closes on | Rationale |
+|---|---|---|
+| **Sliders** (grade brightness/contrast/saturation/temperature, playback speed) | **`pointerup`** | A slider gesture has an unambiguous end. A timer is a guess; the pointer release is the fact. Also removes the failure mode where a slow, deliberate drag crosses the idle window and splits into two entries |
+| **Text fields** (overlay text, project name, script/scene textareas, numeric duration) | **`blur`, or 500 ms idle**, whichever comes first | A text field has no release event, so an idle timer is unavoidable; `blur` closes it early when the user tabs or clicks away |
+| **Discrete actions** (button, toggle, Apply Sync, drag commit, apply-to-all) | Immediately — they open and close their own entry | No gesture to coalesce |
+
+The **coalescing key** is `(control identity, target identity)` — e.g.
+`grade:brightness:<segmentId>`, `overlayText:<segmentId>:<overlayId>`,
+`playbackSpeed:<segmentId>`. Keying on the target as well as the control is what makes
+"drag brightness on segment 5, then drag brightness on segment 9" two entries rather than
+one, which is what a user means. An open entry is also force-closed by a write carrying a
+*different* key, so an interleaved edit can never be absorbed into the wrong entry.
+
+Two implementation notes:
+
+- **`pointerup` for sliders needs a real pointerup listener,** not an inference from "no
+  further writes". `EffectsPanel`'s grade sliders debounce their `setProject` at 120 ms
+  (`EffectsPanel.tsx`, `onGradeLive`), so the last write of a gesture lands up to 120 ms
+  *after* the release. The entry must therefore close on the release **and still absorb** that
+  trailing debounced write — i.e. the key stays claimable for one short grace period after
+  release rather than being closed hard. Getting this wrong produces exactly one spurious
+  one-write entry per slider gesture, which is the bug this section exists to prevent.
+- **500 ms** for text idle is the owner's figure and is **chosen, not tuned against a real
+  hand** — same honesty as the auto-scroll ramp constants. Revisit after first use.
+
+---
+
+## 4. Scope — what is undoable
+
+**Undoable (all of it is `Project` state):**
+
+- segment timing — every drag commit, the playback-speed slider's duration coupling, the
+  segment editor's numeric duration field
+- segment content — asset assignment, trim, overlay text and formatting, per-segment
+  transition/animation/filter/grade
+- global aesthetics — global transition/animation/filter/overlay config, apply-to-all
+- headings — insert, delete, move, resize, edit
+- text layers — add, edit, delete, per-segment toggle
+- **Apply Sync** — see §5.3, this is the one with a caveat
+
+**NOT undoable (deliberately):**
+
+- **Locks — lock/unlock, lock-all/unlock-all.** `[OWNER-RULED]` Revision 1 listed these as
+  undoable, which was wrong. A lock is not an edit to the video; it is a *statement about how
+  future edits may behave*, and making it undoable creates a genuinely confusing interaction
+  with §5.1: undo would sometimes remove a lock and sometimes be blocked *by* one, and the
+  user could not predict which. Excluded. This means lock writes go through the silent setter
+  (§3.1 option (i)), which also removes any question about ordering between a lock toggle and
+  §5.1's block check.
+- **playback position** (`currentTime`) and play/pause. `[OWNER-RULED]` Undo **during
+  playback keeps playing** — the playhead is not history, so an undo mid-playback changes the
+  timeline under a still-running clock and does not pause it. (`currentTime` is still *clamped*
+  into the restored timeline's bounds — see below — which is repair, not restore.)
+- **zoom** (`sliderT`) and **timeline scroll** (`timelineScrollLeft`)
+- **selection** (`selectedSegmentId`, `selectedSegmentIds`, `selectedHeadingId`) and which
+  tab/panel is open
+- panel sizes, fullscreen, global playback speed
+- export settings and the export run itself
+- project switching, project deletion, asset deletion from IndexedDB
+
+The line is drawn exactly where the state lives: everything in `useState<Project>` is
+undoable; everything in the sibling `useState`s and `uiStateStore` is not. That is a rule
+someone can apply without consulting a list, which is why it is preferable to a curated one.
+
+**On selection specifically** — the brief is right that getting this wrong makes undo feel
+haunted, and there are two distinct failure modes:
+
+- *Restoring* selection on undo is the haunted one: the user undoes a timing change and the
+  editor jumps to a segment they are no longer looking at. **Do not do this.**
+- *Failing to repair* selection is the other: undoing back past a heading's creation can
+  leave `selectedHeadingId` pointing at something that no longer exists. So selection is not
+  restored, but it **is validated** after every restore — a selection whose target is gone
+  is cleared, exactly as `handleSwitchProject` already does
+  (`prev && rehydratedSegments.some(s => s.id === prev) ? prev : null`).
+
+Same for `currentTime`: not restored, but clamped into the restored timeline's bounds.
+
+---
+
+## 5. Invariant safety
+
+**Every restore goes through the same `setProject` wrapper as every other write**, so it is
+subject to the identical DEV gapless assertion (`App.tsx`'s `project.segments`-keyed effect)
+and the identical export guard (`checkTimelineIsGapless`). Undo is not a back door around
+Model P, structurally — it cannot be, because it is not a second write path.
+
+Beyond that, snapshots make the question nearly vacuous: **every stored state was itself
+produced by a write that already passed the assertion.** Undo restores a value the pipeline
+committed, not one it computes. A patch scheme would not have that property, which is a
+third argument for §2's recommendation.
+
+One addition worth making explicit: the restore should assert **before** committing, in DEV,
+with the entry's index in the message. If history ever does contain a bad state, the useful
+information is *which* entry, and a violation surfacing only after the restore loses that.
+
+**The duration-invariance guard does not apply to undo, and must not.** `DRAG_CASCADE_OPTIONS`
+(`dragCascade.ts`) sets `conserveTotalDuration`, which enforces "no drag changes total
+duration" — the last-segment-lock ruling of 2026-08-08. That switch is **opt-in and passed
+only by the drag path**: `applyDurationChange`'s `options` parameter is `undefined` for every
+other caller, and the speed slider deliberately relies on that (it legitimately changes the
+last segment's duration through the same `computeDragCascade`). Undo restores via
+`setProject` directly and never enters `computeDragCascade` at all, so it is structurally
+outside that guard — which is correct, because a restored state may legitimately have a
+different total duration than the current one (undoing an Apply Sync is the obvious case).
+**This must be verified explicitly, not assumed** (§10 item 10): a restore path that
+accidentally routed through the cascade would refuse legitimate undos.
+
+### 5.1 Lock conflict — undo is BLOCKED `[OWNER-RULED]`
+
+**The situation.** History entry *N* changed segment 12's timing. The user then locked
+segment 12. Pressing undo would move a segment the user has explicitly pinned.
+
+**The ruling: block the undo.** Do not restore, do not partially restore, do not silently
+unlock. Instead:
+
+1. Leave history untouched — the entry stays on the undo stack, and pressing undo again after
+   unlocking performs it normally. (Nothing is consumed by a blocked attempt.)
+2. Scroll the locked segment into view, using §5.2's machinery.
+3. Show the toast **"Unlock to undo this change"**, with the same **Unlock** action button
+   `applyDurationChange`'s locked-neighbour toast already offers (`App.tsx:1540-1545`) — so the
+   user can resolve it in one click from where they are.
+
+**Why the alternative was rejected.** The option floated in revision 1 — "skip the entry but
+leave the locked segment unchanged" — is not implementable in either representation:
+
+- **Under snapshots** there is nothing to skip. The older entry *is* a whole `Project`; the
+  locked segment's older value is simply part of it. "Restoring everything except segment 12"
+  would mean synthesising a hybrid of two states, and since segment timings are mutually
+  constrained (`startTime[i] + duration[i] === startTime[i+1]`), holding one segment at a
+  newer value while its neighbours go back to older ones **breaks the gapless invariant
+  directly** — the assertion in §5 would fire on our own write.
+- **Under patches** it is worse: applying a subset of inverses out of order produces a state
+  no version of the pipeline ever produced, with no guarantee of any invariant.
+
+Blocking is the only option that keeps every reachable state one the pipeline actually
+committed, which is the property §5 and §9 both rest on.
+
+**Detection.** A blocked undo is decided *before* the write: compare the target entry's
+segments against current state by id (cheap and exact — see R2.2 point 3), and if any segment
+whose timing differs is `locked` in **current** state, block. Locked-in-current is the right
+test, not locked-in-the-entry: the lock is a statement about the timeline as it stands now.
+
+### 5.2 Anchor scroll and flash `[OWNER-RULED]`
+
+Each history entry carries an **anchor segment id**: the segment the gesture **started** on,
+not the whole set it cascaded across. For a five-segment cascade from a drag on segment 12,
+the anchor is 12. This is captured at push time by the caller that knows the gesture (the
+drag session already has `id`), never inferred by diffing.
+
+On undo or redo:
+
+- **Scroll only if the anchor is off-screen.** If it is already visible, do not move the
+  timeline — a scroll the user did not need is the "haunted" feeling §4 warns about. When it
+  *is* off-screen, bring it into view.
+- **Always flash the anchor**, whether or not a scroll happened, so the change is visible
+  even when it is on-screen and subtle (a 0.2 s duration change is otherwise invisible).
+- **Reuse the existing scroll machinery** from `Timeline.tsx`'s segment-follow auto-scroll
+  (the Step 9 work), including its `didRestoreRef` gate. Do not write a second scroller: the
+  existing one already handles the reload-restore ordering trap that caused the visible
+  "0 then scroll" flash, and a parallel implementation would reintroduce it.
+- **Scroll position and selection are NOT undoable** (§4). The anchor scroll is a *reaction*
+  to an undo, not restored state — undoing twice and redoing twice must not replay a scroll
+  history.
+- **An unresolvable anchor falls back to no scroll and no flash.** It must not throw and must
+  not guess a nearby segment. This is reachable exactly across an Apply Sync boundary
+  (R2.2) — the ids in a pre-sync entry do not exist post-sync.
+
+### 5.3 Apply Sync `[OWNER-RULED]`
+
+**Apply Sync is one entry.** Undo once returns to the pre-sync state — including whatever
+messy manual edits were there; redo once returns to the post-sync state. That before/after
+toggle is the explicitly wanted behaviour: it lets the two states be compared directly.
+
+Two consequences worth stating so they are not mistaken for bugs:
+
+- Undoing past the Apply Sync entry continues into the pre-sync edit history normally (the
+  stack is a plain linear 20, not a special case). The owner's "one undo allowed" describes
+  what it takes to *get back* to the pre-sync state, not a cap.
+- Anchors do not survive the boundary in either direction (R2.2), so a sync undo/redo scrolls
+  nowhere and flashes nothing. Accepted.
+
+**The excluded-field caveat.** Apply Sync is undoable — but undoing it must
+not un-transcribe. `transcriptTokens` and the waveform are expensive derived data shared by
+reference across snapshots (§2), and a snapshot taken before Apply Sync would restore
+`transcriptTokens: undefined`, discarding a multi-minute Whisper run. **Recommendation:
+`transcriptTokens`, `lastTranscribedAssetId`, `lastTranscribedFileIdentity`, and `language`
+are EXCLUDED from restore** — carried forward from current state rather than taken from the
+snapshot. They are cache/provenance, not user-authored content, and re-deriving them is not
+what the user asked for by pressing Cmd+Z. This is a real exception to "restore is
+`setProject(entry)`" and must be implemented as an explicit, named merge, not left implicit.
+
+---
+
+## 6. Depth, eviction, and clearing
+
+- **Depth: 20 undo levels.** `[OWNER-RULED]` (Revision 1 said 50.) At the measured ~3.9 kB per
+  typical entry that is well under 0.5 MB, and 12.18 MB in the pathological all-Apply-Sync
+  case (R2.1).
+- **Redo depth is not a second budget.** Redo can only ever hold what has been undone, so it
+  is bounded by the same 20 — "20 each" would be a misreading. The invariant is
+  `undoDepth + redoDepth <= 20`.
+- **Eviction: FIFO from the oldest end, silently**, on push past 20. No warning, no toast.
+- **Redo is discarded on any new edit** `[OWNER-RULED]` — the standard linear model. No redo
+  tree.
+- **History is CLEARED on:** project switch, New Project, app quit (trivially — nothing is
+  persisted across a process restart), the DEV scale-fixture load, and project deletion. Each
+  is "this is a different project now"; an undo stack that survived one could restore another
+  project's segments onto this one's assets.
+- **Apply Sync does NOT clear history** — it pushes one entry like any other edit (§5.3).
+
+### 6.0 RULED — in-memory only, zero storage `[OWNER-RULED 2026-08-08]`
+
+**The ruling, as given:** *"Undo history stays in memory during your active session… It only
+resets when the app restarts, user switch project or even go back to dashboard. Re-opening a
+project starts fresh. Fast, clean, and requires zero extra storage overhead."*
+
+So the decision is **reading (B) of §6.1 below: in-memory only, no persistence layer, nothing
+written to disk.** §6.1 is retained as the record of what (A) would have cost.
+
+**Clearing list, final:**
+
+| Event | History |
+|---|---|
+| Editing inside the currently-open project | **Kept** — this is the whole session |
+| Switching to another project | Cleared |
+| **Going back to the dashboard** | Cleared *(added by this ruling)* |
+| **Re-opening a project** (even the same one) | **Starts fresh** *(added by this ruling)* |
+| New Project | Cleared |
+| App restart | Cleared (nothing persisted, so this is automatic) |
+| DEV scale-fixture load, project deletion | Cleared |
+| Apply Sync | **Kept** — pushes one entry (§5.3) |
+
+**One factual correction to the ruling, because it changes what gets built.** The ruling says
+history *"does not reset if the page reloads during the active session."* That is not
+achievable together with "zero extra storage overhead": **a page reload discards the entire JS
+heap**, including the history stack, so in-memory history cannot survive one. There is no
+middle option — surviving a reload *is* persistence (§6.1(A)), with its own IndexedDB store
+and per-entry asset rehydration.
+
+Since the ruling also explicitly asks for zero storage overhead, and those two requirements
+are mutually exclusive, **zero-storage is taken as the governing constraint** and a reload
+therefore starts with empty history. Worth noting this costs very little in practice: in the
+shipped Tauri app a page reload is not a user-reachable action — there is no reload control;
+it is a dev-time `Cmd+R`. If surviving a reload turns out to matter, it is §6.1(A) and its own
+phase; flag it and it will be scoped rather than smuggled in.
+
+**The part of the reload concern that IS real, and must be implemented:** history must not be
+cleared by *incidental* project-state churn during a single session. Specifically, the
+clear-on-switch trigger must **not** fire on App's mount-time hydration, where a placeholder
+`Project` is swapped for the real persisted one. Keying the clear on `project.id` alone
+reproduces exactly the D15 bug the `sliderT` restore already had to fix
+(`hasSkippedHydrationResetRef`) — a first-run guard is consumed by the placeholder's id and
+then fires unguarded when the real project arrives. The same `isHydrating` gate applies here.
+At mount the stack is empty anyway, so this is about correctness of the trigger rather than
+about saving entries — but it is the kind of thing that silently starts eating history the
+moment hydration order changes.
+
+### 6.1 What persistence would have cost — retained for the record, NOT being built
+
+Revision 1 recommended that all four exits clear history, with no persistence. The owner
+accepted three and **excluded the fourth: "except page reload inside the project"** — i.e.
+reloading the page while staying in the same project should *keep* the undo stack.
+
+**This is the one ruling in the set that adds real, non-trivial work, and it is worth
+confirming the intent before building on it.** Flagging rather than silently deferring:
+
+- **It requires persistence.** There is no in-memory way to survive a reload; the JS heap is
+  gone. So this is not a small carve-out from "no persistence" — it *is* persistence, with a
+  storage layer, a schema version, and a migration story.
+- **`localStorage` will not hold it.** Serialised, history cannot use structural sharing (the
+  0.07 MB figure is a live-heap property, not a byte-count one), so 20 entries of v6 is
+  **6.02 MB of JSON** [MEASURED] against a ~5-10 MB origin quota that the project itself
+  already shares. It would need its own IndexedDB store, like `waveformStore.ts` has.
+- **Asset rehydration has to be re-run per entry.** `Asset.url` is a `blob:` URL stripped
+  before persistence (`projectStore.ts`) and rebuilt from IndexedDB on load. Every persisted
+  entry would need the same drop-missing-asset repair the hydration path performs — 20 times
+  per load — or entries would carry dead blob URLs that only fail when restored.
+- **Writing it is not free either.** The existing 500 ms debounced project save would have to
+  serialise up to 6 MB alongside the project on every edit.
+
+**Two readings of the ruling, and they cost very different amounts:**
+
+- **(A) Literal:** history genuinely survives a webview reload. Cost: a new IndexedDB store,
+  per-entry asset rehydration, schema versioning — a phase of its own, comparable in size to
+  Phases 1-3 combined.
+- **(B) "Do not gratuitously clear it":** the concern is that history must not be wiped by
+  *incidental* project-state churn — the reload-hydration effect writing `rehydratedSegments`
+  through the same seam, or the placeholder-project swap the `sliderT` D15 fix already had to
+  guard against (`hasSkippedHydrationResetRef`). Under this reading the requirement is that
+  **hydration must not be treated as a project switch**, which is a one-line gate, essentially
+  free, and closes a real bug the D15 fix's history says is easy to hit.
+
+**RESOLVED: (B).** See §6.0 above — the owner ruled for in-memory only with zero storage
+overhead. (A) is not being built. This subsection stays as the costing, so that if surviving a
+reload is ever wanted, the price is already known and does not have to be re-derived.
+
+---
+
+## 7. Keyboard shortcuts
+
+`[OWNER-RULED]` **Both platforms are targets — macOS and Windows.** The Windows bindings are
+required, not optional extras, and `tauri.conf.json` already bundles an
+`x86_64-pc-windows-msvc` ffmpeg sidecar, so Windows is a real shipping target.
+
+| Action | macOS | Windows |
+|---|---|---|
+| Undo | `Cmd+Z` | `Ctrl+Z` |
+| Redo | `Cmd+Shift+Z` | `Ctrl+Shift+Z` **and** `Ctrl+Y` (both accepted) |
+
+Detect the modifier as `e.metaKey || e.ctrlKey` rather than branching on a platform sniff —
+one code path, and it matches how the existing keydown branches are written. `Ctrl+Y` is
+macOS-harmless (it is not a system binding there), so it can be accepted unconditionally
+rather than gated on platform.
+
+Implementation goes in the existing `window` `keydown` effect (`App.tsx:3391-3438`), as a
+new branch alongside Space / `+` / `-` / arrows / `F` / the DEV panel toggle.
+
+**Focus suppression — mandatory, and the existing pattern already has it.** Every branch in
+that handler guards on `isTextEntryElement(document.activeElement)` (`App.tsx:1112`), which
+exists precisely because a focused range slider was trapping the spacebar. Undo/redo must
+use the same guard and must be **stricter** about it than the others: `Cmd+Z` inside a text
+field is the browser's own text undo, and stealing it would make every text field in the app
+feel broken. Concretely, suppress the global handler when:
+
+- `isTextEntryElement(document.activeElement)` is true — script/scene textareas, overlay
+  text inputs, the numeric duration field, project name, search;
+- a modal owning its own key handling is open — `ProjectSettingsModal`,
+  `ExportSettingsModal`, `ReviewMappingModal`, `NewProjectModal`, `DevTestPanel` (five
+  separate `window` keydown listeners exist today, `grep` confirmed);
+- an export is in flight (undoing a timing change mid-render is meaningless and the pipeline
+  has already snapshotted).
+
+### Two platform risks, flagged explicitly
+
+**(a) WKWebView interception.** This app has a documented history of the shell swallowing
+input, and it is not speculative:
+
+- the browser Fullscreen API "silently fails in the Tauri WebView shell" and had to be
+  replaced with `getCurrentWindow().setFullscreen()`;
+- after any fullscreen exit, keyboard focus reaches the OS window but **not** the embedded
+  WebView, requiring a bespoke `restoreWebViewFocus()` (`getCurrentWebview().setFocus()` +
+  window focus + three DOM focus fallbacks);
+- the ghost-click swallower exists because WKWebView's synthetic post-release click lands
+  somewhere the code did not expect.
+
+So **`Cmd+Z` reaching the `window` listener at all must be verified in the real shell before
+this feature is called done** — it is a manual checklist step, not an assumption. If it does
+not arrive, the fallback is a Tauri-side global shortcut or a native menu accelerator
+forwarding to the webview via an event.
+
+**(b) Native menu conflict.** [MEASURED] `src-tauri/tauri.conf.json` and `src-tauri/src/lib.rs`
+declare **no menu at all** — `grep -n "menu"` returns nothing in either. On macOS, Tauri
+supplies a default application menu, whose **Edit** submenu carries `Cmd+Z`/`Cmd+Shift+Z`
+bound to the OS text-editing responder. That is a genuine conflict and the most likely place
+this breaks. It also has a silver lining: those bindings are exactly what should keep working
+inside a focused text field, so the correct end state may be to let the native menu own
+`Cmd+Z` when a text field has focus and the app own it otherwise — which is what §7's
+suppression rule already produces. **Resolving this needs a real-shell test, and it is the
+single riskiest unknown in this document** (see §11).
+
+---
+
+## 8. Buttons
+
+- **Placement:** `[OWNER-RULED]` the toolbar, **immediately left of Apply Sync**. (Revision 1
+  proposed left of the zoom slider; superseded.)
+- **Icons:** lucide-react `Undo2` / `Redo2`, matching every other control in the app.
+- **Ignored while a drag gesture is live.** A click or shortcut arriving mid-drag does nothing
+  — the gesture owns the timeline until it resolves, and an undo landing between a drag's live
+  DOM writes and its commit would leave the preview and state disagreeing. Gate on the
+  existing `isResizingRef`, which is already the app's canonical "a drag is in progress" flag.
+- **Disabled state:** greyed and non-interactive when the respective stack is empty, using
+  the app's existing disabled treatment. Disabled, not hidden — a control that disappears
+  makes users hunt for it.
+- **Labelling the next action: YES, in the tooltip only.** `Undo lock segment 12`,
+  `Redo resize segment 4`. This requires each history entry to carry a short human label,
+  which the wrapper can take as an optional argument — cheap, and it is what makes a 50-deep
+  stack navigable. Do **not** put the label in the button face: it changes width on every
+  edit and the toolbar reflows.
+- **No history dropdown** in the first version. It is a genuinely useful feature and a
+  separate one.
+
+---
+
+## 9. Golden-replay risk
+
+**The guarantee: undo/redo cannot alter committed timings for any corpus project, because it
+adds no code to the sync pipeline and computes no timing.**
+
+Specifically:
+
+1. `scripts/phase4-handoff-replay-sync.test.ts` imports `parseProjectData`,
+   `alignScenestoTranscript`, `distributeSegmentTimes`, `applyAnchorBasedTiming`,
+   `headExtendFirstSegment`, and `snapCoveredBoundaries` **directly** — it never renders
+   `App`, never touches `useState`, and never reaches a `setProject`. A wrapper around a
+   React setter is not in its import graph at all.
+2. Snapshots (§2) **store and restore values the pipeline produced**. There is no
+   recomputation, so there is no opportunity to produce a different number. This is the
+   design property that makes the guarantee structural rather than a hope, and it is the
+   strongest single argument against a command/patch scheme, which *would* recompute.
+3. The one place a diff could sneak in is §5's excluded-field merge. That is why it must be
+   an explicit named function with its own unit test asserting the excluded set exactly —
+   an implicit spread would be the exact shape of a silent regression.
+
+**Verification requirement:** the golden replay runs unchanged at every phase boundary in
+§11, and must stay byte-identical. If it moves, the phase does not land.
+
+---
+
+## 10. Test strategy
+
+Minimum bar, all of it:
+
+1. **Round-trip identity.** For each of a representative set of edits (drag commit, lock
+   toggle, grade write, heading insert, text-layer delete, apply-to-all): do → undo →
+   `expect(project).toEqual(before)`, **deep**, not by reference.
+2. **Redo identity.** do → undo → redo → `expect(project).toEqual(afterDo)`.
+3. **Property: random N-operation round trip.** Apply N random operations from the edit
+   vocabulary, then undo N times, and assert byte-identical return to the initial state; then
+   redo N times and assert return to the final state. Sweep N and the seed. This is the test
+   that finds the edit whose inverse nobody thought about.
+4. **Discarded drags create no entry.** Through the **real** `DragSessionHarness`, not a
+   mock: a `pointercancel` discard, a locked-neighbour block, and a press-release with no
+   movement each leave `historyDepth` unchanged; a genuine commit increments it by exactly 1.
+   The harness already resolves all four outcomes, so this is a new assertion on existing
+   machinery.
+5. **Coalescing (§3.2).** A slider gesture of 30 writes produces 1 entry, closed by
+   `pointerup`, **including** the trailing 120 ms-debounced write that lands after the release;
+   a text field's writes produce 1 entry closed by `blur` or 500 ms idle; a write with a
+   different coalescing key opens a second entry immediately.
+6. **Invariant safety.** Every state reachable by undo/redo in the §3 property test passes
+   `findPartitionViolations` — reusing the existing checker, not a new one.
+7. **Eviction and clearing.** Depth cap holds at **20**; the oldest entry is evicted silently;
+   `undoDepth + redoDepth <= 20` always; project switch/New Project/fixture load clear both
+   stacks; a new edit after an undo discards redo.
+8. **Excluded-field merge (§5.3).** A snapshot taken before Apply Sync, restored, keeps the
+   current `transcriptTokens` and does not resurrect `undefined`.
+9. **Selection repair (§4).** Undoing past a heading's creation clears a selection pointing
+   at it; `currentTime` is clamped into the restored bounds.
+10. **Undo is outside the duration-invariance guard (§5).** A restore whose total duration
+    differs from current state succeeds — asserted directly, since a restore accidentally
+    routed through `computeDragCascade` with `DRAG_CASCADE_OPTIONS` would refuse it. Undoing an
+    Apply Sync is the natural fixture: pre- and post-sync totals differ.
+11. **Lock conflict blocks (§5.1).** Undo against an entry that would move a currently-locked
+    segment does not write, does not consume the entry, and the same undo succeeds after the
+    segment is unlocked.
+12. **Locks are not undoable (§4).** A lock toggle pushes **zero** entries; undo after a lock
+    toggle reaches past it to the previous real edit.
+
+---
+
+## 11. Phased plan
+
+`[OWNER-RULED]` Revision 1 proposed six phases. The owner's brief collapses them into
+**three**, which is the plan of record. Test-count deltas are estimates.
+
+| Phase | Scope | Ships? | Tests |
+|---|---|---|---|
+| **1 — history core, no UI** | `src/services/history.ts`: pure push/replace/undo/redo/evict/clear over an opaque state type, with explicit push-vs-replace semantics so callers state intent rather than the store inferring it. An entry carries the snapshot, a human label, and the anchor segment id. Capture wired at the `setProject` seam; `setProjectSilent` for the two revert paths and for lock writes. §10 items 1-4, 6, 7, 10, 12. | No UI | **+30** |
+| **2 — buttons and shortcuts** | **The WKWebView key-interception experiment runs FIRST, before the handler is written** (§12). Then: `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z`, `Ctrl+Y`, §7's text-field and modal suppression, toolbar buttons left of Apply Sync with disabled states and named tooltips, ignored while a drag is live. | Yes | **+18** |
+| **3 — anchor scroll, lock policy, coalescing** | §5.2's anchor scroll (reusing the Step 9 scroller) and flash; §5.1's lock block with its toast; §3.2's coalescing. §10 items 5, 9, 11. | Yes | **+25** |
+
+**Total: roughly +73 tests, 1530 → ~1603.** Golden replay must stay byte-identical at every
+phase boundary — verified per stage, not once at the end.
+
+**Deferred, deliberately, and not in any of the three phases:** history persistence across a
+page reload (§6.1, pending a ruling between readings (A) and (B)); a history dropdown; a redo
+tree.
+
+---
+
+## 12. The decision I am least confident about — now scheduled as an experiment
+
+**§7's platform risk — whether the global `Cmd+Z` handler can own the shortcut at all in the
+real WKWebView/Tauri shell.**
+
+Everything else here is settled by measurement or by an existing pattern in the codebase.
+This one is a guess about a platform, and the codebase's own history is a warning: the
+browser Fullscreen API silently fails in this shell, keyboard focus does not return to the
+webview after a fullscreen exit without three layers of fallback, and a native macOS menu
+this app has never configured (`grep -n "menu"` finds nothing in `tauri.conf.json` or
+`lib.rs`) is presumed — not verified — to bind `Cmd+Z` to the OS text responder.
+
+**This is no longer a note; it is Phase 2's first task, gating the handler.** The experiment:
+a temporary `keydown` logger in the existing effect, `npm run tauri:dev`, and `Cmd+Z` pressed
+in four states — (a) nothing focused, (b) a text field focused, (c) a range slider focused,
+(d) immediately after exiting fullscreen — recording which reach the listener and whether the
+native Edit menu flashes. If `Cmd+Z` never arrives at `window`, the finding is reported as
+such and the **native-menu / Tauri global-shortcut route** is proposed instead of working
+around it blindly.
