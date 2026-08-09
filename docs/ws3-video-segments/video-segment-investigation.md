@@ -487,8 +487,8 @@ needs a new step for this case before it can be trusted to catch a regression he
 
 - `docs/checklists/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
   the `?? 60` case — see §3's fix-shape note on why it needs a second case).
-- `project-state.md` — Deferred Known Bugs ("known video-path gap"); WS3 (Video
-  Segments) as of the 2026-08-09 restructure.
+- `project-state.md` — Active Workstreams → WS3 (Video Segments), as of the
+  2026-08-09 restructure.
 - `docs/history.md` — the 2026-08-08 triage record (symptom 1 as "F6"), and the two
   prior mock-invisible decode-pool defects.
 - `src/hooks/useWebCodecsPreview.ts`, `src/services/videoDecoderPool.ts` — symptom 1.

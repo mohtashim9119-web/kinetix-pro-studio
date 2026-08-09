@@ -14,19 +14,24 @@
 
 ## Verdict
 
-**READY, with one defect to fix first.**
+~~**READY, with one defect to fix first.**~~ **FIXED, 2026-08-08, commit `1b16a50`
+("fix(history): Apply Sync pushes exactly one undo entry, not two").** The finding below
+(§2a) is retained verbatim as the historical record of the diagnosis — the fix routed
+`App.tsx:3005`'s post-hoc boundary-quality log write through `setProjectSilent` instead of
+`setProject`, with tests in `src/services/applySyncHistory.test.ts`. WS1 slice 1 is
+complete; the 50/50 re-derivation (slice 2) is next.
 
-Three of the four questions come back clean. The fourth does not: **Apply Sync currently
-pushes TWO history entries, not one.** It is pre-existing, it is not caused by WS1, and it
-is small — but it lands squarely on the path WS1 spends all its time in, and undoing an
-Apply Sync is described in the design doc as the most valuable undo in the app. Fix it as
-WS1's first slice (§4).
+Three of the four questions came back clean at the time. The fourth did not: **Apply Sync
+was pushing TWO history entries, not one.** Pre-existing, not caused by WS1 — but it landed
+squarely on the path WS1 spends all its time in, and undoing an Apply Sync is described in
+the design doc as the most valuable undo in the app. Fixed as WS1's first slice, ahead of
+§4's original plan (§4 itself is superseded by the actual fix, below).
 
-| # | Question | Answer |
+| # | Question | Answer (as of this assessment) |
 |---|---|---|
 | 1 | Is 50/50 still cleanly decoupled from the editor path? | **YES** [MEASURED] |
 | 1b | Do undo/redo, the duration-invariance guard, or the last-segment lock constrain it? | **NO** — none of the three [MEASURED] |
-| 2 | Does Apply Sync push exactly one history entry? | **NO — it pushes two** [MEASURED by reading; **no test covers it**] |
+| 2 | Does Apply Sync push exactly one history entry? | **NO — it pushed two** [MEASURED by reading] — **FIXED 2026-08-08, `1b16a50`** |
 | 2b | Do stale anchors degrade to no-scroll rather than throwing? | **YES** [ASSERTED — code reading; no test] |
 | 3 | Does Model P or the duration-invariance guard block anything in WS1's scope? | **NO** [MEASURED] |
 
@@ -103,11 +108,11 @@ exists today.
 
 ---
 
-## 2. Apply Sync and the history stack — **one defect**
+## 2. Apply Sync and the history stack — **one defect, now fixed**
 
-### 2a. It pushes TWO entries, not one [MEASURED — by reading; no test covers it]
+### 2a. It pushed TWO entries, not one [MEASURED — by reading at the time] — **FIXED, `1b16a50`**
 
-**This is the finding of this assessment.**
+**This was the finding of this assessment; retained verbatim below as the diagnosis record.**
 
 `setProject` (`App.tsx:1208-1248`) pushes a history entry whenever `next !== prev`
 (`App.tsx:1228`). There is no exemption for log-only writes. Coalescing cannot absorb a
@@ -212,7 +217,7 @@ blind regeneration. `docs/measurements/phase4-baseline-methodology.md` is the pr
 **Not the 50/50 rule.** Start with the history defect from § 2a — it is small, it is on the
 path WS1 lives in, and it makes every subsequent WS1 iteration's undo behave.
 
-### Slice 1 — make Apply Sync push exactly one history entry
+### Slice 1 — make Apply Sync push exactly one history entry — **DONE, `1b16a50`**
 
 **Change:** route the post-hoc boundary-quality log write (`App.tsx:3005`) through
 `setProjectSilent` instead of `setProject`.
