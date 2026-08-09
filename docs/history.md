@@ -4,6 +4,50 @@
 
 This file is a chronological archive: the old phase roadmap, the full completed-work log, every phase-summary writeup, and every per-task deep-dive that used to live in `project-state.md`. Nothing here is current-state tracking — for that, see `project-state.md`. Content below is preserved verbatim from the pre-2026-06-22 version of that file except where noted.
 
+## Table of Contents
+
+Chronological by section date, except the pre-2026-06-24 blocks at the top (labeled "superseded"/"Archived") which predate this file's per-entry dating convention.
+
+- [Roadmap & Meta Snapshot (as of 2026-06-19, superseded)](#roadmap--meta-snapshot-as-of-2026-06-19-superseded)
+- [Completed Work Log](#completed-work-log)
+- [Phase Summaries](#phase-summaries)
+- [Per-Task Deep Dives](#per-task-deep-dives)
+- [Historical Quick Stats (superseded)](#historical-quick-stats-superseded)
+- [Completed Work Log — 2026-06-24 to 2026-07-11](#completed-work-log--2026-06-24-to-2026-07-11)
+- [WebGL2 Effects Engine — Closed Phases (Archived)](#webgl2-effects-engine--closed-phases-archived)
+- [WebCodecs Preview Migration Phases 0–8 (Archived)](#webcodecs-preview-migration-phases-08-archived)
+- [Waveform Rewrite — Implementation Record (Archived)](#waveform-rewrite--implementation-record-archived)
+- [Decisions Log — moved from project-state.md (2026-07-12)](#decisions-log--moved-from-project-statemd-2026-07-12)
+- [WebGL2 Effects Engine — Full Plan (Archived 2026-07-20)](#webgl2-effects-engine--full-plan-archived-2026-07-20)
+- [WebCodecs + WebGL2 Worker Export — Implementation Record](#webcodecs--webgl2-worker-export--implementation-record)
+- [macOS EMFILE Fix — AnnexB Concat (Implementation Record)](#macos-emfile-fix--annexb-concat-implementation-record)
+- [Project Settings + Aspect Ratio + Bulk Delete — Implementation Record](#project-settings--aspect-ratio--bulk-delete--implementation-record)
+- [Export UX — Live Timer + Completion Toast/Chime (2026-07-29)](#export-ux--live-timer--completion-toastchime-2026-07-29)
+- [Sync System Rewrite — Closing Record (WS1a through WS6, 2026-07-29)](#sync-system-rewrite--closing-record-ws1a-through-ws6-2026-07-29)
+- [Sync System Rewrite (2026-07-24 to 2026-07-29) — Archived](#sync-system-rewrite-2026-07-24-to-2026-07-29--archived)
+- [Deep Segment Search + No-Asset Sync Summary + Contention-Aware Silence Claiming (2026-07-30)](#deep-segment-search--no-asset-sync-summary--contention-aware-silence-claiming-2026-07-30)
+- [Rescue Forward Bound, Breath Discrimination, Aligner Snap Parity, Monotonic Re-Check (2026-08-02)](#rescue-forward-bound-breath-discrimination-aligner-snap-parity-monotonic-re-check-2026-08-02)
+- [Window-Overlap Silence Regression Fix, Timeline Redesign, Bug C Landed, Head-Extension, Copy-Logs, Panel Polish (2026-07-31)](#window-overlap-silence-regression-fix-timeline-redesign-bug-c-landed-head-extension-copy-logs-panel-polish-2026-07-31)
+- [Pipeline Contract Program §6.0 — Timeline Smoke Tests (2026-08-01, commit `7e6309f`)](#pipeline-contract-program-60--timeline-smoke-tests-2026-08-01-commit-7e6309f)
+- [Pipeline Contract Program Pair 1 — Contract 1→2 Shipped (2026-08-01)](#pipeline-contract-program-pair-1--contract-12-shipped-2026-08-01)
+- [Long-Pause-Voice Regression — Root Cause + Boundary-Quality Checker Phase 1 (2026-08-02)](#long-pause-voice-regression--root-cause--boundary-quality-checker-phase-1-2026-08-02)
+- [Index-Based Seam Exemption for `isBreathSilence` — Implementation Record (2026-08-03)](#index-based-seam-exemption-for-isbreathsilence--implementation-record-2026-08-03)
+- [The Sync-Pipeline-Contract Programme Through K17 and the Park Commit — Arc Summary (2026-06-01 to 2026-08-07)](#the-sync-pipeline-contract-programme-through-k17-and-the-park-commit--arc-summary-2026-06-01-to-2026-08-07)
+- [Model P Compliance — Implementation Record (2026-08-07)](#model-p-compliance--implementation-record-2026-08-07)
+- [WS2 Task 1 — `dragSession.ts` Extraction (2026-08-07)](#ws2-task-1--dragsessionts-extraction-2026-08-07)
+- [WS2 Task 2 — The Route 2 Drag-Path Test Harness (2026-08-07)](#ws2-task-2--the-route-2-drag-path-test-harness-2026-08-07)
+- [WS2 Task 3 — Manual WKWebView Checklist + the Pointercancel Ruling (2026-08-08)](#ws2-task-3--manual-wkwebview-checklist--the-pointercancel-ruling-2026-08-08)
+- [Manual-Failure Triage — Implementation Record (2026-08-08)](#manual-failure-triage--implementation-record-2026-08-08)
+- [WS2 manual-triage re-scope (2026-08-08, later the same day)](#ws2-manual-triage-re-scope-2026-08-08-later-the-same-day)
+- [WS2 — Last-Segment Lock, Step 10 Closure, Undo/Redo Design (2026-08-08, later still)](#ws2--last-segment-lock-step-10-closure-undoredo-design-2026-08-08-later-still)
+- [WS2 (2026-08-08, fourth pass) — step 10 fixed by measurement; undo/redo built (stages 1-5)](#ws2-2026-08-08-fourth-pass--step-10-fixed-by-measurement-undoredo-built-stages-1-5)
+- [WS2 close-out and verified baseline (2026-08-08)](#ws2-close-out-and-verified-baseline-2026-08-08)
+- [Dead-Code Cleanup Run (2026-08-08/09) — Two Passes](#dead-code-cleanup-run-2026-08-0809--two-passes)
+- [Sync Pipeline v2 Research Programme — Phase 2a Model Swap Through Phase 4 Pre-Implementation (2026-08-04 to 2026-08-07)](#sync-pipeline-v2-research-programme--phase-2a-model-swap-through-phase-4-pre-implementation-2026-08-04-to-2026-08-07)
+- [File Map Archive — Pre-Restructure CLAUDE.md, Through 2026-08-09](#file-map-archive--pre-restructure-claudemd-through-2026-08-09)
+
+**Note on the 2026-08-09 docs-restructure dedup pass:** deduplication across this file was targeted, not exhaustive — it covered `App.tsx`, `syncEngine.ts`, `whisper.rs`, `resolutionConfig.ts`, `snapBoundaries.ts`, `ExportSettingsModal.tsx`, and `NewProjectModal.tsx`'s File Map entries, plus an automated SHA-identical and near-duplicate-sentence scan across the whole file. A narrative-vs-data prune (removing archived material whose content, as opposed to its exact wording, is superseded by a later section) was not performed. A future session should treat this as the known scope rather than infer it.
+
 ---
 
 ## Roadmap & Meta Snapshot (as of 2026-06-19, superseded)
@@ -4319,41 +4363,11 @@ src/
                      #   coalesced, with the timeline rect/pps cached once at drag start; the real
                      #   state commit happens exactly once on mouseup via applyDurationChange
                      #   (perf fix, commit f4da926).
-                     #   The preview stage wrapper div (around <PreviewStage>) keeps a dynamic
-                     #   aspect ratio via an inline style (`style={{ aspectRatio:
-                     #   aspectRatioToCss(project.aspectRatio ?? DEFAULT_ASPECT_RATIO) }}` +
-                     #   bg-black, not the aspect-video utility class) — a same-day D11 "fix"
-                     #   (2026-07-20) that removed the aspect ratio entirely to fill the panel was
-                     #   reverted the same day (it stretched the preview when resizing the panel
-                     #   divider); the actual fix instead changed media fit from object-cover to
-                     #   object-contain across every preview path (PreviewStage.tsx's video/img
-                     #   elements, PreviewCanvas.tsx's draw math, the GL compositor's BLIT shader via
-                     #   useGlPreview.ts's computeObjectContainUvRect) so bg-black shows as
-                     #   letterbox/pillarbox bars instead of cropping. Fullscreen's fill/crop behavior
-                     #   is separate (PreviewStage's own isFullscreen branch) and is unaffected either
-                     #   way. Export is unchanged — frameRenderer.ts still uses drawImageCover.
-                     #   The D11 comment above originally said this hardcoded '16 / 9' value would
-                     #   need to change "when a future project-level aspect-ratio field" arrived —
-                     #   that field now exists (Project Settings + Aspect Ratio, 2026-07-22) and the
-                     #   value is dynamic, per the updated line above. The preview's canvas backing
-                     #   buffer (PreviewCanvas.tsx/useGlPreview.ts, threaded via PreviewStage.tsx's
-                     #   nativeWidth/nativeHeight props) is derived the same way, from
-                     #   previewNativeDimensions = resolveDimensions(project.aspectRatio ??
-                     #   DEFAULT_ASPECT_RATIO, project.resolutionTier ?? DEFAULT_RESOLUTION_TIER)
-                     #   (memoized on those two fields), replacing client-measured sizing.
-                     #   NewProjectModal's onConfirm now also passes aspectRatio/resolutionTier;
-                     #   handleNewProjectConfirm writes both onto the fresh Project (locked
-                     #   aspectRatio forever, resolutionTier editable later). Two new modals are
-                     #   mounted here: ProjectSettingsModal (showProjectSettingsModal state, a
-                     #   button in the right panel) and ExportSettingsModal (showExportSettingsModal
-                     #   state, opened by the Export button before the save-path dialog). Because
-                     #   ExportSettingsModal's onContinue setState call and the subsequent
-                     #   startExport() call would otherwise both read the useExport hook's
-                     #   exportResolution/exportFps closure from the SAME render (stale — React
-                     #   batches the setState), a small exportTriggerCount counter is bumped in
-                     #   onContinue and a dedicated effect (dep [exportTriggerCount]) calls
-                     #   startExport() on the NEXT render, once the hook has re-created with the
-                     #   just-committed values.
+                     #   Preview aspect-ratio wiring (dynamic sizing, the D11 revert, the
+                     #   object-contain fit fix) and the two Project Settings/Export Settings modals
+                     #   (ExportSettingsModal's exportTriggerCount deferred-startExport fix for the
+                     #   stale-closure race) are covered in full in this file's "Project Settings +
+                     #   Aspect Ratio + Bulk Delete — Implementation Record" entry — not restated here.
                      #   sliderT (timeline zoom) is lazy-initialized from persisted UI state
                      #   (uiStateStore's kinetix:ui:v1) instead of a hardcoded 0.5, and a new effect
                      #   persists it on every change — so the reload-restored timelineScrollLeft
@@ -4365,33 +4379,13 @@ src/
                      #   real persisted project, clobbering the just-restored sliderT back to 0.5 on
                      #   every reload instead of only on a genuine user-initiated switch (D15 fix,
                      #   2026-07-20).
-                     #   A "Cancel Export" button renders in the export progress panel alongside
-                     #   the resolution/fps readout, wired to useExport.ts's cancelExport — no
-                     #   local state, purely additive (docs/history.md -> "WebCodecs + WebGL2
-                     #   Worker Export — Implementation Record").
-                     #   Rescue observability (false-positive rescue fix, 2026-07-31) — a new
-                     #   'rescue' SyncLogEntry (types.ts, SyncLogPanel.tsx) per segment the
-                     #   per-segment temporal-bounding rescue (whisperService.ts) recovered this run.
-                     #   buildRescueLogEntries(syncRunId, rescued, timestamp) builds one entry per
-                     #   RescuedSegmentRecord — collected from `aligned.coverage`'s recoveredVia/
-                     #   recoveredRegion fields (present only for an ACCEPTED rescue claim) alongside
-                     #   the matching pre-filter segment's anchorStart — and folds in next to the
-                     #   existing skip/no-asset entries; SyncRunSummary gains rescueCount to match.
-                     #   Purely additive — this is the same rescue mechanism that has always existed
-                     #   (WS6), surfaced to the user for the first time.
-                     #   Segment-1 head-extension (2026-07-31) — right after the
-                     #   snapCoveredBoundaries/retileCoveredSegments branch that produces
-                     #   finalTimedSegments, a single extra call —
-                     #   `finalTimedSegments = headExtendFirstSegment(finalTimedSegments)`
-                     #   (syncEngine.ts) — stretches segment 1 back to startTime 0 the same way the
-                     #   last segment already extends to audioDuration; see syncEngine.ts's entry for
-                     #   the full mechanism.
-                     #   Run-survival gates (Bug C, 2026-07-31) — SkippedSegmentRecord gains an
-                     #   optional `longestRun` field (from whisperService.ts's AlignResult.longestRun,
-                     #   threaded through the same `cov?.longestRun` spot the existing confidence/
-                     #   matchedWords fields come from), carried into the skip-reason SyncLogEntry so
-                     #   SyncLogPanel.tsx's per-segment display can show it. See whisperService.ts's
-                     #   entry for the run-survival mechanism itself.
+                     #   A "Cancel Export" button renders in the export progress panel, wired to
+                     #   useExport.ts's cancelExport (see this file's WebCodecs Worker Export record).
+                     #   Rescue observability (`buildRescueLogEntries`), segment-1 head-extension
+                     #   (`headExtendFirstSegment`), and Bug C's run-survival `longestRun` field are
+                     #   each covered in full in this file's "Rescue Forward Bound..." (2026-08-02) and
+                     #   "Window-Overlap Silence Regression Fix... Head-Extension..." (2026-07-31)
+                     #   entries — not restated here.
   types.ts           # Shared interfaces: Project, VideoSegment, Asset, TextOverlay + enums.
                      #   SegmentGrade { brightness, contrast, saturation, temperature } — each
                      #   -1..1, 0 = neutral — plus VideoSegment.effectGrade?: SegmentGrade
@@ -4470,9 +4464,8 @@ src/
                      #   states you can travel TO, the one you are looking at lives in
                      #   `useState`, so the invariant is `undoDepth + redoDepth <=
                      #   MAX_HISTORY_STATES`. Snapshots not patches, and the reason is measured,
-                     #   not aesthetic: 0.07 MB of REAL retained heap for 20 states of the
-                     #   444-segment corpus project (naive structuredClone: 20.71 MB; worst case,
-                     #   all 20 entries Apply Syncs: 12.18 MB). "Structural sharing" needs no
+                     #   not aesthetic (real-heap numbers: this file's "WS2 (2026-08-08, fourth
+                     #   pass)" entry). "Structural sharing" needs no
                      #   library — an entry holds the very Project object that was committed, and
                      #   every writer in this app is already immutable. THAT IS LOAD-BEARING: if a
                      #   writer ever mutates a committed Project in place, history silently
@@ -4572,19 +4565,11 @@ src/
                      #   dependency-free, worker-safe (same pattern as zoomScale.ts below) —
                      #   imported by the preview path (PreviewCanvas.tsx, useGlPreview.ts via
                      #   PreviewStage.tsx, App.tsx) and the export pipeline alike (useExport.ts).
-                     #   RESOLUTION_TABLE: Record<AspectRatio, Record<ResolutionTier,
-                     #   FrameDimensions>> — TypeScript-exhaustiveness-checked (a missing ratio/tier
-                     #   cell is a compile error, not a silent runtime gap). resolveDimensions(ratio,
-                     #   tier) looks up the table; aspectRatioToCss(ratio) maps '16:9' -> '16 / 9'
-                     #   for the preview wrapper's inline aspectRatio style.
-                     #   DEFAULT_ASPECT_RATIO ('16:9') / DEFAULT_RESOLUTION_TIER ('1080p') are the
-                     #   fallback for every project persisted before this feature existed —
-                     #   resolves to 1920×1080, i.e. exactly pre-existing behavior, so migration is
-                     #   invisible. Only 720p and 1080p tiers exist (all 6 combinations across the
-                     #   3 aspect ratios); 4K/2K were deliberately removed from the UI and the type,
-                     #   not merely left untested — see the DO NOT DO list. 12 unit tests in
-                     #   resolutionConfig.test.ts assert all 6 (ratio, tier) -> dimension pairs,
-                     #   aspectRatioToCss for all 3 ratios, and both defaults.
+                     #   DEFAULT_ASPECT_RATIO ('16:9') / DEFAULT_RESOLUTION_TIER ('1080p') resolve to
+                     #   1920×1080 — exactly pre-existing behavior, so migration for every project
+                     #   persisted before this feature existed is invisible. Table shape, exhaustiveness
+                     #   check, and test count: this file's "Project Settings + Aspect Ratio + Bulk
+                     #   Delete — Implementation Record" entry.
     stockService.ts  # Pexels + Pixabay REST search (both keys are client-side env vars)
     textNormalize.ts # The unified text normalizer (sync rewrite R1, closes G4) — ONE pipeline
                      #   shared by the alignment path and the filename path so they can never
@@ -4632,20 +4617,9 @@ src/
                      #   parseProjectData() still in App.tsx. PASS 2 (character-weight anchor
                      #   backfill) deleted in 3d-2 — dead under clean-slate. PASS 3 now falls
                      #   back to a segment's own startTime for any missing anchor (3d-1).
-                     #   headExtendFirstSegment(segments) (segment-1 head-extension, 2026-07-31)
-                     #   — the tail already runs to audioDuration (snapCoveredBoundaries's own
-                     #   extension / applyAnchorBasedTiming PASS 3), but nothing gave the HEAD the
-                     #   same treatment: segment 1's startTime passes through snapCoveredBoundaries
-                     #   untouched, still sitting at the aligner's first matched word rather than
-                     #   true t=0 (real lead-in silence before narration starts). Stretches
-                     #   segments[0] back to startTime 0 by growing its duration to absorb the
-                     #   lead-in — the segment's END is unchanged, so no contiguity ripple past
-                     #   segment 2. No-op on a locked first segment or one that already starts at 0.
-                     #   Called once by App.tsx right after snapCoveredBoundaries/
-                     #   retileCoveredSegments — deliberately NOT folded into
-                     #   snapCoveredBoundaries itself, which is pair-boundary logic exercised in
-                     #   tests on synthetic MIDDLE slices where index 0 isn't the timeline's real
-                     #   first segment.
+                     #   headExtendFirstSegment(segments) (segment-1 head-extension, 2026-07-31) —
+                     #   full mechanism in this file's "Window-Overlap Silence Regression Fix...
+                     #   Head-Extension..." entry, not restated here.
     whisperService.ts # alignScenestoTranscript() sliding-window text matcher; distributeSegmentTimes()
                      #   applies aligned windows (lock-aware); transcribeWithProgress() runs the
                      #   whisper-cli sidecar; canonicalizeForAlignment/normalize/textMateriallyChanged
@@ -5136,17 +5110,9 @@ src/
                      #   rejects on `fillsTokenGapWithinSpan` alone. `whisperService.ts`'s
                      #   `alignScenestoTranscript` gap-fill calls the same (now pure-window)
                      #   `isBoundarySilenceCandidate`, so both snap paths stay in parity.
-                     #   Contiguity invariant (same fix) — snapCoveredBoundaries only ever wrote
-                     #   `next.startTime = snapped`, but `curr.duration` is floored at
-                     #   MIN_SEGMENT_DURATION (0.1s): when a floored `curr` extends past the just-
-                     #   written `snapped` boundary, `startTime[i] + duration[i] === startTime[i+1]`
-                     #   could break — a visible overlap between adjacent segment cards once Timeline.tsx
-                     #   switched to absolute positioning (see Timeline.tsx's entry below), previously
-                     #   invisible under flexbox's own implicit reflow. Fixed with one check appended
-                     #   after every boundary write: if `curr.startTime + curr.duration > next.startTime`,
-                     #   advance `next.startTime`/`next.anchorStart` to match. This invariant —
-                     #   `startTime[i] + duration[i] === startTime[i+1]` for every adjacent covered pair
-                     #   — now holds unconditionally on this function's output; App.tsx's
+                     #   Contiguity invariant (same fix, full mechanism in this file's "Window-Overlap
+                     #   Silence Regression Fix..." entry) — `startTime[i] + duration[i] ===
+                     #   startTime[i+1]` now holds unconditionally on this function's output; App.tsx's
                      #   `headExtendFirstSegment` (syncEngine.ts) post-pass and Timeline.tsx's absolute-
                      #   positioned lanes both depend on it.
                      #   `computeBoundarySearchWindow` (search-window midpoint/gap math) and
@@ -5875,29 +5841,17 @@ src/
     ExportSettingsModal.tsx # Export-time settings dialog (Project Settings + Aspect Ratio, export-
                      #   settings amendment, 2026-07-22) — resolution + fps are chosen HERE, at
                      #   export time, not in Project Settings — the industry-standard pattern
-                     #   (matches Premiere/Resolve/Final Cut). App.tsx's Export button opens this
-                     #   modal first; its Continue commits the draft resolution/fps back into
-                     #   App.tsx's existing exportResolution/exportFps state (via
-                     #   exportTriggerCount, see App.tsx's entry below) and proceeds to the
-                     #   save-path dialog + export run. Cancel/Escape discard the draft, no export
-                     #   triggered. Draft state is seeded from the current exportResolution/
-                     #   exportFps so the last export's choice is remembered. Same blocking-modal
-                     #   shell as ProjectSettingsModal.tsx (no backdrop-close, Escape = Cancel).
-                     #   Shows derived dimensions (via resolutionConfig.ts's resolveDimensions)
-                     #   and, when mixedNativeFpsWarning is true, an amber note that staged videos
-                     #   have different native frame rates and the fps won't be auto-set.
+                     #   (matches Premiere/Resolve/Final Cut). Same blocking-modal shell as
+                     #   ProjectSettingsModal.tsx (no backdrop-close, Escape = Cancel); shows an amber
+                     #   note when `mixedNativeFpsWarning` is true (staged videos have different
+                     #   native frame rates, fps won't be auto-set). Wiring detail (exportTriggerCount
+                     #   stale-closure fix): this file's "Project Settings + Aspect Ratio + Bulk
+                     #   Delete — Implementation Record" entry.
     NewProjectModal.tsx # New Project dialog. Beyond the project-name field, now also collects
-                     #   aspect ratio (3-way segmented control, 16:9/9:16/1:1, locked forever once
-                     #   created — Project Settings + Aspect Ratio Step 3, 2026-07-22) and native
-                     #   resolution tier (a <select> offering 720p/1080p whose option labels show
-                     #   derived dimensions for the currently-selected ratio via resolutionConfig.ts's
-                     #   resolveDimensions, e.g. "1080p — 1080 × 1920" under 9:16). Both tiers are
-                     #   always offered for every ratio — only the derived dimensions shown change.
-                     #   onConfirm signature widened to (name, aspectRatio, resolutionTier);
-                     #   App.tsx's handleNewProjectConfirm writes both onto the fresh Project
-                     #   before confirming it. Defaults: '16:9' / '1080p' (DEFAULT_ASPECT_RATIO /
-                     #   DEFAULT_RESOLUTION_TIER from resolutionConfig.ts) — matches every
-                     #   pre-existing project's effective resolution, so migration is invisible.
+                     #   aspect ratio (3-way segmented control, locked forever once created) and
+                     #   native resolution tier — both tiers always offered for every ratio, only the
+                     #   derived dimensions shown change. Full detail: this file's "Project Settings +
+                     #   Aspect Ratio + Bulk Delete — Implementation Record" entry.
     PreviewCanvas.tsx     # Minimal canvas paint surface for the WebCodecs preview path — draws
                      #   whatever VideoFrame useWebCodecsPreview.ts hands it, object-contain fit
                      #   (D11 fix, 2026-07-20 — was object-cover; the whole frame now fits inside
@@ -6236,10 +6190,11 @@ src-tauri/
                      #   Model swap (Phase 2a, docs/sync-pipeline-v2-plan.md H.1, 2026-08-04) —
                      #   model_path() now resolves ggml-large-v3-turbo.bin (MODEL_FILENAME const),
                      #   not ggml-base.en.bin, in all 3 resolution branches (bundled resource_dir,
-                     #   macOS app-bundle fallback, dev target/debug fallback) — measured
-                     #   1,624,555,275 bytes on disk, ~2.1-2.2 GiB peak/resident during inference
-                     #   (see plan doc H.9 for the full table and the resulting download-on-first-use
-                     #   decision, not yet implemented — see project-state.md's SaaS Readiness Tasks).
+                     #   macOS app-bundle fallback, dev target/debug fallback) — on-disk size and
+                     #   peak-RSS numbers are in this file's "Sync Pipeline v2 Research Programme"
+                     #   entry (Phase 2a); plan doc H.9 has the full table and the resulting
+                     #   download-on-first-use decision, tracked in project-state.md's SaaS Readiness
+                     #   Tasks (not yet implemented).
                      #   whisper_transcribe gained a `language: String` param ("auto" or a whisper
                      #   language code) passed straight through as `-l`; the frontend
                      #   (whisperService.ts) sends `project.language ?? 'auto'`. `-np` (no-prints) is
