@@ -3371,6 +3371,62 @@ instruction — the fix remains future work, now with a concrete regression test
 27 new passing in `dragSessionHarness.test.ts` + 1 skipped bug-pin); `tsc --noEmit` clean. Step M
 golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3 unchanged.
 
+**`docs/drag-path-testability-assessment.md` — preserved detail not restated above (folded here
+before the file's deletion in Phase 4 of the 2026-08-09 docs restructure).** The document's core
+recommendation (build Route 2, not Route 1, timed alongside the Model P migration) and its
+adoption of the manual WKWebView checklist are both covered above and in the checklist's own
+"Why this exists" section (`docs/checklists/wkwebview-drag-checklist.md`). Not restated there:
+
+- **The gap, as originally stated.** No test in the pre-Route-2 repo mounted a React component —
+  no `jsdom`/`happy-dom`/`@testing-library/*`/`react-test-renderer` existed at all — so the entire
+  interactive drag path (`App.tsx`'s then-inline `onResizeStart` closure, the `rAF` loop, every
+  `el.style.left`/`width` write, `handleUp`'s commit/revert branching, pointer capture/
+  `pointercancel`/the ghost-click swallow) had never been executed by any test and could not be.
+  Five test files imported only pure exports from `App.tsx` (`parseProjectData`,
+  `evaluateCoverageGate`, `filterToCoveredSegments`, message constants) — enough to execute the
+  module body (which is why a stray broken identifier could still fail a whole file) but never to
+  render or drive the component. This is the reason K17's `liveEls` `ReferenceError` (this file's
+  K14-K17 entry above) shipped across four commits before being caught live rather than by any
+  test — closed at zero cost by a separate `package.json` test-gate change (`tsc` now runs as part
+  of `npm test`) that predates Route 2 itself.
+- **Route 1 (full `<App />` mount) — rejected, cost detail.** Measured mocking surface across
+  non-test `src/` files: `VideoDecoder`/WebCodecs APIs (13 files, absent in `jsdom` entirely),
+  `localStorage` (11, `jsdom`-provided), `createObjectURL` (8, needs stubbing), `getBoundingClientRect`
+  (6, `jsdom` returns all zeros), `AudioContext` (4, absent), `ResizeObserver` (4, absent),
+  `requestAnimationFrame` (4, `jsdom` shims via `setTimeout`), `__TAURI__` IPC (3, absent),
+  `indexedDB` (2, `fake-indexeddb` already a devDependency) — plus a WebGL2 context for
+  `PreviewStage`/`useGlPreview`, which `<App />` mounts unconditionally, against a then-4,722-line
+  `App.tsx`. Estimated multiple days to build, high ongoing fragility (any new browser API breaks
+  the mount) — not built.
+- **The F1-F9 catch-table (what a Route 2 harness would/wouldn't catch, assessed before building
+  it).** F1 (K17's `liveEls` `ReferenceError`) — already caught by the `tsc` gate above, harness
+  redundant. F2 (K16 fault 3, a start-edge drag writing only `style.width`) — YES, plain DOM-write
+  readback. F3 (the frozen-neighbour-overlap-then-snap-on-release bug) — YES, "the strongest case
+  for building this," and the bug Task 2's harness was actually built to catch. F4 (K16 fault 1,
+  the stale 24px container-origin constant) — NO: `jsdom` has no layout engine, so a test author
+  must stub `rect.left` and can bake the same wrong constant into the expectation: the class of bug
+  a harness structurally cannot discover, only regression-lock once already found by hand (this is
+  the reasoning `wkwebview-drag-checklist.md`'s "Why this exists" §1 restates). F5 (K16 fault 2,
+  missing grab offset) — partial: expressible as a regression lock against stubbed geometry, but
+  would not have been *discovered* this way. F6 (K15a gap collapse) and F7 (K14 lock-toggle
+  propagation) — already caught more cheaply, by `dragCascade.test.ts` and
+  `phase4-step-aa-unlock-repro.test.ts` respectively, no harness needed. F8 (an uncommitted
+  `dragCascade.ts` multi-hop cascade semantic change, present only in the then-unmerged
+  `model-p-editor-work` park commit, passing all 20 of that file's then-existing tests without
+  being caught) — NO, a pure-logic coverage gap needing more unit tests, not a DOM harness; **stale
+  as a standalone item** — that specific park-commit diff was never merged as-is (this file's "The
+  park commit" entry above), and `dragCascade.ts` has since been rewritten and re-tested
+  extensively through K14-K17, the Model P migration, and the manual-failure triage
+  (`dragTriage.test.ts`), so the exact "20 tests" baseline no longer exists to be stale against.
+  F9 (export desync from an unrepresentable gap) — NO at the time; subsequently made
+  unrepresentable by construction under Model P (`docs/decisions/2026-08-07-model-p-ruling.md`,
+  `docs/decisions/segments-invariant-ruling.md` §1.3). **Tally as originally assessed:** 2 of 9
+  caught by the harness alone (F2, F3), plus F5 as a regression lock; 3 already covered elsewhere
+  (F1, F6, F7); 3 outside the harness's reach entirely (F4, F8, F9).
+- **One limit not restated in the checklist's own gap list:** React 19's concurrent batching may
+  time updates differently under a `jsdom` test than in the real app — noted as an open caveat in
+  the original assessment, not resolved or revisited since.
+
 ---
 
 ## WS2 Task 3 — Manual WKWebView Checklist + the Pointercancel Ruling (2026-08-08)
