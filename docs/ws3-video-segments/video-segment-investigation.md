@@ -247,7 +247,7 @@ would not catch it** — no corpus project exercises an interactive drag.
 symptom 3's clamp first (local to `BottomDrawer.tsx`, no ruling needed, no timing code
 touched), then the product answer on the tail-behaviour question above, then the
 decoupling itself. **Gate: manual checklist steps 1–4, 12, 13**
-(`docs/checklists/wkwebview-drag-checklist.md`). **Not scheduled against WS1** — this is
+(`docs/wkwebview-drag-checklist.md`). **Not scheduled against WS1** — this is
 editor-path work and does not block the sync pipeline.
 
 ---
@@ -459,7 +459,7 @@ construction (the same "coupling engaged ⇒ product ≤ srcDur" argument §2 al
 makes for the `'end'`-edge case would then also hold for `'start'`-edge). Doing (2)
 without (1) is the more complete fix; doing (1) without (2) is the faster one.
 
-**Manual checklist step 13** (`docs/checklists/wkwebview-drag-checklist.md`) currently exercises
+**Manual checklist step 13** (`docs/wkwebview-drag-checklist.md`) currently exercises
 only the `?? 60` / unknown-`sourceDuration` case last run fixed. It does not exercise
 a known-`sourceDuration` segment whose `trimStart` a left-edge drag has pushed out of
 range, so it would PASS today despite this symptom being open — the checklist itself
@@ -485,7 +485,7 @@ needs a new step for this case before it can be trusted to catch a regression he
 
 ## Related
 
-- `docs/checklists/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
+- `docs/wkwebview-drag-checklist.md` — step 12 (symptom 1), step 13 (symptom 3, only
   the `?? 60` case — see §3's fix-shape note on why it needs a second case).
 - `project-state.md` — Active Workstreams → WS3 (Video Segments), as of the
   2026-08-09 restructure.

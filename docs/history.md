@@ -6386,7 +6386,8 @@ general src/ comment sweep.
 
 ## WKWebView Drag Checklist — Run History and Closed Sections, Folded (2026-08-09)
 
-> `docs/checklists/wkwebview-drag-checklist.md` is trimmed this pass, per the
+> `docs/wkwebview-drag-checklist.md` (relocated this same pass from
+> `docs/checklists/`, which is now dissolved) is trimmed this pass, per the
 > docs-restructure Phase 5 plan (Stage 3), to keep only its live procedure —
 > the steps to execute, their pass criteria, and the video-path caveat WS3
 > cites. Everything below (the step 10 investigation narrative, every dated
