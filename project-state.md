@@ -1,6 +1,12 @@
 # Kinetix Pro Studio — Project State
 
-> **Purpose:** Living source of truth for where we are and what's next. Distinct from `CLAUDE.md` — that file covers architecture/conventions/invariants; this file tracks status. Completed work is removed from this file, not marked done — its record lives in `docs/history.md`.
+> **Purpose:** the situation report — perishable status only, always true as of right
+> now. Six fixed sections (Current State, Active Workstreams, Open Decisions,
+> Deferred/Known-Broken, Rulings In Force, Next Action); don't add a seventh. **Never
+> put here:** task-level detail (checkbox lists, per-task notes) — that's
+> `docs/work-in-progress.md`; durable rules/invariants — that's `CLAUDE.md`; anything
+> completed — remove it, don't mark it done, its record lives in `docs/history.md`.
+> **Cap: ~250 lines.**
 
 ---
 

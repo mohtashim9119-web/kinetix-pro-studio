@@ -1,6 +1,12 @@
 # CLAUDE.md — Kinetix Pro Studio
 
-> Persistent context for Claude Code sessions — how to work in this repo correctly today. For current status and active tasks, see `project-state.md`. For the history of how the codebase got here (dated fixes, bug investigations, measured numbers), see `docs/history.md`.
+> **Purpose:** the operating manual — architecture, conventions, invariants. Durable
+> content only: true today and still true in six months. **Never put here:** status,
+> test/line counts, commit SHAs, dates, or task lists — those rot the moment they're
+> written. Status → `project-state.md`. Task-level detail → `docs/work-in-progress.md`.
+> Dated fixes/investigations/measured numbers → `docs/history.md`. **Cap: ~400 lines**;
+> if adding content would exceed it, something existing moves to `docs/history.md`
+> first. See §5 "Documentation rules" for the full scheme across all five docs.
 
 ---
 
@@ -192,7 +198,9 @@ App.tsx                 — top-level state + orchestration only
 | Add a resolution tier without updating `RESOLUTION_TABLE` for all 3 aspect ratios | A missing cell is a compile error — but still needs a deliberate dimension decision per ratio |
 | Store `width`/`height` directly on `Project` | Always derive via `resolutionConfig.ts`'s `resolveDimensions` |
 | Expose `aspectRatio` as editable anywhere in the UI | Locked forever at creation by design |
-| Move a `docs/`-root CSV/measurement file into `docs/measurements/` without checking `scripts/` first | See §7 — several are read by hardcoded path in `scripts/*.py`/`scripts/*.test.ts`, including the golden-replay test itself |
+| Move a file into or out of `scripts/fixtures/` without checking `scripts/` first | See §7 — every file there is read by hardcoded path in `scripts/*.py`/`scripts/*.test.ts`, including the golden-replay test itself |
+
+**Documentation rules.** Five docs, one job each, enforced by a short anti-bloat header at the top of every one of them: `CLAUDE.md` (durable operating manual, cap ~400 lines), `project-state.md` (perishable situation report, cap ~250 lines, six fixed sections), `docs/work-in-progress.md` (one-line-per-task active ledger), `docs/history.md` (append-only archive, never edited mid-workstream), `docs/checklists/wkwebview-drag-checklist.md` (live manual QA procedure only — run history goes to `docs/history.md`). Before adding to any of the five, re-read its header and put the content in the one file whose job it actually is.
 
 ---
 

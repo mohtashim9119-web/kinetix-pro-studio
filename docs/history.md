@@ -1,8 +1,14 @@
 # Kinetix Pro Studio — Implementation History
 
-> Archived implementation history — moved out of project-state.md 2026-06-22. See project-state.md for current state.
+> **Purpose:** the append-only archive — every dated fix, bug investigation, ruling,
+> and measured number, plus completed/abandoned `docs/work-in-progress.md` blocks and
+> dissolved workstream-folder content. **Never edited mid-workstream** — only appended
+> to, on completion/close-out. Data (CSVs, logs, measurements) is preserved verbatim;
+> narrative is kept minimal, not rewritten for style. Not current-state tracking —
+> for that, see `project-state.md`; not the active task ledger — for that, see
+> `docs/work-in-progress.md`. No line cap — this file is expected to grow.
 
-This file is a chronological archive: the old phase roadmap, the full completed-work log, every phase-summary writeup, and every per-task deep-dive that used to live in `project-state.md`. Nothing here is current-state tracking — for that, see `project-state.md`. Content below is preserved verbatim from the pre-2026-06-22 version of that file except where noted.
+This file is a chronological archive: the old phase roadmap, the full completed-work log, every phase-summary writeup, and every per-task deep-dive that used to live in `project-state.md`. Content below is preserved verbatim from the pre-2026-06-22 version of that file except where noted.
 
 ## Table of Contents
 

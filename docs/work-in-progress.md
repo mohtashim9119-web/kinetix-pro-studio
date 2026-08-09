@@ -1,19 +1,14 @@
 # Work In Progress
 
-> Active task ledger — absorbs all task-level churn so `CLAUDE.md` and
-> `docs/history.md` are never touched mid-workstream. Rules:
->
-> - **One line per task.** No narrative, no paragraphs. Detail lives in commit
->   messages and the workstream folder (`docs/ws1-sync-pipeline/`, `docs/ws3-video-segments/`).
-> - **Write each block in final archival form from the start.** Completion is a
->   literal copy-paste into `docs/history.md` with zero rewriting.
-> - **On completion or abandonment**, move the whole block verbatim to
->   `docs/history.md` under a dated heading (abandoned blocks marked with the
->   reason), and delete it here.
-> - **`CLAUDE.md` and `docs/history.md` are not touched during a workstream.**
->   Only this file, and the one-line pointer in `project-state.md`.
-> - Multiple concurrent workstreams get separate blocks, same structure.
-> - Status marks: `[x]` done, `[>]` in progress, `[ ]` not started.
+> **Purpose:** the active task ledger — absorbs all task-level churn so `CLAUDE.md`
+> and `docs/history.md` are never touched mid-workstream. **One line per task, no
+> narrative** — detail lives in commit messages and the workstream folder
+> (`docs/ws1-sync-pipeline/`, `docs/ws3-video-segments/`). Write each block in final
+> archival form from the start: on completion or abandonment, move it verbatim to
+> `docs/history.md` under a dated heading (mark abandoned blocks with the reason) and
+> delete it here — completion is a copy-paste, never a rewrite. Multiple concurrent
+> workstreams get separate blocks. Status marks: `[x]` done, `[>]` in progress, `[ ]`
+> not started.
 
 ---
 

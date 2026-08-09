@@ -1,17 +1,13 @@
 # Manual WKWebView Drag Checklist
 
-> Adopted 2026-08-08, WS2 task 3, per `docs/history.md`'s "WS2 Task 2 — The Route 2
-> Drag-Path Test Harness" entry §6 Q3 ("Approve the manual WKWebView checklist as a
-> standing complement"). Run this in the packaged/dev Tauri app, on a real machine,
-> with your own hands. Total time: **under fifteen minutes** once a test project is
-> loaded (setup below is one-time per session).
->
-> **This file is a live, permanent operational procedure** — not history, and not
-> workstream-scoped, since it outlives any single workstream. It stays at `docs/`
-> root indefinitely. Run history, closed investigations, and the full undo/redo
-> manual-step section are archived in `docs/history.md`'s "WKWebView Drag
-> Checklist — Run History and Closed Sections, Folded" entry — do not re-add them
-> here; append a new dated entry there instead when this checklist is next run.
+> **Purpose:** the live manual QA procedure for drag/timeline changes — adopted
+> 2026-08-08 (WS2 task 3) because `jsdom` cannot see real WKWebView rendering, paint,
+> or event timing. **Permanent, not workstream-scoped** — stays at `docs/` root
+> indefinitely, outliving any single workstream. Only executable steps, setup, and
+> pass criteria belong here. **Never put here:** run logs, investigation narrative,
+> or closed sections — append those to `docs/history.md`'s "WKWebView Drag
+> Checklist — Run History and Closed Sections, Folded" entry instead. Run time under
+> fifteen minutes once a test project is loaded.
 
 ---
 
