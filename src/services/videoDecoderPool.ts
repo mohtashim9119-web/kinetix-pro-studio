@@ -20,9 +20,9 @@
  *    segment's entire trimmed range the moment it becomes current/next.
  *    This is what makes 500+ segment scale viable: memory is bounded by the
  *    window, not by segment count or length.
- *  - Sliding (not prefix) frame buffer — WS3 sparse-keyframe fix, see
- *    docs/ws3-video-segments/ws3-audit.md. The buffer holds a window around
- *    the current target ([-RETAIN_BEHIND_SEC, +WINDOW_AHEAD_SEC]), evicting
+ *  - Sliding (not prefix) frame buffer — WS3 sparse-keyframe fix. The buffer
+ *    holds a window around the current target ([-RETAIN_BEHIND_SEC,
+ *    +WINDOW_AHEAD_SEC]), evicting
  *    frames the target has already passed to make room for ones it hasn't
  *    reached yet. This is what decouples *reachable depth* from *buffer
  *    size*: reaching a target deep inside a long GOP requires decoding every
@@ -264,8 +264,8 @@ interface DecodeSession {
  *  endIndex includes one GOP of margin past endSec (B-frame GOPs can need a
  *  little source data beyond the last requested presentation time).
  *
- * WS3 Stage 3/4 fix (docs/ws3-video-segments/ws3-audit.md): `chunks` is in
- * DECODE (container) order but timestamped by PRESENTATION time
+ * WS3 Stage 3/4 fix: `chunks` is in DECODE (container) order but
+ * timestamped by PRESENTATION time
  * (`videoDemuxer.ts`'s `sample.cts`) — for any real source with B-frames
  * this makes the array locally non-monotonic (confirmed via live
  * instrumentation on a real 10s clip: 119 timestamp inversions across 240
@@ -745,10 +745,9 @@ export class VideoDecoderPool {
    * to run twice at once against the same session: a second call's
    * `needsReset` check can discard the frame buffer a first call is about to
    * return, and per-call eviction can close a frame already handed to
-   * another caller (`docs/ws3-video-segments/ws3-audit.md`'s "third pass"
-   * traces the two production failure shapes this caused — a caller handed
-   * an already-closed frame, and a caller answered with the wrong frame
-   * entirely after a sibling's divergent target triggered a reset). Rather
+   * another caller (traced to two production failure shapes — a caller
+   * handed an already-closed frame, and a caller answered with the wrong
+   * frame entirely after a sibling's divergent target triggered a reset). Rather
    * than leaning on every caller to uphold "at most one call in flight per
    * session" itself (three independent chases against this pool have,
    * historically, not), this method enforces it structurally: each session

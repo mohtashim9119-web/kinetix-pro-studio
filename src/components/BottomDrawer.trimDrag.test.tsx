@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 /**
- * WS3 Batch B tail-defect regression (docs/ws3-video-segments/ws3-audit.md,
- * "Batch B tail defect" section) — pins the actual mechanism of the fix, not
+ * WS3 Batch B tail-defect regression — pins the actual mechanism of the fix, not
  * the source-time arithmetic (that was already correct and unchanged; see
  * `useWebCodecsPreview.test.ts`'s existing Case B boundary tests, which keep
  * passing before and after this fix and therefore cannot be the regression
@@ -31,9 +30,8 @@ import { BottomDrawer } from './BottomDrawer';
 import type { Asset, VideoSegment } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
-// Owner's exact repro numbers (docs/ws3-video-segments/ws3-audit.md): a
-// ~10s clip trimmed into a ~3.4s segment (Case B, long clip) — max slip is
-// sourceDuration - duration = 6.6.
+// Owner's exact repro numbers: a ~10s clip trimmed into a ~3.4s segment
+// (Case B, long clip) — max slip is sourceDuration - duration = 6.6.
 const SOURCE_DURATION = 10;
 const SEGMENT_DURATION = 3.4;
 const MAX_SLIP_TRIM_START = SOURCE_DURATION - SEGMENT_DURATION; // 6.6
@@ -144,8 +142,7 @@ describe('BottomDrawer Clip Trim drag — commits once per gesture, not once per
     expect(calledIdx).toBe(0);
     expect(updates.trimStart).toBeCloseTo(MAX_SLIP_TRIM_START, 5);
     expect(updates.trimEnd).toBeCloseTo(SOURCE_DURATION, 5);
-    // The invariant the whole freeze/trimmed-window mechanism depends on
-    // (docs/ws3-video-segments/ws3-audit.md's "trim invariant now enforced"):
+    // The invariant the whole freeze/trimmed-window mechanism depends on:
     // never past the real clip end.
     expect(updates.trimStart + SEGMENT_DURATION).toBeLessThanOrEqual(SOURCE_DURATION + 1e-9);
   });

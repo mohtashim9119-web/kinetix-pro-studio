@@ -18,9 +18,9 @@
 // (3) `rightPct` (= leftPct + widthPct, clamped to 100) is now computed HERE,
 // once, rather than at each render site composing `leftPct + widthPct`
 // inline and unclamped — that inline composition was the actual overflow
-// bug the investigation doc traced (§3): each of widthPct/leftPct was
-// individually clamped correctly, but their sum never was, and could reach
-// 200. Callers must render the right edge at `rightPct`, never recompute
+// bug: each of widthPct/leftPct was individually clamped correctly, but
+// their sum never was, and could reach 200. Callers must render the right
+// edge at `rightPct`, never recompute
 // `leftPct + widthPct` themselves.
 // (4) `isInert` reports when the clip is shorter than (or exactly as long
 // as) the segment's own duration (WS3 Batch B, Piece 2's Case A —

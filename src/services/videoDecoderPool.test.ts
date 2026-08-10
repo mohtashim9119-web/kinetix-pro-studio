@@ -14,8 +14,7 @@ import { VideoDecoderPool, findChunkRange } from './videoDecoderPool';
  *  GOP base + (framesPerGop-1) frames — jumps ahead), and the B-frames that
  *  follow it in decode order display BEFORE it (cts strictly lower than the
  *  P-frame's own cts) — the actual inversion. Mirrors WS3 Stage 3's live
- *  instrumentation finding (119 inversions / 240 chunks on a real 10s clip;
- *  `docs/ws3-video-segments/ws3-audit.md`'s Part A). */
+ *  instrumentation finding (119 inversions / 240 chunks on a real 10s clip). */
 function makeReorderedChunks(numGops: number, framesPerGop: number, fps = 30): EncodedVideoChunk[] {
   const frameDurUs = Math.round(1e6 / fps);
   const chunks: { type: string; timestamp: number; duration: number; data: Uint8Array }[] = [];
@@ -34,9 +33,9 @@ function makeReorderedChunks(numGops: number, framesPerGop: number, fps = 30): E
 
 /** Otherwise-monotonic multi-GOP chunks with ONE early, non-keyframe sample's
  *  timestamp spiked far ahead — matching the live-instrumentation trace's
- *  exact shape (`docs/ws3-video-segments/ws3-audit.md`'s Part A/Stage 4:
- *  `firstInversionIndex: 2` on a real 10s clip). This is the fixture that
- *  actually discriminates the fix: `makeReorderedChunks`'s PER-GOP pattern
+ *  exact shape (Part A/Stage 4: `firstInversionIndex: 2` on a real 10s clip).
+ *  This is the fixture that actually discriminates the fix:
+ *  `makeReorderedChunks`'s PER-GOP pattern
  *  above, verified by directly reverting the source and re-running, does
  *  NOT trip the pre-fix algorithm's early break for a target in the LAST
  *  GOP (each GOP's own spike stays below a large target until the scan is
@@ -120,8 +119,8 @@ describe('findChunkRange', () => {
     expect(chunks[0]!.timestamp).toBe(0);
   });
 
-  // WS3 Stage 3/4 regression, ACTUALLY discriminating (docs/ws3-video-segments/
-  // ws3-audit.md's Part A): live instrumentation on a real 10s clip recorded
+  // WS3 Stage 3/4 regression, ACTUALLY discriminating (Part A): live
+  // instrumentation on a real 10s clip recorded
   // `firstInversionIndex: 2` — a single early, non-keyframe sample whose
   // presentation timestamp spikes far ahead of its decode-order position.
   // Reproduces exactly that shape. Verified to fail against the pre-fix
@@ -1076,9 +1075,9 @@ describe('VideoDecoderPool — LRU eviction under a session/frame budget (Phase 
  *   non-reset-triggering targets. The test is kept because it still verifies
  *   a real, desirable post-fix invariant (no caller's frame is closed at the
  *   instant its own call settles) — just not as a red/green discriminator.
- *   See this comment block's own "WS3 baseline cleanup note" above and
- *   docs/ws3-video-segments/ws3-audit.md's "fourth pass" note for why this
- *   serialization layer, not an upstream guard, is what's relied on now.
+ *   See this comment block's own "WS3 baseline cleanup note" above (the
+ *   "fourth pass" note) for why this serialization layer, not an upstream
+ *   guard, is what's relied on now.
  */
 describe('VideoDecoderPool — getFrameAt serialization per session (WS3 fourth pass, restoration)', () => {
   class AsyncOutputDecoder {
@@ -1259,9 +1258,9 @@ describe('VideoDecoderPool — getFrameAt serialization per session (WS3 fourth 
 
 /**
  * WS3 Stage 3/4 — end-to-end regression for the confirmed root cause
- * (docs/ws3-video-segments/ws3-audit.md's Part A / "fourth pass" fix):
- * `findChunkRange` resolving a deep target to a stale, much-earlier frame on
- * a B-frame-reordered chunk array. Live instrumentation on a real 10s clip
+ * (Part A / "fourth pass" fix): `findChunkRange` resolving a deep target to
+ * a stale, much-earlier frame on a B-frame-reordered chunk array. Live
+ * instrumentation on a real 10s clip
  * recorded target 9.6144s resolving to 3.7916s (119 inversions / 240
  * chunks); this drives `VideoDecoderPool.getFrameAt` itself (not just the
  * pure `findChunkRange` function above) through the same shape of clip and
@@ -1339,8 +1338,8 @@ describe('VideoDecoderPool — B-frame timestamp inversions no longer resolve to
 
 // --- WS3 sparse-keyframe fix: sliding window instead of a prefix buffer -------
 //
-// The confirmed root cause of the WS3 preview stall (docs/ws3-video-segments/
-// ws3-audit.md). An owner scan of the real asset library found 6 of 7 clips
+// The confirmed root cause of the WS3 preview stall. An owner scan of the
+// real asset library found 6 of 7 clips
 // carry exactly ONE keyframe, at t=0 — generated/stock media is routinely
 // encoded this way, so this is the normal case, not an edge case. Reaching a
 // target at 9.6s therefore means decoding ~230 frames forward from t=0. The

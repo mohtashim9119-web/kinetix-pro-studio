@@ -2,7 +2,7 @@
 
 > **Purpose:** the situation report — perishable status only, always true as of right
 > now. Six fixed sections (Current State, Active Workstreams, Open Decisions,
-> Deferred/Known-Broken, Rulings In Force, Next Action); don't add a seventh. **Never
+> Deferred and Known-Broken, Rulings In Force, Next Action); don't add a seventh. **Never
 > put here:** task-level detail (checkbox lists, per-task notes) — that's
 > `docs/work-in-progress.md`; durable rules/invariants — that's `CLAUDE.md`; anything
 > completed — remove it, don't mark it done, its record lives in `docs/history.md`.
@@ -15,7 +15,7 @@
 | Field | Value |
 |---|---|
 | Branch | `main` (trunk; `webgl2-effects-engine` tracks it, name is historical) |
-| HEAD | `00f288c`, 2026-08-10 — WS3 sliding-window preview-stall fix, owner-verified (the WS2+WS3 closeout commit follows immediately after) |
+| HEAD | `5066852`, 2026-08-10 — WS2+WS3 closeout: workstream docs archived/pruned, `FORCE_LEGACY_VIDEO_PREVIEW` dev toggle removed from `PreviewStage.tsx` (a docs-and-comments-only stale-reference sweep may follow this commit) |
 | `vitest` | 1793 tests — 1792 pass, 0 fail, 1 skip — 71 files |
 | `tsc --noEmit` | clean |
 | `cargo check` | clean |
@@ -75,7 +75,6 @@ One line each — full record in `docs/history.md`'s "Decisions Log — Dissolve
 - **A cancelled drag (`pointercancel`) discards, never commits.** [`docs/history.md#the-pointercancel-question--ruled-discard-2026-08-08`](docs/history.md#the-pointercancel-question--ruled-discard-2026-08-08).
 - **Undo/redo design** — snapshots not patches, 20-state depth, page-reload persistence, lock-blocks-traversal policy. [`docs/history.md#undo--redo--design-2026-08-08`](docs/history.md#undo--redo--design-2026-08-08) (now a record of what was built, not a proposal).
 - **Heading-wildcard assignment (Option A)** — unscripted audio (spoken chapter headings) is absorbed entirely by the preceding segment, logged as an explicit `unscripted-gap` entry. Owner decision 8, recorded in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Steps Y–Z section. Blocks v2 Phase 5, not Phase 3.
-- **Video-drag speed coupling — ruled a bug, decoupled (option 3).** Implemented and owner-verified 2026-08-10 — `playbackSpeed` removed from `VideoSegment`; a video clip always plays at its native rate.
 
 ---
 

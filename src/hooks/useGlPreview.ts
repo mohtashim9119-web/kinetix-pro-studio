@@ -290,10 +290,10 @@ export function useGlPreview({
   // (`currentSegment.id === outgoingVideoSeg.id`), and useWebCodecsPreview.ts
   // is already chasing that very session via `currentFrame`. This is not
   // avoided here (an earlier revision tried gating the two calls apart, but
-  // that was built on a theory `docs/ws3-video-segments/ws3-audit.md`'s
-  // "fourth pass" owner testing falsified as the cause of the reported
-  // preview stall — removing all transitions didn't change the bug). The
-  // concurrency itself is real, but it's made safe at the source:
+  // that was built on a theory the WS3 investigation's "fourth pass" owner
+  // testing falsified as the cause of the reported preview stall — removing
+  // all transitions didn't change the bug). The concurrency itself is real,
+  // but it's made safe at the source:
   // `videoDecoderPool.ts`'s `getFrameAt` now serializes calls per session, so
   // two callers targeting one session never race each other's buffer/reset.
   useEffect(() => {
