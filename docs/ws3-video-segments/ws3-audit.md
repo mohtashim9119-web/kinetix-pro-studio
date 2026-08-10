@@ -1878,3 +1878,595 @@ settle — the self-healing properties above (guaranteed forward progress,
 retry-until-satisfied) are a plausible reason it doesn't, but plausible
 isn't verified. **Can't tell without data** whether it ever manifests in
 practice; it wasn't ruled out, only reasoned about.
+
+---
+
+## Stage 2 result — the legacy `<video>` A/B experiment, and what it eliminates
+
+**Result: decisive.** With `FORCE_LEGACY_VIDEO_PREVIEW = true`
+(`PreviewStage.tsx:294`, still committed and defaulted to `false`) the
+reported stall **completely disappears**, on the exact same project, the
+exact same repro (long clip, short segment, slip dragged toward the end).
+The legacy `<video>` path and the WebCodecs/GL path compute source time
+identically (`trimStart + timeInSegment`, both read `Asset.duration` via
+`sourceRange`/`toSourceTime` in `useWebCodecsPreview.ts`) and the legacy
+path works — so this result isolates the defect to **the decode pool or
+the GL layer that consumes its frames**, and clears every theory that
+lives in shared code both paths execute.
+
+**What this eliminates — do not re-investigate these:**
+- `trimStart`, the source-time math (`toSourceTime`/`sourceRange`), the
+  segment-local→source-time clamp, the slip-bar/slider UI itself, and the
+  export path (`frameRenderer.ts`, the WebCodecs export worker) — all
+  either share this exact math with the legacy path or were independently
+  cleared by "exports render correctly from the same `trimStart`" in the
+  prior pass.
+- The transition-chase collision theory (attempts 3/4's premise) — already
+  falsified in the prior pass by "removing all transitions didn't change
+  the bug"; this result doesn't reopen it.
+
+**What remains in scope:** `videoDecoderPool.ts` (the decode pool: window
+feeding, buffer caps, eviction, scrub-reset) and `useGlPreview.ts`'s GL
+consumption side (`resolveSlotSource`/the render tick).
+
+## H1 — keyframe distance vs. buffer caps
+
+**Mechanism.** `getFrameAt` seeds a session's window at the nearest
+keyframe at-or-before the target (`findChunkRange`/`seedWindow`) and feeds
+forward from there. Per call, `feedWindow` feeds every chunk from that
+keyframe up to `targetSec + WINDOW_AHEAD_SEC` (1.5s) in one synchronous
+batch — for a target sitting deep inside a GOP whose *keyframe* is far
+behind it, that batch must decode every frame in between before the
+target's own frame can be selected. Two hard caps sit on that path:
+`MAX_BUFFERED_FRAMES_PER_SESSION` (90 unconsumed frames/session) and
+`MAX_TOTAL_BUFFERED_FRAMES` (150 pool-wide). `handleDecoderOutput`
+(`videoDecoderPool.ts`) silently **drops and closes** any decoded frame
+that arrives once the per-session cap is already full — it does not evict
+an older buffered frame to make room. So if the run from keyframe to
+target requires decoding more than ~90 frames, the target's own frame can
+be produced by the decoder and then immediately discarded before
+`getFrameAt` ever sees it, with no error — `fillWindow`'s wait condition
+(`frames.some(f => f.timestampSec > targetSec)`) then never becomes true
+from that batch, and the call either keeps re-issuing batches or
+eventually resolves `null`/stale once the session's window is exhausted.
+
+**This is positional by construction**, matching every owner observation:
+fine near the start of a GOP (short decode run to any nearby target), and
+degrading specifically as the target moves deeper into a GOP relative to
+its keyframe — independent of gestures, reloads, undo/redo, transitions,
+or which segment is involved, since it only depends on (keyframe
+position, target position) within whichever clip is playing.
+
+**Predicted signature if H1 is real:**
+- Part A: the failing clip has keyframes sparse enough that the gap
+  between some keyframe and the failing slip position exceeds roughly
+  90 frames (at the clip's own fps) — e.g. a keyframe interval materially
+  longer than ~3s at 30fps, or the failing slip range simply sitting more
+  than ~90 frames past its nearest preceding keyframe.
+- Part B: for calls made while the slider sits in the failing range,
+  `perSessionCapFired: true` and/or a large `distanceFrames`/`framesDecodedThisTurn`
+  approaching or exceeding 90, correlated with `outcome: 'null'` (not
+  `'closed'` — the session is alive, just never gets fed the frame it
+  needed) — as opposed to left/early-range calls, which should show small
+  `distanceFrames`, `perSessionCapFired: false`, and `outcome: 'frame'`.
+
+**What kills it:** Part A shows keyframes densely and regularly spaced
+(every ~1-2s or less) with no gap anywhere near 90 frames — then no target
+in the file is ever far enough from a keyframe for the cap to bind, and H1
+is dead regardless of what Part B would show.
+
+## What the measurement captures
+
+**Part A** (`ffprobe`, run by the owner outside the app): total duration,
+frame count, total keyframe count, every keyframe timestamp, and the
+largest gap between consecutive keyframes, for the actual failing clip —
+cheap, code-independent data that confirms or kills H1 before any
+instrumentation runs.
+
+**Part B** (temporary instrumentation, `src/services/videoDecoderPool.ts`
++ two call sites in `src/hooks/useGlPreview.ts` and
+`src/hooks/useWebCodecsPreview.ts`, all marked `WS3 INSTRUMENTATION`, gated
+by the single `WS3_MEASURE` constant): per `getFrameAt` turn — requested
+target, whether a scrub-reset fired, the keyframe/window-floor timestamp
+the call was actually anchored to, distance to target in both seconds and
+an estimated frame count, how many frames were decoded during the turn,
+whether the per-session or pool-wide buffer cap fired, wall-clock time to
+settle, and the outcome (`'frame'` / `'null'` / `'closed'`) plus the
+caller's slider position for left/mid/end comparison. Per render tick
+(`useGlPreview.ts`'s render `useLayoutEffect`): `'painted-new'` /
+`'retained-previous'` / `'painted-nothing'`, tagged with slider position.
+`window.__ws3ExportLog()` (exposed on `window` when `WS3_MEASURE` is on)
+downloads both logs plus the eviction log as one JSON file — no
+screenshot needed. One known imprecision: a coalesced `getFrameAt` call
+(rapid successive calls during a fast scrub) logs the slider position of
+whichever call *started* the queued turn, not the retargeted one it
+actually resolves against — acceptable for a diagnostic recording, since
+coalescing only happens between near-adjacent positions in the same
+gesture.
+
+**Fallback note.** The legacy `<video>` path is a confirmed-working
+escape hatch (`FORCE_LEGACY_VIDEO_PREVIEW`) if the decode pool's fix turns
+out to be expensive or risky — it's a viable permanent fallback for the
+preview path specifically (not export, which already goes through its own
+pipeline), not just an A/B diagnostic.
+
+## Validation (this pass — measurement only, no fix)
+
+`npm run lint` — clean. `npm test` — 1785 passed, 1 skipped (pre-existing
+skip, unrelated), 71 files. Golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) — 3/3. Rust: **not
+touched** — no `cargo check` needed. Instrumentation is additive-only
+(new optional trailing parameters, new log-only branches at existing
+early-return points) and does not change any decode/selection/render
+logic — confirmed by the full suite passing unchanged.
+
+---
+
+## H1 CONFIRMED — Part A result, mechanism re-verified by reading, no fix yet
+
+**Part A result, failing clip (`008_salesman_walks.mp4`).** `ffprobe`:
+h264, 24fps, 10.000s, 240 frames, **keyframe count: 1** — the largest-gap
+calculation returned empty because there is no second keyframe to measure
+a gap against. The entire clip is one GOP. This is H1 in its strongest
+possible form: not "keyframes sparse enough to sometimes exceed the cap,"
+but "zero keyframes anywhere past t=0," so absolute source position alone
+determines reachability. Part B (the recording session) was skipped per
+instruction — ffprobe alone already answers the question the
+instrumentation was built to measure.
+
+**Mechanism, re-verified against current `main`, item by item:**
+
+1. **`MAX_BUFFERED_FRAMES_PER_SESSION = 90`** (`src/services/videoDecoderPool.ts:155`).
+   At the failing clip's real 24fps, `90 / 24 = 3.75s` of decodable range
+   from the single keyframe at t=0. Confirmed.
+
+2. **`handleDecoderOutput` drops overflow frames rather than evicting older
+   ones.** Quoted verbatim (`src/services/videoDecoderPool.ts:1137-1148`):
+   ```ts
+   private handleDecoderOutput(handle: DecoderHandle, frame: VideoFrame): void {
+     const session = handle.activeSession;
+     if (!session || session.closed || session.frames.length >= MAX_BUFFERED_FRAMES_PER_SESSION) {
+       ...
+       frame.close();
+       return;
+     }
+     ...
+     session.frames.push({ frame, timestampSec });
+   ```
+   Once `session.frames.length` hits 90, every further decoded frame is
+   closed and discarded on arrival — `session.frames` (the buffer
+   `getFrameAt` selects from) is never touched to make room. This is a hard
+   drop, not an eviction. Confirmed — this is the crux, and it is a drop.
+
+   **Consequence traced one level further than the prompt asked, because it
+   changes the observable symptom's shape.** For a deep target (e.g. 6.6s)
+   on a single-keyframe clip, the first 90 decoded frames (source time
+   ~0–3.75s) fill the buffer and everything after is dropped. `fillWindow`'s
+   satisfying condition (`frames.some(f => f.timestampSec > targetSec)`,
+   `videoDecoderPool.ts:665`) never becomes true, but the feed loop still
+   reaches `session.fullyFed = true` once `feedCursor` exhausts the range
+   (`videoDecoderPool.ts:614`), so `fillWindow` returns anyway
+   (`videoDecoderPool.ts:666`). `getFrameAtInternal`'s selection loop
+   (`videoDecoderPool.ts:899-903`, "latest buffered frame at or before
+   `targetSec`") then finds every remaining buffered frame satisfies
+   `<= targetSec` and returns the **last one it has** — the ~3.75s frame —
+   not `null`. So the failure mode is a **frozen stale frame**, not a blank
+   canvas: the preview stalls, holding whatever frame was buffered when the
+   cap tripped.
+
+   This also **entrenches**, rather than self-heals, on the next call:
+   selecting that stale frame advances `session.retainedFloorUs` to its
+   timestamp (`videoDecoderPool.ts:917`), and `needsReset`
+   (`videoDecoderPool.ts:505-509`) only re-seeks when the new target falls
+   *below* the floor. A target further right never does, and the session is
+   already `fullyFed` from the first exhausting run, so `fillWindow`
+   short-circuits immediately (`videoDecoderPool.ts:666`) without decoding
+   anything further. The session parks on the same stale frame permanently
+   until something forces a hard reset (a genuine backward scrub past the
+   floor, or the session being torn down and rebuilt).
+
+3. **Every seek reseeds at t=0; cost is proportional to absolute target
+   time, not drag distance.** `seedWindow` positions a session's window at
+   the keyframe `findChunkRange` returns for the target
+   (`videoDecoderPool.ts:490-498` → `findChunkRange`,
+   `videoDecoderPool.ts:319-350`). With `keyIndices.length === 1`
+   (`videoDecoderPool.ts:328-332`), the loop at `videoDecoderPool.ts:335-338`
+   can never advance `startIndex` past that single entry — every call
+   returns `startIndex = 0` regardless of `targetSec`. So every reset
+   re-seeds at the clip's start, and `feedWindow` must decode forward from
+   chunk 0 up to the target every time — cost scales with the target's
+   absolute position in the 10s clip, never with how far a slip gesture
+   moved. Confirmed.
+
+4. **`retainedFloorUs` and `MAX_SESSION_FRAMES` — compound, don't help.**
+   `retainedFloorUs` (`videoDecoderPool.ts:262`, set at `:497` and `:917`)
+   exists to let a session skip a full reset when a new target is still
+   reachable from what's already retained. In the failure case this doesn't
+   help recovery — as described in item 2, once the cap has already fired
+   and a stale frame is selected, the floor advances to that stale
+   timestamp and *prevents* the reset that would otherwise re-anchor the
+   session, locking in the frozen frame rather than giving the session a
+   path back to a correct one. `MAX_SESSION_FRAMES = 600`
+   (`videoDecoderPool.ts:144`, the outer cap on `findChunkRange`'s
+   `endIndex`) does not bind here at all — the failing clip is 240 frames,
+   well under 600 — so it neither causes nor mitigates this specific
+   failure; it's a separate, much larger ceiling on the session's own
+   *tracked range*, orthogonal to the *buffered-frame* cap that actually
+   trips. For a longer single-keyframe clip it would eventually matter too,
+   but only after `MAX_BUFFERED_FRAMES_PER_SESSION` (the far tighter cap)
+   has already been the binding constraint.
+
+5. **Export is unaffected because it decodes sequentially with backpressure,
+   never a capped fire-and-forget batch.** The WebCodecs export path does
+   not use `VideoDecoderPool`/`getFrameAt` at all — confirmed by grep, zero
+   references to `videoDecoderPool`/`VideoDecoderPool` outside
+   `src/services/webcodecsExport/exportWorker.ts`'s one comment and
+   `sequentialDecode.ts`'s reuse of the pure `findChunkRange` helper. Export
+   uses `decodeSegmentFrames`
+   (`src/services/webcodecsExport/sequentialDecode.ts:100-...`), an async
+   generator that walks a segment's source range exactly once, start to
+   end, in presentation order. Its own cap, `DECODE_AHEAD_CAP = 8`
+   (`sequentialDecode.ts:43`), is enforced with real backpressure, not a
+   drop: the feed loop pauses (`sequentialDecode.ts:208-212`,
+   `await new Promise(...)` inside `while (outputQueue.length >= DECODE_AHEAD_CAP ...)`)
+   until the consumer drains a frame via `yield`, then resumes — every
+   decoded frame is eventually yielded, none is ever closed-and-discarded
+   the way `handleDecoderOutput` does. The legacy export path
+   (`frameRenderer.ts`) doesn't touch this pool either — it drives a real
+   `<video>` element's own seek, unrelated machinery entirely. Confirmed.
+
+**Predicted failure boundary — matches the owner's report exactly, no
+different number to give.** With the segment's own duration ~3.4s and the
+cap's budget at `90 / 24 = 3.75s`: while `trimStart + duration <= 3.75s`
+(true at or near extreme-left slip, `trimStart` near 0), every target the
+segment ever requests is reachable within the 90-frame budget and preview
+is correct. Once slipping right pushes `trimStart + duration` past 3.75s,
+the target nearest the segment's own tail becomes unreachable, the cap
+trips, and playback approaching that point freezes on the last frame that
+made it into the buffer (~3.75s absolute) rather than showing the correct
+frame for wherever `trimStart` has actually moved the window to. Because
+the boundary is a hard absolute-time cutoff, not a gradual degradation, the
+failure onset is close to the left edge of the slip range for this
+particular clip/segment pairing (budget 3.75s vs. segment length 3.4s
+leaves very little slack) — consistent with "fine at extreme left, fails
+moving right," not requiring a large rightward slip to trigger.
+
+**Why five prior fix passes missed this.** All five (the tail-defect
+investigation's first through fourth passes, the trim/asset-model/
+`findChunkRange` fixes kept in this baseline, and the concurrency
+serialization fix) looked at *ordering*, *concurrency*, and *trim math* —
+races between drag commits and preview reads, chunk-array non-monotonicity
+inside a single decode window, stale `Asset.duration`/trim values, and
+overlapping `getFrameAt` calls corrupting one session's buffer. Every one
+of those is a defect in *how a target gets resolved once decoding starts*.
+H1 is different in kind: it's a **capacity limit** (`MAX_BUFFERED_FRAMES_
+PER_SESSION`) that only binds once a target's absolute distance from the
+nearest keyframe exceeds a fixed frame count — for a normal multi-keyframe
+clip this rarely matters (a nearby keyframe keeps the decode run short
+regardless of where in the file the target sits), so nothing about
+*ordering* or *trim correctness* would ever surface it. It only becomes
+visible on a clip whose keyframe interval (here, "interval" of one — no
+second keyframe at all) is long enough that a legitimate target sits more
+than ~90 frames past its keyframe. None of the prior passes' repros or
+reasoning turned on keyframe *density*, so none of them were positioned to
+find it — the ffprobe check in this pass is the first time keyframe
+placement was ever measured against the buffer cap.
+
+## Phase 2 — fix options (not implemented, no option chosen)
+
+**Sliding window / evict-behind.** Change `handleDecoderOutput` (or the
+selection step in `getFrameAtInternal`) to discard the *oldest* buffered
+frame instead of the newest when the cap is hit, keeping a rolling window
+around the target rather than a frozen prefix. Cost: a bounded-size ring
+buffer/eviction policy change confined to `videoDecoderPool.ts`, no API
+change for callers. Risk: `retainedFloorUs`'s contract ("timestamp below
+which this session can no longer answer without a reset") currently
+assumes the retained set is a contiguous *prefix* ending at the most
+recently selected frame; evicting from the front while decoding continues
+past the cap breaks that assumption unless the floor is also redefined
+(e.g. as the oldest still-buffered frame, not the selected one) — every
+`needsReset` call and the backward-scrub path depend on this, so this
+touches a genuinely load-bearing invariant, not just a buffer policy.
+Backward scrubbing within the discarded window would also start needing a
+real reset it doesn't need today (currently a scrub within the already-
+buffered 90-frame prefix is free). Scales to any clip length and fixes the
+whole class (any low-keyframe-density clip, not just single-keyframe), at
+the cost of being the highest-risk, highest-diff option here.
+
+**Raise the cap.** Bump `MAX_BUFFERED_FRAMES_PER_SESSION` (and likely
+`MAX_TOTAL_BUFFERED_FRAMES` alongside it, since one session filling to a
+much larger number would itself blow the pool-wide ceiling). Cost: linear,
+real memory — each buffered `VideoFrame` is a live GPU/CPU-backed buffer
+(the module's own header comment), so covering even this one clip's whole
+10s/240 frames outright means holding 240 decoded frames simultaneously
+per such session, times however many sessions the pool concurrently
+protects (`MAX_CACHED_SESSIONS = 3` today). Does not scale: a 60s
+single-keyframe clip needs ~1440 frames just for that one session, and the
+cap would have to be raised per-clip-worst-case, not per this repro, since
+any future asset could have an even longer single GOP. This is a constant
+stretched to cover the worst case anyone imports, not a fix for the
+mechanism.
+
+**Per-clip fallback to legacy `<video>` for sparse-keyframe clips.** Detect
+at probe/import time (or lazily, first decode) that a clip's keyframe
+interval exceeds some threshold (e.g. via the same `ffprobe`-style
+keyframe scan Part A did, or by inspecting `demuxed.chunks` for the gap
+between consecutive `type === 'key'` entries) and route just those
+segments through `FORCE_LEGACY_VIDEO_PREVIEW`'s already-existing,
+already-proven-working code path instead of the WebCodecs pool. Cost:
+lowest of the four — no change to `videoDecoderPool.ts`'s core logic at
+all, just a per-segment routing decision plus the keyframe-gap probe
+(itself cheap and already informally prototyped by this pass's Part A).
+Risk: lowest of the four — the legacy path already exists, is already
+confirmed working against this exact repro (Stage 2's A/B result), and the
+`FORCE_LEGACY_VIDEO_PREVIEW` toggle referenced in `project-state.md`'s
+notes proves the fallback path is live, not theoretical. Cost to the
+affected segments only: no GL transitions, zoom, or color grading on
+whichever segments get routed to legacy — the WS1/WS3 invariant that these
+effects are GL-only stays true, just inapplicable to this subset. Scales
+trivially to any clip length — a 60s single-keyframe clip just also gets
+routed to legacy, no new constant to tune per worst case.
+
+**Re-encode on import to insert keyframes.** Force a GOP size ceiling
+(e.g. `ffmpeg -g <N>`) on any imported video asset whose native encoding
+has sparse keyframes, so no clip the pool ever sees has a keyframe gap
+large enough to matter. Cost: real import-time latency (a full re-encode,
+not a probe), extra disk for the re-encoded copy, and a quality/bitrate
+tradeoff from the re-encode itself (transcoding a delivered H.264 stream a
+second time is lossy). Also raises a product question this task is not
+scoped to answer: does the original file get replaced, kept alongside, or
+is this opt-in — none of which is decidable from code alone.
+
+**Recommendation: the per-clip legacy-`<video>` fallback**, in plain
+language — it is the only option that is both cheap and already proven to
+work against the exact failing case (Stage 2 already ran this A/B and it's
+decisive), it doesn't touch the pool's serialization/eviction invariants
+that three prior passes already fought hard to get correct, and it scales
+to arbitrarily long single-keyframe clips without a per-clip constant to
+tune. Its cost (no GL transitions/zoom/grading on the affected segments)
+is real but narrow and clearly named, unlike raising the cap (doesn't
+scale, unbounded memory) or re-encoding (import-time cost + a product
+decision this investigation can't make). The sliding-window fix is the
+"real" long-term fix and closes the class for every path including
+WebCodecs preview's GL effects, but it's the highest-risk option — it
+redefines `retainedFloorUs`'s meaning, which `needsReset` and the
+backward-scrub path both depend on — and would need its own dedicated pass
+with the same care the three prior kept fixes each took, not something to
+bundle in quickly.
+
+**Does any option make Stage 1's serialization (or the other kept fixes)
+redundant?** No. The per-session `queueTail`/`turnRunning` serialization
+(the "third pass" fix), `findChunkRange`'s keyframe-only scan (the "fourth
+pass" fix), and `Asset.duration` as the single source of truth for clip
+length all fix independent, already-confirmed-real defects unrelated to
+the buffer cap — none of the four options above changes *what* gets
+decoded or *how concurrent calls are ordered*, only *how much* gets
+buffered before something is dropped (or whether the pool is used for a
+given clip at all, for the fallback option). All three kept fixes stay
+necessary regardless of which H1 fix is chosen.
+
+---
+
+## Sliding-window fix — the permanent fix for the preview stall (not committed)
+
+Implemented after the H1 confirmation above. Owner ruling: fix the decode
+pool properly rather than route around it. Not committed — the owner's
+manual test is the gate, and on this bug "tests pass" has been wrong five
+times.
+
+### The library-wide keyframe scan — why this is the default path, not a fallback
+
+An owner scan of the real asset library found **6 of 7 clips carry exactly
+one keyframe**, at t=0. This is not a property of the one clip Part A
+measured; generated and stock media are routinely encoded as a single GOP.
+That single fact is what decides the design, because it means the failing
+configuration is the *normal* one, and any fix that only handles it as a
+special case would be handling almost every video segment in a real
+project as a special case.
+
+**Why the per-clip legacy-`<video>` fallback — this document's own prior
+recommendation — was rejected.** That recommendation was made before the
+library scan, on the assumption that sparse-keyframe clips were the
+exception. At 6-of-7 it inverts: routing sparse-keyframe clips to the
+legacy path would strip GL transitions, zoom, and colour grading from
+nearly every video segment in a real project. The recommendation does not
+survive its own evidence, and is withdrawn here.
+
+**Also rejected:** raising `MAX_BUFFERED_FRAMES_PER_SESSION` (a 60s
+single-keyframe clip needs ~1440 simultaneously-live `VideoFrame`s — real
+GPU/CPU buffers — so no fixed cap survives and memory would scale with
+clip length); and re-encoding assets on import to insert keyframes
+(mutating the user's source media to work around a player limitation,
+paying import latency, disk, and a second lossy transcode).
+
+### The design — evict behind the playhead
+
+`handleDecoderOutput` no longer drops the arriving frame when the
+per-session buffer is full. It first tries to slide the buffer's trailing
+edge forward (`slideWindowForward`), closing frames the current target has
+already passed, and only drops the new frame if nothing is passed — the
+case the cap was always genuinely meant to contain (a decoder emitting
+faster than `getFrameAt` consumes). Reachable depth is now unbounded;
+memory is bounded exactly as before.
+
+**Window shape: 0.5s behind, 1.5s ahead.**
+- **Ahead — `WINDOW_AHEAD_SEC = 1.5s`, unchanged.** Already the plan's
+  chosen decode-ahead depth; nothing about this defect implicates it.
+- **Behind — `RETAIN_BEHIND_SEC = 0.5s`, new.** ~12 frames at 24fps, ~15
+  at 30fps. The number is chosen from what it has to absorb, not from
+  memory pressure: a frame-step back, scrub jitter inside one gesture, and
+  a transition blend reading slightly behind the playhead. On a
+  single-keyframe clip *any* backward target below the retained floor
+  costs a full re-decode from t=0, so retaining something is what matters
+  far more than the exact figure — 0.5s is the smallest value that covers
+  those three cases with margin.
+- **Total live window: 2.0s ≈ 48 frames at 24fps, 60 at 30fps** — safely
+  under the unchanged `MAX_BUFFERED_FRAMES_PER_SESSION = 90`, which is
+  therefore a real safety net again rather than the binding constraint it
+  had silently become.
+
+### `retainedFloorUs` — the contract that changed
+
+**Before:** the timestamp of the most recently *selected* frame, because
+forward eviction closed everything strictly older than the selection on
+every `getFrameAt` call. This is what made the failure self-entrenching:
+once the cap had dropped the frames a deep target needed, the floor
+advanced to the stale frame that got returned instead, and with the
+session already `fullyFed`, `needsReset` could never fire again (a target
+further right is never *below* the floor) and nothing could ever move it.
+
+**After:** the timestamp of the **oldest frame still buffered** — the
+sliding window's trailing edge — or, when nothing is buffered, the lower
+bound of what the current window can still produce (the seeding chunk's
+timestamp after `seedWindow`, the retain-behind cutoff after a slide).
+
+**Every consumer checked.** `retainedFloorUs` has exactly one reader,
+`needsReset`, and now exactly three writers: `seedWindow` (empty buffer),
+`slideWindowForward` (slide eviction), and `getFrameAtInternal`'s
+post-selection trim. Verified by grep across `src/` — nothing outside this
+file reads or writes it.
+
+**One consequence worth naming.** `getFrameAtInternal`'s post-selection
+trim now measures its cutoff from the *selected frame*, never from
+`targetSec`. A target the decode run has not reached yet sits arbitrarily
+far ahead of everything buffered, so a target-relative cutoff would evict
+the very frame the call is about to return. Related: the previously
+displayed frame is no longer explicitly closed on supersession — it may
+still sit inside the retain-behind tail, and closing it there would hand a
+later call an already-closed frame. Every frame is now closed exactly once,
+at the moment it leaves `session.frames`.
+
+### `MAX_SESSION_FRAMES` — removed, because it was the same bug at 25s
+
+`findChunkRange` additionally clamped `endIndex` to `startIndex + 599`. On
+a single-keyframe clip `startIndex` is always 0, so this was a hard ceiling
+on reachable depth: past chunk 599 (~25s at 24fps) a session reports itself
+`fullyFed` and answers every deeper target with the frame at the ceiling,
+forever — the exact failure this pass fixes at the buffer-cap level,
+silently reintroduced at a different depth. It also bounded nothing real:
+`chunks` is already fully in memory (the demuxer owns it), per-batch feed
+volume is bounded by `boundaryUs` in `feedWindow`, and live decoded-frame
+memory is bounded by `MAX_BUFFERED_FRAMES_PER_SESSION`. Removed, with a
+regression test on a 60s clip.
+
+### Backward seeks — the accepted tradeoff, with numbers
+
+A backward target below the retained tail re-seeds at the keyframe and
+decodes forward again. On a single-keyframe clip that means from t=0. This
+is inherent to the encoding, not a defect in the pool — but it is now
+*correct and bounded*: the reseek completes and returns the right frame
+rather than stalling or answering from stale buffer (pinned by a test).
+
+Cost, 10s clip at 24fps: a backward jump to a *shallow* target is cheap
+(landing at 0.1s decodes ~40 frames — the target plus the 1.5s lookahead).
+The worst case is a backward jump to a *deep* target: 9.9s → 9.0s must
+re-decode ~240 frames. At 720p, hardware H.264 decode typically runs well
+above 500fps, so the expected cost is a few hundred milliseconds — in the
+same range as the architecture doc's ~250ms cold-scrub-seek goal, and
+acceptable for a scrub. **This is an estimate from decoder throughput, not
+a measurement** — no timing was taken in the real app this pass.
+
+### Long decode runs — UI thread and abandonment
+
+The synchronous work on the main thread is the *enqueue* loop in
+`feedWindow` (up to 240 `decoder.decode()` calls for this clip), not the
+decoding itself, which the browser performs off-thread. Reaching a deep
+target on a single-keyframe clip is inherently a long run; chunking the
+enqueue would only add round trips.
+
+Abandonment: the kept serialization/coalescing work **suffices, and needed
+no adjustment**. A turn already running completes (its chunks are already
+enqueued in the decoder), but every call arriving during it coalesces into
+a single pending turn that is retargeted to the newest position. So a fast
+drag costs at most one stale in-flight decode plus the latest — bounded
+regardless of gesture length.
+
+### Global caps — arithmetic re-checked
+
+- `MAX_BUFFERED_FRAMES_PER_SESSION = 90` — **unchanged.** The live window
+  is now ~48-60 frames, so 90 is genuine headroom. During a long forward
+  run a session does legitimately sit at 90 while sliding; that is the
+  design, and it is the same ceiling as before.
+- `MAX_TOTAL_BUFFERED_FRAMES = 150` — **unchanged, and still a soft
+  ceiling for protected sessions**, exactly as its existing comment
+  documents. Worst case is still 3 protected sessions × 90 = 270, because
+  `enforceBudget` never evicts a protected session. The fix does not raise
+  steady-state per-session occupancy (a post-`getFrameAt` trim leaves ~22
+  frames), so no revision is warranted.
+- `MAX_CACHED_SESSIONS = 3` — **unchanged**, nothing in this fix affects
+  session count.
+- `MAX_SESSION_FRAMES = 600` — **removed**, see above.
+
+### Scope
+
+Confined to `src/services/videoDecoderPool.ts` and its own test file. **No
+consumer changed** — `useGlPreview.ts` and `useWebCodecsPreview.ts` are
+back at their committed baseline, and the GL layer was not touched. The
+`WS3_MEASURE` instrumentation and its three call sites are removed;
+`FORCE_LEGACY_VIDEO_PREVIEW` stays at `false` as the standing escape hatch.
+
+### Test coverage — what a unit test genuinely proves, and what it cannot
+
+New describe block, `videoDecoderPool.test.ts`, on a fixture matching the
+real failing clip exactly: 240 frames at 24fps, keyframe only at index 0.
+Deliberately monotonic — this defect has nothing to do with B-frame
+ordering (that was the separate, already-fixed `findChunkRange` defect), so
+an inversion here would only muddy which mechanism a failure implicates.
+
+**Genuinely verified by these tests** (the mock decoder emits
+synchronously, so selection is fully deterministic):
+- A target ~230 frames past the only keyframe resolves to frame 230, not
+  the last frame that fit under the cap. **This is the red/green
+  discriminator.**
+- A target at the very end of the clip.
+- A backward seek from a deep target re-seeks (asserted via `resetCalls`)
+  and returns the correct frame.
+- A short backward nudge inside the retained tail is answered *without* a
+  re-seek — pins the reason `RETAIN_BEHIND_SEC` exists.
+- Live frame count stays bounded across a full forward walk, and every
+  frame is closed at teardown. (A guard, not a discriminator — this passed
+  pre-fix too, since dropping also bounded memory. Its job is to prove the
+  fix did not trade the stall for a leak.)
+- Two sessions each reach their own deep target in parallel.
+- A target past the removed 600-chunk clamp, on a 60s clip.
+
+**Not reachable by any `jsdom` test, and left to the owner's manual run:**
+real decode latency (so the backward-seek cost above stays an estimate);
+real WKWebView/hardware `VideoDecoder` behaviour, including whether output
+timing under a real async decoder differs from the mock's synchronous
+emission; whether the enqueue burst is perceptible as jank; actual GPU
+memory; and — the thing that actually matters — whether the reported stall
+is gone on the real project.
+
+### Red-before / green-after — verified, not assumed
+
+The source was reverted to the committed baseline with the new tests left
+in place, and the suite re-run. **7 tests failed**, and every deep-target
+case failed with timestamp `3708363` — frame 89, 3.708s — which is exactly
+`MAX_BUFFERED_FRAMES_PER_SESSION` frames past the keyframe, the predicted
+stale value. The fix was then restored and all 48 pass.
+
+### Validation
+
+`npm run lint` clean. `npm test`: **1792 passed, 1 skipped, 71 files** (up
+from 1785/1/71 — +7 new tests). One pre-existing test changed result and
+was deliberately rewritten: `'closes every buffered frame it supersedes,
+but keeps the currently displayed one open'` → `'retains a superseded frame
+while it is inside the retain-behind tail, and closes it once the tail
+slides past it'`. That test pinned the exact behaviour this fix changes;
+it now pins the invariant that survives (a frame is closed exactly when it
+leaves the buffer, never while still reachable, never left open at
+teardown). No other test changed result. Golden replay 3/3, byte-identical.
+Rust **not touched** (`git diff --name-only` matches no `src-tauri` path),
+so no `cargo check` was needed.
+
+### What remains unverified
+
+The fix is unproven in the real app. Nothing in this pass ran the real
+decoder, the real preview, or the real project — and on this bug, five
+prior passes each landed a real, test-backed fix that did not resolve the
+reported symptom. This is not called fixed. The owner's manual test is the
+gate: load the project that reproduces the stall, slip a long clip toward
+its end, and confirm the preview tracks the slider instead of freezing —
+then re-run `docs/wkwebview-drag-checklist.md` steps 12 and 13, and check
+backward scrubbing and a real export for regressions.

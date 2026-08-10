@@ -20,6 +20,18 @@
  *    segment's entire trimmed range the moment it becomes current/next.
  *    This is what makes 500+ segment scale viable: memory is bounded by the
  *    window, not by segment count or length.
+ *  - Sliding (not prefix) frame buffer — WS3 sparse-keyframe fix, see
+ *    docs/ws3-video-segments/ws3-audit.md. The buffer holds a window around
+ *    the current target ([-RETAIN_BEHIND_SEC, +WINDOW_AHEAD_SEC]), evicting
+ *    frames the target has already passed to make room for ones it hasn't
+ *    reached yet. This is what decouples *reachable depth* from *buffer
+ *    size*: reaching a target deep inside a long GOP requires decoding every
+ *    frame from its keyframe forward, and on a clip whose only keyframe is
+ *    at t=0 (the common case for generated/stock media, not an edge case)
+ *    that is the entire clip. The previous behavior — drop the arriving
+ *    frame once the per-session cap was full — made any target more than
+ *    MAX_BUFFERED_FRAMES_PER_SESSION frames past its keyframe unreachable,
+ *    returning a stale frame with no error.
  *  - Scrub-seek reset. A target that falls behind what's still buffered
  *    (backward scrub) or beyond the fed-plus-lookahead frontier (a jump
  *    bigger than steady playback ever produces) re-seeks the decoder to the
@@ -58,23 +70,40 @@
 
 import { getOrCreateDemux } from './videoDemuxer';
 
-/** Outer safety ceiling on how many chunks a single session's tracked range
- *  can ever span (used by findChunkRange to cap fullEndIndex) — guards a
- *  pathological single very long/oddly-trimmed segment from making the
- *  "full range" bookkeeping unbounded. Not the per-window feed size (see
- *  WINDOW_AHEAD_SEC below) — this is orthogonal, larger, and rarely hit
- *  under the windowed model. ~20s at 30fps. */
-const MAX_SESSION_FRAMES = 600;
-
 /** Section 4.2's "small time-buffer ahead" — how far past the last
  *  requested target a session decodes proactively. Chosen at the middle of
  *  the plan's stated 1-2s range. */
 export const WINDOW_AHEAD_SEC = 1.5;
 
+/** Leading half of the sliding window (WS3 sparse-keyframe fix, see
+ *  handleDecoderOutput): how much already-passed material a session keeps
+ *  buffered behind its current target instead of discarding it the instant
+ *  the playhead moves on.
+ *
+ *  0.5s is ~12 frames at 24fps / ~15 at 30fps — small enough that the whole
+ *  live window (0.5s behind + WINDOW_AHEAD_SEC=1.5s ahead = 2.0s, ~48-60
+ *  frames) still sits comfortably under MAX_BUFFERED_FRAMES_PER_SESSION, and
+ *  large enough to absorb the short backward movements that actually happen
+ *  in this app: a frame-step back, scrub jitter inside one gesture, and a
+ *  transition blend reading slightly behind the playhead. Retaining anything
+ *  at all matters much more here than the exact number, because on a
+ *  single-keyframe clip (the common case — see the WS3 audit's library scan)
+ *  a backward target below the retained floor costs a full re-decode from
+ *  t=0, so a one-frame nudge backwards must not trigger one. */
+const RETAIN_BEHIND_SEC = 0.5;
+
 /** Per-session cap on simultaneously-buffered (decoded, unconsumed)
- *  VideoFrames — a safety net independent of WINDOW_AHEAD_SEC in case a
- *  decoder emits faster than getFrameAt consumes. ~3s at 30fps, generously
- *  larger than one window. */
+ *  VideoFrames. Bounds this session's real memory — a VideoFrame is a live
+ *  GPU/CPU buffer, not a handle — at roughly 3s of 30fps content.
+ *
+ *  WS3 sparse-keyframe fix: this is a genuine safety net again (a decoder
+ *  emitting faster than getFrameAt consumes), NOT a limit on how deep into a
+ *  clip a target may sit. It used to be both, because a full buffer dropped
+ *  every newly-decoded frame — which silently capped reachable depth at
+ *  90 frames past the seeding keyframe (3.75s at 24fps) and was the root
+ *  cause of the WS3 preview stall. handleDecoderOutput now slides the window
+ *  forward instead of dropping, so reachable depth is unbounded while the
+ *  memory ceiling this constant sets is unchanged. */
 const MAX_BUFFERED_FRAMES_PER_SESSION = 90;
 
 /** Section 4.3 starting point for the pool-wide session-count ceiling:
@@ -178,11 +207,31 @@ interface DecodeSession {
    *  reachable by simple forward continuation or needs a reset. */
   feedFrontierUs: number;
   /** Timestamp (us) below which this session can no longer answer a query
-   *  without a reset — either the keyframe the current window was seeded
-   *  from, or (once at least one frame has been selected) the most
-   *  recently selected frame's own timestamp, since forward eviction closes
-   *  everything older than that on every getFrameAt call. */
+   *  without a reset — i.e. **the sliding window's trailing edge**.
+   *
+   *  WS3 sparse-keyframe fix — the contract changed here. It used to be "the
+   *  most recently *selected* frame's timestamp", because forward eviction
+   *  closed everything strictly older than the selection on every getFrameAt
+   *  call. That made the floor a ratchet that could park above every frame
+   *  the session was still able to produce: once the per-session buffer cap
+   *  had dropped the frames a deep target needed, the floor advanced to the
+   *  stale frame that was returned instead, and (with the session already
+   *  `fullyFed`) nothing could ever move it again.
+   *
+   *  It is now simply **the oldest frame still buffered**, or — when nothing
+   *  is buffered — the lower bound of what the current window can still
+   *  produce (the seeding chunk's timestamp after seedWindow, or the
+   *  retain-behind cutoff after a slide). It is maintained at exactly three
+   *  sites: `seedWindow` (empty buffer), `handleDecoderOutput`'s slide
+   *  eviction, and `getFrameAtInternal`'s post-selection trim. Its sole
+   *  consumer is `needsReset`. */
   retainedFloorUs: number;
+  /** Source time (us) the current decode window is aimed at — the last
+   *  target passed to `fillWindow`/`seedWindow`. Read by
+   *  `handleDecoderOutput` to decide which buffered frames the playhead has
+   *  already passed and may therefore be slid out to make room; never used
+   *  to select a frame to return. */
+  windowTargetUs: number;
 
   frames: BufferedFrame[]; // ascending by timestampSec (decoder output order)
   displayedFrame: VideoFrame | null; // currently checked-out frame; also present in `frames` until superseded
@@ -268,7 +317,19 @@ export function findChunkRange(
   const marginKeyIndex = keyIndices[endGopOrdinal + 1];
   let endIndex = marginKeyIndex !== undefined ? marginKeyIndex : chunks.length - 1;
 
-  endIndex = Math.min(endIndex, startIndex + MAX_SESSION_FRAMES - 1, chunks.length - 1);
+  // WS3 sparse-keyframe fix: this used to additionally clamp to
+  // `startIndex + MAX_SESSION_FRAMES - 1` (600 chunks). That constant is
+  // gone, because on a clip whose only keyframe is at t=0 — the common case,
+  // not an edge case — startIndex is always 0, so the clamp was a hard
+  // ceiling on how deep a target could be reached at all: past chunk 599
+  // (~25s at 24fps) the session would report itself fullyFed and answer every
+  // deeper target with the frame at the ceiling, forever. That is the exact
+  // failure this pass fixes at the buffer-cap level, silently reintroduced at
+  // a different depth. It also bounded nothing real: `chunks` is already
+  // fully in memory (the demuxer owns it), per-batch feed volume is bounded
+  // by `boundaryUs` in feedWindow, and live decoded-frame memory is bounded
+  // by MAX_BUFFERED_FRAMES_PER_SESSION.
+  endIndex = Math.min(endIndex, chunks.length - 1);
   return { startIndex, endIndex };
 }
 
@@ -338,6 +399,7 @@ export class VideoDecoderPool {
       feedGeneration: 0,
       feedFrontierUs: -Infinity,
       retainedFloorUs: -Infinity,
+      windowTargetUs: -Infinity,
       frames: [],
       displayedFrame: null,
       ready: Promise.resolve(),
@@ -411,15 +473,27 @@ export class VideoDecoderPool {
     session.fullEndIndex = endIndex;
     session.fullyFed = startIndex > endIndex;
     session.feedFrontierUs = -Infinity;
+    session.windowTargetUs = targetSec * 1e6;
     const firstChunk = session.chunks[startIndex];
+    // Nothing is buffered at this point (callers reset/close the buffer
+    // before reseeding), so the floor is the lower bound of what this window
+    // can produce: the seeding chunk's own timestamp.
     session.retainedFloorUs = firstChunk ? firstChunk.timestamp : targetSec * 1e6;
   }
 
   /** True when `targetSec` can no longer be answered by this session's
-   *  current window without re-seeking: either it falls before what's still
-   *  retained/reachable (backward scrub, or before the window's own
-   *  keyframe floor), or it's beyond what's been fed plus the decode-ahead
-   *  lookahead (a jump larger than steady playback ever produces). */
+   *  current window without re-seeking: either it falls before the sliding
+   *  window's trailing edge (`retainedFloorUs` — a backward movement larger
+   *  than RETAIN_BEHIND_SEC, or one landing before the window's own keyframe
+   *  floor), or it's beyond what's been fed plus the decode-ahead lookahead
+   *  (a jump larger than steady playback ever produces).
+   *
+   *  On a single-keyframe clip a reset means re-decoding from t=0, so the
+   *  retain-behind tail exists precisely to keep small backward movements
+   *  from landing here. Larger backward jumps genuinely do pay that cost —
+   *  it is inherent to the encoding, not a defect in this pool — but they
+   *  pay it *correctly*: the reseek completes and returns the right frame,
+   *  rather than stalling or answering from stale buffer. */
   private needsReset(session: DecodeSession, targetSec: number): boolean {
     const targetUs = targetSec * 1e6;
     if (targetUs < session.retainedFloorUs) return true;
@@ -579,6 +653,11 @@ export class VideoDecoderPool {
    *  fire. `startFeedBatch` below is what actually paces this correctly:
    *  see its own doc comment. */
   private async fillWindow(session: DecodeSession, targetSec: number): Promise<void> {
+    // Aims the sliding window (handleDecoderOutput reads this to decide what
+    // the playhead has already passed). Safe to assert unconditionally here:
+    // getFrameAt serializes turns per session, so no two targets are ever
+    // being filled for the same session at once.
+    session.windowTargetUs = targetSec * 1e6;
     while (!session.closed) {
       if (session.frames.some((f) => f.timestampSec > targetSec)) return;
       if (session.fullyFed && !session.feedInFlight) return;
@@ -790,23 +869,35 @@ export class VideoDecoderPool {
       else break;
     }
 
-    // Close every buffered frame strictly older than the selected one —
-    // under forward playback they can never be needed again. This also
-    // moves the "reset floor" forward: a future target below this point is
-    // necessarily a backward scrub, handled by needsReset/resetSessionWindow
-    // above, not a stale read from here.
+    // Trim the buffer's trailing edge, keeping RETAIN_BEHIND_SEC of
+    // already-passed material rather than closing everything older than the
+    // selection. That retained tail is what makes a short backward nudge free
+    // instead of a full re-seek — which on a single-keyframe clip means
+    // re-decoding from t=0 (see RETAIN_BEHIND_SEC's own comment). Measured
+    // from the selected frame, never from `targetSec`: a target the decode
+    // run has not reached yet sits arbitrarily far ahead of everything
+    // buffered, and a target-relative cutoff would evict the very frame this
+    // call is about to return.
+    const evictBelowSec = selected.timestampSec - RETAIN_BEHIND_SEC;
     session.frames = session.frames.filter((entry) => {
-      if (entry.timestampSec < selected.timestampSec) {
+      if (entry.timestampSec < evictBelowSec) {
+        if (entry.frame === session.displayedFrame) session.displayedFrame = null;
         entry.frame.close();
         return false;
       }
       return true;
     });
-    session.retainedFloorUs = selected.timestampSec * 1e6;
+    // `selected` is always retained (its own timestamp is the cutoff's
+    // origin), so frames[0] exists.
+    session.retainedFloorUs = session.frames[0]!.timestampSec * 1e6;
 
-    if (session.displayedFrame && session.displayedFrame !== selected.frame) {
-      session.displayedFrame.close();
-    }
+    // The previously displayed frame is deliberately NOT closed here. Under
+    // the old close-everything-older-than-selected rule it had always just
+    // been closed by the filter above anyway; now it may still be buffered
+    // inside the retain-behind tail, and closing it would hand a later
+    // getFrameAt an already-closed frame. Every frame is closed exactly once,
+    // at the moment it leaves `session.frames` — via the filter above,
+    // slideWindowForward, resetSessionWindow, or closeSession.
     session.displayedFrame = selected.frame;
     this.enforceBudget();
     return selected.frame;
@@ -956,9 +1047,49 @@ export class VideoDecoderPool {
     this.idleHandles.set(handle.assetUrl, idle);
   }
 
+  /** Slides the buffer's trailing edge forward to `windowTargetUs -
+   *  RETAIN_BEHIND_SEC`, closing every frame the current target has already
+   *  moved past (oldest first — `frames` is ascending). Returns true if it
+   *  freed at least one slot.
+   *
+   *  This is the WS3 sparse-keyframe fix. Reaching a target deep inside a
+   *  long GOP requires decoding every frame from the seeding keyframe up to
+   *  it — on a single-keyframe clip, potentially the whole clip — but only a
+   *  window around the target is ever wanted. Evicting behind keeps that run
+   *  making progress inside a fixed buffer budget; the previous behavior
+   *  (drop the arriving frame once full) meant the run filled the buffer with
+   *  its own leading frames and then discarded every frame past that point,
+   *  including the target's own. */
+  private slideWindowForward(session: DecodeSession): boolean {
+    const keepFromUs = session.windowTargetUs - RETAIN_BEHIND_SEC * 1e6;
+    let freed = false;
+    while (session.frames.length > 0 && session.frames[0]!.timestampSec * 1e6 < keepFromUs) {
+      const evicted = session.frames.shift()!;
+      // The displayed frame is always also a `frames` member — drop the
+      // reference rather than leaving it pointing at a closed frame.
+      if (evicted.frame === session.displayedFrame) session.displayedFrame = null;
+      evicted.frame.close();
+      freed = true;
+    }
+    if (freed) {
+      session.retainedFloorUs = session.frames[0]
+        ? session.frames[0].timestampSec * 1e6
+        : keepFromUs;
+    }
+    return freed;
+  }
+
   private handleDecoderOutput(handle: DecoderHandle, frame: VideoFrame): void {
     const session = handle.activeSession;
-    if (!session || session.closed || session.frames.length >= MAX_BUFFERED_FRAMES_PER_SESSION) {
+    if (!session || session.closed) {
+      frame.close();
+      return;
+    }
+    if (session.frames.length >= MAX_BUFFERED_FRAMES_PER_SESSION && !this.slideWindowForward(session)) {
+      // Genuinely full of frames the target has NOT passed — the decoder is
+      // racing ahead of consumption, which is the case this cap was always
+      // meant to contain. Dropping the newest is correct here: everything
+      // buffered is closer to the target than this frame is.
       frame.close();
       return;
     }

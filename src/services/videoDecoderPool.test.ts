@@ -275,7 +275,15 @@ describe('VideoDecoderPool', () => {
     expect(frame?.timestamp).toBe(33_333);
   });
 
-  it('closes every buffered frame it supersedes, but keeps the currently displayed one open', async () => {
+  // Behavior deliberately changed by the WS3 sliding-window fix (see that
+  // describe block at the bottom of this file). A superseded frame is no
+  // longer closed the instant the next getFrameAt call selects past it —
+  // frames within RETAIN_BEHIND_SEC (0.5s) of the selection are retained so a
+  // short backward nudge doesn't force a re-seek, which on a single-keyframe
+  // clip means re-decoding from t=0. The invariant that still holds, and is
+  // what this test now pins, is that a frame is closed exactly when it leaves
+  // the buffer — never while still reachable, and never left open at teardown.
+  it('retains a superseded frame while it is inside the retain-behind tail, and closes it once the tail slides past it', async () => {
     const demuxed = makeDemuxed([0, 33_333, 66_667, 100_000]);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
 
@@ -286,8 +294,16 @@ describe('VideoDecoderPool', () => {
     expect(frame1.closed).toBe(false);
 
     const frame2 = (await pool.getFrameAt('seg1', 0.08)) as unknown as MockVideoFrame;
-    expect(frame1.closed).toBe(true); // superseded by frame2 — closed immediately
-    expect(frame2.closed).toBe(false); // still the displayed frame
+    // 33ms apart — well inside the 0.5s retain-behind tail, so frame1 stays
+    // open and remains selectable by a backward nudge.
+    expect(frame1.closed).toBe(false);
+    expect(frame2.closed).toBe(false); // the displayed frame
+    expect((await pool.getFrameAt('seg1', 0.05)) as unknown as MockVideoFrame).toBe(frame1);
+
+    // Teardown still closes everything — no frame is leaked by being retained.
+    pool.dispose();
+    expect(frame1.closed).toBe(true);
+    expect(frame2.closed).toBe(true);
   });
 
   it('closes the displayed frame on releaseSession and parks its decoder for reuse (Phase 4+6)', async () => {
@@ -1318,5 +1334,175 @@ describe('VideoDecoderPool — B-frame timestamp inversions no longer resolve to
     // fixture's own integer-microsecond frame-duration rounding.
     expect(frame.timestamp / 1e6).toBeGreaterThanOrEqual(7.999);
     expect(frame.timestamp / 1e6).toBeLessThanOrEqual(9.6144 + 1e-6);
+  });
+});
+
+// --- WS3 sparse-keyframe fix: sliding window instead of a prefix buffer -------
+//
+// The confirmed root cause of the WS3 preview stall (docs/ws3-video-segments/
+// ws3-audit.md). An owner scan of the real asset library found 6 of 7 clips
+// carry exactly ONE keyframe, at t=0 — generated/stock media is routinely
+// encoded this way, so this is the normal case, not an edge case. Reaching a
+// target at 9.6s therefore means decoding ~230 frames forward from t=0. The
+// pre-fix handleDecoderOutput DROPPED every frame that arrived once
+// MAX_BUFFERED_FRAMES_PER_SESSION (90) was full, so the buffer filled with the
+// run's own leading frames (0 -> 3.75s at 24fps) and every frame past that —
+// including the target's own — was decoded and immediately discarded.
+// getFrameAt then answered from what was left: a stale ~3.7s frame, with no
+// error. 90 frames / 24fps = 3.75s matched the owner's observed working/failing
+// boundary exactly.
+describe('VideoDecoderPool — single-keyframe clips reach targets past the buffer cap (WS3 sliding window)', () => {
+  const FPS_24_FRAME_DUR_US = Math.round(1e6 / 24); // 41_667us
+
+  /** The real failing clip's shape: 240 frames @ 24fps = 10s, with a keyframe
+   *  ONLY at index 0. Deliberately monotonic — this defect has nothing to do
+   *  with B-frame ordering (that was the separate, already-fixed
+   *  findChunkRange defect), so any inversion here would only muddy which
+   *  mechanism a failure implicates. */
+  function makeSingleKeyframeDemuxed(totalFrames = 240) {
+    return {
+      config: { codec: 'avc1.640020', codedWidth: 1280, codedHeight: 720, description: new Uint8Array() },
+      chunks: Array.from({ length: totalFrames }, (_, i) => ({
+        type: i === 0 ? 'key' : 'delta',
+        timestamp: i * FPS_24_FRAME_DUR_US,
+        duration: FPS_24_FRAME_DUR_US,
+        data: new Uint8Array(),
+      })),
+      durationSec: (totalFrames * FPS_24_FRAME_DUR_US) / 1e6,
+    };
+  }
+
+  const frameTs = (index: number) => index * FPS_24_FRAME_DUR_US;
+
+  // THE red/green discriminator for this fix. Verified to fail against the
+  // pre-fix source (returns frame 89 / ~3.708s — the last frame that fit under
+  // the cap) and pass after it.
+  it('resolves a target ~230 frames past the only keyframe, instead of the last frame that fit under the buffer cap', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 9.6);
+    const frame = await pool.getFrameAt('seg', 9.6);
+
+    expect(frame).not.toBeNull();
+    // Frame 230 (9.583s) is the latest at-or-before 9.6s. Pre-fix: frame 89
+    // (3.708s), i.e. exactly MAX_BUFFERED_FRAMES_PER_SESSION frames in.
+    expect(frame!.timestamp).toBe(frameTs(230));
+
+    pool.dispose();
+  });
+
+  it('resolves a target at the very end of the clip', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 9.9);
+    const frame = await pool.getFrameAt('seg', 9.9);
+
+    expect(frame).not.toBeNull();
+    expect(frame!.timestamp).toBe(frameTs(237)); // 9.875s, the last frame at-or-before 9.9s
+
+    pool.dispose();
+  });
+
+  it('a backward seek from a deep target re-seeks and returns the correct frame, not a stale later one', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 9.6);
+    const deep = await pool.getFrameAt('seg', 9.6);
+    expect(deep!.timestamp).toBe(frameTs(230));
+
+    const decoder = MockVideoDecoder.instances[0]!;
+    const resetsBefore = decoder.resetCalls;
+
+    // 4.0s is far below the retained tail (RETAIN_BEHIND_SEC = 0.5s), so this
+    // must re-seed at the single keyframe and decode forward again. On this
+    // encoding that is inherent, not a defect — what matters is that it
+    // COMPLETES and is CORRECT rather than stalling or answering from stale
+    // buffer.
+    const back = await pool.getFrameAt('seg', 4.0);
+
+    expect(decoder.resetCalls).toBeGreaterThan(resetsBefore);
+    expect(back).not.toBeNull();
+    expect(back!.timestamp).toBe(frameTs(95)); // 3.958s, latest at-or-before 4.0s
+
+    pool.dispose();
+  });
+
+  it('a short backward nudge inside the retained tail is answered without a re-seek', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 9.6);
+    await pool.getFrameAt('seg', 9.6);
+
+    const decoder = MockVideoDecoder.instances[0]!;
+    const resetsBefore = decoder.resetCalls;
+
+    // One frame back — must come out of the retain-behind tail. Without that
+    // tail this would cost a full re-decode from t=0 on every frame-step.
+    const nudged = await pool.getFrameAt('seg', 9.55);
+
+    expect(decoder.resetCalls).toBe(resetsBefore);
+    expect(nudged!.timestamp).toBe(frameTs(229)); // 9.542s
+
+    pool.dispose();
+  });
+
+  // Guard, not a discriminator: this passes both before and after the fix
+  // (pre-fix the buffer was bounded by dropping rather than sliding). Its job
+  // is to prove the fix did not trade the stall for unbounded memory.
+  it('holds a bounded number of live frames across a full forward walk of the clip', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 10, 0);
+
+    let peakLive = 0;
+    for (let target = 0.5; target <= 9.5; target += 0.5) {
+      await pool.getFrameAt('seg', target);
+      const live = MockVideoFrame.instances.filter((f) => !f.closed).length;
+      peakLive = Math.max(peakLive, live);
+    }
+
+    // MAX_BUFFERED_FRAMES_PER_SESSION is 90 and not exported; the walk decodes
+    // all 240 frames, so an unbounded buffer would sit far above this.
+    expect(peakLive).toBeLessThanOrEqual(90);
+
+    pool.dispose();
+    expect(MockVideoFrame.instances.every((f) => f.closed)).toBe(true);
+  });
+
+  it('two sessions each reach their own deep target in parallel', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed());
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('segA', 'blob:a', 0, 10, 9.6);
+    await pool.ensureSession('segB', 'blob:b', 0, 10, 8.0);
+
+    const [a, b] = await Promise.all([pool.getFrameAt('segA', 9.6), pool.getFrameAt('segB', 8.0)]);
+
+    expect(a!.timestamp).toBe(frameTs(230));
+    expect(b!.timestamp).toBe(frameTs(191)); // frame 192 is 8.000064s — just past the target
+
+    pool.dispose();
+  });
+
+  // findChunkRange used to additionally clamp endIndex to startIndex + 599
+  // (the removed MAX_SESSION_FRAMES). On a single-keyframe clip startIndex is
+  // always 0, so that clamp was the same defect at a different depth: targets
+  // past ~25s at 24fps were simply unreachable.
+  it('reaches a target past the old 600-chunk session-range clamp on a long single-keyframe clip', async () => {
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(makeSingleKeyframeDemuxed(1440)); // 60s @ 24fps
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 60, 50);
+    const frame = await pool.getFrameAt('seg', 50);
+
+    expect(frame).not.toBeNull();
+    expect(frame!.timestamp).toBe(frameTs(1199)); // frame 1200 is 50.0004s — just past the target
+
+    pool.dispose();
   });
 });
