@@ -277,22 +277,6 @@ export type AutoGradeSampler = (segment: VideoSegment) => Promise<SegmentGrade |
 const AUTO_GRADE_W = 160;
 const AUTO_GRADE_H = 90;
 
-/** WS3 A/B experiment (TEMPORARY, dev-only — see
- *  docs/ws3-video-segments/ws3-audit.md's close-out section). Flip to `true`
- *  to force VIDEO segments through the legacy dual-<video>-slot preview path
- *  below instead of the WebCodecs/GL path, so a Case B slip-near-max-end
- *  repro can be re-run against a decode pipeline that does not touch
- *  VideoDecoderPool at all — the cheapest way to learn whether that pool is
- *  the cause of the still-open preview stall. Image segments are untouched
- *  either way (their GL rendering doesn't depend on this flag). Only the 3
- *  call sites below key off it; the WebCodecs/GL hooks themselves stay
- *  `enabled` and keep decoding in the background (hidden, not torn down) —
- *  this flag hides their OUTPUT for video segments, it does not idle the
- *  pool, so it isolates what's on screen, not decode resource usage.
- *  Remove this constant and its 3 references in one commit once the
- *  experiment concludes. */
-const FORCE_LEGACY_VIDEO_PREVIEW = false;
-
 /** Loads an image URL for one-shot auto-grade sampling; resolves null on error
  *  rather than rejecting, so a single bad asset is a per-segment skip, not a
  *  thrown auto-grade run. */
@@ -917,10 +901,8 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     // owns decode/paint for this segment's video via PreviewCanvas (rendered
     // below); the legacy dual <video>-slot machinery below must not also
     // load/seek/play these elements. Read via ref (not a dep) — same rationale
-    // as currentTimeRef's ref-read pattern. FORCE_LEGACY_VIDEO_PREVIEW (WS3 A/B
-    // experiment, temporary) overrides this so the legacy slots own playback
-    // instead.
-    if (useWebCodecsPathRef.current && !FORCE_LEGACY_VIDEO_PREVIEW) { setCoverState(null); return; }
+    // as currentTimeRef's ref-read pattern.
+    if (useWebCodecsPathRef.current) { setCoverState(null); return; }
     // D12 fix — a timeline resize-drag rewrites startTime for every segment
     // after the dragged one while currentTime stays put, which can flip
     // currentSegment?.id to a neighbor purely from the boundary shift (not a
@@ -1047,8 +1029,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     // segment-change effect above), so calling play()/pause() on them here would
     // be a no-op today, but only incidentally — gate explicitly so this stays
     // inert by construction, not by accident, matching the segment-change effect.
-    // Same FORCE_LEGACY_VIDEO_PREVIEW override as that effect (WS3 A/B experiment).
-    if (useWebCodecsPathRef.current && !FORCE_LEGACY_VIDEO_PREVIEW) return;
+    if (useWebCodecsPathRef.current) return;
     const activeEl = activeSlotRef.current === 'a' ? videoARef.current : videoBRef.current;
     if (!activeEl) return;
     if (isPlaying) {
@@ -1267,7 +1248,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           keep applying, matching the legacy path's parity intent.
                           Suppressed when the GL path owns the frame (glPathActive) — the
                           GL canvas below is then the sole visible media layer. */}
-                      {isVideoAsset && useWebCodecsPath && webCodecsPreview.isVideoSegment && !glPathActive && !FORCE_LEGACY_VIDEO_PREVIEW && (
+                      {isVideoAsset && useWebCodecsPath && webCodecsPreview.isVideoSegment && !glPathActive && (
                         <PreviewCanvas
                           frame={webCodecsPreview.frame}
                           className="absolute inset-0 w-full h-full"
@@ -1299,13 +1280,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
                           className="absolute inset-0 w-full h-full"
                           style={{
                             ...getClipEffectStyle(currentSegment.effectAnimation),
-                            // FORCE_LEGACY_VIDEO_PREVIEW (WS3 A/B experiment,
-                            // temporary): hide (not unmount, same reasoning as
-                            // the missing-asset case) this canvas for a video
-                            // segment so the legacy <video> slot beneath it
-                            // shows through instead. Image segments are
-                            // unaffected — isVideoAsset is false for them.
-                            display: (!asset?.url || (FORCE_LEGACY_VIDEO_PREVIEW && isVideoAsset)) ? 'none' : undefined,
+                            display: !asset?.url ? 'none' : undefined,
                           }}
                         />
                       )}

@@ -60,6 +60,7 @@ Chronological by section date, except the pre-2026-06-24 blocks at the top (labe
   - [The Last Segment's Right Edge — Official and Locked (2026-08-08)](#the-last-segments-right-edge--official-and-locked-2026-08-08)
   - [The Pointercancel Question — RULED: Discard (2026-08-08)](#the-pointercancel-question--ruled-discard-2026-08-08)
   - [Undo / Redo — Design (2026-08-08)](#undo--redo--design-2026-08-08)
+- [WS2 + WS3 Closeout (2026-08-10)](#ws2--ws3-closeout-2026-08-10)
 
 **Note on the 2026-08-09 docs-restructure dedup pass:** deduplication across this file was targeted, not exhaustive — it covered `App.tsx`, `syncEngine.ts`, `whisper.rs`, `resolutionConfig.ts`, `snapBoundaries.ts`, `ExportSettingsModal.tsx`, and `NewProjectModal.tsx`'s File Map entries, plus an automated SHA-identical and near-duplicate-sentence scan across the whole file. A narrative-vs-data prune (removing archived material whose content, as opposed to its exact wording, is superseded by a later section) was not performed. A future session should treat this as the known scope rather than infer it.
 
@@ -8554,3 +8555,13 @@ in four states — (a) nothing focused, (b) a text field focused, (c) a range sl
 native Edit menu flashes. If `Cmd+Z` never arrives at `window`, the finding is reported as
 such and the **native-menu / Tauri global-shortcut route** is proposed instead of working
 around it blindly.
+
+---
+
+## WS2 + WS3 Closeout (2026-08-10)
+
+**WS2 — Editor** (drag-session extraction, Route 2 harness, WKWebView checklist, undo/redo). Already closed and verified 2026-08-08 (see "WS2 close-out and verified baseline" above). This pass is the final administrative confirmation: no dedicated folder ever existed to delete, and no residual status remained in Active Workstreams or `docs/work-in-progress.md`.
+
+**WS3 — Video Segments.** Closed: speed decoupled, slip-bar/trim UI/duplicate-asset issues fixed, preview stall resolved. Root cause: single-keyframe clips plus a prefix-, not sliding-window, decode buffer dropping a deep target's frame once the cap filled. Owner-verified on real preview and export.
+
+`docs/ws3-video-segments/` deleted; no WS2 folder existed. The fix's full technical writeup is preserved in git history (commit `00f288c`) ahead of that deletion. `FORCE_LEGACY_VIDEO_PREVIEW` and its branches removed from `PreviewStage.tsx`. `project-state.md` and `docs/work-in-progress.md` now carry only WS1.
