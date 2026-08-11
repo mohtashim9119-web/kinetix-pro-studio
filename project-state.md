@@ -69,6 +69,8 @@ One line each — full record in `docs/history.md`'s "Decisions Log — Dissolve
 - **R-H — Golden replay is extended before FA timing lands.** A forced-alignment input set and a second baseline are added while the diff against the existing baseline is still zero, ahead of any FA timing change. Detail: roadmap NEXT UP acceptance criteria.
 - **R-I — `-nfa` stays deferred until after Task 5 ships.** Independent by design, entangled with Task 5 at the measurement-baseline level. Detail: roadmap §13.
 - **R-J — `preserveSegmentLocks` position is locked.** Stays at its current post-`autoMatchSegments` call site; must not be moved into `applyAnchorBasedTiming` under Task 5 or any later phase. Detail: roadmap NEXT UP hazards list.
+- **R-K — No release build until WS1 completes.** R-D (Step T, model distribution, kept out of Task 5) depends on this; if release timing changes, R-D must be revisited before Task 5 ships. Detail: roadmap NEXT UP, "Files expected to change."
+- **R-L — Forced alignment runs natively in-process, compiled into the binary.** Out-of-process sidecars (Python, or any external runtime) are rejected permanently as a delivery mechanism for alignment — closes the runtime-delivery Option A (a distinct decision from Decision 8's heading-wildcard Option A, roadmap §4 Step V). `ffmpeg` and `whisper-cli` remain sidecars; R-L governs alignment only. Detail: roadmap §13.
 
 ---
 

@@ -8855,3 +8855,42 @@ for the next docs-focused commit to close, not solved here by amending.
 **Gates, identical before/after this pass:** `npm run lint` clean; `npm test` 72 files / 1803
 passed / 1 skipped / 0 failed; golden replay 3/3 byte-identical; `cargo check` clean — confirming
 the doc/tooling-only scope held and nothing under `src/` or `src-tauri/` was touched.
+
+## Task 5 runtime-delivery rulings recorded — R-K (release timing) and R-L (native in-process alignment) (2026-08-11)
+
+Two owner answers formalized as rulings, closing two open questions from the Task 5 scoping pass:
+whether a release build is imminent (it bears directly on R-D, Step T's kept-out-of-Task-5 scope
+call), and whether forced alignment ships as a native in-process runtime or an out-of-process
+sidecar (left open since Phase 3's original design text flagged ONNX Runtime as the likely
+approach without ever formally ruling out an external process).
+
+**R-K — No release build until WS1 completes.** Confirmed directly with the owner. R-D
+(`project-state.md` §5; `docs/ws1-sync-pipeline/ws1-master-roadmap.md` NEXT UP, "Files expected
+to change") already assumed this informally ("no release is imminent — WS1 finishes first"); R-K
+makes it an explicit, citable ruling instead of a parenthetical. If release timing changes before
+Task 5 ships, R-D's own "Step T stays out of Task 5" scope call must be revisited — it was made
+contingent on this fact, not independent of it.
+
+**R-L — Forced alignment runs natively in-process, compiled into the binary.** Out-of-process
+sidecars (a Python process, or any other external runtime) are rejected permanently as the
+delivery mechanism for the forced-alignment CTC model. This closes the runtime-delivery decision
+that `docs/ws1-sync-pipeline/ws1-master-roadmap.md` §13's ONNX-export bullet had been sitting on
+top of without a formal name — that bullet is rewritten in this same commit to cite R-L, mark the
+out-of-process option (called "Option A" for this decision — distinct from Decision 8's
+heading-wildcard Option A, §4 Step V, an unrelated decision that happens to share the letter) as
+closed, and record the go-forward sequencing as **D-then-C**: the capability-gated Stage 1
+timing-interface boundary lands first, gated off until ready, with native inference implemented
+behind it — not the reverse. The existing sidecar exception is unaffected and stays: `ffmpeg` and
+`whisper-cli` remain out-of-process sidecars — R-L is scoped to the alignment runtime only, it
+neither reopens nor generalizes to either of those.
+
+**Docs touched.** `project-state.md` §5 — R-K, R-L appended, continuing the R-D...R-J sequence
+already in use for Task 5's own rulings (a separate, file-local continuation of the same flat
+R-letter namespace §8's R-A/B/C use in the roadmap itself). `docs/ws1-sync-pipeline/ws1-master-roadmap.md`
+— §13's ONNX-export bullet rewritten to cite R-L/Option A/D-then-C, and NEXT UP's "Files expected
+to change" Step T bullet gets one added clause tying R-D to R-K. No `src/` or `src-tauri/` change
+— docs-only commit.
+
+**Gates, identical before/after:** `npm run lint` clean; `npm test` 72 files / 1803 passed / 1
+skipped / 0 failed; golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3
+byte-identical; `cargo check` clean.
