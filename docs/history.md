@@ -9189,3 +9189,61 @@ size minus 5 special tokens, for en/es/fr/de/pt respectively).
 
 **Gates:** `npm run lint` clean; `npm test` 74 files / 1840 passed / 1 skipped / 0 failed (1817
 baseline + 23 new, exact); golden replay 6/6 unchanged; `cargo check` clean (no `src-tauri/` edit).
+
+## Corpus representability measurement — FA text normalizer run against real text for the first time (2026-08-12)
+
+Purpose: `faTextNormalize.ts` (previous entry) had never been run against real corpus text.
+Read-only measurement, no `src/` change, nothing wired into Apply Sync.
+
+**Text sources, real vs. fallback made explicit.** en: 8 real project `Script.txt` narration
+files from `~/Downloads/All Projects Test Data/` (100/14/173/294/Ancient Humans V9/Missing
+Segs/V6/V8 — 173 and V6 are the golden-replay projects), 18,023 words. es: 1 real project
+(`Spanish Project/Spanish Script.txt`, the golden-replay Spanish project), 249 words. fr/de/pt:
+no real project text of those languages exists in this corpus, so all three fell back to the
+Common Voice target-sentence files (`.work-phase4/spike-runtime/cv-targets/{fr,de,pt}.txt`) —
+the same files the 2026-08-11 runtime spike's G2 step read, which survived on disk in that
+gitignored scratch dir though the spike code itself did not. `Sync.txt` twins were deliberately
+not also read — same words as `Script.txt`, just scene-tag-chunked, would double-count.
+
+**Results: en 13.09% unrepresentable (2,360/18,023), es 12.85% (32/249), fr/de/pt 0% (154,817 /
+142,082 / 35,316 words each).** The fr/de/pt zero is a measurement-genre artifact, not a vocab
+completeness finding — Common Voice's target sentences are pre-normalized (lowercase, no digits,
+no punctuation) specifically because they're ASR training/eval targets, so they never exercise
+the normalizer's failure paths at all; only the en/es real-text numbers say anything about actual
+narration-script behavior. Reason breakdown (en/es): digit-bearing 23/1, character-not-in-vocab
+2,337/31, empty 0/0 (unreachable by construction — `normalizeForForcedAlignment` already filters
+zero-length tokens out of `rawWords` before any word reaches `normalizeWord`).
+
+**The character-not-in-vocab majority is a punctuation-tokenization artifact, not a coverage gap.**
+9 distinct offending characters on en (`.` 1357, `,` 729, `’` U+2019 196, `:` 37, `?` 7, `"` 5, `—`
+4, `“` 1, U+200B zero-width-space 1), 6 on es (`.` 17, `,` 9, `;` 2, `:` 1, `«`/`»` 1 each). Every
+one is either ordinary sentence punctuation glued to a word by whitespace-only splitting, or a
+typographic variant of a character the vocab already contains in ASCII form (curly `’`/`“` vs.
+straight `'`/`"`, guillemets as quote marks, an em dash as a clause break) — zero occurrences of a
+genuinely missing letter or diacritic; es's real accented characters (í, ó, á, ...) all passed
+cleanly, consistent with `faTextNormalize.test.ts`'s existing diacritic-preservation coverage. A
+short, fully-explained list, not a long tail — the fix is a normalization/typographic-folding step,
+not a vocab expansion, and is out of scope for this measurement.
+
+**1.3 verdict: digits stay deferred to Phase 3b, not blocking.** Deciding number: digit-bearing
+words are 24 of 18,272 real-corpus words combined (en+es) — **0.131%** — roughly two orders of
+magnitude smaller than the character-not-in-vocab loss on the same text (12.96%), and that larger
+loss is itself dominated by the punctuation-tokenization artifact above, not a real vocab gap
+either. Fixing punctuation-stripping first would recover far more representability per unit of
+engineering effort than number expansion would. Digit content itself (en's 23 words: `60,000`,
+`50,000`, `48.`, `41st`, `40`, `38`, `32`, `28`, `26`, `24.`, `21.`, `2001`, `1895.`, `1895,`,
+`1890s`, `13th`, `10:30`, `10`, `$9,400."`, `$9,400`, `$84,000`, `$28,000`, `$11,000.`; es: `12`)
+is years/ordinals/decades/times/amounts — exactly what narration naturally contains and exactly
+what Common Voice's pre-normalized targets never show. No number-expansion logic implemented
+either way, per instruction — this is a priority argument from measurement, not an implementation.
+
+**Committed:** `docs/ws1-sync-pipeline/measurements/fa-vocab-representability-2026-08-12.md`
+(full tables, top-20 unrepresentable words per language, full offending-character census) +
+README.md index row. The throwaway TS script that produced it
+(`.work-phase4/spike-runtime/measure-fa-repr.ts`, bundled with `esbuild` since no ts-node/tsx is
+installed, run with plain `node`) stays in that gitignored scratch dir, per instruction — not
+committed.
+
+**Gates:** identical to baseline — `npm run lint` clean; `npm test` 74 files / 1840 passed / 1
+skipped / 0 failed (unchanged, measurement-only); golden replay 6/6 unchanged; `cargo check`
+clean (no `src-tauri/` edit).
