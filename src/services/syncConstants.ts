@@ -489,6 +489,52 @@ export const WORD_COVERAGE_MIN_RATIO = 0.6;
 // this floor).
 export const WORD_COVERAGE_MIN_MISSING = 2;
 
+// --- Forced-alignment anchor computation (`faAnchors.ts`) — R.1/R.4/R.7,
+// `sync-pipeline-v2-plan.md`, R-O/R-P rulings (`docs/history.md`, 2026-08-12)
+// --------------------------------------------------------------------------
+// A time `t` is an anchor for script word `w` only when three independent
+// sources agree within this tolerance: the Hirschberg alignment maps `w` to a
+// specific Whisper token, that token's declared onset, and a detected silence
+// interval ending immediately before it. 0.15s, R.1's own stated value.
+export const ANCHOR_AGREEMENT_SEC = 0.15;
+
+// R-O (i): `w` must be at least this many characters after `canonicalize()`
+// to be admissible as an anchor. Seeded from C10's own "≥3 chars" half of its
+// (lexical, C10-only) distinctiveness definition — the only length threshold
+// this project has any evidence for. Not reused for any lexical/stopword
+// purpose; R.1(a) admissibility is phonetic, per R-O.
+export const MIN_ANCHOR_WORD_CHARS = 3;
+
+// R-O (ii): a word whose first canonicalized character is in this set is
+// inadmissible as an anchor, regardless of length. Seeded from the
+// word-initial glides Step B actually measured failing worst in the corpus
+// ("You"/"Your"/"When"/"We" — 14.1% >250ms, p95 368.8ms, vs. a clean 0.0% for
+// plosive/affricate-initial boundaries). English-measured, applied to all 5
+// supported languages deliberately: conservative (can only reject a real
+// anchor, never admit a bad one) — widening or narrowing per language needs
+// measurement, not intuition.
+export const GLIDE_INITIAL_CHARS: ReadonlySet<string> = new Set(['w', 'y']);
+
+// R.1(b): `w`'s Hirschberg match must sit inside a contiguous matched run of
+// at least this many words. Reuses RUN_SURVIVAL_MIN_RUN_LONG (above) rather
+// than minting a second, independently-tuned constant — the plan's own
+// instruction, confirmed by the R-O/R-P ruling pass. Callers should import
+// RUN_SURVIVAL_MIN_RUN_LONG directly for this purpose; no MIN_ANCHOR_RUN
+// alias is exported.
+
+// R.4: the maximum span, in seconds, a run may grow to before R-P's
+// force-split selection applies. wav2vec2-class encoders are O(n^2) in
+// attention; 30s is the standard chunk length for this model family.
+export const MAX_RUN_SEC = 30;
+
+// R.7: FA per-word confidence below this floor, on a run's first or last
+// word, means that word is not used as a boundary — the same line Blocker 2's
+// own analysis used to separate "FA was confident and wrong" from "FA
+// correctly refused." Defined here per the plan's own value; consumed by a
+// later (post-FA) phase, not by faAnchors.ts's own pre-FA computation — see
+// that module's header comment for the scope boundary.
+export const CONF_MIN = 0.3;
+
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //

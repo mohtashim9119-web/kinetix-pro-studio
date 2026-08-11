@@ -215,10 +215,12 @@ export interface VideoSegment {
    *  Under clean-slate re-sync this is NOT preserved across re-syncs — every anchor is
    *  re-derived fresh each sync. Internal — not displayed in UI. */
   anchorStart?: number;
-  /** How anchorStart was derived. 'whisper' = precise audio-aligned timestamp from
-   *  Whisper transcription; 'estimate' = character-weight approximation. Effectively
-   *  write-only: no production code branches on this value post-3c. */
-  anchorSource?: 'whisper' | 'estimate';
+  /** How anchorStart was derived. 'forced-alignment' = CTC/wav2vec2 forced-alignment
+   *  anchor (R-G, ordered above 'whisper' — demote-only provenance, never inferred from
+   *  ordering); 'whisper' = precise audio-aligned timestamp from Whisper transcription;
+   *  'estimate' = character-weight approximation. Effectively write-only: no production
+   *  code branches on this value post-3c. */
+  anchorSource?: 'forced-alignment' | 'whisper' | 'estimate';
   /** True when this segment came from an EXPLICIT bracket tag whose filename
    *  failed exact asset matching at parse time. Gates off autoMatchSegments'
    *  fuzzy fallback so a tagged-but-unresolved scene stays visibly unmatched
