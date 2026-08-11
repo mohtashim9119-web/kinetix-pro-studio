@@ -21,13 +21,23 @@
 // silences + duration) — `CONF_MIN` is defined in `syncConstants.ts` for that
 // later, post-FA consumer, but is not read here.
 //
-// ASSUMPTION (undocumented upstream, stated explicitly since this module has
-// no real caller yet to fix it in place): `alignment`'s subject sequence is
-// one entry per `tokens[]` element — i.e. `alignment.matchedSubjectOf[qi]`,
-// when >= 0, is a direct index into `tokens`. This matches R.1(a)'s own text
-// ("the Hirschberg alignment maps `w` to a specific Whisper token") rather
-// than `whisperService.ts`'s internal sub-token-word expansion bridge
-// (`tokenWords`), which is a wiring detail for whoever calls this module.
+// VERIFIED (was an unverified assumption at D1 landing; corrected here before
+// any real caller exists): `alignment.matchedSubjectOf[qi]` is NOT a direct
+// index into `tokens`. `TokenAlignment.matchedSubjectOf` is defined as
+// "query i -> subject index" (`whisperService.ts:146`) against whatever
+// `subject: string[]` was passed to `alignQueryToSubject` — and the one real
+// caller, `extractSegmentAlignments`, passes `subjectWords =
+// tokenWords.map(t => t.word)` (`whisperService.ts:823-824`), not the raw
+// token array. `tokenWords` expands EACH token into all the words it
+// canonicalizes to (`whisperService.ts:793-805`, its own comment: "Whisper
+// tokens may contain multiple words"), dropping any that canonicalize to zero
+// words (`whisperService.ts:803`'s `word.length > 0` guard). So
+// `tokenWords.length` routinely differs from `tokens.length` in both
+// directions, and the two index spaces diverge on any token that isn't
+// exactly one canonical word. The subject-index -> real-token-index mapping
+// already exists as `tokenWords[i].tokenIdx` (`whisperService.ts:803`) — this
+// module takes that mapping as an explicit `subjectTokenIdx` parameter rather
+// than assuming identity.
 // ---------------------------------------------------------------------------
 
 import type { TranscriptToken } from '../types';
@@ -124,11 +134,14 @@ function computeAnchors(
   alignment: TokenAlignment,
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
+  subjectTokenIdx: ArrayLike<number>,
 ): FaAnchor[] {
   const anchors: FaAnchor[] = [];
   for (const op of alignment.ops) {
     if (op.type !== 'match') continue;
-    const tokenIdx = alignment.matchedSubjectOf[op.qi];
+    const subjectIdx = alignment.matchedSubjectOf[op.qi];
+    if (subjectIdx === undefined || subjectIdx < 0) continue;
+    const tokenIdx = subjectTokenIdx[subjectIdx];
     if (tokenIdx === undefined || tokenIdx < 0) continue;
     const token = tokens[tokenIdx];
     if (!token) continue;
@@ -170,14 +183,21 @@ function longestSilenceInWindow(
  *
  * I14 (Part F, `sync-pipeline-v2-plan.md`: "the aligner is exonerated, leave
  * it alone"): `alignment` is read only — never mutated, never re-scored.
+ *
+ * `subjectTokenIdx[sj]` must resolve `alignment.matchedSubjectOf`'s subject
+ * space to a real index into `tokens` — e.g. `whisperService.ts`'s
+ * `tokenWords.map(t => t.tokenIdx)` for the array actually passed as
+ * `alignQueryToSubject`'s `subject` argument. See the header VERIFIED note:
+ * the subject space is words, not tokens, and the two are not interchangeable.
  */
 export function computeFaAnchors(
   alignment: TokenAlignment,
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  subjectTokenIdx: ArrayLike<number>,
 ): FaAnchorResult {
-  const anchors = computeAnchors(alignment, tokens, silences);
+  const anchors = computeAnchors(alignment, tokens, silences, subjectTokenIdx);
 
   interface Boundary {
     time: number;

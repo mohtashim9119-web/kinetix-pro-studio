@@ -29,7 +29,7 @@ function sil(startSec: number, endSec: number): SilenceInterval {
   return { startSec, endSec };
 }
 
-/** All-match alignment: query word `i` matches subject (token) index `i`. */
+/** All-match alignment: query word `i` matches subject index `i`. */
 function allMatchAlignment(n: number): TokenAlignment {
   const ops: TokenAlignmentOp[] = [];
   const matchedSubjectOf = new Int32Array(n);
@@ -38,6 +38,13 @@ function allMatchAlignment(n: number): TokenAlignment {
     matchedSubjectOf[i] = i;
   }
   return { ops, matchedSubjectOf, score: n };
+}
+
+/** Identity subject-index -> token-index mapping (one word per token) — what
+ *  every pre-existing fixture in this file implicitly assumed before
+ *  `subjectTokenIdx` became an explicit, required parameter. */
+function identityMapping(n: number): number[] {
+  return Array.from({ length: n }, (_, i) => i);
 }
 
 /** Asserts I1/I2 (Model P, per R-E) directly: every run's `windowEnd` equals
@@ -58,7 +65,7 @@ describe('computeFaAnchors', () => {
     const silences = [sil(0.9, 1.0), sil(1.9, 2.0), sil(2.9, 3.0), sil(3.9, 4.0), sil(4.9, 5.0)];
     const audioDuration = 8;
 
-    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors).toEqual([]);
     expect(runs).toEqual([
@@ -74,7 +81,7 @@ describe('computeFaAnchors', () => {
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
-    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.map(a => a.qi)).toEqual([0, 1, 2, 3, 4]);
     expect(anchors.map(a => a.timeSec)).toEqual(starts);
@@ -107,7 +114,7 @@ describe('computeFaAnchors', () => {
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 18;
 
-    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.some(a => a.qi === 1)).toBe(false); // run of 3 - rejected
     expect(anchors.some(a => a.qi === 5)).toBe(true);  // run of 4 - admitted
@@ -119,7 +126,7 @@ describe('computeFaAnchors', () => {
     const silences: SilenceInterval[] = [];
     const audioDuration = MAX_RUN_SEC * 2 + 5; // 65 - needs two forced splits
 
-    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors).toEqual([]);
     expect(runs).toEqual([
@@ -140,7 +147,7 @@ describe('computeFaAnchors', () => {
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
-    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.some(a => a.qi === 0)).toBe(false); // "on" - too short
     expect(anchors.some(a => a.qi === 1)).toBe(true);  // "alpha" - control, admitted
@@ -155,7 +162,7 @@ describe('computeFaAnchors', () => {
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
-    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.some(a => a.qi === 0)).toBe(false); // "your" - glide-initial
     expect(anchors.some(a => a.qi === 1)).toBe(true);  // "alpha" - control, admitted
@@ -169,7 +176,7 @@ describe('computeFaAnchors', () => {
     const silences = [sil(5, 6), sil(10, 12.5), sil(20, 20.8)];
     const audioDuration = 32;
 
-    const { runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(runs).toEqual([
       { windowStart: 0, windowEnd: 12.5, startProvenance: 'corpus-start', endProvenance: 'forced-split-silence' },
@@ -184,7 +191,7 @@ describe('computeFaAnchors', () => {
     const silences: SilenceInterval[] = [];
     const audioDuration = 45;
 
-    const { runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(runs).toEqual([
       { windowStart: 0, windowEnd: MAX_RUN_SEC, startProvenance: 'corpus-start', endProvenance: 'forced-split-max-run' },
@@ -200,7 +207,7 @@ describe('computeFaAnchors', () => {
     const silences = [sil(4.9, 5)]; // only qi=1 ("bravo") agrees
     const audioDuration = 10;
 
-    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.map(a => a.qi)).toEqual([1]);
     expect(runs[0]!.windowStart).toBe(0);
@@ -229,7 +236,7 @@ describe('computeFaAnchors', () => {
     const silences = [sil(4.9, 5), sil(9.9, 10), sil(14.9, 15)];
     const audioDuration = 50;
 
-    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration);
+    const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
     expect(anchors.map(a => a.timeSec)).toEqual([5, 10, 15]);
     expect(runs.map(r => [r.windowStart, r.windowEnd, r.startProvenance, r.endProvenance])).toEqual([
@@ -240,5 +247,36 @@ describe('computeFaAnchors', () => {
       [45, 50, 'forced-split-max-run', 'corpus-end'],
     ]);
     assertNoGaps(runs);
+  });
+
+  it('subject index space diverges from token index space: subjectTokenIdx is honored, not matchedSubjectOf used directly as a token index', () => {
+    // Mirrors whisperService.ts's real shape: token 0 is a punctuation-only
+    // Whisper token that canonicalizes to ZERO subject words (dropped by
+    // `tokenWords`'s `word.length > 0` guard), so subject index 0 corresponds
+    // to tokens[1], not tokens[0] — the subject space is shifted by one
+    // relative to the token space for the rest of the array.
+    const fillerToken = tok('...', 0, 0.5);
+    const words = ['alpha', 'bravo', 'charlie', 'delta', 'hotel'];
+    const starts = [1, 3, 5, 7, 9];
+    const tokens = [fillerToken, ...words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5))];
+    const silences = starts.map(s => sil(s - 0.1, s));
+    const audioDuration = 12;
+
+    // Query word i truly matches subject index i (0-4); subjectTokenIdx maps
+    // that subject space onto tokens[1..5] — the real token each word came from.
+    const alignment = allMatchAlignment(words.length);
+    const subjectTokenIdx = [1, 2, 3, 4, 5];
+
+    const { anchors } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
+
+    // Correct: every anchor's tokenIdx is subjectTokenIdx[qi] (1-5), and its
+    // timeSec is the REAL token's agreeing silence. Using matchedSubjectOf
+    // directly as a token index (the pre-fix bug) would instead read
+    // tokens[qi] — tokens[0] is the non-distinctive filler (drops qi=0
+    // entirely) and every other anchor would resolve to the WRONG token's
+    // startSec, producing different (wrong) timeSec values below.
+    expect(anchors.map(a => a.qi)).toEqual([0, 1, 2, 3, 4]);
+    expect(anchors.map(a => a.tokenIdx)).toEqual([1, 2, 3, 4, 5]);
+    expect(anchors.map(a => a.timeSec)).toEqual(starts);
   });
 });
