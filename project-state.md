@@ -30,13 +30,12 @@ App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar exp
 
 Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md), not here.
 
-- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** 1/7 tasks done — Slice 2 (50/50 silence-split re-derivation) is next. See `docs/work-in-progress.md`.
+- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** 1/8 tasks done — Slice 2 (50/50 silence-split re-derivation) is next. See `docs/work-in-progress.md`.
 
 ---
 
 ## 3. Open Decisions
 
-- **Spanish forced-alignment gate — awaiting the owner's ear.** Step Q's 10 blinded Spanish clips are exported and integrity-checked but not yet scored. Spanish's MMS-FA p95 (282.1ms) narrowly fails the approved 250ms gate on a 22-pause sample; Step Q determines whether that's reference bias (as English turned out to be) or genuine FA error. Blocks WS1's Rust integration start. Full context: `docs/history.md`'s "Sync Pipeline v2 Research Programme" entry, Phase 4 pre-implementation, Step Q.
 - **C05/C10/C11 structural checks are not CI-ready.** C05 needs the FA token arrays lost with the old `/tmp/phase3/` (never rebuilt); C10 catches 0 of the 3 known word-shift residuals; C11 isn't runnable against real baselines while K13 (lock preservation across resync) stays broken. None are blocking WS1's current slice, but none should be wired into CI as-is.
 
 ---
@@ -47,9 +46,9 @@ Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md
 - **K13 — lock preservation is broken across resync.** Clean-slate resync mints every segment fresh via `parseProjectData`, which has no `locked` field and never reads `project.segments` — so a locked segment silently loses both its position and its lock flag on the next Apply Sync. Live repro: `scripts/phase4-step-w-k13-repro.test.ts` (must start failing when this is fixed — that's the signal, not a broken test). Fix path: `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Stage 3, an order-keyed carry-forward of `locked` into the freshly-parsed array.
 - **`boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5** (`src/services/snapBoundaries.ts`) — the omitted 5th parameter silently defaults to disabling the seam exemption, so every `validateBoundaryQuality` reading on a seam-exempted pair has been wrong since it shipped. Diagnostic-only — never affects a committed boundary. Scheduled for v2 Phase 7; self-resolves if v2 Phase 6 deletes the exemption instead.
 - **Stuck `resizingId` on an early-bail drag start** (`src/services/dragSession.ts`) — **WONTFIX (owner ruling, 2026-08-08).** Unreachable through the UI (both bail conditions require state a real gesture can't produce), and fixing it would retire a characterization test that proves the WS2 task-1 extraction was behavior-preserving. The desired behavior is pinned as a deliberately skipped spec test (`dragSessionHarness.test.ts` PART 4) and the residue is actively audited by `acknowledgeKnownResidue`, which fails if the residue ever stops appearing. Ruling lapses if the path ever becomes reachable.
-- **Manual checklist step 10 (real OS `pointercancel` in WKWebView)** — closed as not fixable at acceptable cost; deprioritized (owner, 2026-08-08). What stays permanently uncoverable by any `jsdom` test is whether a real OS interruption fires `pointercancel` at all — undo/redo exists partly to make the resulting state recoverable rather than unrecoverable.
 
 **Deferred polish (not scheduled):**
+- **22 blank `boundary-quality-flag` rows** in `scripts/fixtures/verification-baseline.csv` — deferred, non-blocking (owner ruling R-A, 2026-08-11). WS1 does not pause for an ear-listening pass to fill them in.
 - Export quality — real color-space conversion + cross-segment drift correction (mux-time bt709 tagging already fixes the practical color mismatch; revisit only if a real issue surfaces).
 - Version snapshots — blocked on two open design decisions (asset-restoration approach, full-rewind-on-restore).
 - Auto-captions (reuse Whisper transcript tokens as a timed text layer).
@@ -75,11 +74,15 @@ One line each — full record in `docs/history.md`'s "Decisions Log — Dissolve
 - **A cancelled drag (`pointercancel`) discards, never commits.** [`docs/history.md#the-pointercancel-question--ruled-discard-2026-08-08`](docs/history.md#the-pointercancel-question--ruled-discard-2026-08-08).
 - **Undo/redo design** — snapshots not patches, 20-state depth, page-reload persistence, lock-blocks-traversal policy. [`docs/history.md#undo--redo--design-2026-08-08`](docs/history.md#undo--redo--design-2026-08-08) (now a record of what was built, not a proposal).
 - **Heading-wildcard assignment (Option A)** — unscripted audio (spoken chapter headings) is absorbed entirely by the preceding segment, logged as an explicit `unscripted-gap` entry. Owner decision 8, recorded in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Steps Y–Z section. Blocks v2 Phase 5, not Phase 3.
+- **Spanish forced-alignment gate — cleared.** Step F's breath-aware reference scores p95 50.4ms against the approved 250ms gate (1 of 22 pauses over) — passes. All three WS1 Rust-integration gates (Spanish accuracy, structural checks, heading assignment) are closed. Evidence: `docs/ws1-sync-pipeline/spanish-gate-scoring.md`, `docs/ws1-sync-pipeline/roadmap-2026-08-07.md` §D2, `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Step U/T.7.
+- **K13 fixed fresh on `main`; `model-p-editor-work` never merges.** Owner ruling R-C (2026-08-11): `model-p-editor-work` stays permanently unmerged; K13 (lock preservation across resync) is fixed as a new bug written directly against `main`, porting only the logic/idea from the parked branch, never its stale code. Tracked as its own task in `docs/work-in-progress.md`.
 
 ---
 
 ## 6. Next Action
 
-**WS1 slice 2** (the 50/50 silence-split re-derivation) is the next concrete implementation task — it's cleanly decoupled from the editor path on current `main` and doesn't need the Spanish gate question resolved first. Budget the golden-replay per-boundary review as part of that work.
+**WS1 slice 2** (the 50/50 silence-split re-derivation) is the next concrete implementation task — it's cleanly decoupled from the editor path on current `main`. Budget the golden-replay per-boundary review as part of that work, never a blind re-baseline.
 
-In parallel, the Spanish Step Q clips are ready for the owner's ear whenever convenient — scoring them unblocks WS1's Rust integration start independently of slice 2's progress.
+**WS1 task 5** (Rust integration for forced alignment) is also unblocked as of this consolidation — all three gates are closed — and can proceed in parallel with slice 2. Per owner ruling R-B, the fr/de/pt unvalidated-language warning surfaces (Step T.7) ship in that same task/release, not after.
+
+K13 (lock preservation across resync) is scheduled as its own WS1 task, to be fixed fresh against `main` per owner ruling R-C — see `docs/work-in-progress.md`.
