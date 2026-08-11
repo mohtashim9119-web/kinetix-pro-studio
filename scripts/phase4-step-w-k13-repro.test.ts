@@ -15,12 +15,15 @@
 // loosening an assertion; a failure means a lock stopped surviving Apply
 // Sync, and the underlying regression is what needs fixing, not this file.
 //
-// Flipped 2026-08-11, the day K13 was fixed. The filename and the artifact's
-// `step-w-c11-live-repro.json` key shape are kept unchanged on purpose, so
-// `scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py` don't KeyError —
-// those two scripts' own C11 narrative text still describes the pre-fix
-// defect-trap framing and updating it is tracked as a separate deferred item
-// (`docs/ws1-sync-pipeline/ws1-master-roadmap.md` §13).
+// Flipped 2026-08-11, the day K13 was fixed. The filename is unchanged, but
+// the artifact's `part2` keys were renamed that same day to describe the
+// fixed world instead of the defect it replaced (baselineDurationSec ->
+// baselineStartSec, durationWithLockSec -> naturallyResyncedStartSec,
+// durationWithoutLockSec -> restoredStartSec). `scripts/phase4-step-w-trust.py`
+// and `phase4-step-x-verify.py` were updated to the new key names and the
+// fixed-state verdicts in the same commit as this comment. Any future rename
+// of these keys must update both consumer scripts in the same commit, or they
+// KeyError/misreport — as happened here between the rename and this fix.
 //
 // Run: npx vitest run scripts/phase4-step-w-k13-repro.test.ts
 import { describe, it, expect } from 'vitest';

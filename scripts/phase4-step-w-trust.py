@@ -206,20 +206,21 @@ def c11_report():
         return False
     a = json.loads(C11_ARTIFACT.read_text())
     p1, p2 = a["part1"], a["part2"]
-    print("""  Route: LIVE K13 REPRO against production code (vitest), real 173 corpus.
-  Step S could only prove C11 on a hand-written pre/post pair — it checked a
-  defect this repo asserted but had never demonstrated. Now demonstrated:""")
+    print("""  Route: LIVE K13 REGRESSION LOCK against production code (vitest), real 173 corpus.
+  K13 was fixed 2026-08-11 (preserveSegmentLocks, App.tsx). Step S could only
+  prove C11 on a hand-written pre/post pair; this repro now proves the FIX
+  live, and doubles as the regression lock:""")
     print(f"\n  PART 1  {p1['project']}: parseProjectData minted {p1['segmentsParsed']} "
           f"segments,\n          {p1['segmentsCarryingAnyLockField']} of them carrying any "
           f"lock field -> {p1['verdict']}")
-    print(f"  PART 2  segment {p2['segmentIndex']}: baseline {p2['baselineDurationSec']}s; "
-          f"with lock {p2['durationWithLockSec']}s,\n          without lock "
-          f"{p2['durationWithoutLockSec']}s -> divergence "
+    print(f"  PART 2  segment {p2['segmentIndex']}: baseline {p2['baselineStartSec']}s; "
+          f"naturally resynced (no fix) {p2['naturallyResyncedStartSec']}s,\n          restored "
+          f"(with fix) {p2['restoredStartSec']}s -> divergence "
           f"{p2['divergenceMs']:.0f}ms -> {p2['verdict']}")
-    ok = p1["verdict"] == "DEFECT CONFIRMED" and p2["verdict"] == "FLAG IS LOAD-BEARING"
-    print(f"\n  VERDICT: {'CI-IN' if ok else 'CI-OUT'} — the defect is reproduced live, and the "
-          "repro doubles as the\n           regression test: it must START FAILING when Stage 3 "
-          "fixes K13.")
+    ok = p1["verdict"] == "LOCK RESTORED" and p2["verdict"] == "POSITION PRESERVED"
+    print(f"\n  VERDICT: {'CI-IN' if ok else 'CI-OUT'} — the fix is reproduced live, and the "
+          "repro doubles as the\n           regression lock: it must START FAILING again if a "
+          "future change reintroduces K13.")
     return ok
 
 

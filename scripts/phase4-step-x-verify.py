@@ -17,12 +17,11 @@ the clip and the human timestamp. It finishes with a tally and an honest
 evidence-strength grade per rule — including the rules that rest on weaker
 evidence than the others, named as such.
 
-Two rules are INVERTED and say so on screen: C11's real half is a live
-reproduction of a defect that is STILL present (K13 is unfixed, so "quiet" is
-not available), and C12's poison IS healthy data (a rule that fires on it
-proves the gate under test is the defect). Neither is finessed. C13 (new)
-looks like C11 mechanically — both re-run a live vitest artifact — but is NOT
-inverted: K14 is fixed, so its real half genuinely stays quiet.
+One rule is INVERTED and says so on screen: C12's poison IS healthy data (a
+rule that fires on it proves the gate under test is the defect). Not finessed.
+C11 and C13 both re-run a live vitest artifact and look alike mechanically;
+neither is inverted — K13 (fixed 2026-08-11) and K14 (fixed earlier) are both
+held regressions now, so both real halves genuinely stay quiet.
 
 Run:  .venv-phase4/bin/python scripts/phase4-step-x-verify.py
       (any python3 with no third-party imports works; numpy is not needed here)
@@ -503,9 +502,9 @@ def run_c11():
     f = poison_for("C11")()
     p = half("POISON HALF", "FIRE", "a resync that clears the lock flag and moves the segment",
              f"{len(f)} finding(s): {f[0].detail if f else 'none'}", bool(f))
-    print("\n  REAL HALF is INVERTED for this rule, and that is stated rather than finessed:")
-    print("  K13 is an OPEN defect, so there is no clean corpus for it to stay quiet on. The")
-    print("  real half instead re-runs the live repro and requires it to still reproduce.")
+    print("\n  REAL HALF, unlike this rule's original design, is NO LONGER inverted: K13 was")
+    print("  fixed 2026-08-11 (preserveSegmentLocks, App.tsx), so this genuinely stays quiet")
+    print("  now, the same way C13 already does for K14.")
     ok = False
     started = time.time()
     try:
@@ -521,14 +520,15 @@ def run_c11():
         p1, p2 = art["part1"], art["part2"]
         saw = (f"parseProjectData minted {p1['segmentsParsed']} real 173 segments, "
                f"{p1['segmentsCarryingAnyLockField']} carrying any lock field; "
-               f"locked vs unlocked timing differs by {p2['divergenceMs']:.0f}ms")
-        ok = ran and p1["verdict"] == "DEFECT CONFIRMED" and p2["verdict"] == "FLAG IS LOAD-BEARING"
+               f"restored position diverges from the unrestored one by {p2['divergenceMs']:.0f}ms")
+        ok = ran and p1["verdict"] == "LOCK RESTORED" and p2["verdict"] == "POSITION PRESERVED"
     else:
         saw = "no artifact produced"
-    r = half("REAL HALF", "REPRODUCE THE DEFECT", f"live vitest run of {K13_TEST} "
+    r = half("REAL HALF", "STAY QUIET", f"live vitest run of {K13_TEST} "
              f"({time.time() - started:.0f}s)", saw, ok,
-             "when Stage 3 fixes K13 this half MUST start failing — that is the signal the "
-             "fix landed,\n             not a broken test")
+             "if this half ever starts failing, K13 has regressed — that is a real defect, "
+             "not a\n             broken test, same convention as every other live-repro "
+             "rule in this file")
     record("C11", p, r, "A", "IN (as the K13 regression lock)")
 
 
@@ -623,7 +623,7 @@ def main():
     print(BAR)
     print("""
   Each rule below is run on a deliberately broken input where it MUST fire, and on
-  real corpus data where it MUST stay quiet. Two rules are inverted and say so.
+  real corpus data where it MUST stay quiet. One rule is inverted and says so.
 
   Why 14 rules and not the 12 Step O specified — the count reconciled:
     Step O item 1 is ONE inventory entry covering TWO structurally different
@@ -694,7 +694,8 @@ def main():
             C13's scenario is a 6-segment synthetic timeline. It is graded A for
             exercising production code on the exact defect shape, not for corpus
             breadth — no committed baseline contains a locked segment to test
-            against (locks are cleared by resync: K13, still open).
+            against (existing fixtures predate K13's fix, from when resync always
+            cleared locks).
 
   B  good — fires exactly on defects this programme already knew about, and nowhere
      else, but the ground truth is this programme's own analysis, not an outside ear

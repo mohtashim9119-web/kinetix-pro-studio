@@ -25,6 +25,10 @@ side effect, task 6 transitively, Stage 1 locking once 3c also lands) and, unlik
 gated on the Spanish accuracy gate, which closed 2026-08-11 (below). This is readiness, not a
 prompt — do not start the work from this block alone; it still needs its own scoping pass.
 
+**Precedence note.** Where this roadmap and `sync-pipeline-v2-plan.md` disagree, the v2 plan's
+later owner decisions win — this roadmap is a derived index, not the primary source. Step T's
+scope (model distribution) is settled, not conditional: see ruling R-D, `project-state.md` §5.
+
 **Goal.** Replace Whisper's word timestamps with forced alignment (a CTC acoustic model aligning
 the known script text to the audio at the phoneme level), bundled as a Rust sidecar addition,
 slotted behind the existing Stage 1 timing interface so nothing downstream of it changes shape.
@@ -48,17 +52,30 @@ file level; a scoping pass is part of this task, not skippable):**
 - `src-tauri/src/` — new module bundling ONNX Runtime + the CTC model, implementing the Viterbi
   alignment pass (mirrors `src-tauri/src/whisper.rs`'s sidecar-command shape).
 - `src-tauri/Cargo.toml` — new ONNX Runtime dependency; `src-tauri/binaries/README.md` — model
-  provisioning docs (mirrors the existing whisper-model pattern).
+  provisioning docs. Provisioning does NOT mirror the existing bundled-whisper-model pattern —
+  Step T bars bundling any model-sized weight in the installer (T.0: ~7.4 GiB for Whisper + all
+  five FA models). Task 5 itself resolves FA models from `app_local_data_dir` with a
+  manual-placement fallback (same ordered-fallback shape as `whisper.rs`'s own `model_path()`,
+  new location); Step T's full on-demand-download/SHA-256/eviction system is its own task,
+  required before release, not before Task 5 (ruling R-D, `project-state.md` §5).
 - `src/services/whisperService.ts` / `src/hooks/useWhisper.ts` — swap the timing source behind
-  the Stage 1 interface these already expose; per H.3, model is multilingual, so per-language
-  behavior must stay keyed the same way it is today.
-- `src/constants.ts` — model distribution/provisioning constants if on-demand download (Step T
-  design) lands alongside, per owner ruling R-B.
+  the Stage 1 interface these already expose. The model is NOT multilingual: Decision 3 bars
+  MMS-FA permanently on licence (CC-BY-NC-4.0, non-commercial-only) and fixes the set at five
+  separate per-language jonatasgrosman models (Apache-2.0, ~1.26 GB each: en/es/fr/de/pt) —
+  per-language behavior stays keyed the same way it is today, now selecting a distinct model
+  file per language rather than one shared checkpoint (`sync-pipeline-v2-plan.md:1712-1715`).
+- `src/constants.ts` — model distribution/provisioning constants for the simple resolution path
+  above only. Step T's full design is its own task, required before release, not a conditional
+  add-on to Task 5 (ruling R-D). Only Step T.7's fr/de/pt "unvalidated language" warning ships
+  in this same task/release, per owner ruling R-B (unchanged, see Acceptance criteria below).
 
 **Acceptance criteria:**
-- Golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`) run and reviewed
-  per-boundary — a deliberate diff review, never a blind re-baseline (§7, task 2's own rule
-  applies equally here since Phase 3 changes the timing source).
+- Golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`) extended with a
+  forced-alignment input set and a second baseline BEFORE any FA timing change lands, while the
+  diff against the existing baseline is still zero (ruling R-H); the FA swap itself is then run
+  and reviewed per-boundary against that new baseline — a deliberate diff review, never a blind
+  re-baseline (§7, task 2's own rule applies equally here since Phase 3 changes the timing
+  source).
 - `scripts/phase4-step-x-verify.py` still passes its non-C10 checks after the swap.
 - fr/de/pt "unvalidated language" warning (Step T.7) ships in this same task/release per R-B.
 - All four project gates pass (below).
@@ -71,16 +88,24 @@ tests — 1803 is the floor to not regress below, not a ceiling to match exactly
 (task 4 — expected to resolve as a side effect, verify after, don't chase separately); Resume
 Pipeline Contract Program (task 6, blocked behind this task); Phase 4's 4-stage restructure
 (blocked on Stage 1 locking, which this task only partially clears — 3c still gates it); Phase
-3b/3c themselves (currently unowned on the ledger, §6 — a separate scheduling decision).
+3b/3c themselves (currently unowned on the ledger, §6 — a separate scheduling decision);
+heading-assignment UI (Decision 8/Option A's on-screen behavior — Phase 5, not Phase 3/Task 5;
+only R.5's CTC-wildcard windowing mechanic is this task's own scope, ruling R-F).
 
 **Hazards / invariants this must not break:** boundary/breath classification must stay on token
-*indices*, never raw timestamps (CLAUDE.md §4); `anchorSource` provenance only ever demotes
-`'whisper'` → `'estimate'`, never promotes back — a new `'forced-alignment'` source (if added)
-needs its own place in that ordering, not a silent insertion; `Project.language` stays sticky
-once set; Part F's stated non-goals apply (`sync-pipeline-v2-plan.md` Part F) — no merging
-duration floors, no retuning the 250ms/1% thresholds, no touching the Hirschberg alignment pass,
-no resolving R5/N4 here; `-nfa`/flash-attention stays un-adopted (§13) — this is a different,
-already-decided axis, don't conflate it with the FA-vs-DTW decision this task executes on.
+*indices*, never raw timestamps (CLAUDE.md §4); `anchorSource` gains a third value,
+`'forced-alignment'`, ordered ABOVE `'whisper'` (forced-alignment > whisper > estimate) —
+demote-only ordering is preserved, and the value is set explicitly by the code path that
+produced it, never inferred (ruling R-G, settles the placement question this paragraph used to
+leave open); `Project.language` stays sticky once set; a forced-alignment wildcard span (R.5) is
+always assigned to the PRECEDING segment — Model P outranks R.5, forced alignment may never emit
+a real gap in `project.segments` (ruling R-E); `preserveSegmentLocks` stays at its current
+post-`autoMatchSegments` call site and must not move into `applyAnchorBasedTiming` (ruling R-J,
+§5 K13 design notes); Part F's stated non-goals apply (`sync-pipeline-v2-plan.md` Part F) — no
+merging duration floors, no retuning the 250ms/1% thresholds, no touching the Hirschberg
+alignment pass, no resolving R5/N4 here; `-nfa`/flash-attention stays un-adopted until after this
+task ships (§13, ruling R-I) — a different, already-decided axis, don't conflate it with the
+FA-vs-DTW decision this task executes on.
 
 ---
 
@@ -342,11 +367,13 @@ Explicitly parked, not forgotten. Recorded here so the next reader doesn't have 
 
 - **Stage 1 blockers (d) and (e)** — Contract IN/1→2 guarantee-by-guarantee verification and the cross-cutting regression checklist (§3). Procedural; deferred until Phase 3 (and 3c) actually ship, so they're run once against the landed state instead of twice.
 - **Stage 1 blocker (b), French/Portuguese/German corpus absence** (§3) — no fr/de/pt corpus project exists. Already accepted in writing, per H.8's dormant-rules allowance: those languages' rules ship dormant behind their language keys and are verified when corpus material arrives.
+- **Phase 3d, adaptive (noise-floor) silence thresholds** (§2, §12) — SKIPPED, not merely deferred: Phase 2b's own measurement found the fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; the failure is entirely token-side). Has a real reopening trigger, not indefinite parking: reopens only if Phase 3's post-FA measurement shows a silence-side cost.
 - **`boundaryUsedFallback` 4-arg bug** (§4 Step Z risks; `snapBoundaries.ts` — defaults the seam exemption off in every boundary-quality reading) — scheduled for Phase 7, may self-resolve at Phase 6 if that phase deletes the seam exemption first.
 - **C10 structural check, 0/4 ear-verified recall** (§9) — accepted as CI-OUT regardless of predicate tuning; a quieter false-positive rate isn't the same as a working check.
 - **No automated test CI** (§9) — all four project gates (`lint`, `npm test`, golden replay, `cargo check`) are run by hand; accepted, no CI pipeline planned.
 - **3rd word-shift case**, `seasons than you‖can count and` (§9) — a script-vs-narration authority conflict, structurally unfixable by any timing-source change; accepted.
 - **Phase 4 design call: architect "Place" gapless-aware from the start, or retrofit later** (§7 item 9) — deferred to Stage 1 lock time, when the call actually has to be made. Noted here that deciding it now is cheaper than retrofitting after Phase 4 lands.
 - **22 blank `boundary-quality-flag` verification rows** (§8 R-A, §9) — deferred, non-blocking, by owner ruling R-A, 2026-08-11. WS1 does not pause for an ear-listening pass to fill them in.
-- **`-nfa` (disables flash attention) is not adopted**, despite Phase 2b finding it recovers a real content dropout (V6 segments 27-29, `sync-pipeline-v2-plan.md:511-515`) — costs roughly 25-33% wall-clock, and adopting it would need its own verification pass (a fresh transcript era per K9, plus a re-listen). Recorded as a finding only, no code changed; left for a future phase to weigh deliberately.
+- **`-nfa` (disables flash attention) is not adopted**, despite Phase 2b finding it recovers a real content dropout (V6 segments 27-29, `sync-pipeline-v2-plan.md:511-515`) — costs roughly 25-33% wall-clock, and adopting it would need its own verification pass (a fresh transcript era per K9, plus a re-listen). Recorded as a finding only, no code changed; deferred until after Task 5 ships, not left open-ended (ruling R-I, `project-state.md` §5) — independent by design, entangled with Task 5 at the measurement-baseline level.
+- **ONNX-export step for the five jonatasgrosman models is scoped nowhere.** No task and no design-doc section covers converting/exporting the per-language PyTorch checkpoints to ONNX for the native, bundled-in-binary runtime the owner confirmed (2026-08-11) over an out-of-process alignment tool. This is an unscoped INPUT to that runtime decision, not a parked item — Task 5's own scoping pass (NEXT UP block) needs to size it.
 - **`scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py`'s C11 narrative text** still describes the pre-fix defect-trap framing ("C11 must keep failing until K13 is fixed") even though the underlying repro test it reads (`scripts/phase4-step-w-k13-repro.test.ts`) flipped on 2026-08-11 to prove the fix holds. The filename and artifact key shape were kept unchanged deliberately so these two scripts don't KeyError (see that test file's own header). Updating their prose to match is separate, deferred work — not done as part of the K13 close-out.
