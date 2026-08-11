@@ -8639,3 +8639,85 @@ Task 5 — Rust integration for forced alignment), `docs/ws1-sync-pipeline/sync-
 `docs/sync-pipeline-contract-plan.md` repointed to this file's own archived copy — see "Sync
 Pipeline Contract Plan — Working Document" above). `wip/preserve-2026-08-07` remains recorded as
 fully rescued and safe to delete (owner action, not performed here).
+
+## Project-state restructure — deferred items relocated to wip.md, Polish list added, Next Action rolled (2026-08-11)
+
+Documentation-only reorganization of `project-state.md` and `docs/work-in-progress.md`, done after
+K13's close-out (`4232f8a`). No source code touched; all four gates (`npm run lint`, `npm test`,
+the golden replay, `cargo check`) read identical before and after.
+
+**Adaptive per-voice silence thresholds — verdict RESOLVED, not open.** The line had sat in
+`project-state.md`'s Deferred and Known-Broken section since early WS1 as if unscheduled and
+forgotten. Evidence says otherwise: Phase 3d (adaptive/noise-floor silence thresholds) was
+investigated and explicitly **SKIPPED** on 2026-08-05, per Phase 2b's own measurement that the
+fixed −45dB threshold is not the binding constraint — the ground-truth pauses it finds are real
+(verified against the waveform), and the failure is entirely token-side, not silence-side
+(`docs/history.md:4265`, `docs/ws1-sync-pipeline/ws1-master-roadmap.md:118,325`,
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md:553`). Live code confirms no adaptive/noise-floor
+logic exists anywhere (`grep`-clean for `noiseFloor`/`adaptive`/`dBFS`/`rms`); `silenceDetector.ts`
+still hardcodes `thresholdDb ?? -45`, and every call site (`App.tsx` ×2, `useWhisper.ts`) invokes
+it with no override — consistent with a deliberate skip, not an unbuilt feature. The skip carries
+its own reopening trigger (task 5/Phase 3's post-forced-alignment measurement showing a
+silence-side cost), which hasn't fired since task 5 hasn't run yet. The line is deleted from
+`project-state.md`; a CLOSED note citing this evidence now lives in `docs/work-in-progress.md`'s
+WS1 Deferred / Known Bugs block, so the reopening condition stays visible to whoever picks up
+task 5.
+
+**Move manifest.** Out of `project-state.md`'s old §4 "Deferred and Known-Broken": the entire
+"Known bugs, not yet fixed" block (`boundaryUsedFallback` 4-arg bug; stuck `resizingId`
+WONTFIX) and the 22-blank-`boundary-quality-flag`-rows item (owner ruling R-A) moved verbatim
+into a new "Deferred / Known Bugs" subsection inside `docs/work-in-progress.md`'s WS1 block. Three
+WS1-specific rulings — Heading-wildcard assignment (Option A), the Spanish forced-alignment gate
+closure, and K13/R-C (`model-p-editor-work` stays unmerged) — moved out of `project-state.md` §5
+"Rulings In Force" into a new "Rulings (WS1-specific)" subsection in that same WS1 block, on
+owner instruction: WS-specific rulings belong with the workstream, not the cross-cutting §5, which
+now holds only the four rulings that apply beyond any one workstream (Model P, last-segment
+right-edge lock, pointercancel discard, undo/redo design). The remaining five "Deferred polish"
+items (version snapshots, auto-captions, multi-user support, sync loading screen, export quality)
+moved into a new, owner-maintained "Deferred Planned Items → Polish Features" section in
+`project-state.md`, positioned directly before the existing SaaS/public-launch-readiness block
+(now its sibling subsection under the same §6). Item count: 9 before (2 known bugs + 7 deferred-
+polish lines, one of which was the adaptive-threshold line) → 9 after (4 in wip.md's WS1 block,
+including the new CLOSED note in place of the deleted line, + 5 in project-state.md's Polish
+Features) — no item lost in transit.
+
+**Rulings audit (§5).** All four rulings that stayed verified live against current code: Model P
+(`App.tsx`'s `handleToggleLock` still refuses a lock toggle that would break the partition),
+last-segment right-edge lock (`dragCascade.ts`'s `DRAG_CASCADE_OPTIONS.conserveTotalDuration`),
+pointercancel discard (`dragSession.ts`'s `wasCancelled` flag), undo/redo design
+(`history.ts`'s `MAX_HISTORY_STATES = 20`) — all classified (i) IN FORCE, correctly located, no
+wording changes needed; all cited anchors in `docs/history.md` resolve. The three relocated
+rulings were each re-verified current before the move (Heading-wildcard: `sync-pipeline-v2-plan.md`
+Steps Y-Z still present; Spanish gate: `spanish-gate-scoring.md` still on disk, Step U/T.7 refs
+valid; K13/R-C: task 8 in `work-in-progress.md` already carries the full fix record) — relocated
+for placement, not for correctness.
+
+**Next Action rolled to a fixed rolling-3** (owner-specified order): task 5 (Rust integration for
+forced alignment, Phase 3) → task 2 (Slice 2, 50/50 silence-split re-derivation) → task 3 (stale-
+anchor scroll degradation test). Position 1 matches `ws1-master-roadmap.md`'s own NEXT UP block,
+no conflict. All three unblocked. A maintenance rule (remove-and-append-one on completion) is
+recorded inline in `project-state.md` §4 so the list doesn't need re-deriving next time.
+
+**Consistency sweep.** One live cross-reference needed repointing:
+`docs/wkwebview-drag-checklist.md` (a standing, run-before-every-release manual procedure) named
+`project-state.md`'s "Deferred Known Bugs" for the stuck-`resizingId` WONTFIX — repointed to
+`docs/work-in-progress.md`'s new WS1 block. Several other repo hits on the same search strings
+(`docs/ws1-sync-pipeline/roadmap-2026-08-07.md`, multiple spots in `sync-pipeline-v2-plan.md`, and
+`context-report-2026-08-07.md`) are dated, point-in-time narrative describing past state as of
+their own date — left untouched, consistent with how this file's own append-only entries are
+never rewritten to match later reality.
+
+**Cross-check against `ws1-master-roadmap.md` §13 "Deferred, with reason."** `boundaryUsedFallback`
+and the 22-blank-rows item appear in both lists (§13 lines 345/350) and now agree on wording/
+citation. The adaptive-silence-threshold item does not appear in §13 at all (it lives only in §2's
+status table and §12's phase-status table) — a minor roadmap-internal inconsistency, noted but not
+fixed here (out of scope: this pass touches `project-state.md`/`work-in-progress.md` only, not the
+roadmap). Several §13 items (Stage 1 blockers (d)/(e)/(b), C10 check, no-CI, the 3rd word-shift
+case, the Phase 4 "Place" design call, `-nfa` not adopted, C11 narrative staleness) exist only in
+the roadmap, not duplicated into `work-in-progress.md`'s new Deferred/Known Bugs block — accepted,
+since they remain discoverable via that block's existing `docs/ws1-sync-pipeline/` pointer and
+duplicating the roadmap's own tracking list was not asked for.
+
+**Gates, unchanged:** `npm run lint` clean; `npm test` 72 files / 1803 passed / 1 skipped / 0
+failed; golden replay 3/3 byte-identical; `cargo check` clean — identical before and after this
+sweep, confirming no edit leaked into source.
