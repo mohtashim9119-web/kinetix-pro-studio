@@ -9141,3 +9141,51 @@ no `.gitignore` edit needed.
 (unchanged — header/comment-only edit, no test or source file touched); golden replay 6/6
 (unchanged, byte-identical); `cargo check` clean (unchanged — no `src-tauri/` edit in this
 commit).
+
+## Vocab-aware FA text normalizer (2026-08-12)
+
+Purpose: map script text to a per-language CTC character vocabulary for the five
+`jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,pt}` models WS1 will actually ship (R-Q,
+above) — groundwork for Phase 3b, not wired into Apply Sync, no caller yet.
+
+**Vocab fixtures committed.** Each model's `vocab.json` was already cached locally
+(`~/.cache/huggingface/hub/models--jonatasgrosman--wav2vec2-large-xlsr-53-*/snapshots/*/vocab.json`)
+from the earlier runtime spike (R-M). Extracted verbatim into
+`scripts/fixtures/fa-vocab-{en,es,fr,de,pt}.json` — `{ "_provenance": { "modelId", "source" },
+"vocab": { <token>: <index>, ... } }`, model id included for traceability. Sizes: en 613B, es
+725B, fr 976B, de 682B, pt 798B — all well under the 5 KB budget. Raw vocab entry counts (33 en /
+41 es / 59 fr / 38 de / 46 pt) match exactly what the FA-fixture-scope-correction commit
+(previous entry) had already cited from the task brief, confirming those numbers before this
+commit relied on them. `scripts/fixtures/README.md` gained a "Forced-alignment shipping-model
+vocabularies" section documenting the fixture family and its one reader (`faTextNormalize.test.ts`).
+
+**`src/services/faTextNormalize.ts`** — pure, synchronous, no I/O. `normalizeForForcedAlignment(input,
+languageCode, vocabChars)` splits a word or whitespace-separated phrase, and per word: NFC +
+lowercase, the German-only `ß` -> `ss` substitution (the vocab has no `ß`, spike G1), a digit
+check, then a per-character vocab-membership check — any failure marks the WHOLE word
+unrepresentable with a recorded reason (never a partially-stripped spelling; digit-run number
+expansion stays Phase 3b, out of scope). `vocabCharsFromRawVocab` derives the literal spellable
+character set from a fixture's raw `vocab` object by excluding wav2vec2's CTC bookkeeping tokens
+(`<pad>`/`<s>`/`</s>`/`<unk>`/`|`, the word-delimiter, not a printable pipe). Deliberately parallel
+to, not built on, `textNormalize.ts`'s `canonicalize` — the module header states why: `canonicalize`
+targets Whisper/Hirschberg alignment scoring the golden-baseline replay already locks in (ASCII-
+folds non-Latin letters to a space, step 10's `[^a-z0-9\s-]` pattern), while this module targets a
+downstream CTC model whose vocab **keeps** native diacritics — the opposite instinct. Neither
+`canonicalize` nor `textNormalize.ts` was imported from or modified by the module.
+
+**Tests (`faTextNormalize.test.ts`, 23 new)** load each language's committed vocab fixture rather
+than hand-copying subsets, so a future fixture regeneration can't silently drift from what the
+tests check. Coverage: a diacritic-bearing word (es "año", fr "élève", de "über", pt "ação")
+survives the FA normalizer intact, with an explicit paired assertion that the SAME word loses its
+diacritic under `canonicalize()` (imported into the test file only, for this one comparison —
+`canonicalize` itself untouched); German `ß`/`ẞ` -> `ss`; a bare digit and a digit-bearing word are
+both unrepresentable with a recorded reason, and a mixed phrase drops only the unrepresentable word
+without mangling the rest; every character either module emits, across all five languages, is
+asserted a real member of that language's committed vocab fixture; French's non-French vocab
+letters (ć č š ș) pass through accepted; empty/whitespace-only input produces no words; interior
+whitespace runs collapse to a single space; `vocabCharsFromRawVocab` excludes all five CTC special/
+delimiter tokens and produces the expected literal-character counts (28/36/54/33/41 = raw vocab
+size minus 5 special tokens, for en/es/fr/de/pt respectively).
+
+**Gates:** `npm run lint` clean; `npm test` 74 files / 1840 passed / 1 skipped / 0 failed (1817
+baseline + 23 new, exact); golden replay 6/6 unchanged; `cargo check` clean (no `src-tauri/` edit).

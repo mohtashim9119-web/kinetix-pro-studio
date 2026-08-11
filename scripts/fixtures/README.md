@@ -1,7 +1,8 @@
 # Test fixtures — sync pipeline research corpus
 
-These 28 files (22 CSVs, plus 3 CSV + 3 JSON pairs added for R-H — see
-"Forced-alignment fixture" below) are **inputs read by hardcoded path**, not
+These 33 files (22 CSVs, 3 CSV + 3 JSON pairs added for R-H — see
+"Forced-alignment fixture" below — plus 5 JSON vocab fixtures, see
+"Forced-alignment shipping-model vocabularies") are **inputs read by hardcoded path**, not
 documentation: by `scripts/phase4-handoff-replay-sync.test.ts` (the
 golden-replay test — see `CLAUDE.md`'s Testing invariant), `scripts/phase4-step-w-k13-repro.test.ts`,
 and by name inside `scripts/phase4-restore-replay-inputs.py`,
@@ -48,6 +49,21 @@ files' own headers, not just here.
 |---|---|
 | `phase4-fa-tokens-{v6,173,spanish}.json` | Raw per-word MMS-FA capture (`text`/`start`/`end`/`score`/`seg`), plus `_caveat` and `_provenance` (model, torch/torchaudio versions, pad-sec, language, elapsed/RSS, failed/dropped words). |
 | `phase4-fa-baseline-{v6,173,spanish}-words.csv` | The same per-word data as a diffable table, with the caveat and provenance as leading `#`-comment lines (stripped by the test's own `loadFaBaselineCsv`, not `parseCsv`/`loadBaselineCsv` — the existing Whisper-baseline loader is untouched). |
+
+## Forced-alignment shipping-model vocabularies
+
+The CTC vocabularies of the five `jonatasgrosman/wav2vec2-large-xlsr-53-*`
+models WS1 will actually ship (R-Q, `project-state.md` §5) — not the barred
+MMS-FA bundle above. Extracted once from each model's cached `vocab.json`,
+2026-08-12; unchanged since. Read by `src/services/faTextNormalize.test.ts`
+(hardcoded path, one fixture per language) to assert every character the
+normalizer emits is a real vocab member — `faTextNormalize.ts` itself does
+not read these files at runtime, per its own module header (the vocab is
+imported/passed in, not read from disk in production code).
+
+| File pattern | Purpose |
+|---|---|
+| `fa-vocab-{en,es,fr,de,pt}.json` | `{ "_provenance": { "modelId", "source" }, "vocab": { <token>: <index>, ... } }` — the model's own vocab.json contents verbatim (special tokens `<pad>`/`<s>`/`</s>`/`<unk>` and the `\|` word-delimiter token included; the normalizer's caller distinguishes literal characters from those). |
 
 ## Forced-alignment ground truth
 
