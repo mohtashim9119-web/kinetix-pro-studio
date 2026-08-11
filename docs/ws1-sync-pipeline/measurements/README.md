@@ -45,6 +45,7 @@ exports) see `scripts/fixtures/README.md` instead — those live in
 | `phase4-step-q-spanish-manifest.csv` | Phase 4, Step Q | 2026-08-06 | Public manifest for the Spanish blinded-clip batch. Write-only output of `scripts/phase4-step-q-spanish-clips.py`; no other script reads it back. |
 | `phase4-step-s-check-results.csv` | Phase 4, Step S | 2026-08-06 | Structural-check results (V6/173/Spanish baselines). Write-only output of `scripts/phase4-step-s-structural-checks.py`; no other script reads it back. |
 | `phase4-step-u-spanish-scored.csv` | Phase 4, Step U | 2026-08-06 | Scored results for the Spanish blinded batch. Write-only output of `scripts/phase4-step-u-score-spanish.py`; no other script reads it back. |
+| `runtime-spike-2026-08-11.md` | Runtime spike (Task 5 pre-work) | 2026-08-11 | FA native-runtime feasibility spike: 5-language wav2vec2 load/inference (G1), uroman-vs-naive disagreement (G2), `ort`/onnxruntime version-deadlock evidence (G4), ONNX export fidelity (G5). Text/numbers only — rescued from gitignored `.work-phase4/spike-runtime/`; the spike code itself was not preserved. Feeds rulings R-M/R-N. |
 
 ## Rescued data
 

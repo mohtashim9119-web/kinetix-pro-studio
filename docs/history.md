@@ -8894,3 +8894,90 @@ to change" Step T bullet gets one added clause tying R-D to R-K. No `src/` or `s
 **Gates, identical before/after:** `npm run lint` clean; `npm test` 72 files / 1803 passed / 1
 skipped / 0 failed; golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3
 byte-identical; `cargo check` clean.
+
+## Runtime spike rescued; R-M (ort runtime) and R-N (packaging deferred) recorded (2026-08-11)
+
+The FA native-runtime feasibility spike run out of the gitignored
+`.work-phase4/spike-runtime/` scratch directory is complete; its text/numeric findings are
+rescued into `docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md` before that
+scratch directory (and its ~6.7 GB of models/venv/onnxruntime binaries) is pruned. The spike
+code itself — the Python check scripts, the `ort-spike` Rust crate, the downloaded
+onnxruntime tarball, the model weights, the venv — was throwaway and is explicitly **not**
+preserved; only measurement output survives, all under the 1 MB/file, 5 MB/total caps this
+rescue pass was bound by.
+
+**What was rescued, by finding:**
+- **G1** — all five jonatasgrosman `wav2vec2-large-xlsr-53` per-language models load, their
+  CTC head matches their vocab, and each decodes real audio correctly (native diacritics
+  render correctly even off non-native audio, e.g. Portuguese "ã"/"lh" decoded from a Spanish
+  clip). Peak RSS 2.57 GiB (es/fr/de/pt) / 3.22 GiB (en, includes model-load overhead
+  variance), ~49.7-49.8 fps uniformly (confirms the 50fps/20ms-frame architecture assumption
+  used elsewhere in the plan). Full vocab symbol sets and on-disk byte counts captured.
+- **G1 side finding** — `textNormalize.ts`'s `canonicalize()` step 10 strips es 8/34, fr
+  26/52, de 5/31, pt 13/39 native vocab letters (full letter lists in the rescued file).
+- **G2** — uroman-vs-naive-lowercase disagreement, 300 real Common Voice sentences/language:
+  en 0.00%, es 7.02%, fr 14.08%, de 7.00%, pt 15.39%. Confirms uroman is unnecessary (harmful)
+  for the jonatasgrosman path — every disagreement is uroman discarding a diacritic the
+  model's vocab already contains natively.
+- **G4** — the `ort` crate's default (auto-download prebuilt) path cannot build for
+  `x86_64-apple-darwin` at all (no such xcframework target); the load-dynamic workaround
+  builds but hits a real, three-ways-confirmed version deadlock — `ort` 2.0.0-rc.13 requires
+  onnxruntime ≥1.27, and no onnxruntime distribution (GitHub releases or PyPI wheels) exists
+  for macOS x86_64 at any version ≥1.24. Binary size figures captured for both the Rust
+  wrapper (~700 KB) and the separate onnxruntime dylib it would `dlopen` (~35.7 MiB,
+  v1.22.0).
+- **G5** — the ONNX export of the English model is fidelity-viable: max_abs_diff 0.000269,
+  p95_abs_diff 0.0000635, argmax path identical to the torch reference (0/49 frame
+  mismatches) via Python's onnxruntime (which still works on Intel Mac — only the Rust
+  crate's version gate blocks the Rust binding path itself).
+
+**Two new rulings, `project-state.md` §5, continuing the R-D...R-L Task-5 sequence:**
+
+- **R-M — `ort` is the forced-alignment runtime; `candle` is rejected.** No wav2vec2/CTC
+  implementation exists anywhere in `candle-transformers` (G3, a prior-session read, not
+  re-verified by this spike — confirmed again via the same repo-tree search this spike's G4
+  work built on). Hand-writing the forward pass in `candle` is out of scope. Accepted cost: a
+  from-source onnxruntime build for `x86_64-apple-darwin` in CI, the same category of work as
+  the existing whisper-cli from-source pattern already in this project's build workflow.
+- **R-N — R-L's packaging reading is DEFERRED, not decided.** R-L requires forced alignment to
+  run in-process, compiled into the binary; for the `ort` crate specifically that admits two
+  readings — static-link (single fat binary, no extra files) or default/load-dynamic
+  (in-process via `dlopen`, but ships a separate onnxruntime dylib alongside the app binary).
+  Both readings satisfy R-L's in-process requirement, and R-K (no release build until WS1
+  completes) means nothing forces this choice today — load-dynamic already compiles, which is
+  enough to keep Task 5 unblocked. Recorded as a blocker on Step T's own design and on any
+  release build, not left implicitly open.
+
+**Roadmap fold, seven items, each placed in the section its assumption already lives in
+rather than piled into §13:**
+1. `canonicalize()`'s ASCII-only stripping (G1 finding above) — Phase 3b
+   (`sync-pipeline-v2-plan.md`, language-keyed normalization), as a named Task 5 prerequisite.
+2. uroman confirmed unnecessary (G2) — folded into H.3's own hedge, which it quantifies for
+   the first time.
+3. The ONNX-export §13 bullet (`ws1-master-roadmap.md`) — rewritten in place: the export
+   itself is now proven viable (G4/G5); what remains unscoped changed from "the export step"
+   to "native-library provisioning for macOS x86_64," and the bullet now cites R-M.
+4. R.4's lattice-size figure — corrected in place from 675k cells (T×L) to ~1.35M (T×S,
+   S=2L+1); feasibility verdict unchanged, this is a precision correction only, sourced from
+   this spike's own G6 reading (carried over from a prior session, re-cited here since G4's
+   Viterbi-lattice discussion sits next to it).
+5. German vocab has no `ß` — added to Phase 3b as a per-language normalization risk.
+6. French vocab contains non-French letters (ć č ō œ š ș) — added to Phase 3b as a
+   footnote-only training-data-hygiene observation, no rule implication.
+7. R-N's deferred packaging reading — added to Step T (`sync-pipeline-v2-plan.md`) as an
+   explicit blocker on that step's own design.
+
+**1.4 verification — is `canonicalize()`'s ASCII stripping a live defect today, or only a
+Task 5 prerequisite?** Checked whether it's applied symmetrically to both script text and
+transcript tokens in the Hirschberg matching path. It is: `whisperService.ts`'s `normalize()`
+(the transcript-token side, called at line 801 on each Whisper token's text) and
+`normalizeSceneDoc()` (the scene-doc/script side, called at line 818 on each segment's text)
+both route through the same `canonicalizeForAlignment` → `canonicalize` pipeline
+(`whisperService.ts:59-61,72-74,89-92`; the ASCII-strip itself is `textNormalize.ts:247`). A
+native word like "café" collapses to "caf" identically on both sides of the match, so today's
+matching is unaffected — this is a Task 5 prerequisite (forced alignment needs the real
+diacritic to match the model's own vocab), not a live matching bug.
+
+**Gates, identical before/after this pass (docs-only, no `src/`/`src-tauri/` change):**
+`npm run lint` clean; `npm test` 72 files / 1803 passed / 1 skipped / 0 failed; golden replay
+3/3 byte-identical; `cargo check` clean.

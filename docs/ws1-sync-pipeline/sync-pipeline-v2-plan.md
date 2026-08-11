@@ -1418,7 +1418,10 @@ That is the property today's design lacks and the reason it cascades.
 **R.4 — Run length bounds.** `MAX_RUN_SEC = 30`. wav2vec2-class encoders are
 O(n²) in attention, and 30s is the standard chunk length for this model family;
 at 50 frames/sec that is 1500 emission frames against ≈450 target symbols for
-30s of narration, a 675k-cell Viterbi lattice — trivial to hold. If no admissible
+30s of narration — **corrected 2026-08-11 (runtime spike, G6 read of torchaudio's
+`forced_align`): the real DP table is T×S with expanded sequence S=2L+1≈901 for
+L=450, i.e. ≈1.35M cells, not 675k (T×L) — feasibility verdict unchanged, both
+figures are trivial to hold.** If no admissible
 anchor exists within `MAX_RUN_SEC`, the run is **force-split at the best
 available candidate and the split is marked LOW-CONFIDENCE** (R.6), rather than
 growing unbounded or silently accepting a weak anchor. A run of one segment is
@@ -1713,6 +1716,16 @@ Decision 3 fixes the model set: `jonatasgrosman/wav2vec2-large-xlsr-53-{english,
 spanish,french,german,portuguese}` (Apache-2.0), one ~1.26GB model per language,
 plus the existing Whisper turbo model. Decision 3 also bars MMS-FA permanently
 — not "until a swap is convenient," but never, including temporarily.
+
+**Blocker, recorded 2026-08-11 (ruling R-N, `project-state.md` §5):** R-L's
+"compiled into the binary" has two readings for the `ort` crate specifically —
+static-link (single fat binary, R-L's strictest reading) vs. default/
+load-dynamic (still in-process, satisfies R-L's requirement, but ships a
+separate onnxruntime `.dylib`/`.so`/`.dll` alongside the binary, `dlopen`'d
+rather than spawned). This reading is DEFERRED, not decided — R-K means no
+release build is being cut yet — but it must be resolved before Step T's own
+design can be finalized, and before any release build. See the runtime-spike
+measurement file (G4) for the packaging-size numbers behind each reading.
 
 **T.0 — The size problem, stated first because it drives everything.**
 
@@ -3723,6 +3736,24 @@ pointer capture instead of `onMouseDown`; waveform-lane sub-cell gains
 The main multilingual work item — full specification in H.5 (per-language number words and reading rules, currency equivalents, the inverted thousands separators, French elision vs. English contraction expansion; every rule additive and language-keyed).
 GATE: the English path must be provably byte-identical to today’s, verified against the frozen English baseline — so this phase does NOT shift English indices. Non-English rule verification requires the non-English corpus (K3); if only one non-English project exists by this point, the others’ rules land dormant behind their language keys and are verified when corpus material arrives — recorded as an explicit written acceptance at the Stage 1 lock.
 
+**Task 5 prerequisite, found 2026-08-11 (runtime spike, G1):** `textNormalize.ts`'s
+`canonicalize()` step 10 (`[^a-z0-9\s-]` → space) is ASCII-only and silently
+destroys native vocab letters for all four non-English supported languages —
+es 8/34, fr 26/52, de 5/31, pt 13/39 letters (full sets in the runtime-spike
+measurement file). Applied symmetrically to both the scene-doc and transcript
+sides today (`whisperService.ts`'s `normalize`/`normalizeSceneDoc`, both routed
+through `canonicalize`), so it is not a live matching bug — but it is a
+blocking prerequisite once forced alignment needs the native diacritic in a
+script word to match the model's own vocab. Sized small; scope this into
+Phase 3b's own rule set rather than as a separate Task 5 change.
+
+**Per-language normalization risk, found 2026-08-11 (runtime spike, G1):**
+German's vocab has no `ß` at all (confirmed via both `vocab.json` and live
+decode) — any Phase 3b German rule must not assume `ß` survives normalization.
+French's vocab additionally contains non-French letters (ć č ō œ š ș) — a
+training-data hygiene oddity in the upstream model, footnote-only, no rule
+implication.
+
 ### Phase 3c — Hyphen asymmetry (moved from old Phase 8 — see K1)
 textNormalize.ts glues mid-call into one alignment word while Whisper emits two tokens, so neither matches and the segment’s end is understated. Six occurrences on V6, timing impact on one. This rewrites the alignment corpus on both sides and interacts with the deliberate NUMBER_WORDS carve-out, so it’s its own commit with its own re-listen of the set. It shifts English token/word indices — the last index-shifting event of Stage 1, after which baselines are stable for the rest of the programme (K9).
 
@@ -3944,6 +3975,15 @@ H.3 Forced alignment, if Phase 2b triggers it
   (language → model, vocab, decode strategy), not (language → romanization
   strategy) alone.** MMS-FA is one point in that space; nothing else about
   this section's guidance changes. Full record: Phase 3's own entry (Part D).
+
+  **Confirmed 2026-08-11 (runtime spike, G2):** uroman is empirically unnecessary
+  — actively harmful if applied — for the jonatasgrosman per-language path.
+  300 real Common Voice sentences/language measured uroman-vs-naive-lowercase
+  disagreement: en 0.00%, es 7.02%, fr 14.08%, de 7.00%, pt 15.39%. Every
+  disagreement is uroman stripping a diacritic the model's own vocab natively
+  contains (é→e, ñ-pattern, ç→c, ü→ue, etc.). Quantifies what this section's
+  own hedge already suspected but never measured; full data in
+  `docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md`.
 
 H.4 NO segmentation-strategy interface — plus the guard that replaces it
   All five supported languages are whitespace-delimited, so the whitespace
