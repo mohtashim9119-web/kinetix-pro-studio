@@ -3,6 +3,11 @@
 # R.4 (sync-pipeline-v2-plan.md) specifies PAD_BASE 0.75s for production. The audit that led to R.4 traced the midpoint-clamp windowing strategy used here to five documented failures on gapless corpora (docs/history.md) — this baseline's windowing is NOT what production should do.
 # Therefore: this is a FIDELITY reference for the future Rust MMS-FA/Viterbi port to reproduce MMS-FA's own achievable output on this input, NOT a behavioral target for what Apply Sync should commit. Do not wire this baseline's numbers into a production-timing comparison.
 # This baseline captures the FIRST run of the FA harness against these three projects' committed segments — there is nothing to diff it against yet; this run establishes the reference.
+# SCOPE CORRECTION: generated with MMS-FA (torchaudio's MMS_FA bundle), a 27-letter + apostrophe romanized alphabet.
+# MMS-FA is BARRED from shipping in this project by Decision 3, on licence grounds (CC-BY-NC-4.0, non-commercial).
+# Production ships jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,pt}, with per-language CTC vocabs of 33 (en) / 41 (es) / 59 (fr) / 38 (de) / 46 (pt) symbols — none of them MMS-FA's alphabet.
+# Therefore this fixture IS a valid reference for the Viterbi DP and the windowing math, which are model-independent.
+# It is NOT a reference for text normalization, vocab coverage, or which words get dropped. Spanish's dropped "12" reflects MMS-FA's alphabet, not necessarily jonatasgrosman's.
 # provenance: model=torchaudio MMS_FA (mling_uroman, with_star=True); torch=2.2.2; torchaudio=2.2.2; pad_sec=3.0; language=es
 # harness run: elapsed_sec=19.793; peak_rss_bytes=3521798144; token_count=247; segment_count=26; failed_segments=[]; dropped_unrepresentable=[{"seg": 3, "words": ["12"]}]
 seg,text,startSec,endSec,score

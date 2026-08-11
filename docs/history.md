@@ -9091,3 +9091,53 @@ this change (confirmed byte-identical, still 3/3).
 tests); golden replay 6/6 (3 original, byte-identical to Step M, + 3 new R-H tests);
 `cargo check` clean. Commits `5f4f0da` (index-space fix) and the R-H fixture commit that
 follows this entry.
+
+## FA fixture scope correction — MMS-FA barred, fixtures rescoped to Viterbi fidelity only (2026-08-12)
+
+The FA golden-replay fixtures committed at `42bd708` (previous entry) were generated with
+torchaudio's `MMS_FA` bundle, confirmed by re-reading `measure-forced-alignment.py` rather than
+trusted from memory: `build_aligner` loads `torchaudio.pipelines.MMS_FA`
+(`scripts/measure-forced-alignment.py:108`), and `normalize_word`'s own docstring names the
+alphabet it exposes as "MMS_FA's 27-letter+apostrophe alphabet"
+(`scripts/measure-forced-alignment.py:118-120`). Decision 3 (`docs/history.md`, WS1) bars MMS-FA
+from shipping permanently on licence grounds (CC-BY-NC-4.0, non-commercial) — production instead
+ships five separate `jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,pt}` models (Apache-2.0),
+each with its own CTC vocabulary, none of them MMS-FA's alphabet. The fixtures' existing caveat
+(fidelity-vs-production, pad-sec/windowing) did not say this, and without it a reader could
+mistake the fixtures' word-drop behavior (e.g. Spanish's dropped bare-digit token "12") for a
+statement about what the real shipping models will do, rather than an artifact of MMS-FA's own
+27-letter alphabet having no digit representation.
+
+Amended, not replaced, all six fixture headers: three `_caveat` JSON arrays
+(`phase4-fa-tokens-{173,spanish,v6}.json`, 5 new array entries appended after the existing 5) and
+three CSV comment blocks (`phase4-fa-baseline-{173,spanish,v6}-words.csv`, 5 new `#`-prefixed
+lines inserted after the existing 5, before the `# provenance:` line) — same five-line addition to
+all six files: names MMS-FA and its 27-letter+apostrophe alphabet explicitly, cites Decision 3's
+licence bar, names the five jonatasgrosman models with their per-language vocab sizes, and states
+the resulting scope split plainly — valid reference for the Viterbi DP and windowing math (both
+model-independent), not a reference for text normalization, vocab coverage, or which words a real
+model would drop. `scripts/phase4-handoff-replay-sync.test.ts:401-402` asserts substrings from
+the *original* five caveat lines (`'NOT a production behavioral target'`,
+`'nothing to diff it against yet'`) — appending rather than editing those lines was required to
+keep that assertion passing, confirmed by re-running the suite after the edit. The three CSV
+comment blocks are not read by any test — `loadFaBaselineCsv` (`phase4-handoff-replay-sync.test.ts:385-390`)
+filters every line starting with `#` before parsing, so their caveat text is documentation-only,
+unlike the JSON `_caveat` array which the replay actively asserts against.
+
+Two rulings recorded (`project-state.md` §5, detail in `docs/ws1-sync-pipeline/ws1-master-roadmap.md`'s
+NEXT UP block): **R-Q** — the FA fixtures are MMS-FA-derived and scoped to Viterbi/windowing
+fidelity only; regenerating them against jonatasgrosman models is an obligation on the Task 5 FA
+wiring slice, not on the text normalizer that follows this entry. **R-H amended** — HALF
+SATISFIED: the input set and first baseline exist, but the second half of the original ruling (a
+real FA swap run and reviewed per-boundary against that baseline) cannot happen until Task 5
+wires a real per-language model; recorded as a hard precondition on that slice, with the explicit
+requirement that these MMS-FA baselines stay byte-identical once it lands (a from-model-swap diff
+must never be conflated with fixture drift).
+
+Confirmed `.venv-phase4-fa/` is already gitignored (`.gitignore:33`, added in the prior commit) —
+no `.gitignore` edit needed.
+
+**Gates:** `npm run lint` clean; `npm test` 73 files / 1817 passed / 1 skipped / 0 failed
+(unchanged — header/comment-only edit, no test or source file touched); golden replay 6/6
+(unchanged, byte-identical); `cargo check` clean (unchanged — no `src-tauri/` edit in this
+commit).

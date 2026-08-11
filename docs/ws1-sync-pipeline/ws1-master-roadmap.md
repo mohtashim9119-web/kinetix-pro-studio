@@ -82,6 +82,21 @@ file level; a scoping pass is part of this task, not skippable):**
 - fr/de/pt "unvalidated language" warning (Step T.7) ships in this same task/release per R-B.
 - All four project gates pass (below).
 
+**R-H status (amended 2026-08-12, ruling R-Q):** HALF SATISFIED. The FA input set and first
+baseline (`scripts/fixtures/phase4-fa-tokens-*.json` / `phase4-fa-baseline-*-words.csv`) landed
+in `42bd708`, generated with torchaudio's MMS-FA bundle (27-letter + apostrophe romanized
+alphabet) — the only forced-alignment tool available before Task 5's real model swap. MMS-FA is
+barred from shipping (Decision 3, above); these fixtures are therefore scoped narrowly to
+Viterbi-DP/windowing fidelity, which is model-independent, and are explicitly NOT a reference for
+text normalization, vocab coverage, or which words a real jonatasgrosman model would drop —
+fixture headers amended in place to say so (not replaced: the original pad-sec/midpoint caveat
+stays). The second half of R-H — "the FA swap itself is then run and reviewed per-boundary
+against that new baseline" — cannot happen until Task 5 wires a real per-language model, so it is
+recorded here as a hard precondition on that slice: when Task 5 lands, the replay must gain a
+real second pass against jonatasgrosman output, and these MMS-FA baselines must stay
+byte-identical (a from-model-swap diff would otherwise silently conflate "FA is now wired" with
+"the fixture drifted").
+
 **Gates, starting baseline (this commit):** `npm run lint` clean; `npm test` 72 files / 1803
 passed / 1 skipped / 0 failed; golden replay 3/3; `cargo check` clean. Task 5 will add new
 tests — 1803 is the floor to not regress below, not a ceiling to match exactly.
