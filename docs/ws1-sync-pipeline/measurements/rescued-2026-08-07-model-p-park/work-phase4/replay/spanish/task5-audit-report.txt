@@ -1,0 +1,31 @@
+=== TASK 5 AUDIT — spanish ===
+Total interior boundaries: 25
+Shifted vs. Step M baseline: 0
+Boundaries whose new value does NOT match the 50/50 prediction: 23
+
+-- Every shifted boundary (old, new, delta) --
+
+-- BUGS (new value does not equal the ruling formula) --
+  *** pair 0 (002_scylla_cliff_passage): new=6.050 predicted=5.895 diff=0.155000s ***
+  *** pair 2 (004_scylla_mouth_teeth): new=10.790 predicted=10.530 diff=0.260000s ***
+  *** pair 3 (005_scylla_twelve_legs): new=12.870 predicted=12.795 diff=0.075000s ***
+  *** pair 4 (006_attack_setup): new=14.700 predicted=13.990 diff=0.710000s ***
+  *** pair 5 (007_ship_approaching): new=17.270 predicted=16.960 diff=0.310000s ***
+  *** pair 6 (008_heads_moving): new=19.870 predicted=19.950 diff=-0.080000s ***
+  *** pair 7 (009_grabbing_sailors): new=23.010 predicted=23.845 diff=-0.835000s ***
+  *** pair 8 (010_six_sailors_lost): new=27.520 predicted=27.615 diff=-0.095000s ***
+  *** pair 9 (011_scylla_limits): new=32.200 predicted=31.925 diff=0.275000s ***
+  *** pair 10 (012_scylla_stays): new=34.210 predicted=33.710 diff=0.500000s ***
+  *** pair 12 (014_keep_moving): new=41.440 predicted=41.275 diff=0.165000s ***
+  *** pair 13 (015_odysseus_warning): new=44.900 predicted=44.420 diff=0.480000s ***
+  *** pair 14 (016_prepares_weapons): new=47.070 predicted=46.690 diff=0.380000s ***
+  *** pair 15 (017_useless_weapons): new=48.670 predicted=48.575 diff=0.095000s ***
+  *** pair 16 (018_scylla_attacks): new=53.060 predicted=53.300 diff=-0.240000s ***
+  *** pair 17 (019_no_stopping): new=55.830 predicted=56.015 diff=-0.185000s ***
+  *** pair 18 (020_the_passage_layout): new=58.690 predicted=58.285 diff=0.405000s ***
+  *** pair 19 (021_charybdis_whirlpool): new=61.190 predicted=60.745 diff=0.445000s ***
+  *** pair 20 (022_ship_trapped): new=65.120 predicted=64.960 diff=0.160000s ***
+  *** pair 21 (023_scylla_six_sailors): new=68.330 predicted=67.775 diff=0.555000s ***
+  *** pair 22 (024_whirlpool_ship_wreck): new=71.960 predicted=71.560 diff=0.400000s ***
+  *** pair 23 (025_odysseus_lesser_evil): new=77.410 predicted=78.210 diff=-0.800000s ***
+  *** pair 24 (026_messina_strait_map): new=83.950 predicted=83.440 diff=0.510000s ***

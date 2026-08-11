@@ -1,0 +1,2180 @@
+[
+  {
+    "idx": 0,
+    "text": "S",
+    "start": 0.12,
+    "end": 0.24
+  },
+  {
+    "idx": 1,
+    "text": "illa",
+    "start": 0.24,
+    "end": 0.64
+  },
+  {
+    "idx": 2,
+    "text": "S",
+    "start": 0.84,
+    "end": 0.92
+  },
+  {
+    "idx": 3,
+    "text": "illa",
+    "start": 0.92,
+    "end": 1.21
+  },
+  {
+    "idx": 4,
+    "text": "es",
+    "start": 1.21,
+    "end": 1.42
+  },
+  {
+    "idx": 5,
+    "text": "un",
+    "start": 1.42,
+    "end": 1.5
+  },
+  {
+    "idx": 6,
+    "text": "mon",
+    "start": 1.5,
+    "end": 1.7
+  },
+  {
+    "idx": 7,
+    "text": "stru",
+    "start": 1.7,
+    "end": 1.99
+  },
+  {
+    "idx": 8,
+    "text": "o",
+    "start": 1.99,
+    "end": 2.06
+  },
+  {
+    "idx": 9,
+    "text": "que",
+    "start": 2.06,
+    "end": 2.27
+  },
+  {
+    "idx": 10,
+    "text": "vive",
+    "start": 2.27,
+    "end": 2.6
+  },
+  {
+    "idx": 11,
+    "text": "dentro",
+    "start": 2.6,
+    "end": 2.99
+  },
+  {
+    "idx": 12,
+    "text": "de",
+    "start": 2.99,
+    "end": 3.13
+  },
+  {
+    "idx": 13,
+    "text": "un",
+    "start": 3.13,
+    "end": 3.34
+  },
+  {
+    "idx": 14,
+    "text": "ac",
+    "start": 3.34,
+    "end": 3.48
+  },
+  {
+    "idx": 15,
+    "text": "ant",
+    "start": 3.48,
+    "end": 3.7
+  },
+  {
+    "idx": 16,
+    "text": "il",
+    "start": 3.7,
+    "end": 3.84
+  },
+  {
+    "idx": 17,
+    "text": "ado",
+    "start": 3.84,
+    "end": 4.12
+  },
+  {
+    "idx": 18,
+    "text": "junto",
+    "start": 4.12,
+    "end": 4.43
+  },
+  {
+    "idx": 19,
+    "text": "a",
+    "start": 4.43,
+    "end": 4.5
+  },
+  {
+    "idx": 20,
+    "text": "un",
+    "start": 4.5,
+    "end": 4.68
+  },
+  {
+    "idx": 21,
+    "text": "estre",
+    "start": 4.68,
+    "end": 4.94
+  },
+  {
+    "idx": 22,
+    "text": "cho",
+    "start": 4.94,
+    "end": 5.09
+  },
+  {
+    "idx": 23,
+    "text": "paso",
+    "start": 5.09,
+    "end": 5.25
+  },
+  {
+    "idx": 24,
+    "text": "mar",
+    "start": 5.25,
+    "end": 5.37
+  },
+  {
+    "idx": 25,
+    "text": "\u00edt",
+    "start": 5.37,
+    "end": 5.49
+  },
+  {
+    "idx": 26,
+    "text": "imo",
+    "start": 5.49,
+    "end": 5.6
+  },
+  {
+    "idx": 27,
+    "text": "iene",
+    "start": 6.32,
+    "end": 6.35
+  },
+  {
+    "idx": 28,
+    "text": "6",
+    "start": 6.35,
+    "end": 6.42
+  },
+  {
+    "idx": 29,
+    "text": "c",
+    "start": 6.42,
+    "end": 6.56
+  },
+  {
+    "idx": 30,
+    "text": "uell",
+    "start": 6.56,
+    "end": 6.72
+  },
+  {
+    "idx": 31,
+    "text": "os",
+    "start": 6.72,
+    "end": 6.86
+  },
+  {
+    "idx": 32,
+    "text": "larg",
+    "start": 6.86,
+    "end": 7.16
+  },
+  {
+    "idx": 33,
+    "text": "os",
+    "start": 7.16,
+    "end": 7.32
+  },
+  {
+    "idx": 34,
+    "text": "6",
+    "start": 7.55,
+    "end": 7.74
+  },
+  {
+    "idx": 35,
+    "text": "cab",
+    "start": 7.74,
+    "end": 7.91
+  },
+  {
+    "idx": 36,
+    "text": "ez",
+    "start": 7.91,
+    "end": 8.06
+  },
+  {
+    "idx": 37,
+    "text": "as",
+    "start": 8.06,
+    "end": 8.24
+  },
+  {
+    "idx": 38,
+    "text": "3",
+    "start": 8.37,
+    "end": 8.58
+  },
+  {
+    "idx": 39,
+    "text": "h",
+    "start": 8.58,
+    "end": 8.65
+  },
+  {
+    "idx": 40,
+    "text": "iler",
+    "start": 8.65,
+    "end": 8.95
+  },
+  {
+    "idx": 41,
+    "text": "as",
+    "start": 8.95,
+    "end": 9.1
+  },
+  {
+    "idx": 42,
+    "text": "de",
+    "start": 9.1,
+    "end": 9.25
+  },
+  {
+    "idx": 43,
+    "text": "di",
+    "start": 9.25,
+    "end": 9.4
+  },
+  {
+    "idx": 44,
+    "text": "entes",
+    "start": 9.4,
+    "end": 9.78
+  },
+  {
+    "idx": 45,
+    "text": "en",
+    "start": 9.78,
+    "end": 9.93
+  },
+  {
+    "idx": 46,
+    "text": "cada",
+    "start": 9.93,
+    "end": 10.23
+  },
+  {
+    "idx": 47,
+    "text": "boca",
+    "start": 10.23,
+    "end": 10.53
+  },
+  {
+    "idx": 48,
+    "text": "y",
+    "start": 10.53,
+    "end": 10.63
+  },
+  {
+    "idx": 49,
+    "text": "12",
+    "start": 10.63,
+    "end": 11.13
+  },
+  {
+    "idx": 50,
+    "text": "pat",
+    "start": 11.13,
+    "end": 11.27
+  },
+  {
+    "idx": 51,
+    "text": "as",
+    "start": 11.27,
+    "end": 11.42
+  },
+  {
+    "idx": 52,
+    "text": "deb",
+    "start": 11.42,
+    "end": 11.64
+  },
+  {
+    "idx": 53,
+    "text": "ajo",
+    "start": 11.64,
+    "end": 11.88
+  },
+  {
+    "idx": 54,
+    "text": "de",
+    "start": 11.88,
+    "end": 12.3
+  },
+  {
+    "idx": 55,
+    "text": "cuerpo",
+    "start": 12.3,
+    "end": 12.7
+  },
+  {
+    "idx": 56,
+    "text": "Su",
+    "start": 12.89,
+    "end": 13.01
+  },
+  {
+    "idx": 57,
+    "text": "ataque",
+    "start": 13.01,
+    "end": 13.41
+  },
+  {
+    "idx": 58,
+    "text": "es",
+    "start": 13.41,
+    "end": 13.72
+  },
+  {
+    "idx": 59,
+    "text": "sencill",
+    "start": 13.72,
+    "end": 14.01
+  },
+  {
+    "idx": 60,
+    "text": "o",
+    "start": 14.01,
+    "end": 14.07
+  },
+  {
+    "idx": 61,
+    "text": "Cuando",
+    "start": 14.26,
+    "end": 14.66
+  },
+  {
+    "idx": 62,
+    "text": "un",
+    "start": 14.66,
+    "end": 14.79
+  },
+  {
+    "idx": 63,
+    "text": "bar",
+    "start": 14.79,
+    "end": 14.99
+  },
+  {
+    "idx": 64,
+    "text": "co",
+    "start": 14.99,
+    "end": 15.12
+  },
+  {
+    "idx": 65,
+    "text": "pasa",
+    "start": 15.12,
+    "end": 15.38
+  },
+  {
+    "idx": 66,
+    "text": "lo",
+    "start": 15.38,
+    "end": 15.51
+  },
+  {
+    "idx": 67,
+    "text": "su",
+    "start": 15.51,
+    "end": 15.64
+  },
+  {
+    "idx": 68,
+    "text": "fic",
+    "start": 15.64,
+    "end": 15.83
+  },
+  {
+    "idx": 69,
+    "text": "ient",
+    "start": 15.83,
+    "end": 16.09
+  },
+  {
+    "idx": 70,
+    "text": "emente",
+    "start": 16.09,
+    "end": 16.48
+  },
+  {
+    "idx": 71,
+    "text": "cerca",
+    "start": 16.48,
+    "end": 16.81
+  },
+  {
+    "idx": 72,
+    "text": "las",
+    "start": 17.11,
+    "end": 17.31
+  },
+  {
+    "idx": 73,
+    "text": "6",
+    "start": 17.31,
+    "end": 17.58
+  },
+  {
+    "idx": 74,
+    "text": "cab",
+    "start": 17.58,
+    "end": 17.87
+  },
+  {
+    "idx": 75,
+    "text": "ez",
+    "start": 17.87,
+    "end": 18.03
+  },
+  {
+    "idx": 76,
+    "text": "as",
+    "start": 18.03,
+    "end": 18.27
+  },
+  {
+    "idx": 77,
+    "text": "se",
+    "start": 18.27,
+    "end": 18.46
+  },
+  {
+    "idx": 78,
+    "text": "mue",
+    "start": 18.46,
+    "end": 18.7
+  },
+  {
+    "idx": 79,
+    "text": "ven",
+    "start": 18.7,
+    "end": 18.88
+  },
+  {
+    "idx": 80,
+    "text": "al",
+    "start": 18.88,
+    "end": 19.01
+  },
+  {
+    "idx": 81,
+    "text": "mismo",
+    "start": 19.01,
+    "end": 19.37
+  },
+  {
+    "idx": 82,
+    "text": "tiempo",
+    "start": 19.37,
+    "end": 19.88
+  },
+  {
+    "idx": 83,
+    "text": "Cada",
+    "start": 20.02,
+    "end": 20.38
+  },
+  {
+    "idx": 84,
+    "text": "cabeza",
+    "start": 20.38,
+    "end": 20.73
+  },
+  {
+    "idx": 85,
+    "text": "at",
+    "start": 20.73,
+    "end": 20.89
+  },
+  {
+    "idx": 86,
+    "text": "rap",
+    "start": 20.89,
+    "end": 21.08
+  },
+  {
+    "idx": 87,
+    "text": "a",
+    "start": 21.08,
+    "end": 21.15
+  },
+  {
+    "idx": 88,
+    "text": "a",
+    "start": 21.15,
+    "end": 21.22
+  },
+  {
+    "idx": 89,
+    "text": "un",
+    "start": 21.22,
+    "end": 21.36
+  },
+  {
+    "idx": 90,
+    "text": "marin",
+    "start": 21.36,
+    "end": 21.72
+  },
+  {
+    "idx": 91,
+    "text": "ero",
+    "start": 21.72,
+    "end": 21.93
+  },
+  {
+    "idx": 92,
+    "text": "de",
+    "start": 21.93,
+    "end": 22.07
+  },
+  {
+    "idx": 93,
+    "text": "la",
+    "start": 22.07,
+    "end": 22.21
+  },
+  {
+    "idx": 94,
+    "text": "cub",
+    "start": 22.21,
+    "end": 22.58
+  },
+  {
+    "idx": 95,
+    "text": "ier",
+    "start": 22.58,
+    "end": 22.63
+  },
+  {
+    "idx": 96,
+    "text": "ta",
+    "start": 22.63,
+    "end": 22.77
+  },
+  {
+    "idx": 97,
+    "text": "6",
+    "start": 22.98,
+    "end": 23.27
+  },
+  {
+    "idx": 98,
+    "text": "cab",
+    "start": 23.27,
+    "end": 23.4
+  },
+  {
+    "idx": 99,
+    "text": "ez",
+    "start": 23.4,
+    "end": 23.55
+  },
+  {
+    "idx": 100,
+    "text": "as",
+    "start": 23.55,
+    "end": 23.67
+  },
+  {
+    "idx": 101,
+    "text": "signific",
+    "start": 23.67,
+    "end": 24.2
+  },
+  {
+    "idx": 102,
+    "text": "an",
+    "start": 24.2,
+    "end": 24.77
+  },
+  {
+    "idx": 103,
+    "text": "6",
+    "start": 24.77,
+    "end": 24.84
+  },
+  {
+    "idx": 104,
+    "text": "mar",
+    "start": 25.03,
+    "end": 25.08
+  },
+  {
+    "idx": 105,
+    "text": "iner",
+    "start": 25.08,
+    "end": 25.35
+  },
+  {
+    "idx": 106,
+    "text": "os",
+    "start": 25.35,
+    "end": 25.48
+  },
+  {
+    "idx": 107,
+    "text": "que",
+    "start": 25.48,
+    "end": 26.26
+  },
+  {
+    "idx": 108,
+    "text": "desapare",
+    "start": 26.26,
+    "end": 26.34
+  },
+  {
+    "idx": 109,
+    "text": "cen",
+    "start": 26.34,
+    "end": 26.5
+  },
+  {
+    "idx": 110,
+    "text": "en",
+    "start": 26.5,
+    "end": 26.64
+  },
+  {
+    "idx": 111,
+    "text": "un",
+    "start": 26.64,
+    "end": 26.78
+  },
+  {
+    "idx": 112,
+    "text": "solo",
+    "start": 26.78,
+    "end": 27.07
+  },
+  {
+    "idx": 113,
+    "text": "ataque",
+    "start": 27.07,
+    "end": 27.51
+  },
+  {
+    "idx": 114,
+    "text": "El",
+    "start": 27.72,
+    "end": 27.86
+  },
+  {
+    "idx": 115,
+    "text": "det",
+    "start": 27.86,
+    "end": 28.08
+  },
+  {
+    "idx": 116,
+    "text": "alle",
+    "start": 28.08,
+    "end": 28.37
+  },
+  {
+    "idx": 117,
+    "text": "importante",
+    "start": 28.37,
+    "end": 29.1
+  },
+  {
+    "idx": 118,
+    "text": "es",
+    "start": 29.1,
+    "end": 29.24
+  },
+  {
+    "idx": 119,
+    "text": "que",
+    "start": 29.24,
+    "end": 29.46
+  },
+  {
+    "idx": 120,
+    "text": "S",
+    "start": 29.46,
+    "end": 29.53
+  },
+  {
+    "idx": 121,
+    "text": "illa",
+    "start": 29.53,
+    "end": 29.82
+  },
+  {
+    "idx": 122,
+    "text": "no",
+    "start": 29.82,
+    "end": 29.96
+  },
+  {
+    "idx": 123,
+    "text": "pers",
+    "start": 29.96,
+    "end": 30.25
+  },
+  {
+    "idx": 124,
+    "text": "igue",
+    "start": 30.25,
+    "end": 30.63
+  },
+  {
+    "idx": 125,
+    "text": "a",
+    "start": 30.63,
+    "end": 30.77
+  },
+  {
+    "idx": 126,
+    "text": "los",
+    "start": 30.77,
+    "end": 30.88
+  },
+  {
+    "idx": 127,
+    "text": "bar",
+    "start": 30.88,
+    "end": 31.12
+  },
+  {
+    "idx": 128,
+    "text": "cos",
+    "start": 31.12,
+    "end": 31.26
+  },
+  {
+    "idx": 129,
+    "text": "en",
+    "start": 31.26,
+    "end": 31.38
+  },
+  {
+    "idx": 130,
+    "text": "mar",
+    "start": 31.38,
+    "end": 31.55
+  },
+  {
+    "idx": 131,
+    "text": "ab",
+    "start": 31.55,
+    "end": 31.68
+  },
+  {
+    "idx": 132,
+    "text": "ierto",
+    "start": 31.68,
+    "end": 32.0
+  },
+  {
+    "idx": 133,
+    "text": "Se",
+    "start": 32.3,
+    "end": 32.38
+  },
+  {
+    "idx": 134,
+    "text": "mant",
+    "start": 32.38,
+    "end": 32.56
+  },
+  {
+    "idx": 135,
+    "text": "iene",
+    "start": 32.56,
+    "end": 32.81
+  },
+  {
+    "idx": 136,
+    "text": "cerca",
+    "start": 32.81,
+    "end": 33.12
+  },
+  {
+    "idx": 137,
+    "text": "del",
+    "start": 33.12,
+    "end": 33.3
+  },
+  {
+    "idx": 138,
+    "text": "ac",
+    "start": 33.3,
+    "end": 33.48
+  },
+  {
+    "idx": 139,
+    "text": "ant",
+    "start": 33.48,
+    "end": 33.62
+  },
+  {
+    "idx": 140,
+    "text": "il",
+    "start": 33.62,
+    "end": 33.74
+  },
+  {
+    "idx": 141,
+    "text": "ado",
+    "start": 33.74,
+    "end": 33.94
+  },
+  {
+    "idx": 142,
+    "text": "Eso",
+    "start": 34.12,
+    "end": 34.33
+  },
+  {
+    "idx": 143,
+    "text": "significa",
+    "start": 34.33,
+    "end": 35.0
+  },
+  {
+    "idx": 144,
+    "text": "que",
+    "start": 35.0,
+    "end": 35.07
+  },
+  {
+    "idx": 145,
+    "text": "la",
+    "start": 35.07,
+    "end": 35.19
+  },
+  {
+    "idx": 146,
+    "text": "estr",
+    "start": 35.19,
+    "end": 35.44
+  },
+  {
+    "idx": 147,
+    "text": "ateg",
+    "start": 35.44,
+    "end": 35.69
+  },
+  {
+    "idx": 148,
+    "text": "ia",
+    "start": 35.69,
+    "end": 35.97
+  },
+  {
+    "idx": 149,
+    "text": "m\u00e1s",
+    "start": 35.97,
+    "end": 36.1
+  },
+  {
+    "idx": 150,
+    "text": "seg",
+    "start": 36.1,
+    "end": 36.34
+  },
+  {
+    "idx": 151,
+    "text": "ura",
+    "start": 36.34,
+    "end": 36.46
+  },
+  {
+    "idx": 152,
+    "text": "no",
+    "start": 36.46,
+    "end": 36.58
+  },
+  {
+    "idx": 153,
+    "text": "es",
+    "start": 36.58,
+    "end": 36.7
+  },
+  {
+    "idx": 154,
+    "text": "l",
+    "start": 36.7,
+    "end": 36.76
+  },
+  {
+    "idx": 155,
+    "text": "uchar",
+    "start": 36.76,
+    "end": 37.06
+  },
+  {
+    "idx": 156,
+    "text": "contra",
+    "start": 37.06,
+    "end": 37.52
+  },
+  {
+    "idx": 157,
+    "text": "ella",
+    "start": 37.52,
+    "end": 37.69
+  },
+  {
+    "idx": 158,
+    "text": "sino",
+    "start": 37.81,
+    "end": 38.06
+  },
+  {
+    "idx": 159,
+    "text": "seguir",
+    "start": 38.06,
+    "end": 38.43
+  },
+  {
+    "idx": 160,
+    "text": "mov",
+    "start": 38.43,
+    "end": 38.61
+  },
+  {
+    "idx": 161,
+    "text": "i",
+    "start": 38.61,
+    "end": 38.7
+  },
+  {
+    "idx": 162,
+    "text": "\u00e9nd",
+    "start": 38.7,
+    "end": 38.91
+  },
+  {
+    "idx": 163,
+    "text": "ose",
+    "start": 38.91,
+    "end": 39.09
+  },
+  {
+    "idx": 164,
+    "text": "antes",
+    "start": 39.09,
+    "end": 39.4
+  },
+  {
+    "idx": 165,
+    "text": "de",
+    "start": 39.4,
+    "end": 39.55
+  },
+  {
+    "idx": 166,
+    "text": "que",
+    "start": 39.55,
+    "end": 39.7
+  },
+  {
+    "idx": 167,
+    "text": "pueda",
+    "start": 39.7,
+    "end": 40.01
+  },
+  {
+    "idx": 168,
+    "text": "atac",
+    "start": 40.01,
+    "end": 40.26
+  },
+  {
+    "idx": 169,
+    "text": "ar",
+    "start": 40.26,
+    "end": 40.41
+  },
+  {
+    "idx": 170,
+    "text": "de",
+    "start": 40.41,
+    "end": 40.5
+  },
+  {
+    "idx": 171,
+    "text": "nuevo",
+    "start": 40.5,
+    "end": 40.81
+  },
+  {
+    "idx": 172,
+    "text": "es",
+    "start": 41.74,
+    "end": 41.98
+  },
+  {
+    "idx": 173,
+    "text": "advert",
+    "start": 41.98,
+    "end": 42.14
+  },
+  {
+    "idx": 174,
+    "text": "ido",
+    "start": 42.14,
+    "end": 42.36
+  },
+  {
+    "idx": 175,
+    "text": "sobre",
+    "start": 42.36,
+    "end": 42.73
+  },
+  {
+    "idx": 176,
+    "text": "esto",
+    "start": 42.73,
+    "end": 43.17
+  },
+  {
+    "idx": 177,
+    "text": "antes",
+    "start": 43.17,
+    "end": 43.42
+  },
+  {
+    "idx": 178,
+    "text": "de",
+    "start": 43.42,
+    "end": 43.66
+  },
+  {
+    "idx": 179,
+    "text": "llegar",
+    "start": 43.66,
+    "end": 44.02
+  },
+  {
+    "idx": 180,
+    "text": "al",
+    "start": 44.02,
+    "end": 44.16
+  },
+  {
+    "idx": 181,
+    "text": "p",
+    "start": 44.16,
+    "end": 44.24
+  },
+  {
+    "idx": 182,
+    "text": "so",
+    "start": 44.24,
+    "end": 44.39
+  },
+  {
+    "idx": 183,
+    "text": "e",
+    "start": 44.39,
+    "end": 44.46
+  },
+  {
+    "idx": 184,
+    "text": "A",
+    "start": 44.68,
+    "end": 44.75
+  },
+  {
+    "idx": 185,
+    "text": "\u00fan",
+    "start": 44.75,
+    "end": 44.97
+  },
+  {
+    "idx": 186,
+    "text": "as\u00ed",
+    "start": 44.97,
+    "end": 45.27
+  },
+  {
+    "idx": 187,
+    "text": "prepar",
+    "start": 45.42,
+    "end": 45.87
+  },
+  {
+    "idx": 188,
+    "text": "a",
+    "start": 45.87,
+    "end": 45.94
+  },
+  {
+    "idx": 189,
+    "text": "sus",
+    "start": 45.94,
+    "end": 46.16
+  },
+  {
+    "idx": 190,
+    "text": "armas",
+    "start": 46.16,
+    "end": 46.55
+  },
+  {
+    "idx": 191,
+    "text": "pero",
+    "start": 46.83,
+    "end": 47.15
+  },
+  {
+    "idx": 192,
+    "text": "result",
+    "start": 47.15,
+    "end": 47.68
+  },
+  {
+    "idx": 193,
+    "text": "an",
+    "start": 47.68,
+    "end": 47.86
+  },
+  {
+    "idx": 194,
+    "text": "in",
+    "start": 47.86,
+    "end": 48.1
+  },
+  {
+    "idx": 195,
+    "text": "\u00fat",
+    "start": 48.1,
+    "end": 48.21
+  },
+  {
+    "idx": 196,
+    "text": "iles",
+    "start": 48.21,
+    "end": 48.48
+  },
+  {
+    "idx": 197,
+    "text": "S",
+    "start": 48.7,
+    "end": 48.77
+  },
+  {
+    "idx": 198,
+    "text": "illa",
+    "start": 48.77,
+    "end": 49.05
+  },
+  {
+    "idx": 199,
+    "text": "se",
+    "start": 49.05,
+    "end": 49.29
+  },
+  {
+    "idx": 200,
+    "text": "lleva",
+    "start": 49.29,
+    "end": 49.54
+  },
+  {
+    "idx": 201,
+    "text": "a",
+    "start": 49.54,
+    "end": 49.61
+  },
+  {
+    "idx": 202,
+    "text": "6",
+    "start": 49.61,
+    "end": 49.82
+  },
+  {
+    "idx": 203,
+    "text": "de",
+    "start": 49.82,
+    "end": 49.96
+  },
+  {
+    "idx": 204,
+    "text": "sus",
+    "start": 49.96,
+    "end": 50.17
+  },
+  {
+    "idx": 205,
+    "text": "hombres",
+    "start": 50.17,
+    "end": 50.67
+  },
+  {
+    "idx": 206,
+    "text": "mientras",
+    "start": 50.67,
+    "end": 51.24
+  },
+  {
+    "idx": 207,
+    "text": "el",
+    "start": 51.24,
+    "end": 51.38
+  },
+  {
+    "idx": 208,
+    "text": "bar",
+    "start": 51.38,
+    "end": 51.59
+  },
+  {
+    "idx": 209,
+    "text": "co",
+    "start": 51.59,
+    "end": 51.73
+  },
+  {
+    "idx": 210,
+    "text": "contin",
+    "start": 51.73,
+    "end": 52.17
+  },
+  {
+    "idx": 211,
+    "text": "\u00faa",
+    "start": 52.17,
+    "end": 52.37
+  },
+  {
+    "idx": 212,
+    "text": "su",
+    "start": 52.37,
+    "end": 52.51
+  },
+  {
+    "idx": 213,
+    "text": "march",
+    "start": 52.51,
+    "end": 52.86
+  },
+  {
+    "idx": 214,
+    "text": "a",
+    "start": 52.86,
+    "end": 52.95
+  },
+  {
+    "idx": 215,
+    "text": "Det",
+    "start": 53.14,
+    "end": 53.35
+  },
+  {
+    "idx": 216,
+    "text": "ener",
+    "start": 53.35,
+    "end": 53.62
+  },
+  {
+    "idx": 217,
+    "text": "se",
+    "start": 53.62,
+    "end": 54.09
+  },
+  {
+    "idx": 218,
+    "text": "solo",
+    "start": 54.09,
+    "end": 54.17
+  },
+  {
+    "idx": 219,
+    "text": "le",
+    "start": 54.17,
+    "end": 54.28
+  },
+  {
+    "idx": 220,
+    "text": "dar",
+    "start": 54.47,
+    "end": 54.52
+  },
+  {
+    "idx": 221,
+    "text": "\u00eda",
+    "start": 54.52,
+    "end": 54.68
+  },
+  {
+    "idx": 222,
+    "text": "otra",
+    "start": 54.68,
+    "end": 54.94
+  },
+  {
+    "idx": 223,
+    "text": "oportunidad",
+    "start": 54.94,
+    "end": 55.78
+  },
+  {
+    "idx": 224,
+    "text": "S",
+    "start": 55.91,
+    "end": 55.98
+  },
+  {
+    "idx": 225,
+    "text": "illa",
+    "start": 55.98,
+    "end": 56.25
+  },
+  {
+    "idx": 226,
+    "text": "tambi\u00e9n",
+    "start": 56.25,
+    "end": 56.8
+  },
+  {
+    "idx": 227,
+    "text": "comp",
+    "start": 56.8,
+    "end": 57.07
+  },
+  {
+    "idx": 228,
+    "text": "arte",
+    "start": 57.07,
+    "end": 57.34
+  },
+  {
+    "idx": 229,
+    "text": "el",
+    "start": 57.34,
+    "end": 57.48
+  },
+  {
+    "idx": 230,
+    "text": "paso",
+    "start": 57.48,
+    "end": 57.75
+  },
+  {
+    "idx": 231,
+    "text": "con",
+    "start": 57.75,
+    "end": 57.95
+  },
+  {
+    "idx": 232,
+    "text": "Carib",
+    "start": 57.95,
+    "end": 58.4
+  },
+  {
+    "idx": 233,
+    "text": "dis",
+    "start": 58.4,
+    "end": 58.49
+  },
+  {
+    "idx": 234,
+    "text": "un",
+    "start": 58.62,
+    "end": 58.76
+  },
+  {
+    "idx": 235,
+    "text": "rem",
+    "start": 58.76,
+    "end": 58.96
+  },
+  {
+    "idx": 236,
+    "text": "ol",
+    "start": 58.96,
+    "end": 59.09
+  },
+  {
+    "idx": 237,
+    "text": "ino",
+    "start": 59.09,
+    "end": 59.29
+  },
+  {
+    "idx": 238,
+    "text": "gig",
+    "start": 59.29,
+    "end": 59.49
+  },
+  {
+    "idx": 239,
+    "text": "ante",
+    "start": 59.49,
+    "end": 59.93
+  },
+  {
+    "idx": 240,
+    "text": "en",
+    "start": 59.93,
+    "end": 60.28
+  },
+  {
+    "idx": 241,
+    "text": "lado",
+    "start": 60.28,
+    "end": 60.46
+  },
+  {
+    "idx": 242,
+    "text": "op",
+    "start": 60.46,
+    "end": 60.7
+  },
+  {
+    "idx": 243,
+    "text": "uesto",
+    "start": 60.7,
+    "end": 60.91
+  },
+  {
+    "idx": 244,
+    "text": "por",
+    "start": 61.03,
+    "end": 61.25
+  },
+  {
+    "idx": 245,
+    "text": "lo",
+    "start": 61.25,
+    "end": 61.35
+  },
+  {
+    "idx": 246,
+    "text": "que",
+    "start": 61.35,
+    "end": 61.54
+  },
+  {
+    "idx": 247,
+    "text": "la",
+    "start": 61.54,
+    "end": 61.88
+  },
+  {
+    "idx": 248,
+    "text": "trip",
+    "start": 61.88,
+    "end": 61.94
+  },
+  {
+    "idx": 249,
+    "text": "ul",
+    "start": 61.94,
+    "end": 62.05
+  },
+  {
+    "idx": 250,
+    "text": "aci\u00f3n",
+    "start": 62.05,
+    "end": 62.43
+  },
+  {
+    "idx": 251,
+    "text": "no",
+    "start": 62.43,
+    "end": 62.56
+  },
+  {
+    "idx": 252,
+    "text": "puede",
+    "start": 62.56,
+    "end": 62.89
+  },
+  {
+    "idx": 253,
+    "text": "simplemente",
+    "start": 62.89,
+    "end": 63.59
+  },
+  {
+    "idx": 254,
+    "text": "ale",
+    "start": 63.59,
+    "end": 63.78
+  },
+  {
+    "idx": 255,
+    "text": "jar",
+    "start": 63.78,
+    "end": 63.97
+  },
+  {
+    "idx": 256,
+    "text": "se",
+    "start": 63.97,
+    "end": 64.09
+  },
+  {
+    "idx": 257,
+    "text": "m\u00e1s",
+    "start": 64.09,
+    "end": 64.35
+  },
+  {
+    "idx": 258,
+    "text": "N",
+    "start": 64.62,
+    "end": 64.77
+  },
+  {
+    "idx": 259,
+    "text": "ave",
+    "start": 64.77,
+    "end": 65.16
+  },
+  {
+    "idx": 260,
+    "text": "gar",
+    "start": 65.16,
+    "end": 65.57
+  },
+  {
+    "idx": 261,
+    "text": "cerca",
+    "start": 65.57,
+    "end": 66.2
+  },
+  {
+    "idx": 262,
+    "text": "de",
+    "start": 66.2,
+    "end": 66.56
+  },
+  {
+    "idx": 263,
+    "text": "S",
+    "start": 66.56,
+    "end": 66.8
+  },
+  {
+    "idx": 264,
+    "text": "illa",
+    "start": 66.8,
+    "end": 66.92
+  },
+  {
+    "idx": 265,
+    "text": "cu",
+    "start": 66.92,
+    "end": 67.06
+  },
+  {
+    "idx": 266,
+    "text": "esta",
+    "start": 67.06,
+    "end": 67.34
+  },
+  {
+    "idx": 267,
+    "text": "6",
+    "start": 67.34,
+    "end": 67.57
+  },
+  {
+    "idx": 268,
+    "text": "mar",
+    "start": 67.57,
+    "end": 67.98
+  },
+  {
+    "idx": 269,
+    "text": "iner",
+    "start": 67.98,
+    "end": 68.09
+  },
+  {
+    "idx": 270,
+    "text": "os",
+    "start": 68.09,
+    "end": 68.22
+  },
+  {
+    "idx": 271,
+    "text": "N",
+    "start": 68.48,
+    "end": 68.5
+  },
+  {
+    "idx": 272,
+    "text": "ave",
+    "start": 68.5,
+    "end": 68.71
+  },
+  {
+    "idx": 273,
+    "text": "gar",
+    "start": 68.71,
+    "end": 68.99
+  },
+  {
+    "idx": 274,
+    "text": "cerca",
+    "start": 68.99,
+    "end": 69.28
+  },
+  {
+    "idx": 275,
+    "text": "de",
+    "start": 69.28,
+    "end": 69.42
+  },
+  {
+    "idx": 276,
+    "text": "Carib",
+    "start": 69.42,
+    "end": 69.78
+  },
+  {
+    "idx": 277,
+    "text": "dis",
+    "start": 69.78,
+    "end": 70.01
+  },
+  {
+    "idx": 278,
+    "text": "puede",
+    "start": 70.01,
+    "end": 70.35
+  },
+  {
+    "idx": 279,
+    "text": "destru",
+    "start": 70.35,
+    "end": 70.78
+  },
+  {
+    "idx": 280,
+    "text": "ir",
+    "start": 70.78,
+    "end": 70.92
+  },
+  {
+    "idx": 281,
+    "text": "el",
+    "start": 70.92,
+    "end": 71.06
+  },
+  {
+    "idx": 282,
+    "text": "bar",
+    "start": 71.06,
+    "end": 71.28
+  },
+  {
+    "idx": 283,
+    "text": "co",
+    "start": 71.28,
+    "end": 71.42
+  },
+  {
+    "idx": 284,
+    "text": "ent",
+    "start": 71.42,
+    "end": 71.65
+  },
+  {
+    "idx": 285,
+    "text": "ero",
+    "start": 71.65,
+    "end": 71.85
+  },
+  {
+    "idx": 286,
+    "text": "A",
+    "start": 72.06,
+    "end": 72.27
+  },
+  {
+    "idx": 287,
+    "text": "Od",
+    "start": 72.27,
+    "end": 72.56
+  },
+  {
+    "idx": 288,
+    "text": "ise",
+    "start": 72.56,
+    "end": 72.61
+  },
+  {
+    "idx": 289,
+    "text": "o",
+    "start": 72.61,
+    "end": 72.79
+  },
+  {
+    "idx": 290,
+    "text": "se",
+    "start": 72.79,
+    "end": 72.87
+  },
+  {
+    "idx": 291,
+    "text": "le",
+    "start": 72.87,
+    "end": 72.96
+  },
+  {
+    "idx": 292,
+    "text": "dice",
+    "start": 72.96,
+    "end": 73.22
+  },
+  {
+    "idx": 293,
+    "text": "que",
+    "start": 73.22,
+    "end": 73.4
+  },
+  {
+    "idx": 294,
+    "text": "el",
+    "start": 73.4,
+    "end": 73.53
+  },
+  {
+    "idx": 295,
+    "text": "ija",
+    "start": 73.53,
+    "end": 73.76
+  },
+  {
+    "idx": 296,
+    "text": "S",
+    "start": 73.76,
+    "end": 73.84
+  },
+  {
+    "idx": 297,
+    "text": "illa",
+    "start": 73.84,
+    "end": 74.38
+  },
+  {
+    "idx": 298,
+    "text": "porque",
+    "start": 74.38,
+    "end": 74.49
+  },
+  {
+    "idx": 299,
+    "text": "perder",
+    "start": 74.49,
+    "end": 74.88
+  },
+  {
+    "idx": 300,
+    "text": "a",
+    "start": 74.88,
+    "end": 74.91
+  },
+  {
+    "idx": 301,
+    "text": "6",
+    "start": 74.91,
+    "end": 75.1
+  },
+  {
+    "idx": 302,
+    "text": "personas",
+    "start": 75.1,
+    "end": 75.61
+  },
+  {
+    "idx": 303,
+    "text": "es",
+    "start": 75.61,
+    "end": 75.74
+  },
+  {
+    "idx": 304,
+    "text": "mejor",
+    "start": 75.74,
+    "end": 76.06
+  },
+  {
+    "idx": 305,
+    "text": "que",
+    "start": 76.06,
+    "end": 76.25
+  },
+  {
+    "idx": 306,
+    "text": "perder",
+    "start": 76.25,
+    "end": 76.63
+  },
+  {
+    "idx": 307,
+    "text": "lo",
+    "start": 76.63,
+    "end": 76.75
+  },
+  {
+    "idx": 308,
+    "text": "todo",
+    "start": 76.75,
+    "end": 77.08
+  },
+  {
+    "idx": 309,
+    "text": "Trad",
+    "start": 77.19,
+    "end": 77.44
+  },
+  {
+    "idx": 310,
+    "text": "iciones",
+    "start": 77.44,
+    "end": 77.9
+  },
+  {
+    "idx": 311,
+    "text": "poster",
+    "start": 77.9,
+    "end": 78.27
+  },
+  {
+    "idx": 312,
+    "text": "i",
+    "start": 78.27,
+    "end": 78.33
+  },
+  {
+    "idx": 313,
+    "text": "ores",
+    "start": 78.33,
+    "end": 78.74
+  },
+  {
+    "idx": 314,
+    "text": "situ",
+    "start": 78.95,
+    "end": 79.04
+  },
+  {
+    "idx": 315,
+    "text": "aron",
+    "start": 79.04,
+    "end": 79.34
+  },
+  {
+    "idx": 316,
+    "text": "el",
+    "start": 79.34,
+    "end": 79.48
+  },
+  {
+    "idx": 317,
+    "text": "paso",
+    "start": 79.48,
+    "end": 79.79
+  },
+  {
+    "idx": 318,
+    "text": "en",
+    "start": 79.79,
+    "end": 79.94
+  },
+  {
+    "idx": 319,
+    "text": "el",
+    "start": 79.94,
+    "end": 80.17
+  },
+  {
+    "idx": 320,
+    "text": "estre",
+    "start": 80.17,
+    "end": 80.47
+  },
+  {
+    "idx": 321,
+    "text": "cho",
+    "start": 80.47,
+    "end": 80.69
+  },
+  {
+    "idx": 322,
+    "text": "de",
+    "start": 80.69,
+    "end": 80.84
+  },
+  {
+    "idx": 323,
+    "text": "Mes",
+    "start": 80.84,
+    "end": 81.07
+  },
+  {
+    "idx": 324,
+    "text": "ina",
+    "start": 81.07,
+    "end": 81.34
+  },
+  {
+    "idx": 325,
+    "text": "entre",
+    "start": 81.44,
+    "end": 81.82
+  },
+  {
+    "idx": 326,
+    "text": "Sic",
+    "start": 81.82,
+    "end": 82.05
+  },
+  {
+    "idx": 327,
+    "text": "ilia",
+    "start": 82.05,
+    "end": 82.35
+  },
+  {
+    "idx": 328,
+    "text": "e",
+    "start": 82.35,
+    "end": 82.42
+  },
+  {
+    "idx": 329,
+    "text": "Italia",
+    "start": 82.42,
+    "end": 82.96
+  },
+  {
+    "idx": 330,
+    "text": "pen",
+    "start": 82.96,
+    "end": 83.18
+  },
+  {
+    "idx": 331,
+    "text": "ins",
+    "start": 83.18,
+    "end": 83.4
+  },
+  {
+    "idx": 332,
+    "text": "ular",
+    "start": 83.4,
+    "end": 83.69
+  },
+  {
+    "idx": 333,
+    "text": "La",
+    "start": 83.92,
+    "end": 84.15
+  },
+  {
+    "idx": 334,
+    "text": "frase",
+    "start": 84.15,
+    "end": 84.82
+  },
+  {
+    "idx": 335,
+    "text": "entre",
+    "start": 84.82,
+    "end": 85.16
+  },
+  {
+    "idx": 336,
+    "text": "S",
+    "start": 85.16,
+    "end": 85.22
+  },
+  {
+    "idx": 337,
+    "text": "illa",
+    "start": 85.22,
+    "end": 85.48
+  },
+  {
+    "idx": 338,
+    "text": "y",
+    "start": 85.48,
+    "end": 85.55
+  },
+  {
+    "idx": 339,
+    "text": "Carib",
+    "start": 85.55,
+    "end": 85.88
+  },
+  {
+    "idx": 340,
+    "text": "dis",
+    "start": 85.88,
+    "end": 86.16
+  },
+  {
+    "idx": 341,
+    "text": "se",
+    "start": 86.16,
+    "end": 86.32
+  },
+  {
+    "idx": 342,
+    "text": "conv",
+    "start": 86.32,
+    "end": 86.49
+  },
+  {
+    "idx": 343,
+    "text": "irt",
+    "start": 86.49,
+    "end": 86.74
+  },
+  {
+    "idx": 344,
+    "text": "i\u00f3",
+    "start": 86.74,
+    "end": 86.89
+  },
+  {
+    "idx": 345,
+    "text": "en",
+    "start": 86.89,
+    "end": 87.02
+  },
+  {
+    "idx": 346,
+    "text": "una",
+    "start": 87.02,
+    "end": 87.25
+  },
+  {
+    "idx": 347,
+    "text": "forma",
+    "start": 87.25,
+    "end": 87.56
+  },
+  {
+    "idx": 348,
+    "text": "de",
+    "start": 87.56,
+    "end": 87.69
+  },
+  {
+    "idx": 349,
+    "text": "descri",
+    "start": 87.69,
+    "end": 88.1
+  },
+  {
+    "idx": 350,
+    "text": "bir",
+    "start": 88.1,
+    "end": 88.3
+  },
+  {
+    "idx": 351,
+    "text": "el",
+    "start": 88.3,
+    "end": 88.43
+  },
+  {
+    "idx": 352,
+    "text": "estar",
+    "start": 88.43,
+    "end": 88.77
+  },
+  {
+    "idx": 353,
+    "text": "at",
+    "start": 88.77,
+    "end": 88.94
+  },
+  {
+    "idx": 354,
+    "text": "rap",
+    "start": 88.94,
+    "end": 89.13
+  },
+  {
+    "idx": 355,
+    "text": "ado",
+    "start": 89.13,
+    "end": 89.3
+  },
+  {
+    "idx": 356,
+    "text": "entre",
+    "start": 89.3,
+    "end": 89.76
+  },
+  {
+    "idx": 357,
+    "text": "dos",
+    "start": 89.76,
+    "end": 90.08
+  },
+  {
+    "idx": 358,
+    "text": "op",
+    "start": 90.08,
+    "end": 90.18
+  },
+  {
+    "idx": 359,
+    "text": "ciones",
+    "start": 90.18,
+    "end": 90.5
+  },
+  {
+    "idx": 360,
+    "text": "pelig",
+    "start": 90.5,
+    "end": 90.78
+  },
+  {
+    "idx": 361,
+    "text": "ros",
+    "start": 90.78,
+    "end": 90.95
+  },
+  {
+    "idx": 362,
+    "text": "as",
+    "start": 90.95,
+    "end": 91.05
+  }
+]

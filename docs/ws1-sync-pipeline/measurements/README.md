@@ -45,3 +45,14 @@ exports) see `scripts/fixtures/README.md` instead — those live in
 | `phase4-step-q-spanish-manifest.csv` | Phase 4, Step Q | 2026-08-06 | Public manifest for the Spanish blinded-clip batch. Write-only output of `scripts/phase4-step-q-spanish-clips.py`; no other script reads it back. |
 | `phase4-step-s-check-results.csv` | Phase 4, Step S | 2026-08-06 | Structural-check results (V6/173/Spanish baselines). Write-only output of `scripts/phase4-step-s-structural-checks.py`; no other script reads it back. |
 | `phase4-step-u-spanish-scored.csv` | Phase 4, Step U | 2026-08-06 | Scored results for the Spanish blinded batch. Write-only output of `scripts/phase4-step-u-score-spanish.py`; no other script reads it back. |
+
+## Rescued data
+
+One exception to "nothing here was deleted or edited": `rescued-2026-08-07-model-p-park/` was never previously committed anywhere reachable from `main`. It's a byte-for-byte preservation copy, pulled 2026-08-11 from the orphaned, unmerged branch `wip/preserve-2026-08-07` (commit `79f779523a35920320ce0f791415d9783e493197`) before that branch could be pruned with no other copy of its data existing. See the folder's own `PROVENANCE.md` for the full per-file manifest and byte-identity verification; indexed here at folder grain only.
+
+| Folder | Phase | Date | Purpose |
+|---|---|---|---|
+| `rescued-2026-08-07-model-p-park/answer-keys/` | Phase 4, Step Q | data 2026-08-06, rescued 2026-08-11 | Spanish blinded-listening ground truth (10-clip answer key + human transcripts). |
+| `rescued-2026-08-07-model-p-park/listening-clips/spanish-batch/` | Phase 4, Step Q | data 2026-08-06, rescued 2026-08-11 | The 10 Spanish `.wav` clips those answer keys score. |
+| `rescued-2026-08-07-model-p-park/work-phase4/replay/{173,spanish,v6}/` | Phase 4, Step M | data 2026-08-07, rescued 2026-08-11 | Golden-baseline replay snapshots (segments, silences, transcript tokens, audio) + Task 5 boundary-audit reports for the three real corpus projects. |
+| `rescued-2026-08-07-model-p-park/work-phase4/` (root files + `step-x-clips/`) | Phase 4, Steps U/W/X/AA | data 2026-08-06/07, rescued 2026-08-11 | Spanish breath-aware reference + 22-pause targets (cited by `spanish-gate-scoring.md`); K13/K14 live-repro evidence; 5 named structural-check audio clips (C02–C10). |

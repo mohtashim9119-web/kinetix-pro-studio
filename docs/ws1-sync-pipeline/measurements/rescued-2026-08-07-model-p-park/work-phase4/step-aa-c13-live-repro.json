@@ -1,0 +1,18 @@
+{
+  "generatedAt": "2026-08-07T12:21:05.493Z",
+  "claim": "K14 LIVE (src/ reverted to 18f5734, 2026-08-07) — computeDragCascade auto-locks both cascade participants, recomputeStartTimes leaves anchorStart stale against every startTime it commits, and applyAnchorBasedTiming's locked branch snaps a locked segment back onto that stale anchor. A drag+cascade on one segment followed by an unrelated lock toggle re-times segments outside {dragged, absorbed, toggled}, and a still-locked segment moves anyway.",
+  "scenario": "drag s1 (absorb s2, both auto-locked), drag s4 (absorb s5, both auto-locked), unlock s2",
+  "untouchedSegmentsChecked": [
+    "s0",
+    "s4"
+  ],
+  "untouchedSegmentsMoved": [],
+  "lockedSegmentsWithDriftedAnchorBeforeToggle": [
+    "s2",
+    "s5"
+  ],
+  "lockedSegmentsWithDriftedAnchorAfterToggle": [],
+  "note": "Drift is measured BEFORE the toggle. The baseline locked branch derives startTime from anchorStart, so it closes the drift by moving the segment — the after-reading is 0 because the defect completed, not because it is absent.",
+  "stillLockedSegmentMoved": true,
+  "verdict": "DEFECT STILL PRESENT"
+}
