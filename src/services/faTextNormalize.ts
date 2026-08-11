@@ -56,6 +56,70 @@ const NON_CHARACTER_VOCAB_TOKENS = new Set(['<pad>', '<s>', '</s>', '<unk>', '|'
 
 const DIGIT_RE = /[0-9]/;
 
+/** Zero-width/invisible characters — stripped wherever they occur in a token
+ *  (copy-paste artifacts, not meaningful word content): zero-width space,
+ *  zero-width non-joiner/joiner, BOM/zero-width no-break space, word joiner. */
+const ZERO_WIDTH_RE = /[​‌‍﻿⁠]/g;
+
+/** Word-boundary punctuation: stripped from a token's leading/trailing edges
+ *  only (never word-internal) — it isn't part of the word at all, just
+ *  sentence/clause punctuation glued on by whitespace-only splitting. */
+const BOUNDARY_STRIP_CHARS = new Set(['.', ',', ';', ':', '?', '!', '"', '«', '»', '(', ')']);
+
+/** Typographic variant -> ASCII target. FOLD is distinct from STRIP: a fold
+ *  substitutes a character in place (preserving the word as one token),
+ *  applied wherever the variant appears in the token, not just at edges.
+ *  Whether a given fold actually happens is vocab-dependent (checked at call
+ *  time in `foldTypographicVariants`): if the target isn't a member of the
+ *  target vocab, the source character is dropped instead of being folded in
+ *  as a still-unrepresentable substitute — a fold degrades to a deletion,
+ *  never to an unrepresentable-vocab character. */
+const FOLD_TARGETS: Record<string, string> = {
+  '‘': "'", // LEFT SINGLE QUOTATION MARK
+  '’': "'", // RIGHT SINGLE QUOTATION MARK
+  'ʼ': "'", // MODIFIER LETTER APOSTROPHE
+  '‐': '-', // HYPHEN
+  '‑': '-', // NON-BREAKING HYPHEN
+  '–': '-', // EN DASH
+  '—': '-', // EM DASH
+  '“': '"', // LEFT DOUBLE QUOTATION MARK
+  '”': '"', // RIGHT DOUBLE QUOTATION MARK
+  '„': '"', // DOUBLE LOW-9 QUOTATION MARK
+  '‟': '"', // DOUBLE HIGH-REVERSED-9 QUOTATION MARK
+};
+
+/** Removes zero-width characters anywhere in the token. */
+function stripZeroWidth(word: string): string {
+  return word.replace(ZERO_WIDTH_RE, '');
+}
+
+/** Substitutes each typographic variant found anywhere in the token for its
+ *  ASCII target, but only when the target is actually a member of this
+ *  language's vocab — otherwise the variant is dropped (strip, not fold). */
+function foldTypographicVariants(word: string, vocabChars: ReadonlySet<string>): string {
+  let out = '';
+  for (const ch of word) {
+    const target = FOLD_TARGETS[ch];
+    if (target === undefined) {
+      out += ch;
+    } else if (vocabChars.has(target)) {
+      out += target;
+    }
+    // else: fold target absent from vocab — drop the character entirely.
+  }
+  return out;
+}
+
+/** Strips `BOUNDARY_STRIP_CHARS` from a token's leading/trailing edges only,
+ *  repeatedly, so stacked marks (e.g. a quote-and-comma pair) fully clear. */
+function stripBoundaryPunctuation(word: string): string {
+  let start = 0;
+  let end = word.length;
+  while (start < end && BOUNDARY_STRIP_CHARS.has(word[start]!)) start++;
+  while (end > start && BOUNDARY_STRIP_CHARS.has(word[end - 1]!)) end--;
+  return word.slice(start, end);
+}
+
 /**
  * Derives the set of literal, spellable characters from a model's raw
  * `vocab.json` object (as committed verbatim in `scripts/fixtures/
@@ -79,9 +143,11 @@ function applyLanguageSpecificSubstitutions(word: string, languageCode: FaLangua
 }
 
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
- *  German ß->ss substitution, then a digit check and a per-character vocab
- *  membership check. Any failure makes the whole word unrepresentable — never
- *  a partial/stripped spelling (that would be silent mangling). */
+ *  German ß->ss substitution, zero-width stripping, typographic folding,
+ *  boundary-punctuation stripping, then a digit check and a per-character
+ *  vocab membership check. A word surviving fold+strip with any character
+ *  still absent from the vocab is unrepresentable — dropped and recorded,
+ *  never partially mangled. */
 function normalizeWord(
   rawWord: string,
   languageCode: FaLanguageCode,
@@ -89,8 +155,19 @@ function normalizeWord(
 ): FaWordResult {
   const lowered = rawWord.normalize('NFC').toLowerCase();
   const substituted = applyLanguageSpecificSubstitutions(lowered, languageCode);
+  const dezeroWidthed = stripZeroWidth(substituted);
+  const folded = foldTypographicVariants(dezeroWidthed, vocabChars);
+  const stripped = stripBoundaryPunctuation(folded);
 
-  if (DIGIT_RE.test(substituted)) {
+  if (stripped.length === 0) {
+    return {
+      input: rawWord,
+      representable: false,
+      reason: `reduced to nothing by fold/strip — no word content remained (word: "${rawWord}")`,
+    };
+  }
+
+  if (DIGIT_RE.test(stripped)) {
     return {
       input: rawWord,
       representable: false,
@@ -98,7 +175,7 @@ function normalizeWord(
     };
   }
 
-  for (const ch of substituted) {
+  for (const ch of stripped) {
     if (!vocabChars.has(ch)) {
       return {
         input: rawWord,
@@ -108,7 +185,7 @@ function normalizeWord(
     }
   }
 
-  return { input: rawWord, representable: true, mapped: substituted };
+  return { input: rawWord, representable: true, mapped: stripped };
 }
 
 /**

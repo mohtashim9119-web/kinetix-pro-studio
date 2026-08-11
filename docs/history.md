@@ -9332,3 +9332,93 @@ already had a `#[cfg(test)] mod tests`, `whisper.rs` does not; `fa.rs`'s is the 
 module in `src-tauri/src/`, not the first; `npm run lint` clean; `npm test` 74 files / 1840
 passed / 1 skipped / 0 failed (unchanged — no TS test added, TS changes are types-only); golden
 replay 6/6 unchanged.
+
+## FA text normalizer — tokenization fix (fold vs. strip), 2026-08-12
+
+**Why.** The immediately-preceding corpus measurement
+(`docs/ws1-sync-pipeline/measurements/fa-vocab-representability-2026-08-12.md`) found
+`faTextNormalize.ts` marking 13.09% of real English corpus words (12.85% Spanish) as
+unrepresentable, and traced essentially all of it to two causes that are not real vocab gaps:
+ordinary sentence/clause punctuation glued onto a word by whitespace-only splitting (`it.`,
+`them.`, `word,`), and typographic variants of characters the vocab already has in ASCII form
+(curly `’` apostrophes on every contraction, curly `“”` quotes, em dashes, Spanish `«»`
+guillemets). Zero occurrences of a genuine missing letter or diacritic were found on either
+real-text language. This fix closes that gap without touching the digit-expansion deferral
+(Phase 3b, unaffected) or loosening the unrepresentable contract for genuinely out-of-vocab
+characters.
+
+**What changed — `src/services/faTextNormalize.ts`.** Two new, separately-implemented and
+separately-tested operations run inside `normalizeWord`, ahead of the existing digit check and
+per-character vocab-membership loop, after the existing NFC-lowercase and German `ß`->`ss` step:
+
+- **FOLD** (`foldTypographicVariants`) — substitutes a typographic variant for its ASCII target
+  *wherever it appears in the token* (word-internal, not just edges), preserving the word as one
+  token: curly `’`/`‘`/`ʼ` -> `'`; hyphen/en-dash/em-dash variants (`‐‑–—`) -> `-`; curly double
+  quotes (`“”„‟`) -> `"`. Critically, a fold only fires if the ASCII target is actually a member
+  of *that language's* vocab (`FOLD_TARGETS` lookup gated on `vocabChars.has(target)`) — checked
+  directly per-vocab rather than assumed from the English case (see the 1.1 vocab table below).
+  When the target is absent, the source character is dropped instead of being folded in as a
+  still-unrepresentable substitute — a fold degrades to a deletion, never to a vocab-check
+  failure on the folded character.
+- **STRIP** (`stripBoundaryPunctuation`) — removes `. , ; : ? ! " « » ( )` from a token's
+  leading/trailing edges only (repeated until stable, so stacked marks like `"word,"` fully
+  clear), plus a separate `stripZeroWidth` pass that removes zero-width/invisible characters
+  (`U+200B`, `U+200C`, `U+200D`, `U+FEFF`, `U+2060`) anywhere in the token, not just at edges.
+  Boundary punctuation is never touched word-internally — a don't-style apostrophe or a
+  hyphenated compound survives untouched because `'`/`-` are valid vocab characters, not because
+  strip special-cases them.
+- **New edge-case guard**: if a token folds/strips down to the empty string (e.g. a lone `"..."`
+  or a standalone `"` token), it is now reported unrepresentable with an explicit reason rather
+  than silently becoming a phantom empty `representable: true` word that would otherwise inject
+  spurious blank entries into `FaNormalizeResult.text`'s join.
+
+**1.1 — vocab character-support table** (checked directly against all five committed
+`scripts/fixtures/fa-vocab-<lang>.json` fixtures before writing any fold logic, per instruction
+not to assume the English answer generalizes): all five vocabs (en/es/fr/de/pt) contain the
+ASCII apostrophe `'` and hyphen `-`; none contain a literal ASCII double quote `"` (so the
+curly-double-quote fold always resolves to a strip/deletion, for all five languages); none
+contain a literal space character — every vocab's word boundary is the `|` CTC delimiter token,
+excluded from `vocabCharsFromRawVocab`'s output, with the normalizer always rejoining
+representable words with an ASCII space regardless of vocab content. All five languages were
+identical on every axis checked — no per-language exception was needed for apostrophe/hyphen
+folding, though the code checks each language's vocab independently rather than hard-coding
+that fact.
+
+**`canonicalize()`/`textNormalize.ts` untouched**, per instruction — this fix is entirely inside
+`faTextNormalize.ts`, which remains deliberately parallel to (not built on) the Whisper-alignment
+normalizer.
+
+**Tests — `src/services/faTextNormalize.test.ts`, 17 new (1840 -> 1857 passed exact, matching
+the tests added).** Fold and strip are exercised as distinct, separately-asserted behaviors, not
+conflated: a FOLD-only describe block (curly apostrophe, em dash, curly-quote-drop), a STRIP-only
+block (trailing period, trailing comma, Spanish guillemets, stacked marks), a fold-and-strip-
+together block, a zero-width-mid-word block, a word-internal apostrophe/hyphen-survives block (5
+languages), and — the one that matters most — an explicit "contract did not become permissive"
+block: a genuinely out-of-vocab Cyrillic character is still unrepresentable after fold+strip, and
+a fully-punctuation token (`...`) that strips to nothing is reported unrepresentable rather than
+an empty representable word. A final block proves the fold-target-absent-causes-strip contract
+directly: all five vocabs lack `"`, so `“x”` folds to `x` (not `"x"`) in every language.
+
+**Re-measurement — same script/corpus/commands as the original, only the normalizer changed**
+(amendment appended in place to `fa-vocab-representability-2026-08-12.md`, original numbers left
+untouched as the evidence that justified the fix):
+
+| Lang | Before % | After % | Before unrepresentable | After unrepresentable |
+|---|---|---|---|---|
+| en | 13.09% | **0.1387%** | 2,360 | 25 |
+| es | 12.85% | 0.4016% | 32 | 1 |
+| fr | 0.00% | 0.00% | 0 | 0 |
+| de | 0.00% | 0.00% | 0 | 0 |
+| pt | 0.00% | 0.00% | 0 | 0 |
+
+English falls below the 1% bar. `characterNotInVocab` is now exactly 0 for both en and es — the
+punctuation/typography gap is fully closed. What remains on en (25: 23 digit-bearing words,
+unchanged and still correctly deferred to Phase 3b, + 2 standalone `"` tokens that strip to
+nothing) and es (1: the same digit-bearing `12` as before) is exactly the previously-flagged
+out-of-scope category, not a new gap this fix should have closed. fr/de/pt stay at 0.00% —
+expected, the Common Voice fallback corpus was already pre-normalized and never exercised the
+normalizer's failure paths either before or after this fix.
+
+**Gates:** `npm run lint` clean; `npm test` 74 files / 1857 passed / 1 skipped / 0 failed (+17
+exact vs. baseline); `cargo check` clean; `cargo test` 19 passed (unchanged, no Rust touched);
+golden replay 6/6 unchanged.

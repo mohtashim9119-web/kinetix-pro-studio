@@ -205,3 +205,104 @@ existing, non-committed private research corpus), and the 3 Common Voice
 whitespace-split word by the existing `FaWordResult.reason` string. No
 `src/` file was read for anything other than the two named, unmodified
 normalizer functions.
+
+---
+
+## AMENDMENT 2026-08-12 — post-tokenization-fix re-measurement
+
+**What changed.** The reading above stood as evidence that `faTextNormalize.ts`
+needed a punctuation-handling fix (see "Reading this table — cheap fix, not a
+coverage problem" above). That fix has now shipped: `faTextNormalize.ts`
+gained two distinct operations ahead of the existing per-character vocab
+check — **FOLD** (typographic variant -> ASCII equivalent the vocab actually
+contains: curly `’`/`‘`/`ʼ` -> `'`, en/em/other dashes -> `-`, curly double
+quotes -> ASCII `"` — conditional per-vocab, never assumed) and **STRIP**
+(removes word-boundary `. , ; : ? ! " « » ( )` from a token's edges only, plus
+zero-width characters anywhere). The original numbers above are left
+untouched as the evidence that justified the fix; this section is the
+re-measurement, using the exact same script, corpus, and commands (only the
+normalizer under test changed).
+
+### 1.1 — vocab character-support table (checked before folding anything)
+
+All five vocab fixtures were inspected directly (`scripts/fixtures/
+fa-vocab-<lang>.json`) rather than assuming the English answer generalizes:
+
+| Lang | ASCII apostrophe `'` (U+0027) | Hyphen `-` (U+002D) | Space / word-delimiter |
+|---|---|---|---|
+| en | yes | yes | `\|` (CTC delimiter token, not a literal space char) |
+| es | yes | yes | `\|` |
+| fr | yes | yes | `\|` |
+| de | yes | yes | `\|` |
+| pt | yes | yes | `\|` |
+
+All five are identical on this axis — apostrophe and hyphen fold targets are
+therefore always available and every fold to `'`/`-` succeeds for all five
+languages. **No vocab contains a literal ASCII double quote `"`** (verified
+the same way — checked each fixture's key list directly), so the curly-double-
+quote fold target is absent everywhere; per the fold contract ("a fold target
+absent from a vocab causes a strip there, not a fold"), curly double quotes
+are dropped rather than folded, for all five languages, not folded to a
+stray unrepresentable `"`. None of the five vocabs carry a literal space
+character either — word boundaries are the `|` CTC delimiter token (excluded
+from `vocabCharsFromRawVocab`'s output by `NON_CHARACTER_VOCAB_TOKENS`), and
+the normalizer's own output always rejoins representable words with an
+ASCII space regardless of vocab content.
+
+### Before / after, side by side
+
+| Lang | Kind | Total words | Before: Unrepresentable | Before % | After: Unrepresentable | After % |
+|---|---|---|---|---|---|---|
+| en | real | 18,023 | 2,360 | 13.09% | 25 | **0.1387%** |
+| es | real | 249 | 32 | 12.85% | 1 | 0.4016% |
+| fr | CV fallback | 154,817 | 0 | 0.00% | 0 | 0.00% |
+| de | CV fallback | 142,082 | 0 | 0.00% | 0 | 0.00% |
+| pt | CV fallback | 35,316 | 0 | 0.00% | 0 | 0.00% |
+
+**English falls to 0.1387%, below the 1% bar.** fr/de/pt are unchanged at
+0.00% — expected, since the Common Voice caveat above (pre-normalized target
+sentences, no punctuation to begin with) still applies; the fix had nothing
+to fold or strip there either way.
+
+### What remains on en/es, and why
+
+`characterNotInVocab` is now **0 for both en and es** — the fold/strip fix
+fully closed the punctuation/typography gap the original measurement found.
+What's left is exactly the deferred category the original report already
+flagged as out of scope:
+
+**en (25 remaining, all corpus text, exact list):**
+- **23 digit-bearing words** (unchanged from before — digit expansion is
+  still deferred to Phase 3b, untouched by this fix): `60,000`, `50,000`,
+  `48.`, `41st`, `40`, `38`, `32`, `28`, `26`, `24.`, `21.`, `2001`, `1895.`,
+  `1895,`, `1890s`, `13th`, `10:30`, `10`, `$9,400."`, `$9,400`, `$84,000`,
+  `$28,000`, `$11,000.`
+- **2 words that stripped to nothing** (`"` appearing as a standalone
+  whitespace-delimited token, count 2) — a lone straight double quote has no
+  word content once boundary-stripped, so it's correctly reported
+  unrepresentable (a new, deliberate guard added alongside the fold/strip
+  fix: fold/strip reducing a token to the empty string marks it
+  unrepresentable rather than emitting a phantom empty "representable" word).
+
+**es (1 remaining):** `12`, the same single digit-bearing word as before —
+unaffected by this fix, same as en's digit words.
+
+**Zero genuine vocab/typography losses remain on either real-text language.**
+The digit-expansion deferral argument in the original "1.3 — does this
+evidence make digits blocking" section above is unaffected by this fix (that
+section's numbers describe digit-bearing loss specifically, which this fix
+does not touch) and still stands.
+
+### Commands used (identical to the original measurement)
+
+```sh
+npx esbuild .work-phase4/spike-runtime/measure-fa-repr.ts --bundle \
+  --platform=node --format=esm \
+  --outfile=.work-phase4/spike-runtime/measure-fa-repr.mjs
+node .work-phase4/spike-runtime/measure-fa-repr.mjs \
+  > .work-phase4/spike-runtime/measure-fa-repr-output.json
+```
+
+Same script (`measure-fa-repr.ts`, still uncommitted/gitignored scratch),
+same corpus files, same fixtures — the only variable that changed between the
+two runs is `src/services/faTextNormalize.ts` itself.

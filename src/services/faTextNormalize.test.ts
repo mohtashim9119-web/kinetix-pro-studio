@@ -163,6 +163,118 @@ describe('faTextNormalize — empty and whitespace-only input', () => {
   });
 });
 
+describe('faTextNormalize — FOLD: typographic variant to ASCII, preserving the word', () => {
+  it('en: "don’t" (curly U+2019 apostrophe) becomes representable and keeps its apostrophe', () => {
+    const result = normalizeForForcedAlignment('don’t', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("don't");
+    expect(result.text).toBe("don't");
+  });
+
+  it('en: an em dash inside a word folds to the vocab hyphen', () => {
+    const result = normalizeForForcedAlignment('well—actually', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('well-actually');
+  });
+
+  it('en: a curly double quote is dropped (fold target " absent from the en vocab)', () => {
+    const result = normalizeForForcedAlignment('“hello”', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('hello');
+  });
+});
+
+describe('faTextNormalize — STRIP: word-boundary punctuation, never word-internal', () => {
+  it('en: "hello." loses only the trailing period', () => {
+    const result = normalizeForForcedAlignment('hello.', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('hello');
+  });
+
+  it('en: "word," loses only the trailing comma', () => {
+    const result = normalizeForForcedAlignment('word,', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('word');
+  });
+
+  it('es: guillemets «cerca» are stripped from both edges', () => {
+    const result = normalizeForForcedAlignment('«cerca»', 'es', VOCABS.es);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('cerca');
+  });
+
+  it('en: stacked boundary marks fully clear from both edges', () => {
+    const result = normalizeForForcedAlignment('"word,"', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('word');
+  });
+});
+
+describe('faTextNormalize — fold and strip together on a single token', () => {
+  it('en: a curly-quoted, period-terminated contraction is fully recovered', () => {
+    const result = normalizeForForcedAlignment('“don’t.”', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("don't");
+  });
+});
+
+describe('faTextNormalize — zero-width characters removed mid-word', () => {
+  it('en: a zero-width space embedded inside a word is removed, not treated as unrepresentable', () => {
+    const result = normalizeForForcedAlignment('hel​lo', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe('hello');
+  });
+});
+
+describe('faTextNormalize — word-internal apostrophe and hyphen survive, per language', () => {
+  const cases: Array<{ lang: FaLanguageCode; word: string }> = [
+    { lang: 'en', word: "don't" },
+    { lang: 'en', word: 'well-known' },
+    { lang: 'fr', word: "l'élève" },
+    { lang: 'de', word: 'arbeits-platz' },
+    { lang: 'pt', word: "d'água" },
+  ];
+
+  for (const { lang, word } of cases) {
+    it(`${lang}: "${word}" survives fold+strip unchanged`, () => {
+      const result = normalizeForForcedAlignment(word, lang, VOCABS[lang]);
+      expect(result.words[0]!.representable).toBe(true);
+      expect(result.words[0]!.mapped).toBe(word);
+    });
+  }
+});
+
+describe('faTextNormalize — the unrepresentable contract did not become permissive', () => {
+  it('en: a genuinely out-of-vocab letter is still unrepresentable after fold+strip', () => {
+    // Cyrillic "п" is in neither FOLD_TARGETS nor BOUNDARY_STRIP_CHARS nor the
+    // en vocab — it must survive fold/strip untouched and still fail the
+    // per-character vocab check, exactly as before this fix.
+    const result = normalizeForForcedAlignment('привет.', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toMatch(/character ".+" is not in the en vocab/);
+    expect(result.text).toBe('');
+  });
+
+  it('en: stripping a fully-punctuation token to nothing marks it unrepresentable, not an empty representable word', () => {
+    const result = normalizeForForcedAlignment('...', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.mapped).toBeUndefined();
+    expect(result.text).toBe('');
+  });
+});
+
+describe('faTextNormalize — a fold target absent from a vocab causes a strip there, not a fold', () => {
+  it('none of the five vocabs contain an ASCII double quote, so curly double quotes always drop rather than fold', () => {
+    for (const lang of LANGUAGES) {
+      expect(VOCABS[lang].has('"'), `${lang} vocab should not contain "\\"" per this test's premise`).toBe(false);
+      const result = normalizeForForcedAlignment('“x”', lang, VOCABS[lang]);
+      expect(result.words[0]!.representable).toBe(true);
+      expect(result.words[0]!.mapped).toBe('x');
+      expect(result.words[0]!.mapped).not.toContain('"');
+    }
+  });
+});
+
 describe('vocabCharsFromRawVocab', () => {
   it('excludes CTC special/delimiter tokens from every language vocab', () => {
     for (const lang of LANGUAGES) {
