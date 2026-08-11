@@ -1,8 +1,9 @@
 # Test fixtures — sync pipeline research corpus
 
-These 22 CSVs are **inputs read by hardcoded path**, not documentation: by
-`scripts/phase4-handoff-replay-sync.test.ts` (the golden-replay test — see
-`CLAUDE.md`'s Testing invariant), `scripts/phase4-step-w-k13-repro.test.ts`,
+These 28 files (22 CSVs, plus 3 CSV + 3 JSON pairs added for R-H — see
+"Forced-alignment fixture" below) are **inputs read by hardcoded path**, not
+documentation: by `scripts/phase4-handoff-replay-sync.test.ts` (the
+golden-replay test — see `CLAUDE.md`'s Testing invariant), `scripts/phase4-step-w-k13-repro.test.ts`,
 and by name inside `scripts/phase4-restore-replay-inputs.py`,
 `scripts/phase4-step-w-trust.py`, `scripts/phase4-step-x-verify.py`,
 `scripts/phase4-step-s-structural-checks.py`,
@@ -27,6 +28,26 @@ against a future post-Phase-4 run.
 | `phase4-baseline-{v6,173,spanish}-words.csv` | Post-`filterMalformedTokens` Whisper token array, re-extracted from the Smear-Phase2a exports. Verified value-for-value by `phase4-restore-replay-inputs.py`. |
 | `phase4-baseline-{v6,173,spanish}-silences.csv` | RMS-detected silence intervals (`silenceDetector.ts`'s exact algorithm, Python-ported). Verified value-for-value by `phase4-restore-replay-inputs.py`. |
 | `phase4-baseline-{v6,173,spanish}-skipped.csv` | The skip set (segment index/tag/matched-words/total-words) the golden replay's coverage gate must reproduce exactly. |
+
+## Forced-alignment fixture (R-H, port-fidelity reference — not a production target)
+
+Read by `scripts/phase4-handoff-replay-sync.test.ts`'s "R-H — forced-alignment
+fixture" describe block. Captured once, 2026-08-12, by
+`scripts/measure-forced-alignment.py` (torchaudio MMS_FA) against each
+project's own committed Step M segments (`phase4-baseline-*-segments.csv`,
+used only as alignment windows, pad-sec 3.0, neighbour-midpoint clamped —
+MEASUREMENT convention, not production windowing; R.4 specifies PAD_BASE
+0.75s for production). This is the FIRST capture — there was nothing to diff
+it against before this commit; going forward, these two files are each
+other's baseline (the CSV must always match the JSON it was derived from).
+**A fidelity reference for a future Rust MMS-FA/Viterbi port, not a claim
+about what Apply Sync should commit** — full caveat text is embedded in both
+files' own headers, not just here.
+
+| File pattern | Purpose |
+|---|---|
+| `phase4-fa-tokens-{v6,173,spanish}.json` | Raw per-word MMS-FA capture (`text`/`start`/`end`/`score`/`seg`), plus `_caveat` and `_provenance` (model, torch/torchaudio versions, pad-sec, language, elapsed/RSS, failed/dropped words). |
+| `phase4-fa-baseline-{v6,173,spanish}-words.csv` | The same per-word data as a diffable table, with the caveat and provenance as leading `#`-comment lines (stripped by the test's own `loadFaBaselineCsv`, not `parseCsv`/`loadBaselineCsv` — the existing Whisper-baseline loader is untouched). |
 
 ## Forced-alignment ground truth
 

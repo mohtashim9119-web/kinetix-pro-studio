@@ -30,6 +30,7 @@ __pycache__/
 .listening-clips/
 .answer-keys/
 .venv-phase4/
+.venv-phase4-fa/
 .work-phase4/
 
 # graphify tool output — regeneratable, not source (2026-08-07)

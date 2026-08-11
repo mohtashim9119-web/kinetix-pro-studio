@@ -300,3 +300,128 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
     }, 120_000);
   }
 });
+
+// ---------------------------------------------------------------------------
+// R-H — forced-alignment fixture (fidelity reference, captured while FA is
+// still unwired from Apply Sync — the diff against production is zero today,
+// which is what makes a later non-zero diff, once faAnchors.ts gets a real
+// caller, unambiguous).
+//
+// This is NOT a re-run of the shipped sync pipeline with FA tokens substituted
+// for Whisper tokens (there is no wiring to do that yet — faAnchors.ts has no
+// caller, per Slice D1). It is a SECOND, INDEPENDENT capture: MMS-FA's own
+// per-word alignment of each project's already-committed segment text against
+// its own audio, produced by the Python harness (measure-forced-alignment.py,
+// torch/torchaudio — not runnable from vitest/Node), and committed as a fixed
+// pair of fixtures:
+//   - scripts/fixtures/phase4-fa-tokens-<key>.json  (the raw per-word capture)
+//   - scripts/fixtures/phase4-fa-baseline-<key>-words.csv (the same data, as
+//     a diffable table — the actual "second baseline" 2.3 asks for)
+// There was nothing to diff the FA pass against before this run — THIS RUN's
+// own committed output IS the baseline going forward. What these tests check
+// is that the pair stays internally consistent (the CSV table matches the
+// JSON capture it was derived from, exactly) and that the required fidelity
+// caveat (below) survives any future edit to either file.
+//
+// Exact harness commands used to produce the raw captures (torch==2.2.2,
+// torchaudio==2.2.2, numpy<2, uroman, per measure-forced-alignment.md's
+// documented setup):
+//   python3 scripts/measure-forced-alignment.py align \
+//     --workdir .work-phase4/replay/v6      --segments-json <v6 committed segments as JSON>      --label fa --language en
+//   python3 scripts/measure-forced-alignment.py align \
+//     --workdir .work-phase4/replay/173     --segments-json <173 committed segments as JSON>     --label fa --language en
+//   python3 scripts/measure-forced-alignment.py align \
+//     --workdir .work-phase4/replay/spanish --segments-json <spanish committed segments as JSON> --label fa --language es
+// `--segments-json` in each case was scripts/fixtures/phase4-baseline-<key>-segments.csv
+// (the committed Step M golden segments — text/startTime/duration) converted
+// to the bare-array JSON shape measure-forced-alignment.py's loader accepts;
+// those are alignment WINDOWS only (R.4/pad-sec 3.0, neighbour-midpoint
+// clamped), never a ground truth this harness scores against.
+//
+// CRITICAL — do not mistake this for a production behavioral target: pad-sec
+// 3.0 and neighbour-midpoint windowing are MEASUREMENT convention. R.4
+// specifies PAD_BASE 0.75s for production, and the audit that produced R.4
+// traced the midpoint-clamp strategy used here to five documented failures on
+// gapless corpora (docs/history.md). This is a FIDELITY reference for the
+// future Rust MMS-FA/Viterbi port to reproduce — not a claim about what Apply
+// Sync should ever commit.
+// ---------------------------------------------------------------------------
+
+interface FaWordToken {
+  text: string;
+  start: number;
+  end: number;
+  score: number;
+  seg: number;
+}
+
+interface FaTokensFixture {
+  _caveat: string[];
+  _provenance: {
+    model: string;
+    torch_version: string;
+    torchaudio_version: string;
+    pad_sec: number;
+    language: string;
+    token_count: number;
+    segment_count: number;
+    failed_segments: unknown[];
+    dropped_unrepresentable: Array<{ seg: number; words: string[] }>;
+  };
+  words: FaWordToken[];
+}
+
+function loadFaTokensFixture(key: string): FaTokensFixture {
+  return JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', `phase4-fa-tokens-${key}.json`), 'utf-8'),
+  ) as FaTokensFixture;
+}
+
+/** Same row format `loadBaselineCsv` reads, plus leading `#`-prefixed
+ *  provenance/caveat comment lines stripped before parsing — a distinct
+ *  helper so the existing three Whisper baselines' loading path
+ *  (`loadBaselineCsv`/`parseCsv`) is never touched by this addition. */
+function loadFaBaselineCsv(key: string): Record<string, string>[] {
+  const raw = readFileSync(resolve(REPO, 'scripts', 'fixtures', `phase4-fa-baseline-${key}-words.csv`), 'utf-8');
+  const withoutComments = raw
+    .split('\n')
+    .filter(line => !line.startsWith('#'))
+    .join('\n');
+  return parseCsv(withoutComments);
+}
+
+describe('R-H — forced-alignment fixture (second baseline, captured while FA is unwired)', () => {
+  for (const spec of PROJECTS) {
+    it(`FA capture for ${spec.key}: committed CSV baseline matches the committed JSON capture it was derived from`, () => {
+      const fixture = loadFaTokensFixture(spec.key);
+      const csvRows = loadFaBaselineCsv(spec.key);
+
+      // The caveat must survive verbatim — this is what stops a future reader
+      // from mistaking a measurement-convention fixture for a production target.
+      expect(fixture._caveat.join(' ')).toContain('NOT a production behavioral target');
+      expect(fixture._caveat.join(' ')).toContain('nothing to diff it against yet');
+
+      expect(fixture._provenance.token_count).toBe(fixture.words.length);
+      expect(fixture._provenance.failed_segments).toEqual([]);
+
+      expect(csvRows.length, `${spec.key}: CSV row count vs JSON word count`).toBe(fixture.words.length);
+      for (let i = 0; i < fixture.words.length; i++) {
+        const w = fixture.words[i]!;
+        const row = csvRows[i]!;
+        expect(Number(row.seg), `${spec.key} word ${i} seg`).toBe(w.seg);
+        expect(row.text, `${spec.key} word ${i} text`).toBe(w.text);
+        expect(Math.abs(Number(row.startSec) - w.start), `${spec.key} word ${i} startSec`).toBeLessThan(1e-9);
+        expect(Math.abs(Number(row.endSec) - w.end), `${spec.key} word ${i} endSec`).toBeLessThan(1e-9);
+        expect(Math.abs(Number(row.score) - w.score), `${spec.key} word ${i} score`).toBeLessThan(1e-9);
+      }
+
+      // eslint-disable-next-line no-console
+      console.log(
+        `[fa-fixture:${spec.key}] words=${fixture.words.length} segments=${fixture._provenance.segment_count} ` +
+        `language=${fixture._provenance.language} pad_sec=${fixture._provenance.pad_sec} ` +
+        `dropped_unrepresentable=${fixture._provenance.dropped_unrepresentable.length} ` +
+        `(this is a FIDELITY reference for a future Rust port — not a production timing target)`,
+      );
+    });
+  }
+});

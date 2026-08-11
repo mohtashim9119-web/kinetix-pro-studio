@@ -9032,3 +9032,62 @@ constant is introduced for it.
 **Gates before this ruling commit:** `npm run lint` clean; `npm test` 72 files / 1803 passed /
 1 skipped / 0 failed; golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3;
 `cargo check` clean (docs-only change, no `src/`/`src-tauri/` edits in this commit).
+
+## faAnchors.ts index-space fix + R-H forced-alignment fixture (2026-08-12)
+
+**D1's token-index assumption verified — and it was wrong.** Before extending the golden
+replay, `faAnchors.ts`'s own header ASSUMPTION comment (landed at `e0c9c89`) — that
+`alignment.matchedSubjectOf[qi]` indexes `tokens[]` directly — was checked against
+`whisperService.ts` rather than trusted. It does not: `TokenAlignment.matchedSubjectOf` is
+documented as a "subject index" against whatever `subject: string[]` array was passed to
+`alignQueryToSubject` (`whisperService.ts:146`), and the one real caller,
+`extractSegmentAlignments`, passes `subjectWords = tokenWords.map(t => t.word)`
+(`whisperService.ts:823-824`) — a per-word expansion of each Whisper token
+(`whisperService.ts:793-805`, its own comment: "Whisper tokens may contain multiple words")
+that also drops any token canonicalizing to zero words (`whisperService.ts:803`'s
+`word.length > 0` guard). The subject space and the token space diverge on any token that
+isn't exactly one canonical word — routine for numbers, currency, multi-word tokens, and
+punctuation-only tokens. **This was a real defect in code that had just landed, not a
+documentation gap**: fixed by making `computeFaAnchors`/`computeAnchors` take an explicit
+`subjectTokenIdx` mapping (subject index → real `tokens[]` index) as a parameter, the same
+shape `whisperService.ts` already builds via `tokenWords[i].tokenIdx` — no new type invented.
+A regression test (`faAnchors.test.ts`, shifted-subject-space case) fails under the old
+identity assumption and passes with the fix. Commit `5f4f0da`.
+
+**R-H — a second, independent golden-replay baseline captured from forced alignment, while
+the diff against production is still exactly zero** (`faAnchors.ts` has no caller yet — Slice
+D1 remains unwired). Ran `scripts/measure-forced-alignment.py` (torchaudio `MMS_FA`,
+mling_uroman, `with_star=True`) against each of the three replay corpora's own committed Step
+M segments (`phase4-baseline-{v6,173,spanish}-segments.csv`, used only as alignment windows —
+`--pad-sec 3.0`, neighbour-midpoint clamped per the harness's own neighbour-bleed fix; this is
+MEASUREMENT convention, not production windowing — R.4 specifies `PAD_BASE` 0.75s for
+production, and the audit that produced R.4 traced this exact midpoint-clamp strategy to five
+documented failures on gapless corpora). The existing `.venv-phase4` (Python 3.14) has no torch
+wheel available for that interpreter (documented in `measure-forced-alignment.md`); built a
+fresh `.venv-phase4-fa` on `python3.11` (already present via Homebrew) instead, installed
+`torch==2.2.2`/`torchaudio==2.2.2`/`numpy<2`/`uroman` per the harness's documented setup, and
+confirmed the `MMS_FA` bundle loads from the already-cached weights
+(`~/.cache/torch/hub/checkpoints/model.pt`) with no network fetch needed. Results: v6 — 3857
+words / 444 segments / 0 failed / 0 dropped (247.7s wall, `align_only` 238.9s); 173 — 1645
+words / 172 segments / 0 failed / 0 dropped (121.8s wall); spanish — 247 words / 26 segments /
+0 failed / 1 dropped (seg 3, the bare digit run "12" — MMS-FA's 27-letter+apostrophe alphabet
+has no digit representation, `--language es`). Committed as
+`scripts/fixtures/phase4-fa-tokens-{v6,173,spanish}.json` (raw per-word capture plus
+`_caveat`/`_provenance`) and `phase4-fa-baseline-{v6,173,spanish}-words.csv` (the same data as
+a diffable table, word-level rather than segment-level since that is FA's own native
+granularity, with the caveat and full harness provenance as leading `#`-comment lines) — 6
+files, ~0.87 MB total, each under the 5 MB/file and 20 MB/total caps. Both files carry the
+fidelity-vs-production caveat inline, not only here: MMS-FA's own achievable output on this
+input is a reference for a future Rust MMS-FA/Viterbi port to reproduce, never a claim about
+what Apply Sync should commit. `scripts/phase4-handoff-replay-sync.test.ts` gained a second
+`describe` block (3 new tests, one per project) that verifies each committed CSV still matches
+the committed JSON it was derived from and that the caveat text survives — the FIRST run of
+this capture *is* the baseline going forward, since there was nothing to diff it against
+before. The original three Whisper-baseline tests and their 1e-9 diffs were not touched by
+this change (confirmed byte-identical, still 3/3).
+
+**Gates:** `npm run lint` clean; `npm test` 73 files / 1817 passed / 1 skipped / 0 failed
+(1813 baseline → +1 the D1 index-space regression test → +3 the R-H fixture-consistency
+tests); golden replay 6/6 (3 original, byte-identical to Step M, + 3 new R-H tests);
+`cargo check` clean. Commits `5f4f0da` (index-space fix) and the R-H fixture commit that
+follows this entry.
