@@ -17,7 +17,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **IMPLEMENTATION-READY, not started.** Blockers 1/2/3 CLOSED; **all three Rust gates closed** (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, **restored and proven faithful at Step Y**; readiness statement at Step Z. Integration not started | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
 | 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
-| 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
+| 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | **SKIPPED** | — | — |
 | — | **STAGE 1 LOCK** | Gate in Part D | NOT PASSED | — | — |
 | 4 | All stages (structural; byte-identical gate) | Restructure into four stages (Prepare / Align and Select / Place / Finalize and Report) | NOT STARTED | — | — |
 | — | **STAGE 2 LOCK** | Gate in Part D | NOT PASSED | — | — |
@@ -3744,7 +3744,7 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   (c) ~~3 short-segment-run boundaries not yet in the verification set~~ **RESOLVED 2026-08-04** — 5 added, see Part L;
   (d) Contract IN / 1→2 not yet verified guarantee-by-guarantee;
   (e) cross-cutting regression checklist (D.-1) not yet run;
-  (f) **NEW 2026-08-05** — Phase 2a's own gate is unmet: `verification-baseline.csv` carries 69 blank `phase-2a` verdict cells (47 existing boundaries + 22 new sync-log-flagged candidates) awaiting the owner's ear. Phase 2a cannot be marked DONE, and Stage 1 cannot lock, until those verdicts land and the correct-count gate (≥30 of 47, Phase 0's baseline) is checked.
+  (f) ~~`verification-baseline.csv` carried 69 blank `phase-2a` verdict cells (47 existing boundaries + 22 new sync-log-flagged candidates) awaiting the owner's ear~~ **RESOLVED 2026-08-11.** All 69 are closed: the 47 existing boundaries were scored during Phase 2a's own listening pass, which passed its correct-count gate (38/44 verified, ≥30-of-47 threshold met — see Phase 2a's entry above); the remaining 22 new sync-log-flagged candidates are DEFERRED, non-blocking, by owner ruling R-A (2026-08-11) — WS1 does not pause for an ear-listening pass to fill them in.
 
 Near-term sequence: Phase 2b is read-only and measurement-exempt from stage ordering, so it can proceed in parallel with the owner's Phase 2a listening pass.
 

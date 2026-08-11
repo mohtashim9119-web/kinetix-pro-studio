@@ -51,7 +51,7 @@ Two status sources exist in the plan document itself: a **top summary table** (i
 | — | **STAGE 1 LOCK** | — | **NOT PASSED.** Six blockers as of 2026-08-05; see §3 for the up-to-date read on each. | `sync-pipeline-v2-plan.md:3741-3747` |
 | **4** | restructure (touches all 4 stages) | **The literal restructure**: reorganize the pipeline into 4 stages, make Stage 2's output timing-free, thread Stage 1's output as one object, collapse `distributeSegmentTimes`/`applyAnchorBasedTiming` into Stage 3. A move, not a behavior change — byte-identical resync is the pass bar. | **NOT STARTED.** Blocked on Stage 1 locking. *Careful: a large body of Phase-4-*labeled* research (Steps M through AD) already shipped as measurement/design — that is not this restructure; see §4.* | `sync-pipeline-v2-plan.md:3751-3754` |
 | — | **STAGE 2 LOCK** | — | **NOT PASSED** | `sync-pipeline-v2-plan.md:3756-3759` |
-| 5 | Stage 3 | Replace the boundary picker with Part C's 4-line "fence" rule; delete the picker heuristics it replaces | **NOT STARTED.** Needs Stage 1 + Stage 2 locked first, and needs heading-wildcard Option A's logic coded in (decided, not yet built — see §5). | `sync-pipeline-v2-plan.md:3763-3766` |
+| 5 | Stage 3 | Replace the boundary picker with Part C's 4-line "fence" rule; delete the picker heuristics it replaces. **Scope also includes implementing heading-wildcard Option A** (unscripted spoken audio absorbed entirely by the preceding segment, logged as an explicit `unscripted-gap` entry) — decided (owner decision 8, plan doc Step V / Steps Y-Z) but not yet coded anywhere; this is the phase that must build it. | **NOT STARTED.** Needs Stage 1 + Stage 2 locked first, and needs heading-wildcard Option A's logic coded in (decided, not yet built). | `sync-pipeline-v2-plan.md:3763-3766` |
 | 6 | Stage 3 | Deprecate the compensation layer (`isBreathSilence`, seam exemption, contention assignment) if the 8 seam-exemption cases still hold without it | **NOT STARTED** | `sync-pipeline-v2-plan.md:3768-3771` |
 | 6b | Stage 3 | Verify the 173-project's known `pairIdx-20` boundary defect, likely resolved by Phase 5 | **NOT STARTED** | `sync-pipeline-v2-plan.md:3773-3774` |
 | — | **STAGE 3 LOCK** | — | **NOT PASSED** | `sync-pipeline-v2-plan.md:3776-3780` |
@@ -131,6 +131,10 @@ Part K (`sync-pipeline-v2-plan.md:4235-4279`) is the plan document's own self-au
 | K15 | Drag cascade: gap-collapse over-absorption (introduced by K14) + a pre-existing unbounded neighbour-absorption bug | **FIXED**, 2026-08-07, extracted to `src/services/dragCascade.ts` |
 | K16 | Drag pointer accuracy (stale 24px constant, missing grab offset, left-edge drag not tracking the pointer) | **FIXED**, 2026-08-07, new `src/services/dragGeometry.ts` |
 | K17 | Frozen-neighbour overlap in the *live drag preview* (distinct from K15 — a rendering-only mismatch between what's drawn during a drag and what commits) | **FIXED and shipped on `main`**, commit `6eae48e` — `dragCascade.ts`'s `resolveDragPreview`, regression-tested (`dragCascade.test.ts`, 37/37 passing, re-run to confirm this session). Independently verified: not a mis-citation. |
+
+**Branch disposition, updated 2026-08-11.** `wip/preserve-2026-08-07`'s previously-unique data is now fully rescued onto `main`, byte-for-byte — all 39 files it alone held (Spanish blinded-listening answer keys/clips, Phase 4 golden-baseline replay snapshots, K13/K14 live-repro evidence, 5 structural-check audio clips) were copied via `git show`/`git cat-file` and verified byte-identical against their source blob SHAs (commit `bb7b0f8`; manifest at `docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/PROVENANCE.md`). The branch itself is now safe to delete. `model-p-editor-work` stays parked, unmerged, permanently, per ruling R-C (§8) — the rescue doesn't change that; its logic/ideas may still be ported fresh into the K13 fix, never its code.
+
+⚠ **Caution when citing `docs/history.md` on K13.** Its park-commit entry (`docs/history.md:2794-2804`) describes the parked `model-p-editor-work` branch as containing "a lock-fingerprint persistence rule closing the pre-existing K13 bug" — quoted alone, out of context, that reads as K13 being fixed. It isn't: that fix exists only on the unmerged, permanently-parked branch and was never merged to `main`. K13 is live on `main` today; the repro test passing (`scripts/phase4-step-w-k13-repro.test.ts`, 3/3, table above) is the proof it's still broken, not evidence it's fixed.
 
 ---
 
@@ -252,3 +256,18 @@ So no reader wonders where something went.
 | Parakeet's CTC-extractability; CJK/Thai/Vietnamese/RTL languages | **OUT OF SCOPE** | Never in scope to begin with — not a cut from an existing plan. |
 
 **Self-corrections inside the plan document itself** — worth knowing before quoting an early section in isolation: Step S's claim of "13/13 poison cases caught" was false when written and is corrected two steps later by Step W to the real 12/13 (§4). Phase 2a's original root-cause for the 173-project's segment 112 ("turbo drops the word") is corrected by Phase 2b's Finding 4 (turbo emits it with a zero-duration timestamp, which a later filter then drops — same downstream consequence, different mechanism). Segment 320's "4.5x duration undercount," discussed as a live defect through most of Phase 3, was later found to be a stale-measurement artifact — latent, not live, in the currently-shipped pipeline. In all three cases the *later* passage is the document correcting itself in the open, not a silent contradiction — but a reader citing only the earlier passage would be citing something the document itself has already disclaimed.
+
+---
+
+## 13. Deferred, with reason
+
+Explicitly parked, not forgotten. Recorded here so the next reader doesn't have to re-derive why each is sitting idle, and doesn't re-litigate any of them.
+
+- **Stage 1 blockers (d) and (e)** — Contract IN/1→2 guarantee-by-guarantee verification and the cross-cutting regression checklist (§3). Procedural; deferred until Phase 3 (and 3c) actually ship, so they're run once against the landed state instead of twice.
+- **Stage 1 blocker (b), French/Portuguese/German corpus absence** (§3) — no fr/de/pt corpus project exists. Already accepted in writing, per H.8's dormant-rules allowance: those languages' rules ship dormant behind their language keys and are verified when corpus material arrives.
+- **`boundaryUsedFallback` 4-arg bug** (§4 Step Z risks; `snapBoundaries.ts` — defaults the seam exemption off in every boundary-quality reading) — scheduled for Phase 7, may self-resolve at Phase 6 if that phase deletes the seam exemption first.
+- **C10 structural check, 0/4 ear-verified recall** (§9) — accepted as CI-OUT regardless of predicate tuning; a quieter false-positive rate isn't the same as a working check.
+- **No automated test CI** (§9) — all four project gates (`lint`, `npm test`, golden replay, `cargo check`) are run by hand; accepted, no CI pipeline planned.
+- **3rd word-shift case**, `seasons than you‖can count and` (§9) — a script-vs-narration authority conflict, structurally unfixable by any timing-source change; accepted.
+- **Phase 4 design call: architect "Place" gapless-aware from the start, or retrofit later** (§7 item 9) — deferred to Stage 1 lock time, when the call actually has to be made. Noted here that deciding it now is cheaper than retrofitting after Phase 4 lands.
+- **22 blank `boundary-quality-flag` verification rows** (§8 R-A, §9) — deferred, non-blocking, by owner ruling R-A, 2026-08-11. WS1 does not pause for an ear-listening pass to fill them in.
