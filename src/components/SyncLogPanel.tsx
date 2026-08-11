@@ -48,6 +48,11 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // wasn't granted. Amber matches the other "we declined / we adjusted"
   // lock surfaces above rather than the red reserved for real failures.
   'lock-refused': { label: 'LOCK REFUSED', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+  // K13 fix — a lock that existed BEFORE this Apply Sync could not be carried
+  // into the freshly-synced timeline (unmatched, or its saved position no
+  // longer fits). Amber matches lock-refused: the user's project is in a
+  // valid state, their earlier lock just wasn't honoured this time.
+  'lock-not-restored': { label: 'LOCK NOT RESTORED', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

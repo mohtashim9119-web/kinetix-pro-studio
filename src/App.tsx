@@ -134,7 +134,7 @@ import {
   buildLockRefusedLogEntry,
   mintSyncLogId,
 } from './services/syncLog';
-import { canLockSegment, findPartitionViolations } from './services/timelinePartition';
+import { canLockSegment, findPartitionViolations, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -706,6 +706,175 @@ function preserveEffectFields(
   });
 }
 
+/**
+ * K13 fix — one record per previously-locked segment `preserveSegmentLocks`
+ * could not carry forward, for the sync log. `no-asset-id`/`duplicate-asset-id`
+ * never resolved to a segment in the new array at all (the match itself
+ * failed), so there is no new-array index to report — `oldText` (a preview of
+ * the OLD segment's own text) is the only stable identity left. `out-of-bounds`/
+ * `partition-conflict` DID match a real new segment before validation dropped
+ * them, so they carry `segmentIndex` into the new array, matching every other
+ * segment-indexed sync-log entry's convention.
+ */
+export interface DroppedLockRecord {
+  reason: 'no-asset-id' | 'duplicate-asset-id' | 'out-of-bounds' | 'partition-conflict';
+  oldText: string;
+  segmentIndex?: number;
+}
+
+/**
+ * K13 fix — restores `locked`/`startTime`/`duration` onto `committed` for
+ * every segment that maps, by unique assetId, to a segment that was locked in
+ * `previousSegments`. Matching mirrors `preserveEffectFields`'s fail-safe
+ * shape exactly (unique-assetId-on-both-sides or no carry) — see that
+ * function's own doc comment for why. Does NOT carry `anchorStart` forward:
+ * a locked segment's anchor is re-derived to match its `startTime` the next
+ * time `applyAnchorBasedTiming` runs on it (syncEngine.ts:300), whether
+ * that's a later lock toggle or the next Apply Sync.
+ *
+ * Deliberately runs on `committed` — AFTER autoMatchSegments has assigned
+ * every real assetId and the full timing pipeline has already produced a
+ * known-valid (gapless) array — rather than feeding the restored lock into
+ * applyAnchorBasedTiming's own hard-wall pass earlier in the pipeline. That
+ * earlier point doesn't have every segment's assetId yet (autoMatchSegments
+ * hasn't run), and — more importantly — a lock that fails validation would
+ * need the entire async, Whisper-driven timing pipeline re-run to cleanly
+ * revert it. Restoring post-hoc instead makes a dropped lock free to revert:
+ * the naturally-synced value the pipeline already computed for that segment
+ * is simply left in place, untouched.
+ *
+ * Validates every restored lock in two passes, per the owner's ordering:
+ * (a) a bound check — does the OLD [startTime, startTime+duration] span still
+ * fit inside [0, audioDuration]? This runs first and is independent per
+ * segment (it can never be affected by another lock), so it never needs to
+ * iterate. (b) `findPartitionViolations` on the tentatively-restored array —
+ * iterated, dropping exactly one offending candidate per pass (the later
+ * segment of a violating pair, matching findPartitionViolations' own
+ * "measured at the later of the two" convention; the earlier one only when
+ * it alone is a restore candidate) and re-validating from scratch, until
+ * stable. Capped at the starting candidate count: each iteration that finds
+ * a violation removes exactly one candidate, so the loop can never run more
+ * than `candidates.size` times before either stabilizing or running out of
+ * candidates to drop.
+ *
+ * Pure and immutable — never mutates `committed` or `previousSegments`.
+ */
+export function preserveSegmentLocks(
+  committed: VideoSegment[],
+  previousSegments: VideoSegment[],
+  audioDuration: number,
+): { segments: VideoSegment[]; dropped: DroppedLockRecord[] } {
+  const lockedOld = previousSegments.filter(s => s.locked);
+  if (lockedOld.length === 0) return { segments: committed, dropped: [] };
+
+  // Old segments keyed by assetId, excluding undefined / non-unique assetIds
+  // — the exact fail-safe shape preserveEffectFields already uses.
+  const oldByAsset = new Map<string, VideoSegment>();
+  const seenOld = new Set<string>();
+  for (const seg of previousSegments) {
+    if (!seg.assetId) continue;
+    if (seenOld.has(seg.assetId)) {
+      oldByAsset.delete(seg.assetId); // now non-unique — drop it
+      continue;
+    }
+    seenOld.add(seg.assetId);
+    oldByAsset.set(seg.assetId, seg);
+  }
+
+  // assetIds appearing >1x in the freshly-committed array — ambiguous targets.
+  const newCounts = new Map<string, number>();
+  committed.forEach(seg => {
+    if (seg.assetId) newCounts.set(seg.assetId, (newCounts.get(seg.assetId) ?? 0) + 1);
+  });
+
+  const dropped: DroppedLockRecord[] = [];
+  // Candidate restores, keyed by the NEW segment's id — stable across the
+  // validation loop below, unlike an array index (which shifts as nothing —
+  // segments never reorder here — but which a re-derived array must not be
+  // trusted to preserve identity through regardless).
+  const candidates = new Map<string, { startTime: number; duration: number; oldText: string }>();
+
+  for (const oldSeg of lockedOld) {
+    if (!oldSeg.assetId) {
+      dropped.push({ reason: 'no-asset-id', oldText: oldSeg.text });
+      continue;
+    }
+    if (!oldByAsset.has(oldSeg.assetId)) {
+      // Non-unique in the OLD array — ambiguous target, never guess.
+      dropped.push({ reason: 'duplicate-asset-id', oldText: oldSeg.text });
+      continue;
+    }
+    const newCount = newCounts.get(oldSeg.assetId) ?? 0;
+    if (newCount === 0) {
+      // The scene this lock belonged to is gone from the new array entirely
+      // — the user deleted it. Silent per the owner's ruling; no log entry.
+      continue;
+    }
+    if (newCount > 1) {
+      dropped.push({ reason: 'duplicate-asset-id', oldText: oldSeg.text });
+      continue;
+    }
+
+    // Bound check (owner refinement) — the OLD span must still fit inside
+    // the NEW audio's duration. Runs before this segment is ever treated as
+    // a restore candidate, since it depends only on the old span and the
+    // fixed [0, audioDuration] range, never on any other lock.
+    const newSeg = committed.find(s => s.assetId === oldSeg.assetId)!;
+    const end = oldSeg.startTime + oldSeg.duration;
+    if (oldSeg.startTime < -PARTITION_EPSILON_SEC || end > audioDuration + PARTITION_EPSILON_SEC) {
+      dropped.push({ reason: 'out-of-bounds', oldText: oldSeg.text, segmentIndex: committed.indexOf(newSeg) });
+      continue;
+    }
+
+    candidates.set(newSeg.id, { startTime: oldSeg.startTime, duration: oldSeg.duration, oldText: oldSeg.text });
+  }
+
+  if (candidates.size === 0) return { segments: committed, dropped };
+
+  const applyCandidates = (): VideoSegment[] =>
+    committed.map(seg => {
+      const c = candidates.get(seg.id);
+      return c ? { ...seg, locked: true, startTime: c.startTime, duration: c.duration } : seg;
+    });
+
+  const maxIterations = candidates.size;
+  for (let iteration = 0; iteration < maxIterations; iteration++) {
+    const attempt = applyCandidates();
+    const violations = findPartitionViolations(attempt, audioDuration);
+    if (violations.length === 0) return { segments: attempt, dropped };
+
+    const v = violations[0]!;
+    const laterSeg = attempt[v.index];
+    const earlierSeg = v.index > 0 ? attempt[v.index - 1] : undefined;
+    const toRevert = laterSeg && candidates.has(laterSeg.id)
+      ? laterSeg
+      : (earlierSeg && candidates.has(earlierSeg.id) ? earlierSeg : undefined);
+
+    if (!toRevert) {
+      // Defensive backstop only — unreachable in practice, since `committed`
+      // is already a known-valid partition before this function ever touches
+      // it (every writer upstream maintains that invariant), so any
+      // violation here must trace back to one of this function's own
+      // candidates. Never risk committing an unresolved violation: abandon
+      // every restore for this run rather than guess which one is at fault.
+      return { segments: committed, dropped };
+    }
+    const revertedCandidate = candidates.get(toRevert.id)!;
+    candidates.delete(toRevert.id);
+    dropped.push({
+      reason: 'partition-conflict',
+      oldText: revertedCandidate.oldText,
+      segmentIndex: committed.findIndex(s => s.id === toRevert.id),
+    });
+    if (candidates.size === 0) return { segments: committed, dropped };
+  }
+  // Cap exhausted without stabilizing — same fail-safe as above. Unreachable
+  // given the loop bound (each pass removes exactly one candidate, and there
+  // are only `maxIterations` of them), but TypeScript can't prove that, and
+  // this is the correct answer if it were ever somehow reached anyway.
+  return { segments: committed, dropped };
+}
+
 // ---------------------------------------------------------------------------
 // WS1b — empty-input hard aborts (doc §3.4/§3.11, S15) + the coverage-gate
 // abort policy (doc §3.4, R12/R13). Pure predicates/functions, module-level so
@@ -1166,6 +1335,55 @@ export function buildRescueLogEntries(
       'rescue',
       `Segment ${record.segmentIndex + 1} recovered via ${passLabel} — matched audio at ${rangeLabel}${anchorClause}.`,
       { segmentIndex: record.segmentIndex },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * K13 fix — one 'lock-not-restored' entry per DroppedLockRecord.
+ * `no-asset-id`/`duplicate-asset-id` never matched a segment in the new
+ * array, so the scene is named from the OLD segment's own text preview;
+ * `out-of-bounds`/`partition-conflict` matched a real new segment before
+ * validation dropped them, so the message uses its 1-based display number,
+ * matching every other segment-indexed entry's convention. Messages are
+ * written for the project owner, not a developer: name the scene, say the
+ * lock was dropped, say why.
+ */
+export function buildLockNotRestoredLogEntries(
+  syncRunId: string,
+  records: DroppedLockRecord[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return records.map(r => {
+    const scene = r.segmentIndex !== undefined
+      ? `Segment ${r.segmentIndex + 1}`
+      : `A previously locked scene ("${previewSegmentText(r.oldText)}")`;
+    let message: string;
+    let fixHint: string;
+    switch (r.reason) {
+      case 'no-asset-id':
+        message = `${scene}'s lock could not be restored after this sync — the locked scene had no asset reference to match against.`;
+        fixHint = 'Point the scene at an asset, then re-lock it.';
+        break;
+      case 'duplicate-asset-id':
+        message = `${scene}'s lock could not be restored after this sync — its asset is shared with another scene, so the match was ambiguous.`;
+        fixHint = 'Make sure each scene points to a unique asset, then re-lock it.';
+        break;
+      case 'out-of-bounds':
+        message = `${scene}'s saved lock position no longer fits the voiceover's new length — the lock was dropped.`;
+        fixHint = 'Re-lock the segment once you are happy with its new position.';
+        break;
+      case 'partition-conflict':
+        message = `${scene}'s saved lock position conflicts with a neighboring scene after this sync — the lock was dropped.`;
+        fixHint = 'Re-lock the segment once you are happy with its new position.';
+        break;
+    }
+    return makeSyncLogEntry(
+      syncRunId,
+      'lock-not-restored',
+      message,
+      { segmentIndex: r.segmentIndex, severity: 'warning', fixHint },
       timestamp,
     );
   });
@@ -2806,15 +3024,32 @@ export default function App() {
     );
     syncMark('autoMatch+preserveEffectFields:done');
 
+    // K13 fix — restore locked/startTime/duration from previousSegments onto
+    // whichever committed segment now carries the same (unique) assetId.
+    // Runs after preserveEffectFields, on the fully-timed, fully-asset-
+    // matched array — see preserveSegmentLocks' own doc comment for why.
+    const { segments: lockRestoredSegments, dropped: droppedLocks } = preserveSegmentLocks(
+      committedSegments,
+      previousSegments,
+      audioDuration,
+    );
+    if (droppedLocks.length > 0) {
+      pendingLogEntries = [
+        ...pendingLogEntries,
+        ...buildLockNotRestoredLogEntries(syncRunId, droppedLocks, syncRunAt),
+      ];
+    }
+    syncMark('preserveSegmentLocks:done');
+
     // WS-logs — one summary entry for committed segments with no matched
     // asset (success paths only; the abort path above returns before this
     // point and owes no such entry). Segment numbers are 1-based positions
-    // in committedSegments, matching the Segments-tab row numbering. Piece 1
+    // in lockRestoredSegments, matching the Segments-tab row numbering. Piece 1
     // (WS3 Batch B) — this is now the SOLE "no asset" emitter; see
     // buildNoAssetSummaryEntry's own comment for why computing it here, on
     // the final committed segments, is strictly correct and why the
     // parse-pass-only snapshot this replaced is redundant with it.
-    const noAssetNumbers = committedSegments
+    const noAssetNumbers = lockRestoredSegments
       .map((s, i) => (s.assetId ? null : i + 1))
       .filter((n): n is number => n !== null);
     if (noAssetNumbers.length > 0) {
@@ -2822,7 +3057,7 @@ export default function App() {
       const noAssetEntry = buildNoAssetSummaryEntry(
         syncRunId,
         noAssetNumbers,
-        committedSegments.length,
+        lockRestoredSegments.length,
         availableAssetCount,
         syncRunAt,
       );
@@ -2833,7 +3068,9 @@ export default function App() {
     // Piece 2, Case A — one warning per committed video segment whose clip
     // runs out before the segment does (freeze-last-frame). See
     // buildFreezeFrameEntries' own comment for why this is computed here.
-    const freezeFrameEntries = buildFreezeFrameEntries(syncRunId, committedSegments, allAssets, syncRunAt);
+    // Computed AFTER preserveSegmentLocks — a restored lock can change a
+    // segment's duration, which this check depends on.
+    const freezeFrameEntries = buildFreezeFrameEntries(syncRunId, lockRestoredSegments, allAssets, syncRunAt);
     if (freezeFrameEntries.length > 0) {
       pendingLogEntries = [...pendingLogEntries, ...freezeFrameEntries];
     }
@@ -2854,7 +3091,7 @@ export default function App() {
       sceneDetailsUpdatedAt: staged.sceneFile ? Date.now() : prev.sceneDetailsUpdatedAt,
       assets: allAssets,
       voiceoverId: newVoiceoverId,
-      segments: committedSegments,
+      segments: lockRestoredSegments,
       headings: clampHeadingsToDuration(prev.headings ?? [], audioDuration),
     }));
     syncMark('setProject:called');

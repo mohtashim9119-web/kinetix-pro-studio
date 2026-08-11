@@ -8565,3 +8565,77 @@ around it blindly.
 **WS3 — Video Segments.** Closed: speed decoupled, slip-bar/trim UI/duplicate-asset issues fixed, preview stall resolved. Root cause: single-keyframe clips plus a prefix-, not sliding-window, decode buffer dropping a deep target's frame once the cap filled. Owner-verified on real preview and export.
 
 `docs/ws3-video-segments/` deleted; no WS2 folder existed. The fix's full technical writeup is preserved in git history (commit `00f288c`) ahead of that deletion. `FORCE_LEGACY_VIDEO_PREVIEW` and its branches removed from `PreviewStage.tsx`. `project-state.md` and `docs/work-in-progress.md` now carry only WS1.
+
+---
+
+## K13 close-out — lock preservation fixed, doc-truth sweep (2026-08-11)
+
+**The bug.** Clean-slate Apply Sync mints every segment fresh via `parseProjectData`, which has
+no `locked` field and never reads `project.segments` — a locked segment silently lost both its
+position and its lock flag on every resync. Confirmed 100% reproducible (owner repro, 2026-08-04,
+173-seg project); live-corpus proof at `scripts/phase4-step-w-k13-repro.test.ts`, which asserted
+the defect (3/3 passing = defect confirmed) from that date until today.
+
+**The fix.** `preserveSegmentLocks` (new, `src/App.tsx`) restores `locked`/`startTime`/`duration`
+onto the freshly-committed array by matching old→new segments on unique `assetId`. Matching
+mirrors `preserveEffectFields`'s existing fail-safe shape exactly: no `assetId`, or an `assetId`
+shared by more than one segment on either side, drops the restore rather than guessing. Each
+surviving candidate is then validated in two passes before being committed: (a) a bound check —
+does the old `[startTime, startTime+duration]` span still fit inside `[0, audioDuration]`; (b)
+`findPartitionViolations` run iteratively against the tentatively-restored array, dropping one
+offending candidate per pass until stable or exhausted. A dropped restore is silent to the
+timeline (the naturally-synced value the pipeline already computed is simply left in place) but
+not to the user — a new `lock-not-restored` sync-log entry type (`SyncLogEntryType`, `types.ts`;
+`buildLockNotRestoredLogEntries`, `App.tsx`; amber badge, `SyncLogPanel.tsx`) names the scene,
+says the lock was dropped, and says why (no asset reference / ambiguous asset / no longer fits
+the new timeline / conflicts with a neighbour).
+
+**Ordering decision.** `preserveSegmentLocks` runs AFTER `autoMatchSegments`/`preserveEffectFields`
+— on the fully-timed, fully-asset-matched `committed` array — NOT through `applyAnchorBasedTiming`'s
+earlier hard-wall pass. Two reasons: that earlier point doesn't have every segment's `assetId`
+yet, and a lock that failed validation before timing ran would need the entire async,
+Whisper-driven timing pipeline re-run to cleanly revert it. Running post-hoc instead makes a
+dropped lock free to revert — nothing needs undoing, the pipeline's own naturally-synced value
+is already sitting there. Recorded so a future reader of the K14/Model P hard-wall code doesn't
+assume it's the lock-restore entry point.
+
+**Tie-break rules, pinned so they aren't re-derived or re-litigated.** (1) When a restored lock's
+tentative position collides with a neighbour, the *later* segment of the violating pair is
+dropped first (matches `findPartitionViolations`'s own "measured at the later of the two"
+convention); the earlier one drops only if it alone is a restore candidate. (2) The validation
+loop's iteration cap equals the starting candidate count — each pass removes exactly one
+candidate — and if it is ever exhausted without stabilizing (unreachable in practice; `committed`
+is already a known-valid partition before this function touches it), it fails safe by reverting
+**all** restores for that run rather than committing a partial, unresolved state.
+
+**Fixed fresh against `main`, per owner ruling R-C** — ported only the logic/idea from the parked
+`model-p-editor-work` branch (never merged, stays permanently unmerged), never its stale code.
+
+**Test inversion.** `scripts/phase4-step-w-k13-repro.test.ts`, which since 2026-08-04 asserted the
+DEFECT against the real 173-segment corpus (feeding structural check C11's "live" half), is
+inverted as of this fix: every assertion now proves the FIX holds, against the same real corpus,
+and is expected to fail if a future change regresses lock preservation. Filename and the
+`step-w-c11-live-repro.json` artifact key shape kept unchanged deliberately, so
+`scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py` don't KeyError — those two scripts'
+own C11 narrative prose still describes the pre-fix defect-trap framing; updating it is tracked
+as a separate deferred item, not done here.
+
+**Verification.** 11 new unit tests (`src/services/preserveSegmentLocks.test.ts` — zero-locks
+no-op, clean carry, reworded-caption survival, reordered-scene follow, deleted-scene silent drop,
+no-assetId drop, duplicate-assetId drop on either side, out-of-bounds drop, negative-startTime
+defensive rejection, adjacent-restores tie-break); the inverted live-corpus regression test (3/3);
+5 manual tests (owner-run). Gates at close-out: `npm run lint` clean; `npm test` 72 files / 1803
+passed / 1 skipped / 0 failed; golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3
+byte-identical; `cargo check` clean — identical before and after the docs sweep below.
+
+**Docs swept for stale K13/status references** (full sweep table and per-file classification in
+the commit that lands this entry): `project-state.md` (K13 moved out of Deferred/Known-Broken,
+task counts corrected, C05/C10/C11 §3 updated), `docs/work-in-progress.md` (task 8 marked done
+with gate numbers, current-focus pointer added), `docs/ws1-sync-pipeline/ws1-master-roadmap.md`
+(K-series registry entry, §1 status table, §6/§7 task ledger, §9 C05/C10/C11 note, branch
+disposition and caution-box language, two new `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` and trust-script deferred items, a new NEXT UP block for
+Task 5 — Rust integration for forced alignment), `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
+(a top-of-file correction note plus five citations to the deleted
+`docs/sync-pipeline-contract-plan.md` repointed to this file's own archived copy — see "Sync
+Pipeline Contract Plan — Working Document" above). `wip/preserve-2026-08-07` remains recorded as
+fully rescued and safe to delete (owner action, not performed here).

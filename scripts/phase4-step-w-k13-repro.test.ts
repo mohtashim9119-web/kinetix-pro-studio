@@ -1,22 +1,31 @@
-// Phase 4 Step W — LIVE K13 lock-preservation repro.
+// Phase 4 Step W — LIVE K13 lock-preservation regression guard.
 //
-// Purpose: make structural check C11 trustworthy. Before this file, C11 was
-// proven on hand-written synthetic pre/post fixtures only — i.e. it was proven
-// against a defect this repo had asserted but never demonstrated in code. This
-// file demonstrates it, against the REAL production functions and the REAL 173
-// corpus project, and writes a machine-readable artifact that the Step X
-// verification harness consumes as C11's "real half".
+// Purpose: keep structural check C11 trustworthy. This file used to assert
+// the DEFECT (K13: a resync silently cleared a locked segment's lock and
+// reset its position) against production code and the real 173-segment
+// corpus, so C11 was proven against a demonstrated defect rather than an
+// asserted one. K13 is now fixed — `preserveSegmentLocks` (App.tsx) restores
+// a previously-locked segment's lock/startTime/duration onto its Apply-Sync
+// counterpart by unique assetId, validating the restore before committing it
+// (see that function's own doc comment for the full design).
 //
-// It asserts the DEFECT, not the fix. Every assertion below is expected to pass
-// today and MUST START FAILING when K13 is fixed at Stage 3 — that is the point.
-// If it starts failing, do not "repair" it: read it as the lock work having
-// landed, and retire it together with the defect.
+// This file is INVERTED accordingly: every assertion below now proves the
+// FIX, still against the real 173-segment corpus, and MUST FAIL if the fix
+// ever regresses — that is the point. Do not "repair" a failure here by
+// loosening an assertion; a failure means a lock stopped surviving Apply
+// Sync, and the underlying regression is what needs fixing, not this file.
+//
+// Flipped 2026-08-11, the day K13 was fixed. The filename and the artifact's
+// `step-w-c11-live-repro.json` key shape are kept unchanged on purpose, so
+// `scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py` don't KeyError —
+// those two scripts' own C11 narrative text still describes the pre-fix
+// defect-trap framing and updating it is tracked as a separate deferred item
+// (`docs/ws1-sync-pipeline/ws1-master-roadmap.md` §13).
 //
 // Run: npx vitest run scripts/phase4-step-w-k13-repro.test.ts
 import { describe, it, expect } from 'vitest';
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { parseProjectData } from '../src/App';
-import { applyAnchorBasedTiming } from '../src/services/syncEngine';
+import { parseProjectData, preserveSegmentLocks } from '../src/App';
 import type { VideoSegment } from '../src/types';
 
 const PROJ = '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project';
@@ -46,78 +55,116 @@ function loadBaselineSegments(): VideoSegment[] {
   });
 }
 
-describe('K13 — lock preservation across Apply Sync (LIVE repro, production code)', () => {
+// Neither the live corpus parse nor the golden baseline carry real assetIds
+// (parseProjectData is called with no real Asset[] here, and the baseline CSV
+// has no assetId column at all) — a deterministic, order-based synthetic
+// assetId is layered on so preserveSegmentLocks' unique-assetId matching has
+// something real to match against, simulating each scene already pointing at
+// its own distinct asset. Mirrors loadBaselineSegments' own precedent of
+// synthesizing `id`.
+function withSyntheticAssetIds(segments: VideoSegment[]): VideoSegment[] {
+  return segments.map((s, i) => ({ ...s, assetId: `asset-${i}` }));
+}
+
+describe('K13 — lock preservation across Apply Sync (LIVE regression guard, production code)', () => {
   const record: Record<string, unknown> = { generatedAt: new Date().toISOString() };
 
-  it('PART 1 — parseProjectData mints every segment with locked === undefined', async () => {
+  it('PART 1 — preserveSegmentLocks restores a lock parseProjectData itself never carries', async () => {
     const script = readFileSync(`${PROJ}/script.txt`, 'utf8');
     const scene = readFileSync(`${PROJ}/sync.txt`, 'utf8');
-    const segs = await parseProjectData(script, scene, [], AUDIO_DURATION);
 
-    expect(segs.length).toBeGreaterThan(100); // the real 173-segment project
-    const anyLocked = segs.filter(s => s.locked !== undefined);
+    // Two independent parses of the SAME real script/scene doc — simulating
+    // "the project as it stood before this Apply Sync" and "the freshly
+    // re-parsed array this Apply Sync just produced". parseProjectData still
+    // mints every segment with locked === undefined (that has not changed —
+    // this file no longer needs to re-prove it in isolation); the fix lives
+    // entirely in preserveSegmentLocks, exercised below.
+    const previousRaw = await parseProjectData(script, scene, [], AUDIO_DURATION);
+    const newRaw = await parseProjectData(script, scene, [], AUDIO_DURATION);
+    expect(previousRaw.length).toBeGreaterThan(100); // the real 173-segment project
+    expect(newRaw.length).toBe(previousRaw.length);
+
+    const previousSegments = withSyntheticAssetIds(previousRaw);
+    const newSegments = withSyntheticAssetIds(newRaw);
+
+    // Lock a real segment comfortably inside the corpus, the way the UI's
+    // lock toggle does (App.tsx: `{ ...s, locked: !s.locked }`).
+    const LOCK_INDEX = Math.floor(previousSegments.length / 2);
+    const lockedPrevious = previousSegments.map((s, i) => (i === LOCK_INDEX ? { ...s, locked: true } : s));
+
+    const { segments: restored, dropped } = preserveSegmentLocks(newSegments, lockedPrevious, AUDIO_DURATION);
+    const lockedCount = restored.filter(s => s.locked === true).length;
 
     record.part1 = {
-      claim: 'Apply Sync rebuilds the timeline clean-slate; the freshly minted '
-        + 'segments carry no lock state at all, so no lock can reach the timing chain.',
+      claim: 'preserveSegmentLocks restores the lock parseProjectData itself never carries — '
+        + 'a resync no longer silently discards it.',
       project: '173-seg (real corpus scene doc + script)',
-      segmentsParsed: segs.length,
-      segmentsCarryingAnyLockField: anyLocked.length,
-      verdict: anyLocked.length === 0 ? 'DEFECT CONFIRMED' : 'lock state present',
+      segmentsParsed: newSegments.length,
+      segmentsCarryingAnyLockField: lockedCount,
+      droppedLockCount: dropped.length,
+      verdict: lockedCount === 1 && dropped.length === 0 ? 'LOCK RESTORED' : 'DEFECT STILL PRESENT',
     };
 
-    // The defect: not one segment carries a lock field.
-    expect(anyLocked.length).toBe(0);
+    // The fix: exactly the locked segment survives, matched to its new
+    // counterpart by assetId, and nothing was dropped.
+    expect(dropped).toEqual([]);
+    expect(lockedCount).toBe(1);
+    expect(restored[LOCK_INDEX]!.locked).toBe(true);
   });
 
-  it('PART 2 — the lost flag is load-bearing: locked vs unlocked timing differs', () => {
+  it('PART 2 — the restored position is exact: it matches the OLD lock, not a freshly re-derived one', () => {
     const base = loadBaselineSegments();
     expect(base.length).toBeGreaterThan(100);
+    const withAssetIds = withSyntheticAssetIds(base);
 
-    // Pick a real segment comfortably longer than the perturbation, lock it the
-    // way the UI's lock toggle does (App.tsx: `{ ...s, locked: !s.locked }`),
-    // and pull its SUCCESSOR's anchor 0.9s earlier so the available span is now
-    // shorter than the locked duration. That is exactly the shape
-    // `applyAnchorBasedTiming`'s locked branch exists for: locked keeps the
-    // preserved duration, unlocked shrinks to the span.
-    const SQUEEZE = 0.9;
-    const i = base.findIndex((s, k) => k > 0 && k < base.length - 2 && s.duration > 2.0);
+    // Pick a real segment comfortably longer than the perturbation below —
+    // same selection rule Part 2 always used.
+    const i = withAssetIds.findIndex((s, k) => k > 0 && k < withAssetIds.length - 2 && s.duration > 2.0);
     expect(i).toBeGreaterThan(0);
 
-    const perturb = (arr: VideoSegment[]) => {
-      arr[i + 1] = { ...arr[i + 1]!, anchorStart: arr[i + 1]!.anchorStart! - SQUEEZE };
-      return arr;
-    };
-    const withLocks = perturb(base.map((s, k) => ({ ...s, locked: k === i })));
-    const withoutLocks = perturb(base.map(s => ({ ...s })));
+    const previousSegments = withAssetIds.map((s, k) => (k === i ? { ...s, locked: true } : s));
 
-    const lockedOut = applyAnchorBasedTiming(withLocks as VideoSegment[], AUDIO_DURATION);
-    const unlockedOut = applyAnchorBasedTiming(withoutLocks as VideoSegment[], AUDIO_DURATION);
+    // Simulate a real resync where SOMETHING upstream shifted this segment's
+    // naturally-derived position by 0.9s, even though its own lock should
+    // have pinned it — exactly the shape K13 used to lose silently.
+    const SHIFT = 0.9;
+    const committed = withAssetIds.map((s, k) => (k === i ? { ...s, startTime: s.startTime + SHIFT } : s));
 
-    const dLock = Math.abs(lockedOut[i]!.duration - base[i]!.duration);
-    const dNoLock = Math.abs(unlockedOut[i]!.duration - base[i]!.duration);
-    const movedMs = Math.abs(lockedOut[i]!.duration - unlockedOut[i]!.duration) * 1000;
+    const { segments: restored, dropped } = preserveSegmentLocks(committed, previousSegments, AUDIO_DURATION);
+
+    const restoredStartSec = restored[i]!.startTime;
+    const driftFromOldMs = Math.abs(restoredStartSec - base[i]!.startTime) * 1000;
+    const naturalDriftMs = Math.abs(committed[i]!.startTime - base[i]!.startTime) * 1000;
 
     record.part2 = {
-      claim: 'applyAnchorBasedTiming honours `locked` — so losing the flag at '
-        + 'Part 1 is not cosmetic, it changes the committed timeline.',
+      claim: 'preserveSegmentLocks restores the segment\'s EXACT old position — the freshly '
+        + 're-derived (drifted) position the natural resync would otherwise have committed is '
+        + 'discarded in favour of the saved one.',
       segmentIndex: i,
-      baselineDurationSec: base[i]!.duration,
-      durationWithLockSec: lockedOut[i]!.duration,
-      durationWithoutLockSec: unlockedOut[i]!.duration,
-      divergenceMs: movedMs,
-      verdict: movedMs > 1 ? 'FLAG IS LOAD-BEARING' : 'no divergence observed',
+      baselineStartSec: base[i]!.startTime,
+      naturallyResyncedStartSec: committed[i]!.startTime,
+      restoredStartSec,
+      // How far this segment would have silently drifted without the fix —
+      // the same load-bearing-ness Part 2 always measured, now shown as the
+      // gap the fix closes rather than a gap nothing closes.
+      divergenceMs: naturalDriftMs,
+      verdict: driftFromOldMs < 1 && dropped.length === 0 ? 'POSITION PRESERVED' : 'position lost',
     };
 
-    expect(movedMs).toBeGreaterThan(1);
-    expect(dLock).toBeLessThanOrEqual(dNoLock);
+    expect(dropped).toEqual([]);
+    expect(driftFromOldMs).toBeLessThan(1);
+    // Sanity check on the fixture itself: the simulated drift must have been
+    // real, or this test would trivially pass with nothing to fix.
+    expect(naturalDriftMs).toBeGreaterThan(1);
+    expect(record.part2 as { verdict: string }).toMatchObject({ verdict: 'POSITION PRESERVED' });
   });
 
   it('PART 3 — writes the C11 evidence artifact for the Step X harness', () => {
-    record.summary = 'K13 confirmed live against production code and the real 173 '
-      + 'corpus: locks cannot survive Apply Sync (Part 1), and the flag they lose '
-      + 'materially changes committed durations (Part 2). C11 therefore checks a '
-      + 'demonstrated defect, not an asserted one.';
+    record.summary = 'K13 is FIXED: preserveSegmentLocks (App.tsx) restores a locked segment\'s '
+      + 'lock and exact position across Apply Sync, verified against the real 173-segment corpus '
+      + '(Part 1: the lock reaches the committed array; Part 2: its position matches the saved '
+      + 'one, not a freshly re-derived one). This file now guards the fix rather than the defect '
+      + '— see the header comment.';
     mkdirSync(OUT_DIR, { recursive: true });
     writeFileSync(OUT, JSON.stringify(record, null, 2));
     expect(record.part1).toBeDefined();

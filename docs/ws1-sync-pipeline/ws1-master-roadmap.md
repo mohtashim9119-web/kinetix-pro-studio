@@ -16,6 +16,74 @@
 
 ---
 
+## NEXT UP (updated 2026-08-11, after the K13 close-out)
+
+**Task 5 — Rust integration for forced alignment (Phase 3), not Slice 2.** Phase 3 is the
+"real timing-source upgrade" (§2) that fixes the underlying smear defect, and per §7 it sits
+first in the "ready now, in parallel" list — it unblocks the most downstream work (task 4 as a
+side effect, task 6 transitively, Stage 1 locking once 3c also lands) and, unlike Slice 2, was
+gated on the Spanish accuracy gate, which closed 2026-08-11 (below). This is readiness, not a
+prompt — do not start the work from this block alone; it still needs its own scoping pass.
+
+**Goal.** Replace Whisper's word timestamps with forced alignment (a CTC acoustic model aligning
+the known script text to the audio at the phoneme level), bundled as a Rust sidecar addition,
+slotted behind the existing Stage 1 timing interface so nothing downstream of it changes shape.
+
+**Entry conditions (all met):**
+- Spanish accuracy gate closed — corrected p95 50.4ms vs. the approved 250ms gate (1 of 22 pauses
+  over). Evidence: `docs/ws1-sync-pipeline/spanish-gate-scoring.md`, Step U in
+  `sync-pipeline-v2-plan.md`.
+- Structural checks gate closed — C05/C11 CI-IN, C10 knowingly CI-OUT by name (not a blocker).
+  Evidence: `scripts/phase4-step-w-trust.py`, `scripts/phase4-step-x-verify.py` (13/13 poison +
+  13/13 real, C10's exclusion by design), §4 Step W/X above.
+- Heading assignment gate closed — Option A decided (owner decision 8). Evidence: Steps Y-Z,
+  `sync-pipeline-v2-plan.md`.
+- DTW eliminated as an alternative (measured zero effect, Phase 2b) — forced alignment is the
+  only remaining timing-source candidate. Evidence: §2 above, `sync-pipeline-v2-plan.md:406-462`.
+- CTC model viability spot-verified (not just license-checked) — `jonatasgrosman/wav2vec2-large-xlsr-53-english`
+  loads and greedy-decodes real corpus audio accurately. Evidence: `sync-pipeline-v2-plan.md:569`.
+
+**Files expected to change (per the plan's own Step R/H.3 design — not yet fully scoped at the
+file level; a scoping pass is part of this task, not skippable):**
+- `src-tauri/src/` — new module bundling ONNX Runtime + the CTC model, implementing the Viterbi
+  alignment pass (mirrors `src-tauri/src/whisper.rs`'s sidecar-command shape).
+- `src-tauri/Cargo.toml` — new ONNX Runtime dependency; `src-tauri/binaries/README.md` — model
+  provisioning docs (mirrors the existing whisper-model pattern).
+- `src/services/whisperService.ts` / `src/hooks/useWhisper.ts` — swap the timing source behind
+  the Stage 1 interface these already expose; per H.3, model is multilingual, so per-language
+  behavior must stay keyed the same way it is today.
+- `src/constants.ts` — model distribution/provisioning constants if on-demand download (Step T
+  design) lands alongside, per owner ruling R-B.
+
+**Acceptance criteria:**
+- Golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`) run and reviewed
+  per-boundary — a deliberate diff review, never a blind re-baseline (§7, task 2's own rule
+  applies equally here since Phase 3 changes the timing source).
+- `scripts/phase4-step-x-verify.py` still passes its non-C10 checks after the swap.
+- fr/de/pt "unvalidated language" warning (Step T.7) ships in this same task/release per R-B.
+- All four project gates pass (below).
+
+**Gates, starting baseline (this commit):** `npm run lint` clean; `npm test` 72 files / 1803
+passed / 1 skipped / 0 failed; golden replay 3/3; `cargo check` clean. Task 5 will add new
+tests — 1803 is the floor to not regress below, not a ceiling to match exactly.
+
+**Out of scope for this task:** Slice 2 (task 2, independent); the 2 remaining word-shift cases
+(task 4 — expected to resolve as a side effect, verify after, don't chase separately); Resume
+Pipeline Contract Program (task 6, blocked behind this task); Phase 4's 4-stage restructure
+(blocked on Stage 1 locking, which this task only partially clears — 3c still gates it); Phase
+3b/3c themselves (currently unowned on the ledger, §6 — a separate scheduling decision).
+
+**Hazards / invariants this must not break:** boundary/breath classification must stay on token
+*indices*, never raw timestamps (CLAUDE.md §4); `anchorSource` provenance only ever demotes
+`'whisper'` → `'estimate'`, never promotes back — a new `'forced-alignment'` source (if added)
+needs its own place in that ordering, not a silent insertion; `Project.language` stays sticky
+once set; Part F's stated non-goals apply (`sync-pipeline-v2-plan.md` Part F) — no merging
+duration floors, no retuning the 250ms/1% thresholds, no touching the Hirschberg alignment pass,
+no resolving R5/N4 here; `-nfa`/flash-attention stays un-adopted (§13) — this is a different,
+already-decided axis, don't conflate it with the FA-vs-DTW decision this task executes on.
+
+---
+
 ## 1. Status at a glance
 
 | | |
@@ -27,8 +95,8 @@
 | Phases not started, no gate blocker | 3b, 3c |
 | Phases blocked on Stage 1 locking | 4, 5, 6, 6b, 7 |
 | Stage locks passed | **0 of 4** — Stage 1, 2, 3, 4 all "NOT PASSED" |
-| Open, confirmed-live defect | K13 (lock preservation across resync) — repro test passes today, confirming the defect is present (3/3, re-run 2026-08-11) |
-| Live WS1 task ledger | 8 tasks, `docs/work-in-progress.md` — 1 done, 4 not-blocked, 1 blocked-behind-another, 1 reference-only, 1 fresh (K13) |
+| Open, confirmed-live defect | None — K13 (lock preservation across resync), the last one, was fixed 2026-08-11 (see §5) |
+| Live WS1 task ledger | 10 tasks, `docs/work-in-progress.md` — 2 done (slice 1, K13), 4 not-blocked, 1 blocked-behind-another, 1 reference-only, 2 unowned (3b/3c, see §6) |
 | CI | None. All four project gates (`lint`, `npm test`, golden replay, `cargo check`) are run by hand — see §9. |
 
 ---
@@ -126,15 +194,21 @@ Part K (`sync-pipeline-v2-plan.md:4235-4279`) is the plan document's own self-au
 | ID | What it was | Disposition |
 |---|---|---|
 | K1-K12 | Structural/process gaps in the *plan document itself* (illegal phase ordering, missing corpus, an unfalsifiable gate, etc.) | All fixed by editing the plan — no runtime code involved. |
-| **K13** | **Lock preservation is broken across resync.** Clean-slate resync's `parseProjectData` has no `locked` field, so a locked segment silently loses both position and lock flag on the next Apply Sync. | **STILL OPEN.** Repro test `scripts/phase4-step-w-k13-repro.test.ts`: **3/3 passing as of 2026-08-11 (re-run directly this session)** — the test asserts the *defect*, so a pass confirms K13 is live; it's designed to flip to failing when Stage 3 fixes it. Fix path (per owner ruling R-C, §7): a fresh fix directly against `main`, porting only the logic/idea from the parked `model-p-editor-work` branch's `projectFingerprint.ts` — never that branch's stale code. `model-p-editor-work` stays unmerged permanently. Tracked as WS1 task 8. |
+| **K13** | **Lock preservation is broken across resync.** Clean-slate resync's `parseProjectData` has no `locked` field, so a locked segment silently loses both position and lock flag on the next Apply Sync. | **FIXED, 2026-08-11.** `preserveSegmentLocks` (`src/App.tsx`) restores `locked`/`startTime`/`duration` onto the freshly-committed array by matching old→new segments on unique `assetId` *after* `autoMatchSegments`/`preserveEffectFields` have run, then validates each restore (bound-check against `audioDuration`, then iterative `findPartitionViolations`, dropping the later segment of any violating pair first) before committing it — a dropped restore silently leaves the naturally-synced value in place and logs a `lock-not-restored` sync-log entry (`buildLockNotRestoredLogEntries`). Fixed fresh directly against `main` per owner ruling R-C — ported only the logic/idea from the parked `model-p-editor-work` branch, never its stale code; that branch stays unmerged permanently. Verified: 11 unit tests (`src/services/preserveSegmentLocks.test.ts`), the inverted live-corpus regression test (`scripts/phase4-step-w-k13-repro.test.ts`, 3/3 — now proves the fix holds instead of the defect), 5 manual tests. Was WS1 task 8, now done. |
 | K14 | In-editor lock-toggle bug: `handleToggleLock` → `applyAnchorBasedTiming` re-derived off a stale `anchorStart`, moving unrelated (even locked) segments | **FIXED**, 2026-08-07, `src/App.tsx` + `src/services/syncEngine.ts` |
 | K15 | Drag cascade: gap-collapse over-absorption (introduced by K14) + a pre-existing unbounded neighbour-absorption bug | **FIXED**, 2026-08-07, extracted to `src/services/dragCascade.ts` |
 | K16 | Drag pointer accuracy (stale 24px constant, missing grab offset, left-edge drag not tracking the pointer) | **FIXED**, 2026-08-07, new `src/services/dragGeometry.ts` |
 | K17 | Frozen-neighbour overlap in the *live drag preview* (distinct from K15 — a rendering-only mismatch between what's drawn during a drag and what commits) | **FIXED and shipped on `main`**, commit `6eae48e` — `dragCascade.ts`'s `resolveDragPreview`, regression-tested (`dragCascade.test.ts`, 37/37 passing, re-run to confirm this session). Independently verified: not a mis-citation. |
 
-**Branch disposition, updated 2026-08-11.** `wip/preserve-2026-08-07`'s previously-unique data is now fully rescued onto `main`, byte-for-byte — all 39 files it alone held (Spanish blinded-listening answer keys/clips, Phase 4 golden-baseline replay snapshots, K13/K14 live-repro evidence, 5 structural-check audio clips) were copied via `git show`/`git cat-file` and verified byte-identical against their source blob SHAs (commit `bb7b0f8`; manifest at `docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/PROVENANCE.md`). The branch itself is now safe to delete. `model-p-editor-work` stays parked, unmerged, permanently, per ruling R-C (§8) — the rescue doesn't change that; its logic/ideas may still be ported fresh into the K13 fix, never its code.
+**Branch disposition, updated 2026-08-11.** `wip/preserve-2026-08-07`'s previously-unique data is now fully rescued onto `main`, byte-for-byte — all 39 files it alone held (Spanish blinded-listening answer keys/clips, Phase 4 golden-baseline replay snapshots, K13/K14 live-repro evidence, 5 structural-check audio clips) were copied via `git show`/`git cat-file` and verified byte-identical against their source blob SHAs (commit `bb7b0f8`; manifest at `docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/PROVENANCE.md`). The branch itself is now safe to delete (owner action — not deleted as part of this consolidation). `model-p-editor-work` stays parked, unmerged, permanently, per ruling R-C (§8) — the rescue doesn't change that; its logic/ideas were ported fresh into the K13 fix (below), never its code.
 
-⚠ **Caution when citing `docs/history.md` on K13.** Its park-commit entry (`docs/history.md:2794-2804`) describes the parked `model-p-editor-work` branch as containing "a lock-fingerprint persistence rule closing the pre-existing K13 bug" — quoted alone, out of context, that reads as K13 being fixed. It isn't: that fix exists only on the unmerged, permanently-parked branch and was never merged to `main`. K13 is live on `main` today; the repro test passing (`scripts/phase4-step-w-k13-repro.test.ts`, 3/3, table above) is the proof it's still broken, not evidence it's fixed.
+⚠ **Caution when citing `docs/history.md` on K13 (historical note — K13 is now fixed).** Its park-commit entry (`docs/history.md:2794-2804`) describes the parked `model-p-editor-work` branch as containing "a lock-fingerprint persistence rule closing the pre-existing K13 bug" — quoted alone, out of context, that used to read as K13 being fixed when it wasn't (that fix existed only on the unmerged, permanently-parked branch and was never merged to `main`). As of 2026-08-11 this distinction is moot for current status — K13 **is** fixed on `main` — but the caution stands for anyone reading the parked branch's commit history: that branch's own fix was never the one that shipped.
+
+**K13 fix — design notes (recorded so they aren't re-litigated).**
+
+*Ordering.* `preserveSegmentLocks` runs on `committed` — AFTER `autoMatchSegments`/`preserveEffectFields`, once every segment has its real `assetId` and the timing pipeline has already produced a known-valid gapless array — NOT through `applyAnchorBasedTiming`'s earlier hard-wall pass. Two reasons: that earlier point doesn't have every segment's `assetId` yet, and a lock that fails validation before timing runs would need the entire async, Whisper-driven timing pipeline re-run to cleanly revert it. Running post-hoc instead makes a dropped lock free to revert — the naturally-synced value the pipeline already computed is simply left in place, untouched. Anyone reading the K14/Model P hard-wall code later should not assume it is the lock-restore entry point; it isn't.
+
+*Tie-break rules (undocumented elsewhere, pin them here).* (1) When a restored lock's tentative position collides with a neighbour per `findPartitionViolations`, the **later** segment of the violating pair is dropped first (matching `findPartitionViolations`' own "measured at the later of the two" convention); the earlier one is only dropped if it alone is a restore candidate. (2) The validation loop's iteration cap equals the starting candidate count — each pass removes exactly one candidate, so it can never run more than `candidates.size` times — and if it is ever somehow exhausted without stabilizing, the function fails safe by reverting **all** restores for that run rather than committing a partial, unresolved state.
 
 ---
 
@@ -151,7 +225,7 @@ The live ledger is `docs/work-in-progress.md` (8 tasks). Mapped against the phas
 | 5. Rust integration for forced alignment | **= Phase 3** | **Not blocked** — all 3 Rust gates closed (§4) |
 | 6. Resume Pipeline Contract Program | Part J | Blocked on task 4 — which per the row above really means blocked *behind task 5* |
 | 7. Re-attempt boundary-quality watcher | Not phase-numbered; a live in-app UI feature, not part of the plan document's own scope | Reference-only — prior attempt reverted (safety-bound failure, uncalibrated formula); `watcher-revert-2026-08-03.diff` is a resumption pointer, **not** source to reintroduce as-is |
-| 8. K13 fix (new, this consolidation) | **Nominally Stage 3** per the plan document's own fix-path text, but owner ruling R-C pulls it forward as an independent fix against `main` now, not gated on Phase 4's restructure landing first | **Not blocked** |
+| 8. K13 fix | **Nominally Stage 3** per the plan document's own fix-path text, but owner ruling R-C pulled it forward as an independent fix against `main`, not gated on Phase 4's restructure landing first | **Done, 2026-08-11** |
 
 **A gap this cross-reference surfaces:** Phase 3b (language normalization) and Phase 3c (hyphen-asymmetry fix — the one that must land before Stage 1 can lock, §3) have **no task of their own** on the 8-item ledger. Task 5 covers Phase 3 specifically ("Rust integration for forced alignment"); nothing currently tracks 3b or 3c. Since 3c gates Stage 1 locking directly, this is worth a deliberate scheduling decision, not an oversight left implicit.
 
@@ -166,8 +240,11 @@ Numbered start to finish. Items at the same number can run in parallel — nothi
 1. **Task 5 — Rust integration for forced alignment (Phase 3).** All 3 gates closed. Per owner ruling R-B, the fr/de/pt unvalidated-language warning surfaces (Step T.7) ship in this same task/release, not after. Unblocks: task 4 (as a side effect), task 6 (transitively), Stage 1 locking (once 3c also lands).
 2. **Task 2 — Slice 2, the 50/50 silence-split re-derivation.** Cleanly decoupled from the editor path (verified twice). Will deliberately break the golden replay — budget a per-boundary review, never a blind re-baseline.
 3. **Task 3 — stale-anchor scroll degradation test.** Independent test-debt item.
-4. **Task 8 — K13 fix.** Fresh fix against `main` per R-C; independent of the FA work above (different files: `parseProjectData`/`App.tsx`'s `preserveEffectFields`, not the sync-timing math). Signal: `scripts/phase4-step-w-k13-repro.test.ts` must start *failing*.
-5. **Phase 3b and 3c** (language normalization; hyphen-asymmetry fix) — currently un-owned on the task ledger (§6). 3c specifically blocks Stage 1 locking. Recommend scheduling explicitly rather than assuming task 5 covers it.
+4. **Phase 3b and 3c** (language normalization; hyphen-asymmetry fix) — currently un-owned on the task ledger (§6). 3c specifically blocks Stage 1 locking. Recommend scheduling explicitly rather than assuming task 5 covers it.
+
+**Done:**
+
+- **Task 8 — K13 fix.** Fixed fresh against `main` per R-C, 2026-08-11 (§5). No longer blocks or gates anything below.
 
 **Do not start yet — genuinely sequenced:**
 
@@ -205,7 +282,7 @@ Things a reader needs to know that don't fit the phase/stage table above.
 - **The 3rd word-shift case** (`seasons than you‖can count and`) is a script-vs-narration authority conflict — the script and what was actually said genuinely disagree about where the boundary is. **Not fixable by any timing-source change**, including Phase 3's forced alignment. The other 2 cases are expected to resolve as a side effect of task 5 (§6, §7).
 - **R5/N4** (a mid-line bracket split case) is explicitly deferred pending a product ruling, recorded as a written acceptance at Contract IN — not a bug, a deliberately parked decision.
 - **The negative-smear `<1%` gate was re-scoped, not met.** Step D proved that gate is structurally unpassable by an accurate timing source — some negative smear is expected, correct behavior, not a defect signal. Treat the original `<1%` figure as retired, not as an outstanding failure.
-- **C05 / C10 / C11 structural checks — real state as of 2026-08-11** (verified by running `scripts/phase4-step-w-trust.py` directly, not by reading a status doc): **C05 is CI-IN** (FA token arrays were recovered at Step W, re-scored against the shipped gate). **C11 is CI-IN** (its live K13 repro correctly flags the defect today; it's *supposed* to be red-flagging right now — that's what makes it trustworthy, and it's designed to flip to a clean pass once K13 is fixed). **C10 is CI-OUT** and looks likely to stay that way — ear-verified recall against real corpus cases is 0/4 no matter how the predicate is tuned; a quieter false-positive rate isn't the same as a working check. (`project-state.md`'s §3 previously described both C05 and C11 as still blocked; that was stale and has been corrected as part of this consolidation.)
+- **C05 / C10 / C11 structural checks — real state as of 2026-08-11** (verified by running `scripts/phase4-step-w-trust.py` directly, not by reading a status doc): **C05 is CI-IN** (FA token arrays were recovered at Step W, re-scored against the shipped gate). **C11 is CI-IN**, and as of K13's fix this same day its live repro has flipped from red-flagging the defect to proving the fix holds (3/3, inverted — see §5); `scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py`'s own prose narrative still describes the pre-fix defect-trap framing, which is a separate deferred item (§13). **C10 is CI-OUT** and looks likely to stay that way — ear-verified recall against real corpus cases is 0/4 no matter how the predicate is tuned; a quieter false-positive rate isn't the same as a working check.
 - **The 22 deferred `boundary-quality-flag` rows** (R-A, above) live in `scripts/fixtures/verification-baseline.csv` and are explicitly out of scope for WS1's current slice.
 - **No automated CI exists for this repository.** `.github/workflows/build.yml` is `workflow_dispatch`-only and cross-builds installers; it contains no `npm test`/`vitest`/`cargo test`/`tsc` step. All four of this project's real gates — `npm run lint`, `npm test`, the golden-replay test, `cargo check` — are run by hand, by whoever is making the change. There is no safety net catching a regression that isn't run for.
 
@@ -271,3 +348,5 @@ Explicitly parked, not forgotten. Recorded here so the next reader doesn't have 
 - **3rd word-shift case**, `seasons than you‖can count and` (§9) — a script-vs-narration authority conflict, structurally unfixable by any timing-source change; accepted.
 - **Phase 4 design call: architect "Place" gapless-aware from the start, or retrofit later** (§7 item 9) — deferred to Stage 1 lock time, when the call actually has to be made. Noted here that deciding it now is cheaper than retrofitting after Phase 4 lands.
 - **22 blank `boundary-quality-flag` verification rows** (§8 R-A, §9) — deferred, non-blocking, by owner ruling R-A, 2026-08-11. WS1 does not pause for an ear-listening pass to fill them in.
+- **`-nfa` (disables flash attention) is not adopted**, despite Phase 2b finding it recovers a real content dropout (V6 segments 27-29, `sync-pipeline-v2-plan.md:511-515`) — costs roughly 25-33% wall-clock, and adopting it would need its own verification pass (a fresh transcript era per K9, plus a re-listen). Recorded as a finding only, no code changed; left for a future phase to weigh deliberately.
+- **`scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py`'s C11 narrative text** still describes the pre-fix defect-trap framing ("C11 must keep failing until K13 is fixed") even though the underlying repro test it reads (`scripts/phase4-step-w-k13-repro.test.ts`) flipped on 2026-08-11 to prove the fix holds. The filename and artifact key shape were kept unchanged deliberately so these two scripts don't KeyError (see that test file's own header). Updating their prose to match is separate, deferred work — not done as part of the K13 close-out.

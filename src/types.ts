@@ -420,7 +420,18 @@ export type SyncLogEntryType =
    *  action the app DECLINED to take, so the segment's `locked` flag is
    *  unchanged when it appears. See services/timelinePartition.ts's
    *  `canLockSegment`. */
-  | 'lock-refused';
+  | 'lock-refused'
+  /** 'lock-not-restored' — K13 fix. A segment that was locked BEFORE this
+   *  Apply Sync could not carry its lock forward into the freshly-synced
+   *  timeline, either because it could not be matched to a segment in the
+   *  new array (no assetId, or an ambiguous assetId shared by more than one
+   *  segment on either side) or because its saved position no longer fits
+   *  the new timeline (past the new audio's end, or conflicting with a
+   *  neighbour). severity:'warning', with a fixHint telling the user to
+   *  re-lock the scene. A locked scene the user simply deleted is NOT
+   *  reported here — that drop is silent by design. See App.tsx's
+   *  `preserveSegmentLocks`. */
+  | 'lock-not-restored';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
