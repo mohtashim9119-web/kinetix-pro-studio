@@ -9247,3 +9247,88 @@ committed.
 **Gates:** identical to baseline — `npm run lint` clean; `npm test` 74 files / 1840 passed / 1
 skipped / 0 failed (unchanged, measurement-only); golden replay 6/6 unchanged; `cargo check`
 clean (no `src-tauri/` edit).
+
+## Rust forced-alignment command surface — no inference (2026-08-12)
+
+Purpose: establish the FA IPC command surface, cancellation, and progress-event shape (WS1
+Task 5 boundary, R-D) so a future native inference engine drops into a proven boundary, with
+NO model, NO inference, and NO ML dependency added. `ort`/`onnxruntime`/`candle` explicitly not
+touched — the earlier spike (R-M) already proved `ort`'s version floor can't be satisfied on
+x86_64-apple-darwin today; adding it would take `cargo check` red.
+
+**Mirrors three whisper.rs patterns rather than inventing parallel ones** (read in full before
+writing anything): (1) `WhisperState`'s cancellation mutex (`whisper.rs:15-25`, used at
+`188-193`/`310-313`/`390-393`, and `whisper_cancel` at `432-441`) — FA has no child process to
+hold (no sidecar, no model), so the guarded value is a run-state enum (`FaRunState::{Idle,
+Running, Cancelled}`) rather than `Option<CommandChild>`, same mutex shape, different payload.
+(2) The `Channel<WhisperEvent>` progress shape (`whisper.rs:39-50`, `on_event: Channel<...>` at
+`185`) — `FaEvent` uses the identical `#[serde(tag = "event", content = "data")]` with
+`Progress`/`Done`/`Error` variants. (3) `model_path()`'s resolution ladder (`whisper.rs:64-112`)
+— FA's ladder swaps whisper's bundled `resource_dir()` tier for `app_local_data_dir()` per R-D
+("Task 5 itself resolves FA models via `app_local_data_dir` with a manual-placement fallback"),
+and never touches `src-tauri/models/` (the whisper model's own bundle-glob location,
+`tauri.conf.json`'s `resources` map — untouched by this commit, confirmed by an empty diff on
+that file). The serde camelCase convention (`TranscriptToken`'s `#[serde(rename_all =
+"camelCase")]`, `whisper.rs:32`) is applied per-struct/per-variant on every multi-word field
+below, correcting a small inconsistency `WhisperEvent` itself has (`Done.detected_language`
+serializes literally as `detected_language`, snake_case, since neither `WhisperEvent` nor its
+`Done` variant carries `rename_all` — not touched or fixed here, out of scope, just not
+repeated).
+
+**`src-tauri/src/fa.rs` (new).** `FaState(Mutex<FaRunState>)` + `start_run`/`cancel_run`/
+`finish_run` helpers (Idle->Running on start, Running->Cancelled on cancel — a no-op on Idle or
+already-Cancelled, mirroring `whisper_cancel`'s no-op-on-empty semantics — Running->Idle on
+finish). `FaError { kind: FaErrorKind, message: String }` (`NotImplemented`/`ModelNotFound`/
+`StateLockPoisoned`) is the command's typed `Err` — a real Rust enum, not a bare string, so a
+caller can branch on `kind` once one exists. `#[tauri::command] fa_align` takes `audio_path`
+(a filesystem path — reuses whatever WAV is already on disk, e.g. the same 16kHz mono file
+`whisper.rs::transcode_to_wav` produces, rather than re-sending audio bytes through IPC a second
+time as `whisper_transcribe`'s own `audio_b64` does), `segments: Vec<FaSegmentInput>`
+(`segmentId`/`text` pairs), `language`, and `on_event: Channel<FaEvent>`; it always starts the
+run, always sends `FaEvent::Error`, always finishes the run, and always returns
+`Err(FaError{kind: NotImplemented, ..})` — deterministic today, never conditional on whether a
+model happens to exist on disk. `#[tauri::command] fa_cancel` mirrors `whisper_cancel` exactly.
+Model resolution (`fa_model_candidate_paths`/`resolve_existing`/`no_model_found_error`/
+`fa_model_path`) is written and unit-tested as a real, callable ladder — `app_local_data_dir()/
+fa-models/<lang>/model.bin` preferred, `<exe-dir>/fa-models/<lang>/model.bin` manual fallback,
+`model.bin` a deliberate placeholder filename (the real model FORMAT is still blocked on R-M) —
+but is NOT yet called from `fa_align`'s own return path, so `fa_align`'s error stays
+deterministically `NotImplemented` rather than becoming conditional on local filesystem state;
+every otherwise-dead-until-wired item (`FaErrorKind::ModelNotFound`, `FaEvent::Progress`/`Done`,
+the model-path functions) carries an explicit `#[allow(dead_code)]` with a comment explaining
+why, rather than silently tolerating compiler warnings the rest of this codebase doesn't have.
+
+**`src-tauri/src/lib.rs`** gained `mod fa;`, `.manage(fa::FaState::default())`, and
+`fa::fa_align, fa::fa_cancel,` in the `invoke_handler!` list — no existing registration line
+touched (confirmed by diff: only 4 lines added, 0 removed). **`src-tauri/Cargo.toml`** gained one
+`[dev-dependencies]` entry, `serde_json = "1.0"` — test-only, already pulled in transitively by
+`tauri` (confirmed by `Cargo.lock`'s one-line diff: no new crate resolved, just the existing
+transitive `serde_json` now also referenced directly), used only to assert the exact JSON shape
+of `FaEvent`/`FaError`/`FaSegmentInput` in `fa.rs`'s own test module. Not an ML dependency.
+`tauri.conf.json` untouched (empty diff) — the bundle glob still only ships `models/*` (whisper).
+
+**15 new Rust tests** (`fa.rs`'s own `#[cfg(test)] mod tests`): state machine idle->running-
+>cancelled; cancel-on-idle is `Ok`, not `Err`, and state stays `Idle`; cancel-on-already-
+cancelled stays `Cancelled`; finish returns to `Idle` from `Running`; candidate-path ordering
+(managed tier before manual tier) built from plain `Option<&Path>` args (no live `AppHandle`
+needed — the same structural reason `whisper.rs`'s own `model_path()` has no unit tests either,
+since it also takes `&tauri::AppHandle`); candidate paths never contain `src-tauri/models`;
+missing tiers are omitted, not padded with placeholders; no-candidates-exist resolves to `None`;
+the not-found error names every path tried and the language code; `fa_align`'s not-implemented
+construction is typed correctly; `FaEvent::Progress`/`Done`/`Error` and `FaError` all serialize
+to the exact camelCase-tagged JSON shape asserted via `serde_json::to_value` equality; and
+`FaSegmentInput` deserializes a `segmentId` (camelCase) JSON key correctly.
+
+**`src/services/faBoundaryTypes.ts` (new, TS types only).** `FaSegmentInput`, `FaEvent`,
+`FaErrorKind`, `FaError`, `FaAlignArgs`, `FaCancelArgs` — hand-written mirrors of `fa.rs`'s serde
+shapes (no codegen). Reuses `faTextNormalize.ts`'s existing `FaLanguageCode` rather than
+redeclaring it. No `invoke()` call, no service wrapper, and confirmed by a repo-wide grep to be
+imported by nothing else in `src/` — visible from TS, wired into nothing.
+
+**Gates:** `cargo check` clean, 0 warnings (matching this codebase's existing zero-warning
+baseline — the `#[allow(dead_code)]` annotations above exist specifically to keep it that way);
+`cargo test` 19 passed (4 baseline `ffmpeg` tests + 15 new `fa` tests, exact) — `ffmpeg.rs`
+already had a `#[cfg(test)] mod tests`, `whisper.rs` does not; `fa.rs`'s is the second Rust test
+module in `src-tauri/src/`, not the first; `npm run lint` clean; `npm test` 74 files / 1840
+passed / 1 skipped / 0 failed (unchanged — no TS test added, TS changes are types-only); golden
+replay 6/6 unchanged.

@@ -1,3 +1,4 @@
+mod fa;
 mod ffmpeg;
 mod whisper;
 
@@ -89,6 +90,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .manage(whisper::WhisperState::default())
         .manage(ffmpeg::FfmpegProcessState::default())
+        .manage(fa::FaState::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -124,6 +126,8 @@ pub fn run() {
             ffmpeg::reveal_in_finder,
             whisper::whisper_transcribe,
             whisper::whisper_cancel,
+            fa::fa_align,
+            fa::fa_cancel,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,
