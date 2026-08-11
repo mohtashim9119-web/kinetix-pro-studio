@@ -36,7 +36,7 @@ Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md
 
 ## 3. Open Decisions
 
-- **C05/C10/C11 structural checks are not CI-ready.** C05 needs the FA token arrays lost with the old `/tmp/phase3/` (never rebuilt); C10 catches 0 of the 3 known word-shift residuals; C11 isn't runnable against real baselines while K13 (lock preservation across resync) stays broken. None are blocking WS1's current slice, but none should be wired into CI as-is.
+- **C10 structural check is not CI-ready; C05 and C11 now are — corrected 2026-08-11, this bullet was stale.** Step W (2026-08-06) recovered C05's FA token arrays and re-scored it against the shipped gate itself: verdict CI-IN. C11 (live K13 repro) is CI-IN too — it correctly reproduces the K13 defect today, and is designed to flip to failing once K13 is fixed; that's the point, not a blocker. Only C10 (seam cross-attribution) stays CI-OUT: ear-verified recall is 0/4 regardless of predicate tuning — "quieter is not fixed." Verified by running `scripts/phase4-step-w-trust.py` directly. None of the three block WS1's current slice.
 
 ---
 
