@@ -8981,3 +8981,54 @@ diacritic to match the model's own vocab), not a live matching bug.
 **Gates, identical before/after this pass (docs-only, no `src/`/`src-tauri/` change):**
 `npm run lint` clean; `npm test` 72 files / 1803 passed / 1 skipped / 0 failed; golden replay
 3/3 byte-identical; `cargo check` clean.
+
+## R.1 spec holes ruled — R-O (measurable anchor admissibility) and R-P (force-split selection) (2026-08-12)
+
+Task 5 / Slice D1 stopped correctly at its hard-stop gate: `sync-pipeline-v2-plan.md`'s R.1
+and R.4 each contained a spec hole that would have required guessing to implement. Both are
+now ruled by the owner, recorded here plus `project-state.md` §5 (one-liners) and the plan
+itself at R.1/R.4 (full detail).
+
+**Hole 1 — R.1(a)'s "distinctive" admissibility test was two different, uncombined tests
+wearing one name.** The bullet's rule text read "not a function word" — a LEXICAL test, the
+same one C10's own definition already uses (`sync-pipeline-v2-plan.md:2262`, "≥3 chars, not a
+closed-class English/Spanish function word"). But the bullet's own justification paragraph
+cited Step B's measurement, which found glide-initial word boundaries (almost entirely
+"You"/"Your"/"When"/"We") the worst fine-grained timing-error bucket in the corpus (14.1%
+>250ms, p95 368.8ms) against a clean 0.0% for plosive/affricate-initial boundaries — a
+PHONETIC finding, not a lexical one. The text never resolved which test governs; the two
+disagree in real cases ("We" is a function word AND glide-initial; "Yesterday" is not a
+function word but is glide-initial; "This" is a function word but not glide-initial).
+
+**Ruling R-O — the phonetic reading governs R.1(a).** Admissible only when BOTH hold: (i)
+≥`MIN_ANCHOR_WORD_CHARS` (3, seeded from C10's own ≥3-char half — the only length threshold
+this project has any evidence for) characters after `canonicalize()`; (ii) first canonicalized
+character not in `GLIDE_INITIAL_CHARS` (`{w, y}`, seeded from Step B's measured English
+glide-initial set). No stopword list, for English or any of the other 4 supported languages.
+The English-measured glide set is applied to all 5 languages deliberately — conservative by
+construction (can only reject a real anchor, never admit a bad one), and widening/narrowing it
+per language needs measurement this project doesn't have, not intuition. C10's lexical
+definition is left exactly as-is and governs C10 only; nothing here changes C10's own gate.
+Rationale for biasing toward rejection at all: a rejected anchor costs a longer run, bounded by
+`MAX_RUN_SEC` — recoverable. A wrong anchor corrupts timing — not recoverable without a second
+pass. The costs are not symmetric.
+
+**Hole 2 — R.4's force-split selection said "the best available candidate" without defining
+"best."** No tie-breaking or selection rule was stated for what happens when a run hits
+`MAX_RUN_SEC` with no R.1-admissible anchor inside it.
+
+**Ruling R-P — split at the longest detected silence inside the window
+`[runStart, runStart + MAX_RUN_SEC]`; if the window has no detected silence, split at exactly
+`runStart + MAX_RUN_SEC`.** The resulting boundary's provenance is recorded distinguishably
+from an agreed (three-source-agreement) anchor, so a downstream consumer can tell a forced
+split from a real one without re-deriving it. A force-split boundary may never produce a gap
+in `project.segments` — Model P (R-E) outranks R.4's force-split the same way it already
+outranks R.5's wildcard.
+
+**MIN_ANCHOR_RUN confirmed, not re-minted.** `RUN_SURVIVAL_MIN_RUN_LONG = 4`
+(`syncConstants.ts`) is the existing constant R.1(b) already names for reuse; no duplicate
+constant is introduced for it.
+
+**Gates before this ruling commit:** `npm run lint` clean; `npm test` 72 files / 1803 passed /
+1 skipped / 0 failed; golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 3/3;
+`cargo check` clean (docs-only change, no `src/`/`src-tauri/` edits in this commit).

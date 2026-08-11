@@ -1375,6 +1375,33 @@ document rather than invented here:
 Anchors are computed **before any FA pass**, entirely from data that already
 exists today (Whisper tokens, Hirschberg output, the RMS silence array).
 
+**R-O ruling (owner, 2026-08-12) — "distinctive" was under-specified above and
+is now a measurable test, not a lexical stopword list.** The bullet text above
+said "not a function word" (LEXICAL — C10's own definition, `MIN_ANCHOR_WORD_CHARS`-adjacent
+context below), while its own justification cited Step B's glide-initial
+measurement, which is PHONETIC. Those are two different tests and the text
+above conflated them. Ruled: the phonetic reading governs R.1(a); C10's
+lexical (closed-class-function-word) definition governs C10 only and is not
+reused here. `w` is admissible as an anchor only when BOTH hold:
+
+  (i)  `w`, after `canonicalize()`, has at least `MIN_ANCHOR_WORD_CHARS` (3 —
+       the only value this project has evidence for, taken directly from
+       C10's own "≥3 chars" half of its definition, cited above) characters.
+  (ii) `w`'s first canonicalized character is not in `GLIDE_INITIAL_CHARS` —
+       seeded from the word-initial glides Step B actually observed in
+       English ("You"/"Your"/"When"/"We"): `{w, y}`.
+
+No stopword list is introduced, for English or any of the other 4 supported
+languages. The English-measured glide set (`{w, y}`) is applied to all 5
+languages deliberately — it is conservative (it can only reject a real anchor,
+never admit a bad one), and widening or narrowing it per language needs
+measurement this project doesn't have yet, not intuition. Rationale for
+biasing toward rejection at all: a rejected anchor costs a longer run, bounded
+by `MAX_RUN_SEC` (R.4) — recoverable. A wrong anchor corrupts timing —
+unrecoverable without a second pass. The costs are not symmetric, so the test
+is deliberately conservative in the rejection direction. Both constants live
+in `syncConstants.ts`, never hardcoded at a call site.
+
 **R.2 — Padding, and how it is bounded.** A run's audio window is
 
 ```
@@ -1426,6 +1453,18 @@ anchor exists within `MAX_RUN_SEC`, the run is **force-split at the best
 available candidate and the split is marked LOW-CONFIDENCE** (R.6), rather than
 growing unbounded or silently accepting a weak anchor. A run of one segment is
 legal; it simply gets R.2's padding.
+
+**R-P ruling (owner, 2026-08-12) — "the best available candidate" above was
+under-specified; force-split selection is now a concrete rule.** When no
+admissible R.1 anchor exists within `MAX_RUN_SEC` of the run's start: split at
+the **longest** detected silence interval inside the window (`[runStart,
+runStart + MAX_RUN_SEC]`); if the window contains no detected silence at all,
+split at exactly `runStart + MAX_RUN_SEC`. Either way the resulting boundary's
+provenance is recorded as a forced split, distinguishable downstream from an
+agreed (three-source-agreement) anchor — so a later consumer can tell a
+real anchor from a forced one without re-deriving it. A force-split boundary
+may never produce a gap in `project.segments` — Model P (R-E) outranks R.4
+the same way it outranks R.5's wildcard.
 
 **R.5 — Unscripted audio inside a run.** Between consecutive segments inside a
 run, insert a CTC wildcard (`<star>` in MMS-FA; the equivalent free blank-run
