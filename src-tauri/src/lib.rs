@@ -1,8 +1,10 @@
 mod fa;
+mod fa_dev;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
+mod sha256;
 mod whisper;
 
 use base64::Engine as _;
@@ -131,6 +133,7 @@ pub fn run() {
             whisper::whisper_cancel,
             fa::fa_align,
             fa::fa_cancel,
+            fa_dev::fa_align_dev,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,

@@ -53,7 +53,15 @@ export type FaEvent =
  *  so a future Rust variant fails loudly there, but that guard is
  *  one-directional: it cannot catch a TS-side rename or addition drifting
  *  away from Rust, only the reverse. */
-export type FaErrorKind = 'notImplemented' | 'modelNotFound' | 'stateLockPoisoned' | 'inferenceFailed';
+export type FaErrorKind =
+  | 'notImplemented'
+  | 'modelNotFound'
+  | 'stateLockPoisoned'
+  | 'inferenceFailed'
+  /** Only ever constructed by `fa_dev.rs`'s pre-use manifest check (WS1
+   *  Task 5 Slice D10) — never returned by the production `fa_align`
+   *  command. */
+  | 'modelHashMismatch';
 
 /** Mirrors `fa.rs`'s `FaError` — the typed error `fa_align`/`fa_cancel`
  *  reject their promise with today, always `kind: 'notImplemented'` for

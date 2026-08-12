@@ -119,6 +119,12 @@ pub enum FaErrorKind {
     // an empty/unusable tokenization of the requested segments' text.
     #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
     InferenceFailed,
+    // Constructed only by `fa_dev.rs`'s pre-use manifest check (WS1 Task 5
+    // Slice D10) — a resolved `model.onnx` whose SHA-256 doesn't match
+    // `scripts/fixtures/fa-onnx-manifest.json`'s committed hash for that
+    // language, or has no manifest entry at all. `fa_dev` is unconditionally
+    // compiled (unlike `fa_onnx.rs`), so this variant is never `dead_code`.
+    ModelHashMismatch,
 }
 
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
@@ -195,6 +201,26 @@ fn word_span_to_dto(w: crate::fa_onnx::WordSpan) -> FaWordSpan {
         start_sec: w.start_seconds,
         end_sec: w.end_seconds,
         confidence: w.score.exp(),
+    }
+}
+
+/// Maps `fa_onnx::align`'s error into the `FaError` `fa_align` rejects its
+/// promise with (WS1 Task 5 Slice D10 fix). A `ModelNotFound` failure must
+/// reach the frontend as `FaErrorKind::ModelNotFound`, not flattened into
+/// `InferenceFailed` — the underlying `FaError` already carries the right
+/// kind and a fully formed message (`no_model_found_error`, above), so it is
+/// forwarded as-is rather than re-wrapped. Every other `FaOnnxError` variant
+/// (WAV decode, ort init/session/run, empty tokenization, unsupported
+/// language, Viterbi failure) has no more specific `FaErrorKind` of its own
+/// and still maps to `InferenceFailed`, unchanged from pre-D10 behavior.
+/// Pulled out as its own function (rather than inlined in `fa_align`'s match
+/// arm) so it has a direct unit-test target, mirroring `word_span_to_dto`'s
+/// own rationale above.
+#[cfg(feature = "fa-inference")]
+fn fa_onnx_error_to_fa_error(e: crate::fa_onnx::FaOnnxError) -> FaError {
+    match e {
+        crate::fa_onnx::FaOnnxError::ModelNotFound(fa_error) => fa_error,
+        other => FaError::inference_failed(other.to_string()),
     }
 }
 
@@ -341,7 +367,7 @@ pub async fn fa_align(
                 Ok(())
             }
             Err(e) => {
-                let err = FaError::inference_failed(e.to_string());
+                let err = fa_onnx_error_to_fa_error(e);
                 let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
                 Err(err)
             }
@@ -603,6 +629,27 @@ mod tests {
         assert_eq!(dto.end_sec, 1.75);
     }
 
+    // -- ModelNotFound kind preservation (WS1 Task 5 Slice D10 fix) --------
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn fa_onnx_error_to_fa_error_preserves_model_not_found_kind_and_message() {
+        let original = FaError::model_not_found("no model for \"en\", tried: /a, /b".to_string());
+        let wrapped = crate::fa_onnx::FaOnnxError::ModelNotFound(original.clone());
+        let mapped = fa_onnx_error_to_fa_error(wrapped);
+        assert_eq!(mapped.kind, FaErrorKind::ModelNotFound);
+        assert_eq!(mapped.message, original.message);
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn fa_onnx_error_to_fa_error_maps_other_variants_to_inference_failed() {
+        let e = crate::fa_onnx::FaOnnxError::EmptyTokenization;
+        let mapped = fa_onnx_error_to_fa_error(e);
+        assert_eq!(mapped.kind, FaErrorKind::InferenceFailed);
+        assert!(mapped.message.contains("zero target tokens"));
+    }
+
     #[test]
     fn fa_error_serializes_camelcase_fields() {
         let err = FaError::not_implemented("nope");
@@ -624,7 +671,8 @@ mod tests {
                 FaErrorKind::NotImplemented
                 | FaErrorKind::ModelNotFound
                 | FaErrorKind::StateLockPoisoned
-                | FaErrorKind::InferenceFailed => {}
+                | FaErrorKind::InferenceFailed
+                | FaErrorKind::ModelHashMismatch => {}
             }
         }
 
@@ -644,6 +692,7 @@ mod tests {
             (FaErrorKind::ModelNotFound, "modelNotFound"),
             (FaErrorKind::StateLockPoisoned, "stateLockPoisoned"),
             (FaErrorKind::InferenceFailed, "inferenceFailed"),
+            (FaErrorKind::ModelHashMismatch, "modelHashMismatch"),
         ];
         for (kind, expected) in cases {
             assert_exhaustive(*kind);

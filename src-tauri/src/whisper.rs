@@ -124,7 +124,7 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// which is already the export muxer and reads virtually any container/codec —
 /// makes that limitation irrelevant. `-ar 16000 -ac 1` matches whisper's own
 /// internal target so no quality is lost versus feeding it a raw file.
-async fn transcode_to_wav(
+pub(crate) async fn transcode_to_wav(
     app: &tauri::AppHandle,
     input: &std::path::Path,
     output: &std::path::Path,
