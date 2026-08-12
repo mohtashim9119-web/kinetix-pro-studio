@@ -9523,3 +9523,60 @@ offline, upstream of and independent from that blocker.
 / 1 skipped / 0 failed (unchanged from Part 1's close); `cargo check` clean; `cargo test` 19
 passed (unchanged); golden replay 6/6 unchanged. All five numbers identical to Part 1's close, as
 expected for a docs/scripts/fixtures-only change.
+
+## Emission-matrix fixtures for the Viterbi (forced_align) port, 2026-08-12
+
+**Why.** The Rust port of `torchaudio.functional.forced_align` (WS1, ported without any
+inference runtime — the DP takes an emission matrix as input, produced elsewhere) needs
+frame-for-frame reference output to diff against. The existing `phase4-fa-tokens-*.json`
+fixtures (see "R-H forced-alignment fixture" and "FA fixture scope correction" entries above)
+are the FA harness's *final* output — merged per-word `{text, start, end, score}` spans — with
+no emission matrix, no per-frame path, and no blank/vocab data anywhere in them; confirmed by
+direct inspection of `phase4-fa-tokens-v6.json` before writing anything else. They cannot
+validate a from-scratch DP port. This gap is what this entry closes.
+
+**What was captured.** Three fixtures under `scripts/fixtures/fa-emission-*.json`, via an ad hoc
+scratch script (`.venv-phase4-fa`'s python3, torch/torchaudio 2.2.2 — same pin as the existing FA
+fixtures) calling `torch.ops.torchaudio.forced_align` and `torchaudio.functional.merge_tokens`
+directly (not the pipeline's `Aligner` wrapper, which exponentiates scores before merging) against
+real MMS_FA model output on SHORT (1.6–2.15s + 0.5s pad) real audio windows drawn from this
+repo's own committed corpus:
+
+| File | Source | T | C | L | R | Note |
+|---|---|---|---|---|---|---|
+| `fa-emission-en-deep-night.json` | v6 seg 4, "It is deep in the night." | 141 | 29 | 18 | 1 | repeat in "deep" (d-**e-e**-p) |
+| `fa-emission-en-mother-look.json` | v6 seg 14, "Your mother does not look up." | 157 | 29 | 23 | 1 | repeat in "look" (l-**o-o**-k) |
+| `fa-emission-es-resultan-inutiles.json` | spanish seg 15, "pero resultan inútiles." | 129 | 29 | 20 | 0 | non-ASCII source word ("inútiles") |
+
+Each fixture carries `_caveat`/`_provenance` (model, torch/torchaudio versions, thread count,
+source project/segment, audio window bounds, frame rate ≈49.7–49.8 fps, samples/frame), `blank_id`
+(0, the MMS_FA dictionary's `'-'` key), the full `vocab` (29-symbol dictionary, `with_star=True`),
+`target_token_ids`/`target_words_romanized`, and the reference output to diff the Rust port
+against: `emission_log_probs` (T×C, 7 decimal places — float32-lossless), `expected_path`,
+`expected_per_frame_scores`, `expected_merged_spans`. Same MMS-FA licence caveat as the existing
+R-H fixture: CC-BY-NC-4.0, barred from shipping by Decision 3 — these are a DP-correctness
+reference only, not a claim about the shipping jonatasgrosman models' output, and not a reference
+for text normalization or vocab coverage.
+
+**Repeated-label case confirmed genuine, not just present.** Both `en-*` fixtures'
+`expected_merged_spans` contain two separate spans of the same token id at the repeat (e.g.
+`(3, 63, 64)` and `(3, 66, 67)` for "deep"'s two `e`s) rather than one merged span — direct
+evidence the real DP was forced through a real blank between them, the exact mandatory-blank
+behavior `forced_align`'s own docstring illustrates with `"aabbc"`.
+
+**Size discipline.** Largest file 76,848 bytes (`fa-emission-en-mother-look.json`); three-file
+total 208 KB. Both well under the 2 MB/file and 8 MB/total caps — no truncation, downsampling, or
+precision reduction was needed or applied.
+
+**Generation script kept in scratch, not committed.** Narrow and fixture-specific (three
+hardcoded audio-window specs), unlike `measure-forced-alignment.py`'s general-purpose
+per-project-segment driver — doesn't meet the "genuinely reusable" bar for `scripts/`.
+
+**Indexed** in `scripts/fixtures/README.md` under a new "Forced-alignment DP-port emission
+fixtures (Viterbi DP validation)" section. Not read by any script yet as of this commit — the
+Rust Viterbi port's fixture-diff tests (next entry) read them by hardcoded path.
+
+**Gates:** no `src/` or `src-tauri/src/` change in this part; `npm run lint` clean; `npm test` 74
+files / 1857 passed / 1 skipped / 0 failed (unchanged); `cargo check` clean; `cargo test` 19
+passed (unchanged); golden replay 6/6 unchanged. All five identical to the pre-work baseline, as
+expected for a fixtures/docs-only change.

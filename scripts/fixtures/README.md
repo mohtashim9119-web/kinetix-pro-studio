@@ -86,6 +86,52 @@ consumed by any script yet.
 |---|---|
 | `fa-onnx-manifest.json` | `{ "_provenance": {...}, "models": { <lang>: { repoId, revision, opset, byteSize, sha256, torchVersion, torchaudioVersion, fidelity } } }` — one entry per language, en/es/fr/de/pt. |
 
+## Forced-alignment DP-port emission fixtures (Viterbi DP validation)
+
+The `phase4-fa-tokens-*.json` fixtures above are the FA harness's *final*
+output — merged per-word spans — which cannot validate a from-scratch port of
+`torchaudio.functional.forced_align`'s Viterbi DP: that port needs an
+emission matrix IN and a per-frame path OUT to diff against, neither of
+which the word-span fixtures carry. These three fixtures fill that gap.
+Captured 2026-08-12 by an ad hoc scratch script (not committed — narrow and
+single-purpose, unlike the reusable `measure-forced-alignment.py`) using
+torchaudio's MMS_FA bundle (same model/licence caveat as the fixture above:
+CC-BY-NC-4.0, barred from shipping by Decision 3 — this is a DP-correctness
+reference only, not a claim about the shipping jonatasgrosman models'
+output), against a SHORT (1.6–2.15s, plus 0.5s pad) real audio window per
+fixture, drawn from this repo's own committed corpus (`v6`/`spanish` under
+`.work-phase4/replay/`, gitignored). Each fixture is real model output on
+real audio — not synthetic — captured via `torch.ops.torchaudio.forced_align`
+and `torchaudio.functional.merge_tokens` directly (bypassing the pipeline's
+`Aligner` wrapper, which exponentiates scores before merging) so the emission
+matrix, blank id, target ids, path, per-frame scores, and merged spans are
+all exactly what those two functions themselves produced, chainable the same
+way the Rust port chains its own DP output into its own merge step. The two
+`en-*` fixtures each carry a real immediately-repeated target label (`deep`'s
+"ee", `look`'s "oo") — the mandatory-blank case `forced_align`'s own
+docstring illustrates with `"aabbc"` — confirmed by inspection: their
+`expected_merged_spans` contain two separate spans of the same token id
+where the repeat occurs, proof the DP was actually forced through a real
+blank rather than merging the repeat into one span. The `es-*` fixture
+exercises a non-ASCII source word (`inútiles`) through real uroman
+romanization. Not read by any script yet in this commit — read by the Rust
+Viterbi port's fixture-diff tests, added in a later commit (see
+`docs/history.md`).
+
+| File pattern | Purpose |
+|---|---|
+| `fa-emission-en-deep-night.json` | v6 seg 4 ("It is deep in the night.", 1.83s) — T=141, C=29, L=18, R=1 (repeat in "deep"). |
+| `fa-emission-en-mother-look.json` | v6 seg 14 ("Your mother does not look up.", 2.15s) — T=157, C=29, L=23, R=1 (repeat in "look"). |
+| `fa-emission-es-resultan-inutiles.json` | spanish seg 15 ("pero resultan inútiles.", 1.6s) — T=129, C=29, L=20, R=0, non-ASCII source word. |
+
+Each file: `_caveat` / `_provenance` (model, torch/torchaudio versions,
+thread count, source project/segment, audio window, frame rate, samples per
+frame), `blank_id`, `vocab` (the MMS_FA dictionary, `token -> id`),
+`target_token_ids` / `target_words_romanized`, `T`/`C`/`L`/`num_repeats_R`,
+`emission_log_probs` (T×C, 7 decimal places — float32-lossless), and the
+reference output: `expected_path`, `expected_per_frame_scores`,
+`expected_merged_spans`.
+
 ## Forced-alignment ground truth
 
 | File pattern | Purpose |
