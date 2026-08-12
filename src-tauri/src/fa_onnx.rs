@@ -257,6 +257,111 @@ pub fn run_forward_pass(model_path: &Path, input_samples: &[f32]) -> Result<Vec<
     Ok(emission)
 }
 
+/// Every call site of [`run_forward_pass`] in this crate — this one included
+/// — routes its call through here (WS1 Task 5 Slice D6). Serializes access
+/// against the `missing_dylib` test module's deliberate `ORT_DYLIB_PATH`
+/// remove-var/restore-var critical section: `run_forward_pass`'s first line
+/// reads that env var, and Rust env vars are real process-global state, so a
+/// naive `remove_var` in one test thread is racy against any other thread
+/// concurrently inside a `run_forward_pass` call that expects the var
+/// present. `require_ort::ort_dylib_or_skip`'s own gate-check read is
+/// SEPARATELY guarded by the same `ORT_ENV_LOCK` (see that function's doc
+/// comment) — an earlier version of this scheme assumed the unlocked gate
+/// check was harmless since it "never mutates anything," which is true but
+/// beside the point: under `FA_REQUIRE_ORT=1` that check's own PANIC branch
+/// makes an unlucky interleaving against this test's remove-var window
+/// directly observable as a spurious failure of an unrelated test — caught
+/// by actually running the full suite concurrently against
+/// `missing_dylib_returns_ort_init_error` (see that test's own doc comment),
+/// not by reasoning alone. Both guards together are what make this
+/// deterministic. See `require_ort::ORT_ENV_LOCK` for the shared primitive.
+///
+/// A plain passthrough (no lock, zero overhead) outside test builds —
+/// `require_ort` itself is `#[cfg(test)]`-only, and a single real production
+/// `fa_align` call is never contended anyway, so there is nothing to
+/// serialize against there.
+#[cfg(test)]
+fn with_ort_env_lock<T>(f: impl FnOnce() -> T) -> T {
+    let _guard = require_ort::ORT_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
+#[cfg(not(test))]
+fn with_ort_env_lock<T>(f: impl FnOnce() -> T) -> T {
+    f()
+}
+
+// ---------------------------------------------------------------------------
+// Frame -> time conversion (WS1 Task 5 Slice D6)
+//
+// The emission matrix `run_forward_pass` returns has one row per output
+// FRAME of the model's own convolutional feature encoder, not one row per
+// audio sample — converting a frame index to a wall-clock second requires
+// knowing that encoder's sample-domain stride.
+//
+// STRIDE SOURCE (authoritative, not guessed): every jonatasgrosman
+// wav2vec2-large-xlsr-53-<lang> model (`export-fa-onnx.py`'s `REPO_IDS`, R-Q)
+// is one shared Wav2Vec2ForCTC architecture. Its `Wav2Vec2FeatureEncoder` is
+// 7 conv1d layers with `conv_stride = [5, 2, 2, 2, 2, 2, 2]` — read directly
+// from each of the five languages' own HF `config.json` (local export
+// scratch under `.work-phase4/spike-runtime/models/{english,spanish,french,
+// german,portuguese}/config.json`, gitignored, not committed — produced by
+// `export-fa-onnx.py`'s own model-loading step). All five are
+// byte-identical: `[5, 2, 2, 2, 2, 2, 2]`, confirmed by direct inspection
+// before writing this constant, not assumed from R-Q's architecture claim
+// alone. The product of that list — 5*2*2*2*2*2*2 = 320 — is the number of
+// INPUT SAMPLES the encoder consumes per output frame it advances by; this
+// IS the actual computation producing the emission's frame axis (a
+// structural property of the model graph), which makes it authoritative in
+// a way neither of the two alternatives this slice was told to avoid can be:
+// a hardcoded ~50fps constant is a rounded restatement of the same number
+// with digits thrown away, and the fixtures' own `_provenance.frame_rate_fps`
+// (`fa-emission-*.json`, a DIFFERENT model/vocab family — MMS_FA, not this
+// jonatasgrosman family) is an empirically-measured `frame_count /
+// audio_duration_seconds` ratio that is NOT exactly 1/0.02 because the real
+// conv output-length formula (`floor((L_in - kernel)/stride) + 1`, chained
+// over all 7 layers) truncates at each layer's boundary — its ratio drifts
+// per-clip near those truncation boundaries (measured 49.615/49.823/49.841,
+// never exactly 50.0) precisely because it is downstream of stride, not a
+// second independent measurement of it.
+//
+// This module's own emission rows are always 16kHz-domain (`read_wav_mono_
+// 16k`/`zero_mean_unit_var_norm` both operate on the fixed 16kHz WAV
+// convention `whisper.rs::transcode_to_wav` produces, asserted directly in
+// `parse_wav_pcm16_mono_16k`), so the sample rate half of the stride ratio is
+// the same fixed constant every input in this codebase already assumes.
+// Not called from production code yet — no windowing/span-consumption caller
+// exists (out of scope for this slice, see task boundary), so these are
+// exercised only by the `frame_to_seconds` test module below regardless of
+// feature configuration. Same "established but unwired" pattern as
+// `TokenSpan::len`/`is_empty` above.
+#[allow(dead_code)]
+pub const FA_FRAME_STRIDE_SAMPLES: u32 = 320;
+#[allow(dead_code)]
+pub const FA_SAMPLE_RATE_HZ: u32 = 16_000;
+
+/// Converts an emission-matrix frame index to a wall-clock second, via the
+/// model's real stride (see module section doc comment above) — never a
+/// hardcoded fps constant, never the `fa-emission-*.json` fixtures'
+/// empirically-measured `frame_rate_fps` provenance field (a different model
+/// family, and downstream of stride rather than a second measurement of it).
+/// f64 throughout: single multiply-then-divide, no accumulation, so this
+/// carries none of the summation error a naive `frame * SECONDS_PER_FRAME`
+/// loop could in principle accrue over many calls — not that it matters here,
+/// since each call is independent and this is a pure function of its input.
+#[allow(dead_code)]
+pub fn frame_to_seconds(frame_index: usize) -> f64 {
+    frame_index as f64 * (FA_FRAME_STRIDE_SAMPLES as f64 / FA_SAMPLE_RATE_HZ as f64)
+}
+
+/// Convenience wrapper for a [`TokenSpan`]'s own `start`/`end` frame indices
+/// — `(start_seconds, end_seconds)`, `start` inclusive, `end` exclusive,
+/// matching the span's own frame-domain convention (`fa_viterbi.rs`'s
+/// `TokenSpan` doc comment).
+#[allow(dead_code)]
+pub fn token_span_seconds(span: &TokenSpan) -> (f64, f64) {
+    (frame_to_seconds(span.start), frame_to_seconds(span.end))
+}
+
 // ---------------------------------------------------------------------------
 // Minimal embedded vocab (id-mapping side) + vocab-aware tokenization via
 // `crate::fa::text` (see module doc comment)
@@ -362,10 +467,27 @@ pub fn align(
     language: &str,
 ) -> Result<Vec<TokenSpan>, FaOnnxError> {
     let model_path = crate::fa::fa_model_path(app, language).map_err(FaOnnxError::ModelNotFound)?;
+    align_with_model_path(&model_path, audio_path, segments, language)
+}
 
+/// [`align`]'s body, minus model-path resolution — split out (WS1 Task 5
+/// Slice D6) so tests can drive the real pipeline (WAV decode, normalize,
+/// forward pass, tokenize, Viterbi) with an already-known `model_path`,
+/// without a live `tauri::AppHandle` — nothing in this crate's test suite
+/// constructs one (see `onnx_fixture_parity`/`e2e_parity`'s own
+/// `fa_models_dir()` doc comments for why: those tests independently
+/// reproduce the production resolver's path convention for the same reason).
+/// `align` itself is now a two-line wrapper around this; behavior is
+/// unchanged for the real `fa_align` IPC caller.
+fn align_with_model_path(
+    model_path: &Path,
+    audio_path: &str,
+    segments: &[FaSegmentInput],
+    language: &str,
+) -> Result<Vec<TokenSpan>, FaOnnxError> {
     let samples = read_wav_mono_16k(Path::new(audio_path)).map_err(FaOnnxError::Wav)?;
     let normed = zero_mean_unit_var_norm(&samples);
-    let emission = run_forward_pass(&model_path, &normed)?;
+    let emission = with_ort_env_lock(|| run_forward_pass(model_path, &normed))?;
 
     let vocab = load_vocab(language)?;
     let lang_enum = Language::from_code(language).ok_or_else(|| FaOnnxError::UnsupportedLanguage(language.to_string()))?;
@@ -606,6 +728,13 @@ mod tests {
 #[cfg(test)]
 mod require_ort {
     use std::path::Path;
+    use std::sync::Mutex;
+
+    /// Shared with `super::with_ort_env_lock` (WS1 Task 5 Slice D6) — see
+    /// that function's own doc comment for the full determinism scheme this
+    /// guards. `Mutex::new` is `const fn`, so a plain `static` needs no
+    /// lazy-init wrapper.
+    pub static ORT_ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn require_ort_enabled() -> bool {
         std::env::var("FA_REQUIRE_ORT").as_deref() == Ok("1")
@@ -615,8 +744,21 @@ mod require_ort {
     /// normal). Returns `false` if unset and `FA_REQUIRE_ORT` is not `"1"`
     /// (caller should print a SKIP message and return early, unchanged from
     /// pre-D4 behavior). Panics if unset and `FA_REQUIRE_ORT=1`.
+    ///
+    /// The env-var read itself is `ORT_ENV_LOCK`-guarded (WS1 Task 5 Slice
+    /// D6): under `FA_REQUIRE_ORT=1`, an unlocked read here would be racy
+    /// against `missing_dylib_returns_ort_init_error`'s deliberate
+    /// remove-var window on another thread — this function's own PANIC
+    /// branch above makes an unlucky interleaving there consequential (a
+    /// spurious hard failure of an unrelated test), not just a skip, so the
+    /// check needs the same lock `with_ort_env_lock`'s call sites use, not
+    /// only the later `run_forward_pass` call those sites protect.
     pub fn ort_dylib_or_skip(context: &str) -> bool {
-        if std::env::var("ORT_DYLIB_PATH").is_ok() {
+        let is_set = {
+            let _guard = ORT_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            std::env::var("ORT_DYLIB_PATH").is_ok()
+        };
+        if is_set {
             return true;
         }
         if require_ort_enabled() {
@@ -731,8 +873,10 @@ mod onnx_fixture_parity {
 
         // Same preprocessing `align()` applies in production — exercises
         // this module's own normalization, not just ort's forward pass.
+        // Lock-wrapped per `with_ort_env_lock`'s own doc comment (WS1 Task 5
+        // Slice D6 determinism scheme).
         let normed = zero_mean_unit_var_norm(&input_samples);
-        let got = run_forward_pass(&model_path, &normed)
+        let got = with_ort_env_lock(|| run_forward_pass(&model_path, &normed))
             .unwrap_or_else(|e| panic!("{}: forward pass failed: {e}", fixture.file));
 
         assert_eq!(got.len(), expected.len(), "{}: frame count mismatch", fixture.file);
@@ -810,6 +954,26 @@ mod onnx_fixture_parity {
 mod e2e_parity {
     use super::*;
     use std::path::PathBuf;
+
+    // Seconds-comparison tolerance (WS1 Task 5 Slice D6). Both sides compute
+    // `frame_index as f64 * (320.0 / 16000.0)` as a single multiply against
+    // an identical pre-divided double (Rust: `FA_FRAME_STRIDE_SAMPLES as f64
+    // / FA_SAMPLE_RATE_HZ as f64`; Python: `FRAME_STRIDE_SAMPLES /
+    // SAMPLE_RATE`, `capture-fa-e2e-reference.py`) — same operation order, so
+    // IEEE-754 double-precision arithmetic (which both Rust `f64` and
+    // CPython `float` are) guarantees bit-identical results for every input
+    // in this fixture family (frame indices are small, exactly-representable
+    // integers; span durations here top out under 10s). The theoretical
+    // rounding-error floor at that magnitude is double's ~15-17 significant
+    // decimal digits, i.e. ~1e-15 absolute error — this tolerance sits 6
+    // orders of magnitude above that floor (generous headroom against a
+    // literal 0.0 assertion being too brittle across platforms/toolchains)
+    // while remaining ~10 million times tighter than a single video frame at
+    // 60fps (~0.017s) — nowhere close to wide enough to mask a real
+    // conversion-formula discrepancy (e.g. an off-by-one-frame or
+    // wrong-stride bug would show up as a diff on the order of 0.02s or
+    // larger, ~7 orders of magnitude over this bound).
+    const FA_SECONDS_TOLERANCE: f64 = 1e-9;
 
     struct Fixture {
         file: &'static str,
@@ -893,9 +1057,10 @@ mod e2e_parity {
         assert_eq!(vocab.blank_id, blank_id, "{}: blank_id mismatch between Rust vocab and fixture", fixture.file);
 
         // Step: real ONNX forward pass (same normalization `align()` applies
-        // in production).
+        // in production). Lock-wrapped per `with_ort_env_lock`'s own doc
+        // comment (WS1 Task 5 Slice D6 determinism scheme).
         let normed = zero_mean_unit_var_norm(&input_samples);
-        let emission = run_forward_pass(&model_path, &normed)
+        let emission = with_ort_env_lock(|| run_forward_pass(&model_path, &normed))
             .unwrap_or_else(|e| panic!("{}: forward pass failed: {e}", fixture.file));
 
         // Step: Viterbi DP + merge.
@@ -926,11 +1091,14 @@ mod e2e_parity {
         );
 
         let mut max_abs_score_diff = 0.0f32;
+        let mut max_abs_seconds_diff = 0.0f64;
         for (i, (got, want)) in spans.iter().zip(expected_spans.iter()).enumerate() {
             let want_token = want["token"].as_i64().unwrap();
             let want_start = want["start"].as_i64().unwrap() as usize;
             let want_end = want["end"].as_i64().unwrap() as usize;
             let want_score = want["score"].as_f64().unwrap() as f32;
+            let want_start_seconds = want["start_seconds"].as_f64().expect("fixture must carry start_seconds (D6)");
+            let want_end_seconds = want["end_seconds"].as_f64().expect("fixture must carry end_seconds (D6)");
 
             assert_eq!(got.token, want_token, "{}: span[{i}] token mismatch — got {}, want {want_token}", fixture.file, got.token);
             // HARD GATE: zero tolerance on frame indices.
@@ -947,10 +1115,40 @@ mod e2e_parity {
                 fixture.file, got.token, got.end, want_end
             );
 
+            // Seconds: converted via this module's own `frame_to_seconds`
+            // (same 320/16000 formula, same order of operations, as the
+            // Python reference's `frame_to_seconds` in
+            // capture-fa-e2e-reference.py) — see FA_SECONDS_TOLERANCE's own
+            // doc comment for why a nonzero tolerance is used at all despite
+            // that.
+            let (got_start_seconds, got_end_seconds) = token_span_seconds(got);
+            let start_seconds_diff = (got_start_seconds - want_start_seconds).abs();
+            let end_seconds_diff = (got_end_seconds - want_end_seconds).abs();
+            assert!(
+                start_seconds_diff <= FA_SECONDS_TOLERANCE,
+                "{}: span[{i}] (token {}) start-seconds diverges — got {got_start_seconds}, want \
+                 {want_start_seconds}, diff {start_seconds_diff} exceeds tolerance \
+                 {FA_SECONDS_TOLERANCE} — STOP: this indicates a real conversion discrepancy \
+                 between the Rust and Python frame->time formulas, not a tolerance issue",
+                fixture.file, got.token
+            );
+            assert!(
+                end_seconds_diff <= FA_SECONDS_TOLERANCE,
+                "{}: span[{i}] (token {}) end-seconds diverges — got {got_end_seconds}, want \
+                 {want_end_seconds}, diff {end_seconds_diff} exceeds tolerance \
+                 {FA_SECONDS_TOLERANCE} — STOP: this indicates a real conversion discrepancy \
+                 between the Rust and Python frame->time formulas, not a tolerance issue",
+                fixture.file, got.token
+            );
+            max_abs_seconds_diff = max_abs_seconds_diff.max(start_seconds_diff).max(end_seconds_diff);
+
             max_abs_score_diff = max_abs_score_diff.max((got.score - want_score).abs());
         }
 
-        eprintln!("{}: max_abs_score_diff={max_abs_score_diff}", fixture.file);
+        eprintln!(
+            "{}: max_abs_score_diff={max_abs_score_diff} max_abs_seconds_diff={max_abs_seconds_diff:e}",
+            fixture.file
+        );
     }
 
     #[test]
@@ -981,5 +1179,219 @@ mod e2e_parity {
     #[test]
     fn e2e_pt_site_publico() {
         run_one(&FIXTURES[5]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// EmptyTokenization: real end-to-end `align_with_model_path` call (the same
+// body `align`/`fa_align` runs, minus only the AppHandle-dependent model-path
+// resolution — see that function's own doc comment) with real audio and real
+// text whose every word is unrepresentable in the target language's vocab.
+// Proves the typed `FaOnnxError::EmptyTokenization` variant specifically
+// surfaces from the real pipeline, not merely that align_with_model_path
+// returns *some* Err (WS1 Task 5 Slice D6, closing a previously-unverified
+// item: this exact path is not otherwise exercised — `text_to_token_ids`'s
+// own unit tests above assert on the intermediate token-id Vec directly, but
+// never drive it through a real forward pass into `align`'s own
+// `if target_ids.is_empty()` branch).
+//
+// Skips (or, under `FA_REQUIRE_ORT=1`, fails loudly) exactly like
+// `onnx_fixture_parity`/`e2e_parity` — same missing-`ORT_DYLIB_PATH`/missing-
+// `model.onnx` conditions, same reasoning.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod empty_tokenization {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("empty_tokenization's fa_models_dir() only reproduces the macOS app_local_data_dir mapping");
+    }
+
+    /// Minimal canonical-PCM16-mono-16kHz WAV byte builder — duplicated
+    /// (rather than shared) from the `tests` module's own private `build_wav`
+    /// above, since that helper is module-private and this is a sibling
+    /// module, not a descendant; ~15 lines, not worth widening the other
+    /// module's visibility for.
+    fn build_wav(samples: &[i16]) -> Vec<u8> {
+        let (channels, sample_rate, bits_per_sample): (u16, u32, u16) = (1, 16000, 16);
+        let block_align = channels * (bits_per_sample / 8);
+        let byte_rate = sample_rate * block_align as u32;
+        let data_bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"RIFF");
+        bytes.extend_from_slice(&(36 + data_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(b"WAVE");
+        bytes.extend_from_slice(b"fmt ");
+        bytes.extend_from_slice(&16u32.to_le_bytes());
+        bytes.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        bytes.extend_from_slice(&channels.to_le_bytes());
+        bytes.extend_from_slice(&sample_rate.to_le_bytes());
+        bytes.extend_from_slice(&byte_rate.to_le_bytes());
+        bytes.extend_from_slice(&block_align.to_le_bytes());
+        bytes.extend_from_slice(&bits_per_sample.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        bytes.extend_from_slice(&(data_bytes.len() as u32).to_le_bytes());
+        bytes.extend_from_slice(&data_bytes);
+        bytes
+    }
+
+    #[test]
+    fn empty_tokenization_surfaces_from_align_with_real_unrepresentable_text() {
+        const CONTEXT: &str = "empty_tokenization_surfaces_from_align_with_real_unrepresentable_text";
+        if !super::require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(CONTEXT, &model_path) {
+            return;
+        }
+
+        // Real, committed audio: reuses the D2 fixture's own `input_samples`
+        // (a short ~3.8s real speech window, not synthesized silence) so the
+        // forward pass this test drives is fast and the audio itself is
+        // genuine, not fabricated for this test.
+        let fixture_path =
+            format!("{}/../scripts/fixtures/fa-onnx-emission-en-deep-night.json", env!("CARGO_MANIFEST_DIR"));
+        let fixture_text = std::fs::read_to_string(&fixture_path)
+            .unwrap_or_else(|e| panic!("{CONTEXT}: failed to read fixture {fixture_path}: {e}"));
+        let v: serde_json::Value = serde_json::from_str(&fixture_text).expect("fixture must be valid JSON");
+        let input_samples: Vec<f32> = v["input_samples"]
+            .as_array()
+            .expect("input_samples")
+            .iter()
+            .map(|x| x.as_f64().unwrap() as f32)
+            .collect();
+        let pcm16: Vec<i16> = input_samples
+            .iter()
+            .map(|&s| (s * 32768.0).clamp(i16::MIN as f32, i16::MAX as f32) as i16)
+            .collect();
+        let wav_bytes = build_wav(&pcm16);
+
+        let tmp_path = std::env::temp_dir().join(format!(
+            "fa-empty-tokenization-test-{}-{}.wav",
+            std::process::id(),
+            CONTEXT
+        ));
+        std::fs::write(&tmp_path, &wav_bytes)
+            .unwrap_or_else(|e| panic!("{CONTEXT}: failed to write temp WAV {}: {e}", tmp_path.display()));
+
+        // Real Japanese place names, space-separated — genuine natural-
+        // language text, but the `en` vocab (`fa-vocab-en.json`) contains
+        // only ASCII letters + "'"/"-"/"|" + special tokens (verified by
+        // direct inspection before writing this test), so EVERY word here is
+        // unrepresentable and dropped wholesale by
+        // `normalize_for_forced_alignment` — zero surviving words, zero
+        // target ids.
+        let segments = vec![FaSegmentInput {
+            segment_id: "seg-1".to_string(),
+            text: "東京 大阪".to_string(),
+        }];
+
+        let result = align_with_model_path(&model_path, tmp_path.to_str().unwrap(), &segments, "en");
+        let _ = std::fs::remove_file(&tmp_path);
+
+        match result {
+            Err(FaOnnxError::EmptyTokenization) => {}
+            Err(other) => panic!(
+                "{CONTEXT}: expected Err(FaOnnxError::EmptyTokenization) specifically, got a \
+                 different error variant: {other:?}"
+            ),
+            Ok(spans) => panic!(
+                "{CONTEXT}: expected Err(FaOnnxError::EmptyTokenization), but align_with_model_path \
+                 succeeded with {} span(s) — the vocab-rejection premise this test depends on no \
+                 longer holds",
+                spans.len()
+            ),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Missing dylib: `run_forward_pass` with `ORT_DYLIB_PATH` genuinely absent
+// (WS1 Task 5 Slice D6), asserting `Err(FaOnnxError::OrtInit(_))` as the
+// OUTCOME. Every other test in this file that touches `ORT_DYLIB_PATH`
+// treats its absence as a SKIP condition (`require_ort::ort_dylib_or_skip`)
+// — this is the first test that deliberately manufactures that absence and
+// asserts the resulting typed error, rather than skipping around it.
+//
+// DETERMINISM UNDER PARALLEL TEST EXECUTION (the real hazard here): Rust
+// runs `#[test]` functions on multiple OS threads by default, and
+// `ORT_DYLIB_PATH` is real process-global state — every OTHER test that
+// might be running concurrently in this same process (`onnx_fixture_parity`,
+// `e2e_parity`, `empty_tokenization`, all of which reach `run_forward_pass`
+// with the ambient `ORT_DYLIB_PATH` expected to stay present for their own
+// duration) would be racy against a naive `remove_var`/`set_var` pair here.
+// The fix: `with_ort_env_lock` (this module, above) wraps EVERY
+// `run_forward_pass` call site in the crate — including this test's own —
+// in the SAME `Mutex<()>` (`require_ort::ORT_ENV_LOCK`). This test acquires
+// that lock directly (not via `with_ort_env_lock`, since it needs the var
+// removed for the ENTIRE remove/call/restore sequence, not just around the
+// call) and holds it for its whole critical section. Any other thread
+// concurrently reaching a `run_forward_pass` call site blocks on the same
+// mutex until this test restores the var and releases — it can never
+// observe the var transiently absent. This makes the test deterministic
+// under `cargo test`'s default parallelism without `--test-threads=1`, a
+// `serial_test`-style crate (none added, per this slice's scope), or any
+// special CI invocation — ordinary `cargo test --features fa-inference` is
+// sufficient. The lock is poison-tolerant (`unwrap_or_else(|poisoned| ...)`)
+// so a panic inside any single locked critical section (this test's own
+// assertion failing, or a `run_forward_pass` panic elsewhere) cannot
+// permanently wedge every other ORT-touching test behind a poisoned mutex.
+//
+// This test needs no `ORT_DYLIB_PATH`/`model.onnx` present to run — it
+// manufactures the missing-var condition itself — so it is NEVER gated by
+// `require_ort::ort_dylib_or_skip`/`path_exists_or_skip` and runs
+// unconditionally in any environment with the `fa-inference` feature on,
+// including a fresh checkout with no onnxruntime installed at all.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod missing_dylib {
+    use super::*;
+
+    #[test]
+    fn missing_dylib_returns_ort_init_error() {
+        let _guard = require_ort::ORT_ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        let previous = std::env::var("ORT_DYLIB_PATH").ok();
+        std::env::remove_var("ORT_DYLIB_PATH");
+
+        // Model path is never touched — `run_forward_pass`'s very first line
+        // reads `ORT_DYLIB_PATH` and returns before opening any file, so a
+        // nonexistent path here proves nothing was silently skipped further
+        // down the function. Sample content is irrelevant for the same
+        // reason; a small dummy buffer keeps this test fast.
+        let dummy_model_path = Path::new("/definitely/does/not/exist/model.onnx");
+        let dummy_samples = vec![0.0f32; 100];
+        let result = run_forward_pass(dummy_model_path, &dummy_samples);
+
+        // Restore before asserting: if the assertion below panics, the env
+        // var is already back to its original state for whichever test runs
+        // next once this thread releases `_guard` (on unwind, at scope end).
+        match previous {
+            Some(v) => std::env::set_var("ORT_DYLIB_PATH", v),
+            None => std::env::remove_var("ORT_DYLIB_PATH"),
+        }
+
+        match result {
+            Err(FaOnnxError::OrtInit(msg)) => {
+                assert!(!msg.is_empty(), "OrtInit error message should not be empty");
+            }
+            Err(other) => panic!(
+                "expected Err(FaOnnxError::OrtInit(_)) specifically when ORT_DYLIB_PATH is unset, \
+                 got a different error variant: {other:?}"
+            ),
+            Ok(_) => panic!(
+                "expected Err(FaOnnxError::OrtInit(_)) when ORT_DYLIB_PATH is unset, but \
+                 run_forward_pass succeeded — the env var may not have actually been removed"
+            ),
+        }
     }
 }

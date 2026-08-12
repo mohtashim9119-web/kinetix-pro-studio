@@ -33,7 +33,10 @@ WHAT IT DOES, PER FIXTURE CASE
      any Rust output at any step.
   4. Writes `scripts/fixtures/fa-e2e-alignment-<case>.json`: input_samples,
      target_token_ids, blank_id, and the resulting per-token spans (token id,
-     start frame inclusive, end frame exclusive, mean log-prob score).
+     start frame inclusive, end frame exclusive, mean log-prob score, and
+     — WS1 Task 5 Slice D6 addendum — start_seconds/end_seconds, the same
+     frame indices converted via the model's real stride, see
+     FRAME_STRIDE_SAMPLES below).
 
 A NEW fixture family, distinct from and never overwriting:
   - `fa-emission-*.json` — MMS_FA DP-correctness-only fixtures (different
@@ -86,6 +89,26 @@ import torchaudio
 REPO_ROOT = Path(__file__).resolve().parent.parent
 APP_IDENTIFIER = "com.kinetix.pro-studio"
 SAMPLE_RATE = 16000
+
+# WS1 Task 5 Slice D6: frame->time conversion, mirroring
+# src-tauri/src/fa_onnx.rs's FA_FRAME_STRIDE_SAMPLES/frame_to_seconds exactly
+# (same source, same formula, same order of operations — see that constant's
+# own doc comment for the full stride-source justification: every
+# jonatasgrosman wav2vec2-large-xlsr-53-<lang> model shares one
+# Wav2Vec2ForCTC feature encoder with conv_stride = [5, 2, 2, 2, 2, 2, 2]
+# (product 320), read directly from each of the five languages' own HF
+# config.json and confirmed byte-identical across all five). Deliberately NOT
+# derived from audio_duration / num_frames (that ratio drifts per-clip near
+# the real conv output-length formula's truncation boundaries, as this
+# script's own existing per-fixture frame_rate_fps figures in sibling scripts
+# already show — it is downstream of stride, not an independent measurement).
+FRAME_STRIDE_SAMPLES = 320
+FRAME_STRIDE_SECONDS = FRAME_STRIDE_SAMPLES / SAMPLE_RATE  # 0.02
+
+
+def frame_to_seconds(frame_index: int) -> float:
+    return frame_index * FRAME_STRIDE_SECONDS
+
 
 # (file key, source D2 onnx-emission fixture name)
 CASES = [
@@ -152,7 +175,14 @@ def capture_one(file_key: str, onnx_emission_name: str, tokens: dict) -> dict:
     spans = torchaudio.functional.merge_tokens(path[0], scores[0], blank=blank_id)
 
     expected_spans = [
-        {"token": int(s.token), "start": int(s.start), "end": int(s.end), "score": float(s.score)}
+        {
+            "token": int(s.token),
+            "start": int(s.start),
+            "end": int(s.end),
+            "score": float(s.score),
+            "start_seconds": frame_to_seconds(int(s.start)),
+            "end_seconds": frame_to_seconds(int(s.end)),
+        }
         for s in spans
     ]
 
@@ -239,7 +269,14 @@ def capture_one_raw_clip(file_key: str, language: str, source_audio_rel: str, to
     spans = torchaudio.functional.merge_tokens(path[0], scores[0], blank=blank_id)
 
     expected_spans = [
-        {"token": int(s.token), "start": int(s.start), "end": int(s.end), "score": float(s.score)}
+        {
+            "token": int(s.token),
+            "start": int(s.start),
+            "end": int(s.end),
+            "score": float(s.score),
+            "start_seconds": frame_to_seconds(int(s.start)),
+            "end_seconds": frame_to_seconds(int(s.end)),
+        }
         for s in spans
     ]
 

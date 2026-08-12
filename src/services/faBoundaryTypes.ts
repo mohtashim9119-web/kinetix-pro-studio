@@ -32,8 +32,14 @@ export type FaEvent =
   | { event: 'Done'; data: Record<string, never> }
   | { event: 'Error'; data: { message: string } };
 
-/** Mirrors `fa.rs`'s `FaErrorKind` (`#[serde(rename_all = "camelCase")]`). */
-export type FaErrorKind = 'notImplemented' | 'modelNotFound' | 'stateLockPoisoned';
+/** Mirrors `fa.rs`'s `FaErrorKind` (`#[serde(rename_all = "camelCase")]`).
+ *  Kept in sync by hand (no codegen for this boundary, see module doc
+ *  comment) — `fa.rs`'s `every_fa_error_kind_variant_serializes_to_its_
+ *  expected_camelcase_string` test asserts the Rust-side serialized strings
+ *  so a future Rust variant fails loudly there, but that guard is
+ *  one-directional: it cannot catch a TS-side rename or addition drifting
+ *  away from Rust, only the reverse. */
+export type FaErrorKind = 'notImplemented' | 'modelNotFound' | 'stateLockPoisoned' | 'inferenceFailed';
 
 /** Mirrors `fa.rs`'s `FaError` — the typed error `fa_align`/`fa_cancel`
  *  reject their promise with today, always `kind: 'notImplemented'` for

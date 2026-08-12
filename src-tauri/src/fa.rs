@@ -485,6 +485,48 @@ mod tests {
         assert_eq!(json, serde_json::json!({ "kind": "notImplemented", "message": "nope" }));
     }
 
+    // -- TS/Rust FaErrorKind drift guard (WS1 Task 5 Slice D6) ------------
+
+    #[test]
+    fn every_fa_error_kind_variant_serializes_to_its_expected_camelcase_string() {
+        // Compile-time exhaustiveness guard: this match has NO wildcard arm,
+        // so it fails to COMPILE (not just fails a runtime assertion) the
+        // moment `FaErrorKind` gains a variant not listed both here and in
+        // `cases` below — a future variant cannot silently ship without its
+        // serialized string being asserted by this test.
+        fn assert_exhaustive(kind: FaErrorKind) {
+            match kind {
+                FaErrorKind::NotImplemented
+                | FaErrorKind::ModelNotFound
+                | FaErrorKind::StateLockPoisoned
+                | FaErrorKind::InferenceFailed => {}
+            }
+        }
+
+        // This list is the Rust source of truth this test guards. It is NOT
+        // itself checked against `src/services/faBoundaryTypes.ts`'s
+        // `FaErrorKind` union — no TS runtime exists in a `cargo test` run —
+        // so this guard is ONE-DIRECTIONAL: it catches a Rust variant added
+        // without a matching TS union member (this test fails to compile
+        // until both are updated together), but it CANNOT catch the reverse
+        // (a TS-side rename or addition that drifts away from Rust with no
+        // corresponding Rust change to trip this match). Keeping the two in
+        // sync when only the TS side changes remains a manual/code-review
+        // responsibility — see `faBoundaryTypes.ts`'s own doc comment on
+        // `FaErrorKind`, which points back here.
+        let cases: &[(FaErrorKind, &str)] = &[
+            (FaErrorKind::NotImplemented, "notImplemented"),
+            (FaErrorKind::ModelNotFound, "modelNotFound"),
+            (FaErrorKind::StateLockPoisoned, "stateLockPoisoned"),
+            (FaErrorKind::InferenceFailed, "inferenceFailed"),
+        ];
+        for (kind, expected) in cases {
+            assert_exhaustive(*kind);
+            let json = serde_json::to_value(kind).unwrap();
+            assert_eq!(json, serde_json::json!(expected), "FaErrorKind serialized string mismatch for {kind:?}");
+        }
+    }
+
     #[test]
     fn fa_segment_input_deserializes_camelcase_segment_id() {
         let json = serde_json::json!({ "segmentId": "seg-1", "text": "hello world" });
