@@ -23,7 +23,7 @@
 // of it.
 // ---------------------------------------------------------------------------
 
-use crate::fa::{fa_align, fa_model_path, FaError, FaErrorKind, FaEvent, FaSegmentInput, FaState};
+use crate::fa::{fa_align, fa_model_path, FaChunkInput, FaError, FaErrorKind, FaEvent, FaModelCache, FaState};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs;
 use std::path::Path;
@@ -101,13 +101,23 @@ fn dev_error(message: impl Into<String>) -> FaError {
 /// `whisper_transcribe`'s own lifecycle), then delegates to the real
 /// `fa_align` unmodified. Always cleans up its own temp directory, success
 /// or failure alike.
+///
+/// `chunks` (WS1 Task 5 Slice D11) replaces the pre-D11 `segments` param —
+/// `src/services/faChunkPlan.ts` builds the ordered `{startSec, endSec,
+/// text}` windows this now takes, one per `fa_align` forward pass, instead
+/// of a single segment list implicitly aligned against the whole file.
+/// Manifest verification above stays exactly once per `fa_align_dev` call
+/// (unchanged) — the model-file SHA-256 is independent of, and unaffected
+/// by, `fa_align`'s own internal per-chunk `Session` cache (`fa_onnx.rs`'s
+/// `CachedSession`, keyed separately on file size+mtime for staleness).
 #[tauri::command]
 pub async fn fa_align_dev(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
+    model_cache: tauri::State<'_, FaModelCache>,
     audio_b64: String,
     audio_ext_hint: String,
-    segments: Vec<FaSegmentInput>,
+    chunks: Vec<FaChunkInput>,
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
@@ -135,7 +145,7 @@ pub async fn fa_align_dev(
     }
 
     let audio_path = wav_path.to_string_lossy().to_string();
-    let result = fa_align(app, state, audio_path, segments, language, on_event).await;
+    let result = fa_align(app, state, model_cache, audio_path, chunks, language, on_event).await;
     let _ = fs::remove_dir_all(&tmp_dir);
     result
 }

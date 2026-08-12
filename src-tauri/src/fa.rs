@@ -49,7 +49,7 @@ pub mod text;
 //
 // The serde camelCase convention (`whisper.rs:32`'s
 // `#[serde(rename_all = "camelCase")]` on `TranscriptToken`) is followed on
-// every multi-word-field struct below (`FaSegmentInput`, `FaError`) — applied
+// every multi-word-field struct below (`FaChunkInput`, `FaError`) — applied
 // per-struct/per-variant rather than at the `FaEvent` enum's own top level,
 // so variant tag names stay PascalCase (`"Progress"`/`"Done"`/`"Error"`,
 // matching `WhisperEvent`'s tags) while field names inside each variant's
@@ -72,6 +72,36 @@ pub struct FaState(pub Mutex<FaRunState>);
 impl Default for FaState {
     fn default() -> Self {
         FaState(Mutex::new(FaRunState::Idle))
+    }
+}
+
+/// Session-scoped ONNX model cache (WS1 Task 5 Slice D11) — see
+/// `fa_onnx.rs`'s "Session cache" section for the full design rationale
+/// (key, staleness argument, eviction). Managed as Tauri `State` (`lib.rs`)
+/// alongside `FaState`, so it lives for the app process's lifetime and is
+/// shared across every `fa_align`/`fa_align_dev` call in one session.
+///
+/// The slot type is feature-conditional (`FaModelCacheSlot`) because the
+/// cached value itself — `fa_onnx::CachedSession`, which holds a real
+/// `ort::Session` — only exists when the `fa-inference` feature (and thus
+/// the optional `ort` crate) is compiled in. With the feature OFF, the slot
+/// is `()`: `FaModelCache` still exists and is still manageable as `State`
+/// (so `fa_align`'s signature and `lib.rs`'s `.manage()` call need no
+/// `#[cfg(...)]` of their own), it simply holds nothing.
+#[cfg(feature = "fa-inference")]
+pub(crate) type FaModelCacheSlot = Option<crate::fa_onnx::CachedSession>;
+#[cfg(not(feature = "fa-inference"))]
+pub(crate) type FaModelCacheSlot = ();
+
+// Under `fa-inference` OFF, the not-implemented arm of `fa_align` never
+// touches `model_cache` at all (there is no session to cache), so the field
+// is only ever default-constructed and stored, never read, in that config.
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+pub struct FaModelCache(pub Mutex<FaModelCacheSlot>);
+
+impl Default for FaModelCache {
+    fn default() -> Self {
+        FaModelCache(Mutex::new(Default::default()))
     }
 }
 
@@ -103,6 +133,19 @@ fn finish_run(state: &FaState) -> Result<(), FaError> {
     Ok(())
 }
 
+/// The cancellation-poll predicate `align_chunked` (`fa_onnx.rs`, WS1 Task 5
+/// Slice D11) checks at every chunk boundary — `true` iff `fa_cancel` has
+/// flipped this run's state to `Cancelled` since it started. A poisoned lock
+/// reads as "not cancelled" (recovers the poisoned guard rather than
+/// propagating — matches this module's existing poison-tolerance elsewhere,
+/// e.g. `fa_onnx.rs`'s `with_ort_env_lock`) rather than aborting a run over
+/// an unrelated panic on another thread.
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+fn is_cancelled(state: &FaState) -> bool {
+    let lock = state.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *lock == FaRunState::Cancelled
+}
+
 // ---------------------------------------------------------------------------
 // Error type
 // ---------------------------------------------------------------------------
@@ -132,6 +175,12 @@ pub enum FaErrorKind {
     // language, or has no manifest entry at all. `fa_dev` is unconditionally
     // compiled (unlike `fa_onnx.rs`), so this variant is never `dead_code`.
     ModelHashMismatch,
+    // WS1 Task 5 Slice D11: `fa_cancel` flipped `FaState` to `Cancelled`
+    // while a chunked alignment run was mid-loop. The run stops before the
+    // next chunk starts and returns this — never `Ok`, never a partial
+    // `Done` — so a cancelled run can never be mistaken for a completed one.
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+    Cancelled,
 }
 
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
@@ -166,16 +215,29 @@ impl FaError {
     pub(crate) fn inference_failed(message: impl Into<String>) -> Self {
         FaError { kind: FaErrorKind::InferenceFailed, message: message.into() }
     }
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+    pub(crate) fn cancelled(message: impl Into<String>) -> Self {
+        FaError { kind: FaErrorKind::Cancelled, message: message.into() }
+    }
 }
 
 // ---------------------------------------------------------------------------
 // IPC event + input types
 // ---------------------------------------------------------------------------
 
-#[derive(serde::Deserialize, Clone, Debug, PartialEq, Eq)]
+/// One forced-alignment CHUNK: an audio time window (raw, unpadded — R.2
+/// padding is out of scope for WS1 Task 5 Slice D11) and the script text to
+/// align against it. Mirrors `src/services/faChunkPlan.ts`'s `FaChunk`.
+/// Replaces the pre-D11 `FaSegmentInput` (single segment id/text pair, no
+/// time window, implicitly aligned against the WHOLE audio file in one
+/// pass) — D10 proved that whole-file pass infeasible at production audio
+/// length, making per-chunk windowing (not per-segment identity) the unit
+/// `fa_align` now operates on.
+#[derive(serde::Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
-pub struct FaSegmentInput {
-    pub segment_id: String,
+pub struct FaChunkInput {
+    pub start_sec: f64,
+    pub end_sec: f64,
     pub text: String,
 }
 
@@ -227,6 +289,12 @@ fn word_span_to_dto(w: crate::fa_onnx::WordSpan) -> FaWordSpan {
 fn fa_onnx_error_to_fa_error(e: crate::fa_onnx::FaOnnxError) -> FaError {
     match e {
         crate::fa_onnx::FaOnnxError::ModelNotFound(fa_error) => fa_error,
+        // WS1 Task 5 Slice D11: same "forward the specific kind, don't
+        // flatten" rule the D10 fix above established for ModelNotFound —
+        // a cancelled run must reach the frontend as FaErrorKind::Cancelled,
+        // never generic InferenceFailed, so a caller can distinguish "the
+        // user cancelled" from "alignment genuinely failed."
+        crate::fa_onnx::FaOnnxError::Cancelled => FaError::cancelled("forced alignment was cancelled"),
         other => FaError::inference_failed(other.to_string()),
     }
 }
@@ -234,11 +302,21 @@ fn fa_onnx_error_to_fa_error(e: crate::fa_onnx::FaOnnxError) -> FaError {
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(tag = "event", content = "data")]
 pub enum FaEvent {
-    // Not sent by `fa_align` yet (it errors before any progress exists) —
-    // established here, and serde-shape-tested below, so the frontend's
-    // eventual progress bar has a proven wire format to code against.
-    #[allow(dead_code)]
-    Progress { percent: u8 },
+    /// Sent once per completed chunk (WS1 Task 5 Slice D11) — `index` is the
+    /// 0-based count of chunks FINISHED so far (never sent for chunk 0
+    /// before its own forward pass + Viterbi + merge complete), `total` is
+    /// the fixed chunk count for this run. `index == total` after the last
+    /// chunk, immediately before `Done`. Deliberately `index`/`total`
+    /// (integers), not a pre-divided `percent` — the frontend can derive a
+    /// percentage trivially and integers avoid a rounding-boundary
+    /// (`floor` vs `round`) argument neither side needs to have. Genuinely
+    /// constructed (not dead) under `fa-inference` ON — the not-implemented
+    /// arm under `fa-inference` OFF errors before any chunk loop exists, so
+    /// this variant is allowed dead there only, not unconditionally (WS1
+    /// Task 5 Slice D11 — previously an unconditional `#[allow(dead_code)]`
+    /// left over from before any real chunk loop existed).
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+    Progress { index: u32, total: u32 },
     /// Real per-word alignment output (WS1 Task 5 Slice D9), sent once by
     /// the `fa-inference`-gated real implementation below on a successful
     /// `fa_onnx::align` call. The feature-off `not_implemented` path never
@@ -335,10 +413,17 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 /// returns `Err(FaError { kind: NotImplemented, .. })`, unchanged from Task
 /// 5's original boundary skeleton: no model, no inference, no ML dependency
 /// in the build graph. With `fa-inference` ON, this resolves the ONNX model
-/// for `language`, runs a real forward pass over `audio_path`, and hands the
-/// resulting emission matrix to the ported Viterbi DP (`fa_viterbi.rs`) —
-/// see `fa_onnx.rs` for that implementation. Neither path panics, blocks the
-/// main thread indefinitely, or silently succeeds.
+/// for `language`, then LOOPS `chunks` in order (WS1 Task 5 Slice D11) —
+/// slicing each chunk's own audio window, checking for cancellation at every
+/// chunk boundary, running a forward pass + the ported Viterbi DP
+/// (`fa_viterbi.rs`) against just that chunk, and emitting `FaEvent::Progress`
+/// once per completed chunk — reusing a single cached `Session`
+/// (`model_cache`) across every chunk in the run rather than reloading the
+/// 1.2+GiB model file each time. See `fa_onnx.rs`'s `align_chunked` for the
+/// implementation and its own module doc comment for why whole-file
+/// alignment (the pre-D11 shape) is infeasible at production audio length.
+/// Neither path panics, blocks the main thread indefinitely, or silently
+/// succeeds.
 ///
 /// Not called from `src/` for production timing in either configuration yet
 /// — the only caller anywhere is the DEV-only `fa_align_dev` (`fa_dev.rs`,
@@ -346,20 +431,25 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 /// capability-gated Settings toggle, per `docs/ws1-sync-pipeline/
 /// task5-slice-ledger.md`'s ruling) is a later, separately-scoped slice.
 ///
-/// * `audio_path` — filesystem path to the audio FA would align against
+/// * `audio_path`   — filesystem path to the audio FA would align against
 ///   (reuses whatever the caller already has on disk, e.g. the same
 ///   16 kHz-mono WAV `whisper.rs::transcode_to_wav` produces, rather than
 ///   re-sending audio bytes through IPC a second time).
-/// * `segments`   — per-segment text to align (`segmentId`/`text` pairs).
-/// * `language`   — an FA language code (one of the five shipping models).
-/// * `on_event`   — frontend channel receiving `FaEvent` variants.
+/// * `chunks`       — ordered `{startSec, endSec, text}` windows to align,
+///   one forward pass per chunk (`src/services/faChunkPlan.ts` builds this
+///   from `faAnchors.ts`'s run structure — unmodified — plus segment-time
+///   membership; see that module's own doc comment for why).
+/// * `language`     — an FA language code (one of the five shipping models).
+/// * `on_event`     — frontend channel receiving `FaEvent` variants
+///   (`Progress` once per completed chunk, then `Done` or `Error`).
 #[tauri::command]
 #[allow(unused_variables)]
 pub async fn fa_align(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
+    model_cache: tauri::State<'_, FaModelCache>,
     audio_path: String,
-    segments: Vec<FaSegmentInput>,
+    chunks: Vec<FaChunkInput>,
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
@@ -367,7 +457,19 @@ pub async fn fa_align(
 
     #[cfg(feature = "fa-inference")]
     {
-        let result = crate::fa_onnx::align(&app, &audio_path, &segments, &language);
+        let total = chunks.len() as u32;
+        let on_progress = |index: u32| {
+            let _ = on_event.send(FaEvent::Progress { index, total });
+        };
+        let result = crate::fa_onnx::align_chunked_for_language(
+            &app,
+            &model_cache.0,
+            &audio_path,
+            &chunks,
+            &language,
+            || is_cancelled(&state),
+            on_progress,
+        );
         finish_run(&state)?;
         return match result {
             Ok(word_spans) => {
@@ -449,6 +551,54 @@ mod tests {
         assert_eq!(*state.0.lock().unwrap(), FaRunState::Idle);
     }
 
+    // -- is_cancelled + the cancelled-run reset sequence (WS1 Task 5 Slice
+    // D11) — the exact state-machine transitions `fa_align`'s real body
+    // drives around a chunked `align_chunked` call: `start_run` before the
+    // loop, `is_cancelled` polled at every chunk boundary (mirrored here by
+    // fa_onnx.rs's own `cancellation` test module, which proves the LOOP
+    // itself stops early — this test proves the STATE resets correctly
+    // afterward, the half `align_chunked` itself has no access to). ------
+
+    #[test]
+    fn is_cancelled_false_when_idle_or_running() {
+        let state = FaState::default();
+        assert!(!is_cancelled(&state), "Idle must not read as cancelled");
+        start_run(&state).unwrap();
+        assert!(!is_cancelled(&state), "Running must not read as cancelled");
+    }
+
+    #[test]
+    fn is_cancelled_true_only_after_cancel_run_on_a_running_state() {
+        let state = FaState::default();
+        start_run(&state).unwrap();
+        cancel_run(&state).unwrap();
+        assert!(is_cancelled(&state), "Cancelled must read as cancelled");
+    }
+
+    #[test]
+    fn cancelled_run_resets_to_idle_and_no_longer_reads_as_cancelled() {
+        // Mirrors fa_align's real sequence around a chunked run: start_run
+        // before the loop begins, cancel_run simulating fa_cancel firing
+        // mid-loop (the point fa_onnx.rs's own cancellation test proves the
+        // chunk loop itself observes and stops at), finish_run afterward —
+        // called UNCONDITIONALLY regardless of the align_chunked result,
+        // exactly as fa_align's own body does (`finish_run(&state)?` runs
+        // before either match arm, Ok or Err). The guarantee this proves:
+        // once a cancelled run finishes, its transient Cancelled signal
+        // cannot bleed into whatever runs next — the very next check reads
+        // Idle, not Cancelled, so a future run is never mistaken for still
+        // being the one that was just cancelled.
+        let state = FaState::default();
+        start_run(&state).unwrap();
+        cancel_run(&state).unwrap();
+        assert!(is_cancelled(&state));
+
+        finish_run(&state).unwrap();
+
+        assert_eq!(*state.0.lock().unwrap(), FaRunState::Idle);
+        assert!(!is_cancelled(&state), "a finished (even cancelled) run must not still read as cancelled");
+    }
+
     // -- model resolution ladder ---------------------------------------
 
     #[test]
@@ -525,13 +675,9 @@ mod tests {
     }
 
     // -- serde camelCase shape -------------------------------------------
-
-    #[test]
-    fn fa_event_progress_serializes_camelcase_tagged_shape() {
-        let event = FaEvent::Progress { percent: 42 };
-        let json = serde_json::to_value(&event).unwrap();
-        assert_eq!(json, serde_json::json!({ "event": "Progress", "data": { "percent": 42 } }));
-    }
+    // (FaEvent::Progress's own shape test moved below, WS1 Task 5 Slice D11
+    // — it now carries `index`/`total`, not `percent`; see
+    // `fa_event_progress_carries_index_and_total`.)
 
     #[test]
     fn fa_event_error_serializes_camelcase_tagged_shape() {
@@ -681,7 +827,8 @@ mod tests {
                 | FaErrorKind::ModelNotFound
                 | FaErrorKind::StateLockPoisoned
                 | FaErrorKind::InferenceFailed
-                | FaErrorKind::ModelHashMismatch => {}
+                | FaErrorKind::ModelHashMismatch
+                | FaErrorKind::Cancelled => {}
             }
         }
 
@@ -702,6 +849,7 @@ mod tests {
             (FaErrorKind::StateLockPoisoned, "stateLockPoisoned"),
             (FaErrorKind::InferenceFailed, "inferenceFailed"),
             (FaErrorKind::ModelHashMismatch, "modelHashMismatch"),
+            (FaErrorKind::Cancelled, "cancelled"),
         ];
         for (kind, expected) in cases {
             assert_exhaustive(*kind);
@@ -711,10 +859,20 @@ mod tests {
     }
 
     #[test]
-    fn fa_segment_input_deserializes_camelcase_segment_id() {
-        let json = serde_json::json!({ "segmentId": "seg-1", "text": "hello world" });
-        let input: FaSegmentInput = serde_json::from_value(json).unwrap();
-        assert_eq!(input.segment_id, "seg-1");
+    fn fa_chunk_input_deserializes_camelcase_fields() {
+        let json = serde_json::json!({ "startSec": 1.5, "endSec": 30.0, "text": "hello world" });
+        let input: FaChunkInput = serde_json::from_value(json).unwrap();
+        assert_eq!(input.start_sec, 1.5);
+        assert_eq!(input.end_sec, 30.0);
         assert_eq!(input.text, "hello world");
+    }
+
+    // -- FaEvent::Progress shape (WS1 Task 5 Slice D11) --------------------
+
+    #[test]
+    fn fa_event_progress_carries_index_and_total() {
+        let event = FaEvent::Progress { index: 3, total: 24 };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json, serde_json::json!({ "event": "Progress", "data": { "index": 3, "total": 24 } }));
     }
 }

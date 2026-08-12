@@ -18,9 +18,15 @@ import type { Channel } from '@tauri-apps/api/core';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { TranscriptToken } from '../types';
 
-/** Mirrors `fa.rs`'s `FaSegmentInput` (`#[serde(rename_all = "camelCase")]`). */
-export interface FaSegmentInput {
-  segmentId: string;
+/** Mirrors `fa.rs`'s `FaChunkInput` (`#[serde(rename_all = "camelCase")]`,
+ *  WS1 Task 5 Slice D11). Replaces the pre-D11 `FaSegmentInput` (a single
+ *  segment id/text pair implicitly aligned against the whole audio file) —
+ *  `fa_align` now takes an ordered list of audio-time-windowed chunks, one
+ *  forward pass per chunk, built by `src/services/faChunkPlan.ts`'s
+ *  `computeFaChunkPlan`. */
+export interface FaChunkInput {
+  startSec: number;
+  endSec: number;
   text: string;
 }
 
@@ -42,7 +48,7 @@ export interface FaWordSpan {
  *  (`whisperService.ts`'s `WhisperEvent` type) — only the payload fields are
  *  camelCase. */
 export type FaEvent =
-  | { event: 'Progress'; data: { percent: number } }
+  | { event: 'Progress'; data: { index: number; total: number } }
   | { event: 'Done'; data: { words: FaWordSpan[] } }
   | { event: 'Error'; data: { message: string } };
 
@@ -61,7 +67,12 @@ export type FaErrorKind =
   /** Only ever constructed by `fa_dev.rs`'s pre-use manifest check (WS1
    *  Task 5 Slice D10) — never returned by the production `fa_align`
    *  command. */
-  | 'modelHashMismatch';
+  | 'modelHashMismatch'
+  /** `fa_cancel` flipped `FaState` to `Cancelled` while a chunked run was
+   *  mid-loop (WS1 Task 5 Slice D11) — `fa_align` stops before the next
+   *  chunk and rejects with this, never resolving with a partial word
+   *  list. */
+  | 'cancelled';
 
 /** Mirrors `fa.rs`'s `FaError` — the typed error `fa_align`/`fa_cancel`
  *  reject their promise with today, always `kind: 'notImplemented'` for
@@ -77,7 +88,7 @@ export interface FaError {
  *  audio bytes — unlike `whisper_transcribe`'s `audio_b64`. */
 export interface FaAlignArgs {
   audioPath: string;
-  segments: FaSegmentInput[];
+  chunks: FaChunkInput[];
   language: FaLanguageCode;
   onEvent: Channel<FaEvent>;
 }

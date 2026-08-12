@@ -101,7 +101,8 @@ import {
   alignScenestoTranscript,
   type SegmentAlignment,
 } from './services/whisperService';
-import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaSegmentInput as FaDevSegmentInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
+import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
+import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
@@ -3530,6 +3531,10 @@ export default function App() {
         console.warn('[fa-dev] project has no segments — run Apply Sync first.');
         return undefined;
       }
+      if (!project.transcriptTokens || project.transcriptTokens.length === 0) {
+        console.warn('[fa-dev] project has no cached Whisper transcriptTokens — run Apply Sync first.');
+        return undefined;
+      }
 
       const SUPPORTED_FA_LANGUAGES: FaLanguageCode[] = ['en', 'es', 'fr', 'de', 'pt'];
       const language = options?.language ?? (project.language as FaLanguageCode | undefined);
@@ -3541,21 +3546,37 @@ export default function App() {
         return undefined;
       }
 
-      const buffer = voiceoverAsset.file
-        ? await voiceoverAsset.file.arrayBuffer()
-        : await (await fetch(voiceoverAsset.url)).arrayBuffer();
+      const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
+      const buffer = await voiceoverBlob.arrayBuffer();
       const audioB64 = bytesToBase64(new Uint8Array(buffer));
       const audioExtHint = voiceoverAsset.file?.type
         || voiceoverAsset.file?.name.split('.').pop()
         || '';
 
-      const faSegments: FaDevSegmentInput[] = project.segments.map(s => ({
-        segmentId: s.id,
-        text: s.text,
-      }));
+      // WS1 Task 5 Slice D11: whole-file FA is infeasible at production
+      // audio length (D10) — build the windowed chunk plan via
+      // computeFaChunkPlan (faAnchors.ts's run structure + segment-startTime
+      // text attribution, see that module's own doc comment) instead of the
+      // pre-D11 single whole-file segment list.
+      const audioDuration = await probeAudioDuration(voiceoverBlob);
+      const silenceResult = await detectSilences(voiceoverBlob);
+      const silences: SilenceInterval[] = silenceResult.status === 'ok' ? silenceResult.silences : [];
+      if (silenceResult.status !== 'ok') {
+        console.warn('[fa-dev] silence detection failed, chunking with zero silences:', silenceResult.errorMessage);
+      }
+      const chunks: FaDevChunkInput[] = computeFaChunkPlan(
+        project.segments,
+        project.transcriptTokens,
+        silences,
+        audioDuration,
+      );
+      if (chunks.length === 0) {
+        console.warn('[fa-dev] chunk plan is empty (every segment has empty text) — nothing to align.');
+        return undefined;
+      }
 
       console.log(
-        `[fa-dev] running fa_align_dev — language=${language}, segments=${faSegments.length}, ` +
+        `[fa-dev] running fa_align_dev — language=${language}, chunks=${chunks.length}, ` +
         `audio bytes=${buffer.byteLength}`,
       );
 
@@ -3564,13 +3585,18 @@ export default function App() {
       const words = await new Promise<FaDevWordSpan[]>(
         (resolve, reject) => {
           channel.onmessage = (msg) => {
-            if (msg.event === 'Done') resolve(msg.data.words);
-            else if (msg.event === 'Error') reject(new Error(msg.data.message));
+            if (msg.event === 'Progress') {
+              console.log(`[fa-dev] progress ${msg.data.index}/${msg.data.total}`);
+            } else if (msg.event === 'Done') {
+              resolve(msg.data.words);
+            } else if (msg.event === 'Error') {
+              reject(new Error(msg.data.message));
+            }
           };
           invoke('fa_align_dev', {
             audioB64,
             audioExtHint,
-            segments: faSegments,
+            chunks,
             language,
             onEvent: channel,
           }).catch((err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
@@ -3579,9 +3605,6 @@ export default function App() {
       const wallClockMs = performance.now() - wallClockStartMs;
 
       const tokens = faWordSpansToTranscriptTokens(words);
-      const audioDuration = await probeAudioDuration(
-        voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob(),
-      );
 
       // Real, unmodified production functions — the same ones the Apply
       // Sync commit path calls (see App.tsx's own `cachedTokensReady`

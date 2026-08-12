@@ -96,6 +96,7 @@ pub fn run() {
         .manage(whisper::WhisperState::default())
         .manage(ffmpeg::FfmpegProcessState::default())
         .manage(fa::FaState::default())
+        .manage(fa::FaModelCache::default())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
