@@ -580,6 +580,74 @@ mod tests {
 }
 
 // ---------------------------------------------------------------------------
+// Shared skip/require guard (WS1 Task 5 Slice D4) for every test below (and
+// in the `e2e_parity` module) that needs a real `ORT_DYLIB_PATH` and/or a
+// locally-provisioned `model.onnx` to execute.
+//
+// D3 finding this closes: with `ORT_DYLIB_PATH` unset, the three D2 argmax-
+// parity tests skipped silently (an `eprintln!` + early `return`, which the
+// `cargo test` harness counts as an ordinary pass) — so a whole gate could
+// go unexercised for an arbitrary stretch of time while every run still
+// reported green. That is a silent-failure channel, not acceptable for a
+// HARD GATE.
+//
+// Default (`FA_REQUIRE_ORT` unset): unchanged behavior — a missing
+// `ORT_DYLIB_PATH` or missing model file is an expected, not broken, fresh-
+// checkout state (neither is committed to the repo). The test prints a SKIP
+// message and returns without asserting anything, same as before this
+// slice.
+//
+// `FA_REQUIRE_ORT=1`: the same missing-dependency condition is now a hard
+// `panic!`, naming exactly what's missing — for any environment (this
+// task's own verification run, a future CI job) that must prove these tests
+// actually executed rather than quietly no-op'd. A skip can never
+// masquerade as a pass under this flag.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod require_ort {
+    use std::path::Path;
+
+    fn require_ort_enabled() -> bool {
+        std::env::var("FA_REQUIRE_ORT").as_deref() == Ok("1")
+    }
+
+    /// Returns `true` if `ORT_DYLIB_PATH` is set (caller should proceed as
+    /// normal). Returns `false` if unset and `FA_REQUIRE_ORT` is not `"1"`
+    /// (caller should print a SKIP message and return early, unchanged from
+    /// pre-D4 behavior). Panics if unset and `FA_REQUIRE_ORT=1`.
+    pub fn ort_dylib_or_skip(context: &str) -> bool {
+        if std::env::var("ORT_DYLIB_PATH").is_ok() {
+            return true;
+        }
+        if require_ort_enabled() {
+            panic!(
+                "{context}: ORT_DYLIB_PATH is not set, but FA_REQUIRE_ORT=1 demands real \
+                 execution — a skip is not allowed here"
+            );
+        }
+        eprintln!("SKIP {context}: ORT_DYLIB_PATH not set");
+        false
+    }
+
+    /// Same contract as [`ort_dylib_or_skip`], for a required file that must
+    /// exist on disk (a `model.onnx`).
+    pub fn path_exists_or_skip(context: &str, path: &Path) -> bool {
+        if path.exists() {
+            return true;
+        }
+        if require_ort_enabled() {
+            panic!(
+                "{context}: required file not found at {} — FA_REQUIRE_ORT=1 demands real \
+                 execution — a skip is not allowed here",
+                path.display()
+            );
+        }
+        eprintln!("SKIP {context}: file not found at {}", path.display());
+        false
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Fixture parity: real Rust `ort` forward pass vs. a Python (onnxruntime)
 // reference, over the three real audio windows the DP fixtures use
 // (`scripts/capture-fa-onnx-reference.py` generated these — see that
@@ -594,7 +662,8 @@ mod tests {
 // language's `model.onnx` isn't present locally — neither is committed to
 // the repo (see this file's module doc comment and `fa.rs`'s model
 // resolver), so a fresh checkout without either is an expected, not broken,
-// state.
+// state UNLESS `FA_REQUIRE_ORT=1` (see `require_ort` above), in which case
+// the same condition fails loudly instead.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod onnx_fixture_parity {
@@ -634,13 +703,11 @@ mod onnx_fixture_parity {
     }
 
     fn run_one(fixture: &Fixture) {
-        if std::env::var("ORT_DYLIB_PATH").is_err() {
-            eprintln!("SKIP {}: ORT_DYLIB_PATH not set", fixture.file);
+        if !super::require_ort::ort_dylib_or_skip(fixture.file) {
             return;
         }
         let model_path = fa_models_dir().join(fixture.language).join("model.onnx");
-        if !model_path.exists() {
-            eprintln!("SKIP {}: model not found at {}", fixture.file, model_path.display());
+        if !super::require_ort::path_exists_or_skip(fixture.file, &model_path) {
             return;
         }
 
@@ -712,6 +779,187 @@ mod onnx_fixture_parity {
 
     #[test]
     fn parity_es_resultan_inutiles() {
+        run_one(&FIXTURES[2]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end alignment parity (WS1 Task 5 Slice D4): the COMPLETE Rust path
+// — resolve model -> zero-mean/unit-var normalize -> real `ort` forward pass
+// -> `fa::text` vocab-aware tokenize -> `fa_viterbi::forced_align` -> `
+// merge_tokens` — against `scripts/capture-fa-e2e-reference.py`'s reference
+// (`scripts/fixtures/fa-e2e-alignment-*.json`): real jonatasgrosman ONNX
+// emission (reused from the D2 fixture), tokenized via the live TS
+// `faTextNormalize.ts` module, aligned via REAL torchaudio 2.2.2
+// `forced_align`/`merge_tokens` — an independent implementation of the same
+// DP `fa_viterbi.rs` was hand-ported from, not sourced from any Rust output.
+//
+// HARD GATE (per the task's own stop condition): every merged token span's
+// `start`/`end` frame index must be IDENTICAL to the Python reference, zero
+// tolerance — not "close enough". Score drift (a real, expected possibility
+// given D2's own measured ~0.001 max abs log-prob diff between `ort` and
+// onnxruntime) is reported as an observation only, never asserted against a
+// tolerance. A span-count or token-count mismatch fails outright — no
+// partial/best-effort comparison.
+//
+// Skips (or, under `FA_REQUIRE_ORT=1`, fails loudly — see `require_ort`
+// above) exactly like `onnx_fixture_parity`: same missing-`ORT_DYLIB_PATH`/
+// missing-`model.onnx` conditions, same reasoning.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod e2e_parity {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        file: &'static str,
+        language: &'static str,
+    }
+
+    const FIXTURES: &[Fixture] = &[
+        Fixture { file: "fa-e2e-alignment-en-deep-night.json", language: "en" },
+        Fixture { file: "fa-e2e-alignment-en-mother-look.json", language: "en" },
+        Fixture { file: "fa-e2e-alignment-es-resultan-inutiles.json", language: "es" },
+    ];
+
+    // Same test-only `app_local_data_dir()` reproduction as
+    // `onnx_fixture_parity::fa_models_dir` (see that function's own doc
+    // comment for why this can't call the real `fa.rs::fa_model_path`
+    // resolver — no live `AppHandle` in a plain unit test).
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("e2e_parity's fa_models_dir() only reproduces the macOS app_local_data_dir mapping");
+    }
+
+    fn run_one(fixture: &Fixture) {
+        if !super::require_ort::ort_dylib_or_skip(fixture.file) {
+            return;
+        }
+        let model_path = fa_models_dir().join(fixture.language).join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(fixture.file, &model_path) {
+            return;
+        }
+
+        let fixture_path = format!("{}/../scripts/fixtures/{}", env!("CARGO_MANIFEST_DIR"), fixture.file);
+        let text = std::fs::read_to_string(&fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {fixture_path}: {e}"));
+        let v: serde_json::Value = serde_json::from_str(&text).expect("fixture must be valid JSON");
+
+        let language_code = v["_provenance"]["language"].as_str().expect("_provenance.language");
+        assert_eq!(language_code, fixture.language, "{}: fixture language mismatch", fixture.file);
+        let source_text = v["_provenance"]["text"].as_str().expect("_provenance.text");
+
+        let input_samples: Vec<f32> = v["input_samples"]
+            .as_array()
+            .expect("input_samples")
+            .iter()
+            .map(|x| x.as_f64().unwrap() as f32)
+            .collect();
+        let fixture_target_ids: Vec<i64> = v["target_token_ids"]
+            .as_array()
+            .expect("target_token_ids")
+            .iter()
+            .map(|x| x.as_i64().unwrap())
+            .collect();
+        let blank_id = v["blank_id"].as_i64().expect("blank_id");
+        let expected_spans = v["expected_spans"].as_array().expect("expected_spans");
+
+        // Step: fa::text vocab-aware tokenize (this module's own
+        // `text_to_token_ids`, exercising the real production tokenization
+        // path, not a fixture-supplied shortcut) — cross-checked against the
+        // Python reference's own (TS-normalizer-derived) target ids before
+        // anything else runs, so a tokenizer drift is diagnosed distinctly
+        // from an alignment-DP or forward-pass divergence.
+        let vocab = load_vocab(fixture.language).unwrap_or_else(|e| panic!("{}: load_vocab failed: {e}", fixture.file));
+        let lang_enum = Language::from_code(fixture.language).expect("known language code");
+        let got_target_ids = text_to_token_ids(source_text, lang_enum, &vocab);
+        assert_eq!(
+            got_target_ids, fixture_target_ids,
+            "{}: Rust tokenizer's target_token_ids diverges from the TS-normalizer-derived \
+             reference — this is a tokenizer regression, not an alignment/forward-pass issue",
+            fixture.file
+        );
+        assert_eq!(vocab.blank_id, blank_id, "{}: blank_id mismatch between Rust vocab and fixture", fixture.file);
+
+        // Step: real ONNX forward pass (same normalization `align()` applies
+        // in production).
+        let normed = zero_mean_unit_var_norm(&input_samples);
+        let emission = run_forward_pass(&model_path, &normed)
+            .unwrap_or_else(|e| panic!("{}: forward pass failed: {e}", fixture.file));
+
+        // Step: Viterbi DP + merge.
+        let align_result = forced_align(&emission, &got_target_ids, blank_id)
+            .unwrap_or_else(|e| panic!("{}: forced_align failed: {e}", fixture.file));
+        let spans = merge_tokens(&align_result.path, &align_result.scores, blank_id);
+
+        eprintln!(
+            "{}: {} target tokens, {} frames, {} merged spans (expected {})",
+            fixture.file,
+            got_target_ids.len(),
+            emission.len(),
+            spans.len(),
+            expected_spans.len()
+        );
+
+        // Vacuity guard: a zero-token/zero-span "pass" would prove nothing.
+        assert!(!got_target_ids.is_empty(), "{}: zero target tokens — vacuous", fixture.file);
+        assert!(!spans.is_empty(), "{}: zero merged spans — vacuous", fixture.file);
+
+        assert_eq!(
+            spans.len(),
+            expected_spans.len(),
+            "{}: merged span count mismatch — got {}, want {}",
+            fixture.file,
+            spans.len(),
+            expected_spans.len()
+        );
+
+        let mut max_abs_score_diff = 0.0f32;
+        for (i, (got, want)) in spans.iter().zip(expected_spans.iter()).enumerate() {
+            let want_token = want["token"].as_i64().unwrap();
+            let want_start = want["start"].as_i64().unwrap() as usize;
+            let want_end = want["end"].as_i64().unwrap() as usize;
+            let want_score = want["score"].as_f64().unwrap() as f32;
+
+            assert_eq!(got.token, want_token, "{}: span[{i}] token mismatch — got {}, want {want_token}", fixture.file, got.token);
+            // HARD GATE: zero tolerance on frame indices.
+            assert_eq!(
+                got.start, want_start,
+                "{}: span[{i}] (token {}) start-frame diverges — got {}, want {} — STOP: this is a \
+                 real alignment divergence, not a fixture or tolerance issue",
+                fixture.file, got.token, got.start, want_start
+            );
+            assert_eq!(
+                got.end, want_end,
+                "{}: span[{i}] (token {}) end-frame diverges — got {}, want {} — STOP: this is a \
+                 real alignment divergence, not a fixture or tolerance issue",
+                fixture.file, got.token, got.end, want_end
+            );
+
+            max_abs_score_diff = max_abs_score_diff.max((got.score - want_score).abs());
+        }
+
+        eprintln!("{}: max_abs_score_diff={max_abs_score_diff}", fixture.file);
+    }
+
+    #[test]
+    fn e2e_en_deep_night() {
+        run_one(&FIXTURES[0]);
+    }
+
+    #[test]
+    fn e2e_en_mother_look() {
+        run_one(&FIXTURES[1]);
+    }
+
+    #[test]
+    fn e2e_es_resultan_inutiles() {
         run_one(&FIXTURES[2]);
     }
 }

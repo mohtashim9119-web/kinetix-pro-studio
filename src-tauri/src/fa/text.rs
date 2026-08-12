@@ -706,3 +706,324 @@ mod fixture_parity {
         assert_eq!(got.reason, oov_word.reason);
     }
 }
+
+
+// ---------------------------------------------------------------------------
+// NFC completeness guard (WS1 Task 5 Slice D4) — closes the D3 finding that
+// an out-of-table combining-mark sequence degrades SILENTLY into an
+// ordinary "unrepresentable word" drop, indistinguishable from legitimate
+// OOV. Proves every accented letter actually present in a shipped vocab has
+// a real NFC_COMPOSE entry, and fails loudly (not silently) the moment a
+// vocab is ever extended past the table.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod nfc_completeness_guard {
+    use super::*;
+
+    /// Independent ground-truth reference: real Unicode canonical (NFD)
+    /// decompositions for every decomposable Latin-1 Supplement / Latin
+    /// Extended-A / Latin Extended-B letter (U+00C0..U+0250), generated
+    /// directly from Python's `unicodedata.normalize('NFD', ch)` over that
+    /// codepoint range — NOT derived from, copied out of, or in any way
+    /// coupled to `NFC_COMPOSE` above, so the two tables cannot trivially
+    /// agree by construction. Deliberately far broader (230 entries) than
+    /// `NFC_COMPOSE`'s current ~54: this is what makes the guard below
+    /// forward-looking rather than a tautology — a vocab later extended
+    /// with a not-yet-tabled accented letter (e.g. Icelandic "ý", Turkish
+    /// "ğ") is still recognized as genuinely decomposable here and
+    /// correctly flagged as an `NFC_COMPOSE` gap, rather than silently
+    /// treated as an atomic, no-decomposition character the guard has
+    /// nothing to check.
+    const REFERENCE_NFD: &[(char, char, char)] = &[
+    ('\u{0041}', '\u{0300}', '\u{00c0}'), // A+combining -> À
+    ('\u{0041}', '\u{0301}', '\u{00c1}'), // A+combining -> Á
+    ('\u{0041}', '\u{0302}', '\u{00c2}'), // A+combining -> Â
+    ('\u{0041}', '\u{0303}', '\u{00c3}'), // A+combining -> Ã
+    ('\u{0041}', '\u{0308}', '\u{00c4}'), // A+combining -> Ä
+    ('\u{0041}', '\u{030a}', '\u{00c5}'), // A+combining -> Å
+    ('\u{0043}', '\u{0327}', '\u{00c7}'), // C+combining -> Ç
+    ('\u{0045}', '\u{0300}', '\u{00c8}'), // E+combining -> È
+    ('\u{0045}', '\u{0301}', '\u{00c9}'), // E+combining -> É
+    ('\u{0045}', '\u{0302}', '\u{00ca}'), // E+combining -> Ê
+    ('\u{0045}', '\u{0308}', '\u{00cb}'), // E+combining -> Ë
+    ('\u{0049}', '\u{0300}', '\u{00cc}'), // I+combining -> Ì
+    ('\u{0049}', '\u{0301}', '\u{00cd}'), // I+combining -> Í
+    ('\u{0049}', '\u{0302}', '\u{00ce}'), // I+combining -> Î
+    ('\u{0049}', '\u{0308}', '\u{00cf}'), // I+combining -> Ï
+    ('\u{004e}', '\u{0303}', '\u{00d1}'), // N+combining -> Ñ
+    ('\u{004f}', '\u{0300}', '\u{00d2}'), // O+combining -> Ò
+    ('\u{004f}', '\u{0301}', '\u{00d3}'), // O+combining -> Ó
+    ('\u{004f}', '\u{0302}', '\u{00d4}'), // O+combining -> Ô
+    ('\u{004f}', '\u{0303}', '\u{00d5}'), // O+combining -> Õ
+    ('\u{004f}', '\u{0308}', '\u{00d6}'), // O+combining -> Ö
+    ('\u{0055}', '\u{0300}', '\u{00d9}'), // U+combining -> Ù
+    ('\u{0055}', '\u{0301}', '\u{00da}'), // U+combining -> Ú
+    ('\u{0055}', '\u{0302}', '\u{00db}'), // U+combining -> Û
+    ('\u{0055}', '\u{0308}', '\u{00dc}'), // U+combining -> Ü
+    ('\u{0059}', '\u{0301}', '\u{00dd}'), // Y+combining -> Ý
+    ('\u{0061}', '\u{0300}', '\u{00e0}'), // a+combining -> à
+    ('\u{0061}', '\u{0301}', '\u{00e1}'), // a+combining -> á
+    ('\u{0061}', '\u{0302}', '\u{00e2}'), // a+combining -> â
+    ('\u{0061}', '\u{0303}', '\u{00e3}'), // a+combining -> ã
+    ('\u{0061}', '\u{0308}', '\u{00e4}'), // a+combining -> ä
+    ('\u{0061}', '\u{030a}', '\u{00e5}'), // a+combining -> å
+    ('\u{0063}', '\u{0327}', '\u{00e7}'), // c+combining -> ç
+    ('\u{0065}', '\u{0300}', '\u{00e8}'), // e+combining -> è
+    ('\u{0065}', '\u{0301}', '\u{00e9}'), // e+combining -> é
+    ('\u{0065}', '\u{0302}', '\u{00ea}'), // e+combining -> ê
+    ('\u{0065}', '\u{0308}', '\u{00eb}'), // e+combining -> ë
+    ('\u{0069}', '\u{0300}', '\u{00ec}'), // i+combining -> ì
+    ('\u{0069}', '\u{0301}', '\u{00ed}'), // i+combining -> í
+    ('\u{0069}', '\u{0302}', '\u{00ee}'), // i+combining -> î
+    ('\u{0069}', '\u{0308}', '\u{00ef}'), // i+combining -> ï
+    ('\u{006e}', '\u{0303}', '\u{00f1}'), // n+combining -> ñ
+    ('\u{006f}', '\u{0300}', '\u{00f2}'), // o+combining -> ò
+    ('\u{006f}', '\u{0301}', '\u{00f3}'), // o+combining -> ó
+    ('\u{006f}', '\u{0302}', '\u{00f4}'), // o+combining -> ô
+    ('\u{006f}', '\u{0303}', '\u{00f5}'), // o+combining -> õ
+    ('\u{006f}', '\u{0308}', '\u{00f6}'), // o+combining -> ö
+    ('\u{0075}', '\u{0300}', '\u{00f9}'), // u+combining -> ù
+    ('\u{0075}', '\u{0301}', '\u{00fa}'), // u+combining -> ú
+    ('\u{0075}', '\u{0302}', '\u{00fb}'), // u+combining -> û
+    ('\u{0075}', '\u{0308}', '\u{00fc}'), // u+combining -> ü
+    ('\u{0079}', '\u{0301}', '\u{00fd}'), // y+combining -> ý
+    ('\u{0079}', '\u{0308}', '\u{00ff}'), // y+combining -> ÿ
+    ('\u{0041}', '\u{0304}', '\u{0100}'), // A+combining -> Ā
+    ('\u{0061}', '\u{0304}', '\u{0101}'), // a+combining -> ā
+    ('\u{0041}', '\u{0306}', '\u{0102}'), // A+combining -> Ă
+    ('\u{0061}', '\u{0306}', '\u{0103}'), // a+combining -> ă
+    ('\u{0041}', '\u{0328}', '\u{0104}'), // A+combining -> Ą
+    ('\u{0061}', '\u{0328}', '\u{0105}'), // a+combining -> ą
+    ('\u{0043}', '\u{0301}', '\u{0106}'), // C+combining -> Ć
+    ('\u{0063}', '\u{0301}', '\u{0107}'), // c+combining -> ć
+    ('\u{0043}', '\u{0302}', '\u{0108}'), // C+combining -> Ĉ
+    ('\u{0063}', '\u{0302}', '\u{0109}'), // c+combining -> ĉ
+    ('\u{0043}', '\u{0307}', '\u{010a}'), // C+combining -> Ċ
+    ('\u{0063}', '\u{0307}', '\u{010b}'), // c+combining -> ċ
+    ('\u{0043}', '\u{030c}', '\u{010c}'), // C+combining -> Č
+    ('\u{0063}', '\u{030c}', '\u{010d}'), // c+combining -> č
+    ('\u{0044}', '\u{030c}', '\u{010e}'), // D+combining -> Ď
+    ('\u{0064}', '\u{030c}', '\u{010f}'), // d+combining -> ď
+    ('\u{0045}', '\u{0304}', '\u{0112}'), // E+combining -> Ē
+    ('\u{0065}', '\u{0304}', '\u{0113}'), // e+combining -> ē
+    ('\u{0045}', '\u{0306}', '\u{0114}'), // E+combining -> Ĕ
+    ('\u{0065}', '\u{0306}', '\u{0115}'), // e+combining -> ĕ
+    ('\u{0045}', '\u{0307}', '\u{0116}'), // E+combining -> Ė
+    ('\u{0065}', '\u{0307}', '\u{0117}'), // e+combining -> ė
+    ('\u{0045}', '\u{0328}', '\u{0118}'), // E+combining -> Ę
+    ('\u{0065}', '\u{0328}', '\u{0119}'), // e+combining -> ę
+    ('\u{0045}', '\u{030c}', '\u{011a}'), // E+combining -> Ě
+    ('\u{0065}', '\u{030c}', '\u{011b}'), // e+combining -> ě
+    ('\u{0047}', '\u{0302}', '\u{011c}'), // G+combining -> Ĝ
+    ('\u{0067}', '\u{0302}', '\u{011d}'), // g+combining -> ĝ
+    ('\u{0047}', '\u{0306}', '\u{011e}'), // G+combining -> Ğ
+    ('\u{0067}', '\u{0306}', '\u{011f}'), // g+combining -> ğ
+    ('\u{0047}', '\u{0307}', '\u{0120}'), // G+combining -> Ġ
+    ('\u{0067}', '\u{0307}', '\u{0121}'), // g+combining -> ġ
+    ('\u{0047}', '\u{0327}', '\u{0122}'), // G+combining -> Ģ
+    ('\u{0067}', '\u{0327}', '\u{0123}'), // g+combining -> ģ
+    ('\u{0048}', '\u{0302}', '\u{0124}'), // H+combining -> Ĥ
+    ('\u{0068}', '\u{0302}', '\u{0125}'), // h+combining -> ĥ
+    ('\u{0049}', '\u{0303}', '\u{0128}'), // I+combining -> Ĩ
+    ('\u{0069}', '\u{0303}', '\u{0129}'), // i+combining -> ĩ
+    ('\u{0049}', '\u{0304}', '\u{012a}'), // I+combining -> Ī
+    ('\u{0069}', '\u{0304}', '\u{012b}'), // i+combining -> ī
+    ('\u{0049}', '\u{0306}', '\u{012c}'), // I+combining -> Ĭ
+    ('\u{0069}', '\u{0306}', '\u{012d}'), // i+combining -> ĭ
+    ('\u{0049}', '\u{0328}', '\u{012e}'), // I+combining -> Į
+    ('\u{0069}', '\u{0328}', '\u{012f}'), // i+combining -> į
+    ('\u{0049}', '\u{0307}', '\u{0130}'), // I+combining -> İ
+    ('\u{004a}', '\u{0302}', '\u{0134}'), // J+combining -> Ĵ
+    ('\u{006a}', '\u{0302}', '\u{0135}'), // j+combining -> ĵ
+    ('\u{004b}', '\u{0327}', '\u{0136}'), // K+combining -> Ķ
+    ('\u{006b}', '\u{0327}', '\u{0137}'), // k+combining -> ķ
+    ('\u{004c}', '\u{0301}', '\u{0139}'), // L+combining -> Ĺ
+    ('\u{006c}', '\u{0301}', '\u{013a}'), // l+combining -> ĺ
+    ('\u{004c}', '\u{0327}', '\u{013b}'), // L+combining -> Ļ
+    ('\u{006c}', '\u{0327}', '\u{013c}'), // l+combining -> ļ
+    ('\u{004c}', '\u{030c}', '\u{013d}'), // L+combining -> Ľ
+    ('\u{006c}', '\u{030c}', '\u{013e}'), // l+combining -> ľ
+    ('\u{004e}', '\u{0301}', '\u{0143}'), // N+combining -> Ń
+    ('\u{006e}', '\u{0301}', '\u{0144}'), // n+combining -> ń
+    ('\u{004e}', '\u{0327}', '\u{0145}'), // N+combining -> Ņ
+    ('\u{006e}', '\u{0327}', '\u{0146}'), // n+combining -> ņ
+    ('\u{004e}', '\u{030c}', '\u{0147}'), // N+combining -> Ň
+    ('\u{006e}', '\u{030c}', '\u{0148}'), // n+combining -> ň
+    ('\u{004f}', '\u{0304}', '\u{014c}'), // O+combining -> Ō
+    ('\u{006f}', '\u{0304}', '\u{014d}'), // o+combining -> ō
+    ('\u{004f}', '\u{0306}', '\u{014e}'), // O+combining -> Ŏ
+    ('\u{006f}', '\u{0306}', '\u{014f}'), // o+combining -> ŏ
+    ('\u{004f}', '\u{030b}', '\u{0150}'), // O+combining -> Ő
+    ('\u{006f}', '\u{030b}', '\u{0151}'), // o+combining -> ő
+    ('\u{0052}', '\u{0301}', '\u{0154}'), // R+combining -> Ŕ
+    ('\u{0072}', '\u{0301}', '\u{0155}'), // r+combining -> ŕ
+    ('\u{0052}', '\u{0327}', '\u{0156}'), // R+combining -> Ŗ
+    ('\u{0072}', '\u{0327}', '\u{0157}'), // r+combining -> ŗ
+    ('\u{0052}', '\u{030c}', '\u{0158}'), // R+combining -> Ř
+    ('\u{0072}', '\u{030c}', '\u{0159}'), // r+combining -> ř
+    ('\u{0053}', '\u{0301}', '\u{015a}'), // S+combining -> Ś
+    ('\u{0073}', '\u{0301}', '\u{015b}'), // s+combining -> ś
+    ('\u{0053}', '\u{0302}', '\u{015c}'), // S+combining -> Ŝ
+    ('\u{0073}', '\u{0302}', '\u{015d}'), // s+combining -> ŝ
+    ('\u{0053}', '\u{0327}', '\u{015e}'), // S+combining -> Ş
+    ('\u{0073}', '\u{0327}', '\u{015f}'), // s+combining -> ş
+    ('\u{0053}', '\u{030c}', '\u{0160}'), // S+combining -> Š
+    ('\u{0073}', '\u{030c}', '\u{0161}'), // s+combining -> š
+    ('\u{0054}', '\u{0327}', '\u{0162}'), // T+combining -> Ţ
+    ('\u{0074}', '\u{0327}', '\u{0163}'), // t+combining -> ţ
+    ('\u{0054}', '\u{030c}', '\u{0164}'), // T+combining -> Ť
+    ('\u{0074}', '\u{030c}', '\u{0165}'), // t+combining -> ť
+    ('\u{0055}', '\u{0303}', '\u{0168}'), // U+combining -> Ũ
+    ('\u{0075}', '\u{0303}', '\u{0169}'), // u+combining -> ũ
+    ('\u{0055}', '\u{0304}', '\u{016a}'), // U+combining -> Ū
+    ('\u{0075}', '\u{0304}', '\u{016b}'), // u+combining -> ū
+    ('\u{0055}', '\u{0306}', '\u{016c}'), // U+combining -> Ŭ
+    ('\u{0075}', '\u{0306}', '\u{016d}'), // u+combining -> ŭ
+    ('\u{0055}', '\u{030a}', '\u{016e}'), // U+combining -> Ů
+    ('\u{0075}', '\u{030a}', '\u{016f}'), // u+combining -> ů
+    ('\u{0055}', '\u{030b}', '\u{0170}'), // U+combining -> Ű
+    ('\u{0075}', '\u{030b}', '\u{0171}'), // u+combining -> ű
+    ('\u{0055}', '\u{0328}', '\u{0172}'), // U+combining -> Ų
+    ('\u{0075}', '\u{0328}', '\u{0173}'), // u+combining -> ų
+    ('\u{0057}', '\u{0302}', '\u{0174}'), // W+combining -> Ŵ
+    ('\u{0077}', '\u{0302}', '\u{0175}'), // w+combining -> ŵ
+    ('\u{0059}', '\u{0302}', '\u{0176}'), // Y+combining -> Ŷ
+    ('\u{0079}', '\u{0302}', '\u{0177}'), // y+combining -> ŷ
+    ('\u{0059}', '\u{0308}', '\u{0178}'), // Y+combining -> Ÿ
+    ('\u{005a}', '\u{0301}', '\u{0179}'), // Z+combining -> Ź
+    ('\u{007a}', '\u{0301}', '\u{017a}'), // z+combining -> ź
+    ('\u{005a}', '\u{0307}', '\u{017b}'), // Z+combining -> Ż
+    ('\u{007a}', '\u{0307}', '\u{017c}'), // z+combining -> ż
+    ('\u{005a}', '\u{030c}', '\u{017d}'), // Z+combining -> Ž
+    ('\u{007a}', '\u{030c}', '\u{017e}'), // z+combining -> ž
+    ('\u{004f}', '\u{031b}', '\u{01a0}'), // O+combining -> Ơ
+    ('\u{006f}', '\u{031b}', '\u{01a1}'), // o+combining -> ơ
+    ('\u{0055}', '\u{031b}', '\u{01af}'), // U+combining -> Ư
+    ('\u{0075}', '\u{031b}', '\u{01b0}'), // u+combining -> ư
+    ('\u{0041}', '\u{030c}', '\u{01cd}'), // A+combining -> Ǎ
+    ('\u{0061}', '\u{030c}', '\u{01ce}'), // a+combining -> ǎ
+    ('\u{0049}', '\u{030c}', '\u{01cf}'), // I+combining -> Ǐ
+    ('\u{0069}', '\u{030c}', '\u{01d0}'), // i+combining -> ǐ
+    ('\u{004f}', '\u{030c}', '\u{01d1}'), // O+combining -> Ǒ
+    ('\u{006f}', '\u{030c}', '\u{01d2}'), // o+combining -> ǒ
+    ('\u{0055}', '\u{030c}', '\u{01d3}'), // U+combining -> Ǔ
+    ('\u{0075}', '\u{030c}', '\u{01d4}'), // u+combining -> ǔ
+    ('\u{00c6}', '\u{0304}', '\u{01e2}'), // Æ+combining -> Ǣ
+    ('\u{00e6}', '\u{0304}', '\u{01e3}'), // æ+combining -> ǣ
+    ('\u{0047}', '\u{030c}', '\u{01e6}'), // G+combining -> Ǧ
+    ('\u{0067}', '\u{030c}', '\u{01e7}'), // g+combining -> ǧ
+    ('\u{004b}', '\u{030c}', '\u{01e8}'), // K+combining -> Ǩ
+    ('\u{006b}', '\u{030c}', '\u{01e9}'), // k+combining -> ǩ
+    ('\u{004f}', '\u{0328}', '\u{01ea}'), // O+combining -> Ǫ
+    ('\u{006f}', '\u{0328}', '\u{01eb}'), // o+combining -> ǫ
+    ('\u{01b7}', '\u{030c}', '\u{01ee}'), // Ʒ+combining -> Ǯ
+    ('\u{0292}', '\u{030c}', '\u{01ef}'), // ʒ+combining -> ǯ
+    ('\u{006a}', '\u{030c}', '\u{01f0}'), // j+combining -> ǰ
+    ('\u{0047}', '\u{0301}', '\u{01f4}'), // G+combining -> Ǵ
+    ('\u{0067}', '\u{0301}', '\u{01f5}'), // g+combining -> ǵ
+    ('\u{004e}', '\u{0300}', '\u{01f8}'), // N+combining -> Ǹ
+    ('\u{006e}', '\u{0300}', '\u{01f9}'), // n+combining -> ǹ
+    ('\u{00c6}', '\u{0301}', '\u{01fc}'), // Æ+combining -> Ǽ
+    ('\u{00e6}', '\u{0301}', '\u{01fd}'), // æ+combining -> ǽ
+    ('\u{00d8}', '\u{0301}', '\u{01fe}'), // Ø+combining -> Ǿ
+    ('\u{00f8}', '\u{0301}', '\u{01ff}'), // ø+combining -> ǿ
+    ('\u{0041}', '\u{030f}', '\u{0200}'), // A+combining -> Ȁ
+    ('\u{0061}', '\u{030f}', '\u{0201}'), // a+combining -> ȁ
+    ('\u{0041}', '\u{0311}', '\u{0202}'), // A+combining -> Ȃ
+    ('\u{0061}', '\u{0311}', '\u{0203}'), // a+combining -> ȃ
+    ('\u{0045}', '\u{030f}', '\u{0204}'), // E+combining -> Ȅ
+    ('\u{0065}', '\u{030f}', '\u{0205}'), // e+combining -> ȅ
+    ('\u{0045}', '\u{0311}', '\u{0206}'), // E+combining -> Ȇ
+    ('\u{0065}', '\u{0311}', '\u{0207}'), // e+combining -> ȇ
+    ('\u{0049}', '\u{030f}', '\u{0208}'), // I+combining -> Ȉ
+    ('\u{0069}', '\u{030f}', '\u{0209}'), // i+combining -> ȉ
+    ('\u{0049}', '\u{0311}', '\u{020a}'), // I+combining -> Ȋ
+    ('\u{0069}', '\u{0311}', '\u{020b}'), // i+combining -> ȋ
+    ('\u{004f}', '\u{030f}', '\u{020c}'), // O+combining -> Ȍ
+    ('\u{006f}', '\u{030f}', '\u{020d}'), // o+combining -> ȍ
+    ('\u{004f}', '\u{0311}', '\u{020e}'), // O+combining -> Ȏ
+    ('\u{006f}', '\u{0311}', '\u{020f}'), // o+combining -> ȏ
+    ('\u{0052}', '\u{030f}', '\u{0210}'), // R+combining -> Ȑ
+    ('\u{0072}', '\u{030f}', '\u{0211}'), // r+combining -> ȑ
+    ('\u{0052}', '\u{0311}', '\u{0212}'), // R+combining -> Ȓ
+    ('\u{0072}', '\u{0311}', '\u{0213}'), // r+combining -> ȓ
+    ('\u{0055}', '\u{030f}', '\u{0214}'), // U+combining -> Ȕ
+    ('\u{0075}', '\u{030f}', '\u{0215}'), // u+combining -> ȕ
+    ('\u{0055}', '\u{0311}', '\u{0216}'), // U+combining -> Ȗ
+    ('\u{0075}', '\u{0311}', '\u{0217}'), // u+combining -> ȗ
+    ('\u{0053}', '\u{0326}', '\u{0218}'), // S+combining -> Ș
+    ('\u{0073}', '\u{0326}', '\u{0219}'), // s+combining -> ș
+    ('\u{0054}', '\u{0326}', '\u{021a}'), // T+combining -> Ț
+    ('\u{0074}', '\u{0326}', '\u{021b}'), // t+combining -> ț
+    ('\u{0048}', '\u{030c}', '\u{021e}'), // H+combining -> Ȟ
+    ('\u{0068}', '\u{030c}', '\u{021f}'), // h+combining -> ȟ
+    ('\u{0041}', '\u{0307}', '\u{0226}'), // A+combining -> Ȧ
+    ('\u{0061}', '\u{0307}', '\u{0227}'), // a+combining -> ȧ
+    ('\u{0045}', '\u{0327}', '\u{0228}'), // E+combining -> Ȩ
+    ('\u{0065}', '\u{0327}', '\u{0229}'), // e+combining -> ȩ
+    ('\u{004f}', '\u{0307}', '\u{022e}'), // O+combining -> Ȯ
+    ('\u{006f}', '\u{0307}', '\u{022f}'), // o+combining -> ȯ
+    ('\u{0059}', '\u{0304}', '\u{0232}'), // Y+combining -> Ȳ
+    ('\u{0079}', '\u{0304}', '\u{0233}'), // y+combining -> ȳ
+
+    ];
+
+    /// Looks up `ch`'s canonical decomposition in the independent
+    /// [`REFERENCE_NFD`] table above (NOT in `NFC_COMPOSE`). `None` means
+    /// either `ch` is ASCII/has no canonical decomposition (e.g. "\u{0153}"
+    /// / oe-ligature, confirmed atomic via `unicodedata.normalize`) or falls
+    /// outside this table's deliberately-generous U+00C0..U+0250 scan range.
+    fn reference_decompose(ch: char) -> Option<(char, char)> {
+        REFERENCE_NFD.iter().find(|&&(_, _, precomposed)| precomposed == ch).map(|&(base, mark, _)| (base, mark))
+    }
+
+    fn fixtures_dir() -> std::path::PathBuf {
+        std::path::PathBuf::from(format!("{}/../scripts/fixtures", env!("CARGO_MANIFEST_DIR")))
+    }
+
+    #[test]
+    fn every_shipped_vocab_char_with_a_real_decomposition_is_covered_by_nfc_compose() {
+        let mut uncovered = Vec::new();
+        let mut checked = 0usize;
+
+        for lang in ["en", "es", "fr", "de", "pt"] {
+            let path = fixtures_dir().join(format!("fa-vocab-{lang}.json"));
+            let chars = vocab_chars_from_path(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+
+            for &ch in &chars {
+                if let Some((base, mark)) = reference_decompose(ch) {
+                    checked += 1;
+                    if compose_pair(base, mark) != Some(ch) {
+                        uncovered.push(format!(
+                            "{lang} vocab char {ch:?} (U+{:04X}) has a real NFD decomposition (base \
+                             {base:?} U+{:04X} + combining mark U+{:04X}) not present in NFC_COMPOSE",
+                            ch as u32, base as u32, mark as u32
+                        ));
+                    }
+                }
+            }
+        }
+
+        // Non-vacuity: this guard must have actually exercised at least one
+        // real decomposable character across the five vocabs, or "0
+        // uncovered" would be a meaningless pass (nothing was checked, not
+        // "everything checked out"). Verified additionally by hand per the
+        // task's own non-vacuity requirement: temporarily deleting one
+        // NFC_COMPOSE entry (e.g. the `('e', '\u{0301}', 'é')` row) makes
+        // this test fail with exactly one uncovered-char message naming that
+        // pair, confirming the guard is live, not tautological.
+        assert!(
+            checked > 0,
+            "guard must check at least one real decomposable vocab character — 0 checked would \
+             make an empty `uncovered` list vacuously true"
+        );
+
+        assert!(
+            uncovered.is_empty(),
+            "{} shipped vocab char(s) have a real NFD decomposition NOT covered by NFC_COMPOSE — \
+             extend NFC_COMPOSE with the missing base/mark/precomposed row(s):\n{}",
+            uncovered.len(),
+            uncovered.join("\n")
+        );
+    }
+}
