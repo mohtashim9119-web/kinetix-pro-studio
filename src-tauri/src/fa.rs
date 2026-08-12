@@ -101,14 +101,22 @@ fn finish_run(state: &FaState) -> Result<(), FaError> {
 #[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum FaErrorKind {
+    // Only constructed by the `#[cfg(not(feature = "fa-inference"))]` arm of
+    // `fa_align` (plus tests, which run in both configurations) — genuinely
+    // dead in a plain, non-test `fa-inference`-on build.
+    #[cfg_attr(feature = "fa-inference", allow(dead_code))]
     NotImplemented,
-    // Reachable via `fa_model_path`/`no_model_found_error` below — not yet
-    // wired into `fa_align`'s own return path (see that command's doc
-    // comment for why), but a real, tested variant of the boundary, not
-    // dead code to be deleted.
-    #[allow(dead_code)]
+    // Reachable via `fa_model_path`/`no_model_found_error` below, and (with
+    // `fa-inference` on) genuinely returned by `fa_align` when no
+    // `model.onnx` exists for the requested language.
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
     ModelNotFound,
     StateLockPoisoned,
+    // Only constructed by the `fa-inference`-gated real implementation
+    // (`fa_onnx.rs`) — WAV-decode failure, ort session/inference failure, or
+    // an empty/unusable tokenization of the requested segments' text.
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+    InferenceFailed,
 }
 
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
@@ -125,10 +133,11 @@ impl std::fmt::Display for FaError {
 }
 
 impl FaError {
+    #[cfg_attr(feature = "fa-inference", allow(dead_code))]
     fn not_implemented(message: impl Into<String>) -> Self {
         FaError { kind: FaErrorKind::NotImplemented, message: message.into() }
     }
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
     fn model_not_found(message: impl Into<String>) -> Self {
         FaError { kind: FaErrorKind::ModelNotFound, message: message.into() }
     }
@@ -137,6 +146,10 @@ impl FaError {
             kind: FaErrorKind::StateLockPoisoned,
             message: "FA state lock poisoned".to_string(),
         }
+    }
+    #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+    pub(crate) fn inference_failed(message: impl Into<String>) -> Self {
+        FaError { kind: FaErrorKind::InferenceFailed, message: message.into() }
     }
 }
 
@@ -172,13 +185,12 @@ pub enum FaEvent {
 // Model path resolver
 // ---------------------------------------------------------------------------
 
-// Filename placeholder only — the real model FORMAT is unresolved (blocked on
-// ruling R-M: no onnxruntime distribution exists for macOS x86_64 at any
-// version the `ort` crate's version gate accepts, so no ONNX file ships yet).
-// Do not read meaning into ".bin" beyond "some file"; do not add `ort`,
-// `onnxruntime`, `candle`, or any ML crate to Cargo.toml to make this real.
-#[allow(dead_code)]
-const FA_MODEL_FILENAME_PLACEHOLDER: &str = "model.bin";
+// Format resolved as of WS1 Task 5 Slice D2: ONNX, exported per-language by
+// `scripts/export-fa-onnx.py` into this same `fa-models/<lang>/` convention
+// (ruling superseding the earlier "format unresolved" placeholder note —
+// see docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md).
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+const FA_MODEL_FILENAME: &str = "model.onnx";
 
 /// Pure candidate-path builder — no filesystem access, no `AppHandle`, so it
 /// is directly unit-testable. Order matters: the managed location (R-D: FA
@@ -187,10 +199,11 @@ const FA_MODEL_FILENAME_PLACEHOLDER: &str = "model.bin";
 /// Step T's on-demand downloader exists (R-D keeps Step T out of this task).
 /// Deliberately never includes anything under `src-tauri/models/` — that's
 /// the whisper model's bundle-glob location (`tauri.conf.json`'s
-/// `resources` map), untouched by this module. Not yet called from
-/// `fa_align` (see that command's doc comment) — established and tested
-/// ahead of the caller that will need it once inference lands.
-#[allow(dead_code)]
+/// `resources` map), untouched by this module. Called from `fa_align`'s
+/// `fa-inference`-gated real implementation (`fa_onnx.rs`) via
+/// [`fa_model_path`] below; still unused (and `dead_code`-allowed) when that
+/// feature is off.
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 fn fa_model_candidate_paths(
     local_data_dir: Option<&Path>,
     exe_dir: Option<&Path>,
@@ -198,22 +211,22 @@ fn fa_model_candidate_paths(
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(dir) = local_data_dir {
-        candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME_PLACEHOLDER));
+        candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME));
     }
     if let Some(dir) = exe_dir {
-        candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME_PLACEHOLDER));
+        candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME));
     }
     candidates
 }
 
 /// The first existing candidate, in preference order, or `None`.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 fn resolve_existing(candidates: &[PathBuf]) -> Option<PathBuf> {
     candidates.iter().find(|p| p.exists()).cloned()
 }
 
 /// A useful, typed error naming every path tried, when none exists.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 fn no_model_found_error(candidates: &[PathBuf], language_code: &str) -> FaError {
     let tried = candidates
         .iter()
@@ -228,8 +241,8 @@ fn no_model_found_error(candidates: &[PathBuf], language_code: &str) -> FaError 
     ))
 }
 
-#[allow(dead_code)]
-fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Result<PathBuf, FaError> {
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
+pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Result<PathBuf, FaError> {
     let local_data_dir = app.path().app_local_data_dir().ok();
     let exe_dir = std::env::current_exe()
         .ok()
@@ -247,13 +260,21 @@ fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Result<PathBuf,
 // Commands
 // ---------------------------------------------------------------------------
 
-/// Forced-alignment entry point. **Not implemented today** — this establishes
-/// the command surface (state transition, progress channel, argument shape)
-/// that a future native inference engine will drop into. Always returns
-/// `Err(FaError { kind: NotImplemented, .. })`; never panics, never blocks the
-/// main thread (no blocking I/O — model resolution is deliberately not
-/// attempted here yet, since there is no engine to hand a resolved path to),
-/// never silently succeeds.
+/// Forced-alignment entry point.
+///
+/// With the `fa-inference` Cargo feature OFF (the default — still true of
+/// every build until that feature is deliberately enabled), this always
+/// returns `Err(FaError { kind: NotImplemented, .. })`, unchanged from Task
+/// 5's original boundary skeleton: no model, no inference, no ML dependency
+/// in the build graph. With `fa-inference` ON, this resolves the ONNX model
+/// for `language`, runs a real forward pass over `audio_path`, and hands the
+/// resulting emission matrix to the ported Viterbi DP (`fa_viterbi.rs`) —
+/// see `fa_onnx.rs` for that implementation. Neither path panics, blocks the
+/// main thread indefinitely, or silently succeeds.
+///
+/// Not called from `src/` in either configuration yet — frontend wiring
+/// (Tauri command consumption, progress-event UX, capability gating) is a
+/// later, separately-scoped slice.
 ///
 /// * `audio_path` — filesystem path to the audio FA would align against
 ///   (reuses whatever the caller already has on disk, e.g. the same
@@ -274,15 +295,35 @@ pub async fn fa_align(
 ) -> Result<(), FaError> {
     start_run(&state)?;
 
-    let err = FaError::not_implemented(
-        "Forced alignment inference is not implemented yet. This command establishes the \
-         boundary (state, cancellation, progress channel, argument shape) that a future native \
-         inference engine will drop into — no model, no inference, no ML dependency added.",
-    );
-    let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
+    #[cfg(feature = "fa-inference")]
+    {
+        let result = crate::fa_onnx::align(&app, &audio_path, &segments, &language);
+        finish_run(&state)?;
+        return match result {
+            Ok(_spans) => {
+                let _ = on_event.send(FaEvent::Done {});
+                Ok(())
+            }
+            Err(e) => {
+                let err = FaError::inference_failed(e.to_string());
+                let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
+                Err(err)
+            }
+        };
+    }
 
-    finish_run(&state)?;
-    Err(err)
+    #[cfg(not(feature = "fa-inference"))]
+    {
+        let err = FaError::not_implemented(
+            "Forced alignment inference is not implemented yet. This command establishes the \
+             boundary (state, cancellation, progress channel, argument shape) that a future native \
+             inference engine will drop into — no model, no inference, no ML dependency added.",
+        );
+        let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
+
+        finish_run(&state)?;
+        Err(err)
+    }
 }
 
 /// Cancels a running FA job. Mirrors `whisper_cancel` (`whisper.rs:432-441`):
@@ -347,8 +388,8 @@ mod tests {
         assert_eq!(
             candidates,
             vec![
-                PathBuf::from("/fake/local-data/fa-models/en/model.bin"),
-                PathBuf::from("/fake/exe-dir/fa-models/en/model.bin"),
+                PathBuf::from("/fake/local-data/fa-models/en/model.onnx"),
+                PathBuf::from("/fake/exe-dir/fa-models/en/model.onnx"),
             ]
         );
     }
@@ -368,7 +409,7 @@ mod tests {
     fn candidate_paths_omits_missing_tiers() {
         let exe = PathBuf::from("/fake/exe-dir");
         let candidates = fa_model_candidate_paths(None, Some(&exe), "de");
-        assert_eq!(candidates, vec![PathBuf::from("/fake/exe-dir/fa-models/de/model.bin")]);
+        assert_eq!(candidates, vec![PathBuf::from("/fake/exe-dir/fa-models/de/model.onnx")]);
 
         let candidates = fa_model_candidate_paths(None, None, "de");
         assert!(candidates.is_empty());
@@ -377,8 +418,8 @@ mod tests {
     #[test]
     fn resolve_existing_none_when_nothing_on_disk() {
         let candidates = vec![
-            PathBuf::from("/definitely/does/not/exist/fa-models/en/model.bin"),
-            PathBuf::from("/also/missing/fa-models/en/model.bin"),
+            PathBuf::from("/definitely/does/not/exist/fa-models/en/model.onnx"),
+            PathBuf::from("/also/missing/fa-models/en/model.onnx"),
         ];
         assert_eq!(resolve_existing(&candidates), None);
     }
@@ -386,14 +427,14 @@ mod tests {
     #[test]
     fn no_model_found_error_names_every_candidate_and_the_language() {
         let candidates = vec![
-            PathBuf::from("/fake/local-data/fa-models/fr/model.bin"),
-            PathBuf::from("/fake/exe-dir/fa-models/fr/model.bin"),
+            PathBuf::from("/fake/local-data/fa-models/fr/model.onnx"),
+            PathBuf::from("/fake/exe-dir/fa-models/fr/model.onnx"),
         ];
         let err = no_model_found_error(&candidates, "fr");
         assert_eq!(err.kind, FaErrorKind::ModelNotFound);
         assert!(err.message.contains("fr"));
-        assert!(err.message.contains("/fake/local-data/fa-models/fr/model.bin"));
-        assert!(err.message.contains("/fake/exe-dir/fa-models/fr/model.bin"));
+        assert!(err.message.contains("/fake/local-data/fa-models/fr/model.onnx"));
+        assert!(err.message.contains("/fake/exe-dir/fa-models/fr/model.onnx"));
         // The message DOES mention "src-tauri/models" — as a "never place it
         // here" warning, not as a candidate. `candidate_paths_never_targets_
         // src_tauri_models` above is the real guard on the actual paths tried.

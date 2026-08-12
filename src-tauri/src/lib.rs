@@ -1,5 +1,7 @@
 mod fa;
 mod fa_viterbi;
+#[cfg(feature = "fa-inference")]
+mod fa_onnx;
 mod ffmpeg;
 mod whisper;
 

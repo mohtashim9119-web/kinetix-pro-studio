@@ -8,9 +8,10 @@
 // model, no I/O, no async, no third-party crate: this takes an emission
 // matrix (produced elsewhere, by whatever acoustic model) and target token
 // ids as plain input and returns the forced alignment. Do NOT wire this into
-// Apply Sync or any `src/` caller — this is the DP only, established ahead
-// of a future native inference engine the same way `fa.rs` establishes the
-// IPC command surface ahead of one.
+// Apply Sync or any `src/` (TypeScript) caller — this is the DP only. Called
+// from Rust by `fa_onnx.rs`'s `fa-inference`-gated real inference path; with
+// that feature off, still unwired and dead-code-allowed, same as `fa.rs`
+// establishing the IPC command surface ahead of a real engine.
 //
 // Structure, confirmed against the reference before porting:
 //   - expanded label sequence S = 2L + 1 (blank/label/blank/label/.../blank)
@@ -35,10 +36,11 @@ use std::fmt;
 /// [`merge_tokens`]. Time bounds are in the emission's own frame axis
 /// (`start` inclusive, `end` exclusive), matching `TokenSpan` in
 /// `torchaudio.functional._alignment`.
-// Not yet called from any `src/` caller (see module header) — `#[allow(dead_code)]`
-// throughout this file mirrors `fa.rs`'s own precedent for a proven-but-unwired
-// boundary, not a signal of unfinished work. Exercised directly by the tests below.
-#[allow(dead_code)]
+// `dead_code` is allowed conditionally throughout this file (see module
+// header) — live when `fa-inference` calls into this DP via `fa_onnx.rs`,
+// still an established-but-unwired boundary otherwise. Exercised directly by
+// the tests below regardless of the feature.
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct TokenSpan {
     pub token: i64,
@@ -47,6 +49,8 @@ pub struct TokenSpan {
     pub score: f32,
 }
 
+// Unused by `fa_onnx.rs` (which only reads `.token`/`.start`/`.end` fields
+// directly) in either feature configuration — unconditional, not cfg_attr.
 #[allow(dead_code)]
 impl TokenSpan {
     pub fn len(&self) -> usize {
@@ -60,7 +64,7 @@ impl TokenSpan {
 /// The result of [`forced_align`]: one label per input frame, and that
 /// label's own log-probability at that frame (gathered from the emission
 /// matrix along the winning path — not a cumulative/alpha score).
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AlignOutput {
     pub path: Vec<i64>,
@@ -69,7 +73,7 @@ pub struct AlignOutput {
 
 /// Typed failure modes for [`forced_align`]. Never panics on either of
 /// these — both are ordinary, expected inputs to guard against, not bugs.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AlignError {
     /// torchaudio's own precondition, from `forced_align`'s docstring:
@@ -110,7 +114,7 @@ impl std::error::Error for AlignError {}
 /// Counts immediately-repeated adjacent labels in `targets` — the `R` in
 /// `T >= L + R`. Matches the reference's own loop (`compute.cpp:38-42`)
 /// exactly: only ADJACENT equal pairs count (`"aabbc"` → 2, not 3).
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 fn count_repeats(targets: &[i64]) -> usize {
     targets.windows(2).filter(|pair| pair[0] == pair[1]).count()
 }
@@ -132,7 +136,7 @@ fn count_repeats(targets: &[i64]) -> usize {
 /// audit's own naive-formula 675,000-cell figure at T*L), S = 2*453+1 = 907,
 /// giving T*S ≈ 1,352,337 bytes ≈ 1.29 MiB — confirming the audit's
 /// corrected ~1.35M-cell figure (see `lattice_sizing_30s_window` below).
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 pub fn forced_align(
     log_probs: &[Vec<f32>],
     targets: &[i64],
@@ -267,7 +271,7 @@ pub fn forced_align(
 /// (relying on no real token id ever being `-1`). This port uses
 /// `Option<i64>` for that sentinel instead of a magic number — same
 /// boundary detection, no assumption about the token id space.
-#[allow(dead_code)]
+#[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 pub fn merge_tokens(tokens: &[i64], scores: &[f32], blank: i64) -> Vec<TokenSpan> {
     if tokens.is_empty() {
         return Vec::new();
