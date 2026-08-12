@@ -1,0 +1,88 @@
+{
+  "_provenance": {
+    "generatedBy": "scripts/export-fa-onnx.py",
+    "note": "Hashes and provenance only — no model weights committed. Consumed by Step T (deferred)."
+  },
+  "models": {
+    "de": {
+      "byteSize": 1262533211,
+      "fidelity": {
+        "argmax_path_identical": true,
+        "max_abs_diff": 0.00015601515769958496,
+        "n_argmax_frame_mismatches": 0,
+        "p95_abs_diff": 6.67572021484375e-05,
+        "total_frames": 49
+      },
+      "opset": 14,
+      "repoId": "jonatasgrosman/wav2vec2-large-xlsr-53-german",
+      "revision": "4b8a02957378d0f2da2ef74091156b032c485a89",
+      "sha256": "f7be6a07e920058a06f85f271ead6b83e6206686a9245a9f010a48c8f71a09ed",
+      "torchVersion": "2.2.2",
+      "torchaudioVersion": "2.2.2"
+    },
+    "en": {
+      "byteSize": 1262512711,
+      "fidelity": {
+        "argmax_path_identical": true,
+        "max_abs_diff": 0.00016868114471435547,
+        "n_argmax_frame_mismatches": 0,
+        "p95_abs_diff": 5.455017089843749e-05,
+        "total_frames": 49
+      },
+      "opset": 14,
+      "repoId": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
+      "revision": "569a6236e92bd5f7652a0420bfe9bb94c5664080",
+      "sha256": "48a3c2e143a9741e92a7ccd7e0600afe498e2c42c3dc01f78bc0c335f916240f",
+      "torchVersion": "2.2.2",
+      "torchaudioVersion": "2.2.2"
+    },
+    "es": {
+      "byteSize": 1262545511,
+      "fidelity": {
+        "argmax_path_identical": true,
+        "max_abs_diff": 0.00027501583099365234,
+        "n_argmax_frame_mismatches": 0,
+        "p95_abs_diff": 6.389617919921875e-05,
+        "total_frames": 49
+      },
+      "opset": 14,
+      "repoId": "jonatasgrosman/wav2vec2-large-xlsr-53-spanish",
+      "revision": "96d7e9b4e4a78af515a3c6d3cee7c0826045d276",
+      "sha256": "7e11fee93ac8fbf2092d0c8695b0ea99cc01085769b2ba6acca8c690d429c408",
+      "torchVersion": "2.2.2",
+      "torchaudioVersion": "2.2.2"
+    },
+    "fr": {
+      "byteSize": 1262619311,
+      "fidelity": {
+        "argmax_path_identical": true,
+        "max_abs_diff": 0.00014781951904296875,
+        "n_argmax_frame_mismatches": 0,
+        "p95_abs_diff": 5.4836273193359375e-05,
+        "total_frames": 49
+      },
+      "opset": 14,
+      "repoId": "jonatasgrosman/wav2vec2-large-xlsr-53-french",
+      "revision": "7c79e105a6525d38e1e69f640b974b4a679723cc",
+      "sha256": "f0f9b76fcba76716644c804ad23923f933206ba1cfeb3a568c821a98f2597515",
+      "torchVersion": "2.2.2",
+      "torchaudioVersion": "2.2.2"
+    },
+    "pt": {
+      "byteSize": 1262566011,
+      "fidelity": {
+        "argmax_path_identical": true,
+        "max_abs_diff": 0.0005879402160644531,
+        "n_argmax_frame_mismatches": 0,
+        "p95_abs_diff": 0.00011730194091796875,
+        "total_frames": 49
+      },
+      "opset": 14,
+      "repoId": "jonatasgrosman/wav2vec2-large-xlsr-53-portuguese",
+      "revision": "634ac655299bcdc46c83bc01da9bab52d2987e4f",
+      "sha256": "24ca489351e1f43088b769e05633228fa820fceb6095b8ba06bde0e483d03d93",
+      "torchVersion": "2.2.2",
+      "torchaudioVersion": "2.2.2"
+    }
+  }
+}

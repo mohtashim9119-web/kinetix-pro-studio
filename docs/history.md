@@ -9422,3 +9422,104 @@ normalizer's failure paths either before or after this fix.
 **Gates:** `npm run lint` clean; `npm test` 74 files / 1857 passed / 1 skipped / 0 failed (+17
 exact vs. baseline); `cargo check` clean; `cargo test` 19 passed (unchanged, no Rust touched);
 golden replay 6/6 unchanged.
+
+## Verified ONNX export for all five FA models, 2026-08-12
+
+**Why.** The runtime spike (2026-08-11, G4/G5) proved ONNX export was viable but only did it
+once, by hand, for English. This formalizes that into a repeatable, per-language, self-verifying
+procedure covering all five shipping models (`jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,
+pt}`, R-Q) — script and manifest only, **no model weights committed**, and **no ML crate added to
+`src-tauri/Cargo.toml`** (this is a Python-side offline export tool; it has no bearing on the
+still-open native-inference blocker, ruling R-M, tracked separately in
+`docs/ws1-sync-pipeline/ws1-master-roadmap.md` §13).
+
+**`scripts/export-fa-onnx.py` (new).** Follows the existing `measure-*.py` conventions (argparse,
+`description=__doc__`, a DEPENDENCIES section naming exact pins). For a given `--language` (or
+`--all`, continuing past a per-language failure rather than aborting the whole run):
+
+1. Loads `jonatasgrosman/wav2vec2-large-xlsr-53-<lang>` — preferring an already-on-disk local
+   copy over the network when one exists (mirrors the runtime spike's own `g1_lang_check.py`
+   fallback pattern: `load_source = local_dir if has_local_weights else repo_id`), so a machine
+   that already has the weights (this one did, for all five — see below) never re-downloads them.
+2. Exports to ONNX via `torch.onnx.export` (opset 14, dynamic batch/sequence axes — same shape as
+   the spike's G4 script).
+3. **Verifies before declaring success**: runs one forward pass through both torch and
+   onnxruntime (Python CPU execution provider) on identical real audio input (the committed
+   `docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/work-phase4/step-x-clips/
+   C05_v6_it_trailing_word.wav` clip, reused across all five languages deliberately — this checks
+   the ONNX graph reproduces the torch graph's per-frame math, a numerical-equivalence property of
+   the exporter, not a transcription-accuracy claim, the same shortcut the spike's own
+   `g1_lang_check.py` took reusing one Spanish clip across es/fr/de/pt sanity checks) and asserts
+   the greedy argmax path is identical — exactly the spike's G5 check. **On a verification
+   failure, the just-written `.onnx` file is deleted and the language fails** (nonzero exit for a
+   single-language run; skipped, not silently accepted, under `--all`) — never an unverified model
+   left looking like a successful export.
+4. Output defaults to the R-D `app_local_data_dir()/fa-models/<lang>/model.onnx` convention the
+   Rust model resolver in `src-tauri/src/fa.rs` already expects — read directly out of that file,
+   not restated from memory: `fa.rs:194-207` (`fa_model_candidate_paths`) joins
+   `<local_data_dir>/fa-models/<language_code>/<FA_MODEL_FILENAME_PLACEHOLDER>` as its managed-tier
+   candidate; `fa.rs:232-233` (`fa_model_path`) resolves `local_data_dir` via
+   `app.path().app_local_data_dir()`; `fa.rs:181`'s `FA_MODEL_FILENAME_PLACEHOLDER = "model.bin"`
+   is explicitly a placeholder ("do not read meaning into '.bin' beyond 'some file'") — this
+   script writes `model.onnx` instead, the real filename for what it actually produces. Since this
+   script is not a Tauri process, it reproduces Tauri's per-OS `app_local_data_dir()` mapping for
+   this app's `identifier` (`com.kinetix.pro-studio`, `tauri.conf.json:5`) itself — verified
+   against this dev machine's own macOS result (`~/Library/Application Support/
+   com.kinetix.pro-studio`), not assumed for Linux/Windows.
+5. **Refuses to write into `src-tauri/models/`** (the whisper model's bundle-glob location,
+   `tauri.conf.json`'s `resources` map — FA models are not part of that glob) — fails loudly
+   before writing anything if `--output-dir` resolves there.
+
+**Why no download was actually needed.** Before running, a filesystem check found all five
+languages' weights already present on this machine from the 2026-08-11 runtime spike: English
+fully cached in the standard `~/.cache/huggingface/hub` (the G4/G5 scripts' own hub-fallback
+path), and Spanish/French/German/Portuguese as complete `pytorch_model.bin` files under the
+gitignored `.work-phase4/spike-runtime/models/{spanish,french,german,portuguese}/` (each ~1.26GB,
+`architectures: ["Wav2Vec2ForCTC"]`, vocab sizes 41/59/38/46 matching the raw vocab counts already
+recorded in `faTextNormalize.test.ts`). Each was load-tested directly with `transformers` before
+trusting it (Spanish and English both loaded cleanly, with only the benign weight-norm
+reparametrization warning `measure-forced-alignment-hf.py`'s own docstring already documents as
+expected and harmless). An initial attempt to export by re-downloading fresh over this machine's
+network hit a genuinely flaky connection (repeated `IncompleteRead`/`ChunkedEncodingError`/read
+timeouts against `huggingface.co`'s CDN, both with and without the `hf_xet` accelerator) before
+this local-weights discovery made the network path unnecessary for four of the five languages
+entirely, and unnecessary for English too once `HF_HOME` was left at its default (a first attempt
+had pointed it at a fresh scratch directory, which is what caused the redundant download attempt
+in the first place).
+
+**Run results — all five languages, all verified, 2026-08-12:**
+
+| Lang | Wall clock | Size | Opset | SHA-256 (first 12) | max_abs_diff | argmax mismatches |
+|---|---|---|---|---|---|---|
+| en | 22.35s | 1,262,512,711 B | 14 | `48a3c2e143a9` | 0.0001687 | 0/49 |
+| es | 22.20s | 1,262,545,511 B | 14 | `7e11fee93ac8` | 0.0002750 | 0/49 |
+| fr | 23.75s | 1,262,619,311 B | 14 | `f0f9b76fcba7` | 0.0001478 | 0/49 |
+| de | 25.69s | 1,262,533,211 B | 14 | `f7be6a07e920` | 0.0001560 | 0/49 |
+| pt | 28.44s | 1,262,566,011 B | 14 | `24ca489351e1` | 0.0005879 | 0/49 |
+
+All five: `argmax_path_identical: true`, `p95_abs_diff` in the 5.5e-5 to 1.2e-4 range, `total_frames: 49`
+(1.0s @ 16kHz through this model's frame stride) — consistent with the spike's own English G5
+number (`max_abs_diff` 0.000269) and with each other; no language showed an outlier. Wall clock is
+export-only (model already loaded from disk/cache) — not comparable to the spike's 24.98s figure,
+which included a network download.
+
+**`scripts/fixtures/fa-onnx-manifest.json` (new, 3,076 bytes — well under the 100KB budget).**
+Hashes and provenance only, one entry per language: `repoId`, resolved HF `revision`, `opset`,
+`byteSize`, `sha256`, `torchVersion`/`torchaudioVersion` (2.2.2/2.2.2, matching the pin already
+established for this venv), and the `fidelity` block from the run above. Indexed in
+`scripts/fixtures/README.md` under a new "ONNX export manifest" section. **No weight file is
+committed anywhere** — every `.onnx` output lives under `~/Library/Application Support/
+com.kinetix.pro-studio/fa-models/<lang>/`, outside the repo tree entirely, confirmed by `git
+status` showing only the script/manifest/doc changes.
+
+**`docs/ws1-sync-pipeline/ws1-master-roadmap.md` §13** — appended a dated update to the existing
+"ONNX-export step ... CLOSED 2026-08-11" bullet noting the export procedure is now scripted,
+repeatable, and verified for all five languages (closing the "ONNX export scoped nowhere" gap),
+while leaving the still-open native-library-provisioning blocker (`ort`/onnxruntime for macOS
+x86_64, ruling R-M) explicitly unaffected and unchanged — this work is entirely Python-side and
+offline, upstream of and independent from that blocker.
+
+**Gates:** no `src/` change in this part; `npm run lint` clean; `npm test` 74 files / 1857 passed
+/ 1 skipped / 0 failed (unchanged from Part 1's close); `cargo check` clean; `cargo test` 19
+passed (unchanged); golden replay 6/6 unchanged. All five numbers identical to Part 1's close, as
+expected for a docs/scripts/fixtures-only change.

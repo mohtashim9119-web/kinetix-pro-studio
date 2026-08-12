@@ -65,6 +65,27 @@ imported/passed in, not read from disk in production code).
 |---|---|
 | `fa-vocab-{en,es,fr,de,pt}.json` | `{ "_provenance": { "modelId", "source" }, "vocab": { <token>: <index>, ... } }` — the model's own vocab.json contents verbatim (special tokens `<pad>`/`<s>`/`</s>`/`<unk>` and the `\|` word-delimiter token included; the normalizer's caller distinguishes literal characters from those). |
 
+## ONNX export manifest — five shipping FA models
+
+`fa-onnx-manifest.json` — provenance for `scripts/export-fa-onnx.py`'s verified
+ONNX export of all five `jonatasgrosman/wav2vec2-large-xlsr-53-*` models
+(formalizes the runtime spike's one-off English export/verify pair, G4/G5,
+into a repeatable per-language procedure). **Hashes and provenance only — no
+model weights are committed here or by the export script.** Per language:
+source `repoId` and its resolved HF `revision`, ONNX `opset`, exported
+`byteSize`, `sha256`, the `torchVersion`/`torchaudioVersion` used, and a
+`fidelity` block (`max_abs_diff`, `p95_abs_diff`, `argmax_path_identical`,
+`n_argmax_frame_mismatches`, `total_frames`) from a torch-vs-onnxruntime
+greedy-argmax equivalence check on identical input — the same G5 check the
+spike used, run once per language rather than once for English only. All
+five passed with zero argmax mismatches (captured 2026-08-12). This is
+groundwork for a later step (Step T) — not a download subsystem, and not
+consumed by any script yet.
+
+| File pattern | Purpose |
+|---|---|
+| `fa-onnx-manifest.json` | `{ "_provenance": {...}, "models": { <lang>: { repoId, revision, opset, byteSize, sha256, torchVersion, torchaudioVersion, fidelity } } }` — one entry per language, en/es/fr/de/pt. |
+
 ## Forced-alignment ground truth
 
 | File pattern | Purpose |
