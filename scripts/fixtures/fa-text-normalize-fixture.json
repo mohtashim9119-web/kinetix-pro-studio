@@ -1,0 +1,1307 @@
+{
+  "_generatedBy": "scripts/generate-fa-text-fixture.ts (run via `npx tsx`) — driven from src/services/faTextNormalize.ts",
+  "entries": [
+    {
+      "language": "en",
+      "input": "",
+      "note": "empty input",
+      "words": [],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "   \t\n  ",
+      "note": "whitespace-only input",
+      "words": [],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "Hello WORLD MiXeD",
+      "note": "mixed case",
+      "words": [
+        {
+          "input": "Hello",
+          "representable": true,
+          "mapped": "hello",
+          "reason": null,
+          "tokenIds": [
+            14,
+            11,
+            18,
+            18,
+            21
+          ]
+        },
+        {
+          "input": "WORLD",
+          "representable": true,
+          "mapped": "world",
+          "reason": null,
+          "tokenIds": [
+            29,
+            21,
+            24,
+            18,
+            10
+          ]
+        },
+        {
+          "input": "MiXeD",
+          "representable": true,
+          "mapped": "mixed",
+          "reason": null,
+          "tokenIds": [
+            19,
+            15,
+            30,
+            11,
+            10
+          ]
+        }
+      ],
+      "text": "hello world mixed",
+      "textTokenIds": [
+        14,
+        11,
+        18,
+        18,
+        21,
+        4,
+        29,
+        21,
+        24,
+        18,
+        10,
+        4,
+        19,
+        15,
+        30,
+        11,
+        10
+      ]
+    },
+    {
+      "language": "de",
+      "input": "STRASSE",
+      "note": "mixed case (all-caps, plain ASCII)",
+      "words": [
+        {
+          "input": "STRASSE",
+          "representable": true,
+          "mapped": "strasse",
+          "reason": null,
+          "tokenIds": [
+            25,
+            26,
+            24,
+            7,
+            25,
+            25,
+            11
+          ]
+        }
+      ],
+      "text": "strasse",
+      "textTokenIds": [
+        25,
+        26,
+        24,
+        7,
+        25,
+        25,
+        11
+      ]
+    },
+    {
+      "language": "de",
+      "input": "GROẞ",
+      "note": "mixed case + uppercase eszett -> ss",
+      "words": [
+        {
+          "input": "GROẞ",
+          "representable": true,
+          "mapped": "gross",
+          "reason": null,
+          "tokenIds": [
+            13,
+            24,
+            21,
+            25,
+            25
+          ]
+        }
+      ],
+      "text": "gross",
+      "textTokenIds": [
+        13,
+        24,
+        21,
+        25,
+        25
+      ]
+    },
+    {
+      "language": "de",
+      "input": "straße",
+      "note": "German ß -> ss",
+      "words": [
+        {
+          "input": "straße",
+          "representable": true,
+          "mapped": "strasse",
+          "reason": null,
+          "tokenIds": [
+            25,
+            26,
+            24,
+            7,
+            25,
+            25,
+            11
+          ]
+        }
+      ],
+      "text": "strasse",
+      "textTokenIds": [
+        25,
+        26,
+        24,
+        7,
+        25,
+        25,
+        11
+      ]
+    },
+    {
+      "language": "de",
+      "input": "die straße ist groß",
+      "note": "German ß -> ss, phrase",
+      "words": [
+        {
+          "input": "die",
+          "representable": true,
+          "mapped": "die",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            11
+          ]
+        },
+        {
+          "input": "straße",
+          "representable": true,
+          "mapped": "strasse",
+          "reason": null,
+          "tokenIds": [
+            25,
+            26,
+            24,
+            7,
+            25,
+            25,
+            11
+          ]
+        },
+        {
+          "input": "ist",
+          "representable": true,
+          "mapped": "ist",
+          "reason": null,
+          "tokenIds": [
+            15,
+            25,
+            26
+          ]
+        },
+        {
+          "input": "groß",
+          "representable": true,
+          "mapped": "gross",
+          "reason": null,
+          "tokenIds": [
+            13,
+            24,
+            21,
+            25,
+            25
+          ]
+        }
+      ],
+      "text": "die strasse ist gross",
+      "textTokenIds": [
+        10,
+        15,
+        11,
+        4,
+        25,
+        26,
+        24,
+        7,
+        25,
+        25,
+        11,
+        4,
+        15,
+        25,
+        26,
+        4,
+        13,
+        24,
+        21,
+        25,
+        25
+      ]
+    },
+    {
+      "language": "es",
+      "input": "año",
+      "note": "es diacritic",
+      "words": [
+        {
+          "input": "año",
+          "representable": true,
+          "mapped": "año",
+          "reason": null,
+          "tokenIds": [
+            7,
+            36,
+            21
+          ]
+        }
+      ],
+      "text": "año",
+      "textTokenIds": [
+        7,
+        36,
+        21
+      ]
+    },
+    {
+      "language": "es",
+      "input": "el año pasado fue increíble",
+      "note": "es diacritic phrase",
+      "words": [
+        {
+          "input": "el",
+          "representable": true,
+          "mapped": "el",
+          "reason": null,
+          "tokenIds": [
+            11,
+            18
+          ]
+        },
+        {
+          "input": "año",
+          "representable": true,
+          "mapped": "año",
+          "reason": null,
+          "tokenIds": [
+            7,
+            36,
+            21
+          ]
+        },
+        {
+          "input": "pasado",
+          "representable": true,
+          "mapped": "pasado",
+          "reason": null,
+          "tokenIds": [
+            22,
+            7,
+            25,
+            7,
+            10,
+            21
+          ]
+        },
+        {
+          "input": "fue",
+          "representable": true,
+          "mapped": "fue",
+          "reason": null,
+          "tokenIds": [
+            12,
+            27,
+            11
+          ]
+        },
+        {
+          "input": "increíble",
+          "representable": true,
+          "mapped": "increíble",
+          "reason": null,
+          "tokenIds": [
+            15,
+            20,
+            9,
+            24,
+            11,
+            35,
+            8,
+            18,
+            11
+          ]
+        }
+      ],
+      "text": "el año pasado fue increíble",
+      "textTokenIds": [
+        11,
+        18,
+        4,
+        7,
+        36,
+        21,
+        4,
+        22,
+        7,
+        25,
+        7,
+        10,
+        21,
+        4,
+        12,
+        27,
+        11,
+        4,
+        15,
+        20,
+        9,
+        24,
+        11,
+        35,
+        8,
+        18,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "élève",
+      "note": "fr diacritic",
+      "words": [
+        {
+          "input": "élève",
+          "representable": true,
+          "mapped": "élève",
+          "reason": null,
+          "tokenIds": [
+            39,
+            18,
+            38,
+            28,
+            11
+          ]
+        }
+      ],
+      "text": "élève",
+      "textTokenIds": [
+        39,
+        18,
+        38,
+        28,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "l'élève où était-il",
+      "note": "fr diacritic phrase, internal apostrophe/hyphen",
+      "words": [
+        {
+          "input": "l'élève",
+          "representable": true,
+          "mapped": "l'élève",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            39,
+            18,
+            38,
+            28,
+            11
+          ]
+        },
+        {
+          "input": "où",
+          "representable": true,
+          "mapped": "où",
+          "reason": null,
+          "tokenIds": [
+            21,
+            49
+          ]
+        },
+        {
+          "input": "était-il",
+          "representable": true,
+          "mapped": "était-il",
+          "reason": null,
+          "tokenIds": [
+            39,
+            26,
+            7,
+            15,
+            26,
+            6,
+            15,
+            18
+          ]
+        }
+      ],
+      "text": "l'élève où était-il",
+      "textTokenIds": [
+        18,
+        5,
+        39,
+        18,
+        38,
+        28,
+        11,
+        4,
+        21,
+        49,
+        4,
+        39,
+        26,
+        7,
+        15,
+        26,
+        6,
+        15,
+        18
+      ]
+    },
+    {
+      "language": "de",
+      "input": "über",
+      "note": "de diacritic",
+      "words": [
+        {
+          "input": "über",
+          "representable": true,
+          "mapped": "über",
+          "reason": null,
+          "tokenIds": [
+            37,
+            8,
+            11,
+            24
+          ]
+        }
+      ],
+      "text": "über",
+      "textTokenIds": [
+        37,
+        8,
+        11,
+        24
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "ação",
+      "note": "pt diacritic",
+      "words": [
+        {
+          "input": "ação",
+          "representable": true,
+          "mapped": "ação",
+          "reason": null,
+          "tokenIds": [
+            7,
+            37,
+            36,
+            21
+          ]
+        }
+      ],
+      "text": "ação",
+      "textTokenIds": [
+        7,
+        37,
+        36,
+        21
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "a ação não é fácil",
+      "note": "pt diacritic phrase",
+      "words": [
+        {
+          "input": "a",
+          "representable": true,
+          "mapped": "a",
+          "reason": null,
+          "tokenIds": [
+            7
+          ]
+        },
+        {
+          "input": "ação",
+          "representable": true,
+          "mapped": "ação",
+          "reason": null,
+          "tokenIds": [
+            7,
+            37,
+            36,
+            21
+          ]
+        },
+        {
+          "input": "não",
+          "representable": true,
+          "mapped": "não",
+          "reason": null,
+          "tokenIds": [
+            20,
+            36,
+            21
+          ]
+        },
+        {
+          "input": "é",
+          "representable": true,
+          "mapped": "é",
+          "reason": null,
+          "tokenIds": [
+            38
+          ]
+        },
+        {
+          "input": "fácil",
+          "representable": true,
+          "mapped": "fácil",
+          "reason": null,
+          "tokenIds": [
+            12,
+            34,
+            9,
+            15,
+            18
+          ]
+        }
+      ],
+      "text": "a ação não é fácil",
+      "textTokenIds": [
+        7,
+        4,
+        7,
+        37,
+        36,
+        21,
+        4,
+        20,
+        36,
+        21,
+        4,
+        38,
+        4,
+        12,
+        34,
+        9,
+        15,
+        18
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "ćčšș",
+      "note": "fr loanword characters (non-French Latin letters in fr vocab)",
+      "words": [
+        {
+          "input": "ćčšș",
+          "representable": true,
+          "mapped": "ćčšș",
+          "reason": null,
+          "tokenIds": [
+            53,
+            54,
+            57,
+            58
+          ]
+        }
+      ],
+      "text": "ćčšș",
+      "textTokenIds": [
+        53,
+        54,
+        57,
+        58
+      ]
+    },
+    {
+      "language": "en",
+      "input": "12",
+      "note": "bare digit",
+      "words": [
+        {
+          "input": "12",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"12\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "room101 available",
+      "note": "digit-bearing word dropped, rest of phrase survives",
+      "words": [
+        {
+          "input": "room101",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"room101\")",
+          "tokenIds": null
+        },
+        {
+          "input": "available",
+          "representable": true,
+          "mapped": "available",
+          "reason": null,
+          "tokenIds": [
+            7,
+            28,
+            7,
+            15,
+            18,
+            7,
+            8,
+            18,
+            11
+          ]
+        }
+      ],
+      "text": "available",
+      "textTokenIds": [
+        7,
+        28,
+        7,
+        15,
+        18,
+        7,
+        8,
+        18,
+        11
+      ]
+    },
+    {
+      "language": "de",
+      "input": "Zimmer5 ist frei",
+      "note": "digit-bearing word dropped (de)",
+      "words": [
+        {
+          "input": "Zimmer5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"Zimmer5\")",
+          "tokenIds": null
+        },
+        {
+          "input": "ist",
+          "representable": true,
+          "mapped": "ist",
+          "reason": null,
+          "tokenIds": [
+            15,
+            25,
+            26
+          ]
+        },
+        {
+          "input": "frei",
+          "representable": true,
+          "mapped": "frei",
+          "reason": null,
+          "tokenIds": [
+            12,
+            24,
+            11,
+            15
+          ]
+        }
+      ],
+      "text": "ist frei",
+      "textTokenIds": [
+        15,
+        25,
+        26,
+        4,
+        12,
+        24,
+        11,
+        15
+      ]
+    },
+    {
+      "language": "es",
+      "input": "año2024 pasado",
+      "note": "digit-bearing word dropped (es)",
+      "words": [
+        {
+          "input": "año2024",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"año2024\")",
+          "tokenIds": null
+        },
+        {
+          "input": "pasado",
+          "representable": true,
+          "mapped": "pasado",
+          "reason": null,
+          "tokenIds": [
+            22,
+            7,
+            25,
+            7,
+            10,
+            21
+          ]
+        }
+      ],
+      "text": "pasado",
+      "textTokenIds": [
+        22,
+        7,
+        25,
+        7,
+        10,
+        21
+      ]
+    },
+    {
+      "language": "en",
+      "input": "...",
+      "note": "pure punctuation -> reduced to nothing",
+      "words": [
+        {
+          "input": "...",
+          "representable": false,
+          "mapped": null,
+          "reason": "reduced to nothing by fold/strip — no word content remained (word: \"...\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "привет.",
+      "note": "genuine OOV: Cyrillic, must reject",
+      "words": [
+        {
+          "input": "привет.",
+          "representable": false,
+          "mapped": null,
+          "reason": "character \"п\" is not in the en vocab (word: \"привет.\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "日本語",
+      "note": "genuine OOV: CJK, must reject (fr)",
+      "words": [
+        {
+          "input": "日本語",
+          "representable": false,
+          "mapped": null,
+          "reason": "character \"日\" is not in the fr vocab (word: \"日本語\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "don’t",
+      "note": "fold: curly apostrophe -> straight",
+      "words": [
+        {
+          "input": "don’t",
+          "representable": true,
+          "mapped": "don't",
+          "reason": null,
+          "tokenIds": [
+            10,
+            21,
+            20,
+            5,
+            26
+          ]
+        }
+      ],
+      "text": "don't",
+      "textTokenIds": [
+        10,
+        21,
+        20,
+        5,
+        26
+      ]
+    },
+    {
+      "language": "en",
+      "input": "well—actually",
+      "note": "fold: em dash -> hyphen",
+      "words": [
+        {
+          "input": "well—actually",
+          "representable": true,
+          "mapped": "well-actually",
+          "reason": null,
+          "tokenIds": [
+            29,
+            11,
+            18,
+            18,
+            6,
+            7,
+            9,
+            26,
+            27,
+            7,
+            18,
+            18,
+            31
+          ]
+        }
+      ],
+      "text": "well-actually",
+      "textTokenIds": [
+        29,
+        11,
+        18,
+        18,
+        6,
+        7,
+        9,
+        26,
+        27,
+        7,
+        18,
+        18,
+        31
+      ]
+    },
+    {
+      "language": "en",
+      "input": "“hello”",
+      "note": "fold target absent from vocab -> drop, not fold",
+      "words": [
+        {
+          "input": "“hello”",
+          "representable": true,
+          "mapped": "hello",
+          "reason": null,
+          "tokenIds": [
+            14,
+            11,
+            18,
+            18,
+            21
+          ]
+        }
+      ],
+      "text": "hello",
+      "textTokenIds": [
+        14,
+        11,
+        18,
+        18,
+        21
+      ]
+    },
+    {
+      "language": "en",
+      "input": "“don’t.”",
+      "note": "fold + strip together",
+      "words": [
+        {
+          "input": "“don’t.”",
+          "representable": true,
+          "mapped": "don't",
+          "reason": null,
+          "tokenIds": [
+            10,
+            21,
+            20,
+            5,
+            26
+          ]
+        }
+      ],
+      "text": "don't",
+      "textTokenIds": [
+        10,
+        21,
+        20,
+        5,
+        26
+      ]
+    },
+    {
+      "language": "en",
+      "input": "hello.",
+      "note": "strip: trailing period",
+      "words": [
+        {
+          "input": "hello.",
+          "representable": true,
+          "mapped": "hello",
+          "reason": null,
+          "tokenIds": [
+            14,
+            11,
+            18,
+            18,
+            21
+          ]
+        }
+      ],
+      "text": "hello",
+      "textTokenIds": [
+        14,
+        11,
+        18,
+        18,
+        21
+      ]
+    },
+    {
+      "language": "en",
+      "input": "word,",
+      "note": "strip: trailing comma",
+      "words": [
+        {
+          "input": "word,",
+          "representable": true,
+          "mapped": "word",
+          "reason": null,
+          "tokenIds": [
+            29,
+            21,
+            24,
+            10
+          ]
+        }
+      ],
+      "text": "word",
+      "textTokenIds": [
+        29,
+        21,
+        24,
+        10
+      ]
+    },
+    {
+      "language": "en",
+      "input": "\"word,\"",
+      "note": "strip: stacked boundary marks both edges",
+      "words": [
+        {
+          "input": "\"word,\"",
+          "representable": true,
+          "mapped": "word",
+          "reason": null,
+          "tokenIds": [
+            29,
+            21,
+            24,
+            10
+          ]
+        }
+      ],
+      "text": "word",
+      "textTokenIds": [
+        29,
+        21,
+        24,
+        10
+      ]
+    },
+    {
+      "language": "es",
+      "input": "«cerca»",
+      "note": "strip: guillemets both edges",
+      "words": [
+        {
+          "input": "«cerca»",
+          "representable": true,
+          "mapped": "cerca",
+          "reason": null,
+          "tokenIds": [
+            9,
+            11,
+            24,
+            9,
+            7
+          ]
+        }
+      ],
+      "text": "cerca",
+      "textTokenIds": [
+        9,
+        11,
+        24,
+        9,
+        7
+      ]
+    },
+    {
+      "language": "en",
+      "input": "hel​lo",
+      "note": "zero-width space removed mid-word",
+      "words": [
+        {
+          "input": "hel​lo",
+          "representable": true,
+          "mapped": "hello",
+          "reason": null,
+          "tokenIds": [
+            14,
+            11,
+            18,
+            18,
+            21
+          ]
+        }
+      ],
+      "text": "hello",
+      "textTokenIds": [
+        14,
+        11,
+        18,
+        18,
+        21
+      ]
+    },
+    {
+      "language": "en",
+      "input": "don't",
+      "note": "word-internal apostrophe survives",
+      "words": [
+        {
+          "input": "don't",
+          "representable": true,
+          "mapped": "don't",
+          "reason": null,
+          "tokenIds": [
+            10,
+            21,
+            20,
+            5,
+            26
+          ]
+        }
+      ],
+      "text": "don't",
+      "textTokenIds": [
+        10,
+        21,
+        20,
+        5,
+        26
+      ]
+    },
+    {
+      "language": "en",
+      "input": "well-known",
+      "note": "word-internal hyphen survives",
+      "words": [
+        {
+          "input": "well-known",
+          "representable": true,
+          "mapped": "well-known",
+          "reason": null,
+          "tokenIds": [
+            29,
+            11,
+            18,
+            18,
+            6,
+            17,
+            20,
+            21,
+            29,
+            20
+          ]
+        }
+      ],
+      "text": "well-known",
+      "textTokenIds": [
+        29,
+        11,
+        18,
+        18,
+        6,
+        17,
+        20,
+        21,
+        29,
+        20
+      ]
+    },
+    {
+      "language": "de",
+      "input": "arbeits-platz",
+      "note": "word-internal hyphen survives (de)",
+      "words": [
+        {
+          "input": "arbeits-platz",
+          "representable": true,
+          "mapped": "arbeits-platz",
+          "reason": null,
+          "tokenIds": [
+            7,
+            24,
+            8,
+            11,
+            15,
+            26,
+            25,
+            6,
+            22,
+            18,
+            7,
+            26,
+            32
+          ]
+        }
+      ],
+      "text": "arbeits-platz",
+      "textTokenIds": [
+        7,
+        24,
+        8,
+        11,
+        15,
+        26,
+        25,
+        6,
+        22,
+        18,
+        7,
+        26,
+        32
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "d'água",
+      "note": "word-internal apostrophe survives (pt)",
+      "words": [
+        {
+          "input": "d'água",
+          "representable": true,
+          "mapped": "d'água",
+          "reason": null,
+          "tokenIds": [
+            10,
+            5,
+            34,
+            13,
+            27,
+            7
+          ]
+        }
+      ],
+      "text": "d'água",
+      "textTokenIds": [
+        10,
+        5,
+        34,
+        13,
+        27,
+        7
+      ]
+    },
+    {
+      "language": "en",
+      "input": "it's a good day",
+      "note": "baseline sanity phrase",
+      "words": [
+        {
+          "input": "it's",
+          "representable": true,
+          "mapped": "it's",
+          "reason": null,
+          "tokenIds": [
+            15,
+            26,
+            5,
+            25
+          ]
+        },
+        {
+          "input": "a",
+          "representable": true,
+          "mapped": "a",
+          "reason": null,
+          "tokenIds": [
+            7
+          ]
+        },
+        {
+          "input": "good",
+          "representable": true,
+          "mapped": "good",
+          "reason": null,
+          "tokenIds": [
+            13,
+            21,
+            21,
+            10
+          ]
+        },
+        {
+          "input": "day",
+          "representable": true,
+          "mapped": "day",
+          "reason": null,
+          "tokenIds": [
+            10,
+            7,
+            31
+          ]
+        }
+      ],
+      "text": "it's a good day",
+      "textTokenIds": [
+        15,
+        26,
+        5,
+        25,
+        4,
+        7,
+        4,
+        13,
+        21,
+        21,
+        10,
+        4,
+        10,
+        7,
+        31
+      ]
+    }
+  ]
+}

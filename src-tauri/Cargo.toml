@@ -36,16 +36,13 @@ tauri-plugin-shell = "2"
 # 1.23.2. load-dynamic resolves the onnxruntime C library at runtime via
 # ORT_DYLIB_PATH; nothing is vendored or downloaded by this crate.
 ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, features = ["std", "load-dynamic"] }
-# Parses fa_onnx.rs's embedded fa-vocab-*.json fixtures at runtime. Already
-# resolved in this workspace's dependency graph (transitively via tauri) at
-# the identical "1.0" constraint used by [dev-dependencies] below — this adds
-# no new package to Cargo.lock, only a direct edge to an already-present one.
-serde_json = { version = "1.0", optional = true }
-
-[dev-dependencies]
-# Test-only — asserts the exact JSON shape of fa.rs's IPC event/error types
-# (serde_json is already pulled in transitively by tauri; this just makes it
-# directly importable from this crate's own tests). Not an ML dependency.
+# Parses fa_onnx.rs's embedded fa-vocab-*.json fixtures at runtime, and (as of
+# WS1 Task 5 Slice D3) fa/text.rs's caller-supplied vocab JSON — the latter is
+# UNCONDITIONAL (not behind fa-inference), so this is a plain dependency, not
+# an optional one gated by a feature. Already resolved in this workspace's
+# dependency graph (transitively via tauri) at the identical "1.0" constraint
+# this crate now depends on directly — this adds no new package to
+# Cargo.lock, only a direct edge to an already-present one.
 serde_json = "1.0"
 
 [features]
@@ -65,4 +62,4 @@ devtools = ["tauri/devtools"]
 # default — with this feature disabled, `ort` is entirely absent from the
 # build graph and the crate compiles/behaves exactly as it did before this
 # slice. See fa.rs / fa_onnx.rs for the feature-gated inference code.
-fa-inference = ["dep:ort", "dep:serde_json"]
+fa-inference = ["dep:ort"]

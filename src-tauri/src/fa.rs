@@ -3,6 +3,8 @@ use std::sync::Mutex;
 use tauri::ipc::Channel;
 use tauri::Manager;
 
+pub mod text;
+
 // ---------------------------------------------------------------------------
 // Forced-alignment (FA) command-surface skeleton (WS1 Task 5 boundary, R-D).
 //

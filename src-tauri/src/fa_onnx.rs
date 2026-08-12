@@ -18,14 +18,16 @@
 //     convention, NOT raw logits).
 //   - A MINIMAL, embedded per-language vocab (the same jonatasgrosman
 //     HF-tokenizer vocab already captured at `scripts/fixtures/
-//     fa-vocab-<lang>.json`) and a naive ASCII-lowercase text-to-token-id
-//     mapper. This is explicitly NOT the production text-normalization
-//     pipeline — `src/services/textNormalize.ts`'s `canonicalize()` remains
-//     the source of truth and is untouched by this slice; unknown
-//     characters (diacritics, punctuation) are silently dropped here rather
-//     than romanized/normalized. A later slice ports the real pipeline (or
-//     its Rust equivalent) for production use.
-//   - Handing the resulting emission matrix + naive target tokens to the
+//     fa-vocab-<lang>.json`) for the id-mapping (`char_to_id`/`blank_id`/
+//     `word_delim_id`) side of tokenization. Text NORMALIZATION itself (WS1
+//     Task 5 Slice D3) routes through `crate::fa::text`, the Rust port of
+//     `src/services/faTextNormalize.ts` — vocab-aware, diacritic-preserving,
+//     German ß->ss, digit-bearing/unspellable words dropped and recorded.
+//     `src/services/textNormalize.ts`'s `canonicalize()` remains the source
+//     of truth for Whisper/Hirschberg alignment specifically and is
+//     untouched by either slice — see `crate::fa::text`'s module doc comment
+//     for why the two are deliberately parallel, not shared.
+//   - Handing the resulting emission matrix + normalized target tokens to the
 //     already-ported Viterbi DP (`fa_viterbi::forced_align`/`merge_tokens`).
 //
 // Deliberately NOT in scope here (later, separately-decided slices):
@@ -37,11 +39,13 @@
 // ---------------------------------------------------------------------------
 #![cfg(feature = "fa-inference")]
 
+use crate::fa::text::{normalize_for_forced_alignment, Language};
 use crate::fa::FaSegmentInput;
 use crate::fa_viterbi::{forced_align, merge_tokens, AlignError, TokenSpan};
 use ort::session::Session;
 use ort::value::Tensor;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
 
@@ -254,13 +258,18 @@ pub fn run_forward_pass(model_path: &Path, input_samples: &[f32]) -> Result<Vec<
 }
 
 // ---------------------------------------------------------------------------
-// Minimal vocab + naive tokenization (see module doc comment: placeholder,
-// not the production text-normalization pipeline)
+// Minimal embedded vocab (id-mapping side) + vocab-aware tokenization via
+// `crate::fa::text` (see module doc comment)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug)]
 struct Vocab {
     char_to_id: HashMap<char, i64>,
+    /// The vocab-membership character set `crate::fa::text::
+    /// normalize_for_forced_alignment` checks against — derived via that
+    /// same module's `vocab_chars_from_raw_vocab` (not re-derived from
+    /// `char_to_id`'s keys independently), so the two never drift.
+    chars: HashSet<char>,
     blank_id: i64,
     word_delim_id: Option<i64>,
 }
@@ -281,6 +290,7 @@ fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {
     let parsed: serde_json::Value =
         serde_json::from_str(json_str).expect("embedded fa-vocab-*.json must parse");
     let vocab_obj = parsed["vocab"].as_object().expect("embedded fa-vocab-*.json must have a vocab object");
+    let chars = crate::fa::text::vocab_chars_from_raw_vocab(vocab_obj);
 
     let mut char_to_id = HashMap::new();
     let mut blank_id = 0i64;
@@ -295,40 +305,40 @@ fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {
             char_to_id.insert(key.chars().next().unwrap(), id);
         }
         // Multi-char special tokens other than "<pad>" (e.g. "<s>", "</s>",
-        // "<unk>") are not targetable by this naive tokenizer — real text
-        // never needs to align to them directly.
+        // "<unk>") are not targetable by `text_to_token_ids` — normalized
+        // text never needs to align to them directly.
     }
-    Ok(Vocab { char_to_id, blank_id, word_delim_id })
+    Ok(Vocab { char_to_id, chars, blank_id, word_delim_id })
 }
 
-/// Naive ASCII-lowercase text-to-token-id mapping. Unknown characters
-/// (diacritics, punctuation, digits) are silently dropped — see this
-/// module's doc comment for why that's an accepted, documented gap for this
-/// slice rather than a bug.
-fn text_to_token_ids(text: &str, vocab: &Vocab) -> Vec<i64> {
+/// Vocab-aware text-to-token-id mapping: normalizes `text` via
+/// `crate::fa::text::normalize_for_forced_alignment` (diacritic-preserving,
+/// German ß->ss, digit-bearing/unspellable words dropped) and maps each
+/// representable word's characters to `vocab`'s ids, inserting a single
+/// word-delimiter id strictly BETWEEN representable words (never leading or
+/// trailing — there is nothing to trim, unlike the old naive tokenizer,
+/// since normalization already produces a single-space-joined, edge-trimmed
+/// `text`). An unrepresentable word (dropped by normalization) contributes
+/// no ids at all, not a delimiter placeholder.
+fn text_to_token_ids(text: &str, language: Language, vocab: &Vocab) -> Vec<i64> {
+    let normalized = normalize_for_forced_alignment(text, language, &vocab.chars);
+
     let mut ids = Vec::new();
-    for ch in text.to_lowercase().chars() {
-        if ch.is_whitespace() {
-            if let Some(id) = vocab.word_delim_id {
-                if ids.last() != Some(&id) {
-                    ids.push(id);
-                }
+    let mut first = true;
+    for word in normalized.words.iter().filter(|w| w.representable) {
+        if !first {
+            if let Some(delim) = vocab.word_delim_id {
+                ids.push(delim);
             }
-            continue;
         }
-        if let Some(&id) = vocab.char_to_id.get(&ch) {
+        first = false;
+        let mapped = word.mapped.as_deref().expect("representable word must have `mapped` set");
+        for ch in mapped.chars() {
+            let id = *vocab
+                .char_to_id
+                .get(&ch)
+                .unwrap_or_else(|| panic!("normalized word \"{mapped}\" contains char {ch:?} absent from vocab — normalize_for_forced_alignment invariant violated"));
             ids.push(id);
-        }
-    }
-    // Trim a leading/trailing word-delimiter (a leading/trailing space in
-    // the joined segment text shouldn't force a leading/trailing blank
-    // requirement on the DP).
-    if let Some(delim) = vocab.word_delim_id {
-        while ids.first() == Some(&delim) {
-            ids.remove(0);
-        }
-        while ids.last() == Some(&delim) {
-            ids.pop();
         }
     }
     ids
@@ -339,12 +349,12 @@ fn text_to_token_ids(text: &str, vocab: &Vocab) -> Vec<i64> {
 // ---------------------------------------------------------------------------
 
 /// Real `fa_align` implementation: resolves the ONNX model for `language`,
-/// decodes+normalizes `audio_path`, runs the forward pass, naively
-/// tokenizes the concatenation of every segment's text (see module doc
-/// comment), and hands the emission matrix + target tokens to the ported
-/// Viterbi DP. Returns the merged token spans (frame-index start/end per
-/// target token) — not yet surfaced over IPC (see `fa.rs::fa_align`'s doc
-/// comment: frontend wiring is a separate, later slice).
+/// decodes+normalizes `audio_path`, runs the forward pass, vocab-aware-
+/// normalizes and tokenizes the concatenation of every segment's text (see
+/// module doc comment), and hands the emission matrix + target tokens to the
+/// ported Viterbi DP. Returns the merged token spans (frame-index start/end
+/// per target token) — not yet surfaced over IPC (see `fa.rs::fa_align`'s
+/// doc comment: frontend wiring is a separate, later slice).
 pub fn align(
     app: &tauri::AppHandle,
     audio_path: &str,
@@ -358,8 +368,9 @@ pub fn align(
     let emission = run_forward_pass(&model_path, &normed)?;
 
     let vocab = load_vocab(language)?;
+    let lang_enum = Language::from_code(language).ok_or_else(|| FaOnnxError::UnsupportedLanguage(language.to_string()))?;
     let combined_text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
-    let target_ids = text_to_token_ids(&combined_text, &vocab);
+    let target_ids = text_to_token_ids(&combined_text, lang_enum, &vocab);
     if target_ids.is_empty() {
         return Err(FaOnnxError::EmptyTokenization);
     }
@@ -510,22 +521,36 @@ mod tests {
     #[test]
     fn tokenizes_simple_english_text() {
         let vocab = load_vocab("en").unwrap();
-        let ids = text_to_token_ids("cat", &vocab);
+        let ids = text_to_token_ids("cat", Language::En, &vocab);
         assert_eq!(ids.len(), 3);
     }
 
     #[test]
-    fn tokenize_drops_unknown_characters() {
+    fn tokenize_drops_a_digit_bearing_word_entirely_not_just_the_digit() {
+        // Vocab-aware normalization (WS1 Task 5 Slice D3) drops a
+        // digit-bearing word WHOLESALE, unlike the old naive placeholder
+        // which dropped only the offending characters and kept the rest —
+        // "a5b" is one word containing a digit, so it contributes zero ids.
         let vocab = load_vocab("en").unwrap();
-        // "5" and "!" are not in the English char vocab — dropped, not erroring.
-        let ids = text_to_token_ids("a5!b", &vocab);
-        assert_eq!(ids.len(), 2);
+        let ids = text_to_token_ids("a5b", Language::En, &vocab);
+        assert_eq!(ids, Vec::<i64>::new());
+    }
+
+    #[test]
+    fn tokenize_drops_a_genuinely_out_of_vocab_word_entirely() {
+        // "café" contains 'é', absent from the en vocab — the whole word is
+        // unrepresentable and dropped, proving the port did not become
+        // permissive (mirrors `fa::text`'s own OOV-rejection contract).
+        let vocab = load_vocab("en").unwrap();
+        assert!(!vocab.chars.contains(&'é'), "test premise: 'é' must be absent from the en vocab");
+        let ids = text_to_token_ids("café", Language::En, &vocab);
+        assert_eq!(ids, Vec::<i64>::new());
     }
 
     #[test]
     fn tokenize_trims_leading_trailing_word_delimiter() {
         let vocab = load_vocab("en").unwrap();
-        let ids = text_to_token_ids("  cat  ", &vocab);
+        let ids = text_to_token_ids("  cat  ", Language::En, &vocab);
         let delim = vocab.word_delim_id.unwrap();
         assert_ne!(ids.first(), Some(&delim));
         assert_ne!(ids.last(), Some(&delim));
@@ -534,10 +559,23 @@ mod tests {
     #[test]
     fn tokenize_collapses_repeated_whitespace_to_one_delimiter() {
         let vocab = load_vocab("en").unwrap();
-        let ids = text_to_token_ids("cat   dog", &vocab);
+        let ids = text_to_token_ids("cat   dog", Language::En, &vocab);
         let delim = vocab.word_delim_id.unwrap();
         let delim_count = ids.iter().filter(|&&id| id == delim).count();
         assert_eq!(delim_count, 1);
+    }
+
+    #[test]
+    fn tokenize_skips_delimiter_around_a_dropped_middle_word() {
+        // "cat 5 dog" — the middle word is digit-only and dropped; the
+        // surviving words get exactly one delimiter between them, not two
+        // (no delimiter placeholder for the dropped word).
+        let vocab = load_vocab("en").unwrap();
+        let ids = text_to_token_ids("cat 5 dog", Language::En, &vocab);
+        let delim = vocab.word_delim_id.unwrap();
+        let delim_count = ids.iter().filter(|&&id| id == delim).count();
+        assert_eq!(delim_count, 1);
+        assert_eq!(ids.len(), 3 + 1 + 3); // "cat" + delim + "dog"
     }
 }
 
