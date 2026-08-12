@@ -9580,3 +9580,84 @@ Rust Viterbi port's fixture-diff tests (next entry) read them by hardcoded path.
 files / 1857 passed / 1 skipped / 0 failed (unchanged); `cargo check` clean; `cargo test` 19
 passed (unchanged); golden replay 6/6 unchanged. All five identical to the pre-work baseline, as
 expected for a fixtures/docs-only change.
+
+## CTC Viterbi forced-alignment ported to Rust — no inference runtime, 2026-08-12
+
+**What.** `src-tauri/src/fa_viterbi.rs` (new file, declared in `lib.rs` alongside `fa`/`ffmpeg`/
+`whisper` — the crate has no submodule directories today, so this sits beside `fa.rs` rather than
+under a new `fa/` directory, matching that existing flat layout). A pure, dependency-free Rust
+port of `torchaudio.functional.forced_align`'s CTC Viterbi DP (`forced_align_impl` in
+`src/libtorchaudio/forced_align/cpu/compute.cpp`, torchaudio v2.2.2) and its `merge_tokens`
+companion (`src/torchaudio/functional/_alignment.py`), both read directly from the pinned tag
+before writing anything. **No `ort`, `onnxruntime`, `candle`, or any crate added to `Cargo.toml`**
+(confirmed by `git diff --stat` showing `Cargo.toml`/`Cargo.lock` untouched) — the DP takes an
+emission matrix as plain input; the model that would produce one is a separate, later concern
+(blocked on ruling R-M, unaffected by this work). Not wired into `fa.rs`'s `fa_align` command or
+any `src/` caller — this establishes the DP the same way `fa.rs` (Rust forced-alignment command
+surface, prior entry above) established the IPC boundary: proven, tested, unwired.
+
+**Why the existing FA fixtures couldn't validate this.** `phase4-fa-tokens-*.json` (R-H fixture,
+prior entries above) is the FA harness's *final* per-word-span output — no emission matrix, no
+per-frame path, no blank/vocab data. A from-scratch DP port needs emissions IN and a frame path
+OUT to diff against. The emission-matrix fixtures entry immediately above this one closes that
+gap; this entry is what reads them.
+
+**Structure read from the reference, confirmed against the G6 audit summary before porting —
+no differences found:** expanded label sequence `S = 2L + 1`; a rolling two-row alpha buffer
+(`alphas[t % 2]`, not a full `T x S` table); a full `T x S` int8 backpointer table; `R` = count of
+immediately-repeated adjacent target labels, forcing `T >= L + R`; the "skip a blank" transition
+(`x2`, state `i-2 -> i`) disallowed exactly when `target[i/2] == target[i/2-1]` — i.e. exactly
+where a real blank frame is mandatory between two identical adjacent labels.
+
+**Two documented, deliberate deviations from the reference** (both explained inline in
+`fa_viterbi.rs`'s doc comments, neither changes observable numerics):
+1. The backpointer table is a single flat `Vec<i8>` of `T * S` bytes (`back_ptr[tt * s + i]`)
+   rather than `T` separate row allocations — one allocation instead of `T`, same byte layout and
+   count as the reference's literal `torch::Tensor` shape.
+2. The reference's final traceback loop performs an unconditional backpointer subtraction at every
+   frame including `t == 0`, reading `backPtr[0][ltrIdx]` — a cell the forward pass never writes
+   (backpointers are only assigned for `t >= 1`), always `-1` there, and whose result is never read
+   again once the loop ends (dead code in the reference). Replicating that exact operation in Rust
+   would underflow-panic on unsigned `ltr_idx` (`ltr_idx -= (-1i8 as usize)` sign-extends to a huge
+   value); this port skips the subtraction only when `t == 0`, which changes nothing observable.
+   `merge_tokens` also swaps the reference's `-1`-sentinel run-boundary detection for
+   `Option<i64>`, avoiding an assumption about the token id space.
+3. `L == 0` (empty targets) returns a new typed `AlignError::EmptyTargets` rather than replicating
+   the reference's own latent out-of-bounds read at that input (`alphas[idx1][S - 2]` underflows
+   to index `-1` when `S == 1`) — not a real torchaudio precondition, just never hit by any real
+   caller (every forced-alignment call has a non-empty target), guarded explicitly instead of
+   ported blindly.
+
+**Tests — 12 new (`cargo test`: 19 -> 31), two categories:**
+- *Unit (9):* `two_symbol_vocab_hand_computable`, `t_exactly_equals_l_plus_r`,
+  `aabbc_canonical_repeat_case_minimal_t` (the docstring's own `"aabbc"` example at its minimum
+  feasible `T = L + R = 7`), `single_token_target`, `all_blank_dominant_emissions_still_thread_the_target`,
+  `t_less_than_l_plus_r_returns_typed_error_not_panic`, `empty_targets_returns_typed_error_not_panic`,
+  `count_repeats_matches_docstring_aabbc_example`, `lattice_sizing_30s_window`. Every expected
+  value in the hand-computable cases was independently cross-checked against real
+  `torch.ops.torchaudio.forced_align`/`torchaudio.functional.merge_tokens` output on the identical
+  toy input (torch/torchaudio 2.2.2, ad hoc scratch script, not committed) before being hardcoded
+  — eliminating hand-arithmetic risk while keeping each case small enough to verify by inspection
+  too (shown inline in each test's own comment).
+- *Fixture diff (3):* `fixture_diff_en_deep_night`, `fixture_diff_en_mother_look`,
+  `fixture_diff_es_resultan_inutiles` — load each `scripts/fixtures/fa-emission-*.json` fixture by
+  hardcoded path (`env!("CARGO_MANIFEST_DIR")`-relative) and assert this port's `forced_align` +
+  `merge_tokens` output is **frame-for-frame identical** to the real torchaudio path (exact
+  equality, not tolerance) and score-identical within `1e-5`. **All three passed on the first
+  run — zero divergence, no tolerance-widening needed.**
+
+**2.3 lattice sizing, empirically confirmed (`lattice_sizing_30s_window` test):** using this
+codebase's own measured MMS_FA frame rate from the emission fixtures (~49.7 fps), a 30s window
+gives `T = round(30 * 49.7) = 1491` frames. Solving for the target length `L` the audit's own
+naive (uncorrected, `S = L`) 675,000-cell figure implies at that `T` (`L = 675_000 / T ≈ 453`)
+and applying the *correct* `S = 2L + 1 = 907` gives `T * S = 1,491 * 907 = 1,352,337` cells —
+**confirming the audit's corrected ~1.35M figure exactly** (within 20K of 1.35M, actual value
+1,352,337). Backpointer allocation at 1 byte/cell (int8, this module's actual `Vec<i8>` type):
+1,352,337 bytes ≈ 1.29 MiB, for a single flat allocation (deviation 1 above) rather than 1,491
+separate row allocations.
+
+**Gates:** `cargo check` clean, zero warnings (all not-yet-wired `pub` items carry
+`#[allow(dead_code)]`, mirroring `fa.rs`'s own established pattern for a proven-but-unwired
+boundary). `cargo test` 31 passed, 0 failed (19 -> 31, +12, exactly the tests added). `npm test`
+74 files / 1857 passed / 1 skipped / 0 failed (unchanged). `npm run lint` clean. Golden replay 6/6
+(unchanged). `git diff --stat` on `Cargo.toml`/`Cargo.lock`: empty (no dependency added).

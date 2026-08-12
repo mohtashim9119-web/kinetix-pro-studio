@@ -1,4 +1,5 @@
 mod fa;
+mod fa_viterbi;
 mod ffmpeg;
 mod whisper;
 
