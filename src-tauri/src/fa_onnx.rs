@@ -1505,6 +1505,412 @@ mod real_corpus_measurement {
     }
 }
 
+// ---------------------------------------------------------------------------
+// D12 window-size ladder / attribution isolation / Whisper triage (WS1 Task
+// 5 Slice D12 Step 5) — #[ignore]d, real-corpus, measurement-only. Separates
+// the three variables D11's own agreement measurement conflated (window
+// size, text-attribution source, choice of reference) — see
+// `docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`
+// §5's "conclusions NOT yet supported" for the conflation this module exists
+// to resolve.
+//
+// Needs, beyond `real_corpus_measurement`'s own preconditions: chunk plans
+// dumped by `scripts/dump-fa-chunk-plan-ladder.ts` (into the same
+// `$FA_CHUNK_PLAN_DIR` as `scripts/dump-fa-chunk-plan.ts`'s own D11 output)
+// and the real Whisper `transcript_tokens.json` for the 173-project replay
+// fixture (already present, already used as `computeFaChunkPlan`'s own
+// `tokens` input — NOT `tokens_fa.json`, which is a DIFFERENT, D7-cancelled
+// tool's output: the per-segment torchaudio MMS_FA reference
+// `measure-forced-alignment.py` produces, per `meta_fa.json`'s own `cmd`
+// field — using it here would silently resurrect the exact
+// "window-is-the-committed-span" anti-pattern D7's cancellation rejected).
+//
+// Run (each rung as its own process, for an isolated wall-clock/peak-RSS
+// reading via an external `/usr/bin/time -l` wrapper — this module does not
+// instrument its own memory):
+//   SCRATCHPAD_DIR=<dir> npx tsx scripts/dump-fa-chunk-plan.ts
+//   SCRATCHPAD_DIR=<dir> npx tsx scripts/dump-fa-chunk-plan-ladder.ts
+//   ORT_DYLIB_PATH=<path> FA_CHUNK_PLAN_DIR=<dir> /usr/bin/time -l \
+//     cargo test --features fa-inference -- --ignored --nocapture --exact \
+//     fa_onnx::d12_measurement::ladder_7s
+//   … (repeat per rung, then attribution_isolation, then whisper_triage —
+//   the FIRST of these run in a given `$FA_CHUNK_PLAN_DIR` computes and
+//   caches the whole-file reference; later runs reuse the cache file).
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod d12_measurement {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("d12_measurement's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    /// A ground-truth word for comparison purposes: normalized text plus
+    /// absolute audio time. Used for both the whole-file FA reference
+    /// (`RefWord.text` is the same normalized/lowercased form `WordSpan.text`
+    /// already is) and the Whisper reference (normalized the same way via
+    /// `normalize_word`, so text comparison is apples-to-apples either way).
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct RefWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    fn load_plan(dir: &Path, label: &str) -> Option<Vec<crate::fa::FaChunkInput>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d12_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(
+            plan.chunks
+                .into_iter()
+                .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+                .collect(),
+        )
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    /// Loads (or computes-and-caches to `<plan_dir>/173-excerpt-240s-
+    /// reference-words.json`) the whole-file reference pass over the real
+    /// 240s excerpt. Cached so the 4 ladder rungs plus the
+    /// attribution-isolation leg — each its own `cargo test --exact`
+    /// process, per this module's own top doc comment — don't each pay the
+    /// whole-file pass's own ~113s/~20GiB cost separately (measured at
+    /// `d11-chunked-alignment-2026-08-13.md` §1).
+    fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
+        if cache_path.exists() {
+            let text = std::fs::read_to_string(&cache_path)
+                .unwrap_or_else(|e| panic!("read cached reference {}: {e}", cache_path.display()));
+            return serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse cached reference {}: {e}", cache_path.display()));
+        }
+        let plan = load_plan(plan_dir, "173-excerpt-240s-wholefile").expect("wholefile plan must exist to compute the reference");
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        eprintln!("d12_measurement: computing whole-file 240s reference (first use in this $FA_CHUNK_PLAN_DIR, will be cached)...");
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, model_path, audio_path, &plan, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("whole-file reference pass failed: {e}"));
+        eprintln!(
+            "d12_measurement: whole-file reference computed in {:.1}s, {} words",
+            start.elapsed().as_secs_f64(),
+            words.len()
+        );
+        let ref_words: Vec<RefWord> =
+            words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        std::fs::write(&cache_path, serde_json::to_string(&ref_words).unwrap())
+            .unwrap_or_else(|e| panic!("write reference cache {}: {e}", cache_path.display()));
+        ref_words
+    }
+
+    struct AgreementStats {
+        matched: usize,
+        start_diffs: Vec<f64>,
+        end_diffs: Vec<f64>,
+    }
+
+    /// Same greedy text-matched two-pointer walk as
+    /// `real_corpus_measurement`'s own agreement test (D11) — `windowed` is
+    /// a strict subsequence of `reference`'s word-text sequence (missing any
+    /// word a failed/skipped chunk dropped), both sides share the same
+    /// normalized text space, so this recovers the correspondence without
+    /// needing equal lengths.
+    fn text_matched_diff_stats(windowed: &[WordSpan], reference: &[RefWord]) -> AgreementStats {
+        let mut ref_idx = 0usize;
+        let mut start_diffs = Vec::new();
+        let mut end_diffs = Vec::new();
+        let mut matched = 0usize;
+        for w in windowed {
+            while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                ref_idx += 1;
+            }
+            if ref_idx >= reference.len() {
+                break;
+            }
+            let r = &reference[ref_idx];
+            start_diffs.push((r.start - w.start_seconds).abs());
+            end_diffs.push((r.end - w.end_seconds).abs());
+            matched += 1;
+            ref_idx += 1;
+        }
+        start_diffs.sort_by(|a, b| a.total_cmp(b));
+        end_diffs.sort_by(|a, b| a.total_cmp(b));
+        AgreementStats { matched, start_diffs, end_diffs }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn print_stats_row(
+        label: &str,
+        stats: &AgreementStats,
+        windowed_total: usize,
+        reference_total: usize,
+        ctc_failed: usize,
+        ctc_total: usize,
+        wall_clock_sec: f64,
+    ) {
+        if stats.start_diffs.is_empty() {
+            eprintln!("d12_measurement: [{label}] matched=0/{windowed_total} (ref={reference_total}) — no distribution");
+            return;
+        }
+        eprintln!(
+            "d12_measurement: [{label}] matched={}/{windowed_total} (ref={reference_total}) ctc_failed={ctc_failed}/{ctc_total} \
+             wall={wall_clock_sec:.1}s START(s) min={:.4} p50={:.4} p90={:.4} p99={:.4} max={:.4} \
+             END(s) min={:.4} p50={:.4} p90={:.4} p99={:.4} max={:.4}",
+            stats.matched,
+            stats.start_diffs[0],
+            percentile(&stats.start_diffs, 0.50),
+            percentile(&stats.start_diffs, 0.90),
+            percentile(&stats.start_diffs, 0.99),
+            stats.start_diffs[stats.start_diffs.len() - 1],
+            stats.end_diffs[0],
+            percentile(&stats.end_diffs, 0.50),
+            percentile(&stats.end_diffs, 0.90),
+            percentile(&stats.end_diffs, 0.99),
+            stats.end_diffs[stats.end_diffs.len() - 1],
+        );
+    }
+
+    /// Runs `chunks` per-chunk, one `align_chunked` call each (fault-
+    /// tolerant — a CTC-infeasible chunk is skipped, not fatal). Same
+    /// measurement-only adaptation `real_corpus_measurement`'s own D11 tests
+    /// use; production `align_chunked` remains unmodified, all-or-nothing.
+    fn run_windowed_fault_tolerant(
+        model_path: &Path,
+        audio_path: &str,
+        chunks: &[crate::fa::FaChunkInput],
+    ) -> (Vec<WordSpan>, usize) {
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let mut words = Vec::new();
+        let mut failed = 0usize;
+        for chunk in chunks {
+            let single = std::slice::from_ref(chunk);
+            match align_chunked(&cache, model_path, audio_path, single, "en", || false, |_| {}) {
+                Ok(mut w) => words.append(&mut w),
+                Err(_) => failed += 1,
+            }
+        }
+        (words, failed)
+    }
+
+    fn common_setup(context: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {context}: FA_CHUNK_PLAN_DIR not set");
+            return None;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((plan_dir, model_path, audio_path))
+    }
+
+    /// PART A — window-size ladder. `target_label` selects one of
+    /// `scripts/dump-fa-chunk-plan-ladder.ts`'s coalesce-target dumps
+    /// (`computeFaChunkPlanCoalesced`, WS1 Task 5 Slice D12 Step 4).
+    fn run_ladder_rung(target_label: &str) {
+        let context = format!("d12_ladder_{target_label}");
+        let Some((plan_dir, model_path, audio_path)) = common_setup(&context) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+        let Some(chunks) = load_plan(&plan_dir, &format!("173-excerpt-240s-ladder-{target_label}")) else { return };
+
+        let start = std::time::Instant::now();
+        let (words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        eprintln!(
+            "d12_measurement: [ladder-{target_label}] {} chunks, {} succeeded, {} failed, wall={wall:.1}s",
+            chunks.len(),
+            chunks.len() - failed,
+            failed,
+        );
+        let stats = text_matched_diff_stats(&words, &reference);
+        print_stats_row(&format!("ladder-{target_label}"), &stats, words.len(), reference.len(), failed, chunks.len(), wall);
+    }
+
+    #[test]
+    #[ignore]
+    fn ladder_7s() {
+        run_ladder_rung("7s");
+    }
+    #[test]
+    #[ignore]
+    fn ladder_20s() {
+        run_ladder_rung("20s");
+    }
+    #[test]
+    #[ignore]
+    fn ladder_45s() {
+        run_ladder_rung("45s");
+    }
+    #[test]
+    #[ignore]
+    fn ladder_90s() {
+        run_ladder_rung("90s");
+    }
+
+    /// PART B — attribution isolation. Cuts ONLY where the whole-file
+    /// reference itself shows an inter-word gap `>= GAP_THRESHOLD_SEC`, and
+    /// assigns each resulting window's TEXT by whole-file WORD membership —
+    /// not by `segment.startTime` (`faChunkPlan.ts`'s rule, the thing under
+    /// suspicion per `d11-chunked-alignment-2026-08-13.md` §5, point 1).
+    /// This makes chunk text correct by construction: whatever disagreement
+    /// remains here is attributable to windowing itself (running FA on a
+    /// smaller window vs. the whole file), not to attribution drift.
+    #[test]
+    #[ignore]
+    fn attribution_isolation() {
+        const CONTEXT: &str = "d12_attribution_isolation";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        // GAP_THRESHOLD_SEC: a round number well above CTC frame
+        // quantization (0.02s, `conv_stride`-derived) and well above
+        // ordinary inter-word co-articulation gaps in continuous narrated
+        // speech, chosen so this diagnostic leg actually finds cut points
+        // inside 240s of real audio — NOT derived from a corpus measurement
+        // the way `ANCHOR_AGREEMENT_SEC`/`PAD_BASE` were (this leg isolates
+        // ONE variable for a report, it does not propose a production
+        // rule), so stated explicitly here rather than silently reused from
+        // `syncConstants.ts` (which this slice does not touch).
+        const GAP_THRESHOLD_SEC: f64 = 0.5;
+
+        let mut chunks: Vec<crate::fa::FaChunkInput> = Vec::new();
+        let mut cur_start = 0.0f64;
+        let mut cur_words: Vec<&str> = Vec::new();
+        for i in 0..reference.len() {
+            cur_words.push(&reference[i].text);
+            let is_last = i == reference.len() - 1;
+            let gap = if is_last { 0.0 } else { reference[i + 1].start - reference[i].end };
+            if is_last || gap >= GAP_THRESHOLD_SEC {
+                let cut = if is_last { reference[i].end } else { reference[i].end + gap / 2.0 };
+                chunks.push(crate::fa::FaChunkInput { start_sec: cur_start, end_sec: cut, text: cur_words.join(" ") });
+                cur_start = cut;
+                cur_words.clear();
+            }
+        }
+        eprintln!(
+            "d12_measurement: [attribution-isolation] built {} text-correct-by-construction chunks (gap threshold {GAP_THRESHOLD_SEC}s) \
+             from {} reference words",
+            chunks.len(),
+            reference.len(),
+        );
+
+        let start = std::time::Instant::now();
+        let (words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        let stats = text_matched_diff_stats(&words, &reference);
+        print_stats_row("attribution-isolation", &stats, words.len(), reference.len(), failed, chunks.len(), wall);
+    }
+
+    /// PART C — Whisper triage. Compares (a) the whole-file reference and
+    /// (b) a windowed rung (`FA_D12_BEST_RUNG`, default `"90s"` — override
+    /// after reading part A's own printed table, since which rung is "best"
+    /// is this test's caller's judgment call, not something this test
+    /// decides for itself).
+    ///
+    /// **Does NOT compute the agreement stats itself.** `text_matched_diff_stats`'s
+    /// naive sequential-text-equality walk (used for the ladder/attribution
+    /// legs above) is only valid when both sides tokenize the SAME
+    /// underlying text — true for whole-file-vs-windowed (both come from
+    /// `segment.text`, the SCRIPT) but FALSE here: Whisper's tokens come
+    /// from the actual spoken AUDIO, which routinely differs in wording from
+    /// the script (that gap is exactly what this codebase's own
+    /// `alignQueryToSubject` Hirschberg-style fuzzy alignment exists to
+    /// bridge everywhere else). A first run of this test confirmed the
+    /// failure mode directly: the naive walk matched only 4/569 words
+    /// (diverging after the first wording difference and never
+    /// resynchronizing). Rather than ship a silently-wrong number, this test
+    /// dumps BOTH sides to JSON and defers the actual comparison to
+    /// `scripts/fa-whisper-triage-report.ts`, which reuses the real,
+    /// already-proven `alignQueryToSubject` to match FA words against
+    /// Whisper words properly.
+    #[test]
+    #[ignore]
+    fn whisper_triage() {
+        const CONTEXT: &str = "d12_whisper_triage";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        // Ensures the reference cache file exists on disk (this call is a
+        // no-op if a prior ladder/attribution test already populated it).
+        let _reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let best_rung = std::env::var("FA_D12_BEST_RUNG").unwrap_or_else(|_| "90s".to_string());
+        let Some(chunks) = load_plan(&plan_dir, &format!("173-excerpt-240s-ladder-{best_rung}")) else { return };
+        let start = std::time::Instant::now();
+        let (windowed_words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        eprintln!(
+            "d12_measurement: [whisper-triage] ladder-{best_rung}: {} chunks, {} succeeded, {} failed, wall={wall:.1}s, {} words",
+            chunks.len(),
+            chunks.len() - failed,
+            failed,
+            windowed_words.len(),
+        );
+
+        let windowed_ref: Vec<RefWord> =
+            windowed_words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        let out_path = plan_dir.join(format!("173-excerpt-240s-ladder-{best_rung}-words.json"));
+        std::fs::write(&out_path, serde_json::to_string(&windowed_ref).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+        eprintln!(
+            "d12_measurement: [whisper-triage] wrote {} words to {} — run \
+             `npx tsx scripts/fa-whisper-triage-report.ts` (FA_CHUNK_PLAN_DIR={}) for the actual agreement stats \
+             (whole-file reference already cached at 173-excerpt-240s-reference-words.json in the same dir).",
+            windowed_ref.len(),
+            out_path.display(),
+            plan_dir.display(),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
