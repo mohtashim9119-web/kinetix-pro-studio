@@ -450,6 +450,131 @@ fn text_to_token_ids(text: &str, language: Language, vocab: &Vocab) -> Vec<i64> 
 }
 
 // ---------------------------------------------------------------------------
+// Character -> word span merge (WS1 Task 5 Slice D8)
+//
+// `fa_viterbi::merge_tokens` collapses the Viterbi path into CHARACTER-level
+// spans (one per surviving token run — every distinct vocab char, INCLUDING
+// the word-delimiter "|", since `merge_tokens` only drops `blank`-valued
+// runs, not delimiter runs; the fixture data confirms this directly — e.g.
+// `fa-e2e-alignment-en-deep-night.json`'s `target_token_ids` has 23 entries
+// for a 6-word/18-letter sentence, the extra 5 being delimiter id 4 (`"|"`
+// in `fa-vocab-en.json`), and `expected_spans` has exactly 23 entries to
+// match, one per token including every delimiter). This function does the
+// next step: group those character spans into WORD-level spans, splitting
+// on the delimiter, reconstructing each word's text from its constituent
+// characters' vocab ids.
+//
+// Three determinations made before writing this (full citations and
+// reasoning in this slice's final report):
+//   1. `TokenSpan.score` is a mean LOG-PROBABILITY (`fa_viterbi.rs`'s
+//      `merge_tokens` doc comment + `log_softmax_row` above), not a
+//      probability — always <= 0, unbounded below. `syncConstants.ts`'s
+//      `CONF_MIN = 0.3` reads as a probability-shaped floor. These are
+//      different units; this slice does not convert between them (that is
+//      the later wiring slice's problem, not this pure-merge slice's).
+//   2. Word-level score is the MEAN of constituent character spans' scores,
+//      WEIGHTED by each span's own frame length (`end - start`) — not an
+//      unweighted mean. This is what directly averaging the underlying
+//      per-frame log-probs across the word's own character-bearing frames
+//      would give (since each character span's own score is already a mean
+//      over its own frame extent); an unweighted mean would let a
+//      single-frame character run outvote a ten-frame one.
+//   3. The delimiter's own spans are consumed as GROUPING BOUNDARIES only —
+//      never included in a word's reconstructed text, never emitted as a
+//      word of their own.
+// ---------------------------------------------------------------------------
+
+/// One word-level span: reconstructed text, wall-clock seconds (via
+/// [`frame_to_seconds`]), and an aggregated score. See this section's module
+/// doc comment above for the three determinations behind these fields —
+/// `score` in particular is a mean LOG-PROBABILITY, not directly comparable
+/// to `syncConstants.ts`'s `CONF_MIN` without an explicit unit conversion
+/// this slice deliberately does not perform.
+// Not yet constructed by any production caller (`align`/`align_with_model_path`
+// are untouched by this slice — see this slice's own scope boundary) —
+// exercised only by this module's test suite below, same "established but
+// unwired" pattern `frame_to_seconds`/`token_span_seconds` already use.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+struct WordSpan {
+    pub text: String,
+    pub start_seconds: f64,
+    pub end_seconds: f64,
+    pub score: f32,
+}
+
+/// Groups `char_spans` (one [`TokenSpan`] per character, in ascending time
+/// order, as produced by `fa_viterbi::merge_tokens`) into word-level
+/// [`WordSpan`]s, splitting on `vocab`'s own word-delimiter token id. A run
+/// of zero non-delimiter spans between two delimiters (or at either end,
+/// or from a wholly-empty `char_spans`) contributes no word — never an
+/// empty [`WordSpan`] in the output.
+///
+/// A mandatory CTC blank between two immediately-repeated characters inside
+/// one word (e.g. "book"'s repeated "o") produces two separate same-token
+/// character spans with a frame gap between them that belongs to neither
+/// span; that gap is simply excluded from the word's score by construction
+/// (the weighted mean below only ever sums over spans that are actually
+/// present in `char_spans`).
+#[allow(dead_code)]
+fn merge_char_spans_to_words(char_spans: &[TokenSpan], vocab: &Vocab) -> Vec<WordSpan> {
+    let id_to_char: HashMap<i64, char> = vocab.char_to_id.iter().map(|(&c, &id)| (id, c)).collect();
+
+    let mut words = Vec::new();
+    let mut current: Vec<&TokenSpan> = Vec::new();
+
+    for span in char_spans {
+        if Some(span.token) == vocab.word_delim_id {
+            flush_word(&mut current, &id_to_char, &mut words);
+            continue;
+        }
+        current.push(span);
+    }
+    flush_word(&mut current, &id_to_char, &mut words);
+
+    words
+}
+
+/// Reconstructs one [`WordSpan`] from `current`'s accumulated character
+/// spans (if any) and pushes it to `words`, then clears `current` for the
+/// next word. A no-op when `current` is empty (two adjacent delimiters, or a
+/// leading/trailing delimiter) — the "no empty word" contract
+/// [`merge_char_spans_to_words`] documents.
+fn flush_word<'a>(current: &mut Vec<&'a TokenSpan>, id_to_char: &HashMap<i64, char>, words: &mut Vec<WordSpan>) {
+    if current.is_empty() {
+        return;
+    }
+
+    let text: String = current
+        .iter()
+        .map(|span| {
+            *id_to_char.get(&span.token).unwrap_or_else(|| {
+                panic!(
+                    "char span token {} absent from vocab's char_to_id reverse map — \
+                     merge_char_spans_to_words invariant violated",
+                    span.token
+                )
+            })
+        })
+        .collect();
+
+    let start = current.first().expect("current is non-empty here").start;
+    let end = current.last().expect("current is non-empty here").end;
+    // Weighted by each span's own frame length (`end - start`) — never 0,
+    // since `merge_tokens` only ever produces spans with `end > start`.
+    let total_frames: usize = current.iter().map(|s| s.end - s.start).sum();
+    let weighted_score = current.iter().map(|s| s.score * (s.end - s.start) as f32).sum::<f32>() / total_frames as f32;
+
+    words.push(WordSpan {
+        text,
+        start_seconds: frame_to_seconds(start),
+        end_seconds: frame_to_seconds(end),
+        score: weighted_score,
+    });
+    current.clear();
+}
+
+// ---------------------------------------------------------------------------
 // Orchestration
 // ---------------------------------------------------------------------------
 
@@ -698,6 +823,218 @@ mod tests {
         let delim_count = ids.iter().filter(|&&id| id == delim).count();
         assert_eq!(delim_count, 1);
         assert_eq!(ids.len(), 3 + 1 + 3); // "cat" + delim + "dog"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Character -> word span merge unit tests (WS1 Task 5 Slice D8). None of
+// these touch ORT/ONNX — `TokenSpan` lists are hand-built or produced by a
+// synthetic `forced_align` call (the same technique `fa_viterbi.rs`'s own
+// hand-computable tests use), so this module runs unconditionally in every
+// environment, no `require_ort` gate needed.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod word_merge {
+    use super::*;
+
+    /// English vocab char ids used throughout this module (confirmed by
+    /// direct inspection of `fa-vocab-en.json`): c=9, a=7, t=26, d=10, o=21,
+    /// g=13, b=8, k=17, delimiter "|"=4.
+    fn span(token: i64, start: usize, end: usize, score: f32) -> TokenSpan {
+        TokenSpan { token, start, end, score }
+    }
+
+    #[test]
+    fn merges_two_words_split_by_one_delimiter() {
+        let vocab = load_vocab("en").unwrap();
+        let delim = vocab.word_delim_id.unwrap();
+        // "cat" (c=9,a=7,t=26) | "dog" (d=10,o=21,g=13)
+        let spans = vec![
+            span(9, 0, 1, -0.1),
+            span(7, 1, 2, -0.2),
+            span(26, 2, 3, -0.3),
+            span(delim, 3, 4, -0.05),
+            span(10, 5, 6, -0.4),
+            span(21, 6, 7, -0.5),
+            span(13, 7, 8, -0.6),
+        ];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 2, "zero-word pass must be impossible for non-empty input");
+        assert_eq!(words[0].text, "cat");
+        assert_eq!(words[1].text, "dog");
+        // Delimiter is a pure boundary — never included in reconstructed text.
+        assert!(!words[0].text.contains('|') && !words[1].text.contains('|'));
+    }
+
+    #[test]
+    fn word_seconds_span_first_to_last_constituent_char_frame() {
+        let vocab = load_vocab("en").unwrap();
+        let spans = vec![span(9, 3, 5, -0.1), span(7, 5, 6, -0.2), span(26, 8, 9, -0.3)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].start_seconds, frame_to_seconds(3));
+        assert_eq!(words[0].end_seconds, frame_to_seconds(9));
+    }
+
+    #[test]
+    fn word_score_is_weighted_by_span_frame_length_not_unweighted_mean() {
+        let vocab = load_vocab("en").unwrap();
+        // "ca": 'c' is a 10-frame run at score -1.0, 'a' is a 1-frame run at
+        // score -10.0. Weighted mean = (-1.0*10 + -10.0*1) / 11 ≈ -1.818.
+        // Unweighted mean would give (-1.0 + -10.0) / 2 = -5.5 — a materially
+        // different number, so this test actually distinguishes the two
+        // aggregation choices rather than passing under either.
+        let spans = vec![span(9, 0, 10, -1.0), span(7, 10, 11, -10.0)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 1);
+        let weighted = (-1.0f32 * 10.0 + -10.0f32 * 1.0) / 11.0;
+        assert!(
+            (words[0].score - weighted).abs() < 1e-5,
+            "expected frame-length-weighted mean {weighted}, got {}",
+            words[0].score
+        );
+        let unweighted = (-1.0f32 + -10.0f32) / 2.0;
+        assert!(
+            (words[0].score - unweighted).abs() > 1.0,
+            "score must NOT equal the unweighted mean {unweighted} — got {}",
+            words[0].score
+        );
+    }
+
+    #[test]
+    fn leading_and_trailing_delimiters_produce_no_empty_word() {
+        let vocab = load_vocab("en").unwrap();
+        let delim = vocab.word_delim_id.unwrap();
+        let spans = vec![span(delim, 0, 1, -0.05), span(9, 1, 2, -0.1), span(delim, 2, 3, -0.05)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "c");
+    }
+
+    #[test]
+    fn two_adjacent_delimiters_produce_no_empty_word() {
+        let vocab = load_vocab("en").unwrap();
+        let delim = vocab.word_delim_id.unwrap();
+        let spans = vec![span(9, 0, 1, -0.1), span(delim, 1, 2, -0.05), span(delim, 2, 3, -0.05), span(7, 3, 4, -0.2)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 2);
+        assert_eq!(words[0].text, "c");
+        assert_eq!(words[1].text, "a");
+    }
+
+    #[test]
+    fn empty_input_produces_zero_words_not_a_panic() {
+        let vocab = load_vocab("en").unwrap();
+        let words = merge_char_spans_to_words(&[], &vocab);
+        assert_eq!(words, Vec::<WordSpan>::new());
+    }
+
+    #[test]
+    fn repeated_adjacent_character_within_a_word_stays_one_word_two_spans() {
+        // "book": b=8, o=21 (repeated — CTC forces a mandatory blank between
+        // the two 'o' spans, so they arrive here as two separate same-token
+        // TokenSpans with a frame gap between them, per merge_tokens), k=17.
+        let vocab = load_vocab("en").unwrap();
+        let spans = vec![
+            span(8, 0, 1, -0.1),
+            span(21, 1, 2, -0.2),
+            // frame 2 is the mandatory blank, dropped by merge_tokens — not
+            // present here, by construction.
+            span(21, 3, 4, -0.25),
+            span(17, 4, 5, -0.3),
+        ];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words.len(), 1);
+        assert_eq!(words[0].text, "book");
+        // The gap frame (2) is excluded from both the span extent used for
+        // scoring and the reported boundaries — end_seconds is the LAST
+        // span's own end (frame 5), not stretched to cover the gap.
+        assert_eq!(words[0].start_seconds, frame_to_seconds(0));
+        assert_eq!(words[0].end_seconds, frame_to_seconds(5));
+        let weighted = (-0.1f32 * 1.0 + -0.2f32 * 1.0 + -0.25f32 * 1.0 + -0.3f32 * 1.0) / 4.0;
+        assert!((words[0].score - weighted).abs() < 1e-5);
+    }
+
+    // -- non-vacuity: perturb each new assertion, confirm it actually fails --
+
+    #[test]
+    fn non_vacuity_word_count_assertion_catches_a_wrong_count() {
+        let vocab = load_vocab("en").unwrap();
+        let delim = vocab.word_delim_id.unwrap();
+        let spans =
+            vec![span(9, 0, 1, -0.1), span(7, 1, 2, -0.2), span(delim, 2, 3, -0.05), span(26, 3, 4, -0.3)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        // Real assertion this mirrors: `assert_eq!(words.len(), 2)`.
+        assert_eq!(words.len(), 2, "sanity: real count must be 2");
+        // Perturbed: assert the WRONG count and confirm it fails.
+        let perturbed = std::panic::catch_unwind(|| assert_eq!(words.len(), 3));
+        assert!(perturbed.is_err(), "perturbed wrong-count assertion must fail, not silently pass");
+    }
+
+    #[test]
+    fn non_vacuity_text_reconstruction_assertion_catches_wrong_text() {
+        let vocab = load_vocab("en").unwrap();
+        let spans = vec![span(9, 0, 1, -0.1), span(7, 1, 2, -0.2), span(26, 2, 3, -0.3)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words[0].text, "cat", "sanity: real text must be \"cat\"");
+        let text = words[0].text.clone();
+        let perturbed = std::panic::catch_unwind(move || assert_eq!(text, "dog"));
+        assert!(perturbed.is_err(), "perturbed wrong-text assertion must fail, not silently pass");
+    }
+
+    #[test]
+    fn non_vacuity_seconds_assertion_catches_wrong_boundary() {
+        let vocab = load_vocab("en").unwrap();
+        let spans = vec![span(9, 3, 5, -0.1)];
+        let words = merge_char_spans_to_words(&spans, &vocab);
+        assert_eq!(words[0].start_seconds, frame_to_seconds(3), "sanity: real start must be frame 3");
+        let start = words[0].start_seconds;
+        let perturbed = std::panic::catch_unwind(move || assert_eq!(start, frame_to_seconds(4)));
+        assert!(perturbed.is_err(), "perturbed wrong-boundary assertion must fail, not silently pass");
+    }
+
+    // -- drop-path coverage: an unrepresentable word must vanish cleanly ----
+
+    #[test]
+    fn unrepresentable_middle_word_is_dropped_with_correct_neighbours_and_no_stray_delimiter() {
+        // "cat 5 dog": the real production tokenizer (`text_to_token_ids`,
+        // vocab-aware, same path `align_with_model_path` uses) drops "5"
+        // wholesale — D5's documented contract-only drop path. This test
+        // drives that REAL tokenizer output through a SYNTHETIC
+        // `forced_align` call (uniform, heavily-favored per-frame log-probs,
+        // T == L exactly so the path is fully forced — the same technique
+        // `fa_viterbi.rs`'s own `aabbc_canonical_repeat_case_minimal_t` test
+        // uses) to get REAL character-level TokenSpans out of the actual DP,
+        // not hand-fabricated ones, then merges them into words.
+        let vocab = load_vocab("en").unwrap();
+        let target_ids = text_to_token_ids("cat 5 dog", Language::En, &vocab);
+        // Sanity: the tokenizer already dropped "5" — one delimiter, 6 letters.
+        assert_eq!(target_ids.len(), 7, "test premise: \"cat\"+delim+\"dog\" must be 7 ids");
+
+        let l = target_ids.len();
+        let c = 30usize; // safely above every vocab id used (max id here is 26 't').
+        // T == L, R == 0 (no immediately-repeated adjacent ids in "catXdog"
+        // once delim is counted — 'c','a','t','|','d','o','g' are all
+        // distinct from their neighbours), so the DP is fully forced through
+        // exactly one label per frame with zero blanks, regardless of
+        // magnitude (same zero-slack reasoning as fa_viterbi.rs's own
+        // t_exactly_equals_l_plus_r/aabbc tests).
+        let mut log_probs = vec![vec![-10.0f32; c]; l];
+        for (t, &id) in target_ids.iter().enumerate() {
+            log_probs[t][id as usize] = -0.01;
+        }
+        let result = forced_align(&log_probs, &target_ids, vocab.blank_id).unwrap();
+        assert_eq!(result.path, target_ids, "test premise: zero-slack path must equal target_ids exactly");
+
+        let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
+        assert_eq!(char_spans.len(), l, "test premise: one span per frame, none merged (no repeats)");
+
+        let words = merge_char_spans_to_words(&char_spans, &vocab);
+        assert_eq!(words.len(), 2, "the dropped middle word must not produce a third word");
+        assert_eq!(words[0].text, "cat", "left neighbour must be correct");
+        assert_eq!(words[1].text, "dog", "right neighbour must be correct");
+        assert!(words.iter().all(|w| !w.text.is_empty()), "no empty word");
+        assert!(words.iter().all(|w| !w.text.contains('|')), "no stray delimiter in reconstructed text");
     }
 }
 
@@ -1178,6 +1515,229 @@ mod e2e_parity {
 
     #[test]
     fn e2e_pt_site_publico() {
+        run_one(&FIXTURES[5]);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Character -> word merge against the six real e2e fixtures (WS1 Task 5
+// Slice D8). Reuses `e2e_parity`'s own pipeline (real ONNX forward pass ->
+// `forced_align` -> `merge_tokens`) to get REAL character-level TokenSpans,
+// then feeds them to `merge_char_spans_to_words` and checks two independent
+// things against two independent ground truths:
+//
+//   1. The merged word TEXT list matches the normalizer's OWN
+//      representable-word output (`fa::text::normalize_for_forced_alignment`
+//      on the fixture's `_provenance.text`) — NOT a naive whitespace split.
+//      A naive split would happen to pass on these six fixtures purely
+//      because none of them contains an unrepresentable word (D5's own
+//      finding), proving nothing about the drop path; the normalizer's own
+//      output is correct by definition and exercises the real contract.
+//   2. Each word's `start_seconds`/`end_seconds` matches the fixture's own
+//      pre-computed `expected_spans[i]["start_seconds"/"end_seconds"]`
+//      fields (Python-computed ground truth, independent of this file's
+//      `frame_to_seconds`), via an INDEPENDENT grouping loop written here
+//      in the test (not by calling `merge_char_spans_to_words` a second
+//      time) — so both the grouping boundaries and the seconds conversion
+//      are cross-checked against fixture-authored numbers, not against this
+//      module's own function a second time.
+//
+// Same require_ort/FA_REQUIRE_ORT skip-vs-fail gating and ORT_ENV_LOCK
+// discipline as `e2e_parity` (same missing-`ORT_DYLIB_PATH`/missing-
+// `model.onnx` conditions, same reasoning — see that module's own comment).
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod word_merge_e2e {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        file: &'static str,
+        language: &'static str,
+    }
+
+    const FIXTURES: &[Fixture] = &[
+        Fixture { file: "fa-e2e-alignment-en-deep-night.json", language: "en" },
+        Fixture { file: "fa-e2e-alignment-en-mother-look.json", language: "en" },
+        Fixture { file: "fa-e2e-alignment-es-resultan-inutiles.json", language: "es" },
+        Fixture { file: "fa-e2e-alignment-fr-pas-juste.json", language: "fr" },
+        Fixture { file: "fa-e2e-alignment-de-nicht-fair.json", language: "de" },
+        Fixture { file: "fa-e2e-alignment-pt-site-publico.json", language: "pt" },
+    ];
+
+    const FA_SECONDS_TOLERANCE: f64 = 1e-9;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("word_merge_e2e's fa_models_dir() only reproduces the macOS app_local_data_dir mapping");
+    }
+
+    /// Groups fixture-authored `expected_spans` on `delim` into
+    /// `(start_seconds, end_seconds)` pairs, read directly from each group's
+    /// first/last member's own `start_seconds`/`end_seconds` JSON fields —
+    /// independent of `merge_char_spans_to_words`/`frame_to_seconds`, so
+    /// this is real fixture ground truth, not a second call into the code
+    /// under test.
+    fn expected_word_seconds_from_fixture(expected_spans: &[serde_json::Value], delim: i64) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
+        let mut run_start: Option<f64> = None;
+        let mut run_end: Option<f64> = None;
+        for span in expected_spans {
+            let token = span["token"].as_i64().unwrap();
+            if token == delim {
+                if let (Some(s), Some(e)) = (run_start.take(), run_end.take()) {
+                    out.push((s, e));
+                }
+                continue;
+            }
+            let s = span["start_seconds"].as_f64().unwrap();
+            let e = span["end_seconds"].as_f64().unwrap();
+            if run_start.is_none() {
+                run_start = Some(s);
+            }
+            run_end = Some(e);
+        }
+        if let (Some(s), Some(e)) = (run_start, run_end) {
+            out.push((s, e));
+        }
+        out
+    }
+
+    fn run_one(fixture: &Fixture) {
+        if !super::require_ort::ort_dylib_or_skip(fixture.file) {
+            return;
+        }
+        let model_path = fa_models_dir().join(fixture.language).join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(fixture.file, &model_path) {
+            return;
+        }
+
+        let fixture_path = format!("{}/../scripts/fixtures/{}", env!("CARGO_MANIFEST_DIR"), fixture.file);
+        let text = std::fs::read_to_string(&fixture_path)
+            .unwrap_or_else(|e| panic!("failed to read fixture {fixture_path}: {e}"));
+        let v: serde_json::Value = serde_json::from_str(&text).expect("fixture must be valid JSON");
+
+        let language_code = v["_provenance"]["language"].as_str().expect("_provenance.language");
+        assert_eq!(language_code, fixture.language, "{}: fixture language mismatch", fixture.file);
+        let source_text = v["_provenance"]["text"].as_str().expect("_provenance.text");
+
+        let input_samples: Vec<f32> = v["input_samples"]
+            .as_array()
+            .expect("input_samples")
+            .iter()
+            .map(|x| x.as_f64().unwrap() as f32)
+            .collect();
+        let blank_id = v["blank_id"].as_i64().expect("blank_id");
+        let expected_spans = v["expected_spans"].as_array().expect("expected_spans");
+
+        let vocab = load_vocab(fixture.language).unwrap_or_else(|e| panic!("{}: load_vocab failed: {e}", fixture.file));
+        let lang_enum = Language::from_code(fixture.language).expect("known language code");
+        let target_ids = text_to_token_ids(source_text, lang_enum, &vocab);
+
+        let normed = zero_mean_unit_var_norm(&input_samples);
+        let emission = with_ort_env_lock(|| run_forward_pass(&model_path, &normed))
+            .unwrap_or_else(|e| panic!("{}: forward pass failed: {e}", fixture.file));
+
+        let align_result = forced_align(&emission, &target_ids, blank_id)
+            .unwrap_or_else(|e| panic!("{}: forced_align failed: {e}", fixture.file));
+        let char_spans = merge_tokens(&align_result.path, &align_result.scores, blank_id);
+
+        // Vacuity guards: neither char-span nor word-merge output may be
+        // empty for these six real, real-speech fixtures.
+        assert!(!char_spans.is_empty(), "{}: zero char spans — vacuous", fixture.file);
+        let words = merge_char_spans_to_words(&char_spans, &vocab);
+        assert!(!words.is_empty(), "{}: zero merged words — vacuous", fixture.file);
+
+        // 1) Word text vs. the normalizer's OWN representable-word output —
+        // NOT a naive whitespace split (see module doc comment for why).
+        let normalized = normalize_for_forced_alignment(source_text, lang_enum, &vocab.chars);
+        let expected_words: Vec<String> = normalized
+            .words
+            .iter()
+            .filter(|w| w.representable)
+            .map(|w| w.mapped.clone().expect("representable word must have `mapped` set"))
+            .collect();
+        let got_words: Vec<String> = words.iter().map(|w| w.text.clone()).collect();
+        assert_eq!(
+            got_words, expected_words,
+            "{}: merged word text list diverges from the normalizer's own representable-word output",
+            fixture.file
+        );
+
+        // 2) Seconds vs. fixture-authored ground truth, via an independent
+        // grouping loop over the fixture's own JSON (not this module's
+        // function called a second time).
+        let delim = vocab.word_delim_id.expect("every supported language has a word delimiter");
+        let expected_seconds = expected_word_seconds_from_fixture(expected_spans, delim);
+        assert_eq!(
+            words.len(),
+            expected_seconds.len(),
+            "{}: word count diverges from an independent fixture-JSON grouping",
+            fixture.file
+        );
+
+        let mut max_abs_seconds_dev = 0.0f64;
+        let mut min_score = f32::INFINITY;
+        let mut max_score = f32::NEG_INFINITY;
+        for (got, (want_start, want_end)) in words.iter().zip(expected_seconds.iter()) {
+            let start_dev = (got.start_seconds - want_start).abs();
+            let end_dev = (got.end_seconds - want_end).abs();
+            assert!(
+                start_dev <= FA_SECONDS_TOLERANCE,
+                "{}: word \"{}\" start_seconds diverges from fixture ground truth — got {}, want {want_start}, diff {start_dev}",
+                fixture.file, got.text, got.start_seconds
+            );
+            assert!(
+                end_dev <= FA_SECONDS_TOLERANCE,
+                "{}: word \"{}\" end_seconds diverges from fixture ground truth — got {}, want {want_end}, diff {end_dev}",
+                fixture.file, got.text, got.end_seconds
+            );
+            max_abs_seconds_dev = max_abs_seconds_dev.max(start_dev).max(end_dev);
+            min_score = min_score.min(got.score);
+            max_score = max_score.max(got.score);
+        }
+
+        eprintln!(
+            "{}: {} words, {} char spans, max_abs_seconds_dev={max_abs_seconds_dev:e}, score_range=[{min_score}, {max_score}]",
+            fixture.file,
+            words.len(),
+            char_spans.len()
+        );
+    }
+
+    #[test]
+    fn words_en_deep_night() {
+        run_one(&FIXTURES[0]);
+    }
+
+    #[test]
+    fn words_en_mother_look() {
+        run_one(&FIXTURES[1]);
+    }
+
+    #[test]
+    fn words_es_resultan_inutiles() {
+        run_one(&FIXTURES[2]);
+    }
+
+    #[test]
+    fn words_fr_pas_juste() {
+        run_one(&FIXTURES[3]);
+    }
+
+    #[test]
+    fn words_de_nicht_fair() {
+        run_one(&FIXTURES[4]);
+    }
+
+    #[test]
+    fn words_pt_site_publico() {
         run_one(&FIXTURES[5]);
     }
 }
