@@ -1,0 +1,395 @@
+# WS1 Task 5 — Rust Forced-Alignment Integration: Slice Ledger & Rulings
+
+> **Purpose.** Canonical home for everything about *how* Task 5 (Phase 3, Rust
+> forced-alignment integration) was actually built, slice by slice: what each
+> slice shipped, why D7 was cancelled instead of completed, assumptions that
+> turned out false and how that was established, the rulings that resolved
+> open spec questions, and the register of what's still not done. Built
+> 2026-08-13 from `git log`, direct source reading (`src-tauri/src/fa*.rs`,
+> `src/services/faAnchors.ts`, `src/services/faBoundaryTypes.ts`), and the
+> commit messages/comments those commits themselves left as their own record.
+> Where a fact already has a home elsewhere (`sync-pipeline-v2-plan.md`'s
+> Step R design, `ws1-master-roadmap.md`'s phase/stage status,
+> `docs/work-in-progress.md`'s task ledger), this document points there
+> instead of restating it — see "Cross-references," bottom.
+>
+> **Status this document does NOT change:** Task 5 is implemented and
+> verified only behind the OFF-by-default `fa-inference` Cargo feature, and
+> only reachable in the running app via the DEV-only `fa_align_dev` /
+> `window.__faDevAlign` path (Slice D10). No production UI, Settings toggle,
+> or Apply-Sync wiring exists yet — see "Known-gap register" and the
+> capability-gate ruling below.
+
+---
+
+## 1. Slice ledger
+
+All commits below are dated 2026-08-12 except D10 (2026-08-13); this reflects
+this project's own commit history, not a documentation error.
+
+| Slice | What it built | Commit(s) | Gates (from the commit's own record, where stated) |
+|---|---|---|---|
+| **D1** | Foundation, two parallel tracks that don't yet touch each other: (a) TS-side — `faAnchors.ts`'s pure `computeFaAnchors` (R.0/R.1/R.4, ruled by R-O/R-P after a genuine spec-hole hard-stop — see `docs/history.md`'s "R.1 spec holes ruled" entry), unwired, no caller; (b) Rust-side — the `fa_align`/`fa_cancel` command surface (`fa.rs`, no model, no inference, typed `NotImplemented` error) and the CTC Viterbi DP port (`fa_viterbi.rs`), plus the vocab-aware FA text normalizer ported to Rust foundations. | `7f74c39`, `e0c9c89`, `5f4f0da`, `42bd708`, `9f70f8f`, `fc0e756`, `0589239`, `eda3f7d`, `4b64c28`, `9461c0a`, `49b0acd`, `6a0ac21` | `npm run lint` clean; `npm test` 72→~74 files, 1803→~1857 passed, 1 skipped; golden replay 3/3→6/6 (extended with the FA input set, R-H); `cargo check` clean. (Exact per-commit deltas not individually re-derived here — see each commit's own message; the D2 entry below states the cumulative baseline this slice left behind: `cargo test` 31/31.) |
+| **D2** | Real ONNX forward pass wired into `fa_align` behind the new, OFF-by-default `fa-inference` Cargo feature. `ort = "=2.0.0-rc.13"` (optional, `default-features = false`, `["std", "load-dynamic"]`, no `api-NN` feature) added to `Cargo.toml`; new `fa_onnx.rs` (WAV decode, zero-mean/unit-var normalization, ONNX session + forward pass via `ORT_DYLIB_PATH`, placeholder ASCII tokenizer, wired into `fa_viterbi`). | `49e233a` | `cargo check` clean both configs; `cargo test` feature-off 31/31 unchanged; feature-on 49 (+18); `npm run lint` clean; `npm test` 74 files/1857 passed/1 skipped; golden replay 6/6. Parity: 0/577 argmax mismatches vs. real jonatasgrosman ONNX models across 3 fixtures, max abs diff 0.0003–0.0012. |
+| **D3** | Vocab-aware FA text normalizer ported to Rust (`fa/text.rs`, unconditional — not behind `fa-inference`), replacing D2's ASCII-only placeholder tokenizer. Byte-identical port of `src/services/faTextNormalize.ts`, with two documented, tested deviations forced by Rust's lack of Unicode-normalization stdlib (hand-rolled NFC table; ECMA-262 `\s`-set whitespace split). | `997102e` | `cargo check` clean both configs; `cargo test` feature-off 31→46 (+15); feature-on 49→66 (+17); `npm run lint` clean; `npm test` 74→75 files, 1857→1894 (+37), 1 skipped unchanged; golden replay 6/6 unchanged. |
+| **D4** | Skip hardening (`FA_REQUIRE_ORT=1` turns a silent ORT-missing skip into a hard failure); re-ran D2's parity tests for real for the first time since D3's tokenizer swap (0/577 mismatches, unchanged); NFC-completeness guard against an independently-generated 230-entry reference table; first end-to-end parity harness (real torchaudio `forced_align`/`merge_tokens` vs. the full Rust path) — **0 divergences, zero tolerance, across all 3 fixtures and 73 combined tokens/spans.** | `e1f6e57` | `cargo check` clean both configs; feature-off 46→47 (+1); feature-on ORT set+`FA_REQUIRE_ORT=1` 66→70 (+4), 0 skips; ORT unset/unset → 70 passed, 6 clean skips; ORT unset+`FA_REQUIRE_ORT=1` → 6 hard failures/64 passed; `npm run lint` clean; `npm test` 75 files/1894/1 skipped unchanged; golden replay 6/6. |
+| **D5** | Closed the text→spans seam (already-closed-at-`e1f6e57` finding for en/es, re-verified live) and extended zero-tolerance e2e parity to fr/de/pt using real `google/fleurs` (CC-BY-4.0) audio, owner-approved after the private corpus was confirmed to have no fr/de/pt audio. | `c7834cd` | `cargo check` clean both configs; feature-off 47 unchanged; feature-on ORT set+`FA_REQUIRE_ORT=1` 70→73 (+3), 0 skipped; ORT unset/unset → 73 passed/9 clean skips; ORT unset+`FA_REQUIRE_ORT=1` → 64 passed/9 hard failures; `npm run lint` clean; `npm test` 75 files/1894/1 skipped unchanged; golden replay 6/6. Zero divergences on all three new languages (fr 65/230/65 tokens/frames/spans, de 61/269/61, pt 70/281/70). |
+| **D6** | Frame→time conversion (`frame_to_seconds`, stride = 320 samples/16kHz — the product of the shared Wav2Vec2 `conv_stride`, sourced from each of the 5 languages' own HF `config.json`, confirmed byte-identical across all five). Closed 3 verification gaps: `EmptyTokenization`, missing-dylib `OrtInit`, and a live TS/Rust `FaErrorKind` drift (`'inferenceFailed'` was missing from `faBoundaryTypes.ts`'s union). **Recorded, not fixed, a doc-omission finding**: `fa.rs`'s own header comment was already stale as of this slice (see §6 below). | `b879ed5` | `cargo check` clean both configs; feature-off 47→48 (+1); feature-on ORT set+`FA_REQUIRE_ORT=1` 73→76 (+3), 0 skips confirmed across 6 repeated concurrent runs (caught and fixed a real test-order race, `ORT_ENV_LOCK`); ORT unset/unset → 76 passed/10 clean skips; ORT unset+`FA_REQUIRE_ORT=1` → 66 passed/10 hard failures; `npm run lint` clean; `npm test` 75 files/1894/1 skipped unchanged; golden replay 6/6. |
+| **D7** | **CANCELLED as scoped — see §2.** No commit exists under this name. | — | — |
+| **D8** | Pure `merge_char_spans_to_words`: groups `merge_tokens`' character-level `TokenSpan`s into word-level spans on the vocab word-delimiter id. Established, in code comments, that (a) `TokenSpan.score` is a mean LOG-probability, not directly comparable to `CONF_MIN`, and (b) word-level score is the per-character-span-frame-length-WEIGHTED mean, not an unweighted one — both later formalized as rulings, §4. Validated against all 6 e2e fixtures (word text + seconds, ~1e-16 max deviation) plus a hand-built drop-path case. No IPC/`FaEvent`/TS change — `align()`/`align_with_model_path` still return the pre-D8 shape. | `20588db` | `fa_onnx.rs` gained 17 `#[test]` functions (29→46, directly grep-verified against the commit's checked-out source), all feature-gated (`fa-inference`-only); feature-off count unaffected. Commit message states validation results only (no aggregate `cargo test`/`npm test` figures recorded in this commit) — this ledger does not restate a number the commit itself didn't record. |
+| **D9** | Wired D8's word-merge into the real `fa_align` path: `align()`/`align_with_model_path` now return `Vec<WordSpan>` (word-level). `fa.rs`'s `fa_align` converts each into an `FaWordSpan` DTO sent as `FaEvent::Done { words }`, applying `exp(score)` at the IPC boundary — the confidence-unit ruling, §4. TS: `TranscriptToken` gained an optional `confidence` field; `faBoundaryTypes.ts` gained a pure `faWordSpansToTranscriptTokens` reshape producing exactly the shape `extractSegmentAlignments` already consumes — established but unwired (no `invoke()`, no hook, no component, no capability gate). | `49dce01` | `fa.rs` gained 4 `#[test]` functions (16→20, directly grep-verified), one unconditional (`fa_word_span_serializes_camelcase_field_names`), the rest feature-gated. New `faBoundaryTypes.test.ts` (44 lines). Ruling sanity-check recorded in the commit message itself: exponentiating D8's six fixture score ranges lands entirely in **[0.730, 1.0]** — see the confidence-unit finding, §5. |
+| **D10** | Live-`AppHandle` composition trace confirmed the full typed chain (project audio → `fa_align` → D9's reshape → `extractSegmentAlignments`/`alignScenestoTranscript`) lines up, with one real gap: nothing in production leaves a durable WAV on disk for `fa_align` to consume (`whisper.rs`'s `transcode_to_wav` output is deleted moments after `whisper_transcribe` uses it). Closed with a new **dev-only** `fa_align_dev` (`fa_dev.rs`) that prepares its own throwaway WAV via the same helper and delegates to the real, unmodified `fa_align`. Added a pre-use SHA-256 manifest check (`sha256.rs`, hand-rolled to avoid a new `Cargo.lock` entry) against `fa-onnx-manifest.json`. **Fixed a real bug this slice's own trace surfaced**: `fa_align`'s error arm was flattening every `FaOnnxError::ModelNotFound` into `FaErrorKind::InferenceFailed`, discarding the more specific kind before it reached the frontend. Dev-only TS entry point `window.__faDevAlign` follows the `__transcriptInspector` precedent (DEV-gated, no UI control). Produced the duration-ladder and delta measurements — see `docs/ws1-sync-pipeline/measurements/d10-runtime-observations-2026-08-13.md`. | `3787b11` | `fa.rs` gained 2 `#[test]` functions (20→22, grep-verified); new `fa_dev.rs` (5 tests) and `sha256.rs` (5 tests), both **unconditionally compiled** (not behind `fa-inference` — confirmed via `lib.rs`'s `mod fa_dev;`/`mod sha256;` having no `#[cfg(feature = ...)]` guard, unlike `mod fa_onnx;`). Current `HEAD` (verified live during this documentation pass, 2026-08-13): `cargo test` feature-off **60 passed** (was 48 after D6; D8 added 0 to feature-off, D9 added 1 unconditional, D10 added 1 fa.rs + 10 fa_dev.rs/sha256.rs — reconciles to 48+1+11=60); `cargo test --features fa-inference` with `ORT_DYLIB_PATH` set + `FA_REQUIRE_ORT=1` **109 passed, 0 failed, 0 skipped**; `cargo check` clean both configs; `npm run lint` clean; `npm test` 76 files/1898 passed/1 skipped; golden replay 6/6. All match this task's own stated starting baseline exactly — re-verified live, not assumed. |
+
+**On D8/D9's missing aggregate gate numbers.** Unlike D2–D6 and D10, the D8 and
+D9 commit messages do not restate full `cargo test`/`npm test`/golden-replay
+figures — they describe validation results (fixture parity, drop-path
+coverage) instead. This ledger reports what each commit's checked-out source
+actually contains (test-function counts, grep-verified) rather than
+inventing aggregate numbers the commits themselves never recorded.
+
+---
+
+## 2. D7 — cancelled, not completed
+
+**D7 does not exist as a commit.** Its planned scope — per D6's own closing
+line ("No windowing/chunking/stitching/cancellation/span-consumption/
+asset-resolution work — out of scope, deferred to D7 per the slice's own
+boundary") — was to build the production windowing/stitching path (Step R,
+`sync-pipeline-v2-plan.md`) and a verification method for it. That slice's
+own **Step 0 review** (scoping-before-building, per this project's standing
+practice) found three things that together made the originally-scoped D7
+un-buildable as planned, and it was cancelled rather than reshaped
+silently:
+
+1. **Step R's boundary logic was already landed in TS, not still "design
+   only."** `faAnchors.ts` (Slice D1, `e0c9c89`) directly implements R.0 (the
+   run/anchor governing change), R.1 (three-source-agreement anchors, with
+   the R-O/R-P admissibility rulings), and R.4 (`MAX_RUN_SEC` force-split,
+   including the R-P longest-silence-in-window selection rule) — verified by
+   direct reading of `computeFaAnchors`, `isDistinctive`,
+   `contiguousMatchRunLength`, `findAgreeingSilence`, and
+   `longestSilenceInWindow` in `src/services/faAnchors.ts`. R.6's boundary
+   shape (corpus-start/corpus-end sentinels) is also present in the same
+   function's `boundaries` array construction. What remains genuinely
+   design-only is R.2 (padding), R.3 (the clamp's reference-point change),
+   R.5 (the CTC wildcard for unscripted audio), and R.7–R.9 (failure paths,
+   the cascade-safety argument, the case-by-case prevention table) — none of
+   which exist in any TS or Rust source as of this documentation pass. D7 as
+   originally scoped ("build the production windowing path") would have
+   redone work already done and left the actually-undone pieces unscoped.
+2. **`scripts/measure-forced-alignment.py` is the superseded per-segment
+   anti-pattern, not a stitching reference.** Verified directly: its own
+   `align` subparser aligns each segment's own text against "a padded window
+   of the audio around that segment's own already-committed
+   [startTime, startTime+duration) window" (`measure-forced-alignment.py`'s
+   own docstring/help text) — this is exactly the "the window is exactly the
+   committed span, which is the very quantity under repair" failure mode
+   Step R's opening paragraph (`sync-pipeline-v2-plan.md`) was written to
+   replace. A D7 that used this script as its "known good" reference would
+   have measured windowing correctness against the mechanism windowing
+   exists to eliminate.
+3. **Windowed multi-pass and whole-file single-pass are different
+   algorithms with no guaranteed frame equivalence.** This is a reasoned
+   architectural conclusion from the Step 0 review, not a repo-measured
+   fact: a CTC forward pass's emission at a given frame is a function of
+   everything the acoustic model's receptive field can see at that frame,
+   which differs between a run-scoped window (R.0's bounded, padded span)
+   and a whole-file pass — and the Viterbi DP's chosen path additionally
+   depends on the full target-token sequence length being aligned in that
+   pass. Two runs of the same audio at different window scopes are not
+   guaranteed to agree on a shared boundary to the frame, even when both are
+   individually correct. This directly rules out the originally-implicit
+   idea of using a whole-file single pass as a **zero-tolerance** ground
+   truth to diff windowed output against, the same zero-tolerance bar D4/D5
+   already established between Rust and torchaudio for a *fixed* window.
+   D10's own finding (a whole-file pass is infeasible at production length,
+   60–150 GB projected vs. 32 GB available — see the measurements doc) makes
+   this doubly moot: there will never be a whole-file pass on real audio to
+   diff against, even if the equivalence problem above didn't exist.
+
+**Disposition:** the windowing/stitching verification problem D7 was meant
+to solve is real and still open (see "Known-gap register," §6), but "diff
+windowed output against a whole-file pass, byte for byte" is not a coherent
+verification method for it. The replacement standard — the **Automated
+Agreement Budget** — is recorded as a new ruling, §5.
+
+---
+
+## 3. Corrected assumptions
+
+Each of these was believed at some point in Task 5 and established false by
+direct reading during this documentation pass (or, where noted, at the
+slice that found it).
+
+1. **The "no prebuilt onnxruntime ≥1.27 for macOS x86_64" blocker was a
+   default Cargo feature, not a real constraint.** `ort`'s `api-NN` features
+   are a configurable minimum-version floor; disabling them (as D2's
+   `Cargo.toml` entry does — `default-features = false`, `["std",
+   "load-dynamic"]`, no `api-NN` feature) drops the floor to 17, which
+   onnxruntime-osx-x86_64 1.23.2 satisfies. R-M's "from-source onnxruntime
+   build required" premise is therefore void. Established at the
+   runtime-unblock investigation (`docs/ws1-sync-pipeline/measurements/
+   runtime-unblock-2026-08-12.md`, commit `55e2ad5`) and confirmed still the
+   live configuration by reading `src-tauri/Cargo.toml` and `fa_onnx.rs`
+   during this pass. **R-M's status in `project-state.md` remains formally
+   unratified** — that file is out of scope for this documentation pass
+   (see `docs/work-in-progress.md`'s permanent process rule) and is not
+   touched here.
+2. **`faAnchors.ts` is strictly UPSTREAM of FA, not a consumer of
+   `TokenSpan`.** Confirmed by direct reading: `faAnchors.ts` imports only
+   `TranscriptToken`, `TokenAlignment`/`TokenAlignmentOp`, `SilenceInterval`,
+   `canonicalize`, and `syncConstants` — no import of `fa_onnx`, `TokenSpan`,
+   `WordSpan`, or anything FA-output-shaped anywhere in the file. Its own
+   header comment states the reason directly: it "runs strictly before any
+   FA pass and has no FA-confidence input in its stated shape." This
+   resolves any suspicion that `faAnchors.ts` and the FA pipeline overlap in
+   responsibility — they are sequential (anchors first, FA second), not
+   peers.
+3. **`anchorSource` is effectively write-only; nothing in production
+   branches on it.** Confirmed: `anchorSource` is *set* at 3 call sites
+   (`App.tsx:3606` → `'forced-alignment'`, `whisperService.ts:1501` →
+   `'whisper'`, `syncEngine.ts:241` → `'estimate'`) but grepping every
+   production file for a read of the field that branches on its value
+   returns nothing — the one place a demotion used to happen was removed
+   in slice "3e," with the removal's own comment (`App.tsx:2591`) stating
+   plainly: "nothing branches on `anchorSource` post-clean-slate, and the
+   next sync rebuilds segments from scratch via `parseProjectData` anyway,
+   so demoting the outgoing segments was dead work." The field is populated
+   for provenance/debugging and future use, not consulted by any runtime
+   decision today.
+4. **Multi-segment attribution does not need building in Rust.** Hirschberg
+   alignment (`whisperService.ts`'s `alignQueryToSubject`, already shipped)
+   already provides script-word-to-transcript-token attribution with fuzzy
+   tolerance a Rust-side exact/positional attribution scheme would lack.
+   `fa_onnx.rs`'s own scope-boundary comment states this directly:
+   "multi-segment span attribution beyond simple token-count bookkeeping" is
+   listed as deliberately out of scope, "later, separately-decided slices."
+   No Task 5 slice has built a competing Rust-side attribution mechanism.
+5. **`fa_align` and `fa_cancel` were already registered in `lib.rs`.**
+   Confirmed: `src-tauri/src/lib.rs`'s `invoke_handler!` list includes
+   `fa::fa_align`, `fa::fa_cancel`, and (since D10) `fa_dev::fa_align_dev`
+   directly — this was not an outstanding wiring task at any point in
+   D1–D10; the commands have been IPC-reachable (module-registered) since
+   the D1 command-surface skeleton landed.
+6. **`measure-forced-alignment.py` is not an authoritative reference for
+   production windowing/stitching.** See §2, point 2 — it is the
+   per-segment measurement convenience Step R's own R.0 was written to
+   replace, confirmed by direct reading of its `align` subcommand's own
+   docstring.
+
+---
+
+## 4. Rulings
+
+### Span consumption — Option 2 (word-merged spans over `FaEvent::Done`, TS reshape)
+
+**Decided:** character-level `TokenSpan`s are merged to word-level `WordSpan`s
+in Rust (D8's `merge_char_spans_to_words`), sent across IPC as `FaEvent::Done
+{ words: Vec<FaWordSpan> }` (D9), and reshaped in TS
+(`faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens`) into exactly the
+`TranscriptToken[]` shape `extractSegmentAlignments`/
+`alignScenestoTranscript` already consume — those two functions are
+UNCHANGED by Task 5.
+
+**Rejected alternatives, and what would have to be true for each to become
+preferable:**
+- **Option 1 — ship raw character-level `TokenSpan`s across IPC, reshape
+  characters into words in TS.** Would move the word-boundary-detection
+  logic (splitting on the delimiter id, reconstructing word text) to the TS
+  side, duplicating vocab knowledge (`char_to_id`/`word_delim_id`) that
+  otherwise lives only in Rust. Would become preferable only if a future
+  consumer needed character-level timing directly (none does today).
+- **Option 3 — do the TS reshape work in Rust and hand TS a
+  `TranscriptToken[]`-shaped payload directly, skipping the intermediate
+  `FaWordSpan` DTO.** Would couple the IPC wire type to a TS-only interface
+  shape and lose the `confidence`-as-probability boundary conversion's
+  natural home (see the confidence-unit ruling below). Would become
+  preferable only if `FaWordSpan` and `TranscriptToken` converge to
+  identical fields with no future divergence expected — not true today
+  (`TranscriptToken` carries fields FA has no opinion on, e.g. token
+  indices used elsewhere in the sync pipeline).
+
+### Confidence unit — resolved SPEC DEFECT, not an implementation detail
+
+**The defect:** `fa_viterbi.rs`'s `merge_tokens`/`log_softmax_row` produce
+`TokenSpan.score`/`WordSpan.score` as a **mean LOG-probability** — always
+`<= 0`, unbounded below. `syncConstants.ts`'s `CONF_MIN = 0.3` is written and
+consumed everywhere else as a **probability** in `[0, 1]`. These are
+incompatible units; comparing a log-probability directly against `CONF_MIN`
+would never trip the gate (a genuine probability of 0.3 is a log-probability
+of roughly -1.2, and most real log-probabilities near correct alignments sit
+close to 0). This was found at D8, explicitly deferred ("this slice
+deliberately does not perform" the conversion), and resolved at D9.
+
+**Ruling:** `exp(score)` is applied exactly once, at the IPC boundary
+(`fa.rs`'s `word_span_to_dto`), converting the internal log-probability into
+a `[0, 1]` probability (`FaWordSpan.confidence`) before it ever reaches TS.
+`CONF_MIN` itself is unchanged — the fix is entirely on the producer side of
+the boundary, so nothing downstream needs to know `WordSpan` ever carried a
+log-probability. Verified directly: `word_span_to_dto` computes
+`w.score.exp()`, unit-tested against both the `score = 0.0 → confidence =
+1.0` and `score = -1.0 → confidence = 1/e` cases.
+
+This is recorded as a **resolved spec defect** (the original design implied
+a unit that never existed in the data), not an implementation detail,
+because it would have produced a gate that could never fire — a silent
+correctness bug, not a style choice.
+
+### Score aggregation across a word — weighted by frame length
+
+**Decided (D8):** a word's score is the mean of its constituent character
+spans' scores, **weighted by each character span's own frame length**
+(`end - start`), not an unweighted mean across characters. Justification
+recorded in `fa_onnx.rs`'s own comment: each character span's score is
+already a mean over its own frame extent, so a length-weighted mean across
+characters is what directly averaging the underlying per-frame log-probs
+across the word's whole character-bearing frame range would give — an
+unweighted mean would over-count short characters relative to long ones.
+
+### Capability gate — dev-only is a phase, not the endpoint
+
+**Ruling:** the current dev-only reachability (`fa_align_dev`/
+`window.__faDevAlign`, DEV-gated, no UI control — Slice D10) is acceptable
+as an interim verification vehicle but is **not sufficient** for FA to
+become the production timing source. A user-visible, capability-probed
+Settings toggle — following `useExport.ts`'s WebCodecs-capability-probe
+precedent (probe once, expose a toggle only when the probe succeeds, degrade
+to the existing path otherwise) — is **required** before any Apply-Sync code
+path may call `fa_align` for real segment timing. This is a new ruling,
+recorded here for the first time; no prior WS1 document states it. Rationale:
+FA depends on a multi-gigabyte per-language model an operator must place by
+hand today (Step T's on-demand downloader doesn't exist yet, R-D), a
+degraded/unavailable state needs a discoverable, revocable control, and every
+other heavyweight-optional feature in this codebase (WebCodecs export) is
+already gated the same way — introducing a second gating pattern for FA
+would be an unforced inconsistency.
+
+### Caching — deferred at D2, now justified by D10's own measurement
+
+`fa_onnx.rs`'s own header comment has recorded since D2 that "a 1.2+ GiB
+ONNX file is reloaded on every `align()` call today — a real cost, deferred"
+— deferred at the time for lack of a concrete latency number to weigh
+against the implementation cost. **D10 supplies that number**: peak memory
+during a single `fa_align_dev` run scales super-linearly with clip length
+(see the measurements doc), and repeated whole-model reloads on a run-scoped
+(post-windowing) calling pattern would multiply both the reload cost and the
+peak-memory cost across every run in a project. **Ruling:** this now
+justifies building a session-scoped model cache (one loaded ONNX session per
+language, held for the lifetime of a sync run or an explicit
+Settings-toggle-driven "FA enabled" session, evicted on language change or
+app/session end) as part of the windowing-and-wiring slice that eventually
+lands R.0-R.9 for real — not before, since caching a model that's reloaded
+once per dev-invocation today has no measurable payoff yet.
+
+### R.5 wildcards — ship without them initially
+
+**Ruling:** the first production-facing FA windowing implementation ships
+**without** R.5's CTC-wildcard mechanism for unscripted audio, relying
+instead on Hirschberg's own existing degradation behavior (an unscripted
+heading recitation simply fails to match any script word and is absorbed by
+whichever neighboring segment's boundary placement already handles it today
+— the same behavior the shipped pipeline has now, pre-FA). This is
+**revisitable, because it is gated**: R.5 sits behind the same
+capability-gated Settings toggle as the rest of FA (see above), so adding it
+later is an additive change behind an already-off-by-default surface, not a
+breaking one. Rationale: R.5's own text already flags its output-destination
+question (which segment absorbs the wildcard gap) as needing an owner ruling
+before implementation, and Step R.9's own table shows R.5 as only a
+**partial** fix for the unscripted-heading case even once built — shipping
+the simpler, already-working degradation first and layering the wildcard
+mechanism in later is lower-risk than blocking the rest of FA on it.
+
+### Windowing verification standard — the Automated Agreement Budget (NEW)
+
+D7's cancellation (§2) established that a zero-tolerance fixture diff
+against a whole-file pass is not a coherent verification method for
+windowed production output — no whole-file pass is even computable at
+production audio length (D10), and even where one is computable, windowed
+and whole-file are different algorithms with no guaranteed frame-level
+equivalence. The replacement standard, ruled here for the first time:
+**three independent automated checks**, none of which is a byte-for-byte
+diff against an unwindowed reference:
+
+1. **Bounded-agreement check.** At a duration where BOTH a windowed pass and
+   a whole-file pass are computable (short clips — the existing 3.6–5.64s
+   e2e fixtures qualify), windowed output must agree with the whole-file
+   pass within a budget **derived from measurement**, not asserted — e.g.
+   the D4/D5 zero-tolerance bar applies only within a single fixed window;
+   a budget for cross-window agreement must be measured fresh once
+   windowing exists, the same way `PAD_BASE`/`ANCHOR_AGREEMENT_SEC` were
+   derived from the corpus's own silence statistics rather than chosen.
+2. **Hard structural invariants**, checked at any audio length regardless of
+   whether a reference pass exists: Model P's no-gap guarantee
+   (`faAnchors.ts`'s own I1/I2 comment: "this function never produces a
+   gap... a run boundary belongs to both the run that ends there and the
+   run that starts there"), monotonic run ordering, and R.8's bounded
+   (not zero) cross-word coupling claim within a run.
+3. **FA-vs-Whisper delta distribution as a full-length sanity check.** D10's
+   own observational measurement (anchorStart delta over 64 real segments,
+   see the measurements doc) is the first instance of exactly this check —
+   not a pass/fail gate on its own, but a distribution that should stay
+   stable (not develop new outliers) as windowing is layered in.
+
+No fourth check substitutes a whole-file pass at production length for
+anything — that comparison is permanently unavailable per D10's own memory
+finding, not merely deferred.
+
+---
+
+## 5. Findings referenced above, stated once
+
+- **`exp(score)` fixture range: [0.730, 1.0], all six e2e fixtures** (D9
+  commit message). Consequence: **R.7's `CONF_MIN` (0.3) gate is untestable
+  on any fixture this repo currently has** — every committed fixture's
+  confidence sits far above the floor, so no existing test exercises the
+  gate's reject branch on real model output. This is a coverage gap, not a
+  defect in the gate itself.
+- **`conv_stride` = 320 samples → exactly 0.02s/frame at 16kHz** (D6),
+  sourced from each of the five jonatasgrosman languages' own HF
+  `config.json`, confirmed byte-identical across all five before being
+  written as a constant — deliberately not derived from the unrelated
+  MMS_FA-based `fa-emission-*.json` fixtures' own empirically-measured (and
+  per-clip-drifting) frame rate.
+
+Full duration-ladder and delta measurements:
+`docs/ws1-sync-pipeline/measurements/d10-runtime-observations-2026-08-13.md`.
+
+---
+
+## 6. Known-gap register
+
+| Gap | Status | What unblocks it |
+|---|---|---|
+| **Windowing (R.0/R.1/R.4 landed in TS; R.2/R.3/R.5/R.7-R.9 not implemented anywhere)** | Open | The windowing-and-wiring slice this ledger's rulings (§4) prepare the ground for. Must also implement the Automated Agreement Budget (§4) as its own verification, since no zero-tolerance reference exists. |
+| **Model caching** | Open, now justified (§4) | Build alongside the windowing slice — a session-scoped ONNX session cache, evicted on language change/session end. |
+| **Cancellation is inert** | Open, confirmed by direct reading | `fa_cancel` flips `FaState`'s `FaRunState` to `Cancelled`, but `fa_onnx.rs`'s `align`/`align_with_model_path` never reads `FaState` at all — grepped directly, zero references to `FaRunState`/`state.0` outside `fa.rs` itself. A long-running windowed alignment has no way to observe a cancellation request today. Must be threaded through once windowing makes a single `fa_align` call long enough to matter (today's ≤5.64s test clips make this moot in practice). |
+| **Production audio path (the dev tool makes its own WAV)** | Open by design (D10) | `fa_align_dev` exists precisely because no production caller leaves a durable WAV on disk. The capability-gated Settings-toggle wiring (§4) must decide how a real Apply-Sync call gets a durable WAV — reusing `transcode_to_wav`'s helper without its current delete-on-exit lifecycle, or an equivalent. |
+| **R.7 gate untestable** | Open, confirmed (§5) | Needs either a deliberately-constructed low-confidence fixture or real-world low-confidence audio; none exists in the repo today. |
+| **R.5 wildcards** | Deliberately deferred (§4 ruling) | Ships after the capability-gated toggle, additive, once an owner ruling on wildcard-gap destination lands (R.5's own open question). |
+| **CI automation of the four-way ORT matrix** (feature off / feature-on×ORT-set / feature-on×ORT-unset / feature-on×`FA_REQUIRE_ORT`) | Open | No CI exists for this repository at all (`ws1-master-roadmap.md` §9) — this is a specific instance of that broader, already-recorded gap, not a new one. |
+| **R-H judgement** (the FA-swap-reviewed-against-baseline half of ruling R-H) | Open | Per `ws1-master-roadmap.md`'s own text, this "cannot happen until Task 5 wires a real per-language model" for production timing — i.e. blocked on the same capability-gated wiring slice as everything else above. |
+| **Spanish gate signoff** | Already CLOSED, not a gap | Cleared 2026-08-11 (`spanish-gate-scoring.md`, p95 50.4ms vs. 250ms gate) — listed here only to confirm it is not accidentally re-opened by this register. |
+| **Live-`AppHandle` coverage** | **Partially closed by D10** — verified accurate here | Before D10, every FA test drove either a hand-rolled path (`fa_models_dir()`-style helpers) or `align_with_model_path` directly, never a real `tauri::AppHandle`. D10's `fa_align_dev` is the first exercise of `fa_model_path`'s real `AppHandle`-based resolution (`app.path().app_local_data_dir()`) outside a test double — confirmed by reading `fa_dev.rs`'s own header comment and `fa_model_path`'s signature. Still not covered: a **production** (non-dev, capability-gated) call path through a live `AppHandle` — D10 closes the dev-tool half of this gap, not the production half. |
+
+---
+
+## 7. Cross-references
+
+- **Windowing design itself (R.0–R.9), the full spec text** — owned by
+  `sync-pipeline-v2-plan.md`'s Step R section. This document does not
+  restate the design, only which pieces are implemented and the ledger of
+  what shipped around it.
+- **Phase/stage status, NEXT UP block** — owned by `ws1-master-roadmap.md`.
+- **Task-level one-line status** — owned by `docs/work-in-progress.md`'s
+  task 5 entry, which now points here for slice-level detail rather than
+  carrying it inline (D1–D6 remain inline there as previously recorded;
+  D7–D10 are recorded only here, to avoid the same fact living in two
+  places going forward).
+- **Duration ladder, memory, and delta measurements** — owned by
+  `docs/ws1-sync-pipeline/measurements/d10-runtime-observations-2026-08-13.md`.
+- **The ort/onnxruntime runtime-unblock investigation** — owned by
+  `docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`.
+- **R-M/R-N ratification into `project-state.md`** — still pending owner
+  approval per the permanent process rule (`docs/work-in-progress.md`,
+  `ws1-master-roadmap.md` §9); untouched by this documentation pass, which
+  is explicitly scoped away from `project-state.md`.

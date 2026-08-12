@@ -6,13 +6,20 @@ use tauri::Manager;
 pub mod text;
 
 // ---------------------------------------------------------------------------
-// Forced-alignment (FA) command-surface skeleton (WS1 Task 5 boundary, R-D).
+// Forced-alignment (FA) command surface (WS1 Task 5 boundary, R-D).
 //
 // Establishes the IPC command surface, cancellation, and progress-event shape
-// so a future native inference engine drops into a proven boundary, without
-// carrying any ML dependency. There is NO model and NO inference here —
-// `fa_align` always returns a typed not-implemented error today. Do not wire
-// this into Apply Sync; nothing in `src/` calls it yet.
+// a native inference engine drops into. With the `fa-inference` Cargo feature
+// OFF (still the default in every build), `fa_align` always returns a typed
+// not-implemented error and no ML dependency enters the build graph — that
+// part of this comment's original claim is unchanged. With `fa-inference` ON,
+// this has carried a real ONNX forward pass + Viterbi alignment since Slice
+// D2 (`49e233a`) — see `fa_onnx.rs` and `docs/ws1-sync-pipeline/
+// task5-slice-ledger.md` for the full slice-by-slice record. Still not wired
+// into Apply Sync: the only caller of `fa_align` anywhere in `src/` is the
+// DEV-only `fa_align_dev` (`fa_dev.rs`) reached via `window.__faDevAlign`
+// (Slice D10) — production wiring (a capability-gated Settings toggle) is a
+// later, separately-scoped slice per that same ledger's rulings.
 //
 // Deliberately mirrors three established patterns from `whisper.rs` rather
 // than inventing parallel ones (see that file for line numbers as of
@@ -333,9 +340,11 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 /// see `fa_onnx.rs` for that implementation. Neither path panics, blocks the
 /// main thread indefinitely, or silently succeeds.
 ///
-/// Not called from `src/` in either configuration yet — frontend wiring
-/// (Tauri command consumption, progress-event UX, capability gating) is a
-/// later, separately-scoped slice.
+/// Not called from `src/` for production timing in either configuration yet
+/// — the only caller anywhere is the DEV-only `fa_align_dev` (`fa_dev.rs`,
+/// Slice D10), unreachable from any UI control. Real frontend wiring (a
+/// capability-gated Settings toggle, per `docs/ws1-sync-pipeline/
+/// task5-slice-ledger.md`'s ruling) is a later, separately-scoped slice.
 ///
 /// * `audio_path` — filesystem path to the audio FA would align against
 ///   (reuses whatever the caller already has on disk, e.g. the same

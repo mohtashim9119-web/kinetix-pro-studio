@@ -1322,7 +1322,23 @@ Step H's did before it.
 
 ---
 
-#### Step R — Production windowing design (design only, not implemented)
+#### Step R — Production windowing design
+
+> **Status update, 2026-08-13 (WS1 Task 5 documentation pass).** This
+> section's heading originally read "design only, not implemented" — stale
+> as of Task 5 Slice D1 (`e0c9c89`): R.0, R.1 (with the R-O/R-P
+> admissibility rulings), R.4, and R.6's boundary shape are implemented in
+> `src/services/faAnchors.ts`'s `computeFaAnchors`, verified by direct
+> reading. R.2 (padding), R.3 (the clamp's reference-point change), R.5 (the
+> CTC wildcard), and R.7-R.9 (failure paths, cascade-safety argument,
+> case-by-case prevention table) remain design-only below — genuinely not
+> implemented anywhere in `src/` or `src-tauri/src/` as of this update. A
+> planned slice (D7) to build the remainder and its own verification method
+> was scoped, reviewed, and **cancelled** rather than completed — see
+> `docs/ws1-sync-pipeline/task5-slice-ledger.md` §2 for why, and its §4 for
+> the "Automated Agreement Budget" ruling that replaces the zero-tolerance
+> verification approach this document's own text does not specify a
+> replacement for.
 
 Every number in Phase 3 came from a window this document itself calls a
 measurement convenience: per-segment, `[committed startTime, committed endTime]`,
