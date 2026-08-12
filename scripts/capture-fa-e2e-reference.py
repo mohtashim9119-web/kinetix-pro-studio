@@ -41,12 +41,35 @@ A NEW fixture family, distinct from and never overwriting:
   - `fa-onnx-emission-*.json` — D2's forward-pass-only fixtures (no
     tokenization/alignment; this script reads but never writes these)
 
-DEPENDENCIES: torch, torchaudio (already in `.venv-phase4-fa`, the same env
-`scripts/measure-forced-alignment-hf.py` uses), plus a working `npx tsx`
-(already a repo devDependency, see `scripts/generate-fa-text-fixture.ts`).
+DEPENDENCIES: torch, torchaudio, onnxruntime, soundfile, numpy (all already in
+`.venv-phase4-fa`), plus a working `npx tsx` (already a repo devDependency,
+see `scripts/generate-fa-text-fixture.ts`).
 
 USAGE
   .venv-phase4-fa/bin/python3 scripts/capture-fa-e2e-reference.py
+
+---------------------------------------------------------------------------
+WS1 Task 5, Slice D5 addendum -- fr/de/pt via RAW_CLIP_CASES
+---------------------------------------------------------------------------
+No `fa-onnx-emission-*.json` D2 fixture exists for fr/de/pt (D2 only
+captured en/en/es), and no MMS_FA `fa-emission-*.json` fixture exists to
+window against either. Real fr/de/pt audio was also unavailable anywhere in
+this repo/private corpus until three short, real utterances were sourced
+from google/fleurs (CC-BY-4.0, HF-hosted, validation split) for this slice
+(see docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md for the
+investigation). RAW_CLIP_CASES below therefore runs the ONNX forward pass
+itself (via onnxruntime, same preprocessing as `capture-fa-onnx-reference.py`)
+directly against the whole real clip (no windowing -- each clip already is a
+short standalone utterance), keeping the SAME per-case output schema and the
+SAME independent-torchaudio-DP step as `capture_one` above -- the only
+difference is where the emission matrix comes from (computed inline here
+instead of read from a committed D2 fixture), because committing an
+intermediate `fa-onnx-emission-{fr,de,pt}-*.json` fixture would itself run
+well over the 2 MB per-fixture budget (T*C emission floats dominate; T=~300
+frames * C up to 59 classes as text). The final `fa-e2e-alignment-*.json`
+fixture (input_samples + target_token_ids + blank_id + expected_spans, no
+emission matrix) stays well under that budget, same as the three D2-sourced
+cases.
 """
 
 import json
@@ -54,10 +77,15 @@ import subprocess
 import sys
 from pathlib import Path
 
+import numpy as np
+import onnxruntime as ort
+import soundfile as sf
 import torch
 import torchaudio
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+APP_IDENTIFIER = "com.kinetix.pro-studio"
+SAMPLE_RATE = 16000
 
 # (file key, source D2 onnx-emission fixture name)
 CASES = [
@@ -65,6 +93,33 @@ CASES = [
     ("en-mother-look", "fa-onnx-emission-en-mother-look.json"),
     ("es-resultan-inutiles", "fa-onnx-emission-es-resultan-inutiles.json"),
 ]
+
+# (file key, language, source_audio relative path) -- see module doc comment
+RAW_CLIP_CASES = [
+    ("fr-pas-juste", "fr", ".work-phase4/replay/fr/audio_16k.wav"),
+    ("de-nicht-fair", "de", ".work-phase4/replay/de/audio_16k.wav"),
+    ("pt-site-publico", "pt", ".work-phase4/replay/pt/audio_16k.wav"),
+]
+
+
+def default_fa_models_dir() -> Path:
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_IDENTIFIER / "fa-models"
+    if sys.platform.startswith("linux"):
+        import os
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = Path(xdg) if xdg else Path.home() / ".local" / "share"
+        return base / APP_IDENTIFIER / "fa-models"
+    if sys.platform == "win32":
+        import os
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / APP_IDENTIFIER / "fa-models"
+    raise RuntimeError(f"no fa-models mapping for platform {sys.platform!r}")
+
+
+def zero_mean_unit_var_norm(x: np.ndarray) -> np.ndarray:
+    return (x - x.mean()) / np.sqrt(x.var() + 1e-7)
 
 
 def load_target_tokens() -> dict:
@@ -115,6 +170,19 @@ def capture_one(file_key: str, onnx_emission_name: str, tokens: dict) -> dict:
                 "fa-emission-*.json (MMS_FA DP fixtures) and fa-onnx-emission-*.json (D2 "
                 "forward-pass-only fixtures); neither is modified by this script."
             ),
+            "targetTokenIdsRole": (
+                "target_token_ids is the EXPECTED, TS-normalizer-derived output of the "
+                "text->tokens step -- src-tauri/src/fa_onnx.rs's e2e_parity test re-derives its "
+                "own sequence from this fixture's _provenance.text via production "
+                "text_to_token_ids() and asserts it equals this field before using its OWN "
+                "derived sequence (not this field) for the forward pass/Viterbi/merge below. "
+                "This field is ALSO passed to torchaudio.functional.forced_align() below as that "
+                "DP's required target-sequence argument -- an unavoidable second role, since CTC "
+                "forced alignment cannot compute spans without a target sequence input. That reuse "
+                "does not make this field 'input data' in the sense of being independently "
+                "sourced -- it remains the derived, expected output of tokenization, asserted "
+                "against, not assumed."
+            ),
             "language": onnx["_provenance"]["language"],
             "text": token_entry["text"],
             "normalizedText": token_entry["normalizedText"],
@@ -130,11 +198,115 @@ def capture_one(file_key: str, onnx_emission_name: str, tokens: dict) -> dict:
     return out
 
 
+def capture_one_raw_clip(file_key: str, language: str, source_audio_rel: str, tokens: dict, fa_models_dir: Path) -> dict:
+    source_audio = REPO_ROOT / source_audio_rel
+    if not source_audio.exists():
+        raise SystemExit(
+            f"source audio not found: {source_audio} -- STOP condition (g): suitable {language} "
+            "audio must be sourced and placed here before this case can run"
+        )
+
+    model_path = fa_models_dir / language / "model.onnx"
+    if not model_path.exists():
+        raise SystemExit(
+            f"ONNX model not found: {model_path} — run scripts/export-fa-onnx.py --language "
+            f"{language} first (see that script's own docstring)"
+        )
+
+    audio, sr = sf.read(str(source_audio), dtype="float32")
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)
+    assert sr == SAMPLE_RATE, f"expected {SAMPLE_RATE}Hz source audio, got {sr}Hz ({source_audio})"
+
+    normed = zero_mean_unit_var_norm(audio).astype(np.float32)
+
+    sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
+    logits = sess.run(None, {"input_values": normed[None, :]})[0]  # (1, T, C)
+    logits = logits.squeeze(0)  # (T, C)
+
+    # log_softmax -- same convention capture_one's D2-sourced emissions already use.
+    shifted = logits - logits.max(axis=-1, keepdims=True)
+    log_probs_np = shifted - np.log(np.exp(shifted).sum(axis=-1, keepdims=True))
+
+    emission = torch.tensor(log_probs_np, dtype=torch.float32).unsqueeze(0)  # [1, T, C]
+
+    token_entry = tokens[file_key]
+    target_ids = token_entry["targetTokenIds"]
+    blank_id = token_entry["blankId"]
+    targets = torch.tensor([target_ids], dtype=torch.int32)  # [1, L]
+
+    path, scores = torchaudio.functional.forced_align(emission, targets, blank=blank_id)
+    spans = torchaudio.functional.merge_tokens(path[0], scores[0], blank=blank_id)
+
+    expected_spans = [
+        {"token": int(s.token), "start": int(s.start), "end": int(s.end), "score": float(s.score)}
+        for s in spans
+    ]
+
+    out = {
+        "_provenance": {
+            "generatedBy": "scripts/capture-fa-e2e-reference.py (RAW_CLIP_CASES, D5 addendum)",
+            "note": (
+                "Full end-to-end forced-alignment reference for fr/de/pt: real jonatasgrosman "
+                "ONNX model, forward pass computed inline via onnxruntime over a whole real "
+                "utterance sourced from google/fleurs (CC-BY-4.0) -- no D2 fa-onnx-emission-*.json "
+                "fixture exists for these languages (see this script's module doc comment for why) "
+                "-- tokenized via the live TS faTextNormalize.ts module "
+                "(scripts/generate-fa-e2e-tokens.ts), aligned via REAL torchaudio 2.2.2 "
+                "forced_align/merge_tokens (an independent implementation of the same DP "
+                "src-tauri/src/fa_viterbi.rs hand-ports) -- NOT sourced from Rust output at any "
+                "step. Distinct fixture family from fa-emission-*.json (MMS_FA DP fixtures) and "
+                "fa-onnx-emission-*.json (D2 forward-pass-only fixtures); neither is modified by "
+                "this script."
+            ),
+            "sourceCorpus": "google/fleurs (CC-BY-4.0), validation split",
+            "targetTokenIdsRole": (
+                "target_token_ids is the EXPECTED, TS-normalizer-derived output of the "
+                "text->tokens step -- src-tauri/src/fa_onnx.rs's e2e_parity test re-derives its "
+                "own sequence from this fixture's _provenance.text via production "
+                "text_to_token_ids() and asserts it equals this field before using its OWN "
+                "derived sequence (not this field) for the forward pass/Viterbi/merge below. "
+                "This field is ALSO passed to torchaudio.functional.forced_align() below as that "
+                "DP's required target-sequence argument -- an unavoidable second role, since CTC "
+                "forced alignment cannot compute spans without a target sequence input. That reuse "
+                "does not make this field 'input data' in the sense of being independently "
+                "sourced -- it remains the derived, expected output of tokenization, asserted "
+                "against, not assumed."
+            ),
+            "language": language,
+            "text": token_entry["text"],
+            "normalizedText": token_entry["normalizedText"],
+            "sourceAudio": source_audio_rel,
+            "sampleRate": SAMPLE_RATE,
+            "onnxruntimeVersion": ort.__version__,
+            "torchVersion": torch.__version__,
+            "torchaudioVersion": torchaudio.__version__,
+        },
+        "input_samples": audio.tolist(),
+        "target_token_ids": target_ids,
+        "blank_id": blank_id,
+        "expected_spans": expected_spans,
+    }
+    return out
+
+
 def main() -> int:
     tokens = load_target_tokens()
     for file_key, onnx_emission_name in CASES:
         print(f"=== {file_key} ===", file=sys.stderr)
         result = capture_one(file_key, onnx_emission_name, tokens)
+        out_path = REPO_ROOT / "scripts" / "fixtures" / f"fa-e2e-alignment-{file_key}.json"
+        out_path.write_text(json.dumps(result) + "\n")
+        print(
+            f"-> {out_path} ({len(result['target_token_ids'])} target tokens, "
+            f"{len(result['expected_spans'])} merged spans)",
+            file=sys.stderr,
+        )
+
+    fa_models_dir = default_fa_models_dir()
+    for file_key, language, source_audio_rel in RAW_CLIP_CASES:
+        print(f"=== {file_key} ({language}) ===", file=sys.stderr)
+        result = capture_one_raw_clip(file_key, language, source_audio_rel, tokens, fa_models_dir)
         out_path = REPO_ROOT / "scripts" / "fixtures" / f"fa-e2e-alignment-{file_key}.json"
         out_path.write_text(json.dumps(result) + "\n")
         print(

@@ -820,6 +820,11 @@ mod e2e_parity {
         Fixture { file: "fa-e2e-alignment-en-deep-night.json", language: "en" },
         Fixture { file: "fa-e2e-alignment-en-mother-look.json", language: "en" },
         Fixture { file: "fa-e2e-alignment-es-resultan-inutiles.json", language: "es" },
+        // Slice D5: fr/de/pt, sourced from google/fleurs (CC-BY-4.0) real audio —
+        // see docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md.
+        Fixture { file: "fa-e2e-alignment-fr-pas-juste.json", language: "fr" },
+        Fixture { file: "fa-e2e-alignment-de-nicht-fair.json", language: "de" },
+        Fixture { file: "fa-e2e-alignment-pt-site-publico.json", language: "pt" },
     ];
 
     // Same test-only `app_local_data_dir()` reproduction as
@@ -961,5 +966,20 @@ mod e2e_parity {
     #[test]
     fn e2e_es_resultan_inutiles() {
         run_one(&FIXTURES[2]);
+    }
+
+    #[test]
+    fn e2e_fr_pas_juste() {
+        run_one(&FIXTURES[3]);
+    }
+
+    #[test]
+    fn e2e_de_nicht_fair() {
+        run_one(&FIXTURES[4]);
+    }
+
+    #[test]
+    fn e2e_pt_site_publico() {
+        run_one(&FIXTURES[5]);
     }
 }

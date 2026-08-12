@@ -19,6 +19,11 @@
 // deliberately dumb (a HashMap lookup) to minimize the risk of a spurious
 // mismatch that isn't a real Rust bug.
 //
+// Slice D5 (2026-08-12) extended CASES with three fr/de/pt entries — real
+// short utterances sourced from google/fleurs (CC-BY-4.0, HF-hosted), since
+// no real fr/de/pt audio existed anywhere in this repo/private corpus before
+// this slice (see docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md).
+//
 // Prints JSON to stdout: one object per fixture case, each with
 // {file, language, text, targetTokenIds, blankId}. Consumed by
 // `scripts/capture-fa-e2e-reference.py` via a `npx tsx` subprocess call —
@@ -52,7 +57,9 @@ function loadRawVocab(lang: FaLanguageCode): RawVocab {
 
 // -- the three D2/D3 fixture windows (same texts as `_provenance.text` in
 // `scripts/fixtures/fa-emission-en-deep-night.json` /
-// `fa-emission-en-mother-look.json` / `fa-emission-es-resultan-inutiles.json`)
+// `fa-emission-en-mother-look.json` / `fa-emission-es-resultan-inutiles.json`),
+// plus three D5 fr/de/pt entries sourced from google/fleurs (see this file's
+// module doc comment)
 interface Case {
   file: string;
   language: FaLanguageCode;
@@ -63,6 +70,17 @@ const CASES: Case[] = [
   { file: 'en-deep-night', language: 'en', text: 'It is deep in the night.' },
   { file: 'en-mother-look', language: 'en', text: 'Your mother does not look up.' },
   { file: 'es-resultan-inutiles', language: 'es', text: 'pero resultan inútiles.' },
+  {
+    file: 'fr-pas-juste',
+    language: 'fr',
+    text: "Cela ne me semblait pas logique ; ce n'était certainement pas juste.",
+  },
+  { file: 'de-nicht-fair', language: 'de', text: 'Das erschien mir nicht sinnvoll; es war ganz gewiss nicht fair.' },
+  {
+    file: 'pt-site-publico',
+    language: 'pt',
+    text: 'O resultado da análise do gráfico será disponibilizado no site público.',
+  },
 ];
 
 function textToTokenIds(
