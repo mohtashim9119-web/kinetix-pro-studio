@@ -487,16 +487,18 @@ fn text_to_token_ids(text: &str, language: Language, vocab: &Vocab) -> Vec<i64> 
 /// One word-level span: reconstructed text, wall-clock seconds (via
 /// [`frame_to_seconds`]), and an aggregated score. See this section's module
 /// doc comment above for the three determinations behind these fields —
-/// `score` in particular is a mean LOG-PROBABILITY, not directly comparable
-/// to `syncConstants.ts`'s `CONF_MIN` without an explicit unit conversion
-/// this slice deliberately does not perform.
-// Not yet constructed by any production caller (`align`/`align_with_model_path`
-// are untouched by this slice — see this slice's own scope boundary) —
-// exercised only by this module's test suite below, same "established but
-// unwired" pattern `frame_to_seconds`/`token_span_seconds` already use.
-#[allow(dead_code)]
+/// `score` is a mean LOG-PROBABILITY (<= 0, unbounded below), NOT directly
+/// comparable to `syncConstants.ts`'s `CONF_MIN`. That conversion
+/// (`exp(score)`, the geometric mean of the per-frame probabilities, in
+/// [0,1]) is deliberately NOT applied here — `WordSpan` keeps the raw
+/// log-prob internally; `fa.rs`'s `FaWordSpan` DTO applies the
+/// exponentiation at the IPC boundary (WS1 Task 5 Slice D9 ruling).
+// `pub(crate)`: constructed by `align_with_model_path` below (WS1 Task 5
+// Slice D9) and consumed by `fa.rs::fa_align` to build the `FaEvent::Done`
+// IPC payload — needs to cross the module boundary, but never needs to be a
+// public type of this crate.
 #[derive(Debug, Clone, PartialEq)]
-struct WordSpan {
+pub(crate) struct WordSpan {
     pub text: String,
     pub start_seconds: f64,
     pub end_seconds: f64,
@@ -516,7 +518,10 @@ struct WordSpan {
 /// span; that gap is simply excluded from the word's score by construction
 /// (the weighted mean below only ever sums over spans that are actually
 /// present in `char_spans`).
-#[allow(dead_code)]
+///
+/// Called from `align_with_model_path` below (WS1 Task 5 Slice D9) so
+/// `align()`'s result is word-level, not the character-level `TokenSpan`s
+/// it produced through Slice D8.
 fn merge_char_spans_to_words(char_spans: &[TokenSpan], vocab: &Vocab) -> Vec<WordSpan> {
     let id_to_char: HashMap<i64, char> = vocab.char_to_id.iter().map(|(&c, &id)| (id, c)).collect();
 
@@ -581,16 +586,18 @@ fn flush_word<'a>(current: &mut Vec<&'a TokenSpan>, id_to_char: &HashMap<i64, ch
 /// Real `fa_align` implementation: resolves the ONNX model for `language`,
 /// decodes+normalizes `audio_path`, runs the forward pass, vocab-aware-
 /// normalizes and tokenizes the concatenation of every segment's text (see
-/// module doc comment), and hands the emission matrix + target tokens to the
-/// ported Viterbi DP. Returns the merged token spans (frame-index start/end
-/// per target token) — not yet surfaced over IPC (see `fa.rs::fa_align`'s
-/// doc comment: frontend wiring is a separate, later slice).
+/// module doc comment), hands the emission matrix + target tokens to the
+/// ported Viterbi DP, and merges the resulting character-level spans into
+/// word-level [`WordSpan`]s (WS1 Task 5 Slice D8's `merge_char_spans_to_words`).
+/// `fa.rs::fa_align` surfaces this over IPC as `FaEvent::Done`'s payload
+/// (WS1 Task 5 Slice D9), converting each `WordSpan`'s log-probability
+/// `score` to a probability at that boundary.
 pub fn align(
     app: &tauri::AppHandle,
     audio_path: &str,
     segments: &[FaSegmentInput],
     language: &str,
-) -> Result<Vec<TokenSpan>, FaOnnxError> {
+) -> Result<Vec<WordSpan>, FaOnnxError> {
     let model_path = crate::fa::fa_model_path(app, language).map_err(FaOnnxError::ModelNotFound)?;
     align_with_model_path(&model_path, audio_path, segments, language)
 }
@@ -609,7 +616,7 @@ fn align_with_model_path(
     audio_path: &str,
     segments: &[FaSegmentInput],
     language: &str,
-) -> Result<Vec<TokenSpan>, FaOnnxError> {
+) -> Result<Vec<WordSpan>, FaOnnxError> {
     let samples = read_wav_mono_16k(Path::new(audio_path)).map_err(FaOnnxError::Wav)?;
     let normed = zero_mean_unit_var_norm(&samples);
     let emission = with_ort_env_lock(|| run_forward_pass(model_path, &normed))?;
@@ -623,7 +630,8 @@ fn align_with_model_path(
     }
 
     let result = forced_align(&emission, &target_ids, vocab.blank_id).map_err(FaOnnxError::Align)?;
-    Ok(merge_tokens(&result.path, &result.scores, vocab.blank_id))
+    let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
+    Ok(merge_char_spans_to_words(&char_spans, &vocab))
 }
 
 #[cfg(test)]

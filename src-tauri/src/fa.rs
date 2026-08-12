@@ -166,6 +166,38 @@ pub struct FaSegmentInput {
     pub text: String,
 }
 
+/// One word-level alignment result, crossing the IPC boundary as
+/// `FaEvent::Done`'s payload (WS1 Task 5 Slice D9). Mirrors
+/// `fa_onnx::WordSpan` field-for-field except `confidence`: `WordSpan.score`
+/// is a mean LOG-probability (<= 0, unbounded below); `confidence` is
+/// `exp(score)`, the geometric mean of the per-frame probabilities, in
+/// [0,1] and therefore directly comparable to `syncConstants.ts`'s
+/// `CONF_MIN` — the exponentiation is applied once, here, at the boundary,
+/// so nothing downstream needs to know `WordSpan` ever carried a log-prob.
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FaWordSpan {
+    pub word: String,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub confidence: f32,
+}
+
+/// The IPC-boundary conversion this module's doc comment on [`FaWordSpan`]
+/// describes: `exp(score)` turns a mean log-probability into a probability.
+/// Pulled out as its own function (rather than inlined in `fa_align`'s match
+/// arm) so it has a direct unit-test target — see the `fa_word_span_*` tests
+/// below.
+#[cfg(feature = "fa-inference")]
+fn word_span_to_dto(w: crate::fa_onnx::WordSpan) -> FaWordSpan {
+    FaWordSpan {
+        word: w.text,
+        start_sec: w.start_seconds,
+        end_sec: w.end_seconds,
+        confidence: w.score.exp(),
+    }
+}
+
 #[derive(serde::Serialize, Clone, Debug)]
 #[serde(tag = "event", content = "data")]
 pub enum FaEvent {
@@ -174,12 +206,13 @@ pub enum FaEvent {
     // eventual progress bar has a proven wire format to code against.
     #[allow(dead_code)]
     Progress { percent: u8 },
-    /// No inference exists yet, so nothing produces a real payload — kept
-    /// empty rather than speculatively shaping an anchors/timing payload
-    /// before a real implementation needs one. Not sent by `fa_align` yet,
-    /// same reason as `Progress` above.
+    /// Real per-word alignment output (WS1 Task 5 Slice D9), sent once by
+    /// the `fa-inference`-gated real implementation below on a successful
+    /// `fa_onnx::align` call. The feature-off `not_implemented` path never
+    /// sends `Done` — it errors first — so this variant stays theoretically
+    /// dead in that configuration, same reason `Progress` above does.
     #[allow(dead_code)]
-    Done {},
+    Done { words: Vec<FaWordSpan> },
     Error { message: String },
 }
 
@@ -302,8 +335,9 @@ pub async fn fa_align(
         let result = crate::fa_onnx::align(&app, &audio_path, &segments, &language);
         finish_run(&state)?;
         return match result {
-            Ok(_spans) => {
-                let _ = on_event.send(FaEvent::Done {});
+            Ok(word_spans) => {
+                let words: Vec<FaWordSpan> = word_spans.into_iter().map(word_span_to_dto).collect();
+                let _ = on_event.send(FaEvent::Done { words });
                 Ok(())
             }
             Err(e) => {
@@ -473,9 +507,100 @@ mod tests {
 
     #[test]
     fn fa_event_done_serializes_camelcase_tagged_shape() {
-        let event = FaEvent::Done {};
+        // 0.5/0.32/0.58 (like 0.5 below) are exactly representable in binary
+        // floating point, so the f32->f64 widening serde_json performs on
+        // `confidence` round-trips without drift — avoids a spurious
+        // precision mismatch unrelated to what this test checks (the JSON
+        // shape and field names).
+        let event = FaEvent::Done {
+            words: vec![FaWordSpan {
+                word: "hello".to_string(),
+                start_sec: 0.25,
+                end_sec: 0.5,
+                confidence: 0.5,
+            }],
+        };
         let json = serde_json::to_value(&event).unwrap();
-        assert_eq!(json, serde_json::json!({ "event": "Done", "data": {} }));
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "event": "Done",
+                "data": {
+                    "words": [
+                        { "word": "hello", "startSec": 0.25, "endSec": 0.5, "confidence": 0.5 }
+                    ]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn fa_event_done_serializes_empty_words_as_empty_array() {
+        let event = FaEvent::Done { words: vec![] };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json, serde_json::json!({ "event": "Done", "data": { "words": [] } }));
+    }
+
+    // -- FaWordSpan: field names + exponentiation (WS1 Task 5 Slice D9) -----
+
+    #[test]
+    fn fa_word_span_serializes_camelcase_field_names() {
+        let span = FaWordSpan { word: "test".to_string(), start_sec: 1.5, end_sec: 2.25, confidence: 0.5 };
+        let json = serde_json::to_value(&span).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "word": "test", "startSec": 1.5, "endSec": 2.25, "confidence": 0.5 })
+        );
+    }
+
+    // `word_span_to_dto` only exists under `fa-inference` (it takes a
+    // `crate::fa_onnx::WordSpan`, itself only compiled under that feature —
+    // see `lib.rs`'s `#[cfg(feature = "fa-inference")] mod fa_onnx;`), so
+    // these two tests are feature-gated rather than living in the
+    // unconditional `#[cfg(test)]` block above.
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn fa_word_span_confidence_is_exponentiated_log_probability() {
+        // Exercises the REAL production conversion function (`word_span_to_dto`,
+        // the same one `fa_align`'s Ok arm calls), not a reimplementation —
+        // a log-prob of 0.0 (probability 1.0, the maximum-confidence case)
+        // must exponentiate to 1.0, and a log-prob of -1.0 must exponentiate
+        // to 1/e — both hand-computable, both landing inside [0, 1] as the
+        // WS1 Task 5 Slice D9 ruling requires (prompted by D8's finding that
+        // `TokenSpan.score`/`WordSpan.score` are log-probabilities, not
+        // probabilities).
+        let zero = crate::fa_onnx::WordSpan {
+            text: "a".to_string(),
+            start_seconds: 0.0,
+            end_seconds: 0.1,
+            score: 0.0,
+        };
+        assert_eq!(word_span_to_dto(zero).confidence, 1.0);
+
+        let neg_one = crate::fa_onnx::WordSpan {
+            text: "b".to_string(),
+            start_seconds: 0.1,
+            end_seconds: 0.2,
+            score: -1.0,
+        };
+        let confidence = word_span_to_dto(neg_one).confidence;
+        assert!((confidence - std::f32::consts::E.recip()).abs() < 1e-6);
+        assert!(confidence > 0.0 && confidence < 1.0);
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn fa_word_span_to_dto_preserves_text_and_seconds() {
+        let w = crate::fa_onnx::WordSpan {
+            text: "kinetix".to_string(),
+            start_seconds: 1.25,
+            end_seconds: 1.75,
+            score: -2.0,
+        };
+        let dto = word_span_to_dto(w);
+        assert_eq!(dto.word, "kinetix");
+        assert_eq!(dto.start_sec, 1.25);
+        assert_eq!(dto.end_sec, 1.75);
     }
 
     #[test]

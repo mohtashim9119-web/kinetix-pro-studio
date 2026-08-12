@@ -283,6 +283,12 @@ export interface TranscriptToken {
   startSec: number;
   endSec: number;
   text: string;
+  /** Forced-alignment per-word confidence (WS1 Task 5 Slice D9), a
+   *  probability in [0,1] comparable to `syncConstants.ts`'s `CONF_MIN`.
+   *  Optional and additive-only: Whisper-sourced tokens never set it — only
+   *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does,
+   *  and that reshape has no live caller yet. */
+  confidence?: number;
 }
 
 export interface Project {

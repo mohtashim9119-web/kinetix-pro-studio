@@ -16,11 +16,25 @@
 
 import type { Channel } from '@tauri-apps/api/core';
 import type { FaLanguageCode } from './faTextNormalize';
+import type { TranscriptToken } from '../types';
 
 /** Mirrors `fa.rs`'s `FaSegmentInput` (`#[serde(rename_all = "camelCase")]`). */
 export interface FaSegmentInput {
   segmentId: string;
   text: string;
+}
+
+/** Mirrors `fa.rs`'s `FaWordSpan` (`#[serde(rename_all = "camelCase")]`,
+ *  WS1 Task 5 Slice D9) — one word-level forced-alignment result. `confidence`
+ *  is already `exp(score)` on the Rust side (the IPC boundary's own unit
+ *  conversion from a log-probability to a probability) — a probability in
+ *  [0,1], directly comparable to `syncConstants.ts`'s `CONF_MIN`; nothing on
+ *  the TS side needs to convert it further. */
+export interface FaWordSpan {
+  word: string;
+  startSec: number;
+  endSec: number;
+  confidence: number;
 }
 
 /** Mirrors `fa.rs`'s `FaEvent` (`#[serde(tag = "event", content = "data")]`).
@@ -29,7 +43,7 @@ export interface FaSegmentInput {
  *  camelCase. */
 export type FaEvent =
   | { event: 'Progress'; data: { percent: number } }
-  | { event: 'Done'; data: Record<string, never> }
+  | { event: 'Done'; data: { words: FaWordSpan[] } }
   | { event: 'Error'; data: { message: string } };
 
 /** Mirrors `fa.rs`'s `FaErrorKind` (`#[serde(rename_all = "camelCase")]`).
@@ -63,3 +77,29 @@ export interface FaAlignArgs {
 /** `fa_cancel` (`fa.rs`'s `fa_cancel`) takes no arguments beyond Tauri's own
  *  managed `FaState` — mirrors `whisper_cancel`'s empty argument shape. */
 export type FaCancelArgs = Record<string, never>;
+
+/**
+ * Reshapes a `FaEvent`'s `Done` payload (`FaWordSpan[]`) into
+ * `TranscriptToken[]` — exactly the shape `whisperService.ts`'s
+ * `extractSegmentAlignments` already consumes (`startSec`/`endSec`/`text`,
+ * now also carrying the optional `confidence` D9 added to `TranscriptToken`).
+ * A straight 1:1 map: unlike a Whisper token, an `FaWordSpan` is already
+ * exactly one word (`fa_onnx.rs`'s `merge_char_spans_to_words`), so there is
+ * no multi-word-per-token expansion to do here (contrast
+ * `extractSegmentAlignments`'s own `tokenWords` expansion of Whisper's
+ * possibly-multi-word tokens).
+ *
+ * NOT WIRED INTO ANYTHING — no `invoke()`, no hook, no component, no
+ * capability gate (WS1 Task 5 Slice D9 scope: carrying confidence is this
+ * slice, comparing it against `CONF_MIN` is the next). Tests are the only
+ * caller today, same "established but unwired" pattern this module's other
+ * declarations already use.
+ */
+export function faWordSpansToTranscriptTokens(words: FaWordSpan[]): TranscriptToken[] {
+  return words.map((w) => ({
+    startSec: w.startSec,
+    endSec: w.endSec,
+    text: w.word,
+    confidence: w.confidence,
+  }));
+}
