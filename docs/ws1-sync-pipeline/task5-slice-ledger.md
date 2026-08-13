@@ -362,8 +362,8 @@ Full duration-ladder and delta measurements:
 | Gap | Status | What unblocks it |
 |---|---|---|
 | **Windowing (R.0/R.1/R.4 landed in TS; R.2/R.3/R.5/R.7-R.9 not implemented anywhere)** | Open | The windowing-and-wiring slice this ledger's rulings (§4) prepare the ground for. Must also implement the Automated Agreement Budget (§4) as its own verification, since no zero-tolerance reference exists. |
-| **Model caching** | Open, now justified (§4) | Build alongside the windowing slice — a session-scoped ONNX session cache, evicted on language change/session end. |
-| **Cancellation is inert** | Open, confirmed by direct reading | `fa_cancel` flips `FaState`'s `FaRunState` to `Cancelled`, but `fa_onnx.rs`'s `align`/`align_with_model_path` never reads `FaState` at all — grepped directly, zero references to `FaRunState`/`state.0` outside `fa.rs` itself. A long-running windowed alignment has no way to observe a cancellation request today. Must be threaded through once windowing makes a single `fa_align` call long enough to matter (today's ≤5.64s test clips make this moot in practice). |
+| **Model caching** | **Done (D11)** — verified accurate here | `fa_onnx.rs`'s `CachedSession` struct (`fa_onnx.rs:688`) and `with_cached_session` (`fa_onnx.rs:700`) hold one loaded ONNX `Session` per `(language, resolved model path/size/mtime)` key; `align_chunked` (`fa_onnx.rs:798-836`) calls it once per run, reusing the same session across every chunk in that run and across later calls in the same process, evicting only on a key mismatch (language change or a different model file) — confirmed by direct reading, matching this document's own §1 D11 entry ("reusing a session-scoped `FaModelCache`... instead of reloading the 1.2+GiB model per chunk"), which this row previously failed to reflect. |
+| **Cancellation is inert** | **Done (D11)** — verified accurate here | Stale as of this row's original wording (pre-D11). `align_chunked` (`fa_onnx.rs:798`) now checks `is_cancelled` before chunk 0 (`fa_onnx.rs:807`) and again before every subsequent chunk (`fa_onnx.rs:819`), returning `Err(FaOnnxError::Cancelled)` immediately with no partial word list. Proven by a real, deterministic test — `mod cancellation`'s `cancellation_stops_before_completing_all_chunks_deterministically` (`fa_onnx.rs:3631+`) scripts a cancel that fires after exactly 2 of 4 chunks and asserts the loop stops there, not merely "eventually." |
 | **Production audio path (the dev tool makes its own WAV)** | Open by design (D10) | `fa_align_dev` exists precisely because no production caller leaves a durable WAV on disk. The capability-gated Settings-toggle wiring (§4) must decide how a real Apply-Sync call gets a durable WAV — reusing `transcode_to_wav`'s helper without its current delete-on-exit lifecycle, or an equivalent. |
 | **R.7 gate untestable** | Open, confirmed (§5) | Needs either a deliberately-constructed low-confidence fixture or real-world low-confidence audio; none exists in the repo today. |
 | **R.5 wildcards** | Deliberately deferred (§4 ruling) | Ships after the capability-gated toggle, additive, once an owner ruling on wildcard-gap destination lands (R.5's own open question). |
@@ -394,6 +394,15 @@ Full duration-ladder and delta measurements:
   section) — owned by `docs/ws1-sync-pipeline/measurements/
   d11-chunked-alignment-2026-08-13.md`. Produced at Slice D12's landing pass,
   not at D11's own commit.
+- **D12's window-size-ladder/attribution-isolation/Whisper-triage
+  measurements** (the finding that attribution, not window size, dominates
+  chunked-alignment disagreement) and **D13's index-attribution measurements**
+  (whether an index-derived rule reaches D12's oracle bound without the
+  oracle; `faChunkPlan.ts`'s `computeFaChunkPlanWithAttribution`, a
+  measurement-only `'script-word-index'` text-attribution mode alongside the
+  unchanged production `'segment-start-time'` one) — owned by
+  `docs/ws1-sync-pipeline/measurements/d13-index-attribution-2026-08-13.md`,
+  which also carries the D12-vs-D13 combined agreement table.
 - **The ort/onnxruntime runtime-unblock investigation** — owned by
   `docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`.
 - **R-M/R-N ratification into `project-state.md`** — still pending owner

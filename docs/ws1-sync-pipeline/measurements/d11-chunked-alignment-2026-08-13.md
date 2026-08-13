@@ -170,7 +170,16 @@ an unrelated bug.
 own scope note, and per this slice's constraints): the WINDOW, not the
 TEXT-ATTRIBUTION rule, is the proximate cause of both failures.** Both
 windows are far shorter than their neighbors (0.62s and 1.40s vs. a 240s-run
-median of 3.12s — see the earlier Step 3(a) run-distribution measurement) —
+median of 3.12s — **provenance repair, Slice D13 Step 1:** this number lived
+only in a chat transcript at D12 landing, with no committed artifact
+reproducing it, violating `CLAUDE.md` §5's "Audit/investigation reports must
+be persisted into `docs/`" rule. `scripts/fa-run-distribution.ts` (added
+Slice D13, pure TS, no ONNX/model dependency, runs in under a second) is that
+artifact — run `npx tsx scripts/fa-run-distribution.ts`. Reproduced exactly:
+240s excerpt run duration p50=3.12s, p90=12.04s, p99=24.46s, max=24.46s over
+46 runs (32 chunks after `runsToChunks` folds 14 text-less runs forward — the
+script also reconciles this 46→32 gap explicitly, and the corresponding
+709s-project 149→97 gap, both confirmed exact) —
 both are runs that landed between two closely-spaced `agreed-anchor`
 boundaries, and each nonetheless inherited an entire committed segment's full
 text via `startTime` membership (`faChunkPlan.ts`'s attribution rule) — a
@@ -222,6 +231,35 @@ document explicitly does NOT assert any of them — that is Slice D12's Step
 Separating these is the explicit subject of Slice D12's remaining Step 5/6
 work (window-size ladder, attribution isolation, Whisper triage) — see
 `task5-slice-ledger.md`'s D12 entry once that work lands.
+
+**Provenance repair (Slice D13 Step 1): which of the four items above D12
+superseded**, added retroactively since D12's own commit did not annotate
+this document at landing time:
+
+1. **SUPERSEDED.** D12's `attribution_isolation` test (oracle boundaries cut
+   at real reference gaps + oracle whole-file-word-membership text) measured
+   max disagreement of 0.08s (start) / 0.33s (end) at matched ~6-7s
+   granularity — two orders of magnitude below the ladder rung's 7.54s at the
+   same granularity. Windowing itself (a) is not the dominant effect;
+   attribution (b) is. Re-confirmed by fresh re-run, Slice D13: `matched=569/569
+   ctc_failed=0/38 ... START(s) ... max=0.0800 END(s) ... max=0.3300`.
+2. **PARTIALLY SUPERSEDED.** D12's window-size ladder (7/20/45/90s, unchanged
+   `segment.startTime` attribution) found the disagreement tail persists
+   through 45s and is still ~5s at 90s — so growing the window alone, under
+   the OLD attribution rule, does not resolve it. D13 subsequently found a
+   FIXED 45s window under an INDEX-derived attribution rule
+   (`faChunkPlan.ts`'s `computeFaChunkPlanWithAttribution`) reaches max 0.76s
+   (start) — "is 7s too small" reframes to "under which attribution rule",
+   not resolved by window size in isolation. See
+   `d13-index-attribution-2026-08-13.md`.
+3. **PARTIALLY SUPERSEDED.** D13 Step 5 proposes a budget derived from the
+   whole-file reference's own measured disagreement against real Whisper
+   ground truth (not fitted to windowed-output numbers) — see
+   `d13-index-attribution-2026-08-13.md` §5. Still not wired to any
+   production gate (out of scope for both slices).
+4. **NOT superseded — still open.** Neither D12 nor D13 re-measured the full
+   709s CTC-infeasibility rate under a new attribution rule; the 2/97 figure
+   remains a single-corpus data point.
 
 ---
 

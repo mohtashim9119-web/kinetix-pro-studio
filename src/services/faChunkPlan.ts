@@ -42,7 +42,7 @@
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { alignQueryToSubject, normalize, normalizeSceneDoc } from './whisperService';
-import { computeFaAnchors, type FaRun } from './faAnchors';
+import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 
 /** One forced-alignment chunk: an audio time window (raw, unpadded — R.2
  *  padding is out of scope for this slice) and the script text to align
@@ -54,19 +54,52 @@ export interface FaChunk {
   text: string;
 }
 
+/** One raw (whitespace-split, UNNORMALIZED) script token, tagged with the
+ *  half-open `queryWords` index range it contributed. `qiStart === qiEnd` for a
+ *  token that normalizes to nothing (a stage direction, a punctuation-only
+ *  token) — such a token still carries real text that must survive into some
+ *  chunk, so it is placed by `qiStart` alone (see `attributeByIndex`). */
+interface RawScriptToken {
+  text: string;
+  qiStart: number;
+  qiEnd: number;
+}
+
+/** Everything one pass over the alignment produces. `computeRuns` returns only
+ *  `runs` from this (its historical shape); index attribution additionally
+ *  needs `anchors` (for their `qi`) and the raw-token/`qi` correspondence. */
+interface RunContext {
+  runs: FaRun[];
+  anchors: readonly FaAnchor[];
+  rawTokens: RawScriptToken[];
+  totalQi: number;
+}
+
 /**
  * Computes the raw `FaRun[]` window structure for a forced-alignment run —
- * the shared first half of both `computeFaChunkPlan` and
- * `computeFaChunkPlanCoalesced` below (`computeFaAnchors` itself, and the
+ * the shared first half of `computeFaChunkPlan`, `computeFaChunkPlanCoalesced`
+ * and the index-attribution variants below (`computeFaAnchors` itself, and the
  * `tokenWords`/`queryWords` alignment construction feeding it, are identical
- * either way; only what happens to `runs` afterward differs).
+ * for all of them; only what happens to `runs` afterward differs).
+ *
+ * PER-TOKEN NORMALIZATION FAITHFULNESS (WS1 Task 5 Slice D13 Step 3): the
+ * `rawTokens` map below normalizes each whitespace token INDIVIDUALLY, while
+ * `queryWords` normalizes each segment WHOLE. These agree only if
+ * `normalizeSceneDoc` never lets one raw token's normalization depend on a
+ * neighboring one — not guaranteed in general, since `stripStageDirections`
+ * works over a whole string and a stage direction can span tokens. Measured on
+ * the real 173 corpus (`scripts/fa-run-distribution.ts`'s sibling probe, Slice
+ * D13): 63/63 segments agree. Rather than trust that, `assertQiMapConsistent`
+ * below re-derives the whole-segment normalization and rejects a mismatch, so
+ * a corpus where the two diverge fails loudly instead of silently mis-cutting
+ * text.
  */
-function computeRuns(
+function computeRunContext(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
-): FaRun[] {
+): RunContext {
   // Mirrors whisperService.ts's extractSegmentAlignments `tokenWords`
   // expansion: a Whisper token may canonicalize to multiple (or zero) words.
   const tokenWords: Array<{ word: string; tokenIdx: number }> = [];
@@ -79,16 +112,50 @@ function computeRuns(
   // Mirrors extractSegmentAlignments's `queryWords` construction — every
   // segment's scene-doc-normalized words, concatenated in segment order.
   const queryWords: string[] = [];
+  const rawTokens: RawScriptToken[] = [];
   for (const seg of segments) {
     const words = seg.text && seg.text.trim() ? normalizeSceneDoc(seg.text) : [];
+    const segQiStart = queryWords.length;
     for (const w of words) if (w.length > 0) queryWords.push(w);
+
+    if (!seg.text || !seg.text.trim()) continue;
+    let qi = segQiStart;
+    for (const raw of seg.text.split(/\s+/)) {
+      if (raw.length === 0) continue;
+      const produced = normalizeSceneDoc(raw).filter(w => w.length > 0).length;
+      rawTokens.push({ text: raw, qiStart: qi, qiEnd: qi + produced });
+      qi += produced;
+    }
+    assertQiMapConsistent(qi, queryWords.length, seg.id);
   }
 
   const subjectWords = tokenWords.map(t => t.word);
   const subjectTokenIdx = tokenWords.map(t => t.tokenIdx);
   const alignment = alignQueryToSubject(queryWords, subjectWords);
 
-  return computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx).runs;
+  const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
+  return { runs, anchors, rawTokens, totalQi: queryWords.length };
+}
+
+/** Per-token and whole-segment normalization must land on the same `qi` count —
+ *  otherwise every downstream index cut in this segment is off by the
+ *  difference. Throwing beats silently mis-attributing text. */
+function assertQiMapConsistent(perTokenQi: number, wholeSegmentQi: number, segId: string): void {
+  if (perTokenQi !== wholeSegmentQi) {
+    throw new Error(
+      `faChunkPlan: per-token normalization disagrees with whole-segment normalization for segment ${segId} ` +
+        `(${perTokenQi} vs ${wholeSegmentQi} words) — index attribution cannot cut this segment's text safely.`,
+    );
+  }
+}
+
+export function computeRuns(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+): FaRun[] {
+  return computeRunContext(segments, tokens, silences, audioDuration).runs;
 }
 
 /**
@@ -235,4 +302,247 @@ export function computeFaChunkPlanCoalesced(
   const runs = computeRuns(segments, tokens, silences, audioDuration);
   const coalesced = coalesceRuns(runs, coalesceTargetSec);
   return runsToChunks(coalesced, segments);
+}
+
+// ---------------------------------------------------------------------------
+// INDEX ATTRIBUTION (WS1 Task 5 Slice D13 Step 3) — measurement-only today.
+//
+// D12 proved that ATTRIBUTION, not window size, dominates chunked-alignment
+// disagreement: at matched ~6-7s granularity, chunks whose text was correct by
+// construction (assigned from whole-file word membership — an ORACLE
+// production cannot have, since it presupposes the whole-file answer) reached
+// 0.08s max start disagreement, against 7.54s for the same-granularity ladder
+// rung using today's `segment.startTime` rule. This section asks whether an
+// INDEX-DERIVED rule — available without the oracle — reaches the same bound.
+//
+// The rule: a chunk's text is the script-word (`qi`) range between its two
+// bounding anchors, rather than the set of segments whose `startTime` happens
+// to fall in its audio window. `faAnchors.ts`'s `FaAnchor` already carries both
+// `qi` and `tokenIdx` (faAnchors.ts:57-62) — `computeRuns` simply discarded
+// them by taking `.runs` off `computeFaAnchors`'s result. Nothing in
+// `faAnchors.ts` or `syncConstants.ts` needs to change.
+//
+// WHY THIS SHOULD HELP: `segment.startTime` is the OLD, pre-alignment timing —
+// exactly the quantity forced alignment is being run to correct. D11 §4's two
+// CTC-infeasibility cases are the extreme form: a 0.62s window inherited a
+// segment whose committed duration is 4.65s, purely because that segment's
+// stale `startTime` landed inside the window. `qi`, by contrast, comes from the
+// Hirschberg alignment against the actual Whisper transcript, so it says where
+// a word IS rather than where it was last laid out.
+//
+// TEXT DOMAIN (the reason this is not simply "emit queryWords"): chunk text is
+// RAW segment text, which Rust's own `normalize_for_forced_alignment` then
+// normalizes. That normalizer and this module's `normalizeSceneDoc` do NOT
+// agree — measured on the real 240s excerpt (Slice D13 Step 3), raw text yields
+// 569 representable words (matching the whole-file FA reference exactly) while
+// `queryWords.join(' ')` yields 589, because `normalizeSceneDoc` expands
+// "41st" to "forty one st" and splits contractions where the FA normalizer
+// drops the unrepresentable token and keeps "don't" whole. Emitting
+// `queryWords` would therefore change WHAT IS ALIGNED, not just where it is
+// cut, and would make any comparison against the whole-file reference
+// apples-to-oranges. So index attribution cuts the RAW token stream at
+// `qi`-derived boundaries, via `RawScriptToken`'s per-token `qi` range.
+// ---------------------------------------------------------------------------
+
+/** Which rule assigns a chunk its text. `'segment-start-time'` is the D11
+ *  production rule (unchanged, still the default everywhere); `'script-word-
+ *  index'` is Slice D13's index-derived rule. No production path passes
+ *  `'script-word-index'` in this slice — it is a measurement knob. */
+export type FaTextAttribution = 'segment-start-time' | 'script-word-index';
+
+/** A run paired with the half-open `queryWords` range its two bounding anchors
+ *  delimit. */
+interface RunQiRange {
+  run: FaRun;
+  qiLo: number;
+  qiHi: number;
+}
+
+/**
+ * Pairs each run with its bounding anchors' `qi`, WITHOUT joining on time.
+ *
+ * A time join would be ambiguous: two anchors may agree with the SAME silence
+ * and therefore share a `timeSec`, producing zero-duration runs (measured on
+ * the real corpus: 8 of 46 runs at 240s, 31 of 149 at full length). Instead
+ * this walks `runs` in order and consumes one anchor each time a run's
+ * `endProvenance` is `'agreed-anchor'` — exact, because `computeFaAnchors`
+ * builds its boundary list as `[corpus-start, ...anchors (in qi order),
+ * corpus-end]` and emits runs in that same order, interleaving only
+ * force-split boundaries, which are labeled distinctly (faAnchors.ts:206-240).
+ *
+ * FORCED-SPLIT BOUNDARIES carry no `qi` by construction (no anchor exists
+ * there). Such a boundary does not advance `qi`, so the run it ends receives an
+ * EMPTY range and its audio window is folded into a neighbor by
+ * `attributeByIndex`'s empty handling — i.e. a force-split subdivides the
+ * WINDOW but never the TEXT. This is the honest fallback: the alternative would
+ * be inventing a `qi` by time interpolation, which is precisely the stale-time
+ * inference this rule exists to remove. It never fires on the real 173 corpus
+ * (measured: 0 forced splits at both 240s and 709s — every internal boundary is
+ * an `agreed-anchor`), so it is a correctness guard, not a tuned path.
+ *
+ * CALLER CONTRACT — UNCOALESCED `runs` ONLY: the one-anchor-per-'agreed-anchor'-
+ * run correspondence this function relies on holds only for `computeRunContext`'s
+ * own, original `ctx.runs` — NOT for a `coalesceRuns`-merged array. Coalescing
+ * discards an absorbed internal boundary's provenance (`coalesceRuns`'s own doc
+ * comment), so a merged run that swallowed several anchors still ends in
+ * `'agreed-anchor'` and would silently desync `anchorCursor` from the anchors
+ * it actually spans — measured, Slice D13 Step 4: this exact bug, caught only
+ * by a real-corpus run (not the narrower unit tests below), inflated START p50
+ * to 45.9s. `coalesceRunQiRanges` below is the only supported way to combine
+ * coalescing with index attribution — it merges qi bounds in lockstep with
+ * time bounds instead of re-deriving them from a coalesced array.
+ */
+function runQiRanges(runs: readonly FaRun[], anchors: readonly FaAnchor[], totalQi: number): RunQiRange[] {
+  const out: RunQiRange[] = [];
+  let anchorCursor = 0;
+  let qiLo = 0;
+  for (const run of runs) {
+    let qiHi: number;
+    if (run.endProvenance === 'agreed-anchor') {
+      qiHi = anchors[anchorCursor]?.qi ?? qiLo;
+      anchorCursor++;
+    } else if (run.endProvenance === 'corpus-end') {
+      qiHi = totalQi;
+    } else {
+      qiHi = qiLo; // forced split — see doc comment
+    }
+    if (qiHi < qiLo) qiHi = qiLo; // anchors are qi-ordered; defensive only
+    out.push({ run, qiLo, qiHi });
+    qiLo = qiHi;
+  }
+  // The final run must always close out the script, whatever its provenance —
+  // otherwise trailing words would be silently dropped.
+  const last = out[out.length - 1];
+  if (last) last.qiHi = totalQi;
+  return out;
+}
+
+/**
+ * Merges adjacent `RunQiRange`s in lockstep with `coalesceRuns`'s own greedy
+ * left-to-right, `<= targetSec`-ceiling algorithm — SAME merge predicate
+ * (`next.run.windowEnd - current.run.windowStart <= targetSec`), applied to
+ * the SAME input sequence in the SAME order, so it makes IDENTICAL merge/
+ * no-merge decisions and produces a run array `coalesceRuns(runs, targetSec)`
+ * would also produce — but carries each merged run's qi bounds along as the
+ * UNION of every absorbed range's own bounds (`qiLo` of the first, `qiHi` of
+ * the last), rather than re-deriving them from the merged array's own
+ * (provenance-lossy) `endProvenance` after the fact. This is the fix for the
+ * bug `runQiRanges`'s own doc comment describes: qi and time must be
+ * coalesced TOGETHER, in one pass over the ORIGINAL per-anchor ranges, never
+ * separately.
+ */
+function coalesceRunQiRanges(ranges: readonly RunQiRange[], targetSec: number): RunQiRange[] {
+  if (ranges.length === 0) return [];
+
+  const out: RunQiRange[] = [];
+  let current: RunQiRange = { run: { ...ranges[0]!.run }, qiLo: ranges[0]!.qiLo, qiHi: ranges[0]!.qiHi };
+  for (let i = 1; i < ranges.length; i++) {
+    const next = ranges[i]!;
+    const mergedDuration = next.run.windowEnd - current.run.windowStart;
+    if (mergedDuration <= targetSec) {
+      current = {
+        run: { ...current.run, windowEnd: next.run.windowEnd, endProvenance: next.run.endProvenance },
+        qiLo: current.qiLo,
+        qiHi: next.qiHi,
+      };
+    } else {
+      out.push(current);
+      current = { run: { ...next.run }, qiLo: next.qiLo, qiHi: next.qiHi };
+    }
+  }
+  out.push(current);
+  return out;
+}
+
+/**
+ * Assigns raw script tokens to runs by `qi` range, then emits chunks.
+ *
+ * Every raw token is placed by its own `qiStart` into the LAST run whose
+ * `qiLo <= qiStart` — a single monotonic scan. Placing by `qiStart` alone (not
+ * by containment of the whole `[qiStart, qiEnd)` range) is what makes this a
+ * partition: each token lands in exactly one run, none is duplicated, none is
+ * dropped, and a token that normalizes to nothing (`qiStart === qiEnd` — a
+ * stage direction, a punctuation-only token) still has a well-defined home
+ * rather than vanishing.
+ *
+ * TWO KINDS OF DEGENERATE RUN are folded into a neighbor rather than emitted:
+ *  - a run with text but NO AUDIO (zero-duration — the shared-silence case
+ *    above). Sending Rust text with an empty window is a guaranteed
+ *    CTC-infeasibility, the exact failure D11 §4 recorded; its text merges
+ *    FORWARD into the next run, which is the run that actually contains that
+ *    audio.
+ *  - a run with audio but NO TEXT (an empty `qi` range). Its window extends the
+ *    previous chunk, mirroring `runsToChunks`'s own existing empty-run rule so
+ *    both attribution modes handle text-less windows identically.
+ */
+function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly RawScriptToken[]): FaChunk[] {
+  if (ranges.length === 0) return [];
+
+  const textsByRun: string[][] = ranges.map(() => []);
+  let rangeIdx = 0;
+  for (const tok of rawTokens) {
+    while (rangeIdx < ranges.length - 1 && tok.qiStart >= ranges[rangeIdx + 1]!.qiLo) rangeIdx++;
+    textsByRun[rangeIdx]!.push(tok.text);
+  }
+
+  // Fold zero-duration runs' text forward into the next run that has audio.
+  for (let i = 0; i < ranges.length - 1; i++) {
+    const r = ranges[i]!.run;
+    if (r.windowEnd - r.windowStart > 0) continue;
+    const carried = textsByRun[i]!;
+    if (carried.length === 0) continue;
+    textsByRun[i + 1]!.unshift(...carried);
+    textsByRun[i] = [];
+  }
+
+  const chunks: FaChunk[] = [];
+  let pendingStart: number | undefined;
+  for (let i = 0; i < ranges.length; i++) {
+    const run = ranges[i]!.run;
+    const text = textsByRun[i]!.join(' ');
+    if (text.length === 0) {
+      if (chunks.length > 0) chunks[chunks.length - 1]!.endSec = run.windowEnd;
+      else pendingStart = pendingStart ?? run.windowStart;
+      continue;
+    }
+    chunks.push({ startSec: pendingStart ?? run.windowStart, endSec: run.windowEnd, text });
+    pendingStart = undefined;
+  }
+  return chunks;
+}
+
+/**
+ * The one entry point that takes an explicit attribution rule and an optional
+ * coalesce target — the measurement surface for Slice D13 Step 4.
+ *
+ * `attribution` is REQUIRED (no default): nothing acquires index attribution by
+ * forgetting to pass a rule. `coalesceTargetSec` is optional; omitting it runs
+ * the unmerged R.0 plan. With `attribution: 'segment-start-time'` and no
+ * target, this is exactly `computeFaChunkPlan` — production behavior is
+ * reachable through this function unchanged, and `computeFaChunkPlan` itself is
+ * untouched.
+ */
+export function computeFaChunkPlanWithAttribution(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  attribution: FaTextAttribution,
+  coalesceTargetSec?: number,
+): FaChunk[] {
+  const ctx = computeRunContext(segments, tokens, silences, audioDuration);
+
+  if (attribution === 'segment-start-time') {
+    const runs = coalesceTargetSec === undefined ? ctx.runs : coalesceRuns(ctx.runs, coalesceTargetSec);
+    return runsToChunks(runs, segments);
+  }
+
+  // Index attribution: qi ranges must be derived from the UNCOALESCED runs
+  // (one-to-one with `anchors`, `runQiRanges`'s own contract) and THEN
+  // coalesced in lockstep via `coalesceRunQiRanges` — never by coalescing the
+  // runs first and re-deriving qi from the merged array (see both functions'
+  // doc comments for the bug that approach produces).
+  const uncoalescedRanges = runQiRanges(ctx.runs, ctx.anchors, ctx.totalQi);
+  const ranges = coalesceTargetSec === undefined ? uncoalescedRanges : coalesceRunQiRanges(uncoalescedRanges, coalesceTargetSec);
+  return attributeByIndex(ranges, ctx.rawTokens);
 }

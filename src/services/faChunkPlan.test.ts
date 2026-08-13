@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced } from './faChunkPlan';
+import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
 
@@ -231,5 +231,164 @@ describe('computeFaChunkPlanCoalesced', () => {
     expect(coalesced.length).toBe(1);
     expect(coalesced[0]!.startSec).toBe(0);
     expect(coalesced[0]!.endSec).toBe(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Index attribution (WS1 Task 5 Slice D13 Step 3)
+// ---------------------------------------------------------------------------
+
+describe('computeFaChunkPlanWithAttribution', () => {
+  /** The same four-segment / three-anchor fixture the suite above uses — real
+   *  R.1 anchors fire at words 3/7/11, so runs really are subdivided and the
+   *  two attribution rules have something to disagree about. */
+  function fixture() {
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+    return { segments, tokens, silences, audioDuration: 8, words };
+  }
+
+  it('is byte-identical to computeFaChunkPlan under segment-start-time attribution', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const legacy = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const viaParam = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'segment-start-time');
+    expect(viaParam).toEqual(legacy);
+  });
+
+  it('is byte-identical to computeFaChunkPlanCoalesced under segment-start-time attribution', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const legacy = computeFaChunkPlanCoalesced(segments, tokens, silences, audioDuration, 5);
+    const viaParam = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'segment-start-time', 5);
+    expect(viaParam).toEqual(legacy);
+  });
+
+  it('places every script word in exactly one chunk, none duplicated or dropped', () => {
+    const { segments, tokens, silences, audioDuration, words } = fixture();
+    const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+
+    const emitted = chunks.flatMap(c => c.text.split(' ').filter(w => w.length > 0));
+    expect(emitted.length).toBe(words.length);
+    expect([...emitted].sort()).toEqual([...words].sort());
+  });
+
+  it('preserves script word order across chunks', () => {
+    const { segments, tokens, silences, audioDuration, words } = fixture();
+    const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    const emitted = chunks.flatMap(c => c.text.split(' ').filter(w => w.length > 0));
+    expect(emitted).toEqual(words);
+  });
+
+  it('emits the same word multiset as the unmerged time-attributed plan', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const byTime = computeFaChunkPlan(segments, tokens, silences, audioDuration)
+      .flatMap(c => c.text.split(' ').filter(w => w.length > 0))
+      .sort();
+    const byIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index')
+      .flatMap(c => c.text.split(' ').filter(w => w.length > 0))
+      .sort();
+    expect(byIndex).toEqual(byTime);
+  });
+
+  it('keeps chunk windows gapless and spanning the full audio', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    expect(chunks[0]!.startSec).toBe(0);
+    expect(chunks[chunks.length - 1]!.endSec).toBe(audioDuration);
+    for (let i = 0; i < chunks.length - 1; i++) {
+      expect(chunks[i]!.endSec).toBe(chunks[i + 1]!.startSec);
+    }
+  });
+
+  it('never emits a chunk with text but a zero-length audio window', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    for (const target of [undefined, 3, 5, 1000] as const) {
+      const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index', target);
+      for (const c of chunks) {
+        expect(c.text.length).toBeGreaterThan(0);
+        expect(c.endSec).toBeGreaterThan(c.startSec);
+      }
+    }
+  });
+
+  it('holds the word-conservation invariant under coalescing too', () => {
+    const { segments, tokens, silences, audioDuration, words } = fixture();
+    for (const target of [3, 5, 1000]) {
+      const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index', target);
+      const emitted = chunks.flatMap(c => c.text.split(' ').filter(w => w.length > 0));
+      expect(emitted).toEqual(words);
+    }
+  });
+
+  it('cuts text at an anchor even when it falls mid-segment', () => {
+    // One long segment spanning the whole corpus, with an anchor in its
+    // middle. Time attribution can only put the entire segment in the run
+    // containing startTime=0; index attribution must split it at the anchor.
+    const segments = [seg('s0', 'kittens likes purple hats dragons chase silver moons', 0, 8)];
+    const words = segments[0]!.text.split(' ');
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i, i + 0.8));
+    const silences: SilenceInterval[] = [silence(tokens[4]!.startSec)];
+
+    const byTime = computeFaChunkPlan(segments, tokens, silences, 8);
+    const byIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index');
+
+    // Time attribution: all 8 words land in one chunk.
+    expect(byTime.filter(c => c.text.split(' ').length === 8).length).toBe(1);
+    // Index attribution: the anchor splits them across two chunks.
+    expect(byIndex.length).toBeGreaterThan(1);
+    expect(byIndex.flatMap(c => c.text.split(' '))).toEqual(words);
+  });
+});
+
+describe('computeFaChunkPlanWithAttribution — coalesced index attribution', () => {
+  // Regression test for the Slice D13 Step 4 bug: qi ranges MUST be coalesced
+  // in lockstep with time ranges, not re-derived from an already-coalesced
+  // run array (which has lost internal boundary provenance). This fixture's
+  // target=5 coalesce specifically forces one merged chunk to absorb an
+  // internal anchor (the [0,1.5) and [1.5,3.5) raw runs merge into [0,3.5),
+  // swallowing the qi=3 anchor) — the exact shape that desynced
+  // `anchorCursor` from which anchors a merged run actually spans, and that
+  // a purely global (order + count) conservation check does not catch.
+  it('gives each coalesced chunk exactly the text between its OWN bounding anchors', () => {
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+
+    const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index', 5);
+
+    expect(chunks).toEqual([
+      { startSec: 0, endSec: 3.5, text: 'kittens likes purple hats dragons chase silver' },
+      { startSec: 3.5, endSec: 8, text: 'moons wizards brew golden potions falcons guard hidden castles' },
+    ]);
+  });
+
+  it('agrees with unmerged index attribution on which anchor closes out each surviving chunk', () => {
+    // A target wide enough to merge everything into ONE chunk must still
+    // contain every word in original order — the coalesced degenerate case
+    // of the property above.
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+
+    const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index', 1000);
+    expect(chunks).toEqual([{ startSec: 0, endSec: 8, text: words.join(' ') }]);
   });
 });
