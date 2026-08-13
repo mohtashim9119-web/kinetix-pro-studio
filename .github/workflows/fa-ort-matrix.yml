@@ -1,0 +1,211 @@
+name: FA ORT matrix
+
+# ---------------------------------------------------------------------------
+# WS1 Task 5 Slice D14 B1 — automates the four-way `fa-inference`/ORT gate
+# matrix that was, until this workflow, run by hand and recorded in prose in
+# each slice's own commit message / docs/ws1-sync-pipeline/task5-slice-ledger.md
+# (see that document's §6 Known-gap register, "CI automation of the four-way
+# ORT matrix" — the same gap this workflow closes). The four cells:
+#
+#   1. feature-off              — `cargo test` with no `fa-inference` feature.
+#                                  No ORT/model dependency compiled in at all.
+#   2. feature-on, ORT unset    — `cargo test --features fa-inference`, no
+#                                  ORT_DYLIB_PATH, no FA_REQUIRE_ORT. This is
+#                                  the state every plain `cargo test` on a
+#                                  fresh checkout is already in (no models or
+#                                  onnxruntime are vendored in this repo) —
+#                                  every ORT-dependent test must SKIP cleanly,
+#                                  never fail or hang.
+#   3. feature-on, ORT set      — `cargo test --features fa-inference` with a
+#                                  real onnxruntime dylib resolved (downloaded
+#                                  fresh in this job, never vendored/committed
+#                                  — see the resolve step below), no per-language
+#                                  FA model present (those are ~1.26 GiB each
+#                                  and are never vendored either). Proves the
+#                                  "runtime present, model absent" state is
+#                                  ALSO a clean skip, not a crash — a state
+#                                  distinct from cell 2 that nothing else
+#                                  exercises.
+#   4. feature-on, FA_REQUIRE_ORT=1, ORT unset
+#                                — the skip-forcing escape hatch
+#                                  (`fa_onnx.rs`'s `require_ort` module) must
+#                                  turn every one of those same skips into a
+#                                  HARD FAILURE naming what's missing. This
+#                                  cell is EXPECTED to fail — the verification
+#                                  step below inverts that and fails the job
+#                                  only if it *doesn't* fail (i.e. a skip slips
+#                                  through where a hard failure is required).
+#
+# Do not vendor onnxruntime or any FA model in this repo to make this
+# workflow "fully green" — cell 3 deliberately proves the partial-
+# availability (runtime yes, model no) state degrades safely instead, which
+# is the realistic state of every contributor's machine and every other CI
+# job that might one day build this crate. The `#[ignore]`d real-corpus
+# measurement tests (`real_corpus_measurement`, `d12_measurement`,
+# `d13_measurement`) need a private, gitignored corpus PLUS real per-language
+# models and are out of scope for this workflow (and for CI generally) —
+# `cargo test` never passes `--ignored` here, so they are excluded in every
+# cell exactly as they already are for a plain local `cargo test`.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src-tauri/src/fa.rs'
+      - 'src-tauri/src/fa_onnx.rs'
+      - 'src-tauri/src/fa_dev.rs'
+      - 'src-tauri/src/fa/**'
+      - 'src-tauri/src/fa_viterbi.rs'
+      - 'src-tauri/src/sha256.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - '.github/workflows/fa-ort-matrix.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src-tauri/src/fa.rs'
+      - 'src-tauri/src/fa_onnx.rs'
+      - 'src-tauri/src/fa_dev.rs'
+      - 'src-tauri/src/fa/**'
+      - 'src-tauri/src/fa_viterbi.rs'
+      - 'src-tauri/src/sha256.rs'
+      - 'src-tauri/Cargo.toml'
+      - 'src-tauri/Cargo.lock'
+      - '.github/workflows/fa-ort-matrix.yml'
+
+concurrency:
+  group: fa-ort-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    # macOS, not Linux: this crate's own test helpers (`fa_models_dir()` in
+    # `real_corpus_measurement`/`d12_measurement`/`d13_measurement`/
+    # `cancellation`) are `#[cfg(target_os = "macos")]`-only by construction
+    # (mirroring Tauri's `app_local_data_dir()` for this app's identifier),
+    # and every local validation of `fa-inference` to date (D2-D13) has been
+    # on macOS — matching `build.yml`'s own choice of `macos-latest` as this
+    # project's primary native-build platform avoids introducing a second,
+    # never-before-exercised OS axis as a side effect of adding CI.
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: feature-off
+            cargo_args: ''
+            resolve_ort: false
+            require_ort: false
+            expect: pass
+          - name: feature-on-ort-unset
+            cargo_args: '--features fa-inference'
+            resolve_ort: false
+            require_ort: false
+            expect: pass
+          - name: feature-on-ort-set
+            cargo_args: '--features fa-inference'
+            resolve_ort: true
+            require_ort: false
+            expect: pass
+          - name: feature-on-require-ort-no-dylib
+            cargo_args: '--features fa-inference'
+            resolve_ort: false
+            require_ort: true
+            expect: hard-fail
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: fa-ort-matrix-${{ matrix.name }}
+
+      # Downloads a real onnxruntime release dylib straight from Microsoft's
+      # GitHub releases INTO THE RUNNER'S TEMP DIR — never written into the
+      # repo/working tree, so this is a runtime fetch (same pattern
+      # `build.yml` already uses for ffmpeg/whisper-cli), not vendoring.
+      # Version pinned to 1.23.2 — the exact version already validated
+      # locally against this crate's `ort = "=2.0.0-rc.13"` binding
+      # (`docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`;
+      # `d11-chunked-alignment-2026-08-13.md`'s own repro command). Tries the
+      # runner's own architecture first (arm64 on current `macos-latest`
+      # images), falls back to the universal2 asset so this survives a future
+      # runner-image architecture change without edits.
+      - name: Resolve onnxruntime dylib (downloaded here, never vendored)
+        if: matrix.resolve_ort
+        run: |
+          set -euo pipefail
+          ORT_VERSION=1.23.2
+          ARCH="$(uname -m)"
+          case "$ARCH" in
+            arm64) PRIMARY="onnxruntime-osx-arm64-${ORT_VERSION}.tgz" ;;
+            x86_64) PRIMARY="onnxruntime-osx-x86_64-${ORT_VERSION}.tgz" ;;
+            *) PRIMARY="onnxruntime-osx-universal2-${ORT_VERSION}.tgz" ;;
+          esac
+          FALLBACK="onnxruntime-osx-universal2-${ORT_VERSION}.tgz"
+          BASE="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}"
+          mkdir -p "$RUNNER_TEMP/ort"
+          curl -fL -o "$RUNNER_TEMP/ort.tgz" "$BASE/$PRIMARY" \
+            || curl -fL -o "$RUNNER_TEMP/ort.tgz" "$BASE/$FALLBACK"
+          tar -xzf "$RUNNER_TEMP/ort.tgz" -C "$RUNNER_TEMP/ort" --strip-components=1
+          DYLIB="$RUNNER_TEMP/ort/lib/libonnxruntime.dylib"
+          test -f "$DYLIB"
+          echo "ORT_DYLIB_PATH=$DYLIB" >> "$GITHUB_ENV"
+
+      # Deliberately NOT a plain `cargo test` — `continue-on-error` lets the
+      # workflow reach the verification step below even for the
+      # `expect: hard-fail` cell, where a non-zero exit is the CORRECT
+      # outcome, not a broken build.
+      - name: Run cargo test (${{ matrix.name }})
+        id: run
+        continue-on-error: true
+        working-directory: src-tauri
+        env:
+          FA_REQUIRE_ORT: ${{ matrix.require_ort && '1' || '' }}
+        run: |
+          set -o pipefail
+          cargo test ${{ matrix.cargo_args }} 2>&1 | tee "$RUNNER_TEMP/cargo-test-${{ matrix.name }}.log"
+
+      # The actual gate. Two failure modes this must catch:
+      #   - an `expect: pass` cell that genuinely failed or panicked (a real
+      #     regression — e.g. a skip that started hard-failing, or a hard
+      #     failure that started silently skipping the OTHER direction);
+      #   - an `expect: hard-fail` cell that exited 0 — i.e. skip-forcing
+      #     silently stopped working, which is exactly the failure mode this
+      #     whole workflow exists to catch (task's own framing: "the job must
+      #     fail if a configuration that should hard-fail instead skips").
+      - name: Verify outcome matches expectation (${{ matrix.name }})
+        run: |
+          set -euo pipefail
+          OUTCOME="${{ steps.run.outcome }}"
+          EXPECT="${{ matrix.expect }}"
+          LOG="$RUNNER_TEMP/cargo-test-${{ matrix.name }}.log"
+          echo "cell=${{ matrix.name }} outcome=$OUTCOME expect=$EXPECT"
+
+          if [ "$EXPECT" = "pass" ]; then
+            if [ "$OUTCOME" != "success" ]; then
+              echo "::error::${{ matrix.name }}: expected PASS but cargo test failed. See the 'Run cargo test' step log."
+              exit 1
+            fi
+            if grep -q "panicked at" "$LOG"; then
+              echo "::error::${{ matrix.name }}: cargo test reported success but the log contains a panic — investigate before trusting the exit code."
+              exit 1
+            fi
+          else
+            if [ "$OUTCOME" = "success" ]; then
+              echo "::error::${{ matrix.name }}: expected a HARD FAILURE (FA_REQUIRE_ORT=1 with no ORT_DYLIB_PATH) but cargo test exited 0 — a skip is happening where this repo's own skip-forcing contract requires a hard failure. See fa_onnx.rs's require_ort module."
+              exit 1
+            fi
+            if ! grep -q "FA_REQUIRE_ORT=1 demands real execution" "$LOG"; then
+              echo "::error::${{ matrix.name }}: cargo test failed, but not with the expected FA_REQUIRE_ORT panic message — it may have failed for an unrelated reason. See the 'Run cargo test' step log."
+              exit 1
+            fi
+            echo "Confirmed: ${{ matrix.name }} hard-failed as required — skip-forcing is working."
+          fi

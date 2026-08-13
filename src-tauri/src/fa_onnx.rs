@@ -1911,6 +1911,449 @@ mod d12_measurement {
     }
 }
 
+// ---------------------------------------------------------------------------
+// WS1 Task 5 Slice D13 Step 2 + Step 4 — index-attribution measurement.
+//
+// D12 found attribution, not window size, dominates chunked-alignment
+// disagreement, but proved it with `attribution_isolation` (Part B above): an
+// ORACLE construction (chunk boundaries cut wherever the whole-file reference
+// itself has a real word gap, text assigned by whole-file WORD MEMBERSHIP)
+// that production cannot reproduce, since it presupposes the whole-file
+// answer it is meant to replace. This module asks two separate questions:
+//
+//   Step 2 (`b_control`): does B's near-zero disagreement come from its TEXT
+//   being correct, or from its BOUNDARIES being chosen at convenient,
+//   already-known-clean cut points? Holds boundaries at the REAL, anchor-
+//   derived 7s-coalesced run structure (`173-excerpt-240s-ladder-7s.json`'s
+//   own `startSec`/`endSec` — its `text` field is discarded) and assigns text
+//   by the SAME oracle whole-file-word-membership rule B uses, keyed by each
+//   reference word's own start time. If `b_control`'s disagreement lands close
+//   to full B's, text assignment alone explains the improvement; if it lands
+//   close to the plain ladder-7s rung instead, boundary placement matters too.
+//
+//   Step 4 (`index_7s`/`index_45s`): the actual production-reachable
+//   candidate — `computeFaChunkPlanWithAttribution(..., 'script-word-index',
+//   target)` (`faChunkPlan.ts`, Slice D13 Step 3), which needs no oracle,
+//   only `computeFaAnchors`'s own `qi`. Chunk plans are dumped ahead of time by
+//   `scripts/dump-fa-chunk-plan-index-ladder.ts` at the same 7s/45s targets
+//   Step 4 asks for, text already index-derived — no extra Rust-side text
+//   logic needed for these two, unlike `b_control`.
+//
+//   Step 4 (`whisper_triage_index`): D12's own `whisper_triage` sanity check
+//   (Part C), re-run against index attribution's OWN best rung instead of the
+//   time-attribution ladder's, so the comparison against real Whisper
+//   timestamps — external ground truth, not the whole-file reference this
+//   module's other legs compare against — covers index attribution too.
+//
+// Duplicates (rather than imports from) `d12_measurement`'s small helpers —
+// `fa_models_dir`, `repo_root`, `RefWord`, `ChunkPlanFile`/`PlanChunk`,
+// `load_plan`, `percentile`, `whole_file_reference_240s`, `AgreementStats`,
+// `text_matched_diff_stats`, `print_stats_row`, `run_windowed_fault_tolerant`,
+// `common_setup` — matching the established convention already visible
+// between `real_corpus_measurement` (D11) and `d12_measurement` (D12): each
+// slice's measurement module is a self-contained, additive sibling, never a
+// shared/refactored dependency of the previous slice's. The whole-file
+// reference cache FILE PATH is identical either way
+// (`<dir>/173-excerpt-240s-reference-words.json`), so whichever module's test
+// runs first in a given `$FA_CHUNK_PLAN_DIR` pays the ~113s/~20GiB cost once;
+// every later test in either module reuses the same cache file.
+//
+// Run (mirrors d12_measurement's own invocation pattern):
+//   SCRATCHPAD_DIR=<dir> npx tsx scripts/dump-fa-chunk-plan-index-ladder.ts
+//   ORT_DYLIB_PATH=<path> FA_CHUNK_PLAN_DIR=<dir> cargo test --features fa-inference \
+//     -- --ignored --nocapture --exact fa_onnx::d13_measurement::b_control
+//   … (repeat per test: index_7s, index_45s, whisper_triage_index)
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod d13_measurement {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("d13_measurement's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    /// Same shape as `d12_measurement::RefWord` — normalized text plus
+    /// absolute audio time, used for both the whole-file reference and (via
+    /// `RawWhisperToken` in the TS triage script) the Whisper side.
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct RefWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    fn load_plan(dir: &Path, label: &str) -> Option<Vec<crate::fa::FaChunkInput>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d13_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(
+            plan.chunks
+                .into_iter()
+                .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+                .collect(),
+        )
+    }
+
+    /// Loads just the `[startSec, endSec)` window boundaries from a dumped
+    /// plan, discarding `text` entirely — `b_control`'s whole point is to pair
+    /// these REAL, anchor-derived boundaries with a DIFFERENT text source.
+    fn load_plan_boundaries_only(dir: &Path, label: &str) -> Option<Vec<(f64, f64)>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d13_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(plan.chunks.into_iter().map(|c| (c.start_sec, c.end_sec)).collect())
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    /// Identical cache contract to `d12_measurement::whole_file_reference_240s`
+    /// — same cache file path, so a prior D12 (or D13) test run in the same
+    /// `$FA_CHUNK_PLAN_DIR` is reused rather than recomputed.
+    fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
+        if cache_path.exists() {
+            let text = std::fs::read_to_string(&cache_path)
+                .unwrap_or_else(|e| panic!("read cached reference {}: {e}", cache_path.display()));
+            return serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse cached reference {}: {e}", cache_path.display()));
+        }
+        let plan = load_plan(plan_dir, "173-excerpt-240s-wholefile").expect("wholefile plan must exist to compute the reference");
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        eprintln!("d13_measurement: computing whole-file 240s reference (first use in this $FA_CHUNK_PLAN_DIR, will be cached)...");
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, model_path, audio_path, &plan, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("whole-file reference pass failed: {e}"));
+        eprintln!(
+            "d13_measurement: whole-file reference computed in {:.1}s, {} words",
+            start.elapsed().as_secs_f64(),
+            words.len()
+        );
+        let ref_words: Vec<RefWord> =
+            words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        std::fs::write(&cache_path, serde_json::to_string(&ref_words).unwrap())
+            .unwrap_or_else(|e| panic!("write reference cache {}: {e}", cache_path.display()));
+        ref_words
+    }
+
+    struct AgreementStats {
+        matched: usize,
+        start_diffs: Vec<f64>,
+        end_diffs: Vec<f64>,
+    }
+
+    /// Same greedy text-matched two-pointer walk as
+    /// `d12_measurement::text_matched_diff_stats` — valid here for the same
+    /// reason it was valid there: both sides come from the SCRIPT (whole-file
+    /// reference vs. a windowed script-text pass), never from Whisper's own
+    /// transcription of the audio.
+    fn text_matched_diff_stats(windowed: &[WordSpan], reference: &[RefWord]) -> AgreementStats {
+        let mut ref_idx = 0usize;
+        let mut start_diffs = Vec::new();
+        let mut end_diffs = Vec::new();
+        let mut matched = 0usize;
+        for w in windowed {
+            while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                ref_idx += 1;
+            }
+            if ref_idx >= reference.len() {
+                break;
+            }
+            let r = &reference[ref_idx];
+            start_diffs.push((r.start - w.start_seconds).abs());
+            end_diffs.push((r.end - w.end_seconds).abs());
+            matched += 1;
+            ref_idx += 1;
+        }
+        start_diffs.sort_by(|a, b| a.total_cmp(b));
+        end_diffs.sort_by(|a, b| a.total_cmp(b));
+        AgreementStats { matched, start_diffs, end_diffs }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn print_stats_row(
+        label: &str,
+        stats: &AgreementStats,
+        windowed_total: usize,
+        reference_total: usize,
+        ctc_failed: usize,
+        ctc_total: usize,
+        wall_clock_sec: f64,
+    ) {
+        if stats.start_diffs.is_empty() {
+            eprintln!("d13_measurement: [{label}] matched=0/{windowed_total} (ref={reference_total}) — no distribution");
+            return;
+        }
+        eprintln!(
+            "d13_measurement: [{label}] matched={}/{windowed_total} (ref={reference_total}) ctc_failed={ctc_failed}/{ctc_total} \
+             wall={wall_clock_sec:.1}s START(s) min={:.4} p50={:.4} p90={:.4} p99={:.4} max={:.4} \
+             END(s) min={:.4} p50={:.4} p90={:.4} p99={:.4} max={:.4}",
+            stats.matched,
+            stats.start_diffs[0],
+            percentile(&stats.start_diffs, 0.50),
+            percentile(&stats.start_diffs, 0.90),
+            percentile(&stats.start_diffs, 0.99),
+            stats.start_diffs[stats.start_diffs.len() - 1],
+            stats.end_diffs[0],
+            percentile(&stats.end_diffs, 0.50),
+            percentile(&stats.end_diffs, 0.90),
+            percentile(&stats.end_diffs, 0.99),
+            stats.end_diffs[stats.end_diffs.len() - 1],
+        );
+    }
+
+    /// Same fault-tolerant per-chunk runner as `d12_measurement`'s — a
+    /// CTC-infeasible chunk is skipped (counted), not fatal to the whole leg.
+    fn run_windowed_fault_tolerant(
+        model_path: &Path,
+        audio_path: &str,
+        chunks: &[crate::fa::FaChunkInput],
+    ) -> (Vec<WordSpan>, usize) {
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let mut words = Vec::new();
+        let mut failed = 0usize;
+        for chunk in chunks {
+            let single = std::slice::from_ref(chunk);
+            match align_chunked(&cache, model_path, audio_path, single, "en", || false, |_| {}) {
+                Ok(mut w) => words.append(&mut w),
+                Err(_) => failed += 1,
+            }
+        }
+        (words, failed)
+    }
+
+    fn common_setup(context: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {context}: FA_CHUNK_PLAN_DIR not set");
+            return None;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((plan_dir, model_path, audio_path))
+    }
+
+    /// STEP 2 — B-control. Real, anchor-derived 7s-coalesced boundaries
+    /// (`173-excerpt-240s-ladder-7s.json`'s `startSec`/`endSec`, its own
+    /// `text` discarded) paired with ORACLE text: each whole-file reference
+    /// word is assigned to the chunk whose window contains that word's OWN
+    /// start time — the same "oracle whole-file word membership" rule
+    /// `attribution_isolation` (full B) uses, applied to a boundary structure
+    /// B itself does NOT use (B cuts only at real reference gaps; these
+    /// boundaries were chosen by R.1 anchor agreement, oblivious to where the
+    /// whole-file pass's own words start and end). A boundary landing inside a
+    /// spoken word's own span is therefore possible here in a way it cannot be
+    /// in B by construction — exactly the difference this leg exists to
+    /// measure.
+    ///
+    /// Empty-chunk folding mirrors `faChunkPlan.ts`'s `runsToChunks`: a window
+    /// that receives no reference words extends the PREVIOUS chunk's
+    /// `end_sec` forward (or, if it is the first window(s), defers its own
+    /// `start_sec` onto the next chunk that does get words) — never sent to
+    /// the aligner as an empty-text chunk.
+    /// Shared body for `b_control`/`b_control_45s` (WS1 Task 5 Slice D14 A2 —
+    /// "the missing control"). `ladder_label` selects which real,
+    /// anchor-derived coalesced boundary structure to pair with oracle text
+    /// (`"7s"` was D13's own only measured rung; `"45s"` is the
+    /// matched-window-size counterpart to `index-45s`, needed to judge index
+    /// attribution against the oracle-text bound AT THE SAME granularity it
+    /// actually runs at in the combined table — D13 Step 2 only ever measured
+    /// this at 7s, leaving 45s an asserted-not-measured gap). Extracted
+    /// (rather than duplicated per this module's own top doc comment
+    /// convention, since D13 itself has not shipped as a separate commit yet
+    /// — this is still the same in-flight slice) so both rungs share
+    /// identical boundary/oracle-text logic and can only ever differ in which
+    /// real boundary file they load.
+    fn run_b_control(context: &str, ladder_label: &str) {
+        let Some((plan_dir, model_path, audio_path)) = common_setup(context) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+        let Some(boundaries) = load_plan_boundaries_only(&plan_dir, &format!("173-excerpt-240s-ladder-{ladder_label}")) else {
+            return;
+        };
+
+        let mut texts_by_window: Vec<Vec<&str>> = boundaries.iter().map(|_| Vec::new()).collect();
+        let mut idx = 0usize;
+        for w in &reference {
+            while idx < boundaries.len() - 1 && w.start >= boundaries[idx + 1].0 {
+                idx += 1;
+            }
+            texts_by_window[idx].push(&w.text);
+        }
+
+        let mut chunks: Vec<crate::fa::FaChunkInput> = Vec::new();
+        let mut pending_start: Option<f64> = None;
+        for (i, (start_sec, end_sec)) in boundaries.iter().enumerate() {
+            let text = texts_by_window[i].join(" ");
+            if text.is_empty() {
+                if let Some(last) = chunks.last_mut() {
+                    last.end_sec = *end_sec;
+                } else {
+                    pending_start = Some(pending_start.unwrap_or(*start_sec));
+                }
+                continue;
+            }
+            chunks.push(crate::fa::FaChunkInput { start_sec: pending_start.take().unwrap_or(*start_sec), end_sec: *end_sec, text });
+        }
+        eprintln!(
+            "d13_measurement: [b-control-{ladder_label}] {} windows -> {} non-empty chunks (real anchor-derived {ladder_label}-coalesced boundaries, oracle text)",
+            boundaries.len(),
+            chunks.len(),
+        );
+
+        let start = std::time::Instant::now();
+        let (words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        let stats = text_matched_diff_stats(&words, &reference);
+        print_stats_row(&format!("b-control-{ladder_label}"), &stats, words.len(), reference.len(), failed, chunks.len(), wall);
+    }
+
+    #[test]
+    #[ignore]
+    fn b_control() {
+        run_b_control("d13_b_control", "7s");
+    }
+
+    /// WS1 Task 5 Slice D14 A2 — "the missing control." D13's own combined
+    /// table (§4) has a B-control row only at 7s, so `index-45s` was judged
+    /// against B (full oracle, ~6-7s granularity) and B-control-7s, never
+    /// against an oracle-text construction AT ITS OWN 45s granularity — the
+    /// "matched-window-size counterpart" every other row in that table has.
+    #[test]
+    #[ignore]
+    fn b_control_45s() {
+        run_b_control("d13_b_control_45s", "45s");
+    }
+
+    /// STEP 4 — index attribution at a given coalesce-target label. Plan
+    /// already has index-derived text (`dump-fa-chunk-plan-index-ladder.ts`) —
+    /// no extra text logic needed here, unlike `b_control`.
+    fn run_index_rung(target_label: &str) {
+        let context = format!("d13_index_{target_label}");
+        let Some((plan_dir, model_path, audio_path)) = common_setup(&context) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+        let Some(chunks) = load_plan(&plan_dir, &format!("173-excerpt-240s-index-{target_label}")) else { return };
+
+        let start = std::time::Instant::now();
+        let (words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        eprintln!(
+            "d13_measurement: [index-{target_label}] {} chunks, {} succeeded, {} failed, wall={wall:.1}s",
+            chunks.len(),
+            chunks.len() - failed,
+            failed,
+        );
+        let stats = text_matched_diff_stats(&words, &reference);
+        print_stats_row(&format!("index-{target_label}"), &stats, words.len(), reference.len(), failed, chunks.len(), wall);
+    }
+
+    #[test]
+    #[ignore]
+    fn index_7s() {
+        run_index_rung("7s");
+    }
+    #[test]
+    #[ignore]
+    fn index_45s() {
+        run_index_rung("45s");
+    }
+
+    /// STEP 4 — Whisper triage for index attribution's best rung (D12's own
+    /// methodology, Part C: dumps both sides to JSON and defers the actual
+    /// comparison to `alignQueryToSubject`-based TS, since a naive
+    /// sequential-text-equality walk is wrong against real Whisper transcript
+    /// wording — see `d12_measurement::whisper_triage`'s own doc comment for
+    /// the 4/569 failure this avoids). `FA_D13_BEST_RUNG` picks which of
+    /// `index_7s`/`index_45s` to triage; default `"45s"` pending Step 4's own
+    /// measured table.
+    #[test]
+    #[ignore]
+    fn whisper_triage_index() {
+        const CONTEXT: &str = "d13_whisper_triage_index";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let _reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let best_rung = std::env::var("FA_D13_BEST_RUNG").unwrap_or_else(|_| "45s".to_string());
+        let Some(chunks) = load_plan(&plan_dir, &format!("173-excerpt-240s-index-{best_rung}")) else { return };
+        let start = std::time::Instant::now();
+        let (windowed_words, failed) = run_windowed_fault_tolerant(&model_path, audio_path_str, &chunks);
+        let wall = start.elapsed().as_secs_f64();
+        eprintln!(
+            "d13_measurement: [whisper-triage] index-{best_rung}: {} chunks, {} succeeded, {} failed, wall={wall:.1}s, {} words",
+            chunks.len(),
+            chunks.len() - failed,
+            failed,
+            windowed_words.len(),
+        );
+
+        let windowed_ref: Vec<RefWord> =
+            windowed_words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        let out_path = plan_dir.join(format!("173-excerpt-240s-index-{best_rung}-words.json"));
+        std::fs::write(&out_path, serde_json::to_string(&windowed_ref).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+        eprintln!(
+            "d13_measurement: [whisper-triage] wrote {} words to {} — run \
+             `npx tsx scripts/fa-whisper-triage-report-index.ts {best_rung}` (FA_CHUNK_PLAN_DIR={}) for the actual agreement stats \
+             (whole-file reference already cached at 173-excerpt-240s-reference-words.json in the same dir).",
+            windowed_ref.len(),
+            out_path.display(),
+            plan_dir.display(),
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
