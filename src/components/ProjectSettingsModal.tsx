@@ -15,6 +15,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { AspectRatio, ResolutionTier, VideoSegment } from '../types';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
+import { isFaCapable, isFaToggleOn, setFaToggle } from '../services/faGate';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { SUPPORTED_LANGUAGES } from '../constants';
@@ -62,8 +63,12 @@ export function ProjectSettingsModal({
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
   const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
+  // WS1 Task 5 Slice D17 (owner ruling D2) — gate defaults OFF; nothing runs
+  // behind it yet (no fa_align call anywhere in Apply Sync this slice).
+  const [draftFaEnabled, setDraftFaEnabled] = useState<boolean>(() => isFaToggleOn());
 
   const webcodecsCapable = isWebCodecsExportCapable();
+  const faCapable = isFaCapable();
 
   // Escape = Cancel (no exact precedent in this codebase, per plan §2.2 —
   // matches NewProjectModal's no-backdrop-close, Escape-cancels behavior).
@@ -78,6 +83,7 @@ export function ProjectSettingsModal({
   const handleSave = (): void => {
     onResolutionTierChange(draftNativeTier);
     setWebCodecsExportToggle(draftWebcodecsEnabled);
+    setFaToggle(draftFaEnabled);
     onSetAllOverlay(draftOverlayOn);
     onLanguageChange(draftLanguage === AUTO_DETECT_VALUE ? undefined : draftLanguage);
     onClose();
@@ -155,6 +161,36 @@ export function ProjectSettingsModal({
                   : 'Overrides auto-detection on the next transcription. Only English, Spanish, French, Portuguese, and German are verified for sync accuracy.'}
               </p>
             </div>
+          </div>
+
+          {/* Section: Sync (forced-alignment gate — WS1 Task 5 Slice D17).
+              Defaults OFF (owner ruling D2); nothing runs behind it yet — see
+              docs/ws1-sync-pipeline/task5-integration-scope.md. */}
+          <div className="space-y-2 pt-4 border-t border-[#222]">
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Sync</p>
+            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
+              <span>High-Precision Auto-Sync (Forced Alignment)</span>
+              <button
+                onClick={() => setDraftFaEnabled((v) => !v)}
+                disabled={!faCapable}
+                aria-label={draftFaEnabled ? 'Disable High-Precision Auto-Sync' : 'Enable High-Precision Auto-Sync'}
+                aria-pressed={draftFaEnabled}
+                className={`w-10 h-5 rounded-full transition-colors relative ${
+                  !faCapable
+                    ? 'bg-[#1A1A1A] border border-[#282828] opacity-40 cursor-not-allowed'
+                    : draftFaEnabled
+                      ? 'bg-[#F27D26]'
+                      : 'bg-[#1A1A1A] border border-[#282828]'
+                }`}
+              >
+                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${draftFaEnabled && faCapable ? 'translate-x-5' : ''}`} />
+              </button>
+            </label>
+            {!faCapable && (
+              <p className="text-[8px] leading-snug text-gray-600">
+                Not available outside the desktop app.
+              </p>
+            )}
           </div>
 
           {/* Section: Export Engine (WebCodecs export toggle — mirrors DropZonePanel's) */}

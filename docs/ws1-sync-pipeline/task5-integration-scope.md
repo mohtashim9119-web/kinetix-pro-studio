@@ -8,7 +8,50 @@
 
 ---
 
+## 0. OWNER RULING — 2026-08-14 (PERMANENT — supersedes §1 below)
+
+§1's "blocking product decision" is resolved. Recorded verbatim, as given:
+
+> D1 SCOPE = Option B, full word-level timings, persisted in project data,
+> with R.5 wildcards and R.7 CONF_MIN fallback.
+>
+> D2 GATE = Settings toggle, persistent, DEFAULTS OFF.
+
+**D1** answers §1's open question: the intended consumer is **(2) per-word
+timing display** (not (1) segment-level-only, and not "both, unsequenced" —
+Option B is explicitly the full word-level scope, R.5 and R.7 included).
+This means §1's own conditional analysis applies at the "(2)" branch
+throughout: R.5/R.7-R.9 and a real per-word UI still need to be built, and
+§2's finding that `faWordSpansToTranscriptTokens` satisfies neither R.5 nor
+R.7 today is the real gap to close, not a moot point. §4's recommended
+order (owner ruling → R.2 padding → R.5 wildcard-destination ruling →
+capability-gated production wiring → R-H judgement) still holds as the
+sequencing frame; D1 fixes the first step's answer rather than replacing
+the rest of the order.
+
+**D2** answers the capability-gate design question `task5-slice-ledger.md`
+("Capability gate — dev-only is a phase, not the endpoint") already ruled
+was required before production use: a persistent Settings toggle, defaulting
+OFF, following the WebCodecs-export capability-probe-plus-toggle precedent
+(`useExport.ts:36-96`). Implemented WS1 Task 5 Slice D17 as
+`src/services/faGate.ts` (`isFaGateOpen`) + a "High-Precision Auto-Sync
+(Forced Alignment)" control in `ProjectSettingsModal.tsx`. Nothing executes
+behind the gate yet — see `docs/ws1-sync-pipeline/d17-schema-capability-design-memo-2026-08-14.md`
+for the schema/history/golden-replay/R.5/R.7 design work D1's scope implies,
+and for the recommended D18+ slice order.
+
+Sections 1-4 below are kept verbatim as the historical record of how this
+ruling was reached — do not edit them to match D1/D2; append forward
+instead, per this project's docs conventions.
+
+---
+
 ## 1. Who is the intended consumer of FA word timings?
+
+> **Superseded 2026-08-14 by §0's D1 ruling** (Option B / consumer (2),
+> full word-level scope). The analysis below is preserved as the record of
+> how that question was scoped before the ruling landed — read it for
+> context, not as an open question.
 
 **No consumer exists in any active roadmap item today. This is the blocking
 product decision.**
