@@ -1158,6 +1158,43 @@ mod tests {
         );
     }
 
+    // -- CONF_MIN TS/Rust drift guard (WS1 Task 5 Slice D20 Step 5) --------
+    //
+    // D19 introduced this file's own `CONF_MIN = 0.3` literal, deliberately
+    // duplicating `syncConstants.ts:536`'s `export const CONF_MIN = 0.3`
+    // rather than reading across the IPC boundary (that module's own doc
+    // comment above explains why). A hand-duplicated literal has no
+    // compiler to catch drift the way `FaErrorKind`'s exhaustive match does
+    // (see that guard below) — the TS side is a plain `f32`, not an enum
+    // variant a Rust `match` could refuse to compile without. This test is
+    // the runtime equivalent: it reads `syncConstants.ts`'s OWN source text
+    // at test time (never touching that protected file, only reading it)
+    // and fails if the two literals no longer agree — the same "unable to
+    // silently ship a drift" property the `FaErrorKind` guard has, just
+    // enforced at test-run time instead of compile time, since no Rust
+    // compiler pass can see into a `.ts` file's literal.
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn conf_min_matches_sync_constants_ts_literal() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/services/syncConstants.ts");
+        let source = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e} — CONF_MIN drift guard cannot run without the TS source", path.display()));
+        let needle = "export const CONF_MIN = ";
+        let start = source.find(needle).unwrap_or_else(|| {
+            panic!("\"{needle}\" not found in {} — syncConstants.ts's CONF_MIN export was renamed or removed", path.display())
+        });
+        let after = &source[start + needle.len()..];
+        let end = after.find(';').unwrap_or_else(|| panic!("no terminating ';' found after CONF_MIN's value in {}", path.display()));
+        let ts_value: f32 = after[..end].trim().parse().unwrap_or_else(|e| {
+            panic!("could not parse {:?} as f32 (from {}): {e}", &after[..end], path.display())
+        });
+        assert_eq!(
+            ts_value, CONF_MIN,
+            "syncConstants.ts's CONF_MIN ({ts_value}) has drifted from fa.rs's own CONF_MIN ({CONF_MIN}) — \
+             update fa.rs's literal to match (syncConstants.ts is off limits to this workstream's Rust slices)"
+        );
+    }
+
     // -- ModelNotFound kind preservation (WS1 Task 5 Slice D10 fix) --------
 
     #[cfg(feature = "fa-inference")]

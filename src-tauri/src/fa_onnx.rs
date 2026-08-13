@@ -778,6 +778,69 @@ pub fn align_chunked_for_language(
     align_chunked(cache, &model_path, audio_path, chunks, language, is_cancelled, on_progress)
 }
 
+/// A CTC-infeasible chunk's placeholder score (WS1 Task 5 Slice D20):
+/// `f32::NEG_INFINITY.exp() == 0.0` exactly (clean f32 underflow, no NaN) —
+/// unconditionally below `CONF_MIN` (0.3) once `fa.rs::word_span_to_dto`
+/// applies its `exp()` IPC-boundary conversion, so every placeholder word
+/// [`fallback_words_for_infeasible_chunk`] produces surfaces as
+/// `needs_review: true` via the SAME mechanism a real low-confidence word
+/// already uses (D19/R.7) — no new field, no new wire shape.
+const CTC_INFEASIBLE_FALLBACK_SCORE: f32 = f32::NEG_INFINITY;
+
+/// Root cause (WS1 Task 5 Slice D20, measured on the real 709s/173-project
+/// corpus — see `docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`):
+/// a chunk's `[start_sec, end_sec)` window can be legitimately narrow (an
+/// anchor-verified run a few tenths of a second wide is a real, correct
+/// `faAnchors.ts` output) while `faChunkPlan.ts`'s `segment.startTime`
+/// membership rule attributes it an ENTIRE committed segment's text — one
+/// whose own real committed `duration` runs far past the run's `endSec` —
+/// because that segment's `startTime` happens to fall inside the narrow
+/// window. `AlignError::TooManyRepeats` ("targets length is too long for
+/// CTC") is the resulting hard failure: the assigned text structurally
+/// cannot fit the window's own frame count at ANY confidence, not a
+/// borderline case. Both of D11's own real-corpus failures (chunk 4,
+/// chunk 52) were measured this way — genuinely dense speech (option (ii)
+/// in the task brief) was ruled out directly: cross-referencing the same
+/// corpus's real Whisper word onsets, all but the FIRST word of each
+/// chunk's assigned text has its real onset well past the chunk's own
+/// `end_sec`, i.e. the text overwhelmingly belongs to LATER chunks, not
+/// this one.
+///
+/// Rather than aborting the whole `align_chunked` run over one bad window
+/// (the pre-D20 behavior — see this function's own caller), this produces
+/// one placeholder [`WordSpan`] per REPRESENTABLE word in the chunk's own
+/// text (same normalizer every other chunk's tokenization uses, so the
+/// word count matches `check_word_count_matches_normalizer`'s expectation
+/// exactly), evenly spaced across the chunk's own `[start_sec, end_sec)` —
+/// keeping `wordIndex` gapless for a downstream consumer (D19's own
+/// rejection of "drop the word's timing" applies here too: a hole in an
+/// index-keyed array is worse than an approximate, clearly-flagged one) —
+/// each carrying [`CTC_INFEASIBLE_FALLBACK_SCORE`] so it is never mistaken
+/// for a real, trustworthy alignment. Returns an empty `Vec` (contributing
+/// no words, not a panic) if the chunk's text normalizes to zero
+/// representable words — the same "no empty output" contract
+/// `merge_char_spans_to_words` already holds for real alignment.
+fn fallback_words_for_infeasible_chunk(chunk: &crate::fa::FaChunkInput, lang: Language, vocab: &Vocab) -> Vec<WordSpan> {
+    let normalized = normalize_for_forced_alignment(&chunk.text, lang, &vocab.chars);
+    let words: Vec<&str> =
+        normalized.words.iter().filter(|w| w.representable).filter_map(|w| w.mapped.as_deref()).collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let window = (chunk.end_sec - chunk.start_sec).max(0.0);
+    let n = words.len() as f64;
+    words
+        .into_iter()
+        .enumerate()
+        .map(|(i, text)| WordSpan {
+            text: text.to_string(),
+            start_seconds: chunk.start_sec + window * (i as f64) / n,
+            end_seconds: chunk.start_sec + window * ((i + 1) as f64) / n,
+            score: CTC_INFEASIBLE_FALLBACK_SCORE,
+        })
+        .collect()
+}
+
 /// Real `fa_align` implementation (WS1 Task 5 Slice D11): decodes
 /// `audio_path` ONCE (not once per chunk), gets-or-loads a cached `Session`
 /// for `model_path`/`language` (see the session-cache section above), then
@@ -795,6 +858,20 @@ pub fn align_chunked_for_language(
 /// returns `Err(FaOnnxError::Cancelled)` immediately — no `Ok` with a
 /// partial word list is ever returned, so a cancelled run can never be
 /// mistaken for a completed one by its caller.
+///
+/// CTC infeasibility (WS1 Task 5 Slice D20): a chunk whose Viterbi pass
+/// fails with `AlignError::TooManyRepeats` specifically (the assigned text
+/// structurally cannot fit the window — see
+/// [`fallback_words_for_infeasible_chunk`]'s own doc comment for why this
+/// happens and how it was verified NOT to be genuinely dense speech) no
+/// longer aborts the run: it falls back to evenly-spaced, `needs_review`
+/// placeholder words and processing continues with the next chunk. Every
+/// OTHER error kind (`Wav`, `OrtRun`, `EmptyTokenization`,
+/// `AlignError::EmptyTargets`, …) is unchanged — still propagates and
+/// aborts the whole run, since those indicate a real system/input failure
+/// this fallback has no basis to paper over. `eprintln!` marks the event
+/// (never a silent skip) in addition to the per-word `needs_review` flag
+/// every consumer of the returned words already gets.
 pub fn align_chunked(
     cache: &Mutex<Option<CachedSession>>,
     model_path: &Path,
@@ -821,14 +898,28 @@ pub fn align_chunked(
             }
             let (start_sample, end_sample) = chunk_sample_range(samples.len(), chunk.start_sec, chunk.end_sec);
             let chunk_samples = &samples[start_sample..end_sample];
-            let words = align_chunk_samples(session, &vocab, lang_enum, chunk_samples, &chunk.text)?;
-            for w in words {
-                all_words.push(WordSpan {
-                    text: w.text,
-                    start_seconds: w.start_seconds + chunk.start_sec,
-                    end_seconds: w.end_seconds + chunk.start_sec,
-                    score: w.score,
-                });
+            match align_chunk_samples(session, &vocab, lang_enum, chunk_samples, &chunk.text) {
+                Ok(words) => {
+                    for w in words {
+                        all_words.push(WordSpan {
+                            text: w.text,
+                            start_seconds: w.start_seconds + chunk.start_sec,
+                            end_seconds: w.end_seconds + chunk.start_sec,
+                            score: w.score,
+                        });
+                    }
+                }
+                Err(FaOnnxError::Align(AlignError::TooManyRepeats { input_length, target_length, num_repeats })) => {
+                    eprintln!(
+                        "fa_onnx::align_chunked: chunk {i} [{:.2},{:.2}) is CTC-infeasible \
+                         (input_length={input_length}, target_length={target_length}, \
+                         num_repeats={num_repeats}) — falling back to evenly-spaced placeholder \
+                         timing, every word flagged needs_review; run continues",
+                        chunk.start_sec, chunk.end_sec,
+                    );
+                    all_words.extend(fallback_words_for_infeasible_chunk(chunk, lang_enum, &vocab));
+                }
+                Err(e) => return Err(e),
             }
             on_progress(i as u32 + 1);
         }
@@ -1502,6 +1593,94 @@ mod real_corpus_measurement {
             words.len(),
         );
         eprintln!("{CONTEXT}: all hard structural invariants hold at full 709s length (over the succeeding chunks).");
+    }
+
+    /// WS1 Task 5 Slice D20, Steps 2/6. Unlike `full_length_709s_windowed_
+    /// sanity` above (pre-D20, needed a per-chunk workaround loop because
+    /// `align_chunked` aborted the whole run on chunk 4/52's CTC
+    /// infeasibility), this calls `align_chunked` ONCE with the full
+    /// 97-chunk list — the exact call shape a real (still-gated) production
+    /// caller would make — and expects `Ok`, proving the D20 fallback
+    /// resolves the abort end-to-end on the real corpus, not just in the
+    /// isolated unit tests. Also reports the Rust path's own confidence
+    /// distribution (Step 6) over the GENUINELY aligned words only
+    /// (`score.is_finite()` — excludes the fallback placeholders' sentinel
+    /// `NEG_INFINITY`, which would otherwise flood the low end of the
+    /// distribution with a synthetic, not-model-produced value).
+    #[test]
+    #[ignore]
+    fn full_length_709s_single_call_with_fallback_and_confidence_distribution() {
+        const CONTEXT: &str = "full_length_709s_single_call_with_fallback_and_confidence_distribution";
+        if !super::require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(CONTEXT, &model_path) {
+            return;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {CONTEXT}: FA_CHUNK_PLAN_DIR not set");
+            return;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let Some(chunks) = load_plan(&plan_dir, "173-full-709s-windowed") else { return };
+
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {CONTEXT}: real audio not found at {}", audio_path.display());
+            return;
+        }
+
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, &model_path, audio_path.to_str().unwrap(), &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok (D20 fallback should absorb chunk 4/52's CTC infeasibility), got Err: {e}"));
+        let elapsed = start.elapsed();
+
+        check_times_non_decreasing(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        check_no_overlap(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        let audio_duration = chunks.last().unwrap().end_sec;
+        check_times_within_audio_bounds(&words, audio_duration).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        check_confidence_in_unit_interval(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+
+        let fallback_count = words.iter().filter(|w| !w.score.is_finite()).count();
+        eprintln!(
+            "{CONTEXT}: wall_clock={:.1}s words={} (of which {fallback_count} are D20 CTC-infeasibility fallback \
+             placeholders) audio_duration={audio_duration:.2}s — single align_chunked call, no per-chunk workaround",
+            elapsed.as_secs_f64(),
+            words.len(),
+        );
+        eprintln!("{CONTEXT}: all hard structural invariants hold at full 709s length (single-call, fallback included).");
+
+        let mut scored: Vec<(f64, &str)> = words
+            .iter()
+            .filter(|w| w.score.is_finite())
+            .map(|w| (w.score.exp() as f64, w.text.as_str()))
+            .collect();
+        scored.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let confidences: Vec<f64> = scored.iter().map(|(c, _)| *c).collect();
+        let below_conf_min = confidences.iter().filter(|&&c| c < 0.3).count();
+        eprintln!(
+            "{CONTEXT}: Rust-path confidence distribution over {} genuinely-aligned words (fallback excluded) — \
+             min={:.4} p1={:.4} p50={:.4} p90={:.4} p99={:.4} max={:.4} fraction_below_0.3={:.4} ({below_conf_min}/{})",
+            confidences.len(),
+            confidences.first().copied().unwrap_or(f64::NAN),
+            percentile(&confidences, 0.01),
+            percentile(&confidences, 0.50),
+            percentile(&confidences, 0.90),
+            percentile(&confidences, 0.99),
+            confidences.last().copied().unwrap_or(f64::NAN),
+            below_conf_min as f64 / confidences.len().max(1) as f64,
+            confidences.len(),
+        );
+        eprintln!(
+            "{CONTEXT}: 15 lowest-confidence real words: {:?}",
+            &scored[..15.min(scored.len())]
+        );
+        eprintln!(
+            "{CONTEXT}: 15 highest-confidence real words: {:?}",
+            &scored[scored.len().saturating_sub(15)..]
+        );
     }
 }
 
@@ -2551,6 +2730,130 @@ mod tests {
         let delim_count = ids.iter().filter(|&&id| id == delim).count();
         assert_eq!(delim_count, 1);
         assert_eq!(ids.len(), 3 + 1 + 3); // "cat" + delim + "dog"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CTC-infeasibility fallback unit tests (WS1 Task 5 Slice D20). Real data:
+// both chunks are the exact (window, text) pairs `align_chunked` produced
+// `AlignError::TooManyRepeats` on when run against the real 709s/173-project
+// corpus (`docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`'s own
+// Step 2 reproduction) — not fabricated. Neither test touches ORT/ONNX
+// (`fallback_words_for_infeasible_chunk` only calls the embedded-vocab text
+// normalizer + arithmetic), so this module runs unconditionally under
+// `--features fa-inference`, no `require_ort` gate needed.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod ctc_infeasibility_fallback {
+    use super::*;
+
+    /// D20 Step 2, chunk 4 of the real 709s/173-project windowed plan.
+    fn real_chunk_4() -> crate::fa::FaChunkInput {
+        crate::fa::FaChunkInput {
+            start_sec: 18.08,
+            end_sec: 18.70,
+            text: "because the environment was already doing the killing before the enemy showed up."
+                .to_string(),
+        }
+    }
+
+    /// D20 Step 2, chunk 52 of the real 709s/173-project windowed plan.
+    fn real_chunk_52() -> crate::fa::FaChunkInput {
+        crate::fa::FaChunkInput {
+            start_sec: 405.58,
+            end_sec: 406.98,
+            text: "It just became a problem with a physical solution rather than a tactical one."
+                .to_string(),
+        }
+    }
+
+    #[test]
+    fn real_infeasible_chunk_still_produces_a_ctc_error_this_slice_catches() {
+        // Non-vacuity: confirms the real chunk 4/52 (window, text) pairs
+        // still reproduce `AlignError::TooManyRepeats` against the SAME
+        // real input-length math the ONNX-backed run hit — pure arithmetic
+        // (frame-stride-derived frame count vs. tokenized target length),
+        // no ONNX needed, since `forced_align`'s length precondition (`t <
+        // l + r`) is checked before it ever touches the emission matrix's
+        // actual row contents (`fa_viterbi.rs:145-154`), so an empty-row
+        // synthetic emission of the real frame count reproduces the same
+        // error the real ONNX run hit.
+        let vocab = load_vocab("en").unwrap();
+        let frame_stride_sec = FA_FRAME_STRIDE_SAMPLES as f64 / FA_SAMPLE_RATE_HZ as f64;
+        for chunk in [real_chunk_4(), real_chunk_52()] {
+            let target_ids = text_to_token_ids(&chunk.text, Language::En, &vocab);
+            let window = chunk.end_sec - chunk.start_sec;
+            let input_length = (window / frame_stride_sec).round() as usize;
+            let emission: Vec<Vec<f32>> = vec![Vec::new(); input_length];
+            let err = forced_align(&emission, &target_ids, vocab.blank_id).unwrap_err();
+            assert!(
+                matches!(err, AlignError::TooManyRepeats { .. }),
+                "expected TooManyRepeats for real chunk text {:?} against a {input_length}-frame window, got {err:?}",
+                chunk.text,
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_covers_every_representable_word_evenly_spaced_within_the_window() {
+        let vocab = load_vocab("en").unwrap();
+        for chunk in [real_chunk_4(), real_chunk_52()] {
+            let normalized = normalize_for_forced_alignment(&chunk.text, Language::En, &vocab.chars);
+            let want_count = normalized.words.iter().filter(|w| w.representable).count();
+
+            let words = fallback_words_for_infeasible_chunk(&chunk, Language::En, &vocab);
+
+            assert_eq!(words.len(), want_count, "chunk {:?}: fallback word count must match the normalizer's own representable-word count", chunk.text);
+            assert!(!words.is_empty(), "real chunk text must produce at least one representable word");
+
+            // Every word lies within the chunk's own window, in order, with
+            // no overlap — the same hard invariants `check_words_within_own_
+            // chunk`/`check_no_overlap`/`check_times_non_decreasing` assert
+            // on real alignment output.
+            for w in &words {
+                assert!(w.start_seconds >= chunk.start_sec && w.end_seconds <= chunk.end_sec,
+                    "word {:?} [{}, {}) escapes chunk window [{}, {})", w.text, w.start_seconds, w.end_seconds, chunk.start_sec, chunk.end_sec);
+            }
+            for pair in words.windows(2) {
+                assert!(pair[0].end_seconds <= pair[1].start_seconds, "words overlap: {pair:?}");
+                assert!(pair[0].start_seconds <= pair[1].start_seconds, "words out of order: {pair:?}");
+            }
+
+            // Every placeholder word is unconditionally below CONF_MIN once
+            // exponentiated — the exact mechanism that makes it surface as
+            // `needs_review: true` at the IPC boundary (`fa.rs::word_span_to_dto`).
+            for w in &words {
+                assert_eq!(w.score, CTC_INFEASIBLE_FALLBACK_SCORE);
+                let confidence = w.score.exp();
+                assert_eq!(confidence, 0.0, "fallback confidence must be exactly 0.0, got {confidence}");
+                assert!(confidence < 0.3, "fallback confidence must be below CONF_MIN");
+            }
+        }
+    }
+
+    #[test]
+    fn fallback_produces_real_expected_word_text_for_chunk_4() {
+        // Pins the exact word sequence for chunk 4's real text — a
+        // regression guard on `normalize_for_forced_alignment`'s own
+        // word-splitting behavior for this real input, not just a count.
+        let vocab = load_vocab("en").unwrap();
+        let words = fallback_words_for_infeasible_chunk(&real_chunk_4(), Language::En, &vocab);
+        let texts: Vec<&str> = words.iter().map(|w| w.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec![
+                "because", "the", "environment", "was", "already", "doing", "the", "killing",
+                "before", "the", "enemy", "showed", "up",
+            ]
+        );
+    }
+
+    #[test]
+    fn fallback_on_empty_representable_text_returns_empty_not_a_panic() {
+        let vocab = load_vocab("en").unwrap();
+        let chunk = crate::fa::FaChunkInput { start_sec: 1.0, end_sec: 2.0, text: "42 99".to_string() };
+        let words = fallback_words_for_infeasible_chunk(&chunk, Language::En, &vocab);
+        assert!(words.is_empty(), "digit-only text has zero representable words — expected empty, not a panic");
     }
 }
 
