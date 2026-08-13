@@ -1682,6 +1682,115 @@ mod real_corpus_measurement {
             &scored[scored.len().saturating_sub(15)..]
         );
     }
+
+    /// WS1 Task 5 Slice D21, Step 1. Re-plans the full 709s corpus with
+    /// INDEX attribution (`computeFaChunkPlanWithAttribution(...,
+    /// 'script-word-index')`, no coalescing — same run/window granularity as
+    /// the time-attributed plan `full_length_709s_single_call_with_fallback_
+    /// and_confidence_distribution` above uses) instead of D20's
+    /// `segment.startTime`-membership rule, then calls `align_chunked` ONCE
+    /// over the resulting chunk list — the same single-call shape a real
+    /// (still-gated) production caller would use. D20 diagnosed both CTC-
+    /// infeasibility cases (its own chunk 4, chunk 52) as 100% text mis-
+    /// attribution, not genuinely dense audio; this test asks whether
+    /// index attribution — which cuts chunk text at each chunk's own
+    /// bounding anchors' `qi` rather than trusting a segment's stale
+    /// `startTime` — removes the mis-attribution and, with it, the CTC
+    /// failures. `align_chunked`'s own D20 fallback is left fully in place
+    /// (not bypassed) — if index attribution does NOT fix everything, this
+    /// test still returns `Ok` via the fallback and reports how many words
+    /// needed it, rather than aborting the measurement.
+    #[test]
+    #[ignore]
+    fn full_length_709s_index_attribution_single_call() {
+        const CONTEXT: &str = "full_length_709s_index_attribution_single_call";
+        if !super::require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(CONTEXT, &model_path) {
+            return;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {CONTEXT}: FA_CHUNK_PLAN_DIR not set");
+            return;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let Some(chunks) = load_plan(&plan_dir, "173-full-709s-index-windowed") else { return };
+
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {CONTEXT}: real audio not found at {}", audio_path.display());
+            return;
+        }
+
+        eprintln!(
+            "{CONTEXT}: running {} index-attributed chunks over the full 709s project \
+             (any CTC-infeasibility fallback fires below, per-chunk, via align_chunked's own eprintln)...",
+            chunks.len()
+        );
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, &model_path, audio_path.to_str().unwrap(), &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok, got Err (a non-CTC-infeasibility failure — the D20 fallback only absorbs TooManyRepeats): {e}"));
+        let elapsed = start.elapsed();
+
+        check_times_non_decreasing(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        check_no_overlap(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        let audio_duration = chunks.last().unwrap().end_sec;
+        check_times_within_audio_bounds(&words, audio_duration).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+        check_confidence_in_unit_interval(&words).unwrap_or_else(|e| panic!("{CONTEXT}: {e:?}"));
+
+        let fallback_count = words.iter().filter(|w| !w.score.is_finite()).count();
+        eprintln!(
+            "{CONTEXT}: wall_clock={:.1}s chunks={} words={} (of which {fallback_count} are D20 CTC-infeasibility \
+             fallback placeholders) audio_duration={audio_duration:.2}s — single align_chunked call, index attribution",
+            elapsed.as_secs_f64(),
+            chunks.len(),
+            words.len(),
+        );
+        eprintln!("{CONTEXT}: all hard structural invariants hold at full 709s length (single-call, index attribution).");
+
+        // WS1 Task 5 Slice D21, Step 4 input — raw confidence values for the
+        // full 709s corpus's genuinely-aligned words (fallback excluded,
+        // though Step 1/2 above establish fallback_count is 0 here), so the
+        // report step can score a proposed threshold against the real
+        // current population rather than D20's stale (pre-index-attribution)
+        // 1616-word figure.
+        let confidences_path = plan_dir.join("173-full-709s-index-confidences.json");
+        let confidences_raw: Vec<f64> =
+            words.iter().filter(|w| w.score.is_finite()).map(|w| w.score.exp() as f64).collect();
+        std::fs::write(&confidences_path, serde_json::to_string(&confidences_raw).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", confidences_path.display()));
+        eprintln!(
+            "{CONTEXT}: wrote {} confidence values to {}",
+            confidences_raw.len(),
+            confidences_path.display()
+        );
+
+        // WS1 Task 5 Slice D21, Step 2 — regression guard. Step 1 (this same
+        // test, above) measured ZERO fallback placeholders on the real 709s
+        // corpus under index attribution: attribution alone resolves both of
+        // D20's CTC-infeasibility cases (chunk 4 → "the worst" instead of the
+        // wrongly-attributed 13-word sentence; chunk 52 → "decision. It"
+        // instead of the wrongly-attributed 14-word sentence — see this
+        // slice's own report). This assertion turns that measurement into a
+        // gate: the D20 fallback stays in the code (a safety net proven
+        // necessary under the OLD `segment.startTime` attribution rule, kept
+        // for exactly the case index attribution doesn't cover — see this
+        // function's own doc comment), but under index attribution it must
+        // never fire on this real corpus. A future regression that
+        // reintroduces fabricated/mis-attributed chunk text would silently
+        // trip the fallback again; this assertion makes that failure loud
+        // instead of silently absorbed.
+        assert_eq!(
+            fallback_count, 0,
+            "{CONTEXT}: expected ZERO CTC-infeasibility fallback placeholders under index attribution on the real \
+             709s corpus (Step 1 of this slice measured 0/1643) — a nonzero count here means index attribution no \
+             longer fully resolves chunk text mis-assignment and needs re-investigation, not silent absorption by \
+             the D20 fallback."
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2530,6 +2639,342 @@ mod d13_measurement {
             out_path.display(),
             plan_dir.display(),
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WS1 Task 5 Slice D21, Step 3 — does Rust-path confidence predict timing
+// error? `#[ignore]`d, real-corpus, measurement-only, mirroring d12_
+// measurement/d13_measurement's own structure (own `common_setup`/`RefWord`/
+// `whole_file_reference_240s`, duplicated rather than imported — same
+// rationale d13_measurement's own header comment states: keeping each
+// measurement module's real-corpus dependency chain self-contained).
+//
+// Uses the real 240s excerpt (the only length a whole-file FA reference is
+// computable at — D10) run through PRODUCTION's own default, unmodified
+// windowing (`173-excerpt-240s-windowed.json`, `dump-fa-chunk-plan.ts`'s D11
+// output, `segment.startTime` attribution — the same plan d12_measurement's
+// own ladder-rung and agreement tests already consume). For every windowed
+// word that text-matches a whole-file reference word (same greedy walk
+// `text_matched_diff_stats` already uses elsewhere in this file), pairs that
+// word's own Rust confidence (`exp(score)`) with its measured timing error
+// (`max(|start diff|, |end diff|)` against the whole-file reference) and
+// reports the Pearson correlation between the two, plus the error
+// distribution split at `CONF_MIN` (0.3).
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod d21_measurement {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("d21_measurement's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct RefWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    fn load_plan(dir: &Path, label: &str) -> Option<Vec<crate::fa::FaChunkInput>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d21_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(
+            plan.chunks
+                .into_iter()
+                .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+                .collect(),
+        )
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    fn common_setup(context: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {context}: FA_CHUNK_PLAN_DIR not set");
+            return None;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((plan_dir, model_path, audio_path))
+    }
+
+    /// Identical cache contract to `d12_measurement::whole_file_reference_240s`
+    /// — same cache file, so a prior d12/d13 run in this `$FA_CHUNK_PLAN_DIR`
+    /// is reused rather than recomputed (~113s/~20GiB cost, D10/D11).
+    fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
+        if cache_path.exists() {
+            let text = std::fs::read_to_string(&cache_path)
+                .unwrap_or_else(|e| panic!("read cached reference {}: {e}", cache_path.display()));
+            return serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse cached reference {}: {e}", cache_path.display()));
+        }
+        let plan = load_plan(plan_dir, "173-excerpt-240s-wholefile").expect("wholefile plan must exist to compute the reference");
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        eprintln!("d21_measurement: computing whole-file 240s reference (first use in this $FA_CHUNK_PLAN_DIR, will be cached)...");
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, model_path, audio_path, &plan, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("whole-file reference pass failed: {e}"));
+        eprintln!(
+            "d21_measurement: whole-file reference computed in {:.1}s, {} words",
+            start.elapsed().as_secs_f64(),
+            words.len()
+        );
+        let ref_words: Vec<RefWord> =
+            words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        std::fs::write(&cache_path, serde_json::to_string(&ref_words).unwrap())
+            .unwrap_or_else(|e| panic!("write reference cache {}: {e}", cache_path.display()));
+        ref_words
+    }
+
+    /// Pearson correlation coefficient. `NaN` if either series has zero
+    /// variance (guards a divide-by-zero rather than panicking — reported,
+    /// not asserted against, since a degenerate real-corpus result is still
+    /// a real answer to "does confidence predict error").
+    fn pearson_r(xs: &[f64], ys: &[f64]) -> f64 {
+        let n = xs.len() as f64;
+        let mean_x = xs.iter().sum::<f64>() / n;
+        let mean_y = ys.iter().sum::<f64>() / n;
+        let mut cov = 0.0;
+        let mut var_x = 0.0;
+        let mut var_y = 0.0;
+        for i in 0..xs.len() {
+            let dx = xs[i] - mean_x;
+            let dy = ys[i] - mean_y;
+            cov += dx * dy;
+            var_x += dx * dx;
+            var_y += dy * dy;
+        }
+        if var_x == 0.0 || var_y == 0.0 {
+            return f64::NAN;
+        }
+        cov / (var_x.sqrt() * var_y.sqrt())
+    }
+
+    /// WS1 Task 5 Slice D21, Step 3. Pairs each windowed word's real Rust
+    /// confidence with its measured timing error against the whole-file
+    /// reference, over the real 240s excerpt run through PRODUCTION's own
+    /// default (unmodified) windowing/attribution — `align_chunked` is
+    /// called exactly as a real caller would, no per-chunk workaround (the
+    /// 240s excerpt has no known CTC-infeasibility case — unlike the 709s
+    /// full corpus, D20 — so a single call is expected to return `Ok`
+    /// outright; if it doesn't, that itself is reported rather than papered
+    /// over with a fault-tolerant loop).
+    #[test]
+    #[ignore]
+    fn confidence_vs_error_correlation_240s() {
+        const CONTEXT: &str = "confidence_vs_error_correlation_240s";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let Some(chunks) = load_plan(&plan_dir, "173-excerpt-240s-windowed") else { return };
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let windowed = align_chunked(&cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok over the 240s excerpt's own production windowing, got Err: {e}"));
+
+        // Greedy text-matched two-pointer walk, same technique as
+        // `d12_measurement::text_matched_diff_stats`, extended to also carry
+        // each matched windowed word's own confidence (`exp(score)`) —
+        // excludes any fallback placeholder (`!score.is_finite()`), since a
+        // placeholder's confidence is a synthetic sentinel, not a real
+        // model output, and would corrupt the correlation with a fabricated
+        // (0.0, large-error) pair the model itself never produced.
+        let mut ref_idx = 0usize;
+        let mut confidences: Vec<f64> = Vec::new();
+        let mut errors: Vec<f64> = Vec::new();
+        let mut skipped_fallback = 0usize;
+        for w in &windowed {
+            while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                ref_idx += 1;
+            }
+            if ref_idx >= reference.len() {
+                break;
+            }
+            if !w.score.is_finite() {
+                skipped_fallback += 1;
+                ref_idx += 1;
+                continue;
+            }
+            let r = &reference[ref_idx];
+            let start_diff = (r.start - w.start_seconds).abs();
+            let end_diff = (r.end - w.end_seconds).abs();
+            confidences.push(w.score.exp() as f64);
+            errors.push(start_diff.max(end_diff));
+            ref_idx += 1;
+        }
+
+        assert!(
+            confidences.len() > 10,
+            "{CONTEXT}: too few matched (confidence, error) pairs ({}) to correlate meaningfully — \
+             something upstream likely regressed (chunk plan, reference, or text-matching)",
+            confidences.len()
+        );
+
+        let r = pearson_r(&confidences, &errors);
+
+        let mut below: Vec<f64> = Vec::new();
+        let mut above: Vec<f64> = Vec::new();
+        for i in 0..confidences.len() {
+            if confidences[i] < 0.3 {
+                below.push(errors[i]);
+            } else {
+                above.push(errors[i]);
+            }
+        }
+        below.sort_by(|a, b| a.total_cmp(b));
+        above.sort_by(|a, b| a.total_cmp(b));
+
+        eprintln!(
+            "{CONTEXT}: matched={} (skipped_fallback={skipped_fallback}) windowed_total={} ref_total={} \
+             pearson_r(confidence, error)={r:.4}",
+            confidences.len(),
+            windowed.len(),
+            reference.len(),
+        );
+        if !below.is_empty() {
+            eprintln!(
+                "{CONTEXT}: BELOW 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} p90={:.4} max={:.4} mean={:.4}",
+                below.len(),
+                below[0],
+                percentile(&below, 0.50),
+                percentile(&below, 0.90),
+                below[below.len() - 1],
+                below.iter().sum::<f64>() / below.len() as f64,
+            );
+        } else {
+            eprintln!("{CONTEXT}: BELOW 0.3 confidence: n=0 (no matched word fell below CONF_MIN on this excerpt)");
+        }
+        if !above.is_empty() {
+            eprintln!(
+                "{CONTEXT}: ABOVE/EQ 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} p90={:.4} max={:.4} mean={:.4}",
+                above.len(),
+                above[0],
+                percentile(&above, 0.50),
+                percentile(&above, 0.90),
+                above[above.len() - 1],
+                above.iter().sum::<f64>() / above.len() as f64,
+            );
+        }
+
+        // WS1 Task 5 Slice D21, Step 4 — threshold derivation inputs. Uses
+        // `docs/ws1-sync-pipeline/measurements/d15-mis-assignment-
+        // diagnostic-2026-08-13.md`'s own already-proposed, owner-sign-off-
+        // pending 0.3s (300ms) per-word timing tolerance (§2.2 there) as the
+        // NAMED TOLERANCE — not a number invented fresh for this slice — and
+        // reports the confidence value that separates violators (error >
+        // 0.3s) from non-violators in this real matched set, so the report
+        // step can state a derivation instead of an arbitrary percentile.
+        const TOLERANCE_SEC: f64 = 0.3;
+        let mut violator_confidences: Vec<f64> = Vec::new();
+        let mut non_violator_confidences: Vec<f64> = Vec::new();
+        for i in 0..confidences.len() {
+            if errors[i] > TOLERANCE_SEC {
+                violator_confidences.push(confidences[i]);
+            } else {
+                non_violator_confidences.push(confidences[i]);
+            }
+        }
+        violator_confidences.sort_by(|a, b| a.total_cmp(b));
+        non_violator_confidences.sort_by(|a, b| a.total_cmp(b));
+        if !violator_confidences.is_empty() {
+            let max_violator_conf = violator_confidences[violator_confidences.len() - 1];
+            let collateral = non_violator_confidences.iter().filter(|&&c| c < max_violator_conf).count();
+            eprintln!(
+                "{CONTEXT}: VIOLATORS (error > {TOLERANCE_SEC}s tolerance, n={}) confidence min={:.6} p50={:.6} \
+                 p90={:.6} max={:.6}",
+                violator_confidences.len(),
+                violator_confidences[0],
+                percentile(&violator_confidences, 0.50),
+                percentile(&violator_confidences, 0.90),
+                max_violator_conf,
+            );
+            eprintln!(
+                "{CONTEXT}: no-miss threshold candidate = max violator confidence = {max_violator_conf:.6} \
+                 (a threshold at or above this catches every observed violator); at that threshold, \
+                 {collateral}/{} non-violators ({:.1}%) would ALSO be flagged (collateral)",
+                non_violator_confidences.len(),
+                100.0 * collateral as f64 / non_violator_confidences.len().max(1) as f64,
+            );
+            eprintln!(
+                "{CONTEXT}: non-violator confidence distribution: n={} min={:.6} p50={:.6} p90={:.6} max={:.6}",
+                non_violator_confidences.len(),
+                non_violator_confidences.first().copied().unwrap_or(f64::NAN),
+                percentile(&non_violator_confidences, 0.50),
+                percentile(&non_violator_confidences, 0.90),
+                non_violator_confidences.last().copied().unwrap_or(f64::NAN),
+            );
+        } else {
+            eprintln!("{CONTEXT}: VIOLATORS (error > {TOLERANCE_SEC}s tolerance): n=0 — no threshold derivation possible from this excerpt");
+        }
+
+        // Dump raw pairs for the full-709s (Step 1's clean, index-attributed,
+        // zero-fallback, 1643-word) population to be scored against
+        // whichever threshold this step proposes (Step 4's own report step,
+        // not asserted here).
+        let raw_path = plan_dir.join("173-excerpt-240s-confidence-error-pairs.json");
+        #[derive(serde::Serialize)]
+        struct Pair {
+            confidence: f64,
+            error_sec: f64,
+        }
+        let pairs: Vec<Pair> =
+            confidences.iter().zip(errors.iter()).map(|(&c, &e)| Pair { confidence: c, error_sec: e }).collect();
+        std::fs::write(&raw_path, serde_json::to_string(&pairs).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", raw_path.display()));
+        eprintln!("{CONTEXT}: wrote {} raw (confidence, error) pairs to {}", pairs.len(), raw_path.display());
     }
 }
 
