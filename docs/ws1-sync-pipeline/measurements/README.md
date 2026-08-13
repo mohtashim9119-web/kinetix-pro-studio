@@ -54,6 +54,39 @@ exports) see `scripts/fixtures/README.md` instead — those live in
 | `d14-measurement-closure-2026-08-13.md` | WS1 Task 5 Slice D14 (Track A) real-corpus measurement closure | 2026-08-13 | Verifies D13's Whisper-triage coincidence directly (SHA-256 + per-word tail — real, not a self-comparison bug); adds the missing `B-control-45s` row so every combined-table row has a matched-window-size oracle counterpart (index attribution reaches neither 7s nor 45s oracle attribution); a per-chunk residual diagnosis correlating index-45s's own disagreement against its bounding anchors' own timing error (weak, r≤0.24 — partially explains at best); and a budget re-derived from `B-control`'s own measured floor (alignment-intrinsic, not Whisper noise) against which no real-boundary row passes on its own max figure. |
 | `d15-mis-assignment-diagnostic-2026-08-13.md` | WS1 Task 5 Slice D15 (Track A) real-corpus diagnostic, no ONNX run | 2026-08-13 | Direct word-by-word mis-assignment diagnostic (not correlation) between index-45s and B-control-45s: 5/569 words (0.9%) land in a different chunk, and that set alone carries the entire START/END max and ~100x the correctly-assigned set's mean error — sharper than D14 §A3's weak anchor-time-error correlation. Corrects the task's own boundary-sharing premise at 7s (index-7s has 29 chunks, B-control-7s's boundary source has 28) and flags a genuine data gap (no per-word aligned output for index-7s exists on disk). Replaces D14 §A4's degenerate B-control-as-budget with an explicit, owner-sign-off-pending 0.3s product-decision gate, re-reports the combined table with exceedance counts (not just percentiles), and states the whole-file-reference-agreement proxy has saturated against real Whisper ground truth. Closes with a one-paragraph sample-adequacy scope (n=6/n=5 on one 240s English excerpt — not a shippable-verdict sample). |
 
+## Whole-file-agreement proxy — RETIRED (WS1 Task 5 Slice D16, 2026-08-13)
+
+The **whole-file-agreement proxy** (scoring a windowed/chunked attribution
+rule by its agreement against the whole-file FA reference — the metric every
+row in D12-D15's combined tables above is expressed against) is retired for
+any future work aimed at *improving* reference agreement specifically. Not
+because it reached zero — because it has **saturated against real,
+independent ground truth**: D13's own Whisper-triage finding (re-verified
+directly by D14 §A1) already showed index-45s is statistically
+indistinguishable from the whole-file reference itself when both are checked
+against Whisper (p90 0.70s vs. 0.72s, p99 identical at 1.02s, max identical
+at 1.20s, start side). D16's own A1 traced the residual gap the proxy still
+reports (5/569 words at 45s, 0.76s max) to its root cause and found it is
+**Whisper-token-timestamp-intrinsic** — see
+`docs/ws1-sync-pipeline/task5-slice-ledger.md`'s D16 row and this slice's own
+report for the full word-level trace. Squeezing index-45s's reference
+agreement further toward B-control-45s's 0.30s oracle floor would not be
+observable by any real consumer, because the metric being optimized has
+already saturated at a level the reference's own Whisper-agreement cannot
+resolve past.
+
+**The 0.3s figure quoted throughout D15's combined table is B-control-45s's
+own oracle floor — provisional, and not a CI gate.** It is a headroom
+number (what a perfect-text-attribution rule would still cost at this window
+size), not a pass/fail threshold; no owner sign-off has made it one, and it
+is not wired to any test or CI check.
+
+Further agreement work should target something with finer discriminating
+power than Whisper timestamps (independently hand-labeled word boundaries,
+or direct perceptual testing once a real per-word timing consumer exists —
+see `docs/ws1-sync-pipeline/task5-integration-scope.md`) — not tighter
+fitting against the whole-file reference used above.
+
 ## Rescued data
 
 One exception to "nothing here was deleted or edited": `rescued-2026-08-07-model-p-park/` was never previously committed anywhere reachable from `main`. It's a byte-for-byte preservation copy, pulled 2026-08-11 from the orphaned, unmerged branch `wip/preserve-2026-08-07` (commit `79f779523a35920320ce0f791415d9783e493197`) before that branch could be pruned with no other copy of its data existing. See the folder's own `PROVENANCE.md` for the full per-file manifest and byte-identity verification; indexed here at folder grain only.
