@@ -127,6 +127,28 @@ jobs:
           workspaces: src-tauri -> target
           key: fa-ort-matrix-${{ matrix.name }}
 
+      # tauri-build's build.rs hard-fails ANY cargo invocation of this crate
+      # (check/test/build alike, regardless of the fa-inference feature or ORT
+      # env vars) if the externalBin resources tauri.conf.json declares
+      # ("binaries/ffmpeg", "binaries/whisper") aren't present on disk —
+      # `resource path 'binaries/ffmpeg-aarch64-apple-darwin' doesn't exist`,
+      # the actual failure on this workflow's first real run, all 4 cells
+      # (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/31731286244).
+      # build.yml provisions REAL ffmpeg/whisper-cli binaries because it does a
+      # full `tauri:build` bundle; this workflow only ever runs `cargo test`,
+      # which never spawns the sidecar, so an empty, executable placeholder at
+      # each expected resource path is sufficient to satisfy the existence
+      # check without vendoring or downloading a real binary.
+      - name: Provision placeholder sidecar binaries (existence only, never executed by cargo test)
+        run: |
+          set -euo pipefail
+          mkdir -p src-tauri/binaries
+          TRIPLE="$(rustc -vV | sed -n 's/host: //p')"
+          for name in ffmpeg whisper; do
+            touch "src-tauri/binaries/${name}-${TRIPLE}"
+            chmod +x "src-tauri/binaries/${name}-${TRIPLE}"
+          done
+
       # Downloads a real onnxruntime release dylib straight from Microsoft's
       # GitHub releases INTO THE RUNNER'S TEMP DIR — never written into the
       # repo/working tree, so this is a runtime fetch (same pattern
@@ -154,7 +176,18 @@ jobs:
           mkdir -p "$RUNNER_TEMP/ort"
           curl -fL -o "$RUNNER_TEMP/ort.tgz" "$BASE/$PRIMARY" \
             || curl -fL -o "$RUNNER_TEMP/ort.tgz" "$BASE/$FALLBACK"
-          tar -xzf "$RUNNER_TEMP/ort.tgz" -C "$RUNNER_TEMP/ort" --strip-components=1
+          # --strip-components=2, not 1: every entry in Microsoft's release
+          # tarball is prefixed "./" (e.g. "./onnxruntime-osx-arm64-1.23.2/lib/
+          # ..."), and macOS's bsdtar counts "./" itself as path component 1 --
+          # unlike GNU tar, which normalizes it away. strip=1 here leaves the
+          # versioned top-level dir intact one level too deep
+          # ($RUNNER_TEMP/ort/onnxruntime-osx-arm64-1.23.2/lib/...), so the
+          # test -f check below always missed. Verified locally against the
+          # real v1.23.2 arm64 asset (`tar -tzf` showing the "./" prefix,
+          # reproduced the miss with strip=1, confirmed strip=2 fixes it) --
+          # this is what actually broke Cell 3 on this workflow's first real
+          # run (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/31731286244).
+          tar -xzf "$RUNNER_TEMP/ort.tgz" -C "$RUNNER_TEMP/ort" --strip-components=2
           DYLIB="$RUNNER_TEMP/ort/lib/libonnxruntime.dylib"
           test -f "$DYLIB"
           echo "ORT_DYLIB_PATH=$DYLIB" >> "$GITHUB_ENV"
