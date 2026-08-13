@@ -41,12 +41,19 @@ export interface FaChunkInput {
  *  full, chunk-stitched FA output — the join key back to the script's own
  *  word sequence. Always present (Rust always sets it, unlike `confidence`'s
  *  own optionality on `TranscriptToken`) — see `fa.rs`'s `FaWordSpan` doc
- *  comment for why time is not a safe substitute join key. */
+ *  comment for why time is not a safe substitute join key.
+ *
+ *  `needsReview` (WS1 Task 5 Slice D19, R.7): `true` when `confidence` is
+ *  below `syncConstants.ts`'s `CONF_MIN`. Always present, same as
+ *  `wordIndex` — Rust always sets it. `startSec`/`endSec` are never dropped
+ *  or substituted when this fires; see `fa.rs`'s `FaWordSpan` doc comment
+ *  for why (no Whisper timing crosses this IPC boundary to fall back to). */
 export interface FaWordSpan {
   word: string;
   startSec: number;
   endSec: number;
   confidence: number;
+  needsReview: boolean;
   wordIndex: number;
 }
 
@@ -129,5 +136,6 @@ export function faWordSpansToTranscriptTokens(words: FaWordSpan[]): TranscriptTo
     text: w.word,
     confidence: w.confidence,
     wordIndex: w.wordIndex,
+    needsReview: w.needsReview,
   }));
 }

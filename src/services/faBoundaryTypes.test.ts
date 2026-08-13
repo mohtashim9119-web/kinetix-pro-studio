@@ -7,15 +7,28 @@
 
 import { describe, it, expect } from 'vitest';
 import { faWordSpansToTranscriptTokens, type FaWordSpan } from './faBoundaryTypes';
+import { CONF_MIN } from './syncConstants';
 
-function word(text: string, startSec: number, endSec: number, confidence: number, wordIndex: number): FaWordSpan {
-  return { word: text, startSec, endSec, confidence, wordIndex };
+// `needsReview` defaults to the same `confidence < CONF_MIN` compare `fa.rs`'s
+// `word_span_to_dto` performs, so existing call sites that don't care about
+// it stay realistic without touching every call site (WS1 Task 5 Slice D19).
+function word(
+  text: string,
+  startSec: number,
+  endSec: number,
+  confidence: number,
+  wordIndex: number,
+  needsReview: boolean = confidence < CONF_MIN,
+): FaWordSpan {
+  return { word: text, startSec, endSec, confidence, wordIndex, needsReview };
 }
 
 describe('faWordSpansToTranscriptTokens', () => {
   it('produces exactly the TranscriptToken shape extractSegmentAlignments consumes', () => {
     const tokens = faWordSpansToTranscriptTokens([word('hello', 0.1, 0.4, 0.95, 0)]);
-    expect(tokens).toEqual([{ startSec: 0.1, endSec: 0.4, text: 'hello', confidence: 0.95, wordIndex: 0 }]);
+    expect(tokens).toEqual([
+      { startSec: 0.1, endSec: 0.4, text: 'hello', confidence: 0.95, wordIndex: 0, needsReview: false },
+    ]);
   });
 
   it('preserves input ordering', () => {
@@ -64,5 +77,24 @@ describe('faWordSpansToTranscriptTokens', () => {
       word('fox', 0.3, 0.6, 0.9, 43),
     ]);
     expect(tokens.map((t) => t.wordIndex)).toEqual([42, 43]);
+  });
+
+  // -- needsReview (WS1 Task 5 Slice D19, R.7) --------------------------
+
+  it('carries needsReview through unchanged, both true and false', () => {
+    const tokens = faWordSpansToTranscriptTokens([
+      word('confident', 0.0, 0.3, 0.9, 0, false),
+      word('mumbled', 0.3, 0.6, 0.1, 1, true),
+    ]);
+    expect(tokens.map((t) => t.needsReview)).toEqual([false, true]);
+  });
+
+  it('does not re-derive needsReview from confidence — it is carried, never recomputed', () => {
+    // A word marked needsReview=false despite a low confidence (or vice
+    // versa) must still pass through as given — the reshape is a straight
+    // carry, the actual CONF_MIN compare is Rust's `word_span_to_dto`'s job,
+    // not this function's.
+    const tokens = faWordSpansToTranscriptTokens([word('odd', 0.0, 0.2, 0.05, 0, false)]);
+    expect(tokens[0]?.needsReview).toBe(false);
   });
 });

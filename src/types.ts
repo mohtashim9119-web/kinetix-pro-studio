@@ -296,6 +296,15 @@ export interface TranscriptToken {
    *  d18-index-trace-2026-08-14.md`. Optional and additive-only, same
    *  convention as `confidence`: Whisper-sourced tokens never set it. */
   wordIndex?: number;
+  /** R.7 confidence fallback (WS1 Task 5 Slice D19): `true` when this
+   *  word's `confidence` is below `syncConstants.ts`'s `CONF_MIN`. The
+   *  word's own `startSec`/`endSec` are the real FA-measured values even
+   *  when this is `true` — nothing is dropped or substituted, this is only
+   *  a signal for a consumer to filter or highlight on, mirroring
+   *  `HeadingOverlay.needsReview`'s convention above. Optional and
+   *  additive-only, same convention as `confidence`/`wordIndex`:
+   *  Whisper-sourced tokens never set it. */
+  needsReview?: boolean;
 }
 
 export interface Project {

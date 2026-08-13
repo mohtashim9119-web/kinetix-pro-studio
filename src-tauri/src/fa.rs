@@ -261,6 +261,17 @@ pub struct FaChunkInput {
 /// trace for why: neither `FaWordSpan` nor `TranscriptToken` carried any
 /// index before this slice, even though the order was always available —
 /// it was simply discarded at this exact DTO boundary).
+///
+/// `needs_review` (WS1 Task 5 Slice D19, R.7): `true` when `confidence <
+/// CONF_MIN`. The word's own `start_sec`/`end_sec` are never dropped or
+/// overwritten when this fires — this DTO carries no Whisper timing to fall
+/// back to in the first place (`fa_align`'s only inputs are `audio_path`,
+/// `chunks: Vec<FaChunkInput>`, `language` — no per-word Whisper anchor
+/// crosses this IPC boundary), so the only signal a consumer gets is this
+/// flag, mirroring the existing `HeadingOverlay.needsReview` convention
+/// (`src/types.ts`) rather than inventing a new shape. See
+/// `docs/ws1-sync-pipeline/d19-r7-fallback-2026-08-14.md` for the full
+/// three-option design writeup.
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FaWordSpan {
@@ -268,24 +279,36 @@ pub struct FaWordSpan {
     pub start_sec: f64,
     pub end_sec: f64,
     pub confidence: f32,
+    pub needs_review: bool,
     pub word_index: u32,
 }
 
+/// Mirrors `syncConstants.ts`'s `CONF_MIN = 0.3` (TS file itself is off
+/// limits to this slice) — the floor `needs_review` compares `confidence`
+/// against. Kept as a Rust-side literal rather than read across the IPC
+/// boundary because `word_span_to_dto` runs entirely on the Rust side, with
+/// no TS runtime in scope at the point this decision is made.
+#[cfg(feature = "fa-inference")]
+const CONF_MIN: f32 = 0.3;
+
 /// The IPC-boundary conversion this module's doc comment on [`FaWordSpan`]
-/// describes: `exp(score)` turns a mean log-probability into a probability.
-/// `word_index` is threaded through as an explicit parameter (not derived
-/// here) because a single `WordSpan` carries no positional information of
-/// its own — only its caller, iterating the stitched `Vec<WordSpan>`, knows
-/// where it sits. Pulled out as its own function (rather than inlined in
-/// `fa_align`'s match arm) so it has a direct unit-test target — see the
-/// `fa_word_span_*` tests below.
+/// describes: `exp(score)` turns a mean log-probability into a probability,
+/// and that same probability is compared against [`CONF_MIN`] to set
+/// `needs_review`. `word_index` is threaded through as an explicit parameter
+/// (not derived here) because a single `WordSpan` carries no positional
+/// information of its own — only its caller, iterating the stitched
+/// `Vec<WordSpan>`, knows where it sits. Pulled out as its own function
+/// (rather than inlined in `fa_align`'s match arm) so it has a direct
+/// unit-test target — see the `fa_word_span_*` tests below.
 #[cfg(feature = "fa-inference")]
 fn word_span_to_dto(w: crate::fa_onnx::WordSpan, word_index: u32) -> FaWordSpan {
+    let confidence = w.score.exp();
     FaWordSpan {
         word: w.text,
         start_sec: w.start_seconds,
         end_sec: w.end_seconds,
-        confidence: w.score.exp(),
+        confidence,
+        needs_review: confidence < CONF_MIN,
         word_index,
     }
 }
@@ -733,6 +756,7 @@ mod tests {
                 start_sec: 0.25,
                 end_sec: 0.5,
                 confidence: 0.5,
+                needs_review: false,
                 word_index: 0,
             }],
         };
@@ -743,7 +767,7 @@ mod tests {
                 "event": "Done",
                 "data": {
                     "words": [
-                        { "word": "hello", "startSec": 0.25, "endSec": 0.5, "confidence": 0.5, "wordIndex": 0 }
+                        { "word": "hello", "startSec": 0.25, "endSec": 0.5, "confidence": 0.5, "needsReview": false, "wordIndex": 0 }
                     ]
                 }
             })
@@ -761,11 +785,18 @@ mod tests {
 
     #[test]
     fn fa_word_span_serializes_camelcase_field_names() {
-        let span = FaWordSpan { word: "test".to_string(), start_sec: 1.5, end_sec: 2.25, confidence: 0.5, word_index: 3 };
+        let span = FaWordSpan {
+            word: "test".to_string(),
+            start_sec: 1.5,
+            end_sec: 2.25,
+            confidence: 0.5,
+            needs_review: false,
+            word_index: 3,
+        };
         let json = serde_json::to_value(&span).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "word": "test", "startSec": 1.5, "endSec": 2.25, "confidence": 0.5, "wordIndex": 3 })
+            serde_json::json!({ "word": "test", "startSec": 1.5, "endSec": 2.25, "confidence": 0.5, "needsReview": false, "wordIndex": 3 })
         );
     }
 
@@ -887,6 +918,244 @@ mod tests {
         // The seam itself: chunk 2's first word ("brown") is index 2, not 0.
         assert_eq!(dtos[2].word, "brown");
         assert_eq!(dtos[2].word_index, 2);
+    }
+
+    // -- needs_review / R.7 fallback (WS1 Task 5 Slice D19) ----------------
+    //
+    // Data below is REAL, not fabricated: verbatim (confidence, word) pairs
+    // read from the D18 Step 5 measurement run's own output files
+    // (`.work-phase4/replay/173/tokens_fa.json` — matched, real audio +
+    // real committed text — and `tokens_mismatch-shuffled.json` — real
+    // audio, a cyclically rotated OTHER segment's text). Both are local,
+    // gitignored measurement artifacts (same convention D18 used for them),
+    // so the values are reproduced here as literals rather than read at
+    // test time — the NUMBERS are real, only their storage location changed.
+    // Each pair is turned into a `WordSpan` via `confidence.ln()` so these
+    // tests exercise the real production function (`word_span_to_dto`), not
+    // a reimplementation of the threshold compare.
+
+    #[cfg(feature = "fa-inference")]
+    fn word_span_with_confidence(text: &str, confidence: f32) -> crate::fa_onnx::WordSpan {
+        crate::fa_onnx::WordSpan {
+            text: text.to_string(),
+            start_seconds: 0.0,
+            end_seconds: 1.0,
+            score: confidence.ln(),
+        }
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn needs_review_fires_on_real_mismatched_sub_threshold_words() {
+        // Real (confidence, word) pairs, all < CONF_MIN, from the D18 Step 5
+        // shuffled-transcript (mismatched) run.
+        let real_sub_threshold: &[(f32, &str)] = &[
+            (0.25, "that"),
+            (0.0, "on"),
+            (0.1511, "auspex"),
+            (0.1938, "scans"),
+            (0.0, "as"),
+            (0.199, "physically"),
+            (0.0168, "larger"),
+            (0.002, "than"),
+            (0.0012, "the"),
+            (0.0, "geological"),
+            (0.2195, "formation"),
+            (0.041, "around"),
+            (0.2481, "them"),
+            (0.0, "a"),
+            (0.2497, "data"),
+            (0.0002, "a"),
+            (0.2499, "time"),
+            (0.2499, "Warriors"),
+            (0.001, "go"),
+            (0.2819, "down."),
+        ];
+        for (confidence, word) in real_sub_threshold {
+            let dto = word_span_to_dto(word_span_with_confidence(word, *confidence), 0);
+            assert!(
+                dto.needs_review,
+                "expected needs_review for real sub-threshold word {word:?} (confidence {confidence})"
+            );
+        }
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn needs_review_does_not_fire_on_real_mismatched_words_that_still_scored_above_conf_min() {
+        // Even under mismatch, some words still align well by chance — the
+        // flag must track confidence, not "was this the mismatched run."
+        let real_above_threshold: &[(f32, &str)] = &[
+            (0.4, "rooms"),
+            (0.4984, "register"),
+            (0.5836, "should"),
+            (0.3323, "permit."),
+            (0.727, "Whether"),
+            (0.3997, "that's"),
+            (0.3332, "sensor"),
+            (0.4255, "artifact"),
+            (0.5272, "or"),
+            (0.3744, "accurate"),
+            (0.9993, "is"),
+            (0.3332, "not"),
+            (0.6644, "question"),
+            (0.4986, "anyone"),
+            (0.4703, "fighting"),
+        ];
+        for (confidence, word) in real_above_threshold {
+            let dto = word_span_to_dto(word_span_with_confidence(word, *confidence), 0);
+            assert!(
+                !dto.needs_review,
+                "did not expect needs_review for real above-threshold word {word:?} (confidence {confidence})"
+            );
+        }
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn needs_review_matched_corpus_stays_essentially_untouched() {
+        // Real (confidence, word) pairs from the D18 Step 5 MATCHED run
+        // (correct text, correct audio): the full real 29/1645
+        // below-threshold set (all 29, verbatim — D18 Step 5's own "1.8%
+        // baseline" measurement) plus a deterministic real sample of 82
+        // above-threshold words (every 20th entry in the real 1645-word
+        // capture, spanning many different segments). This reproduces both
+        // tails of that real distribution and asserts the rule agrees with
+        // every one of these real points, rather than re-deriving the full
+        // corpus count (which lives only in the gitignored
+        // `.work-phase4/` measurement output, not a committed fixture).
+        let real_below_threshold: &[(f32, &str)] = &[
+            (0.0043, "the"),
+            (0.0, "worst"),
+            (0.2955, "vox-casters,"),
+            (0.1664, "and"),
+            (0.2122, "debris,"),
+            (0.266, "pull"),
+            (0.0558, "competing"),
+            (0.0015, "launched"),
+            (0.2232, "round"),
+            (0.2371, "six"),
+            (0.1342, "what"),
+            (0.003, "by"),
+            (0.0316, "centuries,"),
+            (0.0439, "is"),
+            (0.1246, "cycling"),
+            (0.0818, "through"),
+            (0.1746, "Two,"),
+            (0.0004, "Cadian"),
+            (0.0004, "Space."),
+            (0.0, "the"),
+            (0.0, "laws"),
+            (0.017, "the"),
+            (0.0418, "somewhere"),
+            (0.0036, "the"),
+            (0.0039, "setting"),
+            (0.0001, "force"),
+            (0.0002, "depends"),
+            (0.0013, "on"),
+            (0.1472, "outcome,"),
+        ];
+        let real_above_threshold: &[(f32, &str)] = &[
+            (0.9606, "Some"),
+            (0.9991, "function"),
+            (0.9973, "because"),
+            (0.9991, "Number"),
+            (0.945, "killed"),
+            (0.9995, "outcome,"),
+            (0.9492, "a"),
+            (0.9621, "something"),
+            (0.538, "ants"),
+            (0.9929, "fire,"),
+            (0.9917, "track"),
+            (0.9981, "soldiers"),
+            (0.9985, "until"),
+            (0.9995, "as"),
+            (0.9955, "absorbs"),
+            (0.9719, "fused"),
+            (0.999, "on."),
+            (0.9698, "weren't"),
+            (0.9562, "warp"),
+            (0.9995, "by"),
+            (0.9994, "is"),
+            (0.9984, "this"),
+            (0.9739, "the"),
+            (0.8467, "collapse"),
+            (0.9391, "arrive"),
+            (0.9997, "make"),
+            (0.9998, "outcome"),
+            (0.9998, "rather"),
+            (0.9998, "resist"),
+            (0.9185, "engineered,"),
+            (0.7311, "Chaos-aligned"),
+            (0.9993, "extended"),
+            (0.9982, "two"),
+            (0.9997, "contact"),
+            (0.9997, "had"),
+            (0.9978, "because"),
+            (0.9991, "that"),
+            (0.893, "has"),
+            (0.8569, "Tomb"),
+            (0.9809, "than"),
+            (0.9994, "anyone"),
+            (0.9974, "other"),
+            (0.9985, "and"),
+            (0.976, "corridors,"),
+            (0.9305, "scaling"),
+            (0.9992, "model"),
+            (0.9923, "stop"),
+            (0.868, "Number"),
+            (0.8919, "are"),
+            (0.9467, "requires"),
+            (0.9994, "that"),
+            (0.9394, "the"),
+            (0.9691, "atmospheric"),
+            (0.9971, "in"),
+            (0.9421, "between"),
+            (0.8587, "effect"),
+            (0.9997, "They"),
+            (0.9996, "impossible"),
+            (0.8629, "The"),
+            (0.9421, "Warp,"),
+            (0.9911, "of"),
+            (0.9987, "A"),
+            (0.9842, "a"),
+            (0.9996, "concept"),
+            (0.9992, "in"),
+            (0.9693, "what"),
+            (0.9991, "distances."),
+            (0.9967, "have"),
+            (0.8908, "anomalies."),
+            (0.963, "for"),
+            (0.9483, "what"),
+            (0.9649, "available,"),
+            (0.9995, "from"),
+            (0.8958, "one"),
+            (0.7938, "worst"),
+            (0.9042, "in"),
+            (0.9992, "it"),
+            (0.8369, "on"),
+            (0.9732, "Some"),
+            (0.9976, "sent"),
+            (0.9301, "the"),
+            (0.9694, "else"),
+        ];
+
+        for (confidence, word) in real_below_threshold {
+            let dto = word_span_to_dto(word_span_with_confidence(word, *confidence), 0);
+            assert!(dto.needs_review, "expected needs_review for {word:?} ({confidence})");
+        }
+        for (confidence, word) in real_above_threshold {
+            let dto = word_span_to_dto(word_span_with_confidence(word, *confidence), 0);
+            assert!(!dto.needs_review, "did not expect needs_review for {word:?} ({confidence})");
+        }
+
+        // Cross-check against D18 Step 5's own count: exactly 29/1645
+        // (1.76%) of the real matched corpus fell below CONF_MIN.
+        assert_eq!(
+            real_below_threshold.len(),
+            29,
+            "full real below-threshold set from the matched run"
+        );
     }
 
     // -- ModelNotFound kind preservation (WS1 Task 5 Slice D10 fix) --------
