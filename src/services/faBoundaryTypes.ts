@@ -35,12 +35,19 @@ export interface FaChunkInput {
  *  is already `exp(score)` on the Rust side (the IPC boundary's own unit
  *  conversion from a log-probability to a probability) — a probability in
  *  [0,1], directly comparable to `syncConstants.ts`'s `CONF_MIN`; nothing on
- *  the TS side needs to convert it further. */
+ *  the TS side needs to convert it further.
+ *
+ *  `wordIndex` (WS1 Task 5 Slice D18): the word's 0-based position in the
+ *  full, chunk-stitched FA output — the join key back to the script's own
+ *  word sequence. Always present (Rust always sets it, unlike `confidence`'s
+ *  own optionality on `TranscriptToken`) — see `fa.rs`'s `FaWordSpan` doc
+ *  comment for why time is not a safe substitute join key. */
 export interface FaWordSpan {
   word: string;
   startSec: number;
   endSec: number;
   confidence: number;
+  wordIndex: number;
 }
 
 /** Mirrors `fa.rs`'s `FaEvent` (`#[serde(tag = "event", content = "data")]`).
@@ -101,10 +108,11 @@ export type FaCancelArgs = Record<string, never>;
  * Reshapes a `FaEvent`'s `Done` payload (`FaWordSpan[]`) into
  * `TranscriptToken[]` — exactly the shape `whisperService.ts`'s
  * `extractSegmentAlignments` already consumes (`startSec`/`endSec`/`text`,
- * now also carrying the optional `confidence` D9 added to `TranscriptToken`).
- * A straight 1:1 map: unlike a Whisper token, an `FaWordSpan` is already
- * exactly one word (`fa_onnx.rs`'s `merge_char_spans_to_words`), so there is
- * no multi-word-per-token expansion to do here (contrast
+ * now also carrying the optional `confidence` D9 added to `TranscriptToken`,
+ * and `wordIndex`, D18's script-word join key). A straight 1:1 map: unlike a
+ * Whisper token, an `FaWordSpan` is already exactly one word
+ * (`fa_onnx.rs`'s `merge_char_spans_to_words`), so there is no
+ * multi-word-per-token expansion to do here (contrast
  * `extractSegmentAlignments`'s own `tokenWords` expansion of Whisper's
  * possibly-multi-word tokens).
  *
@@ -120,5 +128,6 @@ export function faWordSpansToTranscriptTokens(words: FaWordSpan[]): TranscriptTo
     endSec: w.endSec,
     text: w.word,
     confidence: w.confidence,
+    wordIndex: w.wordIndex,
   }));
 }

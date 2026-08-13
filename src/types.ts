@@ -289,6 +289,13 @@ export interface TranscriptToken {
    *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does,
    *  and that reshape has no live caller yet. */
   confidence?: number;
+  /** Forced-alignment script-word index (WS1 Task 5 Slice D18) — this
+   *  word's 0-based position in the full script word sequence
+   *  (`faAnchors.ts`'s `FaAnchor.qi` space). The join key back to the
+   *  script; TIME IS NOT — see `docs/ws1-sync-pipeline/
+   *  d18-index-trace-2026-08-14.md`. Optional and additive-only, same
+   *  convention as `confidence`: Whisper-sourced tokens never set it. */
+  wordIndex?: number;
 }
 
 export interface Project {
@@ -366,6 +373,23 @@ export interface Project {
   /** WS-logs — per-run rollups, same append/prune discipline, capped at
    *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
   syncRunSummaries?: SyncRunSummary[];
+  /** Persisted forced-alignment word-level timings (WS1 Task 5 Slice D18,
+   *  owner ruling D1 — "full word-level timings, persisted in project
+   *  data"). Reuses `TranscriptToken`'s shape rather than a parallel type:
+   *  every entry an FA production writer produces has `wordIndex` set (the
+   *  join key back to the script's own word sequence — see `wordIndex`'s
+   *  own doc comment on why time is not a safe substitute) and, unlike
+   *  `Project.transcriptTokens` (Whisper's own output), `confidence` set on
+   *  every entry too.
+   *
+   *  SCHEMA ONLY THIS SLICE — no production writer populates this field yet
+   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt), and no `version`
+   *  concept exists on `Project` to migrate through: an absent field is
+   *  read as "no FA word timings," the same convention every other optional
+   *  `Project` field here already uses (see `headings`, `resolutionTier`).
+   *  Undefined on every project until whichever later slice adds the first
+   *  real writer. */
+  faWordTimings?: TranscriptToken[];
 }
 
 // ---------------------------------------------------------------------------

@@ -249,6 +249,18 @@ pub struct FaChunkInput {
 /// [0,1] and therefore directly comparable to `syncConstants.ts`'s
 /// `CONF_MIN` — the exponentiation is applied once, here, at the boundary,
 /// so nothing downstream needs to know `WordSpan` ever carried a log-prob.
+///
+/// `word_index` (WS1 Task 5 Slice D18): the word's 0-based position in the
+/// FULL, chunk-stitched output — the same order `align_chunked`'s `all_words`
+/// already accumulates in (chunk order, then within-chunk text order), so it
+/// is assigned once, after every chunk has been merged, never reset per
+/// chunk. This is the intended join key back to the script's own word
+/// sequence (`faAnchors.ts`'s `FaAnchor.qi` space / `faChunkPlan.ts`'s
+/// `queryWords`) — a persisted word timing's TIME is not a reliable join key
+/// (see `docs/ws1-sync-pipeline/d18-index-trace-2026-08-14.md`'s Step 1
+/// trace for why: neither `FaWordSpan` nor `TranscriptToken` carried any
+/// index before this slice, even though the order was always available —
+/// it was simply discarded at this exact DTO boundary).
 #[derive(serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FaWordSpan {
@@ -256,21 +268,43 @@ pub struct FaWordSpan {
     pub start_sec: f64,
     pub end_sec: f64,
     pub confidence: f32,
+    pub word_index: u32,
 }
 
 /// The IPC-boundary conversion this module's doc comment on [`FaWordSpan`]
 /// describes: `exp(score)` turns a mean log-probability into a probability.
-/// Pulled out as its own function (rather than inlined in `fa_align`'s match
-/// arm) so it has a direct unit-test target — see the `fa_word_span_*` tests
-/// below.
+/// `word_index` is threaded through as an explicit parameter (not derived
+/// here) because a single `WordSpan` carries no positional information of
+/// its own — only its caller, iterating the stitched `Vec<WordSpan>`, knows
+/// where it sits. Pulled out as its own function (rather than inlined in
+/// `fa_align`'s match arm) so it has a direct unit-test target — see the
+/// `fa_word_span_*` tests below.
 #[cfg(feature = "fa-inference")]
-fn word_span_to_dto(w: crate::fa_onnx::WordSpan) -> FaWordSpan {
+fn word_span_to_dto(w: crate::fa_onnx::WordSpan, word_index: u32) -> FaWordSpan {
     FaWordSpan {
         word: w.text,
         start_sec: w.start_seconds,
         end_sec: w.end_seconds,
         confidence: w.score.exp(),
+        word_index,
     }
+}
+
+/// Converts the FULL, already chunk-stitched `Vec<WordSpan>` `align_chunked`
+/// returns into `Vec<FaWordSpan>` DTOs, assigning each word its `word_index`
+/// by its position in THIS vec — i.e. across the whole run, not per chunk.
+/// This is the exact point WS1 Task 5 Slice D18's index trace found the
+/// script-word index was being discarded (the word order was always
+/// available here; nothing carried it forward). Pulled out of `fa_align`'s
+/// Ok arm so it has a direct unit-test target that needs no live model/
+/// AppHandle — see the `word_spans_to_dtos_*` tests below.
+#[cfg(feature = "fa-inference")]
+fn word_spans_to_dtos(word_spans: Vec<crate::fa_onnx::WordSpan>) -> Vec<FaWordSpan> {
+    word_spans
+        .into_iter()
+        .enumerate()
+        .map(|(i, w)| word_span_to_dto(w, i as u32))
+        .collect()
 }
 
 /// Maps `fa_onnx::align`'s error into the `FaError` `fa_align` rejects its
@@ -473,7 +507,7 @@ pub async fn fa_align(
         finish_run(&state)?;
         return match result {
             Ok(word_spans) => {
-                let words: Vec<FaWordSpan> = word_spans.into_iter().map(word_span_to_dto).collect();
+                let words: Vec<FaWordSpan> = word_spans_to_dtos(word_spans);
                 let _ = on_event.send(FaEvent::Done { words });
                 Ok(())
             }
@@ -699,6 +733,7 @@ mod tests {
                 start_sec: 0.25,
                 end_sec: 0.5,
                 confidence: 0.5,
+                word_index: 0,
             }],
         };
         let json = serde_json::to_value(&event).unwrap();
@@ -708,7 +743,7 @@ mod tests {
                 "event": "Done",
                 "data": {
                     "words": [
-                        { "word": "hello", "startSec": 0.25, "endSec": 0.5, "confidence": 0.5 }
+                        { "word": "hello", "startSec": 0.25, "endSec": 0.5, "confidence": 0.5, "wordIndex": 0 }
                     ]
                 }
             })
@@ -726,11 +761,11 @@ mod tests {
 
     #[test]
     fn fa_word_span_serializes_camelcase_field_names() {
-        let span = FaWordSpan { word: "test".to_string(), start_sec: 1.5, end_sec: 2.25, confidence: 0.5 };
+        let span = FaWordSpan { word: "test".to_string(), start_sec: 1.5, end_sec: 2.25, confidence: 0.5, word_index: 3 };
         let json = serde_json::to_value(&span).unwrap();
         assert_eq!(
             json,
-            serde_json::json!({ "word": "test", "startSec": 1.5, "endSec": 2.25, "confidence": 0.5 })
+            serde_json::json!({ "word": "test", "startSec": 1.5, "endSec": 2.25, "confidence": 0.5, "wordIndex": 3 })
         );
     }
 
@@ -756,7 +791,7 @@ mod tests {
             end_seconds: 0.1,
             score: 0.0,
         };
-        assert_eq!(word_span_to_dto(zero).confidence, 1.0);
+        assert_eq!(word_span_to_dto(zero, 0).confidence, 1.0);
 
         let neg_one = crate::fa_onnx::WordSpan {
             text: "b".to_string(),
@@ -764,7 +799,7 @@ mod tests {
             end_seconds: 0.2,
             score: -1.0,
         };
-        let confidence = word_span_to_dto(neg_one).confidence;
+        let confidence = word_span_to_dto(neg_one, 1).confidence;
         assert!((confidence - std::f32::consts::E.recip()).abs() < 1e-6);
         assert!(confidence > 0.0 && confidence < 1.0);
     }
@@ -778,10 +813,80 @@ mod tests {
             end_seconds: 1.75,
             score: -2.0,
         };
-        let dto = word_span_to_dto(w);
+        let dto = word_span_to_dto(w, 7);
         assert_eq!(dto.word, "kinetix");
         assert_eq!(dto.start_sec, 1.25);
         assert_eq!(dto.end_sec, 1.75);
+        assert_eq!(dto.word_index, 7);
+    }
+
+    // -- word_index (WS1 Task 5 Slice D18) --------------------------------
+    //
+    // These exercise `word_spans_to_dtos`, the real function `fa_align`'s Ok
+    // arm calls, with hand-built `WordSpan`s — no live model/AppHandle
+    // needed, since `word_index` assignment is pure positional bookkeeping
+    // over an already-produced `Vec<WordSpan>` (see this function's own doc
+    // comment for why the index doesn't need to be derived any deeper than
+    // that).
+
+    #[cfg(feature = "fa-inference")]
+    fn spans(words: &[&str]) -> Vec<crate::fa_onnx::WordSpan> {
+        words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| crate::fa_onnx::WordSpan {
+                text: w.to_string(),
+                start_seconds: i as f64,
+                end_seconds: i as f64 + 0.5,
+                score: -0.1,
+            })
+            .collect()
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn word_spans_to_dtos_indices_monotonic_and_no_duplicates() {
+        let dtos = word_spans_to_dtos(spans(&["the", "quick", "brown", "fox"]));
+        let indices: Vec<u32> = dtos.iter().map(|d| d.word_index).collect();
+        assert_eq!(indices, vec![0, 1, 2, 3]);
+        let mut sorted = indices.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), indices.len(), "no duplicate word_index values");
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn word_spans_to_dtos_index_resolves_to_expected_script_word() {
+        // Simulates a consumer joining FA output back to the script's own
+        // word array purely via `word_index` — never via time or position in
+        // some other array.
+        let script_words = ["the", "quick", "brown", "fox"];
+        let dtos = word_spans_to_dtos(spans(&script_words));
+        for dto in &dtos {
+            assert_eq!(dto.word, script_words[dto.word_index as usize]);
+        }
+    }
+
+    #[cfg(feature = "fa-inference")]
+    #[test]
+    fn word_spans_to_dtos_index_survives_chunked_path_across_seams() {
+        // `align_chunked`'s own loop appends each chunk's words onto one
+        // running `Vec<WordSpan>` (`all_words`) BEFORE `word_spans_to_dtos`
+        // ever runs — so this concatenation is exactly what a two-chunk run
+        // hands to it. The index must continue across that chunk seam, not
+        // reset to 0 for chunk 2's first word.
+        let mut chunk1 = spans(&["the", "quick"]);
+        let chunk2 = spans(&["brown", "fox", "jumps"]);
+        chunk1.extend(chunk2);
+        let all_words = chunk1;
+
+        let dtos = word_spans_to_dtos(all_words);
+        let indices: Vec<u32> = dtos.iter().map(|d| d.word_index).collect();
+        assert_eq!(indices, vec![0, 1, 2, 3, 4]);
+        // The seam itself: chunk 2's first word ("brown") is index 2, not 0.
+        assert_eq!(dtos[2].word, "brown");
+        assert_eq!(dtos[2].word_index, 2);
     }
 
     // -- ModelNotFound kind preservation (WS1 Task 5 Slice D10 fix) --------
