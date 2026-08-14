@@ -360,6 +360,27 @@ Step 4's own gate table below confirms `needs_review` still has no
 production reader anywhere). This is recorded as an open finding for
 whichever future slice wires R.7 to a real consumer, not resolved here.
 
+> **DATED CORRECTION (WS1 Task 5 Slice D21, then D22) — 2026-08-14.** The
+> 62.75% (1014/1616) figure above is this document's own real measurement at
+> the time it was written and is not edited here — but it is now SUPERSEDED,
+> not current. Slice D21 found the root cause was `faChunkPlan.ts`'s
+> `segment.startTime` text-attribution rule itself (the same rule this
+> document's own Step 3 already named as the CTC-infeasibility root cause,
+> generalized): under `'script-word-index'` attribution, on the identical
+> real 709s corpus, the below-`CONF_MIN` fraction drops to **9.43%
+> (155/1643)** — see
+> [`d21-attribution-confmin-2026-08-14.md`](d21-attribution-confmin-2026-08-14.md)
+> Step 1. Slice D22 made index attribution the chunked path's own internal
+> default (`computeFaChunkPlanWithAttribution`'s `attribution` parameter,
+> `src/services/faChunkPlan.ts`) and recorded the CTC-infeasibility gap this
+> document opened as CLOSED — see
+> [`d22-attribution-default-tail-2026-08-14.md`](d22-attribution-default-tail-2026-08-14.md)
+> and `task5-slice-ledger.md`'s Known-gap register. This document's own
+> Step 1–5 diagnosis (the mechanism, the two real CTC-infeasible chunks, the
+> fallback behavior) remains accurate and is not retracted — only the
+> "62.75%... close to uninformative" characterization of `CONF_MIN`'s
+> real-world flag rate is stale.
+
 ## Full gate table
 
 | Gate | Status |

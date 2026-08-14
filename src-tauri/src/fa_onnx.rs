@@ -2978,6 +2978,577 @@ mod d21_measurement {
     }
 }
 
+// ---------------------------------------------------------------------------
+// WS1 Task 5 Slice D22, Step 3 — is D21's r=-0.75 driven by seam
+// mis-assignment itself, or does confidence predict timing error even
+// WITHIN the correctly-assigned population (the population R.7 will mostly
+// see once the chunked path's internal default is index attribution — see
+// this slice's `faChunkPlan.ts` change)? `#[ignore]`d, real-corpus,
+// measurement-only, self-contained per d13/d21_measurement's own convention
+// (own `common_setup`/`RefWord`/`whole_file_reference_240s`, duplicated
+// rather than imported).
+//
+// Reuses D21 Step 3's EXACT setup (the 240s excerpt's production, unmodified
+// `segment.startTime` windowing, `173-excerpt-240s-windowed.json`) so the
+// full-population Pearson r reproduces D21's own -0.75 as an internal sanity
+// check, then applies D15's own mis-assignment identification method
+// (`d15-mis-assignment-diagnostic-2026-08-13.md` §1.1: for each matched
+// word, compare which chunk window contains its OWN measured start time
+// against which chunk window contains the WHOLE-FILE REFERENCE word's own
+// start time, at the SAME boundary list — a mismatch is a mis-assignment)
+// generalized from D15's original index-vs-B-control comparison to this
+// module's segment.startTime-vs-oracle-time comparison, over the SAME
+// boundary set D21 Step 3 already uses. No new ONNX pass beyond what D21
+// Step 3 itself needed (the whole-file reference is cached, reused if a
+// prior d21/d22 run in this $FA_CHUNK_PLAN_DIR already computed it).
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod d22_measurement {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("d22_measurement's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct RefWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    fn load_plan(dir: &Path, label: &str) -> Option<Vec<crate::fa::FaChunkInput>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d22_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(
+            plan.chunks
+                .into_iter()
+                .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+                .collect(),
+        )
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    fn common_setup(context: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {context}: FA_CHUNK_PLAN_DIR not set");
+            return None;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((plan_dir, model_path, audio_path))
+    }
+
+    /// Same cache file D21's own `whole_file_reference_240s` writes/reads
+    /// (`173-excerpt-240s-reference-words.json`) — a prior d13/d21/d22 run in
+    /// this `$FA_CHUNK_PLAN_DIR` is reused rather than recomputed (~113s/
+    /// ~20GiB cost, D10/D11).
+    fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
+        if cache_path.exists() {
+            let text = std::fs::read_to_string(&cache_path)
+                .unwrap_or_else(|e| panic!("read cached reference {}: {e}", cache_path.display()));
+            return serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse cached reference {}: {e}", cache_path.display()));
+        }
+        let plan = load_plan(plan_dir, "173-excerpt-240s-wholefile").expect("wholefile plan must exist to compute the reference");
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        eprintln!("d22_measurement: computing whole-file 240s reference (first use in this $FA_CHUNK_PLAN_DIR, will be cached)...");
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, model_path, audio_path, &plan, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("whole-file reference pass failed: {e}"));
+        eprintln!(
+            "d22_measurement: whole-file reference computed in {:.1}s, {} words",
+            start.elapsed().as_secs_f64(),
+            words.len()
+        );
+        let ref_words: Vec<RefWord> =
+            words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        std::fs::write(&cache_path, serde_json::to_string(&ref_words).unwrap())
+            .unwrap_or_else(|e| panic!("write reference cache {}: {e}", cache_path.display()));
+        ref_words
+    }
+
+    fn pearson_r(xs: &[f64], ys: &[f64]) -> f64 {
+        let n = xs.len() as f64;
+        let mean_x = xs.iter().sum::<f64>() / n;
+        let mean_y = ys.iter().sum::<f64>() / n;
+        let mut cov = 0.0;
+        let mut var_x = 0.0;
+        let mut var_y = 0.0;
+        for i in 0..xs.len() {
+            let dx = xs[i] - mean_x;
+            let dy = ys[i] - mean_y;
+            cov += dx * dy;
+            var_x += dx * dx;
+            var_y += dy * dy;
+        }
+        if var_x == 0.0 || var_y == 0.0 {
+            return f64::NAN;
+        }
+        cov / (var_x.sqrt() * var_y.sqrt())
+    }
+
+    /// D15's own validated method ("output word i's own chunk of origin is
+    /// recoverable by checking which chunk window contains ITS OWN start
+    /// time — validated as non-decreasing across the full 569-word
+    /// sequence"): a monotonic, resume-from-cursor scan over gapless,
+    /// non-overlapping `[start_sec, end_sec)` windows. Caller must invoke
+    /// with non-decreasing `t` per cursor to preserve the monotonic-scan
+    /// guarantee (two independent cursors — one for the attributed word's
+    /// own measured time, one for the oracle/reference word's own time —
+    /// are used below, each individually monotonic).
+    fn chunk_index_for_time(chunks: &[crate::fa::FaChunkInput], cursor: &mut usize, t: f64) -> usize {
+        while *cursor < chunks.len() - 1 && t >= chunks[*cursor].end_sec {
+            *cursor += 1;
+        }
+        *cursor
+    }
+
+    /// WS1 Task 5 Slice D22, Step 3. Reproduces D21 Step 3's own full-
+    /// population Pearson r as an internal sanity check, then recomputes it
+    /// on the subset D15's method identifies as CORRECTLY attributed (the
+    /// population R.7 will mostly see once index attribution is the
+    /// chunked-path default), reporting whether the correlation survives or
+    /// collapses.
+    #[test]
+    #[ignore]
+    fn mis_assignment_filtered_correlation_240s() {
+        const CONTEXT: &str = "mis_assignment_filtered_correlation_240s";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let Some(chunks) = load_plan(&plan_dir, "173-excerpt-240s-windowed") else { return };
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let windowed = align_chunked(&cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok over the 240s excerpt's own production windowing, got Err: {e}"));
+
+        let mut ref_idx = 0usize;
+        let mut time_cursor = 0usize;
+        let mut oracle_cursor = 0usize;
+        let mut confidences: Vec<f64> = Vec::new();
+        let mut errors: Vec<f64> = Vec::new();
+        let mut mis_assigned: Vec<bool> = Vec::new();
+        let mut skipped_fallback = 0usize;
+
+        for w in &windowed {
+            while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                ref_idx += 1;
+            }
+            if ref_idx >= reference.len() {
+                break;
+            }
+            if !w.score.is_finite() {
+                skipped_fallback += 1;
+                ref_idx += 1;
+                continue;
+            }
+            let r = &reference[ref_idx];
+            let start_diff = (r.start - w.start_seconds).abs();
+            let end_diff = (r.end - w.end_seconds).abs();
+
+            // D15's method, generalized: does the window containing this
+            // word's OWN measured start time (the attribution rule under
+            // test's own placement) match the window containing the
+            // WHOLE-FILE REFERENCE word's own start time (the oracle-time
+            // placement), at the identical boundary list?
+            let attributed_chunk = chunk_index_for_time(&chunks, &mut time_cursor, w.start_seconds);
+            let oracle_chunk = chunk_index_for_time(&chunks, &mut oracle_cursor, r.start);
+
+            confidences.push(w.score.exp() as f64);
+            errors.push(start_diff.max(end_diff));
+            mis_assigned.push(attributed_chunk != oracle_chunk);
+            ref_idx += 1;
+        }
+
+        assert!(
+            confidences.len() > 10,
+            "{CONTEXT}: too few matched (confidence, error) pairs ({}) to correlate meaningfully",
+            confidences.len()
+        );
+
+        let r_full = pearson_r(&confidences, &errors);
+        let n_mis = mis_assigned.iter().filter(|&&m| m).count();
+
+        let mut fc: Vec<f64> = Vec::new();
+        let mut fe: Vec<f64> = Vec::new();
+        for i in 0..confidences.len() {
+            if !mis_assigned[i] {
+                fc.push(confidences[i]);
+                fe.push(errors[i]);
+            }
+        }
+        let r_filtered = pearson_r(&fc, &fe);
+
+        eprintln!(
+            "{CONTEXT}: matched={} (skipped_fallback={skipped_fallback}) full_population_r={r_full:.4} \
+             (D21 Step 3's own reproduced figure) mis_assigned={n_mis}/{} ({:.1}%) correctly_assigned_n={} \
+             filtered_r={r_filtered:.4}",
+            confidences.len(),
+            confidences.len(),
+            100.0 * n_mis as f64 / confidences.len() as f64,
+            fc.len(),
+        );
+
+        let mut below: Vec<f64> = Vec::new();
+        let mut above: Vec<f64> = Vec::new();
+        for i in 0..fc.len() {
+            if fc[i] < 0.3 {
+                below.push(fe[i]);
+            } else {
+                above.push(fe[i]);
+            }
+        }
+        below.sort_by(|a, b| a.total_cmp(b));
+        above.sort_by(|a, b| a.total_cmp(b));
+        if !below.is_empty() {
+            eprintln!(
+                "{CONTEXT}: CORRECTLY-ASSIGNED, BELOW 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} p90={:.4} \
+                 max={:.4} mean={:.4}",
+                below.len(),
+                below[0],
+                percentile(&below, 0.50),
+                percentile(&below, 0.90),
+                below[below.len() - 1],
+                below.iter().sum::<f64>() / below.len() as f64,
+            );
+        } else {
+            eprintln!("{CONTEXT}: CORRECTLY-ASSIGNED, BELOW 0.3 confidence: n=0");
+        }
+        if !above.is_empty() {
+            eprintln!(
+                "{CONTEXT}: CORRECTLY-ASSIGNED, ABOVE/EQ 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} \
+                 p90={:.4} max={:.4} mean={:.4}",
+                above.len(),
+                above[0],
+                percentile(&above, 0.50),
+                percentile(&above, 0.90),
+                above[above.len() - 1],
+                above.iter().sum::<f64>() / above.len() as f64,
+            );
+        } else {
+            eprintln!("{CONTEXT}: CORRECTLY-ASSIGNED, ABOVE/EQ 0.3 confidence: n=0");
+        }
+
+        #[derive(serde::Serialize)]
+        struct Pair {
+            confidence: f64,
+            error_sec: f64,
+            mis_assigned: bool,
+        }
+        let pairs: Vec<Pair> = confidences
+            .iter()
+            .zip(errors.iter())
+            .zip(mis_assigned.iter())
+            .map(|((&c, &e), &m)| Pair { confidence: c, error_sec: e, mis_assigned: m })
+            .collect();
+        let out_path = plan_dir.join("173-excerpt-240s-mis-assignment-filtered-pairs.json");
+        std::fs::write(&out_path, serde_json::to_string(&pairs).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+        eprintln!("{CONTEXT}: wrote {} pairs to {}", pairs.len(), out_path.display());
+    }
+
+    /// A small closed-class function-word list, heuristic only (not a
+    /// linguistic authority) — used solely to characterize D21's below-0.3
+    /// tail (Step 4), never to gate anything.
+    const FUNCTION_WORDS: &[&str] = &[
+        "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "for", "of", "in", "on", "at", "to", "from", "by",
+        "with", "as", "is", "are", "was", "were", "be", "been", "being", "it", "he", "she", "they", "we", "you", "i",
+        "that", "this", "these", "those", "not", "no", "do", "does", "did", "has", "have", "had", "will", "would",
+        "can", "could", "shall", "should", "may", "might", "must", "if", "than", "then", "there", "here", "its",
+        "his", "her", "their", "our", "your", "my", "which", "who", "whom", "whose", "what", "when", "where", "why",
+        "how", "them", "us", "him", "all", "any", "each", "some", "such", "own", "same", "up", "down", "out", "off",
+        "over", "under", "again", "once",
+    ];
+
+    fn is_function_word(raw_text: &str) -> bool {
+        let stripped: String = raw_text.chars().filter(|c| c.is_alphanumeric() || *c == '\'').collect();
+        FUNCTION_WORDS.contains(&stripped.to_lowercase().as_str())
+    }
+
+    fn is_punctuation_adjacent(raw_text: &str) -> bool {
+        let first_non_alnum = raw_text.chars().next().is_some_and(|c| !c.is_alphanumeric());
+        let last_non_alnum = raw_text.chars().last().is_some_and(|c| !c.is_alphanumeric());
+        first_non_alnum || last_non_alnum
+    }
+
+    /// WS1 Task 5 Slice D22, Step 4. Runs the full 709s project through
+    /// index attribution (the SAME single `align_chunked` call shape D21
+    /// Step 1/2's own regression test uses — `173-full-709s-index-windowed`)
+    /// and, for every genuinely-aligned word (fallback excluded — D21 Step
+    /// 1/2 already established and gate this slice's own Step 2 re-verifies
+    /// that fallback_count is 0 on this corpus under index attribution),
+    /// records the per-word detail needed to characterize the below-0.3
+    /// tail: char length, frame length (`(end-start)/0.02`, the CTC frame
+    /// duration, D6), which chunk it landed in, its ordinal position within
+    /// that chunk's own word sequence, its distance to the nearer edge of
+    /// its own chunk window (seam proximity), a heuristic function-word/
+    /// punctuation-adjacent classification, and — for the ~569 words whose
+    /// real onset falls within the 240s whole-file reference's own
+    /// coverage — measured timing error against that reference (`None`
+    /// beyond it, honestly, not fabricated).
+    #[test]
+    #[ignore]
+    fn full_709s_index_attribution_tail_characterization() {
+        const CONTEXT: &str = "full_709s_index_attribution_tail_characterization";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let Some(chunks) = load_plan(&plan_dir, "173-full-709s-index-windowed") else { return };
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok, got Err: {e}"));
+        eprintln!(
+            "{CONTEXT}: aligned {} words over {} index-attributed chunks in {:.1}s",
+            words.len(),
+            chunks.len(),
+            start.elapsed().as_secs_f64()
+        );
+
+        let fallback_count = words.iter().filter(|w| !w.score.is_finite()).count();
+        eprintln!("{CONTEXT}: fallback_count={fallback_count} (Step 2 gate: must be 0 to match D21 Step 1/2)");
+
+        #[derive(serde::Serialize, Clone)]
+        struct WordDetail {
+            text: String,
+            confidence: f64,
+            char_len: usize,
+            frame_len: f64,
+            chunk_index: usize,
+            chunk_start_sec: f64,
+            chunk_end_sec: f64,
+            position_in_chunk: usize,
+            chunk_word_count: usize,
+            seam_distance_sec: f64,
+            is_function_word: bool,
+            is_punctuation_adjacent: bool,
+            error_sec: Option<f64>,
+        }
+
+        const FRAME_SEC: f64 = 0.02; // D6: conv_stride = 320 samples/16kHz
+
+        let mut chunk_cursor = 0usize;
+        let mut position_in_current_chunk = 0usize;
+        let mut last_chunk_index: Option<usize> = None;
+        let mut ref_idx = 0usize;
+        let mut ref_join_attempts = 0usize;
+        let mut ref_join_hits = 0usize;
+
+        // First pass: chunk index + position-in-chunk (needs a forward
+        // monotonic scan matching output order, same method as Step 3).
+        let mut prelim: Vec<(usize, usize)> = Vec::with_capacity(words.len()); // (chunk_index, position_in_chunk)
+        for w in &words {
+            if !w.score.is_finite() {
+                prelim.push((usize::MAX, 0));
+                continue;
+            }
+            let idx = chunk_index_for_time(&chunks, &mut chunk_cursor, w.start_seconds);
+            if last_chunk_index != Some(idx) {
+                position_in_current_chunk = 0;
+                last_chunk_index = Some(idx);
+            } else {
+                position_in_current_chunk += 1;
+            }
+            prelim.push((idx, position_in_current_chunk));
+        }
+        // chunk_word_count per chunk index, from the same prelim pass.
+        let mut chunk_word_counts: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+        for (idx, _) in &prelim {
+            if *idx != usize::MAX {
+                *chunk_word_counts.entry(*idx).or_insert(0) += 1;
+            }
+        }
+
+        let mut details: Vec<WordDetail> = Vec::with_capacity(words.len());
+        for (i, w) in words.iter().enumerate() {
+            if !w.score.is_finite() {
+                continue; // fallback placeholder — excluded, matches D21 Step 6's own convention
+            }
+            let (chunk_idx, position) = prelim[i];
+            let chunk = &chunks[chunk_idx];
+            let seam_distance = (w.start_seconds - chunk.start_sec).min(chunk.end_sec - w.end_seconds);
+
+            // Reference join: greedy sequential text match, same technique
+            // as Step 3/D21 Step 3, only while the reference has words left.
+            let mut error_sec = None;
+            if ref_idx < reference.len() {
+                ref_join_attempts += 1;
+                while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                    ref_idx += 1;
+                }
+                if ref_idx < reference.len() {
+                    let r = &reference[ref_idx];
+                    let start_diff = (r.start - w.start_seconds).abs();
+                    let end_diff = (r.end - w.end_seconds).abs();
+                    error_sec = Some(start_diff.max(end_diff));
+                    ref_join_hits += 1;
+                    ref_idx += 1;
+                }
+            }
+
+            details.push(WordDetail {
+                text: w.text.clone(),
+                confidence: w.score.exp() as f64,
+                char_len: w.text.chars().count(),
+                frame_len: (w.end_seconds - w.start_seconds) / FRAME_SEC,
+                chunk_index: chunk_idx,
+                chunk_start_sec: chunk.start_sec,
+                chunk_end_sec: chunk.end_sec,
+                position_in_chunk: position,
+                chunk_word_count: *chunk_word_counts.get(&chunk_idx).unwrap_or(&0),
+                seam_distance_sec: seam_distance,
+                is_function_word: is_function_word(&w.text),
+                is_punctuation_adjacent: is_punctuation_adjacent(&w.text),
+                error_sec,
+            });
+        }
+
+        eprintln!(
+            "{CONTEXT}: reference-join attempts={ref_join_attempts} hits={ref_join_hits} \
+             ({:.1}% of attempts matched — words beyond the 240s reference's own coverage get error_sec=None, honestly)",
+            100.0 * ref_join_hits as f64 / ref_join_attempts.max(1) as f64,
+        );
+
+        let below: Vec<&WordDetail> = details.iter().filter(|d| d.confidence < 0.3).collect();
+        let above: Vec<&WordDetail> = details.iter().filter(|d| d.confidence >= 0.3).collect();
+
+        fn summarize(label: &str, group: &[&WordDetail]) {
+            if group.is_empty() {
+                eprintln!("  {label}: n=0");
+                return;
+            }
+            let mut char_lens: Vec<f64> = group.iter().map(|d| d.char_len as f64).collect();
+            let mut frame_lens: Vec<f64> = group.iter().map(|d| d.frame_len).collect();
+            let mut seam_dists: Vec<f64> = group.iter().map(|d| d.seam_distance_sec).collect();
+            let mut positions: Vec<f64> = group.iter().map(|d| d.position_in_chunk as f64).collect();
+            char_lens.sort_by(|a, b| a.total_cmp(b));
+            frame_lens.sort_by(|a, b| a.total_cmp(b));
+            seam_dists.sort_by(|a, b| a.total_cmp(b));
+            positions.sort_by(|a, b| a.total_cmp(b));
+            let fn_count = group.iter().filter(|d| d.is_function_word).count();
+            let punct_count = group.iter().filter(|d| d.is_punctuation_adjacent).count();
+            let errors_present: Vec<f64> = group.iter().filter_map(|d| d.error_sec).collect();
+            eprintln!(
+                "  {label}: n={} char_len(median)={:.1} frame_len(median)={:.2} seam_dist(median)={:.4}s \
+                 position_in_chunk(median)={:.1} function_word={}/{} ({:.1}%) punct_adjacent={}/{} ({:.1}%) \
+                 has_reference_error={}/{}",
+                group.len(),
+                percentile(&char_lens, 0.5),
+                percentile(&frame_lens, 0.5),
+                percentile(&seam_dists, 0.5),
+                percentile(&positions, 0.5),
+                fn_count,
+                group.len(),
+                100.0 * fn_count as f64 / group.len() as f64,
+                punct_count,
+                group.len(),
+                100.0 * punct_count as f64 / group.len() as f64,
+                errors_present.len(),
+                group.len(),
+            );
+            if !errors_present.is_empty() {
+                let mut e = errors_present.clone();
+                e.sort_by(|a, b| a.total_cmp(b));
+                eprintln!(
+                    "    reference-backed error(s) among these: n={} min={:.4} p50={:.4} max={:.4} mean={:.4}",
+                    e.len(),
+                    e[0],
+                    percentile(&e, 0.5),
+                    e[e.len() - 1],
+                    e.iter().sum::<f64>() / e.len() as f64,
+                );
+            }
+        }
+
+        eprintln!(
+            "{CONTEXT}: genuinely-aligned words={} below_0.3={} ({:.2}%) above_eq_0.3={}",
+            details.len(),
+            below.len(),
+            100.0 * below.len() as f64 / details.len() as f64,
+            above.len(),
+        );
+        summarize("BELOW 0.3", &below);
+        summarize("ABOVE/EQ 0.3", &above);
+
+        // Seam-distance bucket for the below-0.3 group specifically — is it
+        // concentrated near a chunk edge?
+        let near_seam = below.iter().filter(|d| d.seam_distance_sec < 0.5).count();
+        let near_edge_first_or_last = below
+            .iter()
+            .filter(|d| d.position_in_chunk == 0 || d.position_in_chunk + 1 == d.chunk_word_count)
+            .count();
+        eprintln!(
+            "{CONTEXT}: of {} below-0.3 words: {} ({:.1}%) sit within 0.5s of their own chunk's edge; \
+             {} ({:.1}%) are their chunk's first or last word",
+            below.len(),
+            near_seam,
+            100.0 * near_seam as f64 / below.len().max(1) as f64,
+            near_edge_first_or_last,
+            100.0 * near_edge_first_or_last as f64 / below.len().max(1) as f64,
+        );
+
+        let out_path = plan_dir.join("173-full-709s-index-tail-detail.json");
+        std::fs::write(&out_path, serde_json::to_string(&details).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+        eprintln!("{CONTEXT}: wrote {} word-detail records to {}", details.len(), out_path.display());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

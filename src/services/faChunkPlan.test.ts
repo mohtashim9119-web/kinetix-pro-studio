@@ -262,6 +262,15 @@ describe('computeFaChunkPlanWithAttribution', () => {
     expect(viaParam).toEqual(legacy);
   });
 
+  it('WS1 Task 5 Slice D22: defaults to script-word-index attribution when no rule is passed', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const omitted = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration);
+    const explicitIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    const explicitTime = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'segment-start-time');
+    expect(omitted).toEqual(explicitIndex);
+    expect(omitted).not.toEqual(explicitTime);
+  });
+
   it('is byte-identical to computeFaChunkPlanCoalesced under segment-start-time attribution', () => {
     const { segments, tokens, silences, audioDuration } = fixture();
     const legacy = computeFaChunkPlanCoalesced(segments, tokens, silences, audioDuration, 5);

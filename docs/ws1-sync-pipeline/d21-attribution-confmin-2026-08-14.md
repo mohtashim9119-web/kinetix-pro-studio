@@ -172,6 +172,22 @@ researched constant"). This slice reuses that SAME number rather than
 inventing a fresh one — deriving a threshold against a tolerance nobody has
 approved would just move the unapproved-number problem, not solve it.
 
+> **PROVENANCE, stated explicitly (added WS1 Task 5 Slice D22, not
+> re-derived here — D22 Step 5).** This 0.3s figure is D15's own
+> PROVISIONAL, owner-sign-off-PENDING proposal, not a ratified constant, and
+> D15 §2.3 itself already flagged it as potentially DEGENERATE at the time
+> it was proposed — it equals `B-control-45s`'s own oracle floor (0.30s
+> start max, an unbuildable-in-production upper bound on achievable
+> accuracy), i.e. the gate sits exactly AT the best bound an oracle
+> construction reaches, not comfortably under it. The `0.311` threshold this
+> Step derives below inherits that same unratified status; it does not
+> independently validate 0.3s as correct. D22 Step 5 additionally measured
+> Youden's-J sensitivity at 0.15s and 0.5s tolerances against this same
+> population and found the optimal confidence threshold lands at the
+> identical `0.3112` at all three — see
+> [`d22-attribution-default-tail-2026-08-14.md`](d22-attribution-default-tail-2026-08-14.md)
+> Step 5.
+
 **Derivation method:** the naive "no-miss" approach (threshold = the highest
 confidence among any observed violator of the 0.3s tolerance) degenerates
 because of Step 3's own outlier tail — it lands at confidence=0.999976 and

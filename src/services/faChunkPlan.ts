@@ -305,7 +305,11 @@ export function computeFaChunkPlanCoalesced(
 }
 
 // ---------------------------------------------------------------------------
-// INDEX ATTRIBUTION (WS1 Task 5 Slice D13 Step 3) — measurement-only today.
+// INDEX ATTRIBUTION (WS1 Task 5 Slice D13 Step 3) — the planner's own
+// internal default since Slice D22 (`computeFaChunkPlanWithAttribution`'s
+// `attribution` parameter default, below); still no production caller
+// anywhere in this codebase (`computeFaChunkPlan`, the only function any
+// production/script caller actually invokes, is separate and unchanged).
 //
 // D12 proved that ATTRIBUTION, not window size, dominates chunked-alignment
 // disagreement: at matched ~6-7s granularity, chunks whose text was correct by
@@ -515,19 +519,32 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
  * The one entry point that takes an explicit attribution rule and an optional
  * coalesce target — the measurement surface for Slice D13 Step 4.
  *
- * `attribution` is REQUIRED (no default): nothing acquires index attribution by
- * forgetting to pass a rule. `coalesceTargetSec` is optional; omitting it runs
- * the unmerged R.0 plan. With `attribution: 'segment-start-time'` and no
- * target, this is exactly `computeFaChunkPlan` — production behavior is
- * reachable through this function unchanged, and `computeFaChunkPlan` itself is
- * untouched.
+ * WS1 Task 5 Slice D22: `attribution` DEFAULTS to `'script-word-index'` — the
+ * planner's own internal default, per the owner ruling recorded in
+ * `docs/ws1-sync-pipeline/d21-attribution-confmin-2026-08-14.md` (Step 2) and
+ * `docs/ws1-sync-pipeline/d22-...md` (this slice): index attribution
+ * eliminates the only reachable CTC-infeasibility case found on real corpus
+ * data and cuts the fraction of words below `CONF_MIN` from 62.75% to 9.43%
+ * (D21 Step 1). `'segment-start-time'` (the D11 production rule) remains
+ * fully reachable by passing it explicitly — nothing about this default
+ * removes the old rule, and no caller anywhere in this codebase is forced
+ * onto the new one. This is the CHUNKED-PATH PLANNER's own default only: it
+ * has no production caller today (`computeFaChunkPlan`, the function actual
+ * production code would eventually call, is separate and UNCHANGED — still
+ * hardcoded to segment-start-time, still the only path any script/test that
+ * calls it exercises), and the FA capability gate remains OFF regardless
+ * (`isFaGateOpen()`, D17) — flipping this default changes no shipped
+ * behavior. `coalesceTargetSec` is optional; omitting it runs the unmerged
+ * R.0 plan. With `attribution: 'segment-start-time'` and no target, this is
+ * exactly `computeFaChunkPlan` — that legacy path remains reachable through
+ * this function unchanged, and `computeFaChunkPlan` itself is untouched.
  */
 export function computeFaChunkPlanWithAttribution(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
-  attribution: FaTextAttribution,
+  attribution: FaTextAttribution = 'script-word-index',
   coalesceTargetSec?: number,
 ): FaChunk[] {
   const ctx = computeRunContext(segments, tokens, silences, audioDuration);
