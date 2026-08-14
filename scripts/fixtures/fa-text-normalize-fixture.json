@@ -1302,6 +1302,519 @@
         7,
         31
       ]
+    },
+    {
+      "language": "fr",
+      "input": "l'oiseau",
+      "note": "fr elision: straight apostrophe, already worked, regression guard",
+      "words": [
+        {
+          "input": "l'oiseau",
+          "representable": true,
+          "mapped": "l'oiseau",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            21,
+            15,
+            25,
+            11,
+            7,
+            27
+          ]
+        }
+      ],
+      "text": "l'oiseau",
+      "textTokenIds": [
+        18,
+        5,
+        21,
+        15,
+        25,
+        11,
+        7,
+        27
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "l'homme",
+      "note": "fr elision: mute-h word, straight apostrophe",
+      "words": [
+        {
+          "input": "l'homme",
+          "representable": true,
+          "mapped": "l'homme",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            14,
+            21,
+            19,
+            19,
+            11
+          ]
+        }
+      ],
+      "text": "l'homme",
+      "textTokenIds": [
+        18,
+        5,
+        14,
+        21,
+        19,
+        19,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "l`homme",
+      "note": "fr elision: mute-h word, backtick apostrophe-typo folds",
+      "words": [
+        {
+          "input": "l`homme",
+          "representable": true,
+          "mapped": "l'homme",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            14,
+            21,
+            19,
+            19,
+            11
+          ]
+        }
+      ],
+      "text": "l'homme",
+      "textTokenIds": [
+        18,
+        5,
+        14,
+        21,
+        19,
+        19,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "le hibou",
+      "note": "fr elision: aspirate-h word NOT written elided, stays two tokens",
+      "words": [
+        {
+          "input": "le",
+          "representable": true,
+          "mapped": "le",
+          "reason": null,
+          "tokenIds": [
+            18,
+            11
+          ]
+        },
+        {
+          "input": "hibou",
+          "representable": true,
+          "mapped": "hibou",
+          "reason": null,
+          "tokenIds": [
+            14,
+            15,
+            8,
+            21,
+            27
+          ]
+        }
+      ],
+      "text": "le hibou",
+      "textTokenIds": [
+        18,
+        11,
+        4,
+        14,
+        15,
+        8,
+        21,
+        27
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "l’oiseau",
+      "note": "fr elision: curly U+2019 apostrophe (generic fold, already worked)",
+      "words": [
+        {
+          "input": "l’oiseau",
+          "representable": true,
+          "mapped": "l'oiseau",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            21,
+            15,
+            25,
+            11,
+            7,
+            27
+          ]
+        }
+      ],
+      "text": "l'oiseau",
+      "textTokenIds": [
+        18,
+        5,
+        21,
+        15,
+        25,
+        11,
+        7,
+        27
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "l`oiseau",
+      "note": "fr elision: backtick apostrophe-typo before a vowel folds",
+      "words": [
+        {
+          "input": "l`oiseau",
+          "representable": true,
+          "mapped": "l'oiseau",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            21,
+            15,
+            25,
+            11,
+            7,
+            27
+          ]
+        }
+      ],
+      "text": "l'oiseau",
+      "textTokenIds": [
+        18,
+        5,
+        21,
+        15,
+        25,
+        11,
+        7,
+        27
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "qu`il",
+      "note": "fr elision: two-letter \"qu\" prefix, backtick before a vowel folds",
+      "words": [
+        {
+          "input": "qu`il",
+          "representable": true,
+          "mapped": "qu'il",
+          "reason": null,
+          "tokenIds": [
+            23,
+            27,
+            5,
+            15,
+            18
+          ]
+        }
+      ],
+      "text": "qu'il",
+      "textTokenIds": [
+        23,
+        27,
+        5,
+        15,
+        18
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "j`ai n`est s`il t`aime m`appelle c`est d`accord qu`il l`ai",
+      "note": "fr elision: full prefix set (l d qu j n s t m c), backtick before vowel, single phrase",
+      "words": [
+        {
+          "input": "j`ai",
+          "representable": true,
+          "mapped": "j'ai",
+          "reason": null,
+          "tokenIds": [
+            16,
+            5,
+            7,
+            15
+          ]
+        },
+        {
+          "input": "n`est",
+          "representable": true,
+          "mapped": "n'est",
+          "reason": null,
+          "tokenIds": [
+            20,
+            5,
+            11,
+            25,
+            26
+          ]
+        },
+        {
+          "input": "s`il",
+          "representable": true,
+          "mapped": "s'il",
+          "reason": null,
+          "tokenIds": [
+            25,
+            5,
+            15,
+            18
+          ]
+        },
+        {
+          "input": "t`aime",
+          "representable": true,
+          "mapped": "t'aime",
+          "reason": null,
+          "tokenIds": [
+            26,
+            5,
+            7,
+            15,
+            19,
+            11
+          ]
+        },
+        {
+          "input": "m`appelle",
+          "representable": true,
+          "mapped": "m'appelle",
+          "reason": null,
+          "tokenIds": [
+            19,
+            5,
+            7,
+            22,
+            22,
+            11,
+            18,
+            18,
+            11
+          ]
+        },
+        {
+          "input": "c`est",
+          "representable": true,
+          "mapped": "c'est",
+          "reason": null,
+          "tokenIds": [
+            9,
+            5,
+            11,
+            25,
+            26
+          ]
+        },
+        {
+          "input": "d`accord",
+          "representable": true,
+          "mapped": "d'accord",
+          "reason": null,
+          "tokenIds": [
+            10,
+            5,
+            7,
+            9,
+            9,
+            21,
+            24,
+            10
+          ]
+        },
+        {
+          "input": "qu`il",
+          "representable": true,
+          "mapped": "qu'il",
+          "reason": null,
+          "tokenIds": [
+            23,
+            27,
+            5,
+            15,
+            18
+          ]
+        },
+        {
+          "input": "l`ai",
+          "representable": true,
+          "mapped": "l'ai",
+          "reason": null,
+          "tokenIds": [
+            18,
+            5,
+            7,
+            15
+          ]
+        }
+      ],
+      "text": "j'ai n'est s'il t'aime m'appelle c'est d'accord qu'il l'ai",
+      "textTokenIds": [
+        16,
+        5,
+        7,
+        15,
+        4,
+        20,
+        5,
+        11,
+        25,
+        26,
+        4,
+        25,
+        5,
+        15,
+        18,
+        4,
+        26,
+        5,
+        7,
+        15,
+        19,
+        11,
+        4,
+        19,
+        5,
+        7,
+        22,
+        22,
+        11,
+        18,
+        18,
+        11,
+        4,
+        9,
+        5,
+        11,
+        25,
+        26,
+        4,
+        10,
+        5,
+        7,
+        9,
+        9,
+        21,
+        24,
+        10,
+        4,
+        23,
+        27,
+        5,
+        15,
+        18,
+        4,
+        18,
+        5,
+        7,
+        15
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "aujourd'hui",
+      "note": "fr elision negative: fixed compound, not word-initial elision, unchanged",
+      "words": [
+        {
+          "input": "aujourd'hui",
+          "representable": true,
+          "mapped": "aujourd'hui",
+          "reason": null,
+          "tokenIds": [
+            7,
+            27,
+            16,
+            21,
+            27,
+            24,
+            10,
+            5,
+            14,
+            27,
+            15
+          ]
+        }
+      ],
+      "text": "aujourd'hui",
+      "textTokenIds": [
+        7,
+        27,
+        16,
+        21,
+        27,
+        24,
+        10,
+        5,
+        14,
+        27,
+        15
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "aujourd`hui",
+      "note": "fr elision negative: backtick not at a word-initial elision boundary, not folded",
+      "words": [
+        {
+          "input": "aujourd`hui",
+          "representable": false,
+          "mapped": null,
+          "reason": "character \"`\" is not in the fr vocab (word: \"aujourd`hui\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "j`veux",
+      "note": "fr elision negative: prefix+backtick before a consonant, not a grammatical elision shape",
+      "words": [
+        {
+          "input": "j`veux",
+          "representable": false,
+          "mapped": null,
+          "reason": "character \"`\" is not in the fr vocab (word: \"j`veux\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "l`oiseau",
+      "note": "fr elision negative: the backtick fold is French-only, untouched under en",
+      "words": [
+        {
+          "input": "l`oiseau",
+          "representable": false,
+          "mapped": null,
+          "reason": "character \"`\" is not in the en vocab (word: \"l`oiseau\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
     }
   ]
 }

@@ -578,13 +578,38 @@ additive, not a fix to a live diacritic-loss bug.
    the correction above).**
 2. Do NOT touch `textNormalize.ts`/`canonicalize` — must stay byte-identical.
 3. Land Phase 3b (language-keyed normalization: contractions, numbers, currency for
-   fr/de/pt) — **NOT STARTED — owner: project owner** (§3; ownership assigned
-   2026-08-15, rules themselves not yet written, deliberately out of Slice 1's scope).
+   fr/de/pt) — **IN PROGRESS — owner: project owner** (§3; ownership assigned
+   2026-08-15). **Rule 1 (French elision) DONE, 2026-08-15 (Phase 3b Slice 2, see
+   changelog).** Numbers, currency, thousands separators remain unstarted.
 4. Land Phase 3c (hyphen-asymmetry fix) — **NOT STARTED — owner: project owner**; also
    directly blocks Stage 1 lock regardless of FA.
 5. Source real `fa-vocab-<lang>.json` files for the production build path (today only
    under `scripts/fixtures/`) and wire them into `faTextNormalize.ts` at the eventual
    chunk-building call site.
+6. **Wire `project.language`/`vocabChars` into the two real `computeFaChunkPlan(
+   WithAttribution)` call sites so `normalizeForForcedAlignment` gets a production
+   caller (today: neither site passes the optional params Slice 1 added — see the
+   2026-08-15 Phase 3b Slice 1 changelog entry).** Answered and logged here per this
+   session's own bookkeeping-drift close-out, so it isn't silently wired later without
+   a record of why it waited:
+   - **Which call site(s):** BOTH, eventually. `App.tsx`'s `fa_align_dev` handler
+     (`:3540` resolves `language`, `:3569` calls `computeFaChunkPlan` two lines later —
+     mechanically trivial to wire) and the future capability-gated production-wiring
+     slice (§11 item 1), whose real `fa_align` caller will mirror the same call shape.
+   - **Where the language value comes from:** `project.language` — the same field in
+     both cases, not a separate value. Set by Whisper's `-l auto` detection or an
+     explicit user override and sticky once set (`CLAUDE.md`'s Sync/Whisper
+     invariants) — there is no separate "2a auto-detect result" distinct from
+     `project.language`; that detection IS what populates the field.
+   - **Which phase owns making the connection:** the capability-gated production
+     wiring slice (§11 item 1) — itself sequenced (Option B, 2026-08-15 changelog
+     entry) to not start until Phase 3b and 3c both land. The `App.tsx` dev-path half
+     is technically unblocked today, but was deliberately left unwired at Slice 1 (its
+     own scope note: "No fr/de/pt rules added") and stays that way here too: wiring it
+     now would only ever exercise `scripts/fixtures/fa-vocab-<lang>.json` test data,
+     since item 5 above (real vocab files for the production build path) hasn't
+     landed — wiring the dev path ahead of item 5 would not unblock anything real, so
+     both halves of this item wait on item 5 and/or §11 item 1, not on each other.
 
 **fr/de/pt corpus status:** Spanish exists and is verified (§6). French/Portuguese/German
 narration-script corpus remains completely absent — the fr/de/pt e2e alignment *fixtures*
@@ -889,3 +914,86 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   CI-out," is exactly what was found, so nothing regressed). `git diff
   --stat`: 2 files (`faChunkPlan.ts`, `faChunkPlan.test.ts`), no other file
   touched, no protected file implicated.
+
+- **2026-08-15 — Verification-harness vocabulary corrected (bookkeeping, no
+  harness change).** `scripts/phase4-step-x-verify.py`'s real checks are
+  **C01a, C01b, C02, C03, C04, C05, C06, C07, C08, C09, C10, C11, C12, C13 —
+  14 checks total**, not "C1-C12." **Correct expected result, live-verified
+  this pass:** 13 of the 14 (C01a, C01b, C02-C09, C11, C12, C13) pass BOTH
+  halves (poison + real) and are RECOMMENDED FOR CI; **C10 is the one
+  permitted non-passer** — its poison half passes but its recall half fails
+  by design (0/4 against the owner's own word-shift verdicts; the harness's
+  own HONEST EVIDENCE RANKING grades it D, "failed validation — do not put
+  it in CI"), so it is deliberately KEPT OUT, not blocked/erroring. The
+  script's own exit code is 1 on a clean run for this exact reason (C10's
+  known-failing recall half), and that is the correct, expected exit code —
+  not a harness malfunction. The "C1-C12, expect 11 pass and C1 blocked"
+  phrasing that has circulated in recent task prompts is **stale shorthand**
+  predating the harness's growth to its current C01a/C01b-split, C13-added
+  shape (`scripts/phase4-step-x-verify.py:633-634` dates the split/addition
+  itself) — it does not match any real run of the script and forces a
+  mismatch report every time it's quoted. Future sessions: quote this entry
+  (or re-run the script and read its own "RECOMMENDED FOR CI (13)" / "KEPT
+  OUT (1)" summary lines), not the old shorthand. No change to
+  `scripts/phase4-step-x-verify.py` itself.
+
+- **2026-08-15 — Phase 3b Slice 2: French elision, Part H.5 Rule 1
+  (`src/services/faTextNormalize.ts` + `src-tauri/src/fa/text.rs`).**
+  **Decision, stated before implementation:** an elided word (`l'oiseau`,
+  `l'homme`, `qu'il`, ...) stays ONE token, never split at the apostrophe.
+  Justified from the Rust port (the byte-identical-port authority, per this
+  slice's own hard constraint): neither `normalizeForForcedAlignment`'s
+  `/\s+/` split nor `text.rs`'s `is_js_whitespace`-based
+  `split_js_whitespace` treats apostrophe as a separator — an elided form
+  was already one token before this rule (the pre-existing fixture entry
+  `"l'élève où était-il"` already round-tripped unchanged). Splitting would
+  insert a synthetic CTC word-delimiter (`|`) where French speech has no
+  pause. **What actually changed:** a straight apostrophe (already in every
+  vocab) and a curly one (already generically folded by `FOLD_TARGETS`) both
+  already worked with zero code change — the one real gap was a grave accent
+  (`` ` ``, U+0060) used as an apostrophe typo/OCR substitute, which nothing
+  previously folded. Added a French-only (language-keyed, per H.5's own
+  mandate), shape-gated fold: prefix ∈ {qu, l, d, j, n, s, t, m, c} +
+  backtick + a vowel-or-mute-h (the grammatical elision shape) folds the
+  backtick to `'`; anything not matching that exact shape (wrong position,
+  wrong following character, or non-French) is left untouched, so it cannot
+  misfire on a fixed compound like `aujourd'hui` (apostrophe not word-
+  initial) or on non-French text. **Both sides changed together, same
+  commit, proven to agree**: `text.rs` gained the identical
+  `fold_french_elision_backtick`/`is_french_elision_follower`/
+  `FRENCH_ELISION_PREFIXES` port, operating on `char`s (not bytes) to avoid a
+  multi-byte slice panic on an accented follower. Agreement is enforced by
+  the existing `fixture_parity` hard gate (`text.rs`), not asserted only in
+  prose: 12 new corpus cases added to `scripts/generate-fa-text-fixture.ts`
+  (positives — straight/curly/backtick apostrophe parity, mute-h `l'homme`,
+  the full 9-prefix set in one phrase, the two-letter `qu` prefix; negatives
+  — aspirate-h `le hibou` staying two tokens, the `aujourd'hui`/`aujourd`hui`
+  mid-word-apostrophe non-elision pair, a consonant-follower non-shape
+  `j`veux`, and an `en`-language-gated non-fold), fixture regenerated from
+  the live TS module (`npx tsx scripts/generate-fa-text-fixture.ts`,
+  48 entries), and `fa::text::fixture_parity::
+  fixture_matches_rust_port_for_every_entry_all_five_languages` passes
+  against all 48 including the 12 new ones. **Files:**
+  `src/services/faTextNormalize.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts` (+9 unit tests),
+  `scripts/generate-fa-text-fixture.ts` (+12 corpus cases, +1 required-
+  coverage substring), `scripts/fixtures/fa-text-normalize-fixture.json`
+  (regenerated). **Untouched, verified:** `textNormalize.ts`/`canonicalize`
+  (not imported by this diff); the Slice 1 byte-identical chunk-plan test
+  (`faChunkPlan.test.ts`, unrelated call path, still passes). **No
+  contractions/numbers/currency** — out of scope per this slice's own
+  boundary; Phase 3b's remaining rules stay unstarted (§10 item 3).
+  **Verified:** `cargo test` 84/84 (was 76/76, +8 new Rust unit tests, 0
+  regressions); `cargo test --features fa-inference` 158/19 ignored (was
+  150/19 ignored, +8, 0 regressions); `cargo clippy --features fa-inference`
+  4 pre-existing warnings, 0 new (unchanged); `npm run lint` clean; `npm
+  test` 80 files/1968 passed/1 skipped (was 1946/1, +22: 9 explicit TS unit
+  tests + 12 fixture-driven drift-guard cases + 1 coverage-cross-check
+  addition, 0 regressions); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged;
+  `scripts/phase4-step-x-verify.py` re-run: 13 recommended for CI / 1 kept
+  out (C10), unchanged from the corrected baseline above — this slice
+  touches neither sync timing nor the structural-check harness's own
+  inputs. `git diff --stat`: `faTextNormalize.ts`, `text.rs`,
+  `faTextNormalize.test.ts`, `generate-fa-text-fixture.ts`,
+  `fa-text-normalize-fixture.json` — 5 files, no protected file touched.

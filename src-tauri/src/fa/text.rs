@@ -355,6 +355,59 @@ fn apply_language_specific_substitutions(word: &str, language: Language) -> Stri
 }
 
 // ---------------------------------------------------------------------------
+// French elision (Part H.5 Rule 1) - mirrors faTextNormalize.ts's own
+// comment block in intent: an elided word stays ONE token (this module's
+// split_js_whitespace never treats apostrophe as a separator, so this was
+// already true before this rule); the one genuine gap this rule closes is a
+// grave accent (a backtick) used as an apostrophe typo/OCR substitute at a
+// recognized elision boundary (prefix + apostrophe-like char +
+// vowel-or-mute-h). French-only, shape-gated by construction.
+// ---------------------------------------------------------------------------
+
+/// Elidable French forms. Mirrors `FRENCH_ELISION_PREFIXES`.
+const FRENCH_ELISION_PREFIXES: &[&str] = &["qu", "l", "d", "j", "n", "s", "t", "m", "c"];
+
+/// Elision only applies before a vowel or a mute h. Mirrors
+/// `FRENCH_ELISION_FOLLOWERS`.
+fn is_french_elision_follower(ch: char) -> bool {
+    matches!(
+        ch,
+        'a' | 'e' | 'i' | 'o' | 'u' | 'y' | 'h'
+            | 'à' | 'â' | 'ä' | 'é' | 'è' | 'ê' | 'ë' | 'î' | 'ï' | 'ô' | 'ö' | 'ù' | 'û' | 'ü' | 'œ'
+    )
+}
+
+/// French-only: a backtick standing in for an apostrophe at a recognized
+/// elision boundary folds to the vocab's straight apostrophe. Mirrors
+/// `foldFrenchElisionBacktick`; operates on `char`s (not bytes) throughout
+/// so multi-byte UTF-8 followers (e.g. `e-acute`) never cause a slice panic.
+fn fold_french_elision_backtick(word: &str, vocab_chars: &HashSet<char>) -> String {
+    if !vocab_chars.contains(&'\'') {
+        return word.to_string();
+    }
+    let chars: Vec<char> = word.chars().collect();
+    for prefix in FRENCH_ELISION_PREFIXES {
+        let prefix_chars: Vec<char> = prefix.chars().collect();
+        let prefix_len = prefix_chars.len();
+        if chars.len() < prefix_len + 2 || chars[..prefix_len] != prefix_chars[..] {
+            continue;
+        }
+        if chars[prefix_len] != '`' {
+            continue;
+        }
+        if !is_french_elision_follower(chars[prefix_len + 1]) {
+            continue;
+        }
+        let mut out = String::with_capacity(word.len());
+        out.extend(&chars[..prefix_len]);
+        out.push('\'');
+        out.extend(&chars[prefix_len + 1..]);
+        return out;
+    }
+    word.to_string()
+}
+
+// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -387,7 +440,12 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
     let nfc = compose_scoped_nfc(raw_word);
     let lowered = nfc.to_lowercase();
     let substituted = apply_language_specific_substitutions(&lowered, language);
-    let dezero_widthed = strip_zero_width(&substituted);
+    let elision_folded = if language == Language::Fr {
+        fold_french_elision_backtick(&substituted, vocab_chars)
+    } else {
+        substituted
+    };
+    let dezero_widthed = strip_zero_width(&elision_folded);
     let folded = fold_typographic_variants(&dezero_widthed, vocab_chars);
     let stripped = strip_boundary_punctuation(&folded);
 
@@ -557,6 +615,81 @@ mod tests {
         map.insert("a".to_string(), serde_json::json!(2));
         let chars = vocab_chars_from_raw_vocab(&map);
         assert_eq!(chars, vocab(&['a']));
+    }
+
+    // -- French elision (Part H.5 Rule 1) -----------------------------------
+
+    fn fr_vocab() -> HashSet<char> {
+        vocab(&['l', 'o', 'i', 's', 'e', 'a', 'u', 'h', 'm', 'd', 'q', 'j', 'n', 't', 'v', 'x', 'b', '\''])
+    }
+
+    #[test]
+    fn elision_stays_one_token_straight_apostrophe_unchanged() {
+        let result = normalize_word("l'oiseau", Language::Fr, &fr_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("l'oiseau"));
+    }
+
+    #[test]
+    fn elision_mute_h_backtick_folds_to_apostrophe() {
+        let result = normalize_word("l`homme", Language::Fr, &fr_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("l'homme"));
+    }
+
+    #[test]
+    fn aspirate_h_word_is_not_elided_stays_two_separate_tokens() {
+        let v = fr_vocab();
+        let result = normalize_for_forced_alignment("le hibou", Language::Fr, &v);
+        assert_eq!(result.text, "le hibou");
+        assert_eq!(result.words.len(), 2);
+        assert!(result.words[0].representable && result.words[1].representable);
+    }
+
+    #[test]
+    fn curly_apostrophe_variant_matches_straight_and_backtick_results() {
+        let v = fr_vocab();
+        let straight = normalize_word("l'oiseau", Language::Fr, &v);
+        let curly = normalize_word("l\u{2019}oiseau", Language::Fr, &v);
+        let backtick = normalize_word("l`oiseau", Language::Fr, &v);
+        assert_eq!(straight.mapped, curly.mapped);
+        assert_eq!(straight.mapped, backtick.mapped);
+    }
+
+    #[test]
+    fn two_letter_prefix_qu_folds_before_vowel() {
+        let result = normalize_word("qu`il", Language::Fr, &fr_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("qu'il"));
+    }
+
+    #[test]
+    fn negative_backtick_mid_word_not_at_elision_boundary_is_not_folded() {
+        // "aujourd'hui" is a fixed compound, not productive elision — the
+        // "d'" substring is not word-initial, so the fold must not fire.
+        // The backtick then simply isn't a vocab member and is rejected.
+        let v = vocab(&['a', 'u', 'j', 'o', 'r', 'd', 'h', 'i']); // deliberately no apostrophe
+        let result = normalize_word("aujourd`hui", Language::Fr, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains('`'));
+    }
+
+    #[test]
+    fn negative_consonant_follower_is_not_elision_and_is_not_folded() {
+        // "j`veux": prefix "j" + backtick + a consonant ("v"), not a vowel
+        // or mute h — not a grammatical elision shape, must not fold.
+        let v = fr_vocab();
+        let result = normalize_word("j`veux", Language::Fr, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains('`'));
+    }
+
+    #[test]
+    fn negative_backtick_is_language_gated_and_never_folds_outside_french() {
+        let v = vocab(&['l', 'o', 'i', 's', 'e', 'a', 'u']); // no apostrophe, no backtick
+        let result = normalize_word("l`oiseau", Language::En, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains('`'));
     }
 }
 

@@ -142,6 +142,70 @@ function applyLanguageSpecificSubstitutions(word: string, languageCode: FaLangua
   return languageCode === 'de' ? word.replace(/ß/g, 'ss') : word;
 }
 
+// ---------------------------------------------------------------------------
+// French elision (Part H.5 Rule 1, sync-pipeline-v2-plan.md:4083).
+//
+// DECISION (stated before implementation, per the byte-identical port
+// requirement): an elided word (l'oiseau, l'homme, qu'il, ...) stays ONE
+// token, never split at the apostrophe. Justification: neither this
+// module's own whitespace split (`/\s+/`, see `normalizeForForcedAlignment`)
+// nor its Rust port's `is_js_whitespace` treats apostrophe as a separator —
+// an elided form was ALREADY one token before this rule (confirmed by the
+// pre-existing fixture case "l'élève où était-il"). Splitting would insert a
+// synthetic word-delimiter (the CTC `|` token, which the model was trained
+// to expect at a genuine acoustic pause) between the elision prefix and its
+// stem, where French speech has none — "l'oiseau" is pronounced as one
+// continuous unit, not two words with a gap. One token is therefore both
+// the existing architecture and the phonologically correct choice.
+//
+// What this rule actually ADDS: a straight apostrophe (already in every
+// vocab) and a curly one (already generically folded by FOLD_TARGETS above)
+// both already round-tripped correctly with zero code change. The one
+// genuine gap is a GRAVE ACCENT (`, U+0060) used as an apostrophe typo/OCR
+// substitute — plausible on keyboards where the two keys sit close together
+// — which no existing fold covers. Recognizing it requires knowing this is
+// actually an elision (prefix + apostrophe-like char + vowel-or-mute-h) so
+// the fold can't misfire on unrelated backtick usage or on non-elision
+// mid-word apostrophes (e.g. "aujourd'hui", a fixed compound, not
+// productive elision). French-only (language-keyed, per H.5's own mandate)
+// and elision-shape-gated by construction — it cannot touch English or any
+// other non-matching word.
+// ---------------------------------------------------------------------------
+
+/** Elidable French forms, longest first so "qu'" isn't shadowed by a
+ *  (nonexistent) single-letter "q" entry — kept explicit for clarity even
+ *  though none of these prefixes share a first letter. */
+const FRENCH_ELISION_PREFIXES = ['qu', 'l', 'd', 'j', 'n', 's', 't', 'm', 'c'];
+
+/** Elision only applies before a vowel or a mute h (grammatically, elision
+ *  never precedes a consonant or an aspirate h — and aspirate-h words are
+ *  written unelided, e.g. "le hibou", so this module never has to tell the
+ *  two kinds of h apart itself, only recognize the shape the source text
+ *  already encodes). */
+const FRENCH_ELISION_FOLLOWERS = new Set([
+  'a', 'e', 'i', 'o', 'u', 'y', 'h',
+  'à', 'â', 'ä', 'é', 'è', 'ê', 'ë', 'î', 'ï', 'ô', 'ö', 'ù', 'û', 'ü', 'œ',
+]);
+
+/** French-only: a backtick standing in for an apostrophe at a recognized
+ *  elision boundary (prefix + backtick + vowel-or-mute-h) folds to the
+ *  vocab's straight apostrophe, mirroring the fold-degrades-to-deletion
+ *  contract used everywhere else in this module. A backtick anywhere else
+ *  (wrong position, or not French) is left untouched — this is deliberately
+ *  narrower than `FOLD_TARGETS` above, which folds its variants wherever
+ *  they appear; this fold only fires on a genuine elision shape. */
+function foldFrenchElisionBacktick(word: string, vocabChars: ReadonlySet<string>): string {
+  if (!vocabChars.has("'")) return word;
+  for (const prefix of FRENCH_ELISION_PREFIXES) {
+    if (!word.startsWith(prefix)) continue;
+    if (word[prefix.length] !== '`') continue;
+    const follower = word[prefix.length + 1];
+    if (follower === undefined || !FRENCH_ELISION_FOLLOWERS.has(follower)) continue;
+    return word.slice(0, prefix.length) + "'" + word.slice(prefix.length + 1);
+  }
+  return word;
+}
+
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
  *  boundary-punctuation stripping, then a digit check and a per-character
@@ -155,7 +219,10 @@ function normalizeWord(
 ): FaWordResult {
   const lowered = rawWord.normalize('NFC').toLowerCase();
   const substituted = applyLanguageSpecificSubstitutions(lowered, languageCode);
-  const dezeroWidthed = stripZeroWidth(substituted);
+  const elisionFolded = languageCode === 'fr'
+    ? foldFrenchElisionBacktick(substituted, vocabChars)
+    : substituted;
+  const dezeroWidthed = stripZeroWidth(elisionFolded);
   const folded = foldTypographicVariants(dezeroWidthed, vocabChars);
   const stripped = stripBoundaryPunctuation(folded);
 

@@ -124,6 +124,24 @@ const CORPUS: CorpusCase[] = [
 
   // -- it's a good day (baseline sanity phrase) ----------------------------
   { lang: 'en', input: "it's a good day", note: 'baseline sanity phrase' },
+
+  // -- French elision (Part H.5 Rule 1) ------------------------------------
+  { lang: 'fr', input: "l'oiseau", note: 'fr elision: straight apostrophe, already worked, regression guard' },
+  { lang: 'fr', input: "l'homme", note: 'fr elision: mute-h word, straight apostrophe' },
+  { lang: 'fr', input: 'l`homme', note: 'fr elision: mute-h word, backtick apostrophe-typo folds' },
+  { lang: 'fr', input: 'le hibou', note: 'fr elision: aspirate-h word NOT written elided, stays two tokens' },
+  { lang: 'fr', input: 'l’oiseau', note: 'fr elision: curly U+2019 apostrophe (generic fold, already worked)' },
+  { lang: 'fr', input: 'l`oiseau', note: 'fr elision: backtick apostrophe-typo before a vowel folds' },
+  { lang: 'fr', input: 'qu`il', note: 'fr elision: two-letter "qu" prefix, backtick before a vowel folds' },
+  {
+    lang: 'fr',
+    input: "j`ai n`est s`il t`aime m`appelle c`est d`accord qu`il l`ai",
+    note: 'fr elision: full prefix set (l d qu j n s t m c), backtick before vowel, single phrase',
+  },
+  { lang: 'fr', input: "aujourd'hui", note: 'fr elision negative: fixed compound, not word-initial elision, unchanged' },
+  { lang: 'fr', input: 'aujourd`hui', note: 'fr elision negative: backtick not at a word-initial elision boundary, not folded' },
+  { lang: 'fr', input: 'j`veux', note: 'fr elision negative: prefix+backtick before a consonant, not a grammatical elision shape' },
+  { lang: 'en', input: 'l`oiseau', note: 'fr elision negative: the backtick fold is French-only, untouched under en' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -143,6 +161,7 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'whitespace-only input',
   'mixed case',
   'genuine OOV',
+  'fr elision',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {

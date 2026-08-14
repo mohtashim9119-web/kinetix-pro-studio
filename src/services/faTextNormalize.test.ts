@@ -275,6 +275,82 @@ describe('faTextNormalize — a fold target absent from a vocab causes a strip t
   });
 });
 
+describe('faTextNormalize — French elision (Part H.5 Rule 1)', () => {
+  // DECISION: an elided word stays ONE token — see faTextNormalize.ts's own
+  // comment block above `foldFrenchElisionBacktick` for the full
+  // justification (mirrored byte-for-byte in src-tauri/src/fa/text.rs).
+
+  it('l\'oiseau: straight apostrophe already worked and is unchanged (regression guard)', () => {
+    const result = normalizeForForcedAlignment("l'oiseau", 'fr', VOCABS.fr);
+    expect(result.words).toHaveLength(1);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("l'oiseau");
+  });
+
+  it('l\'homme (mute h): elides correctly, one token', () => {
+    const result = normalizeForForcedAlignment("l'homme", 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("l'homme");
+  });
+
+  it('le hibou (aspirate h): NOT written elided in the source, stays two separate tokens', () => {
+    const result = normalizeForForcedAlignment('le hibou', 'fr', VOCABS.fr);
+    expect(result.words).toHaveLength(2);
+    expect(result.text).toBe('le hibou');
+    expect(result.words[0]!.mapped).toBe('le');
+    expect(result.words[1]!.mapped).toBe('hibou');
+  });
+
+  it('apostrophe-variant case: curly U+2019 and backtick U+0060 both normalize to the same result as straight U+0027', () => {
+    const straight = normalizeForForcedAlignment("l'oiseau", 'fr', VOCABS.fr);
+    const curly = normalizeForForcedAlignment('l’oiseau', 'fr', VOCABS.fr);
+    const backtick = normalizeForForcedAlignment('l`oiseau', 'fr', VOCABS.fr);
+    expect(curly.text).toBe(straight.text);
+    expect(backtick.text).toBe(straight.text);
+    expect(straight.text).toBe("l'oiseau");
+  });
+
+  it('qu`il: the two-letter "qu" prefix folds a backtick before a vowel', () => {
+    const result = normalizeForForcedAlignment('qu`il', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("qu'il");
+  });
+
+  it('the full elision prefix set (l d qu j n s t m c) folds a backtick before a vowel, in one phrase', () => {
+    const result = normalizeForForcedAlignment(
+      "j`ai n`est s`il t`aime m`appelle c`est d`accord qu`il l`ai",
+      'fr',
+      VOCABS.fr,
+    );
+    expect(result.text).toBe("j'ai n'est s'il t'aime m'appelle c'est d'accord qu'il l'ai");
+    expect(result.words.every(w => w.representable)).toBe(true);
+  });
+
+  it('negative: "aujourd\'hui" — a fixed compound, not word-initial elision, is untouched (already worked)', () => {
+    const result = normalizeForForcedAlignment("aujourd'hui", 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe("aujourd'hui");
+  });
+
+  it('negative: a backtick at a non-word-initial position (mid-compound) is not folded and stays unrepresentable', () => {
+    const result = normalizeForForcedAlignment('aujourd`hui', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('`');
+  });
+
+  it('negative: prefix + backtick + consonant is not a grammatical elision shape and is not folded', () => {
+    const result = normalizeForForcedAlignment('j`veux', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('`');
+  });
+
+  it('negative: the backtick fold is French-only — the same input under "en" is untouched', () => {
+    const result = normalizeForForcedAlignment('l`oiseau', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('`');
+  });
+});
+
 describe('vocabCharsFromRawVocab', () => {
   it('excludes CTC special/delimiter tokens from every language vocab', () => {
     for (const lang of LANGUAGES) {
