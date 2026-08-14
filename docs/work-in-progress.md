@@ -580,7 +580,9 @@ additive, not a fix to a live diacritic-loss bug.
 3. Land Phase 3b (language-keyed normalization: contractions, numbers, currency for
    fr/de/pt) — **IN PROGRESS — owner: project owner** (§3; ownership assigned
    2026-08-15). **Rule 1 (French elision) DONE, 2026-08-15 (Phase 3b Slice 2, see
-   changelog).** Numbers, currency, thousands separators remain unstarted.
+   changelog).** **Rule 2 (Spanish cardinals 0-30) DONE, 2026-08-15 (Phase 3b
+   Slice 3, see changelog) — 31+/other-languages/decimals/currency/thousands
+   separators remain unstarted.**
 4. Land Phase 3c (hyphen-asymmetry fix) — **NOT STARTED — owner: project owner**; also
    directly blocks Stage 1 lock regardless of FA.
 5. Source real `fa-vocab-<lang>.json` files for the production build path (today only
@@ -997,3 +999,93 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   inputs. `git diff --stat`: `faTextNormalize.ts`, `text.rs`,
   `faTextNormalize.test.ts`, `generate-fa-text-fixture.ts`,
   `fa-text-normalize-fixture.json` — 5 files, no protected file touched.
+
+- **2026-08-15 — Phase 3b Slice 3: Spanish cardinal numbers 0-30, Part H.5
+  Rule 2 (`src/services/faTextNormalize.ts` + `src-tauri/src/fa/text.rs`).**
+  **Gap verified empirically before any code was written**, per this slice's
+  own instruction: ran `"23"`, `"1,5"`, `"2.5"`, `"100 %"`, `"5"` through both
+  `normalizeWord` (TS) and `normalize_word` (Rust) for en/fr/de/pt against
+  the real committed vocabs. Result, byte-identical on both sides: every
+  digit-bearing word is unconditionally DROPPED (not passed through, not
+  altered) in all four languages, with `text: ""` — confirming the reason
+  string already baked into both implementations
+  (`"contains a digit — number expansion is Phase 3b, out of scope"`) was a
+  live, not stale, TODO. **Correction to H.5's own framing:** H.5 describes
+  this as an English-vs-others asymmetry (digit expansion works for English,
+  breaks other languages) — that's true of the OLD `textNormalize.ts`
+  canonicalizer, but `faTextNormalize.ts` has never had digit expansion for
+  ANY language, including English; it is a universal drop, not an asymmetry.
+  Traced the consumers (`fa_onnx.rs`'s `word_merge_e2e`/`words_per_chunk`):
+  internally self-consistent today (nothing crashes), but unlike R.5 (where
+  D25 found a real product rule — wildcard span assigned to the preceding
+  segment — already absorbs the reachable case), there is no compensating
+  mechanism for a dropped digit word — a real spoken number is audible in
+  the recording but absent from forced alignment's target text, which can
+  smear a neighboring word's timestamp. Currently invisible in production
+  (FA has zero production callers, gated off until Phase 3b+3c both land —
+  §11 item 1), but a genuine gap Phase 3b exists to close before that gate
+  flips. **Scope, proposed and approved before coding (owner sign-off,
+  2026-08-15):** bare cardinal integers 0-30, Spanish (`es`) only — every
+  one of these is a SINGLE Spanish orthographic word (`dieciséis`,
+  `veintitrés`, `treinta`); 31+ requires a space-linked `"y"` compound
+  (`treinta y uno`), i.e. one input token expanding into MULTIPLE output
+  words, which would break the one-`FaWordResult`/`WordResult`-per-CTC-word
+  invariant `word_merge_e2e`/`words_per_chunk` already rely on — deferred to
+  a later slice pending a separate decision on multi-word output, not
+  implemented here. **Language justified by "unblocks real content," not
+  "hardest shape":** Spanish is the only FA language with a real corpus
+  today (`Spanish Project/`, 27 segments, already transcribed), and
+  `sync-pipeline-v2-plan.md` H.8 states explicitly "Spanish preferred for
+  number-word coverage." German compound cardinals, French's 70/80/90
+  irregularities, and Portuguese gender agreement are harder and are exactly
+  what later slices are for. **Explicitly out of scope, who owns it:** 31-99
+  and all multi-word compounds (a later Spanish slice, pending the
+  multi-word-output decision above); decimals, thousands separators,
+  currency, `%`, ordinals, negative numbers (later slices, no owner
+  assigned yet); en/fr/de/pt (dormant, per H.5's own stated allowance, no
+  owner assigned yet). Contractions/currency untouched per this slice's own
+  hard constraint. **Consequence logged, not silently skipped:**
+  `sync-pipeline-v2-plan.md:381` has a standing trigger — Spanish boundary
+  listening becomes mandatory before Stage 1 can lock the moment any
+  Spanish-specific normalization code ships. This slice trips it. Does not
+  block Phase 3b (Stage 1 lock is already blocked on several other things —
+  §1), but is now an owner obligation, not a silent gap. **Implementation:**
+  `expandSpanishCardinal`/`SPANISH_CARDINALS_0_30` (TS) and
+  `expand_spanish_cardinal`/`SPANISH_CARDINALS_0_30` (Rust) — a bare
+  all-digit token (no sign, no separators, no leading zero beyond a literal
+  `"0"`) in range 0-30 is looked up and substituted for `stripped` BEFORE
+  the existing digit-check-drop, so the vocab-membership check runs on the
+  spelled word instead; anything not matching (31+, decimals, leading
+  zeros, non-Spanish) falls through to the pre-existing drop path,
+  byte-for-byte unchanged. **Both sides changed together, same commit,
+  proven to agree** via the existing `fixture_parity` hard gate: 8 new
+  corpus cases added to `scripts/generate-fa-text-fixture.ts` (positives —
+  `"23"`, boundary `"0"`, boundary `"30"`, expansion inside a phrase;
+  negatives — `"31"` multi-word compound, `"2.5"` decimal, `"05"` leading
+  zero, `"23"` under `fr` as an unaffected-language control), fixture
+  regenerated from the live TS module (56 entries), and
+  `fa::text::fixture_parity::fixture_matches_rust_port_for_every_entry_all_five_languages`
+  passes against all 56 including the 8 new ones. **Files:**
+  `src/services/faTextNormalize.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts` (+12 unit tests, table-driven),
+  `scripts/generate-fa-text-fixture.ts` (+8 corpus cases, +1
+  required-coverage substring), `scripts/fixtures/fa-text-normalize-fixture.json`
+  (regenerated). **Untouched, verified:** `textNormalize.ts`/`canonicalize`
+  (not imported by this diff, not in `git diff --stat`); the Slice 1
+  byte-identical English chunk-plan test (`faChunkPlan.test.ts`) still
+  passes unchanged. **No 31+/decimals/thousands-separators/currency/
+  contractions** — out of scope per this slice's own boundary; Phase 3b's
+  remaining rules stay unstarted. **Verified:** `cargo test` 92/92 (was
+  84/84, +8 new Rust unit tests, 0 regressions); `cargo test --features
+  fa-inference` 166/19 ignored (was 158/19 ignored, +8, 0 regressions);
+  `cargo clippy --all-targets` 4 pre-existing warnings, 0 new (unchanged);
+  `npm run lint` clean; `npm test` 80 files/1988 passed/1 skipped (was
+  1968/1, +20: 12 explicit TS unit tests + 8 fixture-driven drift-guard
+  cases, 0 regressions); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged;
+  `scripts/phase4-step-x-verify.py` re-run: 13 recommended for CI / 1 kept
+  out (C10), exit code 1 — unchanged, this slice touches neither sync timing
+  nor the structural-check harness's own inputs. `git diff --stat`:
+  `faTextNormalize.ts`, `text.rs`, `faTextNormalize.test.ts`,
+  `generate-fa-text-fixture.ts`, `fa-text-normalize-fixture.json` — 5 files,
+  no protected file touched.

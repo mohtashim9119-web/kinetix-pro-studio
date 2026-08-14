@@ -206,12 +206,48 @@ function foldFrenchElisionBacktick(word: string, vocabChars: ReadonlySet<string>
   return word;
 }
 
+// ---------------------------------------------------------------------------
+// Spanish cardinal numbers 0-30 (Part H.5 Rule 2, sync-pipeline-v2-plan.md:4074,
+// scope narrowed per Slice 1 sign-off — docs/work-in-progress.md 2026-08-15).
+//
+// SCOPE: bare cardinal integers 0-30, Spanish only. Every one of these is a
+// SINGLE Spanish orthographic word ("dieciséis", "veintitrés", "treinta") —
+// from 31 on, Spanish requires a space-linked "y" compound ("treinta y
+// uno"), which is one INPUT token expanding into MULTIPLE output words. That
+// would break an invariant several `fa_onnx.rs` consumers already rely on
+// (one `FaWordResult` <-> one CTC-aligned word — see `word_merge_e2e`/
+// `words_per_chunk`), so 31-99, decimals, thousands separators, currency,
+// percent, ordinals, negative numbers, and every language other than Spanish
+// stay OUT OF SCOPE and continue to drop exactly as before this change.
+// ---------------------------------------------------------------------------
+
+/** Index `n` -> its Spanish spelling, for `n` in 0..=30. */
+const SPANISH_CARDINALS_0_30: readonly string[] = [
+  'cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve',
+  'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
+  'dieciocho', 'diecinueve', 'veinte', 'veintiuno', 'veintidós', 'veintitrés',
+  'veinticuatro', 'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho',
+  'veintinueve', 'treinta',
+];
+
+/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+ *  "0"), no sign, no separators — anything else returns `undefined` and the
+ *  caller falls through to the pre-existing digit-drop path unchanged. */
+function expandSpanishCardinal(stripped: string): string | undefined {
+  if (!/^[0-9]+$/.test(stripped)) return undefined;
+  if (stripped.length > 1 && stripped[0] === '0') return undefined;
+  const n = Number(stripped);
+  if (n > 30) return undefined;
+  return SPANISH_CARDINALS_0_30[n];
+}
+
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
- *  boundary-punctuation stripping, then a digit check and a per-character
- *  vocab membership check. A word surviving fold+strip with any character
- *  still absent from the vocab is unrepresentable — dropped and recorded,
- *  never partially mangled. */
+ *  boundary-punctuation stripping, then (Spanish only) a bare-0-30-cardinal
+ *  expansion, then a digit check and a per-character vocab membership
+ *  check. A word surviving fold+strip with any character still absent from
+ *  the vocab is unrepresentable — dropped and recorded, never partially
+ *  mangled. */
 function normalizeWord(
   rawWord: string,
   languageCode: FaLanguageCode,
@@ -234,7 +270,10 @@ function normalizeWord(
     };
   }
 
-  if (DIGIT_RE.test(stripped)) {
+  const cardinalExpansion = languageCode === 'es' ? expandSpanishCardinal(stripped) : undefined;
+  const candidate = cardinalExpansion ?? stripped;
+
+  if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {
     return {
       input: rawWord,
       representable: false,
@@ -242,7 +281,7 @@ function normalizeWord(
     };
   }
 
-  for (const ch of stripped) {
+  for (const ch of candidate) {
     if (!vocabChars.has(ch)) {
       return {
         input: rawWord,
@@ -252,7 +291,7 @@ function normalizeWord(
     }
   }
 
-  return { input: rawWord, representable: true, mapped: stripped };
+  return { input: rawWord, representable: true, mapped: candidate };
 }
 
 /**

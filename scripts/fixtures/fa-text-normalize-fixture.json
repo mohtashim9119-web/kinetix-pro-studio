@@ -1815,6 +1815,242 @@
       ],
       "text": "",
       "textTokenIds": []
+    },
+    {
+      "language": "es",
+      "input": "23",
+      "note": "es cardinal 0-30: bare digit expands to a spelled word",
+      "words": [
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "veintitrés",
+          "reason": null,
+          "tokenIds": [
+            28,
+            11,
+            15,
+            20,
+            26,
+            15,
+            26,
+            24,
+            34,
+            25
+          ]
+        }
+      ],
+      "text": "veintitrés",
+      "textTokenIds": [
+        28,
+        11,
+        15,
+        20,
+        26,
+        15,
+        26,
+        24,
+        34,
+        25
+      ]
+    },
+    {
+      "language": "es",
+      "input": "0",
+      "note": "es cardinal 0-30: lower boundary value",
+      "words": [
+        {
+          "input": "0",
+          "representable": true,
+          "mapped": "cero",
+          "reason": null,
+          "tokenIds": [
+            9,
+            11,
+            24,
+            21
+          ]
+        }
+      ],
+      "text": "cero",
+      "textTokenIds": [
+        9,
+        11,
+        24,
+        21
+      ]
+    },
+    {
+      "language": "es",
+      "input": "30",
+      "note": "es cardinal 0-30: upper boundary value",
+      "words": [
+        {
+          "input": "30",
+          "representable": true,
+          "mapped": "treinta",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            11,
+            15,
+            20,
+            26,
+            7
+          ]
+        }
+      ],
+      "text": "treinta",
+      "textTokenIds": [
+        26,
+        24,
+        11,
+        15,
+        20,
+        26,
+        7
+      ]
+    },
+    {
+      "language": "es",
+      "input": "cumplí 23 años",
+      "note": "es cardinal 0-30: expansion survives inside a phrase",
+      "words": [
+        {
+          "input": "cumplí",
+          "representable": true,
+          "mapped": "cumplí",
+          "reason": null,
+          "tokenIds": [
+            9,
+            27,
+            19,
+            22,
+            18,
+            35
+          ]
+        },
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "veintitrés",
+          "reason": null,
+          "tokenIds": [
+            28,
+            11,
+            15,
+            20,
+            26,
+            15,
+            26,
+            24,
+            34,
+            25
+          ]
+        },
+        {
+          "input": "años",
+          "representable": true,
+          "mapped": "años",
+          "reason": null,
+          "tokenIds": [
+            7,
+            36,
+            21,
+            25
+          ]
+        }
+      ],
+      "text": "cumplí veintitrés años",
+      "textTokenIds": [
+        9,
+        27,
+        19,
+        22,
+        18,
+        35,
+        4,
+        28,
+        11,
+        15,
+        20,
+        26,
+        15,
+        26,
+        24,
+        34,
+        25,
+        4,
+        7,
+        36,
+        21,
+        25
+      ]
+    },
+    {
+      "language": "es",
+      "input": "31",
+      "note": "es cardinal negative: 31 is a multi-word \"y\" compound, out of scope, stays dropped",
+      "words": [
+        {
+          "input": "31",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "es",
+      "input": "2.5",
+      "note": "es cardinal negative: decimal stays dropped, out of scope",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"2.5\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "es",
+      "input": "05",
+      "note": "es cardinal negative: leading zero is not a bare cardinal, stays dropped",
+      "words": [
+        {
+          "input": "05",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"05\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "23",
+      "note": "es cardinal 0-30 unaffected-language control: fr digit word still drops exactly as before",
+      "words": [
+        {
+          "input": "23",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"23\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
     }
   ]
 }

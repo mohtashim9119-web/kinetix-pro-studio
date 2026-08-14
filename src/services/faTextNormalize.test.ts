@@ -351,6 +351,60 @@ describe('faTextNormalize — French elision (Part H.5 Rule 1)', () => {
   });
 });
 
+describe('faTextNormalize — Spanish cardinal numbers 0-30 (Part H.5 Rule 2)', () => {
+  // SCOPE: bare cardinal integers 0-30, Spanish only — see faTextNormalize.ts's
+  // own comment block above `expandSpanishCardinal` for why 31+ (a multi-word
+  // "y" compound) is a separate, later slice, not this one.
+
+  const POSITIVE_CASES: Array<[input: string, mapped: string]> = [
+    ['0', 'cero'],
+    ['5', 'cinco'],
+    ['16', 'dieciséis'],
+    ['20', 'veinte'],
+    ['22', 'veintidós'],
+    ['23', 'veintitrés'],
+    ['30', 'treinta'],
+  ];
+
+  it.each(POSITIVE_CASES)('"%s" expands to "%s"', (input, mapped) => {
+    const result = normalizeForForcedAlignment(input, 'es', VOCABS.es);
+    expect(result.words).toHaveLength(1);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe(mapped);
+    expect(result.text).toBe(mapped);
+  });
+
+  it('expansion survives inside a phrase', () => {
+    const result = normalizeForForcedAlignment('cumplí 23 años', 'es', VOCABS.es);
+    expect(result.text).toBe('cumplí veintitrés años');
+    expect(result.words.every(w => w.representable)).toBe(true);
+  });
+
+  it('negative: 31 is a multi-word "y" compound, out of scope, stays dropped', () => {
+    const result = normalizeForForcedAlignment('31', 'es', VOCABS.es);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a decimal ("2.5") stays dropped, out of scope', () => {
+    const result = normalizeForForcedAlignment('2.5', 'es', VOCABS.es);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a leading-zero form ("05") is not a bare cardinal and stays dropped', () => {
+    const result = normalizeForForcedAlignment('05', 'es', VOCABS.es);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
+    const result = normalizeForForcedAlignment('23', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+});
+
 describe('vocabCharsFromRawVocab', () => {
   it('excludes CTC special/delimiter tokens from every language vocab', () => {
     for (const lang of LANGUAGES) {

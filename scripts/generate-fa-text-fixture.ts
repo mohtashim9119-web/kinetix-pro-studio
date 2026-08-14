@@ -142,6 +142,16 @@ const CORPUS: CorpusCase[] = [
   { lang: 'fr', input: 'aujourd`hui', note: 'fr elision negative: backtick not at a word-initial elision boundary, not folded' },
   { lang: 'fr', input: 'j`veux', note: 'fr elision negative: prefix+backtick before a consonant, not a grammatical elision shape' },
   { lang: 'en', input: 'l`oiseau', note: 'fr elision negative: the backtick fold is French-only, untouched under en' },
+
+  // -- Spanish cardinal numbers 0-30 (Part H.5 Rule 2) ---------------------
+  { lang: 'es', input: '23', note: 'es cardinal 0-30: bare digit expands to a spelled word' },
+  { lang: 'es', input: '0', note: 'es cardinal 0-30: lower boundary value' },
+  { lang: 'es', input: '30', note: 'es cardinal 0-30: upper boundary value' },
+  { lang: 'es', input: 'cumplí 23 años', note: 'es cardinal 0-30: expansion survives inside a phrase' },
+  { lang: 'es', input: '31', note: 'es cardinal negative: 31 is a multi-word "y" compound, out of scope, stays dropped' },
+  { lang: 'es', input: '2.5', note: 'es cardinal negative: decimal stays dropped, out of scope' },
+  { lang: 'es', input: '05', note: 'es cardinal negative: leading zero is not a bare cardinal, stays dropped' },
+  { lang: 'fr', input: '23', note: 'es cardinal 0-30 unaffected-language control: fr digit word still drops exactly as before' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -162,6 +172,7 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'mixed case',
   'genuine OOV',
   'fr elision',
+  'es cardinal 0-30',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {

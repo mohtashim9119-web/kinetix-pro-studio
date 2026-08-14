@@ -408,6 +408,45 @@ fn fold_french_elision_backtick(word: &str, vocab_chars: &HashSet<char>) -> Stri
 }
 
 // ---------------------------------------------------------------------------
+// Spanish cardinal numbers 0-30 (Part H.5 Rule 2) - mirrors
+// `SPANISH_CARDINALS_0_30`/`expandSpanishCardinal` in faTextNormalize.ts.
+// Scope: bare cardinal integers 0-30, Spanish only — every one of these is a
+// SINGLE Spanish orthographic word; 31+ requires a space-linked "y" compound
+// (one input token -> multiple output words), which would break the
+// one-`WordResult`-per-CTC-word invariant `word_merge_e2e`/`words_per_chunk`
+// already rely on, so 31-99, decimals, thousands separators, currency,
+// percent, ordinals, negative numbers, and every other language stay OUT OF
+// SCOPE and continue to drop exactly as before this change.
+// ---------------------------------------------------------------------------
+
+/// Index `n` -> its Spanish spelling, for `n` in 0..=30. Mirrors
+/// `SPANISH_CARDINALS_0_30`.
+const SPANISH_CARDINALS_0_30: &[&str] = &[
+    "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce",
+    "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno",
+    "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho",
+    "veintinueve", "treinta",
+];
+
+/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+/// "0"), no sign, no separators — anything else returns `None` and the
+/// caller falls through to the pre-existing digit-drop path unchanged.
+/// Mirrors `expandSpanishCardinal`.
+fn expand_spanish_cardinal(stripped: &str) -> Option<&'static str> {
+    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if stripped.len() > 1 && stripped.starts_with('0') {
+        return None;
+    }
+    let n: u32 = stripped.parse().ok()?;
+    if n > 30 {
+        return None;
+    }
+    SPANISH_CARDINALS_0_30.get(n as usize).copied()
+}
+
+// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -460,7 +499,10 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         };
     }
 
-    if stripped.chars().any(|c| c.is_ascii_digit()) {
+    let cardinal_expansion = if language == Language::Es { expand_spanish_cardinal(stripped) } else { None };
+    let candidate: &str = cardinal_expansion.unwrap_or(stripped);
+
+    if cardinal_expansion.is_none() && stripped.chars().any(|c| c.is_ascii_digit()) {
         return WordResult {
             input: raw_word.to_string(),
             representable: false,
@@ -471,7 +513,7 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         };
     }
 
-    for ch in stripped.chars() {
+    for ch in candidate.chars() {
         if !vocab_chars.contains(&ch) {
             return WordResult {
                 input: raw_word.to_string(),
@@ -485,7 +527,7 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         }
     }
 
-    WordResult { input: raw_word.to_string(), representable: true, mapped: Some(stripped.to_string()), reason: None }
+    WordResult { input: raw_word.to_string(), representable: true, mapped: Some(candidate.to_string()), reason: None }
 }
 
 /// Normalizes a word or whitespace-separated phrase against one language's
@@ -690,6 +732,81 @@ mod tests {
         let result = normalize_word("l`oiseau", Language::En, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains('`'));
+    }
+
+    // -- Spanish cardinal numbers 0-30 (Part H.5 Rule 2) --------------------
+    //
+    // SCOPE: bare cardinal integers 0-30, Spanish only — see
+    // `expand_spanish_cardinal`'s own doc comment for why 31+ (a multi-word
+    // "y" compound) is a separate, later slice, not this one.
+
+    fn es_vocab() -> HashSet<char> {
+        // Every letter needed to spell "cero".."treinta" plus the accents
+        // dieciséis/veintidós/veintitrés/veintiséis require.
+        vocab(&['c', 'e', 'r', 'o', 'u', 'n', 'd', 's', 't', 'v', 'i', 'a', 'z', 'h', 'q', 'g', 'é', 'ó'])
+    }
+
+    #[test]
+    fn spanish_cardinal_boundary_zero_expands() {
+        let result = normalize_word("0", Language::Es, &es_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("cero"));
+    }
+
+    #[test]
+    fn spanish_cardinal_bare_digit_expands() {
+        let result = normalize_word("23", Language::Es, &es_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("veintitrés"));
+    }
+
+    #[test]
+    fn spanish_cardinal_boundary_thirty_expands() {
+        let result = normalize_word("30", Language::Es, &es_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("treinta"));
+    }
+
+    #[test]
+    fn spanish_cardinal_survives_inside_a_phrase() {
+        let v = es_vocab();
+        let result = normalize_for_forced_alignment("cumplí 23 años", Language::Es, &v);
+        // "cumplí"/"años" aren't in this narrow test vocab — only the digit
+        // word matters here, so check its own entry directly.
+        let digit_word = result.words.iter().find(|w| w.input == "23").unwrap();
+        assert!(digit_word.representable);
+        assert_eq!(digit_word.mapped.as_deref(), Some("veintitrés"));
+    }
+
+    #[test]
+    fn negative_spanish_cardinal_31_is_a_multiword_compound_out_of_scope() {
+        let result = normalize_word("31", Language::Es, &es_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_spanish_cardinal_decimal_stays_dropped() {
+        let result = normalize_word("2.5", Language::Es, &es_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_spanish_cardinal_leading_zero_stays_dropped() {
+        let result = normalize_word("05", Language::Es, &es_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_spanish_cardinal_expansion_is_language_gated() {
+        // Other languages are unaffected: the same bare digit under "fr"
+        // still drops exactly as it did before this rule.
+        let v = vocab(&['v', 'e', 'i', 'n', 't', 'r', 's']);
+        let result = normalize_word("23", Language::Fr, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
     }
 }
 
