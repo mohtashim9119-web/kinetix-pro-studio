@@ -4,11 +4,15 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
+import { vocabCharsFromRawVocab } from './faTextNormalize';
 
 function seg(id: string, text: string, startTime: number, duration: number): VideoSegment {
   return {
@@ -423,5 +427,83 @@ describe('computeFaChunkPlanWithAttribution — coalesced index attribution', ()
 
     const chunks = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index', 1000);
     expect(chunks).toEqual([{ startSec: 0, endSec: 8, text: words.join(' ') }]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// faTextNormalize.ts wiring (WS1 Phase 3b Slice 1) — plumbing only. See
+// computeFaChunkPlanWithAttribution's `languageCode`/`vocabChars` doc
+// comment: omitting either leaves every pre-existing call path (including
+// computeFaChunkPlan's own default, App.tsx's exact production call shape)
+// byte-identical to before this slice landed.
+// ---------------------------------------------------------------------------
+
+describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3b Slice 1 (faTextNormalize wiring)', () => {
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const EN_VOCAB: ReadonlySet<string> = (() => {
+    const raw = JSON.parse(
+      readFileSync(resolve(REPO, 'scripts', 'fixtures', 'fa-vocab-en.json'), 'utf-8'),
+    ) as { vocab: Record<string, number> };
+    return vocabCharsFromRawVocab(raw.vocab);
+  })();
+
+  // Mixed case + trailing punctuation, unlike every fixture above — chosen so
+  // a normalization pass (lowercase, boundary-punctuation strip) is visibly
+  // distinguishable from raw passthrough, proving the wiring is a real call
+  // site rather than plumbing that happens to no-op on already-clean text.
+  function englishFixture() {
+    const segments = [
+      seg('s0', 'Kittens Likes Purple Hats', 0, 2),
+      seg('s1', 'Dragons Chase Silver Moons', 2, 2),
+      seg('s2', 'Wizards Brew Golden Potions', 4, 2),
+      seg('s3', 'Falcons Guard Hidden Castles.', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+    return { segments, tokens, silences, audioDuration: 8 };
+  }
+
+  it('production call shape (computeFaChunkPlan, 4 args, exactly App.tsx\'s own call) is unaffected by this slice', () => {
+    const { segments, tokens, silences, audioDuration } = englishFixture();
+    const productionShape = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const viaAttribution = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    expect(productionShape).toEqual(viaAttribution);
+    // Raw casing/punctuation survives untouched — the default path was never
+    // routed through normalizeForForcedAlignment.
+    expect(productionShape.some(c => /[A-Z]/.test(c.text))).toBe(true);
+    expect(productionShape.some(c => c.text.includes('.'))).toBe(true);
+  });
+
+  it('is byte-identical to the pre-slice call signature when languageCode/vocabChars are explicitly undefined', () => {
+    const { segments, tokens, silences, audioDuration } = englishFixture();
+    const omitted = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    const explicitUndefined = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'script-word-index', undefined, undefined, undefined,
+    );
+    expect(explicitUndefined).toEqual(omitted);
+  });
+
+  it('opting in with languageCode+vocabChars actually normalizes chunk text (proves the wiring is real, not dead code)', () => {
+    const { segments, tokens, silences, audioDuration } = englishFixture();
+    const raw = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    const normalized = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'script-word-index', undefined, 'en', EN_VOCAB,
+    );
+
+    // Windows (startSec/endSec) are untouched — only text changes.
+    expect(normalized.length).toBe(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      expect(normalized[i]!.startSec).toBe(raw[i]!.startSec);
+      expect(normalized[i]!.endSec).toBe(raw[i]!.endSec);
+    }
+    // Normalized text is lowercase and free of the trailing period.
+    expect(normalized.some(c => /[A-Z]/.test(c.text))).toBe(false);
+    expect(normalized.some(c => c.text.includes('.'))).toBe(false);
+    // Same underlying words, modulo case/punctuation — nothing was dropped or
+    // reordered by the normalization pass on this all-representable fixture.
+    expect(normalized.map(c => c.text.toLowerCase().replace(/[.,]/g, ''))).toEqual(
+      raw.map(c => c.text.toLowerCase().replace(/[.,]/g, '')),
+    );
   });
 });

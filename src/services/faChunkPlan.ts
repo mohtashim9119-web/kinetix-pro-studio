@@ -43,6 +43,7 @@ import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { alignQueryToSubject, normalize, normalizeSceneDoc } from './whisperService';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
+import { normalizeForForcedAlignment, type FaLanguageCode } from './faTextNormalize';
 
 /** One forced-alignment chunk: an audio time window (raw, unpadded — R.2
  *  padding is out of scope for this slice) and the script text to align
@@ -245,8 +246,12 @@ export function computeFaChunkPlan(
   silences: readonly SilenceInterval[],
   audioDuration: number,
   attribution: FaTextAttribution = 'script-word-index',
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
 ): FaChunk[] {
-  return computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, attribution);
+  return computeFaChunkPlanWithAttribution(
+    segments, tokens, silences, audioDuration, attribution, undefined, languageCode, vocabChars,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -562,6 +567,18 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
  * FA capability gate remains OFF regardless (`isFaGateOpen()`, D17), so this
  * whole module stays production-inert either way. `coalesceTargetSec` is
  * optional; omitting it runs the unmerged R.0 plan.
+ *
+ * `languageCode`/`vocabChars` (Phase 3b Slice 1, plumbing only): when BOTH are
+ * supplied, each emitted chunk's `text` is additionally passed through
+ * `faTextNormalize.ts`'s `normalizeForForcedAlignment` — the vocab-aware
+ * normalizer that preserves native diacritics, as opposed to this module's
+ * pre-existing raw-text passthrough (Rust's own `normalize_for_forced_alignment`
+ * port already normalizes raw chunk text safely today — see
+ * `docs/work-in-progress.md` §10 — so this is an additive JS-side capability,
+ * not a fix to a live bug). Omitting either parameter (every call site today,
+ * `App.tsx`'s dev path included) leaves `runsToChunks`/`attributeByIndex`'s
+ * output completely untouched — this parameter pair has no effect unless a
+ * caller opts in.
  */
 export function computeFaChunkPlanWithAttribution(
   segments: readonly VideoSegment[],
@@ -570,20 +587,44 @@ export function computeFaChunkPlanWithAttribution(
   audioDuration: number,
   attribution: FaTextAttribution = 'script-word-index',
   coalesceTargetSec?: number,
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
 ): FaChunk[] {
   const ctx = computeRunContext(segments, tokens, silences, audioDuration);
 
+  let chunks: FaChunk[];
   if (attribution === 'segment-start-time') {
     const runs = coalesceTargetSec === undefined ? ctx.runs : coalesceRuns(ctx.runs, coalesceTargetSec);
-    return runsToChunks(runs, segments);
+    chunks = runsToChunks(runs, segments);
+  } else {
+    // Index attribution: qi ranges must be derived from the UNCOALESCED runs
+    // (one-to-one with `anchors`, `runQiRanges`'s own contract) and THEN
+    // coalesced in lockstep via `coalesceRunQiRanges` — never by coalescing
+    // the runs first and re-deriving qi from the merged array (see both
+    // functions' doc comments for the bug that approach produces).
+    const uncoalescedRanges = runQiRanges(ctx.runs, ctx.anchors, ctx.totalQi);
+    const ranges = coalesceTargetSec === undefined ? uncoalescedRanges : coalesceRunQiRanges(uncoalescedRanges, coalesceTargetSec);
+    chunks = attributeByIndex(ranges, ctx.rawTokens);
   }
 
-  // Index attribution: qi ranges must be derived from the UNCOALESCED runs
-  // (one-to-one with `anchors`, `runQiRanges`'s own contract) and THEN
-  // coalesced in lockstep via `coalesceRunQiRanges` — never by coalescing the
-  // runs first and re-deriving qi from the merged array (see both functions'
-  // doc comments for the bug that approach produces).
-  const uncoalescedRanges = runQiRanges(ctx.runs, ctx.anchors, ctx.totalQi);
-  const ranges = coalesceTargetSec === undefined ? uncoalescedRanges : coalesceRunQiRanges(uncoalescedRanges, coalesceTargetSec);
-  return attributeByIndex(ranges, ctx.rawTokens);
+  return languageCode !== undefined && vocabChars !== undefined
+    ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+    : chunks;
+}
+
+/** Post-processes an already-built chunk plan's `text` through
+ *  `normalizeForForcedAlignment`, leaving `startSec`/`endSec` untouched — see
+ *  `computeFaChunkPlanWithAttribution`'s `languageCode`/`vocabChars` doc
+ *  comment. Applied after chunk assembly so it can never influence the `qi`
+ *  index arithmetic (`computeRunContext`/`runQiRanges`), which is computed
+ *  entirely from raw text beforehand and stays untouched by this step. */
+function applyFaTextNormalization(
+  chunks: readonly FaChunk[],
+  languageCode: FaLanguageCode,
+  vocabChars: ReadonlySet<string>,
+): FaChunk[] {
+  return chunks.map(chunk => ({
+    ...chunk,
+    text: normalizeForForcedAlignment(chunk.text, languageCode, vocabChars).text,
+  }));
 }

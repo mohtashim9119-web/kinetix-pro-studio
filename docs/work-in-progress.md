@@ -102,8 +102,8 @@ lock-gate text, not copied from the deleted file uncritically).
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
 | **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
-| 3b | 1 | **NOT STARTED** | **unowned** | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — no task on the ledger under its own name |
-| 3c | 1 | **NOT STARTED** | **unowned** | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
+| 3b | 1 | **NOT STARTED** (Slice 1 plumbing done — normalizer wired, no fr/de/pt rules yet) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — no task on the ledger under its own name |
+| 3c | 1 | **NOT STARTED** | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
 | 5 | 3 | **NOT STARTED** | — | Stage 1 + 2 locks; heading-wildcard Option A logic (decided, not coded) | Replace `computeBoundarySearchWindow`/`isBoundarySilenceCandidate` with the fence |
@@ -555,20 +555,33 @@ Hirschberg matching on both sides — scene-doc words and Whisper tokens):
   German `ß`→`ss` applied before the vocab check (German vocab has no `ß` at all).
 - Pure function, no I/O — caller supplies `vocabChars` (sourced today from
   `scripts/fixtures/fa-vocab-<lang>.json`). 40/40 unit tests pass (live-verified this
-  consolidation pass). **Zero live callers anywhere in `src/`** — own header states "NOT
-  WIRED INTO ANY PIPELINE."
+  consolidation pass). **Real caller since 2026-08-15 (Phase 3b Slice 1):**
+  `computeFaChunkPlanWithAttribution`'s optional `languageCode`/`vocabChars` params
+  (`faChunkPlan.ts`) — opt-in only, no production/dev path passes them yet, so this
+  remains production-inert; own header's "NOT WIRED INTO ANY PIPELINE" now describes
+  only the live production/dev call path, not the module's reachability.
 - Rust port: `src-tauri/src/fa/text.rs:435`, byte-identical, 36 corpus entries, all 5
   languages (§4/§5).
 
+**Correction (2026-08-15, Phase 3b Slice 1 investigation):** item 1 below, as
+originally worded, overstated the gap — `FaChunk.text` was traced end to end and
+found to already carry RAW (un-ASCII-stripped) `seg.text`/token text in both
+attribution modes, never routed through `canonicalize`. Diacritics already reach
+Rust's `fa_align_dev` intact; Rust's own port normalizes them there. `canonicalize`
+is used inside `faChunkPlan.ts` only for `qi` word-count bookkeeping, never for the
+`chunk.text` payload. Item 1 is now DONE as plumbing (see changelog below); it was
+additive, not a fix to a live diacritic-loss bug.
+
 **Action items before non-English FA can ship:**
-1. Wire `faTextNormalize.ts` into `src/services/faChunkPlan.ts`'s chunk-building path so
-   text handed to the Rust CTC decoder carries native diacritics instead of
-   `textNormalize.ts`'s ASCII-stripped form.
+1. ~~Wire `faTextNormalize.ts` into `src/services/faChunkPlan.ts`'s chunk-building
+   path~~ — **DONE, 2026-08-15 (Phase 3b Slice 1, plumbing only, see changelog and
+   the correction above).**
 2. Do NOT touch `textNormalize.ts`/`canonicalize` — must stay byte-identical.
 3. Land Phase 3b (language-keyed normalization: contractions, numbers, currency for
-   fr/de/pt) — **NOT STARTED, unowned** (§3).
-4. Land Phase 3c (hyphen-asymmetry fix) — **NOT STARTED, unowned**; also directly blocks
-   Stage 1 lock regardless of FA.
+   fr/de/pt) — **NOT STARTED — owner: project owner** (§3; ownership assigned
+   2026-08-15, rules themselves not yet written, deliberately out of Slice 1's scope).
+4. Land Phase 3c (hyphen-asymmetry fix) — **NOT STARTED — owner: project owner**; also
+   directly blocks Stage 1 lock regardless of FA.
 5. Source real `fa-vocab-<lang>.json` files for the production build path (today only
    under `scripts/fixtures/`) and wire them into `faTextNormalize.ts` at the eventual
    chunk-building call site.
@@ -832,3 +845,47 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   (unchanged); `npm run lint` clean; `npm test` 80 files/1943 passed/1 skipped
   (unchanged). All four counts match the 2026-08-15 close-out audit baseline
   exactly — this pass added a dev script and doc lines only, no logic changed.
+
+- **2026-08-15 — Phase 3b Slice 1: `faTextNormalize.ts` wired into
+  `faChunkPlan.ts` (plumbing only, zero behavior change).** Gives
+  `faTextNormalize.ts` its first real caller (previously 40/40 tests, zero
+  callers — §10). `computeFaChunkPlanWithAttribution` (and `computeFaChunkPlan`,
+  which delegates to it) gained two new trailing optional parameters,
+  `languageCode`/`vocabChars`: when BOTH are supplied, the assembled chunk
+  plan's `text` is additionally passed through
+  `normalizeForForcedAlignment`; when either is omitted — every call site
+  today, `App.tsx`'s dev-only production-shaped call included — the code path
+  is untouched. Applied as a single post-process step after chunk assembly,
+  so it cannot influence the `qi` word-index arithmetic
+  (`computeRunContext`/`runQiRanges`), which is computed beforehand from raw
+  text via the (untouched) `textNormalize.ts`/`canonicalize` path.
+  **Pre-wiring investigation finding (see below), not a fix:** traced
+  `FaChunk.text` end to end and found it was already built from RAW
+  `seg.text`/raw token text in both attribution modes, never routed through
+  `canonicalize` — diacritics already reach Rust's `fa_align_dev` call
+  intact, and Rust's own `src-tauri/src/fa/text.rs` (a committed
+  byte-identical port of this same TS module) already normalizes it
+  correctly there. §10's action-item wording ("text handed to the Rust CTC
+  decoder... instead of `textNormalize.ts`'s ASCII-stripped form") overstates
+  what was actually happening — `canonicalize` is used inside
+  `faChunkPlan.ts` only for `qi` word-count bookkeeping, never for the
+  `chunk.text` payload. This slice is therefore additive (a new JS-side
+  capability), not a live-bug fix. **No ASCII-only downstream assumption
+  found** — no byte-vs-char offset field exists on `FaChunk` (only
+  `startSec`/`endSec`/`text`), and `qi` arithmetic is word-count-based via
+  JS's own `\s+` splitting, decoupled from `chunk.text`'s content. **Files:**
+  `src/services/faChunkPlan.ts`, `src/services/faChunkPlan.test.ts` (3 new
+  tests: production call shape unaffected; explicit-`undefined` byte-
+  identical to omitted; opt-in path actually normalizes, proving the wiring
+  is a real call site). **No fr/de/pt rules added** — out of scope for this
+  slice per H.5. **Verified:** `cargo test` 76/76 (unchanged); `cargo test
+  --features fa-inference` 150/19 ignored (unchanged); `cargo clippy
+  --features fa-inference` 4 pre-existing warnings, 0 new (unchanged); `npm
+  run lint` clean; `npm test` 80 files/1946 passed/1 skipped (+3 new tests
+  over the 1943/1 baseline, zero regressions); `scripts/phase4-step-x-verify.py`
+  re-run: 13 recommended for CI / 1 kept out (C10, unchanged — the harness
+  has grown since the C1-C12 shorthand this task was briefed against to
+  C01a/C01b through C13, but the invariant it protects, "only C10 stays
+  CI-out," is exactly what was found, so nothing regressed). `git diff
+  --stat`: 2 files (`faChunkPlan.ts`, `faChunkPlan.test.ts`), no other file
+  touched, no protected file implicated.
