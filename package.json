@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri:dev": "tauri dev",
+    "tauri:dev:fa": "tauri dev -f fa-inference",
     "tauri:build": "tauri build"
   },
   "dependencies": {

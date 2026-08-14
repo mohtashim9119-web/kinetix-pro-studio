@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **IN PROGRESS, dev-only** | — | Capability-gated production wiring slice (§11) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
+| **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
 | 3b | 1 | **NOT STARTED** | **unowned** | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — no task on the ledger under its own name |
 | 3c | 1 | **NOT STARTED** | **unowned** | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -357,7 +357,11 @@ work proceeding without a stated target.
 owner's call"). *Owner, trigger:* project owner; before any R.3/R.7-R.9 windowing-precision
 work is scoped in detail.
 
-**2. R.5 — build now, later, or not at all.**
+**2. R.5 — build now, later, or not at all. DECIDED 2026-08-15: DEFER (option b).**
+Full decision text: `sync-pipeline-v2-plan.md` Part M (appended 2026-08-15, after
+the durable-cache paragraph). Ship the production-wiring slice (item 1 below)
+without R.5; build R.5 afterward, before Phase 4. Reopens when item 1 or item 6
+below starts. Does not descope — owner ruling D1 still mandates it in-scope.
 *What's already decided, not open:* the wildcard-gap *destination* (R-E: "Model P outranks
 R.5," assigned to the preceding segment) — ruled 2026-08-11, a day before Task 5's first
 commit.
@@ -427,6 +431,33 @@ pass, so the correction doesn't get lost a third time.
 >   consolidation, 2026-08-14)."*
 > - **R-N**: no change proposed — still genuinely open, unaffected by the above.
 
+**5. R-N — fa-inference production packaging: static-link vs. load-dynamic+bundled
+onnxruntime dylib.** Distinct from item 4 above — item 4 is whether to ratify R-N's
+*wording* into `project-state.md`; this is the underlying packaging decision R-N itself
+names, restated here as its own tracked item since it has its own trigger independent of
+any documentation pass.
+*What it is:* `ort` (R-M) currently compiles `load-dynamic` — no onnxruntime dylib bundled
+or statically linked into the app today (confirmed live this session: `npm run
+tauri:dev:fa`'s only obligation is that the Cargo feature compiles; a real `ORT_DYLIB_PATH`
+is still unset in dev, and any FA call fails cleanly rather than crashing). Production
+packaging has two live options: (a) static-link onnxruntime into a single fat binary, or
+(b) stay load-dynamic and bundle a separate onnxruntime dylib as a Tauri resource. The
+choice determines model-bundling shape, the onnxruntime distribution mechanism, and final
+installer/binary size — none of which is decided.
+*Why not decided now:* R-K (no release build until WS1 completes) means no build is being
+cut yet, and load-dynamic already satisfies R-L's in-process requirement for local dev —
+not urgent today, but not free to leave open indefinitely either.
+*Decision required:* static-link vs. load-dynamic+bundled-dylib for the production
+onnxruntime dependency.
+*Phase that must answer it:* before Step T (model distribution/on-demand-download, R-D)
+and before any release build (R-K) — i.e., it gates the release-build phase, not Task
+5/Phase 3's production-wiring slice itself.
+*Owner, trigger:* project owner; originally recorded 2026-08-11 as R-N
+(`project-state.md` §5); restated here 2026-08-15 after last session's `tauri:dev:fa`
+work surfaced it again in the `fa-inference` build-flag context (see the 2026-08-15
+"Gate sequencing decided" changelog entry below) — confirming it was written down, not
+only discussed.
+
 **Decisions already ruled (closed) — WS1-specific, not restated as open work.** Carried
 forward from the deleted `ws1-master-roadmap.md` §8 and the pre-consolidation WIP doc's own
 Rulings block, since both are now gone and these still govern live code:
@@ -439,6 +470,8 @@ Rulings block, since both are now gone and these still govern live code:
   `main`, porting only the logic/idea, never the stale branch code. **CLOSED**, task 8
   above.
 - **R-E** — "Model P outranks R.5" (destination decided, see item 2 above).
+- **R.5 timing** — DEFERRED, 2026-08-15 (item 2 above): build after production
+  wiring (§11 item 1), not bundled with it. Not a Stage 1 lock criterion.
 - **R-G** — `anchorSource` gains `'forced-alignment'`, ordered above `'whisper'`
   (forced-alignment > whisper > estimate); demote-only ordering preserved.
 - **Heading-wildcard Option A** — unscripted audio absorbed entirely by the preceding
@@ -556,12 +589,14 @@ Ordered by real dependency, not convenience. Owner rulings D1/D2 (§7) already f
 first sequencing question (`task5-integration-scope.md` §4's own recommended order):
 ruling → R.2 padding → R.5 destination ruling → capability-gated production wiring →
 R-H judgement. R.2 is done (closed-negative); R.5's destination is decided; what's left
-starts at production wiring.
+starts at production wiring — itself now re-sequenced by the Option B gate-sequencing
+decision (2026-08-15, item 1 below) to start only after Phase 3b/3c land, not immediately.
 
 **Already complete, not on the critical path:** task 1 (Apply Sync history-entry fix),
 task 8 (K13 fix) — see §3.
 
-**Ready now, in parallel (nothing blocking any of them):**
+**Ready now, in parallel (nothing blocking any of them, except item 1 — see its
+sequencing note):**
 
 1. **Capability-gated production wiring slice.** *Goal:* a non-dev, `isFaGateOpen()`-gated
    caller of `fa_align` reachable from the real running app, replacing the
@@ -575,7 +610,10 @@ task 8 (K13 fix) — see §3.
    "capability-gated production wiring" item named throughout §4/§6/§7. *Depends on:* §7
    item 2 (R.5 whether/when) — affects this slice's shape (does the production command need
    to surface per-word confidence/wildcard data, or just a single `t0`?) but does not block
-   starting it.
+   starting it. **Sequencing block (Option B, 2026-08-15):** does not start until Phase 3b
+   and 3c (items 7-8 below) both land — the gate stays off through both and flips once,
+   after 3c, so the boundary set is measured exactly once. This is a decision-imposed
+   block, not a technical one — see the Phase 3 row (`sync-pipeline-v2-plan.md`, §3 above).
 2. **`FaEvent` → UI progress consumer.** *Goal:* a real progress bar/status consumer for
    `FaEvent::Progress`/`Done`/`Error`, mirroring `useWhisper.ts`'s existing pattern for
    `WhisperEvent`. *Files:* new hook (e.g. `useForcedAlignment.ts`) consuming
@@ -656,7 +694,7 @@ task 8 (K13 fix) — see §3.
     figure in favor of `verification-baseline.csv` verdict counts and updating all standing
     docs.
 
-**Definition of done for WS1:** all four stage-lock gates in §2 pass; all four open
+**Definition of done for WS1:** all four stage-lock gates in §2 pass; all five open
 decisions in §7 are closed (ratified or explicitly re-deferred with a new trigger); the
 production writer at `App.tsx:2837` is real and gated; `FaEvent` has a real UI consumer;
 CI is green (existing 4 gates run clean, `fa-ort-matrix.yml` still green).
@@ -758,3 +796,39 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   test` 80 files/1943 passed/1 skipped; golden replay 6/6. All non-doc changes
   were comments-only (`git diff --stat 9cf5867 -- src/ src-tauri/`: 7 files,
   93 insertions/34 deletions, zero logic lines).
+
+- **2026-08-15 — Phase 3b/3c ownership assigned.** Phases 3b (multilingual
+  text cleaner: FR/DE/PT, §10) and 3c (hyphen tokenisation mismatch, §11 item
+  8) now have an owner: the project owner. Intended execution order: 3b → 3c
+  → Phase 3 production wiring (§11 item 1) → Stage 1 lock (§11 item 12-13).
+  Recorded on both rows of `sync-pipeline-v2-plan.md`'s Phase Status table
+  (lines 23-24). No change to either phase's NOT STARTED status or scope.
+
+- **2026-08-15 — R.5 decision: DEFER.** Closed the "whether/when" half of §7
+  item 2 (destination was already closed, R-E). Ship the capability-gated
+  production-wiring slice (§11 item 1) without R.5; build R.5 next, before
+  Phase 4. Reopens when §11 item 1 or item 6 starts. Full reasoning appended
+  to `sync-pipeline-v2-plan.md` Part M. Does not touch scope (owner ruling D1
+  still mandates R.5 for Task 5) — only sequencing.
+
+- **2026-08-15 — Gate sequencing decided (Option B); `fa-inference` dev
+  build flag wired.** Owner chose Option B for §11 item 1's production-wiring
+  slice: gate stays off through 3b/3c, flips once after 3c lands, boundary
+  set measured exactly once. Item 1 itself (the `App.tsx:2792-2837` branch on
+  `isFaGateOpen()`, the `faWordTimings` writer) is therefore **not started
+  this pass** — it is blocked on Phase 3c by the owner's own sequencing
+  choice, not by any remaining technical gap. Separately, discovered that
+  `isFaGateOpen()` alone is insufficient even for local testing: `fa_align`
+  (`fa.rs:806`) is compiled out entirely unless the `fa-inference` Cargo
+  feature is enabled, and neither `tauri:dev` nor `tauri:build` (`package.json`)
+  passed it. Owner approved enabling it for local dev only (not production
+  builds, which stay decided separately per R-N). Added `npm run tauri:dev:fa`
+  (`tauri dev -f fa-inference`, `package.json`), documented in `CLAUDE.md` §2.
+  `ort` uses `load-dynamic` (`Cargo.toml:39-41`) so this compiles with no
+  onnxruntime dylib present; an FA call at runtime with `ORT_DYLIB_PATH` unset
+  fails cleanly. Verified: `cargo test` 76 passed (unconditional, unchanged);
+  `cargo test --features fa-inference` 150 passed/19 ignored (unchanged);
+  `cargo clippy --features fa-inference` 4 pre-existing warnings, 0 new
+  (unchanged); `npm run lint` clean; `npm test` 80 files/1943 passed/1 skipped
+  (unchanged). All four counts match the 2026-08-15 close-out audit baseline
+  exactly — this pass added a dev script and doc lines only, no logic changed.

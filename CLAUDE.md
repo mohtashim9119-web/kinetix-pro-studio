@@ -30,6 +30,8 @@ npm run test:watch      # vitest watch mode
 
 Rust side (`src-tauri/`): normally driven through `tauri:dev`/`tauri:build` above; use `cargo check`/`cargo build` from `src-tauri/` directly when iterating on Rust alone. ffmpeg sidecar binaries under `src-tauri/binaries/` are gitignored — see `src-tauri/binaries/README.md` to re-provision on a fresh checkout.
 
+`npm run tauri:dev:fa` compiles with the `fa-inference` Cargo feature (forced-alignment ONNX inference — see `src-tauri/Cargo.toml`'s `[features]`), off by default in plain `tauri:dev`/`tauri:build`. `ort` uses `load-dynamic`, so this compiles without an onnxruntime dylib present; an FA call at runtime with `ORT_DYLIB_PATH` unset fails cleanly rather than crashing. This does not by itself route Apply Sync's timing through FA — see `docs/work-in-progress.md`'s WS1 section for that gate's status.
+
 Export, the ffmpeg sidecar, and the whisper.cpp sidecar only run inside `npm run tauri:dev` or the built app — `npm run dev` alone has no Tauri IPC bridge.
 
 ---

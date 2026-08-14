@@ -19,9 +19,9 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/ws1-sync-pipeline/measurements/v6-smear-baseline.csv` / `docs/ws1-sync-pipeline/measurements/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
-| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **STALE, describes this row's 2026-08-07 pre-Task-5 state — see Part M.** Original text, left as the historical readiness record: "IMPLEMENTATION-READY, not started. Blockers 1/2/3 CLOSED; all three Rust gates closed (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, restored and proven faithful at Step Y; readiness statement at Step Z. Integration not started." **Current status (2026-08-14, Part M / `docs/work-in-progress.md` §3–§5): IN PROGRESS, dev-only — Slices D1–D25 shipped (D7 cancelled as scoped), behind the `fa-inference` feature flag, zero production callers. Not "not started"; not yet production-integrated either.** | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
-| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED | — | — |
-| 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED | — | — |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **STALE, describes this row's 2026-08-07 pre-Task-5 state — see Part M.** Original text, left as the historical readiness record: "IMPLEMENTATION-READY, not started. Blockers 1/2/3 CLOSED; all three Rust gates closed (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, restored and proven faithful at Step Y; readiness statement at Step Z. Integration not started." **Current status (2026-08-15, Part M / `docs/work-in-progress.md` §3–§5, §11 item 1): ALIGNER COMPLETE, dev-only — Slices D1–D25 shipped (D7 cancelled as scoped), behind the `fa-inference` feature flag, zero production callers. The remaining work — the capability-gated production-wiring slice — is BLOCKED ON 3C BY DECISION (Option B, 2026-08-15): the gate stays off through Phase 3b/3c and flips once, after 3c lands. Not "not started"; not "in progress" either — what's left is sequencing-blocked by owner decision, not incomplete implementation.** | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
+| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | NOT STARTED — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock) | — | — |
+| 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock) | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | **SKIPPED** | — | — |
 | — | **STAGE 1 LOCK** | Gate in Part D | NOT PASSED | — | — |
 | 4 | All stages (structural; byte-identical gate) | Restructure into four stages (Prepare / Align and Select / Place / Finalize and Report) | NOT STARTED | — | — |
@@ -4480,3 +4480,22 @@ byte-identical to a miss. Two real bugs were caught and fixed live in the same s
 `.tmp`-suffix filename defeating ffmpeg's own format auto-detection; a concurrent-miss
 filename collision). Still has no production (non-dev, UI-reachable) caller — that slice is
 the next item on the terminal path (`docs/work-in-progress.md` §11, item 1).
+
+**R.5 (unscripted-audio wildcard) — DECISION: DEFERRED, 2026-08-15.** Closes the
+"whether/when" question `docs/work-in-progress.md` §7 item 2 left open (the
+*destination* question was already closed by ruling R-E; the *implementation*
+timing is what this closes). **Decision: option (b)** — ship the capability-gated
+production-wiring slice (`docs/work-in-progress.md` §11 item 1) without R.5, build
+R.5 afterward. **Reasoning:** Stage 1 lock (§11 items 12-13) depends only on items
+1 (production wiring) and 8 (Phase 3c) landing — R.5 is not a Stage 1 lock
+criterion under any citation in this document or the tracker. D25 B1 already found
+the condition R.5 exists to handle remains reachable and silently-absorbed (not
+mis-attributed) under the shipped index-attribution path, so deferring costs
+nothing correctness-wise before Stage 1 lock. **Does not descope R.5** — owner
+ruling D1 (`docs/work-in-progress.md` §7, "PERMANENT") mandates it in Task 5's
+scope; this decision only orders it after production wiring rather than bundled
+into it, since both changes touch `FaChunkInput` and combining them would delay
+production wiring's own landing for no Stage-1-lock benefit. **Reopen trigger:**
+the next time work begins on `docs/work-in-progress.md` §11 item 1 (production
+wiring) or item 6 (R-H second-baseline pass) — whichever lands first — R.5 (item
+5) should be scoped concretely as the following slice, before Phase 4 begins.
