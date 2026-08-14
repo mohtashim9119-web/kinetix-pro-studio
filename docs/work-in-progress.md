@@ -102,7 +102,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
 | **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
-| 3b | 1 | **NOT STARTED** (Slice 1 plumbing done — normalizer wired, no fr/de/pt rules yet) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — no task on the ledger under its own name |
+| 3b | 1 | **IN PROGRESS, NOT COMPLETE** (Rules 1-3 done — French elision, Spanish cardinals 0-30, German cardinals 0-30; currency/thousands-separator expansion PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) — remaining sub-items (Portuguese cardinals, French cardinals beyond Rule 1) inherit this same phase-level assignment, not separately unowned | Portuguese cardinal expansion blocked on a PT-PT/PT-BR spelling-fork question put to the owner this pass (§7 item 6 below); French cardinal expansion beyond Rule 1 blocked on its own irregular-exception design | Language-keyed normalization (fr/de/pt/de contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **NOT STARTED** | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
@@ -457,6 +457,33 @@ and before any release build (R-K) — i.e., it gates the release-build phase, n
 work surfaced it again in the `fa-inference` build-flag context (see the 2026-08-15
 "Gate sequencing decided" changelog entry below) — confirming it was written down, not
 only discussed.
+
+**6. Portuguese cardinal numbers 0-30 — PT-PT vs PT-BR spelling fork.**
+*What it is:* Rules 1-3 (French elision, Spanish/German cardinals) are done; a Phase 3b
+remainder audit (2026-08-15) found Portuguese cardinal digits 0-30 are the same shape of
+gap (no structural multi-word wall, single lookup table would suffice) but four of the
+31 values fork by variant: 14 catorze/quatorze, 16 dezasseis/dezesseis, 17
+dezassete/dezessete, 19 dezanove/dezenove (PT-PT first, PT-BR second in each pair). The
+other 27 of 31 values (0-13, 15, 18, 20-30) are spelled identically in both variants.
+*Checked before asking, per this pass's own instruction not to guess:* the committed
+`scripts/fixtures/fa-vocab-pt.json` is a CTC character-vocabulary export (which letters
+the model can emit), not a word list — it cannot settle a whole-word spelling choice by
+construction, confirmed by direct read of the file. The one real Portuguese text fixture
+in the repo, `scripts/fixtures/fa-e2e-alignment-pt-site-publico.json`, carries a single
+sourced sentence ("O resultado da análise do gráfico será disponibilizado no site
+público.") with no cardinal number in it and no variant-distinguishing vocabulary either
+way — it settles nothing. Its audio is sourced from `google/fleurs`, whose only
+Portuguese configuration is Brazilian (`pt_br`) — noted for completeness, but this is
+about the *audio corpus*, not the jonatasgrosman model's training-vocab bias or a
+project convention for spelled-out numbers, so it does not resolve the spelling question
+either. No prior Portuguese narration-script corpus exists in this repo (§10 above: fr/de/pt
+narration corpus is completely absent). **Conclusion: not settled by anything in-repo —
+put to the owner (§ Portuguese fork question, this session).**
+*Options:* (a) PT-PT (catorze/dezasseis/dezassete/dezanove); (b) PT-BR
+(quatorze/dezesseis/dezessete/dezenove); (c) support both, keyed off a variant flag not
+currently in `Project`/`SUPPORTED_LANGUAGES` (bigger change, new field, deferred unless
+requested).
+*Owner, trigger:* project owner; blocks Rule 4 (Portuguese cardinals 0-30) starting.
 
 **Decisions already ruled (closed) — WS1-specific, not restated as open work.** Carried
 forward from the deleted `ws1-master-roadmap.md` §8 and the pre-consolidation WIP doc's own
@@ -1096,7 +1123,9 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   asymmetry when `faTextNormalize.ts` never had digit expansion for any
   language — but only updated the "Rule 2 unstarted" forward-references
   (`sync-pipeline-v2-plan.md`'s status table, line 23); the underlying framing
-  prose in Part H.5 itself (`sync-pipeline-v2-plan.md:4067-4092`) was left
+  prose in Part H.5 itself (`sync-pipeline-v2-plan.md:4087-4112`, shifted
+  +20 from the original `4067-4092` by the 2026-08-15 Phase 3c scope-addition
+  insertion, see this changelog's own later entry) was left
   unedited. Verified by direct code inspection this run: `textNormalize.ts`
   genuinely has all five capabilities H.5 attributes to it (`digitTokenToWords`,
   `$`->`dollars` currency expansion, a thousands-separator strip, an English
@@ -1143,7 +1172,8 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   architecture `faTextNormalize.ts`'s 1:1-per-token `normalizeWord` cannot
   replicate. So decision (b) forecloses currency expansion too, not just
   Spanish 31+/French "et"-numbers. Recorded in full in H.5
-  (`sync-pipeline-v2-plan.md:4136-4166`) and the Phase 3b tracker row, with
+  (`sync-pipeline-v2-plan.md:4156-4186`, shifted +20 for the same reason)
+  and the Phase 3b tracker row, with
   a reopening criterion (only if a concrete forcing need justifies reworking
   the `FaWordResult`/`WordResult` 1:1 contract and its `fa_onnx.rs`
   consumers together).
@@ -1235,3 +1265,88 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   no protected file touched, no new doc file, scratch audit test file
   (`src/services/__scratch_h5_audit.test.ts`, used to print real normalizer
   outputs during the audit) deleted before this commit.
+
+- **2026-08-15 — Ownership-contradiction fix + Phase 3b scope correction
+  (docs-only, follow-up to Rule 3 / commit `06c2bb4`).** Two parts.
+
+  **1. Ownership contradiction, resolved.** The Rule 3 changelog entry above
+  said "Four items remain, none with an owner." §3's Master Phase Board and
+  `sync-pipeline-v2-plan.md`'s own status table both already carry
+  `project owner (assigned 2026-08-15)` in Phase 3b's Owner column — so the
+  phase itself was never unowned; the "no owner" wording was describing
+  something narrower (no owner distinct from the phase-level assignment)
+  but read as a contradiction against the tracker. Fixed by editing §3's 3b
+  row (above) and adding an explicit note that remaining sub-items inherit
+  Phase 3b's existing phase-level owner rather than being separately
+  unowned — no 3b item now reads as unowned. `sync-pipeline-v2-plan.md`'s
+  3b status-table cell gets the equivalent correction in the same commit as
+  this entry (see its own diff).
+
+  **2. Phase 3b scope correction — code evidence for whether the two
+  `textNormalize.ts` items actually belong in 3b.** Rule 3's audit filed
+  "the pre-existing Task 5 prerequisite" (diacritic destruction) and
+  "`textNormalize.ts`'s thousands-separator MANGLING bug" as open 3b items.
+  Traced both through `src/services/faChunkPlan.ts` end to end before
+  accepting that framing, per this pass's own instruction to verify rather
+  than assume:
+    - `chunk.text` — the string that actually reaches forced alignment — is
+      RAW `seg.text`, never routed through `canonicalize`/`canonicalizeSceneDoc`.
+      Confirmed at the call site, `faChunkPlan.ts:628`
+      (`normalizeForForcedAlignment(chunk.text, languageCode, vocabChars).text`),
+      and stated as a deliberate design choice in the module's own "TEXT
+      DOMAIN" comment (`faChunkPlan.ts:360-371`): raw text yields 569
+      representable words matching the whole-file FA reference exactly,
+      while `queryWords.join(' ')` (the canonicalize-derived path) yields
+      589 because `normalizeSceneDoc` expands "41st" and splits contractions
+      differently — routing FA text through `canonicalize` was explicitly
+      rejected as changing WHAT IS ALIGNED, not just where it's cut.
+    - `canonicalize` (via `normalizeSceneDoc`/`normalize`, both imported
+      from `whisperService.ts` at `faChunkPlan.ts:44`) IS reached, but only
+      for `qi` word-count bookkeeping — `computeRunContext`'s `tokenWords`
+      (`faChunkPlan.ts:106-111`, transcript side) and `queryWords`/`rawTokens`
+      (`:117-130`, script side), which decide where a chunk's raw text gets
+      CUT, not what the cut text contains.
+  **Conclusion, per item:**
+    - Diacritic destruction (`textNormalize.ts` `canonicalize` step 10,
+      ASCII-fold) does NOT reach the FA model's input text — confirmed, not
+      assumed. It CAN shift `qi` word-count boundaries for non-English
+      segments (a diacritic mid-word becomes a space, splitting one
+      orthographic word into two counted words), which is a chunk-cut-point
+      risk, not an FA-input-corruption risk.
+    - `textNormalize.ts`'s thousands-separator mangling is the same shape:
+      unreachable as FA-input corruption (chunk text is raw), reachable
+      only as a `qi`-bookkeeping risk via the same `canonicalize` path.
+  **Neither is a Phase 3b item.** Phase 3b's actual surface is
+  `faTextNormalize.ts`/`text.rs` — additive, language-keyed rules that never
+  touch `canonicalize`. Both items live entirely inside `textNormalize.ts`,
+  the file every 3b slice has correctly treated as hard-untouchable (frozen
+  English baseline, `CLAUDE.md` Testing section). **Reassigned to Phase 3c.**
+  Phase 3c is the one phase already scoped to edit `canonicalize` (the
+  hyphen-asymmetry fix, `sync-pipeline-v2-plan.md:3818-3819`) and already
+  budgets the cost that any `canonicalize` change requires: "this rewrites
+  the alignment corpus on both sides... its own commit with its own
+  re-listen of the set. It shifts English token/word indices — the last
+  index-shifting event of Stage 1." Bundling these two qi-bookkeeping items
+  into that same commit/re-listen avoids paying the index-shift-plus-
+  re-listen cost twice; leaving them as standalone Phase 3b items would
+  either strand them behind 3b's byte-identical-English gate (which they
+  cannot clear without touching `canonicalize`) or force a second,
+  redundant corpus re-listen. `sync-pipeline-v2-plan.md`'s Phase 3c section
+  gets a correction paragraph recording this in the same commit as this
+  entry.
+  **Phase 3b's real remaining scope, after this correction:** two items,
+  both already covered by Phase 3b's existing phase-level ownership, not
+  unowned — Portuguese cardinal expansion (§7 item 6 above, PT-PT/PT-BR
+  fork put to the owner this session) and French cardinal expansion beyond
+  Rule 1 (irregular "et"-exception design, no code attempted this pass per
+  this pass's own instruction not to freelance a design under audit-pass
+  time pressure).
+  **No code changed by this entry** — `textNormalize.ts` was read, not
+  edited, consistent with this pass's explicit constraint not to touch it.
+  `git diff --stat` for this entry: `docs/work-in-progress.md`,
+  `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` — 2 files, no protected
+  file touched, no new doc file. Suite baselines unaffected (docs-only,
+  same as the Rule 3 commit's own verified numbers: cargo 100/100, `cargo
+  test --features fa-inference` 174/19 ignored, clippy 4 pre-existing/0
+  new, `npm test` 80 files/2008 passed/1 skipped, golden replay 6/6,
+  `phase4-step-x-verify.py` 13 in/C10 out/exit 1).
