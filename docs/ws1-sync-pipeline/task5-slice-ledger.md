@@ -299,12 +299,24 @@ whichever neighboring segment's boundary placement already handles it today
 **revisitable, because it is gated**: R.5 sits behind the same
 capability-gated Settings toggle as the rest of FA (see above), so adding it
 later is an additive change behind an already-off-by-default surface, not a
-breaking one. Rationale: R.5's own text already flags its output-destination
+breaking one. Rationale: R.5's own text flags its output-destination
 question (which segment absorbs the wildcard gap) as needing an owner ruling
-before implementation, and Step R.9's own table shows R.5 as only a
-**partial** fix for the unscripted-heading case even once built — shipping
-the simpler, already-working degradation first and layering the wildcard
-mechanism in later is lower-risk than blocking the rest of FA on it.
+before implementation (`sync-pipeline-v2-plan.md:1499`), and Step R.9's own
+table shows R.5 as only a **partial** fix for the unscripted-heading case
+even once built — shipping the simpler, already-working degradation first
+and layering the wildcard mechanism in later is lower-risk than blocking
+the rest of FA on it.
+
+**Correction, added during the WS1 docs-sync pass (2026-08-14): the
+destination question above was already settled before Task 5 began, not
+merely flagged.** `project-state.md`'s **R-E** ("Model P outranks R.5" — a
+forced-alignment wildcard span is assigned to the preceding segment) was
+recorded 2026-08-11 (commit `ba05be6`), a full day before Task 5's first
+commit (`7f74c39`, 2026-08-12) — this paragraph and D25 B1's own writeup
+(below) both overlooked it. What remains genuinely open is not *where the
+gap goes* (decided: the preceding segment) but *whether/when to build R.5
+at all*, given D25 B1's verdict (i) finding — see
+`task5-open-decisions.md` §2.
 
 **D25 B1 (read-only reachability scoping, no implementation):** owner
 decision D1 (`task5-integration-scope.md` §0) mandates R.5 as part of D1's
@@ -391,11 +403,11 @@ Full duration-ladder and delta measurements:
 | **Cancellation is inert** | **Done (D11)** — verified accurate here | Stale as of this row's original wording (pre-D11). `align_chunked` (`fa_onnx.rs:798`) now checks `is_cancelled` before chunk 0 (`fa_onnx.rs:807`) and again before every subsequent chunk (`fa_onnx.rs:819`), returning `Err(FaOnnxError::Cancelled)` immediately with no partial word list. Proven by a real, deterministic test — `mod cancellation`'s `cancellation_stops_before_completing_all_chunks_deterministically` (`fa_onnx.rs:3631+`) scripts a cancel that fires after exactly 2 of 4 chunks and asserts the loop stops there, not merely "eventually." |
 | **Production audio path (the dev tool makes its own WAV)** | **Wired into `fa_align_dev` and live-verified against a real `AppHandle` (D25 A1); still no PRODUCTION (UI-reachable) caller** | `fa_align_dev` exists precisely because no production caller leaves a durable WAV on disk. `faWordSpansToTranscriptTokens` (`src/services/faBoundaryTypes.ts:117`) still has exactly one caller, `src/App.tsx`'s DEV-only `__faDevAlign` harness (`App.tsx:3498-3499`, `import.meta.env.DEV`-gated, no UI, no production `invoke()`). **D24** built `fa.rs`'s `ensure_durable_wav` (durable, LRU-retained cache under `app_local_data_dir()/fa-audio-cache/`, key = source-file identity) but left it genuinely untested against a real `AppHandle` — D24's own 9 tests covered only the pure core. **D25 A1** wired `ensure_durable_wav` into `fa_align_dev` itself and exercised it live (a real `AppHandle<Wry>` via `tauri::test::mock_context`, no running app needed; a new `harness = false` integration-test binary since the real runtime needs the process main thread) against the real 173 corpus: resolved cache path matches production's `app_local_data_dir()` exactly, and a second call is a genuine cache hit (1538x faster, byte-identical, mtime re-stamped). **Caught a real, previously-undetected bug live on the first run** — the `.tmp` file's name defeated ffmpeg's own filename-based output-format auto-detection, so every real transcode was failing; fixed (`cache_dir/.tmp/{key}.{uuid}.wav`). **A2** also found and fixed a concurrent-miss tmp-filename collision (two real ffmpeg processes could race to write the same file) — full evidence: `docs/ws1-sync-pipeline/d25-durable-cache-live-wired-r5-scoping-2026-08-14.md`. **Still has no PRODUCTION caller** — `fa_align_dev` remains dev-only/console-invoked; the capability-gated Settings-toggle slice (§4's ruling) is what will invoke `ensure_durable_wav` from a real Apply-Sync path. What D25 changes is confidence: the durable cache is now proven correct against a real `AppHandle` and real I/O, not just its pure core in isolation. |
 | **R.7 gate untestable** | **Open, re-confirmed (D15)** | `CONF_MIN = 0.3` (`syncConstants.ts:536`) is still defined but unconsumed by any test — grepped, no fixture in the repo constructs a deliberately low-confidence case. Needs either a deliberately-constructed low-confidence fixture or real-world low-confidence audio; none exists in the repo today. Unchanged by D11-D14 (real-corpus measurement work, not synthetic fixture work). |
-| **R.5 wildcards** | Deliberately deferred (§4 ruling) | Ships after the capability-gated toggle, additive, once an owner ruling on wildcard-gap destination lands (R.5's own open question). |
+| **R.5 wildcards** | Deliberately deferred (§4 ruling); still not-started as of D25 — verdict (i), fully reachable, no code (`d25-durable-cache-live-wired-r5-scoping-2026-08-14.md`) | Destination is already decided (R-E, 2026-08-11 — corrected in §4 above, this pass). What's open is whether/when to build it at all, given D25's reachability finding and 2-layer implementation sketch — see `task5-open-decisions.md` §2, not a scoping gap. |
 | **CI automation of the four-way ORT matrix** (feature off / feature-on×ORT-set / feature-on×ORT-unset / feature-on×`FA_REQUIRE_ORT`) | **Done (D14 B1), confirmed non-flaky (D16 B1)** | `.github/workflows/fa-ort-matrix.yml` runs all four cells on every push/PR touching the FA Rust surface. First real run (`31731286244`) failed all 4 cells on two bugs never reproduced locally (a missing `externalBin` sidecar-resource placeholder that `tauri-build`'s `build.rs` requires unconditionally, and a macOS-`bsdtar`-specific `--strip-components` miscount on the onnxruntime release tarball); both fixed, re-run (`31731983204`) is green on all 4 cells — https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/31731983204. **D16**: triggered a second, independent run via `workflow_dispatch` (`31733694464`) to rule out a one-off — also green on all 4 cells. **Not added to required status checks**: `main` currently has no branch protection at all (`GET /branches/main/protection` → 404 "Branch not protected"), so there is no existing required-checks list to append to; creating branch protection from scratch is a repo-settings change with a blast radius beyond this workflow (it would start gating every future push/PR to `main`) and was left to the owner rather than done unilaterally. |
 | **R-H judgement** (the FA-swap-reviewed-against-baseline half of ruling R-H) | **BLOCKED on a per-language model, not merely Open (D15 restatement)** | `ws1-master-roadmap.md:108-113`: "the FA swap itself is then run and reviewed per-boundary against that new baseline... cannot happen until Task 5 wires a real per-language model, so it is recorded here as a hard precondition on that slice." Still true after D11-D14 (no production per-language-model wiring landed) — do not carry this as generically "Open" work again; it is specifically blocked on the capability-gated production wiring slice, not on anything achievable within a measurement-only slice. |
 | **Spanish gate signoff** | **CLOSED, not a gap (D15 citation added)** | Cleared 2026-08-11 — `docs/ws1-sync-pipeline/spanish-gate-scoring.md:40`: "Step F breath-aware \| 30.3ms \| **50.4ms** \| 1183.7ms \| 1 of 22 \| PASS" (p95 50.4ms vs. the 250ms gate). Listed here only to confirm it is not accidentally re-opened by this register. |
-| **Live-`AppHandle` coverage** | **Partially closed by D10** — verified accurate here | Before D10, every FA test drove either a hand-rolled path (`fa_models_dir()`-style helpers) or `align_with_model_path` directly, never a real `tauri::AppHandle`. D10's `fa_align_dev` is the first exercise of `fa_model_path`'s real `AppHandle`-based resolution (`app.path().app_local_data_dir()`) outside a test double — confirmed by reading `fa_dev.rs`'s own header comment and `fa_model_path`'s signature. Still not covered: a **production** (non-dev, capability-gated) call path through a live `AppHandle` — D10 closes the dev-tool half of this gap, not the production half. Unchanged by D11-D14. |
+| **Live-`AppHandle` coverage** | **Extended by D10, then D25 A1** — verified accurate here | Before D10, every FA test drove either a hand-rolled path (`fa_models_dir()`-style helpers) or `align_with_model_path` directly, never a real `tauri::AppHandle`. D10's `fa_align_dev` is the first exercise of `fa_model_path`'s real `AppHandle`-based resolution (`app.path().app_local_data_dir()`) outside a test double — confirmed by reading `fa_dev.rs`'s own header comment and `fa_model_path`'s signature. **D25 A1** (`1cde438`) extended this to the durable-cache path specifically: a real `AppHandle<Wry>` via `tauri::test::mock_context` (a new `harness = false` integration test, `src-tauri/tests/fa_durable_wav_live.rs`, since the real Wry runtime needs the process's actual main thread) against the real 173 corpus — confirmed cache path resolution matches production's `app_local_data_dir()` exactly. Still not covered: a **production** (non-dev, UI-reachable) call path through a live `AppHandle` — D10 and D25 both close dev-tool/test-harness halves of this gap, not the production half. Unchanged by D11-D14, D16-D24; extended D25. |
 
 ---
 
@@ -431,7 +443,10 @@ was `fa_onnx.rs`, now resolved above.
   task 5 entry, which now points here for slice-level detail rather than
   carrying it inline (D1–D6 remain inline there as previously recorded;
   D7–D10 are recorded only here, to avoid the same fact living in two
-  places going forward).
+  places going forward). D11–D25 are recorded only in this ledger and in
+  `task5-status-board.md` (current per-item state) — `work-in-progress.md`'s
+  own entry carries only a short summary pointing here, added at the
+  2026-08-14 docs-sync pass.
 - **Duration ladder, memory, and delta measurements** — owned by
   `docs/ws1-sync-pipeline/measurements/d10-runtime-observations-2026-08-13.md`.
 - **D11's real-corpus chunked-alignment measurements** (240s agreement table,

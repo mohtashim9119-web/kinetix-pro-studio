@@ -16,23 +16,34 @@
 
 ---
 
-## NEXT UP (updated 2026-08-13, after Task 5 Slices D1-D10 — STALE, see note)
+## NEXT UP (last updated 2026-08-13, after Task 5 Slices D1-D10 — STALE again as of D25, see note)
 
 > **This block predates Task 5's actual execution and is kept below only as
-> the historical scoping record it was written as.** As of 2026-08-13, Task
-> 5's Rust integration has shipped eleven slices (D1-D6, D8-D12; D7 was
-> cancelled as scoped — `eda13b1` (D11) and `dda07b7` (D12) landed after this
-> heading was last dated, `git log --oneline` confirms both on `main`) behind
-> the OFF-by-default `fa-inference` Cargo feature, reachable in the running
-> app only via the DEV-only `window.__faDevAlign` path — full slice-by-slice
-> record, corrected assumptions, and rulings at
-> `docs/ws1-sync-pipeline/task5-slice-ledger.md`. **What genuinely remains
-> next** is the windowing implementation (Step R's R.2/R.3/R.5/R.7-R.9,
-> still design-only) plus the capability-gated production wiring the slice
-> ledger's rulings require before FA can become the real Apply-Sync timing
-> source — see that document's "Known-gap register" (§6), which supersedes
-> the "Files expected to change" / "Acceptance criteria" text below wherever
-> the two disagree.
+> the historical scoping record it was written as.** As of 2026-08-14, Task
+> 5's Rust integration has shipped through **Slice D25** (D1-D6, D8-D25; D7
+> was cancelled as scoped, no commit exists under that name — full
+> cancellation reasoning at `task5-slice-ledger.md` §2) behind the
+> OFF-by-default `fa-inference` Cargo feature, reachable in the running app
+> only via the DEV-only `window.__faDevAlign` path. Since this block was
+> written, real chunked-windowing execution landed on top of R.0/R.1/R.4
+> (D11), index attribution became the chunked path's own internal default
+> and closed the real CTC-infeasibility cases it was built to fix
+> (D13/D21/D22), R.2 padding was built, measured net-unfavorable, and
+> deleted (D23/D24), a capability-gated Settings toggle and a word-timing
+> schema shipped but remain inert (D17-D19), and a durable audio cache was
+> built and live-wired against a real `AppHandle` (D24/D25) — still no
+> production (UI-reachable) caller. Full slice-by-slice record, corrected
+> assumptions, and rulings: `docs/ws1-sync-pipeline/task5-slice-ledger.md`.
+> Current per-item status board (every sub-item done/in-progress/blocked,
+> with evidence): `docs/ws1-sync-pipeline/task5-status-board.md`. **What
+> genuinely remains next** is the capability-gated production wiring slice
+> (a production, non-dev `AppHandle`-reachable caller of `fa_align`) — R.2 is
+> now closed-negative (not remaining work), R.5 is scoped-but-unbuilt
+> (verdict (i), still reachable — `task5-open-decisions.md` §2 for the
+> whether/when call), and R.3/R.7-R.9 remain design-only. See the status
+> board and `task5-slice-ledger.md`'s "Known-gap register" (§6), which
+> supersedes the "Files expected to change" / "Acceptance criteria" text
+> below wherever the two disagree.
 
 **Task 5 — Rust integration for forced alignment (Phase 3), not Slice 2.** Phase 3 is the
 "real timing-source upgrade" (§2) that fixes the underlying smear defect, and per §7 it sits
@@ -149,7 +160,7 @@ FA-vs-DTW decision this task executes on.
 | Programme status | "Accepted architecture — pending implementation" (plan doc's own header, line 1) |
 | Phases fully shipped | 0, 1, 1b, 2a, 2b (research/design phases only — see §2; no stage has *locked*) |
 | Phases explicitly skipped | 3d (conditional phase, condition didn't trigger) |
-| Phases in progress, dev-only | 3 (forced alignment — Slices D1-D6/D8-D12 shipped behind `fa-inference`, dev-only reachable; windowing + production wiring still open — `docs/ws1-sync-pipeline/task5-slice-ledger.md`, updated 2026-08-13, is more current than this table's 2026-08-11 build date) |
+| Phases in progress, dev-only | 3 (forced alignment — Slices D1-D6/D8-D25 shipped (D7 cancelled as scoped) behind `fa-inference`, dev-only reachable; capability-gated production wiring is the one remaining engineering slice — R.2 closed-negative, R.5 scoped-but-unbuilt (verdict (i)), R.3/R.7-R.9 design-only — `docs/ws1-sync-pipeline/task5-status-board.md` is the current per-item board, more current than this table's 2026-08-11 build date) |
 | Phases not started, no gate blocker | 3b, 3c |
 | Phases blocked on Stage 1 locking | 4, 5, 6, 6b, 7 |
 | Stage locks passed | **0 of 4** — Stage 1, 2, 3, 4 all "NOT PASSED" |
@@ -170,7 +181,7 @@ Two status sources exist in the plan document itself: a **top summary table** (i
 | 1b | Stage 1 | Build a dev-only Transcript Inspector; measure smear distribution on a tight-pause and a long-pause project | **DONE**, owner ran it on both corpus projects 2026-08-04 | `sync-pipeline-v2-plan.md:222-293` |
 | 2a | Stage 1 | Swap to the multilingual `ggml-large-v3-turbo` model, add per-project language override | **DONE**, gate passed 38/44, owner listened all 47 boundaries | `sync-pipeline-v2-plan.md:295-378` |
 | 2b | Stage 1 | Measure DTW vs. no-DTW on the production model | **DONE** — **DTW is dead.** Measured to change timestamps by exactly `0.000000000s` across 4,579 + 2,080 tokens. Decision: "DTW IS ABANDONED PERMANENTLY... do not revisit it without new evidence that overturns the zero-delta measurement." | `sync-pipeline-v2-plan.md:406-462, 555` |
-| **3** | Stage 1 | **Forced alignment — the real timing-source upgrade.** This is the phase that actually fixes the smear defect. | **IN PROGRESS, dev-only.** Real ONNX+Viterbi Rust alignment landed (Slices D1-D6, D8-D12; D7 cancelled as scoped — `docs/ws1-sync-pipeline/task5-slice-ledger.md`), behind the OFF-by-default `fa-inference` feature, reachable in the app only via the DEV-only `window.__faDevAlign`. Not yet the production timing source: windowing (Step R's R.2/R.3/R.5/R.7-R.9) and the capability-gated Settings-toggle wiring the slice ledger's rulings require are still open — see that document's §6. | `docs/ws1-sync-pipeline/task5-slice-ledger.md`; `roadmap-2026-08-07.md` §D2; `sync-pipeline-v2-plan.md` Steps M-Z |
+| **3** | Stage 1 | **Forced alignment — the real timing-source upgrade.** This is the phase that actually fixes the smear defect. | **IN PROGRESS, dev-only.** Real ONNX+Viterbi Rust alignment, chunked windowing execution, index attribution, a capability gate, and a durable audio cache landed (Slices D1-D6, D8-D25; D7 cancelled as scoped — `docs/ws1-sync-pipeline/task5-slice-ledger.md`), behind the OFF-by-default `fa-inference` feature, reachable in the app only via the DEV-only `window.__faDevAlign`. Not yet the production timing source: the capability-gated production-wiring slice (a non-dev `AppHandle`-reachable `fa_align` caller) is the one remaining engineering item — R.2 is closed-negative (built, measured net-unfavorable, deleted), R.5 is scoped reachable-but-unbuilt (verdict (i)), R.3/R.7-R.9 remain design-only. Current per-item status: `docs/ws1-sync-pipeline/task5-status-board.md`. | `docs/ws1-sync-pipeline/task5-slice-ledger.md`; `docs/ws1-sync-pipeline/task5-status-board.md`; `roadmap-2026-08-07.md` §D2; `sync-pipeline-v2-plan.md` Steps M-Z |
 | 3b | Stage 1 | Language-keyed text normalization (contractions, numbers) for fr/de/pt | **NOT STARTED.** Not on the current WS1 task ledger under its own name — see the gap flagged in §6. | `sync-pipeline-v2-plan.md:3721-3723` |
 | 3c | Stage 1 | Hyphen-asymmetry fix (`textNormalize.ts` glues a hyphenated word Whisper emits as two tokens) — **the last event that shifts English token/word indices in Stage 1** | **NOT STARTED.** Blocks Stage 1 locking directly (see §3). Not on the current WS1 task ledger under its own name — same gap as 3b. | `sync-pipeline-v2-plan.md:3725-3726`, K1 audit `:4239` |
 | 3d | Stage 1 | Adaptive (noise-floor) silence thresholds, conditional on Phase 2b showing the fixed −45dB threshold costs accuracy | **SKIPPED.** Phase 2b's own finding: the threshold isn't the binding constraint (spot-verified against a waveform; the failure is entirely token-side). Reopens only if Phase 3's post-FA measurement shows a silence-side cost. ⚠ *The plan doc's own top table still lists this as "NOT STARTED" — a real internal contradiction; the detailed section (dated, reasoned, with a reopening trigger) is authoritative.* | `sync-pipeline-v2-plan.md:3731` vs. `:20` |

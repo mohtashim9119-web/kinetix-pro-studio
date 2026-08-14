@@ -46,6 +46,68 @@ instead, per this project's docs conventions.
 
 ---
 
+## 0a. Update — 2026-08-14, WS1 docs-sync pass (appended forward, §1-4 below untouched)
+
+Two of §3's four "not-started" items have since shipped, and one correction
+to §2's own framing is needed. Recorded here rather than editing §1-4 in
+place, per this document's own stated convention above.
+
+**§3 row 2 ("Durable production audio path") is now built and live-wired,
+though still not production-reachable.** `fa.rs`'s `ensure_durable_wav`
+(`fa.rs:736`) was built at Slice D24 (`a89f70a`) and wired into the one real
+caller, `fa_align_dev`, at Slice D25 A1 (`1cde438`) — exercised live against
+a real `AppHandle<Wry>` (via `tauri::test::mock_context`, a new
+`harness = false` integration test, `src-tauri/tests/fa_durable_wav_live.rs`)
+and the real 173-project corpus: resolved cache path matches production's
+`app_local_data_dir()` exactly, and a cache hit is 1538x faster and
+byte-identical to a miss. Two real bugs were caught and fixed live in the
+same slice (a `.tmp`-suffix filename defeating ffmpeg's format
+auto-detection; a concurrent-miss tmp-filename collision). **§3's stated
+hard prerequisite (the capability-gated Settings-toggle decision) has
+itself been satisfied** — D17/D18 (owner ruling D2, §0 above) shipped
+`faGate.ts`'s `isFaGateOpen()`, a persistent OFF-by-default toggle. What
+`fa_align_dev` still is not is a *production* (UI-reachable, non-dev)
+caller — that remains the actual open item, now better-scoped than §3
+described it (the durable-WAV half of the work is done; only the
+production-command half, §3 row 3, remains). Full evidence:
+`d25-durable-cache-live-wired-r5-scoping-2026-08-14.md`.
+
+**§3 row 3 ("Production-side `AppHandle` coverage") is partially
+addressed by the same D25 A1 work** — a real `AppHandle<Wry>` has now been
+exercised for the durable-cache path specifically, not just `fa_dev.rs`'s
+model-resolution path (D10's original, narrower coverage). Still missing:
+a non-dev, capability-gated Tauri command that calls `fa_align` through a
+live `AppHandle` in a way reachable from the actual running app, not a
+test harness.
+
+**§2's claim that R.5 is "fully unimplemented design" needs one
+correction: the destination sub-question is not open.** §2 correctly
+states R.5 remains fully unimplemented — that part is unchanged and still
+true (D25 B1 confirmed it, verdict (i): the condition R.5 handles is still
+fully reachable, no wildcard/star-token mechanism exists anywhere in
+`fa_viterbi.rs`/`fa_onnx.rs`). But `project-state.md`'s **R-E** ("Model P
+outranks R.5" — the wildcard span is assigned to the preceding segment) had
+already settled R.5's own output-destination recommendation
+(`sync-pipeline-v2-plan.md:1499`) on 2026-08-11, before Task 5's first
+commit — a fact §2 (written at D16) and this document's own §4 step 3
+("R.5's wildcard-destination owner ruling") both missed. What is still
+open is not the destination but whether/when to build R.5 at all, given D1's
+mandate (§0 above) and D25's reachability finding — see
+`task5-open-decisions.md` §2 for the full framing, evidence, and cost of
+deciding either way. `task5-slice-ledger.md`'s R.5 ruling section carries
+the same correction.
+
+**Net effect on §4's recommended order:** step 4 ("capability-gated
+production wiring") is now smaller than §4 described — the durable-audio
+half is done, leaving only the production-command/`AppHandle` half. Step 3
+("R.5's wildcard-destination owner ruling") is resolved (destination
+decided); what replaces it in the sequencing is the whether/when call in
+`task5-open-decisions.md` §2, which — per that document's own analysis —
+most naturally happens *inside* step 4's slice if the answer is "build it,"
+since both touch `FaChunkInput`/the chunk-planning surface.
+
+---
+
 ## 1. Who is the intended consumer of FA word timings?
 
 > **Superseded 2026-08-14 by §0's D1 ruling** (Option B / consumer (2),
