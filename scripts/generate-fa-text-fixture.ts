@@ -161,7 +161,25 @@ const CORPUS: CorpusCase[] = [
   { lang: 'de', input: '31', note: 'de cardinal negative: 31 is past the scope cap, stays dropped' },
   { lang: 'de', input: '2.5', note: 'de cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'de', input: '05', note: 'de cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'pt', input: '23', note: 'de cardinal 0-30 unaffected-language control: pt digit word still drops exactly as before' },
+  { lang: 'en', input: '23', note: 'de cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
+
+  // -- Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
+  //    remainder; PT-BR spelling per owner decision 2026-08-15) --
+  { lang: 'pt', input: '3', note: 'pt cardinal 0-20/30: bare digit expands to a spelled word' },
+  { lang: 'pt', input: '0', note: 'pt cardinal 0-20/30: lower boundary value' },
+  { lang: 'pt', input: '14', note: 'pt cardinal 0-20/30: PT-BR variant value (quatorze, not catorze)' },
+  { lang: 'pt', input: '16', note: 'pt cardinal 0-20/30: PT-BR variant value (dezesseis, not dezasseis)' },
+  { lang: 'pt', input: '17', note: 'pt cardinal 0-20/30: PT-BR variant value (dezessete, not dezassete)' },
+  { lang: 'pt', input: '19', note: 'pt cardinal 0-20/30: PT-BR variant value (dezenove, not dezanove)' },
+  { lang: 'pt', input: '20', note: 'pt cardinal 0-20/30: upper boundary of the contiguous single-word range' },
+  { lang: 'pt', input: '30', note: 'pt cardinal 0-20/30: the one value past 20 that is still a single word' },
+  { lang: 'pt', input: 'tenho 3 gatos', note: 'pt cardinal 0-20/30: expansion survives inside a phrase' },
+  { lang: 'pt', input: '21', note: 'pt cardinal negative: 21 is inside the permanent "vinte e X" three-word wall, stays dropped' },
+  { lang: 'pt', input: '29', note: 'pt cardinal negative: 29 is the other end of the "vinte e X" wall, stays dropped' },
+  { lang: 'pt', input: '31', note: 'pt cardinal negative: 31 is past the scope cap, stays dropped' },
+  { lang: 'pt', input: '2.5', note: 'pt cardinal negative: decimal stays dropped, out of scope' },
+  { lang: 'pt', input: '05', note: 'pt cardinal negative: leading zero is not a bare cardinal, stays dropped' },
+  { lang: 'fr', input: '3', note: 'pt cardinal 0-20/30 unaffected-language control: fr digit word still drops exactly as before' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -184,6 +202,7 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'fr elision',
   'es cardinal 0-30',
   'de cardinal 0-30',
+  'pt cardinal 0-20/30',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {

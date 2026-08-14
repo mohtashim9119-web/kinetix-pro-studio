@@ -102,7 +102,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
 | **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
-| 3b | 1 | **IN PROGRESS, NOT COMPLETE** (Rules 1-3 done — French elision, Spanish cardinals 0-30, German cardinals 0-30; currency/thousands-separator expansion PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) — remaining sub-items (Portuguese cardinals, French cardinals beyond Rule 1) inherit this same phase-level assignment, not separately unowned | Portuguese cardinal expansion blocked on a PT-PT/PT-BR spelling-fork question put to the owner this pass (§7 item 6 below); French cardinal expansion beyond Rule 1 blocked on its own irregular-exception design | Language-keyed normalization (fr/de/pt/de contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
+| 3b | 1 | **IN PROGRESS, NOT COMPLETE** (Rules 1-4 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR; currency/thousands-separator expansion and Portuguese 21-29 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) — the remaining sub-item (French cardinals beyond Rule 1) inherits this same phase-level assignment, not separately unowned | French cardinal expansion beyond Rule 1 blocked on its own irregular "et"-exception design, not attempted this pass | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **NOT STARTED** | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
@@ -458,13 +458,17 @@ work surfaced it again in the `fa-inference` build-flag context (see the 2026-08
 "Gate sequencing decided" changelog entry below) — confirming it was written down, not
 only discussed.
 
-**6. Portuguese cardinal numbers 0-30 — PT-PT vs PT-BR spelling fork.**
+**6. Portuguese cardinal numbers — PT-PT vs PT-BR spelling fork. RESOLVED 2026-08-15:
+PT-BR.**
 *What it is:* Rules 1-3 (French elision, Spanish/German cardinals) are done; a Phase 3b
-remainder audit (2026-08-15) found Portuguese cardinal digits 0-30 are the same shape of
-gap (no structural multi-word wall, single lookup table would suffice) but four of the
-31 values fork by variant: 14 catorze/quatorze, 16 dezasseis/dezesseis, 17
-dezassete/dezessete, 19 dezanove/dezenove (PT-PT first, PT-BR second in each pair). The
-other 27 of 31 values (0-13, 15, 18, 20-30) are spelled identically in both variants.
+remainder audit (2026-08-15) found Portuguese cardinal digits are the same shape of gap,
+but with a caveat this item's original wording missed: Portuguese 21-29 is a three-word
+"vinte e X" compound (e.g. "vinte e três"), the same permanent multi-word wall as Spanish
+31+ under decision (b) — so only 0-20 and 30 (22 of the 31 values originally scoped) are
+actually single-word-representable; 21-29 is out of reach regardless of which spelling
+variant is chosen. Of those 22, four fork by variant: 14 catorze/quatorze, 16
+dezasseis/dezesseis, 17 dezassete/dezessete, 19 dezanove/dezenove (PT-PT first, PT-BR
+second in each pair). The other 18 are spelled identically in both variants.
 *Checked before asking, per this pass's own instruction not to guess:* the committed
 `scripts/fixtures/fa-vocab-pt.json` is a CTC character-vocabulary export (which letters
 the model can emit), not a word list — it cannot settle a whole-word spelling choice by
@@ -478,7 +482,9 @@ about the *audio corpus*, not the jonatasgrosman model's training-vocab bias or 
 project convention for spelled-out numbers, so it does not resolve the spelling question
 either. No prior Portuguese narration-script corpus exists in this repo (§10 above: fr/de/pt
 narration corpus is completely absent). **Conclusion: not settled by anything in-repo —
-put to the owner (§ Portuguese fork question, this session).**
+put to the owner this session.**
+*Owner decision (2026-08-15): PT-BR* (quatorze/dezesseis/dezessete/dezenove). Implemented
+as Rule 4 — see this session's changelog entry below.
 *Options:* (a) PT-PT (catorze/dezasseis/dezassete/dezanove); (b) PT-BR
 (quatorze/dezesseis/dezessete/dezenove); (c) support both, keyed off a variant flag not
 currently in `Project`/`SUPPORTED_LANGUAGES` (bigger change, new field, deferred unless
@@ -1350,3 +1356,85 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   test --features fa-inference` 174/19 ignored, clippy 4 pre-existing/0
   new, `npm test` 80 files/2008 passed/1 skipped, golden replay 6/6,
   `phase4-step-x-verify.py` 13 in/C10 out/exit 1).
+
+- **2026-08-15 — Portuguese cardinal numbers 0-20 and 30, Part H.5 Rule 4
+  (Phase 3b remainder audit follow-up, PT-BR).** Same shape as Rules 2/3.
+
+  **Owner decision, this session:** the PT-PT/PT-BR spelling fork (§7 item
+  6 above) resolved PT-BR. Implemented as
+  `PORTUGUESE_CARDINALS_0_30`/`expandPortugueseCardinal` in
+  `src/services/faTextNormalize.ts` + `src-tauri/src/fa/text.rs`.
+
+  **Real finding during implementation, not present in the original
+  scoping:** Portuguese 21-29 is a THREE-WORD space-linked "e" compound
+  (`"vinte e três"`, 23), the same permanent multi-word wall as Spanish
+  31+ and French "et"-numbers under decision (b) — Portuguese's wall
+  starts at 21, not 31 like Spanish (`"veintitrés"` is one word up to 29).
+  So Rule 4's real scope is 0-20 and 30 (22 of the 31 values §7 item 6
+  originally described), not the full 0-30 range. §7 item 6 and the H.5
+  decision-(b) block are both corrected in this commit to record this,
+  rather than silently shipping a narrower rule than what was asked.
+  21-29 stays dropped exactly as before, for the same permanent reason
+  Spanish 31+ does — verified with a dedicated negative test at both ends
+  of the gap (21, 29), not just asserted.
+
+  **Both sides changed together, proven to agree** via the existing
+  `fixture_parity` hard gate: 15 new corpus cases added to
+  `scripts/generate-fa-text-fixture.ts` (positives — 0, 3, 10, 14, 16, 17,
+  19, 20, 30, expansion inside a phrase; negatives — 21 and 29 the
+  three-word wall, 31 past the scope cap, 2.5 decimal, 05 leading zero;
+  plus one unaffected-language control under fr), fixture regenerated from
+  the live TS module (79 entries total, was 64), and
+  `fa::text::fixture_parity::fixture_matches_rust_port_for_every_entry_all_five_languages`
+  passes against all 79.
+
+  **Housekeeping, same commit:** Rule 3's own "unaffected language"
+  control test (TS and Rust) used `pt` as the control — no longer valid
+  now that `pt` has its own cardinal rule (coincidentally still passed,
+  since `"23"` falls in Portuguese's own 21-29 gap, but for the wrong
+  reason). Switched to `fr`, which has no cardinal rule of any kind.
+
+  **Files:** `src/services/faTextNormalize.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts` (+18 unit tests: 9 positive
+  table-driven, 1 phrase-survival, 2 negative-wall spot-checks, 1
+  scope-cap negative, 1 decimal negative, 1 leading-zero negative, 1
+  language-gate negative, plus the Rule 3 control-language fix),
+  `scripts/generate-fa-text-fixture.ts` (+15 corpus cases, +1
+  required-coverage substring, 1 control-language fix),
+  `scripts/fixtures/fa-text-normalize-fixture.json` (regenerated), plus
+  the docs above (§7 item 6 resolved, §3 board, plan doc's 3b row and H.5
+  decision-(b) block). **Untouched, verified:** `textNormalize.ts`/
+  `canonicalize` (not imported by this diff, not in `git diff --stat`);
+  the Slice 1 byte-identical English chunk-plan test
+  (`faChunkPlan.test.ts`) still passes unchanged.
+
+  **Phase 3b status after this slice: NOT COMPLETE.** One item remains,
+  owned (project owner, inherits Phase 3b's existing assignment): French
+  cardinal expansion beyond Rule 1, blocked on its own irregular
+  "et"-exception design (21/31/41/51/61/71 use "et", 81/91 don't) — not a
+  flat lookup like Rules 2-4, not attempted this pass per the explicit
+  instruction not to freelance a design under audit-pass time pressure.
+  **3b does not close this run.** The pre-existing Task 5 prerequisite
+  (diacritic destruction) and `textNormalize.ts`'s thousands-separator
+  mangling remain reassigned to Phase 3c (this session's earlier commit),
+  not 3b's own exit criterion. `languageCode` still has no production
+  caller (§11 item 1, unchanged, sequenced behind Phase 3b AND 3c both
+  landing).
+
+  **Verified:** `cargo test` 114/114 (was 100/100, +14 new Rust unit
+  tests, 0 regressions); `cargo test --features fa-inference` 188/19
+  ignored (was 174/19 ignored, +14, 0 regressions); `cargo clippy
+  --all-targets` 4 pre-existing warnings, 0 new (unchanged — re-verified
+  against the pre-edit tree via `git stash` to confirm none of the 4 are
+  newly introduced); `npm run lint` clean; `npm test` 80 files/2038
+  passed/1 skipped (was 2008/1, +30: 18 explicit TS unit tests + 12
+  fixture-driven drift-guard cases, 0 regressions); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged;
+  `scripts/phase4-step-x-verify.py` re-run: 13 recommended for CI / 1 kept
+  out (C10), exit code 1 — unchanged. `git status`: 5 files changed this
+  slice plus the same 2 doc files from this session's earlier B/C commit
+  — `docs/work-in-progress.md`, `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`,
+  `scripts/fixtures/fa-text-normalize-fixture.json`,
+  `scripts/generate-fa-text-fixture.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts`, `src/services/faTextNormalize.ts`
+  — 7 files, no protected file touched, no new doc file.

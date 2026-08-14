@@ -455,8 +455,76 @@ describe('faTextNormalize — German cardinal numbers 0-30 (Part H.5 Rule 3, Pha
     expect(result.words[0]!.reason).toContain('digit');
   });
 
-  it('other languages are unaffected: the same digit under "pt" still drops exactly as before', () => {
-    const result = normalizeForForcedAlignment('23', 'pt', VOCABS.pt);
+  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
+    const result = normalizeForForcedAlignment('23', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+});
+
+describe('faTextNormalize — Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b remainder)', () => {
+  // SCOPE: bare cardinal integers 0-20 and 30, Portuguese (PT-BR) only.
+  // Unlike German, Portuguese DOES have a structural multi-word wall — but
+  // it starts at 21 ("vinte e três", 3 words), not 31 like Spanish
+  // ("veintitrés" is one word up to 29). 21-29 is therefore permanently
+  // excluded here under decision (b), not deferred — see
+  // `expandPortugueseCardinal`'s own comment block in faTextNormalize.ts.
+  // 14/16/17/19 fork PT-PT/PT-BR; owner decision 2026-08-15 chose PT-BR.
+
+  const POSITIVE_CASES: Array<[input: string, mapped: string]> = [
+    ['0', 'zero'],
+    ['3', 'três'],
+    ['10', 'dez'],
+    ['14', 'quatorze'],
+    ['16', 'dezesseis'],
+    ['17', 'dezessete'],
+    ['19', 'dezenove'],
+    ['20', 'vinte'],
+    ['30', 'trinta'],
+  ];
+
+  it.each(POSITIVE_CASES)('"%s" expands to "%s"', (input, mapped) => {
+    const result = normalizeForForcedAlignment(input, 'pt', VOCABS.pt);
+    expect(result.words).toHaveLength(1);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe(mapped);
+    expect(result.text).toBe(mapped);
+  });
+
+  it('expansion survives inside a phrase', () => {
+    const result = normalizeForForcedAlignment('tenho 3 gatos', 'pt', VOCABS.pt);
+    expect(result.text).toBe('tenho três gatos');
+    expect(result.words.every(w => w.representable)).toBe(true);
+  });
+
+  it('negative: 21-29 is the permanent three-word wall ("vinte e X"), not a missing entry', () => {
+    for (const input of ['21', '29']) {
+      const result = normalizeForForcedAlignment(input, 'pt', VOCABS.pt);
+      expect(result.words[0]!.representable).toBe(false);
+      expect(result.words[0]!.reason).toContain('digit');
+    }
+  });
+
+  it('negative: 31 is past the scope cap, stays dropped', () => {
+    const result = normalizeForForcedAlignment('31', 'pt', VOCABS.pt);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a decimal ("2.5") stays dropped, out of scope', () => {
+    const result = normalizeForForcedAlignment('2.5', 'pt', VOCABS.pt);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a leading-zero form ("05") is not a bare cardinal and stays dropped', () => {
+    const result = normalizeForForcedAlignment('05', 'pt', VOCABS.pt);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
+    const result = normalizeForForcedAlignment('3', 'fr', VOCABS.fr);
     expect(result.words[0]!.representable).toBe(false);
     expect(result.words[0]!.reason).toContain('digit');
   });

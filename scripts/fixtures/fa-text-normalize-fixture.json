@@ -2317,15 +2317,425 @@
       "textTokenIds": []
     },
     {
-      "language": "pt",
+      "language": "en",
       "input": "23",
-      "note": "de cardinal 0-30 unaffected-language control: pt digit word still drops exactly as before",
+      "note": "de cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
       "words": [
         {
           "input": "23",
           "representable": false,
           "mapped": null,
           "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"23\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "3",
+      "note": "pt cardinal 0-20/30: bare digit expands to a spelled word",
+      "words": [
+        {
+          "input": "3",
+          "representable": true,
+          "mapped": "três",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            39,
+            25
+          ]
+        }
+      ],
+      "text": "três",
+      "textTokenIds": [
+        26,
+        24,
+        39,
+        25
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "0",
+      "note": "pt cardinal 0-20/30: lower boundary value",
+      "words": [
+        {
+          "input": "0",
+          "representable": true,
+          "mapped": "zero",
+          "reason": null,
+          "tokenIds": [
+            32,
+            11,
+            24,
+            21
+          ]
+        }
+      ],
+      "text": "zero",
+      "textTokenIds": [
+        32,
+        11,
+        24,
+        21
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "14",
+      "note": "pt cardinal 0-20/30: PT-BR variant value (quatorze, not catorze)",
+      "words": [
+        {
+          "input": "14",
+          "representable": true,
+          "mapped": "quatorze",
+          "reason": null,
+          "tokenIds": [
+            23,
+            27,
+            7,
+            26,
+            21,
+            24,
+            32,
+            11
+          ]
+        }
+      ],
+      "text": "quatorze",
+      "textTokenIds": [
+        23,
+        27,
+        7,
+        26,
+        21,
+        24,
+        32,
+        11
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "16",
+      "note": "pt cardinal 0-20/30: PT-BR variant value (dezesseis, not dezasseis)",
+      "words": [
+        {
+          "input": "16",
+          "representable": true,
+          "mapped": "dezesseis",
+          "reason": null,
+          "tokenIds": [
+            10,
+            11,
+            32,
+            11,
+            25,
+            25,
+            11,
+            15,
+            25
+          ]
+        }
+      ],
+      "text": "dezesseis",
+      "textTokenIds": [
+        10,
+        11,
+        32,
+        11,
+        25,
+        25,
+        11,
+        15,
+        25
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "17",
+      "note": "pt cardinal 0-20/30: PT-BR variant value (dezessete, not dezassete)",
+      "words": [
+        {
+          "input": "17",
+          "representable": true,
+          "mapped": "dezessete",
+          "reason": null,
+          "tokenIds": [
+            10,
+            11,
+            32,
+            11,
+            25,
+            25,
+            11,
+            26,
+            11
+          ]
+        }
+      ],
+      "text": "dezessete",
+      "textTokenIds": [
+        10,
+        11,
+        32,
+        11,
+        25,
+        25,
+        11,
+        26,
+        11
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "19",
+      "note": "pt cardinal 0-20/30: PT-BR variant value (dezenove, not dezanove)",
+      "words": [
+        {
+          "input": "19",
+          "representable": true,
+          "mapped": "dezenove",
+          "reason": null,
+          "tokenIds": [
+            10,
+            11,
+            32,
+            11,
+            20,
+            21,
+            28,
+            11
+          ]
+        }
+      ],
+      "text": "dezenove",
+      "textTokenIds": [
+        10,
+        11,
+        32,
+        11,
+        20,
+        21,
+        28,
+        11
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "20",
+      "note": "pt cardinal 0-20/30: upper boundary of the contiguous single-word range",
+      "words": [
+        {
+          "input": "20",
+          "representable": true,
+          "mapped": "vinte",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            26,
+            11
+          ]
+        }
+      ],
+      "text": "vinte",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        26,
+        11
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "30",
+      "note": "pt cardinal 0-20/30: the one value past 20 that is still a single word",
+      "words": [
+        {
+          "input": "30",
+          "representable": true,
+          "mapped": "trinta",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            15,
+            20,
+            26,
+            7
+          ]
+        }
+      ],
+      "text": "trinta",
+      "textTokenIds": [
+        26,
+        24,
+        15,
+        20,
+        26,
+        7
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "tenho 3 gatos",
+      "note": "pt cardinal 0-20/30: expansion survives inside a phrase",
+      "words": [
+        {
+          "input": "tenho",
+          "representable": true,
+          "mapped": "tenho",
+          "reason": null,
+          "tokenIds": [
+            26,
+            11,
+            20,
+            14,
+            21
+          ]
+        },
+        {
+          "input": "3",
+          "representable": true,
+          "mapped": "três",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            39,
+            25
+          ]
+        },
+        {
+          "input": "gatos",
+          "representable": true,
+          "mapped": "gatos",
+          "reason": null,
+          "tokenIds": [
+            13,
+            7,
+            26,
+            21,
+            25
+          ]
+        }
+      ],
+      "text": "tenho três gatos",
+      "textTokenIds": [
+        26,
+        11,
+        20,
+        14,
+        21,
+        4,
+        26,
+        24,
+        39,
+        25,
+        4,
+        13,
+        7,
+        26,
+        21,
+        25
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "21",
+      "note": "pt cardinal negative: 21 is inside the permanent \"vinte e X\" three-word wall, stays dropped",
+      "words": [
+        {
+          "input": "21",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"21\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "29",
+      "note": "pt cardinal negative: 29 is the other end of the \"vinte e X\" wall, stays dropped",
+      "words": [
+        {
+          "input": "29",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"29\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "31",
+      "note": "pt cardinal negative: 31 is past the scope cap, stays dropped",
+      "words": [
+        {
+          "input": "31",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "2.5",
+      "note": "pt cardinal negative: decimal stays dropped, out of scope",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"2.5\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "05",
+      "note": "pt cardinal negative: leading zero is not a bare cardinal, stays dropped",
+      "words": [
+        {
+          "input": "05",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"05\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "3",
+      "note": "pt cardinal 0-20/30 unaffected-language control: fr digit word still drops exactly as before",
+      "words": [
+        {
+          "input": "3",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"3\")",
           "tokenIds": null
         }
       ],

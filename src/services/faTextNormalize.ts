@@ -286,6 +286,51 @@ function expandGermanCardinal(stripped: string): string | undefined {
   return GERMAN_CARDINALS_0_30[n];
 }
 
+// ---------------------------------------------------------------------------
+// Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
+// remainder, 2026-08-15 — sync-pipeline-v2-plan.md's H.5 PT-PT/PT-BR fork).
+//
+// Unlike Spanish's 21-29 (a single concatenated "veinti-" word, e.g.
+// "veintitrés") and German's arbitrarily-far compounding, Portuguese 21-29
+// is a THREE-WORD space-linked "e" compound ("vinte e três") — the same
+// permanent single-word-output wall as Spanish 31+ and French "et"-numbers
+// under decision (b). 21-29 is therefore PERMANENTLY excluded here, not
+// deferred; 0-20 and 30 have no such wall (each a single orthographic
+// word) and are covered by this rule.
+//
+// 14/16/17/19 fork by variant (PT-PT catorze/dezasseis/dezassete/dezanove
+// vs. PT-BR quatorze/dezesseis/dezessete/dezenove) — nothing in this repo's
+// vocab or corpus fixtures settled the choice (checked, not assumed; see
+// `docs/work-in-progress.md` §7 item 6). Owner decision, 2026-08-15:
+// PT-BR. The other 27 of 31 values in the 0-30 range are identical in both
+// variants.
+// ---------------------------------------------------------------------------
+
+/** Index `n` -> its Portuguese (PT-BR) spelling, for `n` in 0..=20 and
+ *  n == 30. `undefined` at indices 21-29: no single-word spelling exists
+ *  ("vinte e X" is 3 words), permanently blocked by decision (b) — not a
+ *  missing table entry. */
+const PORTUGUESE_CARDINALS_0_30: readonly (string | undefined)[] = [
+  'zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
+  'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete',
+  'dezoito', 'dezenove', 'vinte',
+  undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+  'trinta',
+];
+
+/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+ *  "0"), no sign, no separators — anything else returns `undefined` and the
+ *  caller falls through to the pre-existing digit-drop path unchanged.
+ *  Also returns `undefined` for 21-29 (in range but structurally excluded —
+ *  see module comment above). Mirrors `expandSpanishCardinal`'s contract. */
+function expandPortugueseCardinal(stripped: string): string | undefined {
+  if (!/^[0-9]+$/.test(stripped)) return undefined;
+  if (stripped.length > 1 && stripped[0] === '0') return undefined;
+  const n = Number(stripped);
+  if (n > 30) return undefined;
+  return PORTUGUESE_CARDINALS_0_30[n];
+}
+
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
  *  boundary-punctuation stripping, then (Spanish only) a bare-0-30-cardinal
@@ -319,7 +364,9 @@ function normalizeWord(
     ? expandSpanishCardinal(stripped)
     : languageCode === 'de'
       ? expandGermanCardinal(stripped)
-      : undefined;
+      : languageCode === 'pt'
+        ? expandPortugueseCardinal(stripped)
+        : undefined;
   const candidate = cardinalExpansion ?? stripped;
 
   if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {

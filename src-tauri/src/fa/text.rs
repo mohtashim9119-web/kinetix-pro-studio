@@ -485,6 +485,48 @@ fn expand_german_cardinal(stripped: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
+// Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
+// remainder, 2026-08-15) - mirrors `PORTUGUESE_CARDINALS_0_30`/
+// `expandPortugueseCardinal` in faTextNormalize.ts. Unlike Spanish's 21-29
+// (a single concatenated "veinti-" word) and German's arbitrarily-far
+// compounding, Portuguese 21-29 is a THREE-WORD space-linked "e" compound
+// ("vinte e três") - the same permanent single-word-output wall as Spanish
+// 31+ and French "et"-numbers under decision (b). 21-29 is therefore
+// PERMANENTLY excluded (`None` in the table below), not a missing entry.
+// 14/16/17/19 fork PT-PT/PT-BR; owner decision 2026-08-15 chose PT-BR
+// (quatorze/dezesseis/dezessete/dezenove).
+// ---------------------------------------------------------------------------
+
+/// Index `n` -> its Portuguese (PT-BR) spelling, for `n` in 0..=20 and
+/// n == 30. `None` at indices 21-29: no single-word spelling exists.
+/// Mirrors `PORTUGUESE_CARDINALS_0_30`.
+const PORTUGUESE_CARDINALS_0_30: &[Option<&str>] = &[
+    Some("zero"), Some("um"), Some("dois"), Some("três"), Some("quatro"), Some("cinco"), Some("seis"),
+    Some("sete"), Some("oito"), Some("nove"), Some("dez"), Some("onze"), Some("doze"), Some("treze"),
+    Some("quatorze"), Some("quinze"), Some("dezesseis"), Some("dezessete"), Some("dezoito"), Some("dezenove"),
+    Some("vinte"), None, None, None, None, None, None, None, None, None, Some("trinta"),
+];
+
+/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+/// "0"), no sign, no separators — anything else returns `None` and the
+/// caller falls through to the pre-existing digit-drop path unchanged.
+/// Also returns `None` for 21-29 (in range but structurally excluded — see
+/// module comment above). Mirrors `expandPortugueseCardinal`.
+fn expand_portuguese_cardinal(stripped: &str) -> Option<&'static str> {
+    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if stripped.len() > 1 && stripped.starts_with('0') {
+        return None;
+    }
+    let n: u32 = stripped.parse().ok()?;
+    if n > 30 {
+        return None;
+    }
+    PORTUGUESE_CARDINALS_0_30.get(n as usize).copied().flatten()
+}
+
+// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -540,6 +582,7 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
     let cardinal_expansion = match language {
         Language::Es => expand_spanish_cardinal(stripped),
         Language::De => expand_german_cardinal(stripped),
+        Language::Pt => expand_portuguese_cardinal(stripped),
         _ => None,
     };
     let candidate: &str = cardinal_expansion.unwrap_or(stripped);
@@ -919,10 +962,134 @@ mod tests {
 
     #[test]
     fn negative_german_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "pt"
+        // Other languages are unaffected: the same bare digit under "fr"
         // still drops exactly as it did before this rule.
         let v = vocab(&['d', 'r', 'e', 'i', 'u', 'n', 'z', 'a', 'g']);
-        let result = normalize_word("23", Language::Pt, &v);
+        let result = normalize_word("23", Language::Fr, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    // -- Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
+    // remainder) -
+    //
+    // SCOPE: bare cardinal integers 0-20 and 30, Portuguese (PT-BR) only.
+    // 21-29 is permanently excluded (three-word "vinte e X" compound,
+    // blocked by decision (b)) — see `expand_portuguese_cardinal`'s own doc
+    // comment.
+
+    fn pt_vocab() -> HashSet<char> {
+        // Every letter needed to spell "zero".."trinta" (PT-BR spelling).
+        vocab(&[
+            'a', 'c', 'd', 'e', 'g', 'i', 'l', 'm', 'n', 'o', 'q', 'r', 's', 't', 'u', 'v', 'z', 'ê',
+        ])
+    }
+
+    #[test]
+    fn portuguese_cardinal_boundary_zero_expands() {
+        let result = normalize_word("0", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("zero"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_bare_digit_expands() {
+        let result = normalize_word("3", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("três"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_boundary_twenty_expands() {
+        let result = normalize_word("20", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("vinte"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_boundary_thirty_expands() {
+        let result = normalize_word("30", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("trinta"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_pt_br_variant_14_is_quatorze_not_catorze() {
+        let result = normalize_word("14", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("quatorze"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_pt_br_variant_16_is_dezesseis_not_dezasseis() {
+        let result = normalize_word("16", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dezesseis"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_pt_br_variant_17_is_dezessete_not_dezassete() {
+        let result = normalize_word("17", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dezessete"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_pt_br_variant_19_is_dezenove_not_dezanove() {
+        let result = normalize_word("19", Language::Pt, &pt_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dezenove"));
+    }
+
+    #[test]
+    fn portuguese_cardinal_survives_inside_a_phrase() {
+        let v = pt_vocab();
+        let result = normalize_for_forced_alignment("tenho 3 gatos", Language::Pt, &v);
+        let digit_word = result.words.iter().find(|w| w.input == "3").unwrap();
+        assert!(digit_word.representable);
+        assert_eq!(digit_word.mapped.as_deref(), Some("três"));
+    }
+
+    #[test]
+    fn negative_portuguese_cardinal_21_to_29_is_the_permanent_three_word_wall() {
+        // 21-29 ("vinte e X") needs 3 output words, blocked by decision (b)
+        // — same permanent wall as Spanish 31+ and French "et"-numbers, not
+        // a missing table entry. Spot-checked at both ends of the gap.
+        let v = pt_vocab();
+        for n in ["21", "29"] {
+            let result = normalize_word(n, Language::Pt, &v);
+            assert!(!result.representable, "{n} should be blocked");
+            assert!(result.reason.as_deref().unwrap().contains("digit"));
+        }
+    }
+
+    #[test]
+    fn negative_portuguese_cardinal_31_is_past_the_scope_cap() {
+        let result = normalize_word("31", Language::Pt, &pt_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_portuguese_cardinal_decimal_stays_dropped() {
+        let result = normalize_word("2.5", Language::Pt, &pt_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_portuguese_cardinal_leading_zero_stays_dropped() {
+        let result = normalize_word("05", Language::Pt, &pt_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_portuguese_cardinal_expansion_is_language_gated() {
+        // Other languages are unaffected: the same bare digit under "fr"
+        // still drops exactly as it did before this rule.
+        let v = vocab(&['t', 'r', 'e', 's']);
+        let result = normalize_word("3", Language::Fr, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("digit"));
     }
