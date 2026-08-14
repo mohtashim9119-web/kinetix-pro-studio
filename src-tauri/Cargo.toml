@@ -45,6 +45,22 @@ ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, fea
 # Cargo.lock, only a direct edge to an already-present one.
 serde_json = "1.0"
 
+[dev-dependencies]
+# WS1 Task 5 Slice D25 A1 — `tauri::test::mock_context`/`noop_assets` build a
+# `Context<R>` with an EMPTY window list, generic over the runtime `R`. Used
+# by `tests/fa_durable_wav_live.rs` with `R = tauri::Wry` (the REAL runtime,
+# not `MockRuntime`) — `fa_align_dev`/`ensure_durable_wav`'s own signatures
+# are hardcoded to `AppHandle<Wry>` (tauri's `#[default_runtime]` macro), and
+# `whisper.rs::transcode_to_wav` (unmodified, protected this slice) is too,
+# so only a REAL Wry `AppHandle` can reach them — `mock_context`'s empty
+# window list means `Builder::<Wry>::build()` never needs to create an actual
+# webview/window to get one. `test = []` on tauri's own Cargo.toml declares
+# zero additional dependencies, so this adds no new package to Cargo.lock
+# (verified: `cargo check --tests` after this change left Cargo.lock
+# byte-identical). Scoped to `[dev-dependencies]`, not `[dependencies]`, so
+# the feature is unreachable in a release build.
+tauri = { version = "2.11.2", features = ["test"] }
+
 [features]
 # Opt-in devtools in a RELEASE build. Tauri's own
 # `open_devtools`/`close_devtools`/`is_devtools_open` are gated on
@@ -63,3 +79,16 @@ devtools = ["tauri/devtools"]
 # build graph and the crate compiles/behaves exactly as it did before this
 # slice. See fa.rs / fa_onnx.rs for the feature-gated inference code.
 fa-inference = ["dep:ort"]
+
+# WS1 Task 5 Slice D25 A1 — live, real-`AppHandle` durable-cache probe.
+# `harness = false`: this file's own `main()` (not `#[test]` functions run
+# under libtest's worker threads) runs directly on the process's actual OS
+# main thread, which the real Wry runtime's `EventLoop::new()` requires on
+# macOS. Self-gated inside `main()` on an env var + the real corpus audio's
+# presence (mirrors this codebase's own `ORT_REQUIRE`/`ort_dylib_or_skip`
+# skip convention) — a plain `cargo test` sweep still builds this target but
+# exits immediately without touching the filesystem or the Wry runtime.
+[[test]]
+name = "fa_durable_wav_live"
+path = "tests/fa_durable_wav_live.rs"
+harness = false

@@ -1,5 +1,14 @@
-mod fa;
-mod fa_dev;
+// `fa`/`fa_dev` are `pub` (WS1 Task 5 Slice D25 A1) solely so the live,
+// real-`AppHandle` durable-cache probe under `tests/fa_durable_wav_live.rs`
+// (a separate `harness = false` integration-test crate — the only way to get
+// the real Wry runtime's `EventLoop::new()` to run on the actual process
+// main thread, which macOS/AppKit requires) can reach `fa_align_dev` and its
+// `FaState`/`FaModelCache`/`FaChunkInput`/`FaEvent` types, all already `pub`
+// within the crate. No item's own visibility (`pub`/`pub(crate)`) changed,
+// and no runtime behavior changed — this is a compile-time-only widening of
+// which OTHER CRATES may name these modules.
+pub mod fa;
+pub mod fa_dev;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
