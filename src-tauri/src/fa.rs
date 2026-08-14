@@ -460,6 +460,235 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 }
 
 // ---------------------------------------------------------------------------
+// Durable transcoded-audio cache (WS1 Task 5 Slice D24 B1/B2) — UNWIRED, no
+// production/script/test caller invokes [`ensure_durable_wav`] on any live
+// path yet (`isFaGateOpen()` stays OFF regardless — this section changes no
+// shipped behavior). Closes the ledger's own "Production audio path" gap
+// (`docs/ws1-sync-pipeline/task5-slice-ledger.md` §6): `fa_align` takes a
+// filesystem path to an already-16kHz-mono WAV and never transcodes
+// anything itself (by design, its own doc comment above: "reuses whatever
+// the caller already has on disk"), and the only thing in this codebase
+// that PRODUCES such a WAV is `whisper.rs::transcode_to_wav` — its one
+// production caller (`whisper_transcribe`) deletes that WAV
+// (`fs::remove_dir_all`) the moment whisper-cli exits, a lifetime
+// `fa_align` could never observe. `fa_align_dev` (`fa_dev.rs`) works around
+// this today by making its OWN throwaway WAV per dev invocation; a future
+// real Apply-Sync caller needs one that (a) survives past the call that
+// requested it and (b) is reused across repeated FA runs against the SAME
+// source media, rather than re-transcoding a multi-minute file every time —
+// the same reload-cost shape D10/D11 already measured and fixed for the
+// ONNX model itself via `CachedSession`.
+//
+// MECHANISM: a durable WAV cache under `app_local_data_dir()/fa-audio-
+// cache/<key>.wav`, mirroring `fa_model_path`'s own `app_local_data_dir`
+// resolution precedent (R-D) rather than inventing a second convention.
+// Unlike `fa_model_path`'s ladder (a FIXED file the USER places by hand,
+// with a manual-placement fallback tier), this cache is written BY the app
+// itself — there is exactly one location, no fallback tier makes sense for
+// output nothing external ever places.
+//
+// Every function below follows this file's own established "pure core,
+// thin AppHandle-based wrapper" split (`fa_model_candidate_paths`/
+// `resolve_existing` vs. `fa_model_path`) so the core cache-hit/miss/
+// eviction logic is directly unit-testable without a live `AppHandle` or an
+// async runtime — see the "durable WAV cache" test section below (B3).
+// ---------------------------------------------------------------------------
+
+/// Sibling of `fa-models` (see `fa_model_candidate_paths` above) under
+/// `app_local_data_dir()` — never shared with it: a model the user places by
+/// hand and a WAV the app derives from a source file are different
+/// lifecycles (see this section's own doc comment).
+const FA_AUDIO_CACHE_DIRNAME: &str = "fa-audio-cache";
+
+/// Total on-disk budget for the durable WAV cache (WS1 Task 5 Slice D24 B2)
+/// — see [`evict_lru_until_under_cap`]'s own doc comment for the eviction
+/// policy this bounds. 2 GiB, by the same stated-order-of-magnitude
+/// reasoning this codebase's other budget constants use rather than a
+/// measured optimum: a 16kHz mono PCM WAV runs ~1.83 MiB/minute (16000
+/// samples/s * 2 bytes/sample * 60s / 2^20), so 2 GiB covers roughly 18
+/// hours of cached source audio — generous headroom for one active
+/// project's repeated FA re-runs against the same source media, while
+/// staying a small, bounded fraction of typical available disk.
+#[cfg_attr(not(test), allow(dead_code))]
+const FA_AUDIO_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Pure path builder — no filesystem access — mirrors
+/// `fa_model_candidate_paths`'s own split so this half is directly
+/// unit-testable without a live `tauri::AppHandle`.
+#[cfg_attr(not(test), allow(dead_code))]
+fn fa_audio_cache_dir_from_local_data_dir(local_data_dir: &Path) -> PathBuf {
+    local_data_dir.join(FA_AUDIO_CACHE_DIRNAME)
+}
+
+/// `AppHandle`-based wrapper — see the pure builder above for the tested
+/// half, mirroring `fa_model_path`'s own split. Unconditionally (not
+/// `cfg(test)`-gated) `allow(dead_code)`: unlike the pure functions below,
+/// nothing calls this even in a test build (this codebase has no
+/// `AppHandle` test-mocking precedent — see the "durable WAV cache" test
+/// section's own header comment).
+#[allow(dead_code)]
+fn fa_audio_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, FaError> {
+    let local_data_dir = app.path().app_local_data_dir().map_err(|e| {
+        FaError::inference_failed(format!("cannot resolve app_local_data_dir for the FA audio cache: {e}"))
+    })?;
+    Ok(fa_audio_cache_dir_from_local_data_dir(&local_data_dir))
+}
+
+/// WS1 Task 5 Slice D24 B2 — the cache key. Deliberately mirrors this
+/// codebase's OWN existing precedent for exactly this class of problem —
+/// `syncEngine.ts`'s `getFileIdentity(file) = "${file.name}|${file.size}|
+/// ${file.lastModified}"`, which `CLAUDE.md` records as a standing
+/// invariant ("Transcription cache validity is keyed by file identity, not
+/// asset id") — rather than a full content hash: this codebase already
+/// decided that name+size+mtime is what "the same source media" means for
+/// transcription-cache invalidation, and a multi-hundred-MiB source media
+/// file is expensive to hash in full on every FA run, whereas a `stat()`
+/// call is not.
+///
+/// STALE SOURCE (explicit answer, not silently resolved): if the source
+/// file is edited in place (same path, different size/mtime), its identity
+/// string changes, so it hashes to a DIFFERENT cache key — the old entry is
+/// never looked up again under the new identity (silently orphaned, never
+/// served stale or overwritten in place) rather than needing an explicit
+/// invalidation step. [`evict_lru_until_under_cap`] is what eventually
+/// reclaims an orphaned entry's disk space — this layer has no reverse
+/// index from an old identity back to a project/asset, so it cannot safely
+/// delete an orphan any sooner than the LRU cap does.
+///
+/// Hashed (not used as the literal filename) because the source filename
+/// can contain characters that are not a safe/portable single path segment
+/// on every target OS.
+#[cfg_attr(not(test), allow(dead_code))]
+fn source_identity_key(source_path: &Path) -> std::io::Result<String> {
+    let meta = std::fs::metadata(source_path)?;
+    let name = source_path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let mtime_secs =
+        meta.modified()?.duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let identity = format!("{name}|{}|{mtime_secs}", meta.len());
+    let mut hasher = crate::sha256::Sha256::new();
+    hasher.update(identity.as_bytes());
+    Ok(crate::sha256::hex_digest(&hasher.finish()))
+}
+
+/// WS1 Task 5 Slice D24 B2 — retention policy: least-recently-used
+/// eviction, bounded by [`FA_AUDIO_CACHE_MAX_BYTES`], applied
+/// opportunistically after every new cache WRITE (never on a cache HIT — a
+/// hit only re-stamps the entry's own mtime, see [`resolve_cache_entry`]),
+/// so a miss can never leave the directory unbounded even if nothing else
+/// ever prunes it. "Least-recently-used" is the file's own mtime: a hit
+/// re-stamps it, so an entry every FA run keeps touching survives, and one
+/// nothing has looked up in a while — including an orphan left behind by a
+/// changed source identity — ages toward eviction. Errors reading/removing
+/// an individual entry are logged-and-skipped rather than aborting the
+/// whole pass — best-effort cleanup, not a correctness-critical path (worst
+/// case: the cache grows past its budget until the next successful pass,
+/// never data loss or a wrong alignment result).
+#[cfg_attr(not(test), allow(dead_code))]
+fn evict_lru_until_under_cap(cache_dir: &Path, max_bytes: u64) {
+    let Ok(entries) = std::fs::read_dir(cache_dir) else { return };
+    let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    let mut total: u64 = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("wav") {
+            continue; // skip .wav.tmp (in-progress writes) and anything else
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        let Ok(mtime) = meta.modified() else { continue };
+        total += meta.len();
+        files.push((path, meta.len(), mtime));
+    }
+    if total <= max_bytes {
+        return;
+    }
+    files.sort_by_key(|(_, _, mtime)| *mtime);
+    for (path, size, _) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if std::fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+        }
+    }
+}
+
+/// A resolved cache lookup: either the durable WAV already exists (`Hit`),
+/// or it must be produced by transcoding `source_path` into `tmp_path` and
+/// then finalized via [`finalize_cache_write`] (`Miss`). Split from the
+/// actual transcode call (async, lives in `whisper.rs`) so this half stays
+/// synchronous and directly testable — see this section's own doc comment.
+#[cfg_attr(not(test), allow(dead_code))]
+enum CacheLookup {
+    Hit(PathBuf),
+    Miss { tmp_path: PathBuf, final_path: PathBuf },
+}
+
+/// The cache-hit/miss decision, pure filesystem stat/rename logic — no
+/// transcoding happens here. On a hit, re-stamps the entry's mtime (see
+/// [`evict_lru_until_under_cap`]'s own doc comment for why) via
+/// `File::set_modified` (stable since Rust 1.75; this crate's own
+/// `rust-version = "1.77.2"` already requires at least that) rather than a
+/// new crate dependency.
+#[cfg_attr(not(test), allow(dead_code))]
+fn resolve_cache_entry(cache_dir: &Path, source_path: &Path) -> Result<CacheLookup, FaError> {
+    std::fs::create_dir_all(cache_dir)
+        .map_err(|e| FaError::inference_failed(format!("create FA audio cache dir {}: {e}", cache_dir.display())))?;
+
+    let key = source_identity_key(source_path)
+        .map_err(|e| FaError::inference_failed(format!("stat source media {}: {e}", source_path.display())))?;
+    let final_path = cache_dir.join(format!("{key}.wav"));
+
+    if final_path.exists() {
+        if let Ok(file) = std::fs::File::open(&final_path) {
+            let _ = file.set_modified(std::time::SystemTime::now());
+        }
+        return Ok(CacheLookup::Hit(final_path));
+    }
+
+    let tmp_path = cache_dir.join(format!("{key}.wav.tmp"));
+    Ok(CacheLookup::Miss { tmp_path, final_path })
+}
+
+/// Finalizes a successful transcode: renames the `.tmp` file into place
+/// (atomic on every target OS this codebase ships for — a reader can never
+/// observe a partially-written `.wav`), then runs the LRU eviction pass.
+/// Called only after the caller's own transcode step has already succeeded
+/// against `tmp_path`.
+#[cfg_attr(not(test), allow(dead_code))]
+fn finalize_cache_write(tmp_path: &Path, final_path: &Path, cache_dir: &Path) -> Result<PathBuf, FaError> {
+    std::fs::rename(tmp_path, final_path).map_err(|e| {
+        let _ = std::fs::remove_file(tmp_path);
+        FaError::inference_failed(format!("finalize durable WAV cache entry: {e}"))
+    })?;
+    evict_lru_until_under_cap(cache_dir, FA_AUDIO_CACHE_MAX_BYTES);
+    Ok(final_path.to_path_buf())
+}
+
+/// Production-shaped entry point (WS1 Task 5 Slice D24 B1) — UNWIRED, no
+/// caller anywhere in `src/`/`src-tauri/src/` yet (grepped; see this
+/// section's own doc comment). Resolves the cache directory via a live
+/// `AppHandle` and transcodes for real via `whisper.rs::transcode_to_wav`
+/// (unchanged, reused as-is per this slice's own scope — Track B does not
+/// modify `whisper.rs`) rather than a reimplementation. On a cache hit, this
+/// never spawns ffmpeg at all. Unconditional `allow(dead_code)` for the same
+/// reason as `fa_audio_cache_dir` above — no `AppHandle` reaches this in any
+/// test.
+#[allow(dead_code)]
+pub(crate) async fn ensure_durable_wav(app: &tauri::AppHandle, source_path: &Path) -> Result<PathBuf, FaError> {
+    let cache_dir = fa_audio_cache_dir(app)?;
+    match resolve_cache_entry(&cache_dir, source_path)? {
+        CacheLookup::Hit(path) => Ok(path),
+        CacheLookup::Miss { tmp_path, final_path } => {
+            if let Err(e) = crate::whisper::transcode_to_wav(app, source_path, &tmp_path).await {
+                let _ = std::fs::remove_file(&tmp_path);
+                return Err(FaError::inference_failed(format!("transcode to durable WAV failed: {e}")));
+            }
+            finalize_cache_write(&tmp_path, &final_path, &cache_dir)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Commands
 // ---------------------------------------------------------------------------
 
@@ -716,6 +945,213 @@ mod tests {
         // The message DOES mention "src-tauri/models" — as a "never place it
         // here" warning, not as a candidate. `candidate_paths_never_targets_
         // src_tauri_models` above is the real guard on the actual paths tried.
+    }
+
+    // -- durable WAV cache (WS1 Task 5 Slice D24 B1-B3) -------------------
+    //
+    // `ensure_durable_wav` itself needs a live `tauri::AppHandle` (this
+    // codebase has no `AppHandle` test-mocking precedent anywhere — grepped
+    // — matching `fa_model_path`'s own untested-wrapper convention above).
+    // These tests instead exercise every PURE/sync piece it delegates to —
+    // `fa_audio_cache_dir_from_local_data_dir`, `source_identity_key`,
+    // `resolve_cache_entry`, `finalize_cache_write`, and
+    // `evict_lru_until_under_cap` — with real temp files/dirs, which is the
+    // entire cache-hit/miss/retention pipeline minus the one line that
+    // spawns the ffmpeg sidecar. This is the reachability proof WS1 Task 5
+    // Slice D24's own instruction asks for ("prove reachability with a
+    // test, not a wiring change") — no production/script caller invokes any
+    // of this outside `cargo test`.
+
+    fn durable_wav_test_dir(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("fa-durable-wav-test-{label}-{}", std::process::id()))
+    }
+
+    #[test]
+    fn fa_audio_cache_dir_is_a_sibling_of_fa_models_not_shared_with_it() {
+        let local = PathBuf::from("/fake/local-data");
+        let cache_dir = fa_audio_cache_dir_from_local_data_dir(&local);
+        assert_eq!(cache_dir, PathBuf::from("/fake/local-data/fa-audio-cache"));
+        assert_ne!(cache_dir, local.join("fa-models"));
+    }
+
+    #[test]
+    fn source_identity_key_stable_for_an_unchanged_file() {
+        let dir = durable_wav_test_dir("stable");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.wav");
+        std::fs::write(&path, b"same bytes").unwrap();
+
+        let key1 = source_identity_key(&path).unwrap();
+        let key2 = source_identity_key(&path).unwrap();
+        assert_eq!(key1, key2, "identity key must be stable across repeated stats of an untouched file");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_identity_key_changes_when_file_size_changes() {
+        let dir = durable_wav_test_dir("size-change");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.wav");
+
+        std::fs::write(&path, b"short").unwrap();
+        let key_before = source_identity_key(&path).unwrap();
+
+        std::fs::write(&path, b"a much longer replacement payload").unwrap();
+        let key_after = source_identity_key(&path).unwrap();
+
+        assert_ne!(key_before, key_after, "editing the source file's content/size must mint a new cache key");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn source_identity_key_changes_when_mtime_changes_at_same_size() {
+        // Same byte length (so `meta.len()` alone can't explain a
+        // difference), only mtime bumped via `File::set_modified` — a
+        // deterministic stand-in for "the file was re-saved with identical
+        // content," which real editors do routinely.
+        let dir = durable_wav_test_dir("mtime-change");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("source.wav");
+        std::fs::write(&path, b"same size!").unwrap();
+
+        let key_before = source_identity_key(&path).unwrap();
+
+        let file = std::fs::File::open(&path).unwrap();
+        let bumped = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
+        file.set_modified(bumped).unwrap();
+
+        let key_after = source_identity_key(&path).unwrap();
+        assert_ne!(key_before, key_after, "a changed mtime at identical size must still mint a new cache key");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_cache_entry_misses_then_hits_after_finalize() {
+        let dir = durable_wav_test_dir("miss-then-hit");
+        let cache_dir = dir.join("cache");
+        std::fs::create_dir_all(&dir).unwrap();
+        let source_path = dir.join("source.wav");
+        std::fs::write(&source_path, b"source audio bytes").unwrap();
+
+        let (tmp_path, final_path) = match resolve_cache_entry(&cache_dir, &source_path).unwrap() {
+            CacheLookup::Miss { tmp_path, final_path } => (tmp_path, final_path),
+            CacheLookup::Hit(_) => panic!("expected a miss on a never-before-seen source identity"),
+        };
+        assert!(tmp_path.starts_with(&cache_dir));
+        assert!(final_path.starts_with(&cache_dir));
+        assert_ne!(tmp_path, final_path);
+
+        // Stand-in for a successful transcode: write real bytes to tmp_path
+        // (never `ensure_durable_wav`'s own ffmpeg call — see this test
+        // module's own header comment for why).
+        std::fs::write(&tmp_path, b"fake transcoded pcm bytes").unwrap();
+        let finalized = finalize_cache_write(&tmp_path, &final_path, &cache_dir).unwrap();
+        assert_eq!(finalized, final_path);
+        assert!(final_path.exists());
+        assert!(!tmp_path.exists(), "the .tmp file must be renamed away, not left behind");
+
+        match resolve_cache_entry(&cache_dir, &source_path).unwrap() {
+            CacheLookup::Hit(path) => assert_eq!(path, final_path),
+            CacheLookup::Miss { .. } => panic!("expected a hit on the same source identity after finalize"),
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn resolve_cache_entry_hit_re_stamps_mtime() {
+        let dir = durable_wav_test_dir("touch-mtime");
+        let cache_dir = dir.join("cache");
+        std::fs::create_dir_all(&dir).unwrap();
+        let source_path = dir.join("source.wav");
+        std::fs::write(&source_path, b"source audio bytes").unwrap();
+
+        let (tmp_path, final_path) = match resolve_cache_entry(&cache_dir, &source_path).unwrap() {
+            CacheLookup::Miss { tmp_path, final_path } => (tmp_path, final_path),
+            CacheLookup::Hit(_) => panic!("expected a miss the first time"),
+        };
+        std::fs::write(&tmp_path, b"fake transcoded pcm bytes").unwrap();
+        finalize_cache_write(&tmp_path, &final_path, &cache_dir).unwrap();
+
+        // Artificially age the entry, then confirm a hit re-stamps it back
+        // to "now" (within a generous tolerance) — the signal
+        // `evict_lru_until_under_cap` relies on to treat a still-used entry
+        // as fresh.
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        std::fs::File::open(&final_path).unwrap().set_modified(old).unwrap();
+
+        match resolve_cache_entry(&cache_dir, &source_path).unwrap() {
+            CacheLookup::Hit(path) => assert_eq!(path, final_path),
+            CacheLookup::Miss { .. } => panic!("expected a hit"),
+        }
+        let restamped = std::fs::metadata(&final_path).unwrap().modified().unwrap();
+        let age = std::time::SystemTime::now().duration_since(restamped).unwrap_or_default();
+        assert!(age < std::time::Duration::from_secs(30), "hit must re-stamp mtime close to now, was {age:?} old");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn evict_lru_until_under_cap_removes_oldest_first_until_under_budget() {
+        let dir = durable_wav_test_dir("evict-lru");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Three 100-byte entries, mtimes strictly oldest -> newest.
+        let oldest = dir.join("oldest.wav");
+        let middle = dir.join("middle.wav");
+        let newest = dir.join("newest.wav");
+        for p in [&oldest, &middle, &newest] {
+            std::fs::write(p, vec![0u8; 100]).unwrap();
+        }
+        let now = std::time::SystemTime::now();
+        std::fs::File::open(&oldest).unwrap().set_modified(now - std::time::Duration::from_secs(300)).unwrap();
+        std::fs::File::open(&middle).unwrap().set_modified(now - std::time::Duration::from_secs(200)).unwrap();
+        std::fs::File::open(&newest).unwrap().set_modified(now - std::time::Duration::from_secs(100)).unwrap();
+
+        // Total is 300 bytes; cap at 150 forces removing the oldest entry
+        // (down to 200), which still exceeds the cap, so the next-oldest
+        // (middle) must go too (down to 100) — only `newest` should survive.
+        evict_lru_until_under_cap(&dir, 150);
+
+        assert!(!oldest.exists(), "oldest entry must be evicted first");
+        assert!(!middle.exists(), "second-oldest entry must be evicted once the first eviction still exceeds the cap");
+        assert!(newest.exists(), "newest entry must survive — the cache stayed within budget once older entries were removed");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn evict_lru_until_under_cap_ignores_non_wav_entries() {
+        let dir = durable_wav_test_dir("evict-ignores-non-wav");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let real_entry = dir.join("real.wav");
+        let in_progress = dir.join("in-progress.wav.tmp");
+        std::fs::write(&real_entry, vec![0u8; 10]).unwrap();
+        std::fs::write(&in_progress, vec![0u8; 10_000]).unwrap();
+
+        // A cap far too small for the .tmp file's own size to matter, since
+        // it must never be counted or evicted by this pass.
+        evict_lru_until_under_cap(&dir, 1);
+
+        assert!(!real_entry.exists(), "the only real .wav entry must still be evicted once over budget");
+        assert!(in_progress.exists(), ".wav.tmp (an in-progress write) must never be touched by eviction");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn evict_lru_until_under_cap_noop_when_already_under_budget() {
+        let dir = durable_wav_test_dir("evict-noop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let entry = dir.join("small.wav");
+        std::fs::write(&entry, vec![0u8; 10]).unwrap();
+
+        evict_lru_until_under_cap(&dir, 1_000_000);
+        assert!(entry.exists(), "nothing should be evicted when total size is already under the cap");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // -- fa_align (without a model / AppHandle) -------------------------
