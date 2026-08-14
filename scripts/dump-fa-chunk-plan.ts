@@ -90,7 +90,12 @@ function buildPlan(audioDurationCutoff: number, label: string) {
   const tokens = allTokens.filter(t => t.startSec < audioDuration);
   const silences = allSilences.filter(s => s.startSec < audioDuration);
 
-  const windowed = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+  // Pinned to 'segment-start-time' explicitly (WS1 Task 5 Slice D23):
+  // computeFaChunkPlan's own default flipped to index attribution this
+  // slice, but this dumper's whole documented purpose (above) is the
+  // time-attribution baseline these *-windowed.json artifacts have always
+  // been — an implicit call here would now silently change their meaning.
+  const windowed = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'segment-start-time');
   const wholeFileText = segments.map(s => s.text).join(' ');
   const wholeFile = [{ startSec: 0, endSec: audioDuration, text: wholeFileText }];
 

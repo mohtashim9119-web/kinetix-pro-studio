@@ -53,7 +53,13 @@ describe('computeFaChunkPlan', () => {
     // the run into multiple chunks, exercising the multi-chunk path.
     const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
 
-    const chunks = computeFaChunkPlan(segments, tokens, silences, 8);
+    // Pinned to 'segment-start-time' (WS1 Task 5 Slice D23): this assertion's
+    // "whole segment's text lands in exactly one chunk" claim is a
+    // segment-start-time-specific guarantee — index attribution can (and, per
+    // the anchor placement below, does) cut a segment's own last word into
+    // the NEXT chunk instead, by design (see the "cuts text at an anchor
+    // even when it falls mid-segment" test below).
+    const chunks = computeFaChunkPlan(segments, tokens, silences, 8, 'segment-start-time');
 
     // Total time coverage is gapless and spans the full audio.
     expect(chunks[0]!.startSec).toBe(0);
@@ -88,7 +94,11 @@ describe('computeFaChunkPlan', () => {
       .filter((_, i) => i % 4 === 3)
       .map(t => silence(t.startSec));
 
-    const chunks = computeFaChunkPlan(segments, tokens, silences, 40);
+    // Pinned to 'segment-start-time' (WS1 Task 5 Slice D23): this fixture's
+    // anchor density was calibrated against runsToChunks's own (time-
+    // attribution) empty-run merge rule; index attribution's empty-qi-range
+    // merge rule can legitimately merge differently for the same fixture.
+    const chunks = computeFaChunkPlan(segments, tokens, silences, 40, 'segment-start-time');
     for (const c of chunks) expect(c.endSec - c.startSec).toBeLessThanOrEqual(MAX_RUN_SEC);
   });
 
@@ -194,7 +204,10 @@ describe('computeFaChunkPlanCoalesced', () => {
       .filter((_, i) => i % 4 === 3)
       .map(t => silence(t.startSec));
 
-    const baseline = computeFaChunkPlan(segments, tokens, silences, 40);
+    // Pinned to 'segment-start-time' (WS1 Task 5 Slice D23): computeFaChunkPlanCoalesced
+    // is exclusively segment-start-time (own doc comment, unaffected this
+    // slice) — the baseline it's compared against must use the same rule.
+    const baseline = computeFaChunkPlan(segments, tokens, silences, 40, 'segment-start-time');
     const coalesced = computeFaChunkPlanCoalesced(segments, tokens, silences, 40, 10);
 
     // Coalescing actually did something (fewer, larger chunks).
@@ -255,9 +268,9 @@ describe('computeFaChunkPlanWithAttribution', () => {
     return { segments, tokens, silences, audioDuration: 8, words };
   }
 
-  it('is byte-identical to computeFaChunkPlan under segment-start-time attribution', () => {
+  it('is byte-identical to computeFaChunkPlan(..., "segment-start-time") under segment-start-time attribution', () => {
     const { segments, tokens, silences, audioDuration } = fixture();
-    const legacy = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const legacy = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'segment-start-time');
     const viaParam = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'segment-start-time');
     expect(viaParam).toEqual(legacy);
   });
@@ -268,6 +281,17 @@ describe('computeFaChunkPlanWithAttribution', () => {
     const explicitIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
     const explicitTime = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'segment-start-time');
     expect(omitted).toEqual(explicitIndex);
+    expect(omitted).not.toEqual(explicitTime);
+  });
+
+  it('WS1 Task 5 Slice D23: computeFaChunkPlan itself defaults to script-word-index (the flip is live)', () => {
+    const { segments, tokens, silences, audioDuration } = fixture();
+    const omitted = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const explicitIndex = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'script-word-index');
+    const explicitTime = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'segment-start-time');
+    const viaWithAttribution = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
+    expect(omitted).toEqual(explicitIndex);
+    expect(omitted).toEqual(viaWithAttribution);
     expect(omitted).not.toEqual(explicitTime);
   });
 
@@ -296,7 +320,7 @@ describe('computeFaChunkPlanWithAttribution', () => {
 
   it('emits the same word multiset as the unmerged time-attributed plan', () => {
     const { segments, tokens, silences, audioDuration } = fixture();
-    const byTime = computeFaChunkPlan(segments, tokens, silences, audioDuration)
+    const byTime = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'segment-start-time')
       .flatMap(c => c.text.split(' ').filter(w => w.length > 0))
       .sort();
     const byIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index')
@@ -344,7 +368,7 @@ describe('computeFaChunkPlanWithAttribution', () => {
     const tokens: TranscriptToken[] = words.map((w, i) => token(w, i, i + 0.8));
     const silences: SilenceInterval[] = [silence(tokens[4]!.startSec)];
 
-    const byTime = computeFaChunkPlan(segments, tokens, silences, 8);
+    const byTime = computeFaChunkPlan(segments, tokens, silences, 8, 'segment-start-time');
     const byIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index');
 
     // Time attribution: all 8 words land in one chunk.

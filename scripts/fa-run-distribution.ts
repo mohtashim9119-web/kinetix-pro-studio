@@ -99,7 +99,12 @@ function emptyRunCount(runs: readonly FaRun[], segments: readonly VideoSegment[]
 
 function report(label: string, segments: VideoSegment[], tokens: TranscriptToken[], silences: SilenceInterval[], audioDuration: number): void {
   const runs = computeRuns(segments, tokens, silences, audioDuration);
-  const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+  // Pinned to 'segment-start-time' explicitly (WS1 Task 5 Slice D23):
+  // computeFaChunkPlan's own default flipped to index attribution this
+  // slice, but emptyRunCount below mirrors runsToChunks's own
+  // segment-start-time-specific scan, so this report is only meaningful
+  // against that same rule.
+  const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'segment-start-time');
 
   const durations = runs.map(r => r.windowEnd - r.windowStart).sort((a, b) => a - b);
   const provenance = new Map<string, number>();

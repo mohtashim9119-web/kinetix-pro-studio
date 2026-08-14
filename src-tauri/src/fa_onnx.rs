@@ -928,6 +928,185 @@ pub fn align_chunked(
 }
 
 // ---------------------------------------------------------------------------
+// R.2 symmetric context padding (WS1 Task 5 Slice D23 Step 4) — UNWIRED,
+// measurement-only. `align_chunked` above is the only path any production
+// or test caller invokes today; this section adds a sibling, never called
+// from `align_chunked` itself, `align_chunked_for_language`, or `fa.rs`.
+//
+// MOTIVATION (evidence-backed, not speculative — D22 Step 4 / D23 Step 3):
+// production windowing is deliberately unpadded (this module's own D11
+// design), so a word near a raw chunk edge loses acoustic context a padded
+// pass would have had. D22 Step 4 measured this directly: of the below-
+// CONF_MIN tail, 83.9% sit within 0.5s of their own chunk's edge (a ~3.9x
+// overrepresentation vs. a uniform-position baseline), and where a
+// reference exists to check, the timing error there is real (median 0.46s).
+//
+// DEFAULT = 0.5s, chosen directly from that measurement: it is the exact
+// seam-proximity radius D22 Step 4 used to characterize the tail (not a
+// round-number guess), small relative to a run's own scale (MAX_RUN_SEC =
+// 30s, `syncConstants.ts`), and cheap (0.5s * 16kHz = 8000 extra samples —
+// 25 extra frames — per side, per chunk).
+//
+// MECHANISM: extend each chunk's raw-sample window by `padding_sec` on both
+// sides (clamped at the decoded audio's own bounds — first/last chunks get
+// less or no padding on the clamped side, by construction) SOLELY for the
+// forward pass, so the model's convolutional feature encoder has real
+// acoustic context (not implicit zero-padding) at frames near the chunk's
+// own true edges. The padding is discarded before decoding: `forced_align`
+// only ever sees the frame range belonging to the chunk's OWN unpadded
+// `[start_sec, end_sec)` window. That frame range is measured via a SEPARATE
+// real forward pass over the unpadded samples (not estimated from a sample-
+// count formula) — `FA_FRAME_STRIDE_SAMPLES`'s own doc comment establishes
+// this model's conv stack does not admit an exact affine formula (kernel-
+// size truncation drift), so guessing the slice length risks silently
+// mis-aligning every downstream frame. Guaranteeing the sliced-out frame
+// count is exactly what an unpadded pass would have produced makes chunk
+// boundaries, word attribution, and chunk COUNT byte-identical to the
+// unpadded path — only per-word CONFIDENCE and TIMING PRECISION can change,
+// costing one extra forward pass per chunk (~2x this feature's own wall
+// clock vs. unpadded — never paid by `align_chunked`, which never calls
+// this).
+// ---------------------------------------------------------------------------
+
+/// WS1 Task 5 Slice D23 Step 4's own evidence-backed default — see the
+/// section doc comment above for the measurement it comes from. Established
+/// but unwired outside `cargo test` (same pattern as `FA_FRAME_STRIDE_
+/// SAMPLES` above) — no production/script caller passes this yet.
+#[allow(dead_code)]
+pub const FA_R2_DEFAULT_PADDING_SEC: f64 = 0.5;
+
+/// Aligns ONE chunk's text with `padding_sec` of extra acoustic context on
+/// each side, discarding that context before decoding (see this section's
+/// own doc comment). `chunk_samples` is the chunk's own TRUE, unpadded
+/// window; `padded_samples` is `chunk_samples` extended by up to
+/// `padding_sec` on each side (already clamped to the decoded audio's own
+/// bounds by the caller); `left_pad_samples` is how many of `padded_samples`
+/// precede `chunk_samples[0]` (i.e. `chunk_samples`' own offset within
+/// `padded_samples` — may be less than `padding_sec` worth of samples near
+/// either end of the audio).
+fn align_chunk_samples_padded(
+    session: &mut Session,
+    vocab: &Vocab,
+    lang_enum: Language,
+    chunk_samples: &[f32],
+    padded_samples: &[f32],
+    left_pad_samples: usize,
+    chunk_text: &str,
+) -> Result<Vec<WordSpan>, FaOnnxError> {
+    // Measured, not estimated (see section doc comment): this model's own
+    // conv stack has no exact sample-count -> frame-count formula available
+    // in this codebase, so the unpadded frame count is learned from a real
+    // pass over the exact same samples align_chunk_samples would use.
+    let normed_unpadded = zero_mean_unit_var_norm(chunk_samples);
+    let unpadded_emission = run_forward_pass_with_session(session, &normed_unpadded)?;
+    let unpadded_frame_count = unpadded_emission.len();
+
+    let normed_padded = zero_mean_unit_var_norm(padded_samples);
+    let padded_emission = run_forward_pass_with_session(session, &normed_padded)?;
+
+    // Frame-domain analog of `left_pad_samples`, via the same sample<->frame
+    // stride this codebase already uses throughout (`frame_to_seconds`) —
+    // approximate to within the model's own frame quantization (0.02s), the
+    // same tolerance `WordOutsideOwnChunkWindow`'s own invariant check
+    // already accepts at every unpadded chunk boundary today.
+    let frames_before =
+        ((left_pad_samples as f64) / (FA_FRAME_STRIDE_SAMPLES as f64)).round() as usize;
+    let frames_before = frames_before.min(padded_emission.len());
+    let slice_end = (frames_before + unpadded_frame_count).min(padded_emission.len());
+    let emission = &padded_emission[frames_before..slice_end];
+
+    let target_ids = text_to_token_ids(chunk_text, lang_enum, vocab);
+    if target_ids.is_empty() {
+        return Err(FaOnnxError::EmptyTokenization);
+    }
+
+    let result = forced_align(emission, &target_ids, vocab.blank_id).map_err(FaOnnxError::Align)?;
+    let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
+    Ok(merge_char_spans_to_words(&char_spans, vocab))
+}
+
+/// Sibling of [`align_chunked`] (see its own doc comment) with R.2 symmetric
+/// context padding applied to the forward pass — see this section's own doc
+/// comment for the full mechanism and evidence. `padding_sec <= 0.0`
+/// delegates straight to `align_chunked` (byte-identical output, no extra
+/// forward pass paid) — this function is never on `align_chunked`'s own call
+/// path, so `align_chunked`'s behavior is unaffected by this function's
+/// existence either way.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn align_chunked_with_padding(
+    cache: &Mutex<Option<CachedSession>>,
+    model_path: &Path,
+    audio_path: &str,
+    chunks: &[crate::fa::FaChunkInput],
+    language: &str,
+    padding_sec: f64,
+    is_cancelled: impl Fn() -> bool,
+    mut on_progress: impl FnMut(u32),
+) -> Result<Vec<WordSpan>, FaOnnxError> {
+    if padding_sec <= 0.0 {
+        return align_chunked(cache, model_path, audio_path, chunks, language, is_cancelled, on_progress);
+    }
+    if is_cancelled() {
+        return Err(FaOnnxError::Cancelled);
+    }
+
+    let vocab = load_vocab(language)?;
+    let lang_enum =
+        Language::from_code(language).ok_or_else(|| FaOnnxError::UnsupportedLanguage(language.to_string()))?;
+    let samples = read_wav_mono_16k(Path::new(audio_path)).map_err(FaOnnxError::Wav)?;
+    let padding_samples = (padding_sec * FA_SAMPLE_RATE_HZ as f64).round() as usize;
+
+    with_cached_session(cache, model_path, language, |session| {
+        let mut all_words = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            if is_cancelled() {
+                return Err(FaOnnxError::Cancelled);
+            }
+            let (start_sample, end_sample) = chunk_sample_range(samples.len(), chunk.start_sec, chunk.end_sec);
+            let chunk_samples = &samples[start_sample..end_sample];
+            let padded_start = start_sample.saturating_sub(padding_samples);
+            let padded_end = (end_sample + padding_samples).min(samples.len());
+            let padded_samples = &samples[padded_start..padded_end];
+            let left_pad_samples = start_sample - padded_start;
+
+            match align_chunk_samples_padded(
+                session,
+                &vocab,
+                lang_enum,
+                chunk_samples,
+                padded_samples,
+                left_pad_samples,
+                &chunk.text,
+            ) {
+                Ok(words) => {
+                    for w in words {
+                        all_words.push(WordSpan {
+                            text: w.text,
+                            start_seconds: w.start_seconds + chunk.start_sec,
+                            end_seconds: w.end_seconds + chunk.start_sec,
+                            score: w.score,
+                        });
+                    }
+                }
+                Err(FaOnnxError::Align(AlignError::TooManyRepeats { input_length, target_length, num_repeats })) => {
+                    eprintln!(
+                        "fa_onnx::align_chunked_with_padding: chunk {i} [{:.2},{:.2}) is CTC-infeasible \
+                         (input_length={input_length}, target_length={target_length}, \
+                         num_repeats={num_repeats}) — falling back to evenly-spaced placeholder \
+                         timing, every word flagged needs_review; run continues",
+                        chunk.start_sec, chunk.end_sec,
+                    );
+                    all_words.extend(fallback_words_for_infeasible_chunk(chunk, lang_enum, &vocab));
+                }
+                Err(e) => return Err(e),
+            }
+            on_progress(i as u32 + 1);
+        }
+        Ok(all_words)
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Windowed-output invariants (WS1 Task 5 Slice D11 — the Automated Agreement
 // Budget's "hard structural invariants" leg, `task5-slice-ledger.md` §4).
 // Pure, standalone checkers over `align_chunked`'s stitched `Vec<WordSpan>`
@@ -1904,6 +2083,11 @@ mod d12_measurement {
     /// whole-file pass's own ~113s/~20GiB cost separately (measured at
     /// `d11-chunked-alignment-2026-08-13.md` §1).
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        // WS1 Task 5 Slice D23 — see `require_ort::WHOLE_FILE_REFERENCE_LOCK`'s
+        // own doc comment: held for this whole function so a concurrent
+        // caller blocks instead of racing a second ~20GiB compute.
+        let _guard =
+            super::require_ort::WHOLE_FILE_REFERENCE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
         if cache_path.exists() {
             let text = std::fs::read_to_string(&cache_path)
@@ -2339,6 +2523,11 @@ mod d13_measurement {
     /// — same cache file path, so a prior D12 (or D13) test run in the same
     /// `$FA_CHUNK_PLAN_DIR` is reused rather than recomputed.
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        // WS1 Task 5 Slice D23 — see `require_ort::WHOLE_FILE_REFERENCE_LOCK`'s
+        // own doc comment: held for this whole function so a concurrent
+        // caller blocks instead of racing a second ~20GiB compute.
+        let _guard =
+            super::require_ort::WHOLE_FILE_REFERENCE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
         if cache_path.exists() {
             let text = std::fs::read_to_string(&cache_path)
@@ -2753,6 +2942,11 @@ mod d21_measurement {
     /// — same cache file, so a prior d12/d13 run in this `$FA_CHUNK_PLAN_DIR`
     /// is reused rather than recomputed (~113s/~20GiB cost, D10/D11).
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        // WS1 Task 5 Slice D23 — see `require_ort::WHOLE_FILE_REFERENCE_LOCK`'s
+        // own doc comment: held for this whole function so a concurrent
+        // caller blocks instead of racing a second ~20GiB compute.
+        let _guard =
+            super::require_ort::WHOLE_FILE_REFERENCE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
         if cache_path.exists() {
             let text = std::fs::read_to_string(&cache_path)
@@ -3094,6 +3288,11 @@ mod d22_measurement {
     /// this `$FA_CHUNK_PLAN_DIR` is reused rather than recomputed (~113s/
     /// ~20GiB cost, D10/D11).
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        // WS1 Task 5 Slice D23 — see `require_ort::WHOLE_FILE_REFERENCE_LOCK`'s
+        // own doc comment: held for this whole function so a concurrent
+        // caller blocks instead of racing a second ~20GiB compute.
+        let _guard =
+            super::require_ort::WHOLE_FILE_REFERENCE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
         if cache_path.exists() {
             let text = std::fs::read_to_string(&cache_path)
@@ -3546,6 +3745,462 @@ mod d22_measurement {
         std::fs::write(&out_path, serde_json::to_string(&details).unwrap())
             .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
         eprintln!("{CONTEXT}: wrote {} word-detail records to {}", details.len(), out_path.display());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WS1 Task 5 Slice D23 Step 3 — correlation on the REAL index-attribution
+// population, no filtering.
+//
+// D22 Step 3's own r=-0.78 was measured on TIME-attribution output with
+// mis-assigned words filtered out — a proxy for what index attribution's own
+// population would look like, not a direct measurement (D22's own doc
+// comment: "the REAL population index attribution produces is very likely
+// cleaner than this filtered proxy, not just no-worse-than it" — stated as a
+// prediction, not measured). This module measures the real thing: runs the
+// 240s excerpt through INDEX attribution (`173-excerpt-240s-index-windowed`,
+// `scripts/dump-fa-chunk-plan-index-240s-windowed.ts`), joins every output
+// word against the whole-file reference by the same greedy sequential
+// text-match technique D21/D22 already use, and correlates confidence
+// against timing error with NO mis-assignment filtering applied at all —
+// there is nothing to filter FOR, since index attribution's own chunk text
+// is exactly the qi-range between real anchors, not a segment.startTime
+// membership guess.
+//
+// Own `common_setup`/`RefWord`/`whole_file_reference_240s` (duplicated
+// rather than imported, matching every measurement module's own convention
+// in this file) — the whole-file reference is CACHED (`WHOLE_FILE_REFERENCE_
+// LOCK`-guarded since WS1 Task 5 Slice D23's own Step 2), reused if a prior
+// d12/d13/d21/d22/d23 run in this `$FA_CHUNK_PLAN_DIR` already computed it.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod d23_measurement {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("d23_measurement's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct RefWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    fn load_plan(dir: &Path, label: &str) -> Option<Vec<crate::fa::FaChunkInput>> {
+        let path = dir.join(format!("{label}.json"));
+        if !path.exists() {
+            eprintln!("SKIP d23_measurement: {} not found", path.display());
+            return None;
+        }
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        Some(
+            plan.chunks
+                .into_iter()
+                .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+                .collect(),
+        )
+    }
+
+    fn percentile(sorted: &[f64], p: f64) -> f64 {
+        if sorted.is_empty() {
+            return f64::NAN;
+        }
+        let idx = ((sorted.len() - 1) as f64 * p).round() as usize;
+        sorted[idx.min(sorted.len() - 1)]
+    }
+
+    fn common_setup(context: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let Ok(plan_dir) = std::env::var("FA_CHUNK_PLAN_DIR") else {
+            eprintln!("SKIP {context}: FA_CHUNK_PLAN_DIR not set");
+            return None;
+        };
+        let plan_dir = PathBuf::from(plan_dir);
+        let audio_path = repo_root().join(".work-phase4/replay/173/audio_16k.wav");
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((plan_dir, model_path, audio_path))
+    }
+
+    /// Same cache file every sibling measurement module's own
+    /// `whole_file_reference_240s` writes/reads. WS1 Task 5 Slice D23:
+    /// guarded by `require_ort::WHOLE_FILE_REFERENCE_LOCK` for its entire
+    /// check-cache-or-compute-and-write body (see that lock's own doc
+    /// comment) — safe to run concurrently with a d12/d13/d21/d22 test in
+    /// the same process without racing a second ~20GiB compute.
+    fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
+        let _guard =
+            super::require_ort::WHOLE_FILE_REFERENCE_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let cache_path = plan_dir.join("173-excerpt-240s-reference-words.json");
+        if cache_path.exists() {
+            let text = std::fs::read_to_string(&cache_path)
+                .unwrap_or_else(|e| panic!("read cached reference {}: {e}", cache_path.display()));
+            return serde_json::from_str(&text)
+                .unwrap_or_else(|e| panic!("parse cached reference {}: {e}", cache_path.display()));
+        }
+        let plan = load_plan(plan_dir, "173-excerpt-240s-wholefile").expect("wholefile plan must exist to compute the reference");
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        eprintln!("d23_measurement: computing whole-file 240s reference (first use in this $FA_CHUNK_PLAN_DIR, will be cached)...");
+        let start = std::time::Instant::now();
+        let words = align_chunked(&cache, model_path, audio_path, &plan, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("whole-file reference pass failed: {e}"));
+        eprintln!(
+            "d23_measurement: whole-file reference computed in {:.1}s, {} words",
+            start.elapsed().as_secs_f64(),
+            words.len()
+        );
+        let ref_words: Vec<RefWord> =
+            words.iter().map(|w| RefWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds }).collect();
+        std::fs::write(&cache_path, serde_json::to_string(&ref_words).unwrap())
+            .unwrap_or_else(|e| panic!("write reference cache {}: {e}", cache_path.display()));
+        ref_words
+    }
+
+    fn pearson_r(xs: &[f64], ys: &[f64]) -> f64 {
+        let n = xs.len() as f64;
+        let mean_x = xs.iter().sum::<f64>() / n;
+        let mean_y = ys.iter().sum::<f64>() / n;
+        let mut cov = 0.0;
+        let mut var_x = 0.0;
+        let mut var_y = 0.0;
+        for i in 0..xs.len() {
+            let dx = xs[i] - mean_x;
+            let dy = ys[i] - mean_y;
+            cov += dx * dy;
+            var_x += dx * dx;
+            var_y += dy * dy;
+        }
+        if var_x == 0.0 || var_y == 0.0 {
+            return f64::NAN;
+        }
+        cov / (var_x.sqrt() * var_y.sqrt())
+    }
+
+    /// WS1 Task 5 Slice D23, Step 3. Runs the 240s excerpt through INDEX
+    /// attribution's own uncoalesced/production-matching windowing
+    /// (`173-excerpt-240s-index-windowed`) and joins the output DIRECTLY
+    /// against the whole-file reference — no mis-assignment filter, no
+    /// proxy population. Reports the full-population Pearson r and the
+    /// error distribution split at `CONF_MIN`=0.3, the same reporting shape
+    /// D21 Step 3/D22 Step 3 use, so the two are directly comparable.
+    #[test]
+    #[ignore]
+    fn direct_correlation_index_attribution_240s() {
+        const CONTEXT: &str = "direct_correlation_index_attribution_240s";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+
+        let reference = whole_file_reference_240s(&plan_dir, &model_path, audio_path_str);
+
+        let Some(chunks) = load_plan(&plan_dir, "173-excerpt-240s-index-windowed") else { return };
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let words = align_chunked(&cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: expected Ok over the 240s excerpt's own index windowing, got Err: {e}"));
+
+        let mut ref_idx = 0usize;
+        let mut confidences: Vec<f64> = Vec::new();
+        let mut errors: Vec<f64> = Vec::new();
+        let mut skipped_fallback = 0usize;
+
+        for w in &words {
+            while ref_idx < reference.len() && reference[ref_idx].text != w.text {
+                ref_idx += 1;
+            }
+            if ref_idx >= reference.len() {
+                break;
+            }
+            if !w.score.is_finite() {
+                skipped_fallback += 1;
+                ref_idx += 1;
+                continue;
+            }
+            let r = &reference[ref_idx];
+            let start_diff = (r.start - w.start_seconds).abs();
+            let end_diff = (r.end - w.end_seconds).abs();
+
+            confidences.push(w.score.exp() as f64);
+            errors.push(start_diff.max(end_diff));
+            ref_idx += 1;
+        }
+
+        assert!(
+            confidences.len() > 10,
+            "{CONTEXT}: too few matched (confidence, error) pairs ({}) to correlate meaningfully",
+            confidences.len()
+        );
+
+        let r_full = pearson_r(&confidences, &errors);
+
+        eprintln!(
+            "{CONTEXT}: matched={} (skipped_fallback={skipped_fallback}) chunks={} words_total={} \
+             full_population_r={r_full:.4} (index attribution, NO filtering, direct join against whole-file reference)",
+            confidences.len(),
+            chunks.len(),
+            words.len(),
+        );
+
+        let mut below: Vec<f64> = Vec::new();
+        let mut above: Vec<f64> = Vec::new();
+        for i in 0..confidences.len() {
+            if confidences[i] < 0.3 {
+                below.push(errors[i]);
+            } else {
+                above.push(errors[i]);
+            }
+        }
+        below.sort_by(|a, b| a.total_cmp(b));
+        above.sort_by(|a, b| a.total_cmp(b));
+        if !below.is_empty() {
+            eprintln!(
+                "{CONTEXT}: BELOW 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} p90={:.4} max={:.4} mean={:.4}",
+                below.len(),
+                below[0],
+                percentile(&below, 0.50),
+                percentile(&below, 0.90),
+                below[below.len() - 1],
+                below.iter().sum::<f64>() / below.len() as f64,
+            );
+        } else {
+            eprintln!("{CONTEXT}: BELOW 0.3 confidence: n=0");
+        }
+        if !above.is_empty() {
+            eprintln!(
+                "{CONTEXT}: ABOVE/EQ 0.3 confidence (n={}) error(s) min={:.4} p50={:.4} p90={:.4} max={:.4} mean={:.4}",
+                above.len(),
+                above[0],
+                percentile(&above, 0.50),
+                percentile(&above, 0.90),
+                above[above.len() - 1],
+                above.iter().sum::<f64>() / above.len() as f64,
+            );
+        } else {
+            eprintln!("{CONTEXT}: ABOVE/EQ 0.3 confidence: n=0");
+        }
+
+        #[derive(serde::Serialize)]
+        struct Pair {
+            confidence: f64,
+            error_sec: f64,
+        }
+        let pairs: Vec<Pair> =
+            confidences.iter().zip(errors.iter()).map(|(&c, &e)| Pair { confidence: c, error_sec: e }).collect();
+        let out_path = plan_dir.join("173-excerpt-240s-index-direct-pairs.json");
+        std::fs::write(&out_path, serde_json::to_string(&pairs).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+        eprintln!("{CONTEXT}: wrote {} pairs to {}", pairs.len(), out_path.display());
+    }
+
+    /// D22 Step 4's own seam-proximity method (`chunk_index_for_time` +
+    /// nearer-edge distance), duplicated here rather than imported (this
+    /// module's own convention) so this before/after comparison can compute
+    /// the identical "% within 0.5s of own chunk's edge" statistic for both
+    /// the unpadded and padded runs.
+    fn chunk_index_for_time(chunks: &[crate::fa::FaChunkInput], cursor: &mut usize, t: f64) -> usize {
+        while *cursor < chunks.len() - 1 && t >= chunks[*cursor].end_sec {
+            *cursor += 1;
+        }
+        *cursor
+    }
+
+    fn seam_adjacent_fraction(words: &[WordSpan], chunks: &[crate::fa::FaChunkInput]) -> (usize, usize, f64) {
+        let mut cursor = 0usize;
+        let mut below_n = 0usize;
+        let mut near_seam = 0usize;
+        for w in words {
+            if !w.score.is_finite() {
+                continue; // fallback placeholder — excluded, matches D22 Step 4's own convention
+            }
+            let confidence = w.score.exp() as f64;
+            if confidence >= 0.3 {
+                continue;
+            }
+            below_n += 1;
+            let idx = chunk_index_for_time(chunks, &mut cursor, w.start_seconds);
+            let chunk = &chunks[idx];
+            let seam_distance = (w.start_seconds - chunk.start_sec).min(chunk.end_sec - w.end_seconds);
+            if seam_distance < 0.5 {
+                near_seam += 1;
+            }
+        }
+        let pct = 100.0 * near_seam as f64 / below_n.max(1) as f64;
+        (below_n, near_seam, pct)
+    }
+
+    /// WS1 Task 5 Slice D23, Steps 4-5. Runs the SAME full-709s index-
+    /// attribution plan (`173-full-709s-index-windowed`, D21 Step 1's own
+    /// regression-guard shape) through both `align_chunked` (unpadded
+    /// baseline) and `align_chunked_with_padding` (R.2, `FA_R2_DEFAULT_
+    /// PADDING_SEC` = 0.5s) in the SAME test/process for a clean apples-to-
+    /// apples comparison, and reports every Step 4/5 success metric: the
+    /// below-0.3 tail count and its seam-adjacent concentration before vs.
+    /// after, fallback count (must stay 0 both runs), total word count (must
+    /// stay 1643 both runs), and per-word timing delta (p50/p99/max).
+    ///
+    /// Wall clock is reported PER PHASE via internal timing (unpadded then
+    /// padded, sequentially in this one process); peak RSS is only
+    /// obtainable for the WHOLE process externally (`/usr/bin/time -l`
+    /// wrapping this test's own `cargo test` invocation) — reported as a
+    /// single combined figure, not phase-split, and stated as such rather
+    /// than implied to be padding-only.
+    #[test]
+    #[ignore]
+    fn full_709s_padding_before_after() {
+        const CONTEXT: &str = "full_709s_padding_before_after";
+        let Some((plan_dir, model_path, audio_path)) = common_setup(CONTEXT) else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+
+        let Some(chunks) = load_plan(&plan_dir, "173-full-709s-index-windowed") else { return };
+
+        eprintln!("{CONTEXT}: running UNPADDED baseline over {} chunks...", chunks.len());
+        let cache_unpadded: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let start_unpadded = std::time::Instant::now();
+        let words_unpadded = align_chunked(&cache_unpadded, &model_path, audio_path_str, &chunks, "en", || false, |_| {})
+            .unwrap_or_else(|e| panic!("{CONTEXT}: unpadded run expected Ok, got Err: {e}"));
+        let elapsed_unpadded = start_unpadded.elapsed();
+
+        eprintln!(
+            "{CONTEXT}: running PADDED run (padding_sec={}) over {} chunks...",
+            FA_R2_DEFAULT_PADDING_SEC,
+            chunks.len()
+        );
+        let cache_padded: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let start_padded = std::time::Instant::now();
+        let words_padded = align_chunked_with_padding(
+            &cache_padded,
+            &model_path,
+            audio_path_str,
+            &chunks,
+            "en",
+            FA_R2_DEFAULT_PADDING_SEC,
+            || false,
+            |_| {},
+        )
+        .unwrap_or_else(|e| panic!("{CONTEXT}: padded run expected Ok, got Err: {e}"));
+        let elapsed_padded = start_padded.elapsed();
+
+        let fallback_unpadded = words_unpadded.iter().filter(|w| !w.score.is_finite()).count();
+        let fallback_padded = words_padded.iter().filter(|w| !w.score.is_finite()).count();
+        eprintln!(
+            "{CONTEXT}: unpadded: wall_clock={:.1}s words={} fallback={} | padded: wall_clock={:.1}s words={} fallback={}",
+            elapsed_unpadded.as_secs_f64(),
+            words_unpadded.len(),
+            fallback_unpadded,
+            elapsed_padded.as_secs_f64(),
+            words_padded.len(),
+            fallback_padded,
+        );
+
+        assert_eq!(fallback_unpadded, 0, "{CONTEXT}: unpadded fallback_count must stay 0 (D21 Step 1/2's own gate)");
+        assert_eq!(fallback_padded, 0, "{CONTEXT}: padded fallback_count must stay 0 — R.2 must not reintroduce CTC-infeasibility");
+        assert_eq!(words_unpadded.len(), 1643, "{CONTEXT}: unpadded word count must stay 1643 (D21/D22's own measured figure)");
+        assert_eq!(words_padded.len(), 1643, "{CONTEXT}: padded word count must stay 1643 — R.2 must not change word attribution or count");
+
+        // Step 5: per-word text sequence must be IDENTICAL (same attribution,
+        // same chunk plan, same chunk count — only the forward pass's own
+        // acoustic context differs) — a text mismatch at any index would mean
+        // padding silently changed word attribution, which the plan/attribution
+        // machinery (untouched this section) should make structurally
+        // impossible, but this is the direct, honest check rather than an
+        // assumption.
+        for (i, (u, p)) in words_unpadded.iter().zip(words_padded.iter()).enumerate() {
+            assert_eq!(u.text, p.text, "{CONTEXT}: word {i} text differs between unpadded and padded runs — word attribution changed");
+        }
+
+        let mut deltas: Vec<f64> = words_unpadded
+            .iter()
+            .zip(words_padded.iter())
+            .map(|(u, p)| (u.start_seconds - p.start_seconds).abs().max((u.end_seconds - p.end_seconds).abs()))
+            .collect();
+        deltas.sort_by(|a, b| a.total_cmp(b));
+        eprintln!(
+            "{CONTEXT}: per-word timing delta (padded vs. unpadded): p50={:.4}s p99={:.4}s max={:.4}s",
+            percentile(&deltas, 0.50),
+            percentile(&deltas, 0.99),
+            deltas[deltas.len() - 1],
+        );
+
+        let (below_unpadded, near_seam_unpadded, pct_unpadded) = seam_adjacent_fraction(&words_unpadded, &chunks);
+        let (below_padded, near_seam_padded, pct_padded) = seam_adjacent_fraction(&words_padded, &chunks);
+        eprintln!(
+            "{CONTEXT}: BEFORE (unpadded): below_0.3={} ({:.2}% of {}) near_seam(<0.5s)={} ({:.1}% of below)",
+            below_unpadded,
+            100.0 * below_unpadded as f64 / words_unpadded.len() as f64,
+            words_unpadded.len(),
+            near_seam_unpadded,
+            pct_unpadded,
+        );
+        eprintln!(
+            "{CONTEXT}: AFTER (padded, {}s): below_0.3={} ({:.2}% of {}) near_seam(<0.5s)={} ({:.1}% of below)",
+            FA_R2_DEFAULT_PADDING_SEC,
+            below_padded,
+            100.0 * below_padded as f64 / words_padded.len() as f64,
+            words_padded.len(),
+            near_seam_padded,
+            pct_padded,
+        );
+
+        #[derive(serde::Serialize)]
+        struct WordOut {
+            text: String,
+            start_seconds: f64,
+            end_seconds: f64,
+            confidence: f64,
+        }
+        let to_out = |ws: &[WordSpan]| -> Vec<WordOut> {
+            ws.iter()
+                .map(|w| WordOut {
+                    text: w.text.clone(),
+                    start_seconds: w.start_seconds,
+                    end_seconds: w.end_seconds,
+                    confidence: w.score.exp() as f64,
+                })
+                .collect()
+        };
+        let unpadded_path = plan_dir.join("173-full-709s-index-unpadded-words.json");
+        let padded_path = plan_dir.join("173-full-709s-index-padded-words.json");
+        std::fs::write(&unpadded_path, serde_json::to_string(&to_out(&words_unpadded)).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", unpadded_path.display()));
+        std::fs::write(&padded_path, serde_json::to_string(&to_out(&words_padded)).unwrap())
+            .unwrap_or_else(|e| panic!("write {}: {e}", padded_path.display()));
+        eprintln!("{CONTEXT}: wrote per-word output to {} and {}", unpadded_path.display(), padded_path.display());
     }
 }
 
@@ -4119,6 +4774,29 @@ mod require_ort {
     /// guards. `Mutex::new` is `const fn`, so a plain `static` needs no
     /// lazy-init wrapper.
     pub static ORT_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    /// WS1 Task 5 Slice D23. Guards every `whole_file_reference_240s`
+    /// (duplicated once per `d12_measurement`/`d13_measurement`/
+    /// `d21_measurement`/`d22_measurement` module — see each copy's own doc
+    /// comment) across its ENTIRE check-cache-or-compute-and-write critical
+    /// section, following this module's own `ORT_ENV_LOCK` precedent.
+    ///
+    /// Without this: two tests in the same multi-threaded `cargo test`
+    /// process (e.g. `d22_measurement`'s own `mis_assignment_filtered_
+    /// correlation_240s` and `full_709s_index_attribution_tail_
+    /// characterization`, both real, both real callers) can both observe a
+    /// cold cache and both start computing the whole-file reference
+    /// CONCURRENTLY — each pass peaks ~20GiB (D10/D11) on a 32GiB machine,
+    /// which drove this exact machine into 23GiB+ of swap and a 30+ minute
+    /// uninterruptible-I/O stall with no forward progress (WS1 Task 5 Slice
+    /// D23's own Step 2). The prior workaround was `--test-threads=1` on the
+    /// `cargo test` invocation — an easy-to-forget flag a future CI
+    /// configuration would silently not carry. With this lock, the first
+    /// caller computes and writes the cache file while holding the lock; a
+    /// second, concurrent caller blocks on the lock, then — once it
+    /// acquires it — finds the cache file already populated and returns
+    /// from the fast path immediately, with no flag required.
+    pub static WHOLE_FILE_REFERENCE_LOCK: Mutex<()> = Mutex::new(());
 
     fn require_ort_enabled() -> bool {
         std::env::var("FA_REQUIRE_ORT").as_deref() == Ok("1")

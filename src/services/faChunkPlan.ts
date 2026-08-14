@@ -210,26 +210,43 @@ function runsToChunks(runs: readonly FaRun[], segments: readonly VideoSegment[])
 
 /**
  * Builds the ordered chunk plan for a forced-alignment run: `computeFaAnchors`
- * (unmodified) supplies the audio-time windows, this function attributes each
- * window's TEXT via segment-`startTime` membership (see module doc comment).
+ * (unmodified) supplies the audio-time windows; `attribution` decides how
+ * each window's TEXT is assigned (see module doc comment for the original
+ * segment-`startTime` design, and the INDEX ATTRIBUTION section below for the
+ * `qi`-derived alternative).
  *
  * Preconditions (caller's responsibility, matching `App.tsx`'s existing
  * `__faDevAlign` guards): `segments.length > 0`, `tokens.length > 0`. Returns
  * `[]` only in the degenerate case where no segment has non-empty text.
  *
- * Unchanged in behavior since WS1 Task 5 Slice D11 — the run/chunk
- * conversion below was extracted into `computeRuns`/`runsToChunks` (WS1 Task
- * 5 Slice D12) purely so `computeFaChunkPlanCoalesced` could reuse it; this
- * function's own output is byte-identical to before that extraction.
+ * THE PRODUCTION/LIVE ENTRY POINT — WS1 Task 5 Slice D23. Every function in
+ * this codebase that anything (production, script, or test) actually calls
+ * for real chunk-plan work goes through this one. D22 flipped
+ * `computeFaChunkPlanWithAttribution`'s own internal default to
+ * `'script-word-index'` but candidly reported that this function was a
+ * SEPARATE code path, hardcoded to segment-start-time, and therefore
+ * unaffected — "the flip changed zero existing call sites' behavior" (D22's
+ * own gate table). This slice closes that gap: `computeFaChunkPlan` now
+ * DELEGATES to `computeFaChunkPlanWithAttribution`, with the identical
+ * `'script-word-index'` default, so every existing 4-argument call site
+ * (`App.tsx`'s dev-only `__faDevAlign` path included) picks up index
+ * attribution without its own call changing at all. `'segment-start-time'`
+ * (the pre-D23 behavior, still exactly what `runsToChunks` below computes)
+ * remains fully reachable by passing it as the 5th argument explicitly —
+ * nothing removes the old rule, and `computeFaChunkPlanWithAttribution`'s own
+ * `'segment-start-time'` branch was already proven byte-identical to this
+ * function's pre-D23 body (`faChunkPlan.test.ts`'s
+ * `'is byte-identical to computeFaChunkPlan under segment-start-time
+ * attribution'`, since Slice D13).
  */
 export function computeFaChunkPlan(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  attribution: FaTextAttribution = 'script-word-index',
 ): FaChunk[] {
-  const runs = computeRuns(segments, tokens, silences, audioDuration);
-  return runsToChunks(runs, segments);
+  return computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, attribution);
 }
 
 // ---------------------------------------------------------------------------
@@ -307,9 +324,10 @@ export function computeFaChunkPlanCoalesced(
 // ---------------------------------------------------------------------------
 // INDEX ATTRIBUTION (WS1 Task 5 Slice D13 Step 3) — the planner's own
 // internal default since Slice D22 (`computeFaChunkPlanWithAttribution`'s
-// `attribution` parameter default, below); still no production caller
-// anywhere in this codebase (`computeFaChunkPlan`, the only function any
-// production/script caller actually invokes, is separate and unchanged).
+// `attribution` parameter default, below), and — since WS1 Task 5 Slice D23
+// — the LIVE default too: `computeFaChunkPlan`, the only function any
+// production/script caller actually invokes, now delegates straight to
+// `computeFaChunkPlanWithAttribution` and inherits this same default.
 //
 // D12 proved that ATTRIBUTION, not window size, dominates chunked-alignment
 // disagreement: at matched ~6-7s granularity, chunks whose text was correct by
@@ -528,16 +546,17 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
  * (D21 Step 1). `'segment-start-time'` (the D11 production rule) remains
  * fully reachable by passing it explicitly — nothing about this default
  * removes the old rule, and no caller anywhere in this codebase is forced
- * onto the new one. This is the CHUNKED-PATH PLANNER's own default only: it
- * has no production caller today (`computeFaChunkPlan`, the function actual
- * production code would eventually call, is separate and UNCHANGED — still
- * hardcoded to segment-start-time, still the only path any script/test that
- * calls it exercises), and the FA capability gate remains OFF regardless
- * (`isFaGateOpen()`, D17) — flipping this default changes no shipped
- * behavior. `coalesceTargetSec` is optional; omitting it runs the unmerged
- * R.0 plan. With `attribution: 'segment-start-time'` and no target, this is
- * exactly `computeFaChunkPlan` — that legacy path remains reachable through
- * this function unchanged, and `computeFaChunkPlan` itself is untouched.
+ * onto the new one.
+ *
+ * WS1 Task 5 Slice D23 UPDATE: `computeFaChunkPlan` (the function any
+ * production/script caller actually invokes) now DELEGATES here — see that
+ * function's own doc comment. This function's `'segment-start-time'` branch
+ * remains byte-identical to the pre-D23 `computeFaChunkPlan` body (still
+ * `computeRunContext` + `runsToChunks`, untouched), so passing
+ * `'segment-start-time'` explicitly is still the exact pre-D23 behavior; the
+ * FA capability gate remains OFF regardless (`isFaGateOpen()`, D17), so this
+ * whole module stays production-inert either way. `coalesceTargetSec` is
+ * optional; omitting it runs the unmerged R.0 plan.
  */
 export function computeFaChunkPlanWithAttribution(
   segments: readonly VideoSegment[],

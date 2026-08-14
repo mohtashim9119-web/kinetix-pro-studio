@@ -3555,8 +3555,10 @@ export default function App() {
 
       // WS1 Task 5 Slice D11: whole-file FA is infeasible at production
       // audio length (D10) — build the windowed chunk plan via
-      // computeFaChunkPlan (faAnchors.ts's run structure + segment-startTime
-      // text attribution, see that module's own doc comment) instead of the
+      // computeFaChunkPlan (faAnchors.ts's run structure; text attribution
+      // defaults to script-word-index text attribution since WS1 Task 5
+      // Slice D23 — segment-startTime remains reachable via computeFaChunkPlan's
+      // 5th argument, see that function's own doc comment) instead of the
       // pre-D11 single whole-file segment list.
       const audioDuration = await probeAudioDuration(voiceoverBlob);
       const silenceResult = await detectSilences(voiceoverBlob);
