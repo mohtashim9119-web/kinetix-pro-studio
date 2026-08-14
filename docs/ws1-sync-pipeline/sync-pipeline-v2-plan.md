@@ -4404,3 +4404,70 @@ These five boundaries give the short-segment-run category 6 total members in the
 ---
 
 > Bug & task tracking lives in `project-state.md`. `docs/sync-pipeline-contract-plan.md` (deleted; archived verbatim in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) remains the authority on the OLD pipeline's assumption tables and the R1-R14 register text; Part J owns their v2 mapping. `docs/verification-baseline.csv` (created at Phase 0) is the programme's verdict record.
+
+---
+
+Part M — Task 5 (Phase 3) Status Addendum (2026-08-14, WS1 documentation consolidation)
+
+> **Append-only, per this project's own line-citation-stability rule.** Nothing above this
+> line was edited, reordered, or removed to write this Part — every existing line number in
+> this document, and therefore every prior audit's citation against it, remains valid. This
+> addendum exists because Task 5 (Phase 3) shipped 25 slices (D1–D25, D7 cancelled as
+> scoped) between this document's own last self-correction (the 2026-08-13 callout under
+> Step R, "Status update, 2026-08-13 (WS1 Task 5 documentation pass)") and today, and none
+> of D2–D25 is reflected anywhere above. **Live, granular status for all of this — updated
+> per-slice, not per-consolidation-pass — now lives in `docs/work-in-progress.md`'s
+> "WS1 — Sync Pipeline Rewrite" section (§1–§11). This Part is a point-in-time pointer, not
+> a replacement tracker; if the two ever disagree, `work-in-progress.md` is newer and wins.**
+> This document remains design-of-record: stages, phases, contracts (Part J), and the risk
+> register are unchanged and unrestated here.
+
+**R.2 (context padding) — CLOSED-NEGATIVE, deleted.** Step R (`:1421-1446`) specifies R.2
+as a padding mechanism bounding a run's audio window. It was built (Slice D23,
+`align_chunked_with_padding`/`FA_R2_DEFAULT_PADDING_SEC`, 0.5s default), measured, and
+found net-unfavorable: the below-`CONF_MIN` tail grew 155→164 words and seam concentration
+worsened 83.9%→85.4% (Slice D24). D24's own diagnostic then falsified the mechanism's own
+premise — 0/236 edge-word checks showed a timestamp escaping its own chunk's window, in
+either the padded or unpadded run, confirmed both architecturally (padded emission is
+sliced back to the exact unpadded frame count before Viterbi decode) and empirically. The
+three symbols (`align_chunked_with_padding`, `align_chunk_samples_padded`,
+`FA_R2_DEFAULT_PADDING_SEC`) were deleted from `src-tauri/src/fa_onnx.rs` rather than kept
+as unwired dead code — confirmed by direct grep, zero hits. Does not need re-attempting
+under the falsified untokenized-pad-speech hypothesis; a future slice would need a
+genuinely new mechanism. Full record: `docs/work-in-progress.md` §4/§6, commits `3f2b9e6`
+(build) / `a89f70a` (post-mortem + deletion).
+
+**R.5 (unscripted-audio wildcard) — scoped, reachable, not built.** Step R (`:1485-1503`)
+specifies R.5 as a CTC wildcard absorbing unscripted audio inside a run, with its
+destination flagged there as needing an owner ruling. That destination question is now
+closed: ruling R-E ("Model P outranks R.5," the wildcard span is assigned to the preceding
+segment), recorded 2026-08-11, a day before Task 5's first commit. What R.5's own
+reachability scoping (Slice D25 B1) found: the condition R.5 exists to handle — real
+unscripted audio between two segments sharing a chunk — is **still fully reachable today**
+under the shipped index-attribution chunked path (118 real chunks from 172 segments means
+most chunks already concatenate multiple segments' text); index attribution (D21) fixed a
+different, coarser-granularity bug and did not add any wildcard mechanism. No
+wildcard/star-token state exists anywhere in `fa_viterbi.rs`/`fa_onnx.rs` today (grepped,
+zero hits). What remains open is *whether/when* to build it, not where the gap goes — see
+`docs/work-in-progress.md` §7 item 2 for the live open-decision framing.
+
+**Spanish language gate — CLOSED**, unchanged from Step U's own finding above (this
+document's Step U, Spanish accuracy: corrected p95 50.4ms vs. the approved 250ms gate, 1 of
+22 pauses over) — noted here only to confirm Task 5's later slices (D1–D25) did not reopen
+it. No Spanish-specific code has shipped in Task 5 to date, so the reopening trigger stated
+at this document's own Phase 1b entry (Spanish boundary-listening acceptance voids "the
+moment any Spanish-specific normalization or alignment code ships, Phase 3b") has not
+fired.
+
+**Durable 16kHz WAV audio cache — built, live-wired, not yet production-reachable.** Not
+named anywhere in Step R's own design (R.0–R.9) — this is an implementation-layer addition
+Task 5 needed once real per-chunk inference required durable, reusable transcoded audio
+rather than the whisper.cpp sidecar's existing delete-on-exit temp WAV. `ensure_durable_wav`
+(`src-tauri/src/fa.rs:736`), LRU-evicted at a 2 GiB cap (`fa.rs:591,516`), built at Slice
+D24 and wired into `fa_align_dev` — the one real caller — at Slice D25, live-verified
+against a real `AppHandle<Wry>` and the real 173-project corpus: resolved cache path
+matches production's `app_local_data_dir()` exactly, cache hit 1538× faster and
+byte-identical to a miss. Two real bugs were caught and fixed live in the same slice (a
+`.tmp`-suffix filename defeating ffmpeg's own format auto-detection; a concurrent-miss
+filename collision). Still has no production (non-dev, UI-reachable) caller — that slice is
+the next item on the terminal path (`docs/work-in-progress.md` §11, item 1).
