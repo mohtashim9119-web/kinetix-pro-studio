@@ -731,3 +731,30 @@ Full state: [`docs/ws1-sync-pipeline/`](ws1-sync-pipeline/) — two top-level tr
 (`sync-pipeline-v2-plan.md` design doc, `watcher-revert-2026-08-03.diff` resumption
 pointer) plus this section for execution/status, plus the `measurements/` data directory
 (raw CSV/JSON exports and the restored `measurements/README.md` index, §12 row 21).
+
+---
+
+## Changelog
+
+- **2026-08-15 — WS1 consolidation close-out audit.** Full
+  audit-fix-reaudit pass against the 2026-08-14 consolidation (`9cf5867`).
+  Iteration 1 found FAILs across 8 of 12 checks (~35 dangling references to
+  the 29 deleted files across source comments/plan doc/tracker; `CLAUDE.md`
+  asserting a since-deleted `measurements/README.md`; no archive-retrieval
+  section; no stated summarization-vs-lossless-merge disclosure; no
+  single-tracker enforcement test; a "Part Z"/"Part M" naming error; a
+  "30 files"/29-actual miscount; a stale `sync-pipeline-v2-plan.md` Phase
+  Status row contradicting Part M). All were fixed except one: `project-state.md`
+  (protected, out of scope for this pass) still points its Task 5 rulings at
+  the deleted `ws1-master-roadmap.md` — a genuine, permanent blocker under this
+  pass's hard constraints, not a partial pass being declared clean. Iteration 2
+  re-audit: that one FAIL only. Added: `docs/work-in-progress.md` §12 (deleted-
+  file archive, all 29 files, retrieval commands), a summarization-transform
+  disclosure in this file's header, restored and corrected
+  `docs/ws1-sync-pipeline/measurements/README.md`, `scripts/ws1-single-tracker.test.ts`
+  (C7 guard, allowlist of 3). Gates: `cargo test` 76 (unconditional) + 150
+  (fa-inference, 19 ignored) passed 0 failed; `cargo clippy --features
+  fa-inference` 4 pre-existing warnings, 0 new; `npm run lint` clean; `npm
+  test` 80 files/1943 passed/1 skipped; golden replay 6/6. All non-doc changes
+  were comments-only (`git diff --stat 9cf5867 -- src/ src-tauri/`: 7 files,
+  93 insertions/34 deletions, zero logic lines).
