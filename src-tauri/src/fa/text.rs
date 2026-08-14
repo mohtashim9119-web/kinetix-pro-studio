@@ -447,6 +447,44 @@ fn expand_spanish_cardinal(stripped: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
+// German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder audit,
+// 2026-08-15) - mirrors `GERMAN_CARDINALS_0_30`/`expandGermanCardinal` in
+// faTextNormalize.ts. Unlike Spanish, German has no structural wall at 30 —
+// every German cardinal is a single concatenated word arbitrarily far up —
+// so it is unaffected by the permanent single-word-output decision (b); the
+// cap at 30 here is a scope choice mirroring Rule 2's reviewed shape, not a
+// structural one. Values are the PRE-substitution vocab-safe spelling
+// (German vocab has no `ß`): "dreissig", not "dreißig".
+// ---------------------------------------------------------------------------
+
+/// Index `n` -> its German spelling (bare-cardinal reading), for `n` in
+/// 0..=30. Mirrors `GERMAN_CARDINALS_0_30`.
+const GERMAN_CARDINALS_0_30: &[&str] = &[
+    "null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf",
+    "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn", "zwanzig", "einundzwanzig",
+    "zweiundzwanzig", "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig", "siebenundzwanzig",
+    "achtundzwanzig", "neunundzwanzig", "dreissig",
+];
+
+/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+/// "0"), no sign, no separators — anything else returns `None` and the
+/// caller falls through to the pre-existing digit-drop path unchanged.
+/// Mirrors `expandGermanCardinal`.
+fn expand_german_cardinal(stripped: &str) -> Option<&'static str> {
+    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if stripped.len() > 1 && stripped.starts_with('0') {
+        return None;
+    }
+    let n: u32 = stripped.parse().ok()?;
+    if n > 30 {
+        return None;
+    }
+    GERMAN_CARDINALS_0_30.get(n as usize).copied()
+}
+
+// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -499,7 +537,11 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         };
     }
 
-    let cardinal_expansion = if language == Language::Es { expand_spanish_cardinal(stripped) } else { None };
+    let cardinal_expansion = match language {
+        Language::Es => expand_spanish_cardinal(stripped),
+        Language::De => expand_german_cardinal(stripped),
+        _ => None,
+    };
     let candidate: &str = cardinal_expansion.unwrap_or(stripped);
 
     if cardinal_expansion.is_none() && stripped.chars().any(|c| c.is_ascii_digit()) {
@@ -805,6 +847,82 @@ mod tests {
         // still drops exactly as it did before this rule.
         let v = vocab(&['v', 'e', 'i', 'n', 't', 'r', 's']);
         let result = normalize_word("23", Language::Fr, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    // -- German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder) -
+    //
+    // SCOPE: bare cardinal integers 0-30, German only — unlike Spanish,
+    // German has no structural multi-word wall at 30; the cap here mirrors
+    // Rule 2's reviewed shape as a scope choice, not a structural one — see
+    // `expand_german_cardinal`'s own doc comment.
+
+    fn de_vocab() -> HashSet<char> {
+        // Every letter needed to spell "null".."dreissig" (pre-substituted
+        // ss, not ß) plus ü/ö.
+        vocab(&[
+            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'n', 'o', 'r', 's', 't', 'u', 'v', 'w', 'z', 'ü', 'ö',
+        ])
+    }
+
+    #[test]
+    fn german_cardinal_boundary_zero_expands() {
+        let result = normalize_word("0", Language::De, &de_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("null"));
+    }
+
+    #[test]
+    fn german_cardinal_bare_digit_expands() {
+        let result = normalize_word("23", Language::De, &de_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dreiundzwanzig"));
+    }
+
+    #[test]
+    fn german_cardinal_boundary_thirty_expands() {
+        let result = normalize_word("30", Language::De, &de_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dreissig"));
+    }
+
+    #[test]
+    fn german_cardinal_survives_inside_a_phrase() {
+        let v = de_vocab();
+        let result = normalize_for_forced_alignment("ich bin 23 jahre alt", Language::De, &v);
+        let digit_word = result.words.iter().find(|w| w.input == "23").unwrap();
+        assert!(digit_word.representable);
+        assert_eq!(digit_word.mapped.as_deref(), Some("dreiundzwanzig"));
+    }
+
+    #[test]
+    fn negative_german_cardinal_31_is_past_the_scope_cap() {
+        let result = normalize_word("31", Language::De, &de_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_german_cardinal_decimal_stays_dropped() {
+        let result = normalize_word("2.5", Language::De, &de_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_german_cardinal_leading_zero_stays_dropped() {
+        let result = normalize_word("05", Language::De, &de_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_german_cardinal_expansion_is_language_gated() {
+        // Other languages are unaffected: the same bare digit under "pt"
+        // still drops exactly as it did before this rule.
+        let v = vocab(&['d', 'r', 'e', 'i', 'u', 'n', 'z', 'a', 'g']);
+        let result = normalize_word("23", Language::Pt, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("digit"));
     }

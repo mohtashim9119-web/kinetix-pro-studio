@@ -152,6 +152,16 @@ const CORPUS: CorpusCase[] = [
   { lang: 'es', input: '2.5', note: 'es cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'es', input: '05', note: 'es cardinal negative: leading zero is not a bare cardinal, stays dropped' },
   { lang: 'fr', input: '23', note: 'es cardinal 0-30 unaffected-language control: fr digit word still drops exactly as before' },
+
+  // -- German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder) --
+  { lang: 'de', input: '23', note: 'de cardinal 0-30: bare digit expands to a spelled word' },
+  { lang: 'de', input: '0', note: 'de cardinal 0-30: lower boundary value' },
+  { lang: 'de', input: '30', note: 'de cardinal 0-30: upper boundary value (dreissig, pre-substituted ss)' },
+  { lang: 'de', input: 'ich bin 23 jahre alt', note: 'de cardinal 0-30: expansion survives inside a phrase' },
+  { lang: 'de', input: '31', note: 'de cardinal negative: 31 is past the scope cap, stays dropped' },
+  { lang: 'de', input: '2.5', note: 'de cardinal negative: decimal stays dropped, out of scope' },
+  { lang: 'de', input: '05', note: 'de cardinal negative: leading zero is not a bare cardinal, stays dropped' },
+  { lang: 'pt', input: '23', note: 'de cardinal 0-30 unaffected-language control: pt digit word still drops exactly as before' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -173,6 +183,7 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'genuine OOV',
   'fr elision',
   'es cardinal 0-30',
+  'de cardinal 0-30',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {

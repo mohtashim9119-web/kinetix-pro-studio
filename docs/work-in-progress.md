@@ -1089,3 +1089,149 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   `faTextNormalize.ts`, `text.rs`, `faTextNormalize.test.ts`,
   `generate-fa-text-fixture.ts`, `fa-text-normalize-fixture.json` — 5 files,
   no protected file touched.
+
+- **2026-08-15 — Part H.5 framing correction (docs-only, follow-up to Phase 3b
+  Slice 3).** The prior slice's changelog entry (above) had already concluded
+  H.5 misdescribes the digit-expansion defect as an English-vs-others
+  asymmetry when `faTextNormalize.ts` never had digit expansion for any
+  language — but only updated the "Rule 2 unstarted" forward-references
+  (`sync-pipeline-v2-plan.md`'s status table, line 23); the underlying framing
+  prose in Part H.5 itself (`sync-pipeline-v2-plan.md:4067-4092`) was left
+  unedited. Verified by direct code inspection this run: `textNormalize.ts`
+  genuinely has all five capabilities H.5 attributes to it (`digitTokenToWords`,
+  `$`->`dollars` currency expansion, a thousands-separator strip, an English
+  `CONTRACTIONS` list, and the `NUMBER_WORDS` hyphen carve-out — all real,
+  grep-confirmed) — H.5 is not wrong about that module. The error is that
+  Phase 3b's actual Rules (1: French elision, 2: Spanish cardinals) land in
+  `faTextNormalize.ts`, a module its own header comment calls "DELIBERATELY
+  PARALLEL to `textNormalize.ts`'s `canonicalize`, not built on top of it"
+  (created 2026-08-12, R-Q, predates H.5's prose) — which started with NONE of
+  those five capabilities, for ANY language including English (grep-confirmed:
+  no `CONTRACTIONS`, no currency symbol handling, no `NUMBER_WORDS`/hyphen
+  logic anywhere in the file; every digit-bearing word uniformly dropped
+  pre-Rule-2). **All four content bullets (digit expansion, currency,
+  thousands separators, contractions) plus the closing byte-identical GATE
+  line were misframed the same way** — each correctly describes
+  `textNormalize.ts` but was being read as the capability baseline for the
+  module Phase 3b is actually extending, which has no such baseline. The
+  thousands-separator bullet differs in failure mode, not just module: in
+  `textNormalize.ts` a non-English separator format is actively MANGLED
+  (corrupted token); in `faTextNormalize.ts` it is dropped wholesale
+  (unrepresentable, not mangled) — same missing capability, different symptom.
+  **Fix applied:** appended a correction block directly under H.5's existing
+  GATE line in `sync-pipeline-v2-plan.md`, naming each bullet's real referent
+  module and stating `faTextNormalize.ts`'s actual (empty) starting state per
+  capability, without deleting or rewriting the original prose (same
+  preserve-original-append-correction convention already used elsewhere in
+  that document, e.g. row 3's STALE/Part-M pattern). No code changed this
+  entry — docs-only. `git diff --stat`: `sync-pipeline-v2-plan.md`,
+  `work-in-progress.md` (this entry) — 2 files, no protected file touched,
+  no test suite affected (cargo 92/92, `--features fa-inference` 166/19
+  ignored, clippy 4 pre-existing/0 new, `npm test` 1988/1 skipped, golden
+  replay 6/6, `phase4-step-x-verify.py` 13 in/C10 out/exit 1 — all identical
+  to Phase 3b Slice 3's baseline, unaffected by a docs-only change).
+
+- **2026-08-15 — Phase 3b remainder audit, one bundled pass (decision +
+  audit + Rule 3).** Three parts, same session, same commit.
+
+  **1. Multi-word-output decision recorded (owner sign-off): (b), single-
+  word-output only, permanently.** Before recording it, surfaced a
+  consequence not present in the original 31+/French scoping and confirmed
+  it against code: `textNormalize.ts`'s own currency rule
+  (`t.replace(/\$\s?(\d+)/g, ' $1 dollars ')`, `textNormalize.ts:239`) turns
+  a single glued token (`"$5"`) into 2 output words (`"5 dollars"`) — an
+  architecture `faTextNormalize.ts`'s 1:1-per-token `normalizeWord` cannot
+  replicate. So decision (b) forecloses currency expansion too, not just
+  Spanish 31+/French "et"-numbers. Recorded in full in H.5
+  (`sync-pipeline-v2-plan.md:4136-4166`) and the Phase 3b tracker row, with
+  a reopening criterion (only if a concrete forcing need justifies reworking
+  the `FaWordResult`/`WordResult` 1:1 contract and its `fa_onnx.rs`
+  consumers together).
+
+  **2. Audit — real inputs through both `canonicalize` and
+  `normalizeForForcedAlignment`, all 5 languages, before writing any code.**
+
+  | Category | Tested | Classification |
+  |---|---|---|
+  | Currency (`$5`, `€10`, `R$5`, `5%`, all 5 langs) | yes | REAL GAP, PERMANENTLY blocked by decision (b) — every glued symbol+digit token needs ≥2 output words in `faTextNormalize.ts`; no code |
+  | Contractions (es `del`/`al`, fr `du`, de `zum`/`zur`/`im`/`am`, pt `do`/`da`/`no`/`na`) | yes | NOT A GAP — both normalizers already leave them as one unexpanded token; verified acoustically correct (spoken as one word) and neither's English-only contraction list fires on them; no code |
+  | Thousands separators — `faTextNormalize.ts` (`1.234,56` etc, all 5 langs) | yes | REAL GAP, PERMANENTLY blocked by decision (b) — any thousands-separated number is ≥1000, always multi-word; no code |
+  | Thousands separators — `textNormalize.ts` (`canonicalize`) | yes | REAL GAP, confirmed still MANGLED (`"1.234,56"` reads digit-by-digit as `"one point two three four five six"`, silently wrong for es/fr/de/pt) — blocked by this pass's own hard constraint (`textNormalize.ts`/`canonicalize` untouched), no owner assigned; no code |
+  | French 70-99 hyphen/"et" forms already spelled as words (`quatre-vingt-dix-neuf`, `soixante et onze`) | yes | NOT A GAP — already representable, unchanged; no raw digit is present so no expansion is needed; no code |
+  | German compound cardinals already spelled as words (`einunddreißig`, `zweihundertfünfzig`) | yes | NOT A GAP — already representable, unchanged (existing ß->ss substitution handles it); no code |
+  | German cardinal DIGITS 0-30 (new finding) | yes | REAL GAP, IN SCOPE under decision (b) — German has no structural multi-word wall at 30 (every German cardinal is one concatenated word, arbitrarily far up), so single-word output suffices — **IMPLEMENTED as Rule 3** |
+  | Portuguese cardinal DIGITS 0-20ish (new finding) | yes | REAL GAP, blocked — PT-PT/PT-BR spelling fork for 14/16/17/19 (catorze/quatorze, dezasseis/dezesseis, dezassete/dezessete, dezanove/dezenove) is unresolved and no prior project convention exists; not a decision (b) block, a distinct undecided sub-question; no code, no owner |
+  | French cardinal digits beyond Rule 1 (new finding) | yes | REAL GAP, blocked — French's "et"-exception structure (21/31/41/51/61/71 use "et", but 81/91 don't) is irregular, not a flat 0-N lookup like Rule 2/3, and needs its own design pass; not safe to freelance under audit-pass time pressure; no code, no owner |
+  | Ordinals/percent/decimals/negatives (all langs) | yes (spot-checked) | Not a new finding — already correctly tracked as out-of-scope by `faTextNormalize.ts`'s own SCOPE comment; not one of this audit's 4 named categories; no code |
+
+  **3. Implemented: Rule 3, German cardinal numbers 0-30
+  (`src/services/faTextNormalize.ts` + `src-tauri/src/fa/text.rs`).** Same
+  shape as Rule 2 (`GERMAN_CARDINALS_0_30`/`expandGermanCardinal`,
+  `expand_german_cardinal`), same guard contract (bare digits only, no
+  leading zero beyond a literal `"0"`, no sign, no separators, n ≤ 30). Table
+  values are the PRE-substitution vocab-safe spelling (`"dreissig"`, not
+  `"dreißig"` — German vocab has no `ß`, and the ß->ss substitution runs on
+  the raw input only, never on a generated candidate). Cap of 30 is a scope
+  choice mirroring Rule 2's already-reviewed shape, not a structural one —
+  German has no wall at 30 the way Spanish does at 31; going higher needs
+  algorithmic compound generation (hundreds/thousands rules), deferred to a
+  future slice as real design work, not a same-pattern extension.
+  **Both sides changed together, same commit, proven to agree** via the
+  existing `fixture_parity` hard gate: 8 new corpus cases added to
+  `scripts/generate-fa-text-fixture.ts` (positives — `"23"`, boundary `"0"`,
+  boundary `"30"`, expansion inside a phrase; negatives — `"31"` past the
+  scope cap, `"2.5"` decimal, `"05"` leading zero, `"23"` under `pt` as an
+  unaffected-language control), fixture regenerated from the live TS module
+  (64 entries total, was 56), and
+  `fa::text::fixture_parity::fixture_matches_rust_port_for_every_entry_all_five_languages`
+  passes against all 64. **Files:** `src/services/faTextNormalize.ts`,
+  `src-tauri/src/fa/text.rs`, `src/services/faTextNormalize.test.ts` (+12
+  unit tests, table-driven, mirroring Rule 2's exactly),
+  `scripts/generate-fa-text-fixture.ts` (+8 corpus cases, +1
+  required-coverage substring), `scripts/fixtures/fa-text-normalize-fixture.json`
+  (regenerated), plus the two docs above. **Untouched, verified:**
+  `textNormalize.ts`/`canonicalize` (not imported by this diff, not in
+  `git diff --stat`); the Slice 1 byte-identical English chunk-plan test
+  (`faChunkPlan.test.ts`) still passes unchanged.
+
+  **Phase 3b status: NOT COMPLETE.** Rules 1-3 done; currency and thousands
+  separators (in `faTextNormalize.ts`) are now closed as PERMANENTLY out of
+  scope rather than silently unstarted. Four items remain, none with an
+  owner: Portuguese cardinal expansion (locale-variant decision needed),
+  French cardinal expansion beyond Rule 1 (irregular-exception design
+  needed), the pre-existing Task 5 prerequisite
+  (`sync-pipeline-v2-plan.md:3800-3809` — `textNormalize.ts`'s ASCII-only
+  fold destroying native diacritic letters for es/fr/de/pt, explicitly
+  scoped into Phase 3b by the plan itself, never started), and
+  `textNormalize.ts`'s thousands-separator mangling bug (confirmed still
+  live this pass). **Phase 3c's first task** (per
+  `sync-pipeline-v2-plan.md:3818-3819`, unchanged by this pass): the hyphen-
+  asymmetry fix in `textNormalize.ts` (glued mid-call vs. Whisper's two
+  tokens) — its own commit, its own re-listen of the verification set, since
+  it rewrites the alignment corpus on both sides. **`languageCode` still has
+  no production caller, re-confirmed this pass** — `App.tsx`'s only call
+  site (`faDevAlign`, `App.tsx:3569`, a `DEV`-gated devtools-only hook) calls
+  `computeFaChunkPlan` with 4 arguments, never passing the 5th/6th
+  (`languageCode`/`vocabChars`) that would route text through
+  `normalizeForForcedAlignment` at all — confirmed by direct read, not
+  memory. This is not a silently-dropped item: it is tracked, with an owner,
+  as `docs/work-in-progress.md` §11 item 1 (capability-gated production
+  wiring), explicitly sequenced to start only after Phase 3b AND 3c both
+  land (Option B, 2026-08-15).
+  **Verified:** `cargo test` 100/100 (was 92/92, +8 new Rust unit tests, 0
+  regressions); `cargo test --features fa-inference` 174/19 ignored (was
+  166/19 ignored, +8, 0 regressions); `cargo clippy --all-targets` 4
+  pre-existing warnings (2 distinct warnings × 2 build targets), 0 new
+  (unchanged); `npm run lint` clean; `npm test` 80 files/2008 passed/1
+  skipped (was 1988/1, +20: 12 explicit TS unit tests + 8 fixture-driven
+  drift-guard cases, 0 regressions); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged;
+  `scripts/phase4-step-x-verify.py` re-run: 13 recommended for CI / 1 kept
+  out (C10), exit code 1 — unchanged. `git status`: 7 files changed
+  (`docs/work-in-progress.md`, `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`,
+  `scripts/fixtures/fa-text-normalize-fixture.json`,
+  `scripts/generate-fa-text-fixture.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts`, `src/services/faTextNormalize.ts`),
+  no protected file touched, no new doc file, scratch audit test file
+  (`src/services/__scratch_h5_audit.test.ts`, used to print real normalizer
+  outputs during the audit) deleted before this commit.

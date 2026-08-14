@@ -20,7 +20,7 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
 | 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **STALE, describes this row's 2026-08-07 pre-Task-5 state — see Part M.** Original text, left as the historical readiness record: "IMPLEMENTATION-READY, not started. Blockers 1/2/3 CLOSED; all three Rust gates closed (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, restored and proven faithful at Step Y; readiness statement at Step Z. Integration not started." **Current status (2026-08-15, Part M / `docs/work-in-progress.md` §3–§5, §11 item 1): ALIGNER COMPLETE, dev-only — Slices D1–D25 shipped (D7 cancelled as scoped), behind the `fa-inference` feature flag, zero production callers. The remaining work — the capability-gated production-wiring slice — is BLOCKED ON 3C BY DECISION (Option B, 2026-08-15): the gate stays off through Phase 3b/3c and flips once, after 3c lands. Not "not started"; not "in progress" either — what's left is sequencing-blocked by owner decision, not incomplete implementation.** | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
-| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | **IN PROGRESS** — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock). Rule 1 (French elision) DONE 2026-08-15 (Phase 3b Slice 2); Rule 2 (Spanish cardinals 0-30 only — 31+ deferred, multi-word compound) DONE 2026-08-15 (Phase 3b Slice 3, `docs/work-in-progress.md` changelog); currency, thousands separators, 31+ and non-Spanish number words not yet started. | `src/services/faTextNormalize.test.ts` + `src-tauri/src/fa/text.rs` fixture-parity gate (French elision + Spanish cardinals 0-30 only) | 2026-08-15 |
+| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | **IN PROGRESS, NOT COMPLETE** — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock). Rule 1 (French elision) DONE (Slice 2); Rule 2 (Spanish cardinals 0-30, 31+ PERMANENTLY out of scope under the multi-word-output decision (b)) DONE (Slice 3); Rule 3 (German cardinals 0-30, no structural wall but scope-capped to mirror Rule 2) DONE (remainder audit, 2026-08-15); currency and thousands-separator expansion audited and found PERMANENTLY blocked by decision (b) — every case needs multi-word output. **Still open, no owner assigned:** Portuguese cardinal expansion (blocked on an undecided PT-PT/PT-BR spelling-variant choice, new this pass); French cardinal expansion beyond Rule 1 (blocked on its own irregular "et"-exception design, not a flat lookup like Rule 2/3); the pre-existing Task 5 prerequisite (`textNormalize.ts`'s ASCII-only fold destroying native diacritics, sync-pipeline-v2-plan.md:3800-3809, explicitly scoped into Phase 3b by the plan itself, not started); `textNormalize.ts`'s thousands-separator MANGLING bug (confirmed still live this pass, out of reach — `textNormalize.ts`/`canonicalize` are hard-constrained untouched in FA-module slices). See H.5's decision block and `docs/work-in-progress.md`'s changelog for the full per-rule classification table. | `src/services/faTextNormalize.test.ts` + `src-tauri/src/fa/text.rs` fixture-parity gate (French elision + Spanish/German cardinals 0-30) | 2026-08-15 |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock) | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | **SKIPPED** | — | — |
 | — | **STAGE 1 LOCK** | Gate in Part D | NOT PASSED | — | — |
@@ -4089,6 +4089,89 @@ H.5 Language-keyed normalization (Phase 3b, Stage 1) — THE MAIN MULTILINGUAL W
   GATE on this change: the English path must be provably byte-identical to
   today's, verified against the frozen English baseline. Every non-English rule
   is additive and language-keyed.
+
+  **Correction (2026-08-15, Phase 3b Slice 3 self-audit — `docs/work-in-progress.md`
+  changelog): every claim above is accurate for `textNormalize.ts` but is NOT the
+  starting-point capability inventory for Phase 3b's actual implementation
+  target.** `textNormalize.ts` really does have working English digit expansion
+  (`digitTokenToWords`), currency expansion (`$` -> `dollars`), a thousands-
+  separator strip, an English `CONTRACTIONS` list, and the `NUMBER_WORDS` hyphen
+  carve-out — all real, all English-only, all correctly described above for THAT
+  module. But Rule 1 (French elision) and Rule 2 (Spanish cardinals) both landed
+  in `faTextNormalize.ts` (created 2026-08-12, R-Q — `docs/history.md`), a module
+  its own header comment states is **"DELIBERATELY PARALLEL to `textNormalize.ts`'s
+  `canonicalize`, not built on top of it."** `faTextNormalize.ts` started with
+  NONE of the five capabilities above, for ANY language, English included — every
+  digit-bearing word, every currency symbol, every contraction was uniformly
+  DROPPED regardless of language by construction. Per bullet, for the module
+  Phase 3b actually touches:
+    - Digit-run expansion: not an English-vs-others asymmetry — English never
+      had it in this module either. Rule 2 gave Spanish integers 0-30 only;
+      every other digit-bearing word, in every language including English, is
+      still dropped.
+    - Currency/symbol expansion: same gap — no language has it, not even
+      English. Correctly tracked as unstarted in the Phase 3b status row above.
+    - Thousands separators: `textNormalize.ts`'s bug is that its separator-strip
+      step actively MANGLES the token (assumes English format, corrupts a
+      non-English number that reaches it). `faTextNormalize.ts` has no separator
+      step at all — a thousands-separated number is dropped wholesale as an
+      unrepresentable digit-bearing word, not mangled. Different failure mode,
+      same missing capability, no owner assigned yet either way.
+    - Contractions / French elision: Rule 1 is a narrow apostrophe-shape fold for
+      French elision, not a port of `textNormalize.ts`'s `CONTRACTIONS` list —
+      `faTextNormalize.ts` has no English contraction-expansion list that could
+      accidentally fire on French in the first place, so this bullet's concern
+      doesn't transfer as written.
+    - The `NUMBER_WORDS` hyphen carve-out: `faTextNormalize.ts` has no hyphen/
+      `NUMBER_WORDS` logic of any kind yet — this bullet describes
+      `textNormalize.ts` exclusively and has no current analog in the FA module.
+    - The GATE line above ("byte-identical to today's [English path]") is
+      `textNormalize.ts`'s gate — `faTextNormalize.ts` has no pre-existing
+      English baseline to hold identical; its real regression gate is the
+      `fixture_parity` TS/Rust-port equivalence test across all five languages
+      (`faTextNormalize.test.ts`).
+  Read the paragraph and bullets above as documenting `textNormalize.ts`'s real,
+  separate, still-open defect (no owner assigned) — not as describing the
+  capability baseline Phase 3b's Rules are extending in `faTextNormalize.ts`.
+
+  **Decision (2026-08-15, multi-word-output scope — owner sign-off): (b) —
+  `faTextNormalize.ts`/`text.rs` stay single-word-output only, PERMANENTLY.**
+  The one-`FaWordResult`/`WordResult`-per-input-token contract (`normalizeWord`/
+  `normalize_word`, relied on by `fa_onnx.rs`'s `word_merge_e2e`/
+  `words_per_chunk` for per-chunk timestamp-window verification) will not be
+  reworked to let one input token expand into a multi-word output sequence.
+  **Full scope of what this forecloses, permanently, not just for now:**
+    - Spanish cardinals 31+ (`"treinta y uno"` — a space-linked "y" compound,
+      one input token needing 3 output words). Not deferred to a later slice;
+      no future slice lands this under decision (b).
+    - French numbers using "et" (`"soixante et onze"`, 71) — same shape, same
+      permanent exclusion. (French 70-99 built purely on hyphens, e.g.
+      `"quatre-vingt-dix-neuf"`, stays a SINGLE token/word and is NOT blocked
+      by this decision — only the "et"-linked forms are.)
+    - Currency expansion, in general — **consequence newly identified and
+      confirmed against code this pass, not present in the original 31+/
+      French scoping:** `textNormalize.ts`'s own currency rule
+      (`t.replace(/\$\s?(\d+)/g, ' $1 dollars ')`, `textNormalize.ts:239`)
+      takes a single glued token (`"$5"`) and produces 2 output words
+      (`"5 dollars"`) by inserting a space during a whole-string regex pass —
+      an architecture `faTextNormalize.ts`'s per-token `normalizeWord` cannot
+      replicate under the 1:1 contract. Currency is foreclosed by this same
+      decision, not merely unstarted-with-an-owner-pending: every currency
+      amount written as a glued symbol+digits token (`"$5"`, `"€10"`,
+      `"£20"`) needs multi-word output to read aloud correctly.
+    - German compound cardinals are explicitly UNAFFECTED by this decision —
+      `"einunddreißig"` (31) is a single concatenated orthographic word, so
+      single-word output is structurally sufficient for it. They remain
+      unimplemented for a separate reason (an algorithmic compound-generation
+      rule, unlike Spanish's flat 0-30 lookup table), not blocked by (b).
+  **Reopening criterion:** this decision is voided, and multi-word output
+  goes back on the table, only if a future requirement needs it badly enough
+  to justify reworking `FaWordResult`/`WordResult`'s 1:1 contract AND
+  `fa_onnx.rs`'s `word_merge_e2e`/`words_per_chunk` consumers together — e.g.
+  a corpus/production need for Spanish 31+, French "et"-numbers, or currency
+  read-aloud that single-word output genuinely cannot serve any other way.
+  Remaining coverage gaps alone do not reopen it; the rework cost is real and
+  cross-file, so it needs a concrete forcing need.
 
 H.6 Character-weight proportioning — minor under the narrowed scope
   parseProjectData's character-weight estimate assumes characters approximate

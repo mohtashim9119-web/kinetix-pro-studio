@@ -405,6 +405,63 @@ describe('faTextNormalize — Spanish cardinal numbers 0-30 (Part H.5 Rule 2)', 
   });
 });
 
+describe('faTextNormalize — German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder)', () => {
+  // SCOPE: bare cardinal integers 0-30, German only — unlike Spanish, German
+  // has no structural multi-word wall at 30 (every German cardinal is a
+  // single concatenated word arbitrarily far up), so the cap here is a scope
+  // choice mirroring Rule 2's already-reviewed shape, not a structural limit
+  // forced by the permanent single-word-output decision — see
+  // `expandGermanCardinal`'s own comment block in faTextNormalize.ts.
+
+  const POSITIVE_CASES: Array<[input: string, mapped: string]> = [
+    ['0', 'null'],
+    ['5', 'fünf'],
+    ['16', 'sechzehn'],
+    ['20', 'zwanzig'],
+    ['22', 'zweiundzwanzig'],
+    ['23', 'dreiundzwanzig'],
+    ['30', 'dreissig'],
+  ];
+
+  it.each(POSITIVE_CASES)('"%s" expands to "%s"', (input, mapped) => {
+    const result = normalizeForForcedAlignment(input, 'de', VOCABS.de);
+    expect(result.words).toHaveLength(1);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe(mapped);
+    expect(result.text).toBe(mapped);
+  });
+
+  it('expansion survives inside a phrase', () => {
+    const result = normalizeForForcedAlignment('ich bin 23 jahre alt', 'de', VOCABS.de);
+    expect(result.text).toBe('ich bin dreiundzwanzig jahre alt');
+    expect(result.words.every(w => w.representable)).toBe(true);
+  });
+
+  it('negative: 31 is past the scope cap, stays dropped', () => {
+    const result = normalizeForForcedAlignment('31', 'de', VOCABS.de);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a decimal ("2.5") stays dropped, out of scope', () => {
+    const result = normalizeForForcedAlignment('2.5', 'de', VOCABS.de);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a leading-zero form ("05") is not a bare cardinal and stays dropped', () => {
+    const result = normalizeForForcedAlignment('05', 'de', VOCABS.de);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('other languages are unaffected: the same digit under "pt" still drops exactly as before', () => {
+    const result = normalizeForForcedAlignment('23', 'pt', VOCABS.pt);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+});
+
 describe('vocabCharsFromRawVocab', () => {
   it('excludes CTC special/delimiter tokens from every language vocab', () => {
     for (const lang of LANGUAGES) {

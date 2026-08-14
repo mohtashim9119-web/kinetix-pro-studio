@@ -2051,6 +2051,286 @@
       ],
       "text": "",
       "textTokenIds": []
+    },
+    {
+      "language": "de",
+      "input": "23",
+      "note": "de cardinal 0-30: bare digit expands to a spelled word",
+      "words": [
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "dreiundzwanzig",
+          "reason": null,
+          "tokenIds": [
+            10,
+            24,
+            11,
+            15,
+            27,
+            20,
+            10,
+            32,
+            29,
+            7,
+            20,
+            32,
+            15,
+            13
+          ]
+        }
+      ],
+      "text": "dreiundzwanzig",
+      "textTokenIds": [
+        10,
+        24,
+        11,
+        15,
+        27,
+        20,
+        10,
+        32,
+        29,
+        7,
+        20,
+        32,
+        15,
+        13
+      ]
+    },
+    {
+      "language": "de",
+      "input": "0",
+      "note": "de cardinal 0-30: lower boundary value",
+      "words": [
+        {
+          "input": "0",
+          "representable": true,
+          "mapped": "null",
+          "reason": null,
+          "tokenIds": [
+            20,
+            27,
+            18,
+            18
+          ]
+        }
+      ],
+      "text": "null",
+      "textTokenIds": [
+        20,
+        27,
+        18,
+        18
+      ]
+    },
+    {
+      "language": "de",
+      "input": "30",
+      "note": "de cardinal 0-30: upper boundary value (dreissig, pre-substituted ss)",
+      "words": [
+        {
+          "input": "30",
+          "representable": true,
+          "mapped": "dreissig",
+          "reason": null,
+          "tokenIds": [
+            10,
+            24,
+            11,
+            15,
+            25,
+            25,
+            15,
+            13
+          ]
+        }
+      ],
+      "text": "dreissig",
+      "textTokenIds": [
+        10,
+        24,
+        11,
+        15,
+        25,
+        25,
+        15,
+        13
+      ]
+    },
+    {
+      "language": "de",
+      "input": "ich bin 23 jahre alt",
+      "note": "de cardinal 0-30: expansion survives inside a phrase",
+      "words": [
+        {
+          "input": "ich",
+          "representable": true,
+          "mapped": "ich",
+          "reason": null,
+          "tokenIds": [
+            15,
+            9,
+            14
+          ]
+        },
+        {
+          "input": "bin",
+          "representable": true,
+          "mapped": "bin",
+          "reason": null,
+          "tokenIds": [
+            8,
+            15,
+            20
+          ]
+        },
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "dreiundzwanzig",
+          "reason": null,
+          "tokenIds": [
+            10,
+            24,
+            11,
+            15,
+            27,
+            20,
+            10,
+            32,
+            29,
+            7,
+            20,
+            32,
+            15,
+            13
+          ]
+        },
+        {
+          "input": "jahre",
+          "representable": true,
+          "mapped": "jahre",
+          "reason": null,
+          "tokenIds": [
+            16,
+            7,
+            14,
+            24,
+            11
+          ]
+        },
+        {
+          "input": "alt",
+          "representable": true,
+          "mapped": "alt",
+          "reason": null,
+          "tokenIds": [
+            7,
+            18,
+            26
+          ]
+        }
+      ],
+      "text": "ich bin dreiundzwanzig jahre alt",
+      "textTokenIds": [
+        15,
+        9,
+        14,
+        4,
+        8,
+        15,
+        20,
+        4,
+        10,
+        24,
+        11,
+        15,
+        27,
+        20,
+        10,
+        32,
+        29,
+        7,
+        20,
+        32,
+        15,
+        13,
+        4,
+        16,
+        7,
+        14,
+        24,
+        11,
+        4,
+        7,
+        18,
+        26
+      ]
+    },
+    {
+      "language": "de",
+      "input": "31",
+      "note": "de cardinal negative: 31 is past the scope cap, stays dropped",
+      "words": [
+        {
+          "input": "31",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "de",
+      "input": "2.5",
+      "note": "de cardinal negative: decimal stays dropped, out of scope",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"2.5\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "de",
+      "input": "05",
+      "note": "de cardinal negative: leading zero is not a bare cardinal, stays dropped",
+      "words": [
+        {
+          "input": "05",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"05\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "pt",
+      "input": "23",
+      "note": "de cardinal 0-30 unaffected-language control: pt digit word still drops exactly as before",
+      "words": [
+        {
+          "input": "23",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"23\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
     }
   ]
 }

@@ -241,6 +241,51 @@ function expandSpanishCardinal(stripped: string): string | undefined {
   return SPANISH_CARDINALS_0_30[n];
 }
 
+// ---------------------------------------------------------------------------
+// German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder audit,
+// 2026-08-15 — sync-pipeline-v2-plan.md's H.5 decision block).
+//
+// Found empirically (not from spec): German cardinal digits were dropped
+// wholesale like every other language before this rule, but unlike Spanish
+// German has NO structural wall at 30 — every German cardinal, arbitrarily
+// large, is a single concatenated orthographic word ("einunddreißig",
+// "zweihundertfünfzig", ...), so it never needs multi-word output and is
+// unaffected by the permanent single-word-output decision (b). The cap at 30
+// here is a deliberate SCOPE choice, not a structural one: a flat lookup
+// table mirrors Rule 2's already-reviewed shape exactly, while numbers past
+// 30 need algorithmic compound generation (hundreds/thousands rules), which
+// is real design work deferred to a future slice, not a same-pattern
+// extension.
+//
+// Values below are the PRE-substitution vocab-safe spelling (German vocab
+// has no `ß` — spike G1, `applyLanguageSpecificSubstitutions` above) since
+// `expandGermanCardinal`'s output bypasses that step entirely (it substitutes
+// for `stripped`, which already ran through it on the ORIGINAL input, not on
+// a freshly generated candidate): "dreissig", not "dreißig".
+// ---------------------------------------------------------------------------
+
+/** Index `n` -> its German spelling (bare-cardinal reading, e.g. "eins" not
+ *  the adjectival "ein"), for `n` in 0..=30. */
+const GERMAN_CARDINALS_0_30: readonly string[] = [
+  'null', 'eins', 'zwei', 'drei', 'vier', 'fünf', 'sechs', 'sieben', 'acht', 'neun',
+  'zehn', 'elf', 'zwölf', 'dreizehn', 'vierzehn', 'fünfzehn', 'sechzehn', 'siebzehn',
+  'achtzehn', 'neunzehn', 'zwanzig', 'einundzwanzig', 'zweiundzwanzig', 'dreiundzwanzig',
+  'vierundzwanzig', 'fünfundzwanzig', 'sechsundzwanzig', 'siebenundzwanzig',
+  'achtundzwanzig', 'neunundzwanzig', 'dreissig',
+];
+
+/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+ *  "0"), no sign, no separators — anything else returns `undefined` and the
+ *  caller falls through to the pre-existing digit-drop path unchanged.
+ *  Mirrors `expandSpanishCardinal`'s contract exactly. */
+function expandGermanCardinal(stripped: string): string | undefined {
+  if (!/^[0-9]+$/.test(stripped)) return undefined;
+  if (stripped.length > 1 && stripped[0] === '0') return undefined;
+  const n = Number(stripped);
+  if (n > 30) return undefined;
+  return GERMAN_CARDINALS_0_30[n];
+}
+
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
  *  boundary-punctuation stripping, then (Spanish only) a bare-0-30-cardinal
@@ -270,7 +315,11 @@ function normalizeWord(
     };
   }
 
-  const cardinalExpansion = languageCode === 'es' ? expandSpanishCardinal(stripped) : undefined;
+  const cardinalExpansion = languageCode === 'es'
+    ? expandSpanishCardinal(stripped)
+    : languageCode === 'de'
+      ? expandGermanCardinal(stripped)
+      : undefined;
   const candidate = cardinalExpansion ?? stripped;
 
   if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {
