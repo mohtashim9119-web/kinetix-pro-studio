@@ -7,7 +7,11 @@
 // WS1 Task 5 Slice D13 Step 1 — run-distribution + runs-vs-chunks
 // reconciliation diagnostic.
 //
-// PROVENANCE REPAIR. `d11-chunked-alignment-2026-08-13.md` §4 cites "a 240s-run
+// PROVENANCE REPAIR. `docs/work-in-progress.md` §6's attribution-isolation
+// paragraph (original source measurements/d11-chunked-alignment-2026-08-13.md
+// §4, deleted 2026-08-14, `9cf5867`; retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`)
+// cites "a 240s-run
 // median of 3.12s — see the earlier Step 3(a) run-distribution measurement",
 // but Slice D12 shipped no committed artifact that reproduces that table: the
 // number lived only in a chat transcript, which `CLAUDE.md` §5's

@@ -7,9 +7,11 @@
 // calls [`align_chunked_for_language`] only from its own
 // `#[cfg(feature = "fa-inference")]` arm.
 //
-// Scope (WS1 Task 5 Slice D2 boundary — see docs/ws1-sync-pipeline/
-// measurements/runtime-unblock-2026-08-12.md for the ort/onnxruntime
-// version-deadlock resolution this wiring is built on):
+// Scope (WS1 Task 5 Slice D2 boundary — see docs/work-in-progress.md §7
+// item 4 for the ort/onnxruntime version-deadlock resolution this wiring is
+// built on; original source measurements/runtime-unblock-2026-08-12.md was
+// deleted 2026-08-14, `9cf5867`; retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`):
 //   - WAV decode + per-utterance zero-mean/unit-variance normalization,
 //     matching transformers' Wav2Vec2FeatureExtractor(do_normalize=True)
 //     exactly (verified against that class's own `zero_mean_unit_var_norm`
@@ -788,7 +790,10 @@ pub fn align_chunked_for_language(
 const CTC_INFEASIBLE_FALLBACK_SCORE: f32 = f32::NEG_INFINITY;
 
 /// Root cause (WS1 Task 5 Slice D20, measured on the real 709s/173-project
-/// corpus — see `docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`):
+/// corpus — see `docs/work-in-progress.md` §6's CTC-infeasibility paragraph;
+/// original source `d20-ctc-infeasibility-2026-08-14.md` was deleted
+/// 2026-08-14, `9cf5867`; retrieve: `git show
+/// 251be64:docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`):
 /// a chunk's `[start_sec, end_sec)` window can be legitimately narrow (an
 /// anchor-verified run a few tenths of a second wide is a real, correct
 /// `faAnchors.ts` output) while `faChunkPlan.ts`'s `segment.startTime`
@@ -929,7 +934,10 @@ pub fn align_chunked(
 
 // ---------------------------------------------------------------------------
 // Windowed-output invariants (WS1 Task 5 Slice D11 — the Automated Agreement
-// Budget's "hard structural invariants" leg, `task5-slice-ledger.md` §4).
+// Budget's "hard structural invariants" leg, `docs/work-in-progress.md` §5;
+// `task5-slice-ledger.md` §4, the original source, was deleted 2026-08-14,
+// `9cf5867`; retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`).
 // Pure, standalone checkers over `align_chunked`'s stitched `Vec<WordSpan>`
 // output — hold at ANY audio length, independent of any whole-file reference
 // (D7's cancellation established no such reference is even computable at
@@ -1075,7 +1083,10 @@ fn check_times_within_audio_bounds(words: &[WordSpan], audio_duration: f64) -> R
 /// log-softmax output) — checked anyway because the GATE'S JOB is to catch a
 /// FUTURE regression (e.g. someone accidentally comparing raw `score`
 /// against `[0,1]` again, the exact D8/D9 spec defect this project already
-/// hit once — see `task5-slice-ledger.md`'s "Confidence unit" ruling), not
+/// hit once — see `docs/work-in-progress.md` §5's D8 row for the
+/// "Confidence unit" ruling; `task5-slice-ledger.md`, the original source,
+/// was deleted 2026-08-14, `9cf5867`; retrieve: `git show
+/// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`), not
 /// just today's known-safe case.
 #[cfg_attr(not(test), allow(dead_code))]
 fn check_confidence_in_unit_interval(words: &[WordSpan]) -> Result<(), InvariantViolation> {
@@ -1798,9 +1809,11 @@ mod real_corpus_measurement {
 // 5 Slice D12 Step 5) — #[ignore]d, real-corpus, measurement-only. Separates
 // the three variables D11's own agreement measurement conflated (window
 // size, text-attribution source, choice of reference) — see
-// `docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`
-// §5's "conclusions NOT yet supported" for the conflation this module exists
-// to resolve.
+// `docs/work-in-progress.md` §6's "Attribution isolation (D12/D13)"
+// paragraph for the conflation this module exists to resolve; original
+// source measurements/d11-chunked-alignment-2026-08-13.md §5's "conclusions
+// NOT yet supported" was deleted 2026-08-14, `9cf5867`; retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`.
 //
 // Needs, beyond `real_corpus_measurement`'s own preconditions: chunk plans
 // dumped by `scripts/dump-fa-chunk-plan-ladder.ts` (into the same
@@ -1902,7 +1915,9 @@ mod d12_measurement {
     /// attribution-isolation leg — each its own `cargo test --exact`
     /// process, per this module's own top doc comment — don't each pay the
     /// whole-file pass's own ~113s/~20GiB cost separately (measured at
-    /// `d11-chunked-alignment-2026-08-13.md` §1).
+    /// `docs/work-in-progress.md` §5's D11 row; `d11-chunked-alignment-2026-08-13.md`
+    /// §1, the original source, was deleted 2026-08-14, `9cf5867`; retrieve:
+    /// `git show 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`).
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
         // WS1 Task 5 Slice D23 — see `require_ort::WHOLE_FILE_REFERENCE_LOCK`'s
         // own doc comment: held for this whole function so a concurrent
@@ -2092,7 +2107,10 @@ mod d12_measurement {
     /// reference itself shows an inter-word gap `>= GAP_THRESHOLD_SEC`, and
     /// assigns each resulting window's TEXT by whole-file WORD membership —
     /// not by `segment.startTime` (`faChunkPlan.ts`'s rule, the thing under
-    /// suspicion per `d11-chunked-alignment-2026-08-13.md` §5, point 1).
+    /// suspicion per `docs/work-in-progress.md` §6's "Attribution isolation"
+    /// paragraph; `d11-chunked-alignment-2026-08-13.md` §5 point 1, the
+    /// original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
+    /// 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`).
     /// This makes chunk text correct by construction: whatever disagreement
     /// remains here is attributable to windowing itself (running FA on a
     /// smaller window vs. the whole file), not to attribution drift.
@@ -3007,7 +3025,11 @@ mod d21_measurement {
 // `segment.startTime` windowing, `173-excerpt-240s-windowed.json`) so the
 // full-population Pearson r reproduces D21's own -0.75 as an internal sanity
 // check, then applies D15's own mis-assignment identification method
-// (`d15-mis-assignment-diagnostic-2026-08-13.md` §1.1: for each matched
+// (`docs/work-in-progress.md` §6's "Mis-assignment diagnostic (D15)"
+// paragraph; `d15-mis-assignment-diagnostic-2026-08-13.md` §1.1, the
+// original source, was deleted 2026-08-14, `9cf5867`, retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/measurements/d15-mis-assignment-diagnostic-2026-08-13.md`:
+// for each matched
 // word, compare which chunk window contains its OWN measured start time
 // against which chunk window contains the WHOLE-FILE REFERENCE word's own
 // start time, at the SAME boundary list — a mismatch is a mis-assignment)
@@ -4054,8 +4076,11 @@ mod tests {
 // CTC-infeasibility fallback unit tests (WS1 Task 5 Slice D20). Real data:
 // both chunks are the exact (window, text) pairs `align_chunked` produced
 // `AlignError::TooManyRepeats` on when run against the real 709s/173-project
-// corpus (`docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`'s own
-// Step 2 reproduction) — not fabricated. Neither test touches ORT/ONNX
+// corpus (`docs/work-in-progress.md` §6's CTC-infeasibility paragraph;
+// `d20-ctc-infeasibility-2026-08-14.md`'s own Step 2 reproduction, the
+// original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
+// 251be64:docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`) —
+// not fabricated. Neither test touches ORT/ONNX
 // (`fallback_words_for_infeasible_chunk` only calls the embedded-vocab text
 // normalizer + arithmetic), so this module runs unconditionally under
 // `--features fa-inference`, no `require_ort` gate needed.
@@ -4693,7 +4718,10 @@ mod e2e_parity {
         Fixture { file: "fa-e2e-alignment-en-mother-look.json", language: "en" },
         Fixture { file: "fa-e2e-alignment-es-resultan-inutiles.json", language: "es" },
         // Slice D5: fr/de/pt, sourced from google/fleurs (CC-BY-4.0) real audio —
-        // see docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md.
+        // see docs/work-in-progress.md §5's D5 row; original source
+        // fa-text-to-spans-seam-d5-2026-08-12.md was deleted 2026-08-14,
+        // `9cf5867`; retrieve: `git show
+        // 251be64:docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md`.
         Fixture { file: "fa-e2e-alignment-fr-pas-juste.json", language: "fr" },
         Fixture { file: "fa-e2e-alignment-de-nicht-fair.json", language: "de" },
         Fixture { file: "fa-e2e-alignment-pt-site-publico.json", language: "pt" },

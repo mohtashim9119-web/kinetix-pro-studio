@@ -59,8 +59,11 @@ captured en/en/es), and no MMS_FA `fa-emission-*.json` fixture exists to
 window against either. Real fr/de/pt audio was also unavailable anywhere in
 this repo/private corpus until three short, real utterances were sourced
 from google/fleurs (CC-BY-4.0, HF-hosted, validation split) for this slice
-(see docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md for the
-investigation). RAW_CLIP_CASES below therefore runs the ONNX forward pass
+(see docs/work-in-progress.md §5's D5 row for the investigation; original
+source fa-text-to-spans-seam-d5-2026-08-12.md was deleted 2026-08-14,
+`9cf5867`; retrieve: `git show
+251be64:docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md`).
+RAW_CLIP_CASES below therefore runs the ONNX forward pass
 itself (via onnxruntime, same preprocessing as `capture-fa-onnx-reference.py`)
 directly against the whole real clip (no windowing -- each clip already is a
 short standalone utterance), keeping the SAME per-case output schema and the

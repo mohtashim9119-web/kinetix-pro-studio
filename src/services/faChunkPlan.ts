@@ -539,8 +539,13 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
  *
  * WS1 Task 5 Slice D22: `attribution` DEFAULTS to `'script-word-index'` — the
  * planner's own internal default, per the owner ruling recorded in
- * `docs/ws1-sync-pipeline/d21-attribution-confmin-2026-08-14.md` (Step 2) and
- * `docs/ws1-sync-pipeline/d22-...md` (this slice): index attribution
+ * `docs/work-in-progress.md` §6's "R.7 CONF_MIN" and "CTC-infeasibility"
+ * paragraphs (original sources `d21-attribution-confmin-2026-08-14.md` Step 2
+ * and `d22-attribution-default-tail-2026-08-14.md`, this slice, were deleted
+ * 2026-08-14, `9cf5867`; retrieve: `git show
+ * 251be64:docs/ws1-sync-pipeline/d21-attribution-confmin-2026-08-14.md` /
+ * `git show 251be64:docs/ws1-sync-pipeline/d22-attribution-default-tail-2026-08-14.md`):
+ * index attribution
  * eliminates the only reachable CTC-infeasibility case found on real corpus
  * data and cuts the fraction of words below `CONF_MIN` from 62.75% to 9.43%
  * (D21 Step 1). `'segment-start-time'` (the D11 production rule) remains

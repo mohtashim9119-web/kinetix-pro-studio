@@ -292,8 +292,11 @@ export interface TranscriptToken {
   /** Forced-alignment script-word index (WS1 Task 5 Slice D18) — this
    *  word's 0-based position in the full script word sequence
    *  (`faAnchors.ts`'s `FaAnchor.qi` space). The join key back to the
-   *  script; TIME IS NOT — see `docs/ws1-sync-pipeline/
-   *  d18-index-trace-2026-08-14.md`. Optional and additive-only, same
+   *  script; TIME IS NOT — see `docs/work-in-progress.md` §4's word-timing-
+   *  schema row (original source `d18-index-trace-2026-08-14.md` was
+   *  deleted 2026-08-14, `9cf5867`; retrieve: `git show
+   *  251be64:docs/ws1-sync-pipeline/d18-index-trace-2026-08-14.md`).
+   *  Optional and additive-only, same
    *  convention as `confidence`: Whisper-sourced tokens never set it. */
   wordIndex?: number;
   /** R.7 confidence fallback (WS1 Task 5 Slice D19): `true` when this

@@ -2,7 +2,7 @@
 
 > **Purpose:** the active task ledger. Historically "one line per task, no narrative" —
 > that rule stays the default for small/simple workstreams. **WS1 is the documented
-> exception**: on 2026-08-14 its 30 scattered tracking/slice/decision/measurement files
+> exception**: on 2026-08-14 its 29 scattered tracking/slice/decision/measurement files
 > were consolidated here, into the structured §1–§11 tracker below, specifically so a
 > single reader in a single file can reconstruct full WS1 status without following
 > cross-references into files that no longer exist. Detail below this rule still avoids
@@ -11,6 +11,21 @@
 > (2026-08-14, `main` at `251be64` at pass start), not copied on faith from a deleted doc.
 > On completion or abandonment, a block (or the relevant rows within one) moves verbatim
 > to `docs/history.md` under a dated heading and is deleted here.
+>
+> **This is a summarization, not a lossless merge — stated plainly per the 2026-08-15
+> close-out audit.** The 29 source files totaled 625,715 bytes (git show
+> `251be64:<path> | wc -c`, summed); this tracker's WS1 section is 57,967 bytes — roughly
+> 9% of the source material by byte count. Load-bearing conclusions, figures, and rulings
+> were carried forward (verified line-by-line during the 2026-08-14 pass); narrative,
+> intermediate reasoning, and superseded working notes were not. Full original text of
+> every source file remains retrievable verbatim from git — §12 below is the per-file
+> index with commit hash and copy-pasteable retrieval command for all 29.
+
+> **Correction, 2026-08-15 close-out audit:** this document's own header and consolidation
+> note (below) previously said "Part Z" for `sync-pipeline-v2-plan.md`'s append-only
+> addendum — the addendum actually landed as **Part M** (`sync-pipeline-v2-plan.md:4410`,
+> "Task 5 (Phase 3) Status Addendum"). Both occurrences below are corrected in place rather
+> than left to mislead a reader who greps the plan doc for a section that doesn't exist.
 
 ---
 
@@ -23,7 +38,7 @@
 ## WS1 — Sync Pipeline Rewrite
 Started: 2026-08-04 | Status: active | Consolidated into this single tracker: 2026-08-14
 
-**Consolidation note.** This section replaces 30 files formerly under
+**Consolidation note.** This section replaces 29 files formerly under
 `docs/ws1-sync-pipeline/`: `ws1-master-roadmap.md`, `task5-status-board.md`,
 `task5-slice-ledger.md`, `task5-open-decisions.md`, `task5-integration-scope.md`,
 `spanish-gate-scoring.md`, `d17`–`d25` design memos (9 files), `fa-text-to-spans-seam-d5-2026-08-12.md`,
@@ -32,7 +47,7 @@ Started: 2026-08-04 | Status: active | Consolidated into this single tracker: 20
 (`d10`, `d11`, `d13`, `d14`, `d15`, `fa-vocab-representability`, `runtime-spike`,
 `runtime-unblock`). Two files under `docs/ws1-sync-pipeline/` were deliberately **not**
 deleted and are not restated here: `sync-pipeline-v2-plan.md` (the design/contract source
-of truth — see its own append-only Part Z, dated 2026-08-14) and `watcher-revert-2026-08-03.diff`
+of truth — see its own append-only Part M, dated 2026-08-14) and `watcher-revert-2026-08-03.diff`
 (a literal diff, not prose — remains the resumption pointer for task 7 below). Raw
 `.csv`/`.json` measurement exports in `measurements/` and the `rescued-2026-08-07-model-p-park/`
 evidence subtree are explicitly out of scope for this consolidation (data assets, not
@@ -54,7 +69,7 @@ Part B):
 
 **Task 5 (the MMS-FA/jonatasgrosman ONNX Rust engine, slices D1–D25) = Phase 3, which
 lives entirely inside Stage 1.** Confirmed at `sync-pipeline-v2-plan.md:184` (phase table)
-and restated with intent at the file's own append-only Part Z below. There is no "Stage 3
+and restated with intent at the file's own append-only Part M below. There is no "Stage 3
 = forced alignment" and no "Stage 4 = production integration/UI/release" anywhere in the
 source plan — Stage 3 is the boundary-picker replacement (not started), Stage 4 is
 clamp/floor/fallback logging (not started). State this once here so no future session
@@ -661,5 +676,58 @@ Log — Dissolved from `docs/decisions/`" section, indexed at `project-state.md`
 - 22 blank `boundary-quality-flag` rows in `scripts/fixtures/verification-baseline.csv` —
   deferred, non-blocking (R-A, §7).
 
-Full state: [`docs/ws1-sync-pipeline/`](ws1-sync-pipeline/) — now exactly two files:
-`sync-pipeline-v2-plan.md` (design) and this section (execution/status).
+---
+
+### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
+
+Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
+commit (`251be64`, the commit immediately before `9cf5867`) and a copy-pasteable retrieval
+command. This is the C1/C5 "historical/archive block" every remaining in-repo reference to
+one of these filenames should be read against — a mention elsewhere that says "(deleted
+this pass)" without repeating the command below is still covered by this index, not a
+dangling reference. Where a file's load-bearing conclusions were carried forward, the
+surviving section is named; `context-report-2026-08-07.md` did not have WS1-tracking
+content to carry forward (see its own row) and is the one file in this list whose
+disposition is "superseded snapshot," not "folded in."
+
+Retrieval command pattern: `git show 251be64:<old path> > <old path>` (recreates the file
+at its old location with its pre-deletion content; run from the repo root).
+
+| # | Old path | Surviving content / disposition |
+|---|---|---|
+| 1 | `docs/ws1-sync-pipeline/ws1-master-roadmap.md` | §2 (Master Stage Board), §3 (Master Phase Board), §7 (ruled decisions R-A–R-G, D1/D2) |
+| 2 | `docs/ws1-sync-pipeline/task5-status-board.md` | §4 (Phase 3 Component Ledger), §5 (Slice Ledger) |
+| 3 | `docs/ws1-sync-pipeline/task5-slice-ledger.md` | §5 (Full Slice Ledger D1–D25, reproduced in full) |
+| 4 | `docs/ws1-sync-pipeline/task5-open-decisions.md` | §7 (Open Decisions 1–4) |
+| 5 | `docs/ws1-sync-pipeline/task5-integration-scope.md` | §7 item 2 (R.5), §11 (Terminal Path sequencing) |
+| 6 | `docs/ws1-sync-pipeline/spanish-gate-scoring.md` | §6 ("Spanish language gate — CLOSED") |
+| 7 | `docs/ws1-sync-pipeline/d17-schema-capability-design-memo-2026-08-14.md` | §4 (Capability gate row), §5 (D17 row) |
+| 8 | `docs/ws1-sync-pipeline/d18-index-trace-2026-08-14.md` | §4 (Word-timing schema row), §5 (D18 row) |
+| 9 | `docs/ws1-sync-pipeline/d19-r7-fallback-2026-08-14.md` | §4 (R.7 confidence flag row), §5 (D19 row) |
+| 10 | `docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md` | §5 (D20 row), §6 (CTC-infeasibility paragraph) |
+| 11 | `docs/ws1-sync-pipeline/d21-attribution-confmin-2026-08-14.md` | §5 (D21 row), §6 (R.7 CONF_MIN + CTC-infeasibility paragraphs) |
+| 12 | `docs/ws1-sync-pipeline/d22-attribution-default-tail-2026-08-14.md` | §5 (D22 row) |
+| 13 | `docs/ws1-sync-pipeline/d23-live-flip-race-guard-r2-padding-2026-08-14.md` | §5 (D23 row), §6 (R.2 padding paragraph, build half) |
+| 14 | `docs/ws1-sync-pipeline/d24-r2-post-mortem-durable-audio-path-2026-08-14.md` | §5 (D24 row), §6 (R.2 padding paragraph, post-mortem half; durable audio cache paragraph) |
+| 15 | `docs/ws1-sync-pipeline/d25-durable-cache-live-wired-r5-scoping-2026-08-14.md` | §4 (Durable WAV cache row, R.5 row), §5 (D25 row), §6 (durable audio cache paragraph) |
+| 16 | `docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md` | §5 (D5 row) |
+| 17 | `docs/ws1-sync-pipeline/boundary-drift-investigation.md` | §3 (task 4 row), its DO-NOT-RE-INVESTIGATE conclusion folded into the paragraph immediately below that table |
+| 18 | `docs/ws1-sync-pipeline/context-report-2026-08-07.md` | **Superseded snapshot, not folded in.** One-time full-repo forensic audit of a since-abandoned detached-HEAD state (`8d83358`, pre-dating `main`'s current tip by 134+ commits at the time); not WS1 sync-pipeline tracking data. Its actionable findings (dual export-path structure, CLAUDE.md File Map gaps) are either already reflected in CLAUDE.md's current File Map or concern branches/commits no longer relevant to `main`. No WS1 status claim in this tracker depends on it |
+| 19 | `docs/ws1-sync-pipeline/roadmap-2026-08-07.md` | Superseded by `ws1-master-roadmap.md` (row 1 above), itself now superseded by this tracker |
+| 20 | `docs/ws1-sync-pipeline/ws1-readiness-2026-08-08.md` | §6 (50/50 silence-split reference, cross-cited from `docs/history.md:4108`) |
+| 21 | `docs/ws1-sync-pipeline/measurements/README.md` | **Restored** (this pass, 2026-08-15) at its original path — see that file directly; not deleted after all, see C3/C4 finding in the 2026-08-15 close-out audit |
+| 22 | `docs/ws1-sync-pipeline/measurements/d10-runtime-observations-2026-08-13.md` | §5 (D10 row), §6 (whole-file memory ladder table) |
+| 23 | `docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md` | §5 (D11 row), §6 (attribution isolation paragraph) |
+| 24 | `docs/ws1-sync-pipeline/measurements/d13-index-attribution-2026-08-13.md` | §5 (D13 row), §6 (attribution isolation, CTC-infeasibility paragraphs) |
+| 25 | `docs/ws1-sync-pipeline/measurements/d14-measurement-closure-2026-08-13.md` | §5 (D14 row) |
+| 26 | `docs/ws1-sync-pipeline/measurements/d15-mis-assignment-diagnostic-2026-08-13.md` | §5 (D15 row), §6 (mis-assignment diagnostic paragraph) |
+| 27 | `docs/ws1-sync-pipeline/measurements/fa-vocab-representability-2026-08-12.md` | §10 (Non-English Normalizer Gap — vocab-representability figures) |
+| 28 | `docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md` | §7 item 4 (R-M/R-N ratification proposal) |
+| 29 | `docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md` | §7 item 4 (R-M/R-N ratification proposal, primary source) |
+
+---
+
+Full state: [`docs/ws1-sync-pipeline/`](ws1-sync-pipeline/) — two top-level tracked files
+(`sync-pipeline-v2-plan.md` design doc, `watcher-revert-2026-08-03.diff` resumption
+pointer) plus this section for execution/status, plus the `measurements/` data directory
+(raw CSV/JSON exports and the restored `measurements/README.md` index, §12 row 21).

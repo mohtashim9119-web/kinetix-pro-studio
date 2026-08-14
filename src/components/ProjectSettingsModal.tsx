@@ -165,7 +165,10 @@ export function ProjectSettingsModal({
 
           {/* Section: Sync (forced-alignment gate — WS1 Task 5 Slice D17).
               Defaults OFF (owner ruling D2); nothing runs behind it yet — see
-              docs/ws1-sync-pipeline/task5-integration-scope.md. */}
+              docs/work-in-progress.md §7 item 2 / §11 item 1 (original source
+              docs/ws1-sync-pipeline/task5-integration-scope.md was deleted
+              2026-08-14, `9cf5867`; retrieve: `git show
+              251be64:docs/ws1-sync-pipeline/task5-integration-scope.md`). */}
           <div className="space-y-2 pt-4 border-t border-[#222]">
             <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Sync</p>
             <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">

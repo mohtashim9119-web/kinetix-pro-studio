@@ -2,9 +2,11 @@
 """
 export-fa-onnx.py — verified ONNX export for the five shipping FA models
 (WS1, ruling R-Q). Formalizes the runtime spike's one-off English-only
-export/verify pair (G4/G5,
-docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md) into a
-repeatable, per-language procedure covering all five: en, es, fr, de, pt.
+export/verify pair (G4/G5, see docs/work-in-progress.md §7 item 4; original
+source docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md was
+deleted 2026-08-14, `9cf5867`; retrieve: `git show
+251be64:docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md`)
+into a repeatable, per-language procedure covering all five: en, es, fr, de, pt.
 
 WHAT THIS DOES
 For a given --language, exports jonatasgrosman/wav2vec2-large-xlsr-53-<lang>

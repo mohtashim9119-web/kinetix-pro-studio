@@ -30,8 +30,11 @@ tauri-plugin-shell = "2"
 
 # Optional: real ONNX forward pass for forced alignment (WS1 Task 5, Slice D2).
 # default-features = false + no api-NN feature keeps ort's own onnxruntime
-# minor-version floor at 17 (see docs/ws1-sync-pipeline/measurements/
-# runtime-unblock-2026-08-12.md) — the default api-27 feature would require
+# minor-version floor at 17 (see docs/work-in-progress.md §7 item 4; original
+# source docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md was
+# deleted 2026-08-14, `9cf5867`; retrieve: `git show
+# 251be64:docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`)
+# — the default api-27 feature would require
 # onnxruntime >=1.27, and no macOS x86_64 onnxruntime build exists past
 # 1.23.2. load-dynamic resolves the onnxruntime C library at runtime via
 # ORT_DYLIB_PATH; nothing is vendored or downloaded by this crate.

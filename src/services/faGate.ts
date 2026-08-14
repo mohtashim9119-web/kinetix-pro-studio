@@ -13,8 +13,11 @@
  * NOTHING RUNS BEHIND THIS GATE YET. No `fa_align` invocation, no IPC, no
  * audio handling is wired to `isFaGateOpen()` this slice — it exists so a
  * later slice has a real off-by-default switch to check, per the
- * capability-gate ruling recorded in `task5-slice-ledger.md`'s "Capability
- * gate — dev-only is a phase, not the endpoint" section.
+ * capability-gate ruling recorded in `docs/work-in-progress.md` §4's
+ * capability-gate row ("Capability gate — dev-only is a phase, not the
+ * endpoint" section of `task5-slice-ledger.md`, the original source,
+ * was deleted 2026-08-14, `9cf5867`; retrieve: `git show
+ * 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`).
  *
  * Capability probe: unlike WebCodecs export (a set of browser APIs), FA
  * runs through a Tauri backend command (`fa_align`) — the same reason
