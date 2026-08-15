@@ -1,0 +1,176 @@
+order,tag,text,startTime,duration,endTime,anchorSource
+0,perilous_realms,The Hardest Warhammer 40K Environments to Fight In,0,1.36,1.36,forced-alignment
+1,hostile_landscape,Some places in the 41st Millennium don’t just kill soldiers.,1.36,2.82,4.18,forced-alignment
+2,testing_parameters,They take apart the conditions under which a soldier can function in the first place.,4.18,4.96,9.14,forced-alignment
+3,military_collapse,"Training, equipment, formation, doctrine, gone before the first contact report.",9.14,5.29,14.43,forced-alignment
+4,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,2.07,16.5,forced-alignment
+5,abysmal_opinion,They’re the worst,16.5,2.01,18.51,forced-alignment
+6,lethal_nature_hazard,because the environment was already doing the killing before the enemy showed up.,18.51,4.65,23.16,forced-alignment
+7,rugged_survivalist,"Number Six, Catachan.",23.16,1.77,24.93,forced-alignment
+8,ancient_training_grounds,"Before Catachan produced the Imperium’s most capable baseline human soldiers,",24.93,5.13,30.06,forced-alignment
+9,historical_visual,the planet had a simpler reputation.,30.06,2.59,32.65,forced-alignment
+10,barren_ruin,It killed everything on it.,32.65,1.97,34.62,forced-alignment
+11,ancient_nature_thriving,The jungle didn’t evolve around human warfare.,34.62,2.34,36.96,forced-alignment
+12,blue_monkey,"""The blue monkey jumped over the moon"".",36.96,0.77,37.73,forced-alignment
+13,eternal_focus,"It spent millions of years optimizing toward a single outcome,",37.73,4.49,42.22,forced-alignment
+14,fatal_surge,and anything with a nervous system is on the wrong side of that outcome.,42.22,3.84,46.06,forced-alignment
+15,moist_short_circuit,Humidity wrecks unprotected electronics inside a few hours.,46.06,4.38,50.44,forced-alignment
+16,energy_rust,Las-charge packs corrode.,50.44,1.75,52.19,forced-alignment
+17,sight_blur,Optical scopes fog permanently.,52.19,2.14,54.33,forced-alignment
+18,signal_static_frustration,"The canopy generates a biological electrical field that jams vox-casters,",54.33,5.26,59.59,forced-alignment
+19,ancient_schematic_view,something the Mechanicus has catalogued and never adequately explained.,59.59,4.32,63.91,forced-alignment
+20,foliage_hostility,That’s before anything in the jungle decides to engage.,63.91,3.98,67.89,forced-alignment
+21,insect_corrosive,Catachan devil ants dissolve flesh faster than combat-grade acid.,67.89,4.78,72.67,forced-alignment
+22,segmented_stalker,"The Catachan devil itself, six limbs, chitin thick enough",72.67,2.99,75.66,forced-alignment
+23,iron_bounce,"to deflect small arms fire, hunts by thermal signature.",75.66,4.64,80.3,forced-alignment
+24,vicious_growth,Strangler plants drop tendrils that sever limbs before the soldier registers contact.,80.3,5.95,86.25,forced-alignment
+25,danger_soil,Miral land sharks track ground vibration.,86.25,3.21,89.46,forced-alignment
+26,gloomy_hollow,Every shadow has been occupying it longer than any patrol has been searching it.,89.46,5.5,94.96,forced-alignment
+27,vibrant_wilderness_contrast,Forces without Catachan-born soldiers operate at a deficit that no amount of preparation closes.,94.96,6.71,101.67,forced-alignment
+28,silent_forest,The jungle doesn’t telegraph its threats.,101.67,2.67,104.34,forced-alignment
+29,futile_moment,It withholds them until they’re already past the point of response.,104.34,4.23,108.57,forced-alignment
+30,tropical_wilderness_patrol,Catachan regiments work in that environment,108.57,2.29,110.86,forced-alignment
+31,maintenance_blade,because they grew up treating survival as a practical discipline rather than an expected outcome.,110.86,6.41,117.27,forced-alignment
+32,victory_jungle,"For everyone else, the mission doesn’t fail on Catachan.",117.27,4.2,121.47,forced-alignment
+33,wilderness_consumes,The jungle absorbs it and moves on.,121.47,2.24,123.71,forced-alignment
+34,cosmic_debris,"Number Five, Space Hulks.",123.71,2.23,125.94,forced-alignment
+35,cosmic_wreckage_cluster,"A Space Hulk is centuries of accumulated ships, stations,",125.94,4.23,130.17,forced-alignment
+36,shifting_monolith,"and debris, fused by warp transit into a structure too massive to ignore and too unstable for any chart to stay current on.",130.17,8.37,138.54,forced-alignment
+37,vessel_access,Boarding one isn’t a tactical challenge.,138.54,2.86,141.4,forced-alignment
+38,logic_failed_briefing,It’s a structural impossibility that command has decided cannot be avoided.,141.4,4.53,145.93,forced-alignment
+39,unformed_abyss_gap,The corridors weren’t built.,145.93,1.7,147.63,forced-alignment
+40,metallic_fusion,"They’re the overlapping interiors of vessels that were never designed to share a wall,",147.63,4.94,152.57,forced-alignment
+41,spatial_jolt,smashed into adjacency by warp physics.,152.57,3.57,156.14,forced-alignment
+42,inverted_gravity_path,Floors become ceilings two junctions in.,156.14,2.83,158.97,forced-alignment
+43,orientation_conflict,Gravity plates from different ships pull in competing,158.97,2.36,161.33,forced-alignment
+44,wall_split_path,directions in rooms separated by a single bulkhead.,161.33,4.58,165.91,forced-alignment
+45,industrial_gas_leak,Sections pressurize and vent without warning when something fails.,165.91,4.1,170.01,forced-alignment
+46,pungent_vapor,"The atmosphere, where it exists at all, is a chemical residue",170.01,2.9,172.91,forced-alignment
+47,vessel_damage_clue,"of whatever the last crew left behind, which includes whatever finished them.",172.91,6.41,179.32,forced-alignment
+48,creature_flexibility,Genestealers are adapted to this geometry in ways that standard assault doctrine isn’t.,179.32,6.08,185.4,forced-alignment
+49,weightless_physics_defiance,They don’t need consistent gravity.,185.4,1.85,187.25,forced-alignment
+50,rapid_duct_transit,They move through ventilation shafts with the velocity of a launched round,187.25,4.18,191.43,forced-alignment
+51,listening_error,and the acoustic signature of a maintenance fault.,191.43,2.58,194.01,forced-alignment
+52,tight_blind_bend,"Squad formations built around structured corridors collapse because line-of-sight inside a hulk rarely extends six meters,",194.01,7.88,201.89,forced-alignment
+53,perpendicular_structural_entry,and flanking acquires a third dimension when the threat can arrive from overhead or through the wall itself.,201.89,5.09,206.98,forced-alignment
+54,heavy_suit,Terminator armor was developed for this specific operational context.,206.98,4.71,211.69,forced-alignment
+55,loss_statistic,It still doesn’t make the casualty rates acceptable.,211.69,3.26,214.95,forced-alignment
+56,hazard_endured,It makes them survivable for a fraction of the boarding party.,214.95,3.52,218.47,forced-alignment
+57,fatal_acceptance,That’s the best available outcome and everyone going in knows it.,218.47,3.92,222.39,forced-alignment
+58,trench_siege,"Number Four, Vraks.",222.39,1.58,223.97,forced-alignment
+59,duration_recollection,Seventeen years.,223.97,1.4,225.37,forced-alignment
+60,logic_comprehension_view,That number starts making sense once you understand what,225.37,3.11,228.48,forced-alignment
+61,rugged_landscape,the terrain did to every assault the Imperium attempted.,228.48,3.44,231.92,forced-alignment
+62,fortified_vault,"Vraks was an armoury world, built for storage and protection rather than habitation.",231.92,5.77,237.69,forced-alignment
+63,grey_industrial_vista,Thick rockcrete everywhere.,237.69,2.07,239.76,forced-alignment
+64,subterranean_chambers,Deep vaults below it.,239.76,1.42,241.18,forced-alignment
+65,ruins_monument_view,"Defensive lines pre-dating the siege by centuries,",241.18,3.42,244.6,forced-alignment
+66,sturdy_plating,constructed specifically to resist the type of assault being attempted against them.,244.6,4.52,249.12,forced-alignment
+67,combat_territory,"The attacking forces had to advance into ground that had been engineered,",249.12,4.22,253.34,forced-alignment
+68,mechanical_vigil,"decades before they arrived, to stop exactly them.",253.34,2.99,256.33,forced-alignment
+69,earthwork_corridor,Trenches funnel movement and eliminate flanking at the squad level.,256.33,4.78,261.11,forced-alignment
+70,hazard_fluid,"The Chaos-aligned defenders added persistent acidic chemical compounds to that problem,",261.11,5.4,266.51,forced-alignment
+71,liquid_hazard,"agents that pooled in low ground, degraded respirator seals over extended exposure, and corrupted the soil chemistry across entire operating sectors.",266.51,9.77,276.28,forced-alignment
+72,poisonous_terrain_shift,Ground that should have been traversable became toxic inside two weeks of sustained fighting.,276.28,5.83,282.11,forced-alignment
+73,fatigue_hazardous_travel,Soldiers who crossed contaminated sections arrived at their objectives already in physiological decline,282.11,7.23,289.34,forced-alignment
+74,silent_stalking,before any contact occurred.,289.34,2.03,291.37,forced-alignment
+75,ground_morph,"After seventeen years of that, the battlefield substrate changed.",291.37,4.2,295.57,forced-alignment
+76,unstable_land,The soil churned.,295.57,1.15,296.72,forced-alignment
+77,unnatural_fungi_inspection,Contaminated zones developed biological properties that had no business being there.,296.72,5.68,302.4,forced-alignment
+78,perilous_zone_blur,In the worst sectors the distinction between a minefield,302.4,3.03,305.43,forced-alignment
+79,strategic_equivalence,and clear ground stopped mattering operationally because the outcomes were roughly comparable either way.,305.43,5.87,311.3,forced-alignment
+80,casualty_landscape,Fourteen million Krieg Guardsmen died at Vraks.,311.3,3.59,314.89,forced-alignment
+81,clime_influence,The environment wasn’t incidental to that number.,314.89,2.89,317.78,forced-alignment
+82,strategy_predetermined,It was built into the calculation from the start.,317.78,3.06,320.84,forced-alignment
+83,ancient_structure,"Number Three, Necron Tomb Complexes.",320.84,3.09,323.93,forced-alignment
+84,ancient_mechanical_lure,A Necron tomb world has been a trap for several million years.,323.93,4.45,328.38,forced-alignment
+85,celestial_behemoth,The exterior looks like a planet.,328.38,2.21,330.59,forced-alignment
+86,unseen_boundary,That’s where the familiar part ends.,330.59,2.2,332.79,forced-alignment
+87,deep_void_tunnels,"Tomb complexes extend kilometers below the surface through dimensionally compressed architecture,",332.79,6.21,339,forced-alignment
+88,spatial_anomaly,rooms that register on auspex scans as physically larger than the geological formation around them should permit.,339,6.37,345.37,forced-alignment
+89,glitch_check,Whether that’s a sensor artifact or accurate data is,345.37,3.56,348.93,forced-alignment
+90,rapid_skirmish_clash,not a question anyone fighting inside has time to settle.,348.93,3.57,352.5,forced-alignment
+91,recovery_formation,The defenders reassemble after being destroyed.,352.5,3.25,355.75,forced-alignment
+92,distinctive_property_highlight,That single feature separates this from every other hostile environment on this list.,355.75,5.62,361.37,forced-alignment
+93,safety_passage,A fire lane is cleared.,361.37,1.99,363.36,forced-alignment
+94,combatants_defeat_scene,Warriors go down.,363.36,1.41,364.77,forced-alignment
+95,fixed_march,Twenty minutes later they’ve partially rebuilt and resumed patrol.,364.77,4.52,369.29,forced-alignment
+96,count_void,Progress measured in confirmed eliminations stops being meaningful.,369.29,4.25,373.54,forced-alignment
+97,architectural_pivot,"The structure itself continuously reconfigures around the intrusion, sealing corridors, shifting gravity orientations, cycling through",373.54,8.66,382.2,forced-alignment
+98,ancient_guardian_mechanism,"defensive responses the way a biological organism cycles through immune responses, automatic, tireless, and scaling up.",382.2,7.14,389.34,forced-alignment
+99,reveal_secret_chamber,The Astral Knights found this out aboard the World Engine.,389.34,3.84,393.18,forced-alignment
+100,tactical_bypass,The only thing that worked was abandoning the model of fighting through an enemy position entirely,393.18,6.11,399.29,forced-alignment
+101,explosive_focus,and treating the structure as a demolition target instead.,399.29,3.85,403.14,forced-alignment
+102,vicious_wilds,The environment didn’t stop being hostile after that decision.,403.14,3.62,406.76,forced-alignment
+103,heavy_effort,It just became a problem with a physical solution rather than a tactical one.,406.76,4.8,411.56,forced-alignment
+104,void_guardian_watch,"Number Two, Cadian Space.",411.56,2.13,413.69,forced-alignment
+105,void_boundary,Cadia sits at the edge of a permanent spatial rupture where the laws,413.69,3.46,417.15,forced-alignment
+106,logic_clash,governing material reality are contested in ways standard military planning doesn’t account for.,417.15,7.04,424.19,forced-alignment
+107,void_vessel_steering,Navigation through the outer reaches of the Eye of Terror,424.19,3.29,427.48,forced-alignment
+108,gadget_decay,requires specialized instruments that themselves degrade the deeper in you go.,427.48,4.98,432.46,forced-alignment
+109,temporal_flux,Helmsmen on those routes age at accelerated rates.,432.46,3.84,436.3,forced-alignment
+110,unstable_path,Ships that enter the inner Eye on standard transit projections sometimes emerge centuries off course.,436.3,7.27,443.57,forced-alignment
+111,shadow_loss,Some don’t emerge.,443.57,1.4,444.97,forced-alignment
+112,shirking_foundation,"For ground forces during active incursions, the problem is reality as an unreliable physical substrate.",444.97,7.63,452.6,forced-alignment
+113,onslaught_epoch,"During the 13th Black Crusade,",452.6,2.15,454.75,forced-alignment
+114,malignant_swirl_weather,corruption radiating from Abaddon’s fleet destabilized atmospheric conditions across entire operating zones.,454.75,7.62,462.37,forced-alignment
+115,gear_halted,Equipment failed with no physical damage to explain it.,462.37,3.32,465.69,forced-alignment
+116,alien_topography,"Soldiers who spent extended time in contaminated sectors reported geography that didn’t match survey maps,",465.69,6.6,472.29,forced-alignment
+117,mystery_signal_lag,"vox-traffic on dead frequencies, and an inability to track time between events.",472.29,5.24,477.53,forced-alignment
+118,varied_battalions,These were documented across multiple units.,477.53,3.08,480.61,forced-alignment
+119,resolute_stand,They weren’t morale failures.,480.61,1.72,482.33,forced-alignment
+120,unprotected_exposure,They were the operational signature of the Eye’s effect on personnel without shielding.,482.33,5.47,487.8,forced-alignment
+121,military_origin,Cadian Shock Troops were trained from the start with all of this as a baseline.,487.8,4.57,492.37,forced-alignment
+122,routine_protocol,They treated it as standard operating parameters rather than emergency conditions.,492.37,5.11,497.48,forced-alignment
+123,extraordinary_divide,That gap between a force that had normalized the impossible,497.48,3.47,500.95,forced-alignment
+124,strike_encounter,and a force meeting it for the first time determined most of the tactical results at the Cadian Gate.,500.95,6.06,507.01,forced-alignment
+125,fallen_regiment_site,The Cadians died there too.,507.01,1.82,508.83,forced-alignment
+126,policy_check,They just had doctrine that already had a line item for it.,508.83,3.77,512.6,forced-alignment
+127,distorted_rift,"Number One, The Warp, Uncontrolled.",512.6,2.9,515.5,forced-alignment
+128,purple_nebula,Every interstellar vessel passes through the Warp to reach the next star system.,515.5,5.08,520.58,forced-alignment
+129,perilous_overpass_doom,Nobody has survived losing control of that crossing.,520.58,3.75,524.33,forced-alignment
+130,mystic_corridor,The Warp enables faster-than-light travel.,524.33,2.84,527.17,forced-alignment
+131,void_entropy,It also operates under conditions where stable matter has no particular standing.,527.17,5.6,532.77,forced-alignment
+132,craft_ward_vanishing,"A ship that loses its Geller field,",532.77,2.35,535.12,forced-alignment
+133,stable_shield,"the containment system maintaining a bubble of material-reality coherence around the hull, isn’t a vessel in a dangerous environment anymore.",535.12,8.35,543.47,forced-alignment
+134,unstable_formation,It’s matter trying to hold its shape somewhere,543.47,2.42,545.89,forced-alignment
+135,pattern_chaos,that actively works against the concept of shape.,545.89,2.76,548.65,forced-alignment
+136,strange_fate_occurs,The crew doesn’t die the way crews die when life support fails.,548.65,4.78,553.43,forced-alignment
+137,chaotic_rot_witness,The deterioration comes from outside in and doesn’t follow a sequence anyone has successfully predicted.,553.43,6.91,560.34,forced-alignment
+138,harsh_territory_evaluation,What makes this the worst environment in the setting,560.34,3.16,563.5,forced-alignment
+139,unbound_chaos,is what gets stripped away the moment control fails.,563.5,2.93,566.43,forced-alignment
+140,erratic_tide,Navigation stops working because Warp currents have no fixed relationship to physical distances.,566.43,6.41,572.84,forced-alignment
+141,chronal_drift,"Time becomes operationally non-linear: vessels have exited transit weeks before they entered,",572.84,6.87,579.71,forced-alignment
+142,view_trapped_warrior,"as measured by external observers, and some have never exited despite correct departure coordinates.",579.71,6.57,586.28,forced-alignment
+143,unstable_spirit_journey,Crew psychological integrity declines in proportion to transit duration and proximity to Warp anomalies.,586.28,7.6,593.88,forced-alignment
+144,broken_link,Communication with anything outside the hull is severed.,593.88,3.95,597.83,forced-alignment
+145,battle_network,"Supply lines, reinforcements, intelligence, extraction, everything a military force depends on",597.83,5.86,603.69,forced-alignment
+146,protection_failure,"for sustained operation, ceases to function the moment the Geller field goes.",603.69,5.55,609.24,forced-alignment
+147,entry_clash,The final boarding of the Vengeful Spirit illustrated,609.24,3.27,612.51,forced-alignment
+148,unstable_energy_consequence,what even partial Warp exposure does at close range.,612.51,4.42,616.93,forced-alignment
+149,warp_lightning_entry,"A targeted teleport assault,",616.93,2.01,618.94,forced-alignment
+150,engine_flash_array,"the most controlled form of Warp-adjacent transit available, was used as a dispersion mechanism.",618.94,5.74,624.68,forced-alignment
+151,team_disperse,The loyalist strike force scattered across a corrupted interior.,624.68,4.57,629.25,forced-alignment
+152,void_fission,Pocket instabilities isolated individuals from their units mid-transit.,629.25,5.21,634.46,forced-alignment
+153,hidden_zone_vacuum,Dorn was displaced into a pocket dimension entirely.,634.46,3.82,638.28,forced-alignment
+154,hallway_warp,Corridors changed geometry around active engagements.,638.28,3.68,641.96,forced-alignment
+155,corrupted_frame,"That was one ship, partially destabilized by prolonged Warp exposure.",641.96,4.76,646.72,forced-alignment
+156,maelstrom_dawn,"The open Warp produces those conditions as its starting point, not its worst case.",646.72,5.4,652.12,forced-alignment
+157,lost_legion_void,No military force has operated effectively inside the open Warp without navigation.,652.12,5.64,657.76,forced-alignment
+158,perilous_void_threshold,The ones that lost control going in didn’t return to write up what happened.,657.76,5.22,662.98,forced-alignment
+159,nature_hazard,"The environment holds that record not because it kills efficiently,",662.98,4.27,667.25,forced-alignment
+160,strategic_void,but because it removes the preconditions for any organized response.,667.25,4.47,671.72,forced-alignment
+161,boundary_failed,You cannot establish a perimeter.,671.72,2.26,673.98,forced-alignment
+162,failing_defense_line,You cannot hold ground.,673.98,1.62,675.6,forced-alignment
+163,halted_progress,You cannot advance on an objective.,675.6,2.29,677.89,forced-alignment
+164,mental_persistence,"Staying coherent long enough to matter is about the best available outcome,",677.89,4.24,682.13,forced-alignment
+165,uncertain_outcome,and that’s not a given.,682.13,1.4,683.53,forced-alignment
+166,deadly_climate,Some environments kill soldiers.,683.53,2.19,685.72,forced-alignment
+167,strategic_collapse_disarray,These kill the structure of a mission before the first order reaches anyone.,685.72,5.66,691.38,forced-alignment
+168,strategic_metric_view,The officers who sent men into these places had the parameters in front of them,691.38,4.66,696.04,forced-alignment
+169,troop_deployment,and sent them anyway.,696.04,1.5,697.54,forced-alignment
+170,logic_surplus,The calculation kept producing the same answer: the alternative cost more.,697.54,4.7,702.24,forced-alignment
+171,routine_occurrence,Usually it did.,702.24,1.25,703.49,forced-alignment
+172,unyielding_terrain,The hard places stay hard.,703.49,1.76,705.25,forced-alignment
+173,perpetual_clash,The wars don’t stop.,705.25,1.3,706.55,forced-alignment
+174,upcoming_assignment,Somebody else gets the briefing next.,706.55,2.46,709.01,forced-alignment

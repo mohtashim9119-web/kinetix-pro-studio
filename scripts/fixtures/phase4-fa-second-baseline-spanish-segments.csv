@@ -1,0 +1,28 @@
+order,tag,text,startTime,duration,endTime,anchorSource
+0,001_scylla_intro,Scylla.,0,1.06,1.06,forced-alignment
+1,002_scylla_cliff_passage,Scylla es un monstruo que vive dentro de un acantilado junto a un estrecho paso marítimo.,1.06,4.99,6.05,forced-alignment
+2,003_scylla_six_necks,"Tiene seis cuellos largos,",6.05,1.82,7.87,forced-alignment
+3,004_scylla_mouth_teeth,"seis cabezas, tres hileras de dientes en cada boca",7.87,2.92,10.79,forced-alignment
+4,005_scylla_twelve_legs,y 12 patas debajo de su cuerpo.,10.79,2.08,12.87,forced-alignment
+5,006_attack_setup,Su ataque es sencillo.,12.87,1.83,14.7,forced-alignment
+6,007_ship_approaching,"Cuando un barco pasa lo suficientemente cerca,",14.7,2.57,17.27,forced-alignment
+7,008_heads_moving,las seis cabezas se mueven al mismo tiempo.,17.27,2.6,19.87,forced-alignment
+8,009_grabbing_sailors,Cada cabeza atrapa a un marinero de la cubierta.,19.87,3.14,23.01,forced-alignment
+9,010_six_sailors_lost,Seis cabezas significan seis marineros que desaparecen en un solo ataque.,23.01,4.51,27.52,forced-alignment
+10,011_scylla_limits,El detalle importante es que Scylla no persigue a los barcos en mar abierto.,27.52,4.68,32.2,forced-alignment
+11,012_scylla_stays,Se mantiene cerca del acantilado.,32.2,2.01,34.21,forced-alignment
+12,013_no_fighting_strategy,Eso significa que la estrategia más segura no es luchar contra ella.,34.21,3.77,37.98,forced-alignment
+13,014_keep_moving,Es seguir moviéndose antes de que pueda atacar de nuevo.,37.98,3.46,41.44,forced-alignment
+14,015_odysseus_warning,Odiseo es advertido sobre esto antes de llegar al paso.,41.44,3.46,44.9,forced-alignment
+15,016_prepares_weapons,"Aún así, prepara sus armas,",44.9,2.17,47.07,forced-alignment
+16,017_useless_weapons,pero resultan inútiles.,47.07,1.6,48.67,forced-alignment
+17,018_scylla_attacks,Scylla se lleva a seis de sus hombres mientras el barco continúa su marcha.,48.67,4.39,53.06,forced-alignment
+18,019_no_stopping,Detenerse solo le daría otra oportunidad.,53.06,2.77,55.83,forced-alignment
+19,020_the_passage_layout,"Scylla también comparte el paso con Caribdis,",55.83,2.86,58.69,forced-alignment
+20,021_charybdis_whirlpool,"un remolino gigante en el lado opuesto,",58.69,2.5,61.19,forced-alignment
+21,022_ship_trapped,por lo que la tripulación no puede simplemente alejarse más.,61.19,5.54,66.73,forced-alignment
+22,023_scylla_six_sailors,Navegar cerca de Scylla cuesta seis marineros.,66.73,1.6,68.33,forced-alignment
+23,024_whirlpool_ship_wreck,Navegar cerca de Caribdis puede destruir el barco entero.,68.33,3.63,71.96,forced-alignment
+24,025_odysseus_lesser_evil,A Odiseo se le dice que elija a Scylla porque perder a seis personas es mejor que perderlo todo.,71.96,5.45,77.41,forced-alignment
+25,026_messina_strait_map,"Tradiciones posteriores situaron el paso en el estrecho de Mesina, entre Sicilia e Italia peninsular.",77.41,6.54,83.95,forced-alignment
+26,027_idiom_visualized,La frase «entre Scylla y Caribdis» se convirtió en una forma de describir el estar atrapado entre dos opciones peligrosas.,83.95,8.09,92.04,forced-alignment

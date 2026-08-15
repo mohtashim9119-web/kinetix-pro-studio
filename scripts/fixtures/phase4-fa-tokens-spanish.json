@@ -1,27 +1,20 @@
 {
   "_caveat": [
     "FA FIDELITY REFERENCE \u2014 NOT a production behavioral target.",
-    "Source: measure-forced-alignment.py (torchaudio MMS_FA, mling_uroman, with_star=True), run with pad-sec=3.0 and neighbour-midpoint windowing (align_segment's floor_bound/ceil_bound clamp) \u2014 this is MEASUREMENT convention, chosen to keep one segment's alignment window from bleeding into a neighbour's real speech during this measurement pass.",
+    "Source: measure-forced-alignment-hf.py (transformers Wav2Vec2ForCTC, jonatasgrosman/wav2vec2-large-xlsr-53-spanish), run with pad-sec=3.0 and neighbour-midpoint windowing (align_segment's floor_bound/ceil_bound clamp) \u2014 this is MEASUREMENT convention, chosen to keep one segment's alignment window from bleeding into a neighbour's real speech during this measurement pass.",
     "R.4 (sync-pipeline-v2-plan.md) specifies PAD_BASE 0.75s for production. The audit that led to R.4 traced the midpoint-clamp windowing strategy used here to five documented failures on gapless corpora (docs/history.md) \u2014 this baseline's windowing is NOT what production should do.",
-    "Therefore: this is a FIDELITY reference for the future Rust MMS-FA/Viterbi port to reproduce MMS-FA's own achievable output on this input, NOT a behavioral target for what Apply Sync should commit. Do not wire this baseline's numbers into a production-timing comparison.",
-    "This baseline captures the FIRST run of the FA harness against these three projects' committed segments \u2014 there is nothing to diff it against yet; this run establishes the reference.",
-    "SCOPE CORRECTION: generated with MMS-FA (torchaudio's MMS_FA bundle), a 27-letter + apostrophe romanized alphabet.",
-    "MMS-FA is BARRED from shipping in this project by Decision 3, on licence grounds (CC-BY-NC-4.0, non-commercial).",
-    "Production ships jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,pt}, with per-language CTC vocabs of 33 (en) / 41 (es) / 59 (fr) / 38 (de) / 46 (pt) symbols \u2014 none of them MMS-FA's alphabet.",
-    "Therefore this fixture IS a valid reference for the Viterbi DP and the windowing math, which are model-independent.",
-    "It is NOT a reference for text normalization, vocab coverage, or which words get dropped. Spanish's dropped \"12\" reflects MMS-FA's alphabet, not necessarily jonatasgrosman's."
+    "Therefore: this is a FIDELITY reference for the Rust jonatasgrosman/ONNX/Viterbi port to reproduce this model's own achievable output on this input, NOT a behavioral target for what Apply Sync should commit. Do not wire this baseline's numbers into a production-timing comparison.",
+    "R-Q REGENERATION (docs/work-in-progress.md, this session): this fixture previously used torchaudio's MMS_FA bundle (CC-BY-NC-4.0, barred from shipping by Decision 3). It has been regenerated here against jonatasgrosman/wav2vec2-large-xlsr-53-spanish (Apache-2.0) \u2014 the actual model family production ships \u2014 resolving R-Q's stated obligation. The prior MMS-FA capture's own numbers are superseded; retrieve them from git history if a historical comparison is ever needed.",
+    "This baseline captures the FIRST run of this HF-harness/jonatasgrosman pairing against these three projects' committed segments \u2014 there is nothing to diff it against yet; this run establishes the reference.",
+    "Production ships jonatasgrosman/wav2vec2-large-xlsr-53-{en,es,fr,de,pt}, with per-language CTC vocabs of 33 (en) / 41 (es) / 59 (fr) / 38 (de) / 46 (pt) symbols.",
+    "This fixture IS now a valid reference for text normalization and vocab coverage too (unlike its MMS-FA predecessor), since it uses the real shipping model's own alphabet \u2014 though it still measures via transformers/torchaudio's forced_align, not this repo's own Rust Viterbi port; the Rust port's own fidelity is independently verified by fa-onnx-emission-*.json/fa-e2e-alignment-*.json (zero-tolerance parity, Slices D2/D4), which this fixture does not replace or duplicate."
   ],
   "_provenance": {
-    "model": "torchaudio MMS_FA (mling_uroman, with_star=True)",
-    "model_weights": "torchaudio.pipelines.MMS_FA (ctc_alignment_mling_uroman/model.pt); no separate revision id exposed by the torchaudio bundle API \u2014 weights cached at ~/.cache/torch/hub/checkpoints/model.pt",
+    "model": "transformers Wav2Vec2ForCTC (jonatasgrosman/wav2vec2-large-xlsr-53-spanish, Apache-2.0)",
     "torch_version": "2.2.2",
     "torchaudio_version": "2.2.2",
     "pad_sec": 3.0,
     "language": "es",
-    "elapsed_sec": 19.793436482999823,
-    "model_load_sec": 5.971479466999881,
-    "align_only_sec": 13.742858097008138,
-    "peak_rss_bytes": 3521798144,
     "token_count": 247,
     "segment_count": 26,
     "failed_segments": [],
@@ -37,247 +30,247 @@
   "words": [
     {
       "text": "Scylla",
-      "start": 0.341,
+      "start": 0.321,
       "end": 1.763,
-      "score": 0.5163,
+      "score": 0.0344,
       "seg": 0
     },
     {
       "text": "es",
       "start": 1.943,
-      "end": 2.023,
-      "score": 0.9995,
+      "end": 2.003,
+      "score": 0.9998,
       "seg": 0
     },
     {
       "text": "un",
       "start": 2.083,
-      "end": 2.144,
-      "score": 0.9988,
+      "end": 2.124,
+      "score": 0.998,
       "seg": 0
     },
     {
       "text": "monstruo",
       "start": 2.184,
       "end": 2.524,
-      "score": 0.996,
+      "score": 0.9968,
       "seg": 0
     },
     {
       "text": "que",
       "start": 2.564,
       "end": 2.644,
-      "score": 0.9948,
+      "score": 0.9983,
       "seg": 0
     },
     {
       "text": "vive",
       "start": 2.684,
       "end": 2.865,
-      "score": 0.9983,
+      "score": 0.9999,
       "seg": 0
     },
     {
       "text": "dentro",
       "start": 2.905,
       "end": 3.125,
-      "score": 0.9656,
+      "score": 0.9257,
       "seg": 0
     },
     {
       "text": "de",
       "start": 3.165,
       "end": 3.205,
-      "score": 0.9955,
+      "score": 0.9983,
       "seg": 0
     },
     {
       "text": "un",
-      "start": 3.245,
+      "start": 3.265,
       "end": 3.325,
-      "score": 0.8303,
+      "score": 0.979,
       "seg": 0
     },
     {
       "text": "acantilado",
-      "start": 3.366,
+      "start": 3.386,
       "end": 3.906,
-      "score": 0.9994,
+      "score": 1.0,
       "seg": 0
     },
     {
       "text": "junto",
       "start": 4.067,
       "end": 4.367,
-      "score": 0.9963,
+      "score": 0.9928,
       "seg": 0
     },
     {
       "text": "a",
-      "start": 4.507,
-      "end": 4.527,
-      "score": 0.9975,
+      "start": 4.487,
+      "end": 4.507,
+      "score": 0.9971,
       "seg": 0
     },
     {
       "text": "un",
       "start": 4.588,
       "end": 4.648,
-      "score": 0.9995,
+      "score": 0.9998,
       "seg": 0
     },
     {
       "text": "estrecho",
       "start": 4.688,
-      "end": 5.028,
-      "score": 0.9997,
+      "end": 5.008,
+      "score": 0.986,
       "seg": 0
     },
     {
       "text": "paso",
-      "start": 5.068,
+      "start": 5.088,
       "end": 5.289,
-      "score": 0.9907,
+      "score": 1.0,
       "seg": 0
     },
     {
       "text": "mar\u00edtimo.",
-      "start": 5.329,
-      "end": 5.75,
-      "score": 0.9998,
+      "start": 5.349,
+      "end": 5.77,
+      "score": 0.9999,
       "seg": 0
     },
     {
       "text": "Tiene",
       "start": 6.292,
-      "end": 6.514,
-      "score": 0.9991,
+      "end": 6.534,
+      "score": 0.9999,
       "seg": 1
     },
     {
       "text": "seis",
-      "start": 6.696,
+      "start": 6.676,
       "end": 6.898,
-      "score": 0.9979,
+      "score": 1.0,
       "seg": 1
     },
     {
       "text": "cuellos",
-      "start": 6.958,
-      "end": 7.281,
-      "score": 0.8252,
+      "start": 6.979,
+      "end": 7.261,
+      "score": 0.9999,
       "seg": 1
     },
     {
       "text": "largos,",
       "start": 7.342,
-      "end": 7.726,
-      "score": 0.9995,
+      "end": 7.705,
+      "score": 1.0,
       "seg": 1
     },
     {
       "text": "seis",
       "start": 8.21,
       "end": 8.291,
-      "score": 0.3416,
+      "score": 0.0001,
       "seg": 2
     },
     {
       "text": "cabezas,",
       "start": 8.311,
-      "end": 8.795,
-      "score": 0.9947,
+      "end": 8.754,
+      "score": 1.0,
       "seg": 2
     },
     {
       "text": "tres",
-      "start": 8.976,
+      "start": 8.996,
       "end": 9.178,
-      "score": 0.9477,
+      "score": 1.0,
       "seg": 2
     },
     {
       "text": "hileras",
       "start": 9.218,
       "end": 9.54,
-      "score": 0.8848,
+      "score": 0.9984,
       "seg": 2
     },
     {
       "text": "de",
       "start": 9.581,
-      "end": 9.641,
-      "score": 0.9983,
+      "end": 9.621,
+      "score": 0.9999,
       "seg": 2
     },
     {
       "text": "dientes",
-      "start": 9.661,
-      "end": 10.004,
-      "score": 0.9984,
+      "start": 9.681,
+      "end": 9.984,
+      "score": 0.9998,
       "seg": 2
     },
     {
       "text": "en",
       "start": 10.044,
       "end": 10.105,
-      "score": 0.9981,
+      "score": 0.9999,
       "seg": 2
     },
     {
       "text": "cada",
       "start": 10.145,
       "end": 10.306,
-      "score": 0.9995,
+      "score": 1.0,
       "seg": 2
     },
     {
       "text": "boca",
-      "start": 10.347,
+      "start": 10.367,
       "end": 10.588,
-      "score": 0.9977,
+      "score": 1.0,
       "seg": 2
     },
     {
       "text": "y",
       "start": 10.952,
       "end": 10.972,
-      "score": 0.9954,
+      "score": 0.9998,
       "seg": 3
     },
     {
       "text": "patas",
-      "start": 11.315,
+      "start": 11.335,
       "end": 11.658,
-      "score": 0.9996,
+      "score": 0.9982,
       "seg": 3
     },
     {
       "text": "debajo",
       "start": 11.739,
       "end": 12.042,
-      "score": 0.9996,
+      "score": 0.9999,
       "seg": 3
     },
     {
       "text": "de",
       "start": 12.082,
       "end": 12.143,
-      "score": 0.9993,
+      "score": 0.9991,
       "seg": 3
     },
     {
       "text": "su",
       "start": 12.183,
       "end": 12.264,
-      "score": 0.9997,
+      "score": 0.9519,
       "seg": 3
     },
     {
       "text": "cuerpo.",
       "start": 12.305,
       "end": 12.628,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 3
     },
     {
@@ -291,181 +284,181 @@
       "text": "ataque",
       "start": 13.292,
       "end": 13.614,
-      "score": 0.9449,
+      "score": 0.9159,
       "seg": 4
     },
     {
       "text": "es",
       "start": 13.855,
-      "end": 13.936,
-      "score": 0.9334,
+      "end": 13.916,
+      "score": 0.9781,
       "seg": 4
     },
     {
       "text": "sencillo.",
       "start": 13.976,
       "end": 14.459,
-      "score": 0.9484,
+      "score": 0.9997,
       "seg": 4
     },
     {
       "text": "Cuando",
-      "start": 14.901,
+      "start": 14.921,
       "end": 15.102,
-      "score": 0.9995,
+      "score": 0.9999,
       "seg": 5
     },
     {
       "text": "un",
       "start": 15.142,
       "end": 15.202,
-      "score": 0.9993,
+      "score": 0.9996,
       "seg": 5
     },
     {
       "text": "barco",
-      "start": 15.242,
+      "start": 15.262,
       "end": 15.483,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 5
     },
     {
       "text": "pasa",
-      "start": 15.543,
+      "start": 15.563,
       "end": 15.804,
-      "score": 0.9976,
+      "score": 0.9999,
       "seg": 5
     },
     {
       "text": "lo",
       "start": 15.885,
       "end": 15.945,
-      "score": 0.9991,
+      "score": 0.9999,
       "seg": 5
     },
     {
       "text": "suficientemente",
       "start": 16.005,
       "end": 16.728,
-      "score": 0.9998,
+      "score": 0.9696,
       "seg": 5
     },
     {
       "text": "cerca,",
-      "start": 16.768,
+      "start": 16.788,
       "end": 17.049,
-      "score": 0.9998,
+      "score": 0.9994,
       "seg": 5
     },
     {
       "text": "las",
-      "start": 17.431,
-      "end": 17.552,
-      "score": 0.9984,
+      "start": 17.451,
+      "end": 17.532,
+      "score": 0.9999,
       "seg": 6
     },
     {
       "text": "seis",
-      "start": 17.592,
-      "end": 17.774,
-      "score": 0.9994,
+      "start": 17.572,
+      "end": 17.754,
+      "score": 0.9999,
       "seg": 6
     },
     {
       "text": "cabezas",
       "start": 17.814,
       "end": 18.217,
-      "score": 0.9994,
+      "score": 1.0,
       "seg": 6
     },
     {
       "text": "se",
-      "start": 18.358,
-      "end": 18.439,
-      "score": 0.9998,
+      "start": 18.338,
+      "end": 18.419,
+      "score": 1.0,
       "seg": 6
     },
     {
       "text": "mueven",
-      "start": 18.479,
+      "start": 18.499,
       "end": 18.761,
-      "score": 0.9287,
+      "score": 0.9689,
       "seg": 6
     },
     {
       "text": "al",
       "start": 18.842,
-      "end": 18.923,
-      "score": 0.9997,
+      "end": 18.903,
+      "score": 0.9998,
       "seg": 6
     },
     {
       "text": "mismo",
       "start": 18.943,
-      "end": 19.185,
-      "score": 0.9998,
+      "end": 19.165,
+      "score": 1.0,
       "seg": 6
     },
     {
       "text": "tiempo.",
       "start": 19.225,
       "end": 19.548,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 6
     },
     {
       "text": "Cada",
       "start": 20.152,
       "end": 20.333,
-      "score": 0.9999,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "cabeza",
       "start": 20.393,
-      "end": 20.736,
-      "score": 0.9994,
+      "end": 20.756,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "atrapa",
-      "start": 20.897,
-      "end": 21.239,
-      "score": 0.9998,
+      "start": 20.917,
+      "end": 21.259,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "a",
-      "start": 21.38,
-      "end": 21.4,
-      "score": 0.9991,
+      "start": 21.4,
+      "end": 21.42,
+      "score": 0.9998,
       "seg": 7
     },
     {
       "text": "un",
-      "start": 21.48,
+      "start": 21.5,
       "end": 21.561,
-      "score": 0.9995,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "marinero",
       "start": 21.621,
       "end": 22.004,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "de",
       "start": 22.044,
       "end": 22.084,
-      "score": 0.9993,
+      "score": 0.9998,
       "seg": 7
     },
     {
       "text": "la",
       "start": 22.124,
-      "end": 22.185,
+      "end": 22.165,
       "score": 0.9995,
       "seg": 7
     },
@@ -473,217 +466,217 @@
       "text": "cubierta.",
       "start": 22.245,
       "end": 22.708,
-      "score": 0.9831,
+      "score": 1.0,
       "seg": 7
     },
     {
       "text": "Seis",
       "start": 23.331,
       "end": 23.551,
-      "score": 0.9994,
+      "score": 0.9763,
       "seg": 8
     },
     {
       "text": "cabezas",
       "start": 23.591,
       "end": 23.952,
-      "score": 0.9865,
+      "score": 1.0,
       "seg": 8
     },
     {
       "text": "significan",
       "start": 23.992,
-      "end": 24.513,
-      "score": 0.9995,
+      "end": 24.493,
+      "score": 0.9679,
       "seg": 8
     },
     {
       "text": "seis",
       "start": 24.614,
-      "end": 24.854,
-      "score": 0.9972,
+      "end": 24.834,
+      "score": 0.9922,
       "seg": 8
     },
     {
       "text": "marineros",
       "start": 24.914,
-      "end": 25.395,
-      "score": 0.9999,
+      "end": 25.375,
+      "score": 0.9879,
       "seg": 8
     },
     {
       "text": "que",
       "start": 25.656,
       "end": 25.736,
-      "score": 0.9967,
+      "score": 0.8558,
       "seg": 8
     },
     {
       "text": "desaparecen",
-      "start": 25.756,
+      "start": 25.776,
       "end": 26.357,
-      "score": 0.9998,
+      "score": 0.9561,
       "seg": 8
     },
     {
       "text": "en",
       "start": 26.458,
       "end": 26.518,
-      "score": 0.9995,
+      "score": 0.9991,
       "seg": 8
     },
     {
       "text": "un",
       "start": 26.578,
       "end": 26.638,
-      "score": 0.9997,
+      "score": 0.947,
       "seg": 8
     },
     {
       "text": "solo",
       "start": 26.678,
-      "end": 26.859,
-      "score": 0.9994,
+      "end": 26.838,
+      "score": 0.8541,
       "seg": 8
     },
     {
       "text": "ataque.",
       "start": 26.899,
-      "end": 27.179,
-      "score": 0.9908,
+      "end": 27.199,
+      "score": 0.9947,
       "seg": 8
     },
     {
       "text": "El",
-      "start": 27.982,
-      "end": 28.062,
-      "score": 0.9997,
+      "start": 28.002,
+      "end": 28.082,
+      "score": 0.9998,
       "seg": 9
     },
     {
       "text": "detalle",
       "start": 28.102,
       "end": 28.424,
-      "score": 0.9984,
+      "score": 0.8952,
       "seg": 9
     },
     {
       "text": "importante",
       "start": 28.464,
       "end": 29.026,
-      "score": 0.9999,
+      "score": 1.0,
       "seg": 9
     },
     {
       "text": "es",
       "start": 29.267,
-      "end": 29.368,
-      "score": 0.9986,
+      "end": 29.348,
+      "score": 0.9999,
       "seg": 9
     },
     {
       "text": "que",
       "start": 29.408,
       "end": 29.488,
-      "score": 0.9984,
+      "score": 0.8752,
       "seg": 9
     },
     {
       "text": "Scylla",
-      "start": 29.569,
-      "end": 29.83,
-      "score": 0.6426,
+      "start": 29.549,
+      "end": 29.87,
+      "score": 0.0241,
       "seg": 9
     },
     {
       "text": "no",
-      "start": 30.111,
-      "end": 30.212,
-      "score": 0.9998,
+      "start": 30.131,
+      "end": 30.191,
+      "score": 1.0,
       "seg": 9
     },
     {
       "text": "persigue",
       "start": 30.292,
       "end": 30.673,
-      "score": 0.9808,
+      "score": 0.9979,
       "seg": 9
     },
     {
       "text": "a",
       "start": 30.714,
       "end": 30.734,
-      "score": 0.9935,
+      "score": 0.9881,
       "seg": 9
     },
     {
       "text": "los",
       "start": 30.754,
-      "end": 30.874,
-      "score": 0.9993,
+      "end": 30.854,
+      "score": 0.999,
       "seg": 9
     },
     {
       "text": "barcos",
       "start": 30.915,
-      "end": 31.256,
-      "score": 0.9998,
+      "end": 31.236,
+      "score": 0.9999,
       "seg": 9
     },
     {
       "text": "en",
       "start": 31.336,
       "end": 31.397,
-      "score": 0.9989,
+      "score": 0.9999,
       "seg": 9
     },
     {
       "text": "mar",
-      "start": 31.437,
+      "start": 31.457,
       "end": 31.557,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 9
     },
     {
       "text": "abierto.",
       "start": 31.597,
       "end": 32.019,
-      "score": 0.9968,
+      "score": 0.9791,
       "seg": 9
     },
     {
       "text": "Se",
       "start": 32.381,
-      "end": 32.461,
-      "score": 0.9997,
+      "end": 32.481,
+      "score": 0.9214,
       "seg": 10
     },
     {
       "text": "mantiene",
       "start": 32.542,
       "end": 32.883,
-      "score": 0.974,
+      "score": 1.0,
       "seg": 10
     },
     {
       "text": "cerca",
-      "start": 32.944,
+      "start": 32.964,
       "end": 33.205,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 10
     },
     {
       "text": "del",
       "start": 33.245,
-      "end": 33.366,
-      "score": 0.9986,
+      "end": 33.346,
+      "score": 0.9138,
       "seg": 10
     },
     {
       "text": "acantilado.",
-      "start": 33.386,
+      "start": 33.406,
       "end": 33.969,
-      "score": 0.9989,
+      "score": 1.0,
       "seg": 10
     },
     {
@@ -695,471 +688,471 @@
     },
     {
       "text": "significa",
-      "start": 34.671,
-      "end": 35.131,
-      "score": 0.9999,
+      "start": 34.691,
+      "end": 35.151,
+      "score": 0.9028,
       "seg": 11
     },
     {
       "text": "que",
-      "start": 35.231,
+      "start": 35.211,
       "end": 35.291,
-      "score": 0.9996,
+      "score": 0.9983,
       "seg": 11
     },
     {
       "text": "la",
       "start": 35.332,
       "end": 35.372,
-      "score": 0.9993,
+      "score": 0.9998,
       "seg": 11
     },
     {
       "text": "estrategia",
       "start": 35.412,
       "end": 35.892,
-      "score": 0.9995,
+      "score": 0.9956,
       "seg": 11
     },
     {
       "text": "m\u00e1s",
       "start": 35.952,
       "end": 36.073,
-      "score": 0.9993,
+      "score": 0.9999,
       "seg": 11
     },
     {
       "text": "segura",
       "start": 36.113,
-      "end": 36.433,
-      "score": 0.9999,
+      "end": 36.453,
+      "score": 1.0,
       "seg": 11
     },
     {
       "text": "no",
-      "start": 36.713,
+      "start": 36.733,
       "end": 36.814,
-      "score": 0.9999,
+      "score": 1.0,
       "seg": 11
     },
     {
       "text": "es",
       "start": 36.934,
       "end": 37.014,
-      "score": 0.9994,
+      "score": 1.0,
       "seg": 11
     },
     {
       "text": "luchar",
       "start": 37.074,
       "end": 37.334,
-      "score": 0.9999,
+      "score": 0.9847,
       "seg": 11
     },
     {
       "text": "contra",
       "start": 37.394,
-      "end": 37.635,
-      "score": 0.9905,
+      "end": 37.615,
+      "score": 1.0,
       "seg": 11
     },
     {
       "text": "ella.",
       "start": 37.715,
       "end": 37.855,
-      "score": 0.9927,
+      "score": 0.9999,
       "seg": 11
     },
     {
       "text": "Es",
-      "start": 37.915,
+      "start": 38.055,
       "end": 38.195,
-      "score": 0.5,
+      "score": 0.0225,
       "seg": 12
     },
     {
       "text": "seguir",
       "start": 38.416,
       "end": 38.656,
-      "score": 0.9892,
+      "score": 0.9305,
       "seg": 12
     },
     {
       "text": "movi\u00e9ndose",
       "start": 38.696,
       "end": 39.237,
-      "score": 0.9997,
+      "score": 0.9978,
       "seg": 12
     },
     {
       "text": "antes",
       "start": 39.437,
       "end": 39.698,
-      "score": 0.9998,
+      "score": 0.9849,
       "seg": 12
     },
     {
       "text": "de",
       "start": 39.738,
-      "end": 39.798,
-      "score": 0.9993,
+      "end": 39.778,
+      "score": 0.9998,
       "seg": 12
     },
     {
       "text": "que",
       "start": 39.838,
-      "end": 39.918,
-      "score": 0.9627,
+      "end": 39.898,
+      "score": 0.9999,
       "seg": 12
     },
     {
       "text": "pueda",
-      "start": 39.958,
-      "end": 40.198,
-      "score": 0.9526,
+      "start": 39.978,
+      "end": 40.218,
+      "score": 0.9999,
       "seg": 12
     },
     {
       "text": "atacar",
-      "start": 40.338,
-      "end": 40.699,
-      "score": 0.9998,
+      "start": 40.358,
+      "end": 40.679,
+      "score": 0.9657,
       "seg": 12
     },
     {
       "text": "de",
       "start": 40.739,
       "end": 40.799,
-      "score": 0.9996,
+      "score": 0.9998,
       "seg": 12
     },
     {
       "text": "nuevo.",
       "start": 40.859,
-      "end": 41.1,
-      "score": 0.9997,
+      "end": 41.12,
+      "score": 0.9999,
       "seg": 12
     },
     {
       "text": "Odiseo",
       "start": 41.782,
-      "end": 42.184,
-      "score": 0.8489,
+      "end": 42.204,
+      "score": 0.9853,
       "seg": 13
     },
     {
       "text": "es",
       "start": 42.245,
-      "end": 42.325,
-      "score": 0.9973,
+      "end": 42.305,
+      "score": 0.9258,
       "seg": 13
     },
     {
       "text": "advertido",
       "start": 42.365,
-      "end": 42.808,
-      "score": 0.9994,
+      "end": 42.788,
+      "score": 0.9993,
       "seg": 13
     },
     {
       "text": "sobre",
       "start": 42.868,
       "end": 43.049,
-      "score": 0.9997,
+      "score": 0.9104,
       "seg": 13
     },
     {
       "text": "esto",
       "start": 43.11,
-      "end": 43.311,
-      "score": 0.9994,
+      "end": 43.291,
+      "score": 0.9993,
       "seg": 13
     },
     {
       "text": "antes",
       "start": 43.472,
-      "end": 43.713,
-      "score": 0.9997,
+      "end": 43.693,
+      "score": 0.9521,
       "seg": 13
     },
     {
       "text": "de",
       "start": 43.733,
       "end": 43.794,
-      "score": 0.9993,
+      "score": 0.9868,
       "seg": 13
     },
     {
       "text": "llegar",
-      "start": 43.814,
-      "end": 44.075,
-      "score": 0.9996,
+      "start": 43.834,
+      "end": 44.055,
+      "score": 0.9999,
       "seg": 13
     },
     {
       "text": "al",
-      "start": 44.095,
+      "start": 44.115,
       "end": 44.176,
-      "score": 0.9984,
+      "score": 0.9981,
       "seg": 13
     },
     {
       "text": "paso.",
       "start": 44.236,
-      "end": 44.498,
-      "score": 0.7089,
+      "end": 44.518,
+      "score": 0.0541,
       "seg": 13
     },
     {
       "text": "A\u00fan",
       "start": 45.322,
       "end": 45.523,
-      "score": 0.9977,
+      "score": 0.1662,
       "seg": 14
     },
     {
       "text": "as\u00ed,",
       "start": 45.563,
-      "end": 45.744,
-      "score": 0.8935,
+      "end": 45.764,
+      "score": 0.9842,
       "seg": 14
     },
     {
       "text": "prepara",
-      "start": 45.985,
-      "end": 46.347,
-      "score": 0.9998,
+      "start": 46.005,
+      "end": 46.327,
+      "score": 1.0,
       "seg": 14
     },
     {
       "text": "sus",
       "start": 46.387,
-      "end": 46.527,
+      "end": 46.507,
       "score": 0.9998,
       "seg": 14
     },
     {
       "text": "armas,",
-      "start": 46.588,
-      "end": 46.909,
-      "score": 0.9999,
+      "start": 46.608,
+      "end": 46.869,
+      "score": 0.9861,
       "seg": 14
     },
     {
       "text": "pero",
       "start": 47.212,
-      "end": 47.374,
-      "score": 0.9998,
+      "end": 47.354,
+      "score": 1.0,
       "seg": 15
     },
     {
       "text": "resultan",
-      "start": 47.455,
-      "end": 47.86,
-      "score": 0.9997,
+      "start": 47.435,
+      "end": 47.84,
+      "score": 0.9987,
       "seg": 15
     },
     {
       "text": "in\u00fatiles.",
       "start": 47.921,
-      "end": 48.447,
-      "score": 0.9728,
+      "end": 48.407,
+      "score": 0.9999,
       "seg": 15
     },
     {
       "text": "Scylla",
       "start": 48.911,
       "end": 49.171,
-      "score": 0.6612,
+      "score": 0.0132,
       "seg": 16
     },
     {
       "text": "se",
       "start": 49.271,
       "end": 49.332,
-      "score": 0.9994,
+      "score": 0.9995,
       "seg": 16
     },
     {
       "text": "lleva",
-      "start": 49.372,
+      "start": 49.392,
       "end": 49.592,
-      "score": 0.9983,
+      "score": 1.0,
       "seg": 16
     },
     {
       "text": "a",
       "start": 49.692,
       "end": 49.712,
-      "score": 0.9972,
+      "score": 0.9997,
       "seg": 16
     },
     {
       "text": "seis",
       "start": 49.813,
-      "end": 50.013,
-      "score": 0.9953,
+      "end": 49.993,
+      "score": 1.0,
       "seg": 16
     },
     {
       "text": "de",
       "start": 50.033,
       "end": 50.093,
-      "score": 0.999,
+      "score": 0.9918,
       "seg": 16
     },
     {
       "text": "sus",
       "start": 50.133,
-      "end": 50.254,
-      "score": 0.9993,
+      "end": 50.234,
+      "score": 0.999,
       "seg": 16
     },
     {
       "text": "hombres",
-      "start": 50.294,
-      "end": 50.634,
-      "score": 0.9998,
+      "start": 50.274,
+      "end": 50.614,
+      "score": 0.9717,
       "seg": 16
     },
     {
       "text": "mientras",
-      "start": 50.895,
-      "end": 51.236,
-      "score": 0.9992,
+      "start": 50.915,
+      "end": 51.216,
+      "score": 0.9248,
       "seg": 16
     },
     {
       "text": "el",
       "start": 51.276,
-      "end": 51.356,
-      "score": 0.9987,
+      "end": 51.336,
+      "score": 0.9998,
       "seg": 16
     },
     {
       "text": "barco",
-      "start": 51.376,
-      "end": 51.637,
-      "score": 0.9997,
+      "start": 51.396,
+      "end": 51.657,
+      "score": 1.0,
       "seg": 16
     },
     {
       "text": "contin\u00faa",
-      "start": 51.737,
-      "end": 52.218,
-      "score": 0.9997,
+      "start": 51.757,
+      "end": 52.238,
+      "score": 0.9944,
       "seg": 16
     },
     {
       "text": "su",
       "start": 52.298,
       "end": 52.378,
-      "score": 0.9998,
+      "score": 0.9999,
       "seg": 16
     },
     {
       "text": "marcha.",
       "start": 52.439,
-      "end": 52.759,
-      "score": 0.9998,
+      "end": 52.779,
+      "score": 0.9994,
       "seg": 16
     },
     {
       "text": "Detenerse",
       "start": 53.381,
       "end": 53.863,
-      "score": 0.9998,
+      "score": 0.9665,
       "seg": 17
     },
     {
       "text": "solo",
-      "start": 53.943,
-      "end": 54.144,
-      "score": 0.9998,
+      "start": 53.963,
+      "end": 54.124,
+      "score": 0.8391,
       "seg": 17
     },
     {
       "text": "le",
       "start": 54.184,
       "end": 54.244,
-      "score": 0.9996,
+      "score": 0.9997,
       "seg": 17
     },
     {
       "text": "dar\u00eda",
       "start": 54.284,
       "end": 54.525,
-      "score": 0.9999,
+      "score": 0.9992,
       "seg": 17
     },
     {
       "text": "otra",
       "start": 54.666,
       "end": 54.867,
-      "score": 0.9999,
+      "score": 0.9562,
       "seg": 17
     },
     {
       "text": "oportunidad.",
       "start": 54.927,
-      "end": 55.549,
-      "score": 0.9997,
+      "end": 55.529,
+      "score": 1.0,
       "seg": 17
     },
     {
       "text": "Scylla",
       "start": 56.172,
       "end": 56.434,
-      "score": 0.6486,
+      "score": 0.0101,
       "seg": 18
     },
     {
       "text": "tambi\u00e9n",
       "start": 56.495,
-      "end": 56.797,
-      "score": 0.9944,
+      "end": 56.777,
+      "score": 0.9999,
       "seg": 18
     },
     {
       "text": "comparte",
-      "start": 56.837,
-      "end": 57.32,
-      "score": 0.9911,
+      "start": 56.857,
+      "end": 57.3,
+      "score": 1.0,
       "seg": 18
     },
     {
       "text": "el",
       "start": 57.361,
       "end": 57.421,
-      "score": 0.996,
+      "score": 0.9996,
       "seg": 18
     },
     {
       "text": "paso",
-      "start": 57.482,
+      "start": 57.502,
       "end": 57.764,
-      "score": 0.9414,
+      "score": 0.9999,
       "seg": 18
     },
     {
       "text": "con",
-      "start": 57.824,
+      "start": 57.844,
       "end": 57.945,
-      "score": 0.9994,
+      "score": 0.9999,
       "seg": 18
     },
     {
       "text": "Caribdis,",
       "start": 57.985,
-      "end": 58.489,
-      "score": 0.9789,
+      "end": 58.468,
+      "score": 0.972,
       "seg": 18
     },
     {
       "text": "un",
-      "start": 58.932,
+      "start": 58.952,
       "end": 59.033,
-      "score": 0.9997,
+      "score": 0.9999,
       "seg": 19
     },
     {
@@ -1173,399 +1166,399 @@
       "text": "gigante",
       "start": 59.517,
       "end": 59.96,
-      "score": 0.8757,
+      "score": 0.9989,
       "seg": 19
     },
     {
       "text": "en",
       "start": 60.081,
       "end": 60.142,
-      "score": 0.9992,
+      "score": 0.9998,
       "seg": 19
     },
     {
       "text": "el",
       "start": 60.182,
       "end": 60.242,
-      "score": 0.9846,
+      "score": 0.9978,
       "seg": 19
     },
     {
       "text": "lado",
-      "start": 60.283,
+      "start": 60.303,
       "end": 60.484,
-      "score": 0.9994,
+      "score": 0.9999,
       "seg": 19
     },
     {
       "text": "opuesto,",
       "start": 60.545,
       "end": 60.988,
-      "score": 0.9994,
+      "score": 0.9365,
       "seg": 19
     },
     {
       "text": "por",
       "start": 61.35,
       "end": 61.471,
-      "score": 0.9986,
+      "score": 0.9961,
       "seg": 20
     },
     {
       "text": "lo",
       "start": 61.511,
       "end": 61.571,
-      "score": 0.9964,
+      "score": 0.9999,
       "seg": 20
     },
     {
       "text": "que",
       "start": 61.611,
       "end": 61.691,
-      "score": 0.985,
+      "score": 0.8793,
       "seg": 20
     },
     {
       "text": "la",
       "start": 61.731,
       "end": 61.792,
-      "score": 0.9992,
+      "score": 0.8733,
       "seg": 20
     },
     {
       "text": "tripulaci\u00f3n",
-      "start": 61.832,
-      "end": 62.453,
-      "score": 0.9983,
+      "start": 61.852,
+      "end": 62.473,
+      "score": 1.0,
       "seg": 20
     },
     {
       "text": "no",
-      "start": 62.634,
+      "start": 62.654,
       "end": 62.714,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 20
     },
     {
       "text": "puede",
-      "start": 62.774,
-      "end": 63.015,
-      "score": 0.928,
+      "start": 62.794,
+      "end": 62.995,
+      "score": 0.9999,
       "seg": 20
     },
     {
       "text": "simplemente",
-      "start": 63.055,
+      "start": 63.075,
       "end": 63.616,
-      "score": 0.9998,
+      "score": 0.9826,
       "seg": 20
     },
     {
       "text": "alejarse",
-      "start": 63.797,
-      "end": 64.318,
-      "score": 0.9996,
+      "start": 63.817,
+      "end": 64.298,
+      "score": 0.9998,
       "seg": 20
     },
     {
       "text": "m\u00e1s.",
       "start": 64.378,
-      "end": 64.599,
-      "score": 0.9999,
+      "end": 64.559,
+      "score": 0.9917,
       "seg": 20
     },
     {
       "text": "Navegar",
       "start": 65.622,
-      "end": 66.003,
-      "score": 0.9997,
+      "end": 65.983,
+      "score": 0.9998,
       "seg": 21
     },
     {
       "text": "cerca",
-      "start": 66.083,
+      "start": 66.103,
       "end": 66.364,
-      "score": 0.9998,
+      "score": 0.957,
       "seg": 21
     },
     {
       "text": "de",
       "start": 66.404,
-      "end": 66.484,
-      "score": 0.9995,
+      "end": 66.464,
+      "score": 0.9997,
       "seg": 21
     },
     {
       "text": "Scylla",
       "start": 66.544,
       "end": 66.845,
-      "score": 0.6701,
+      "score": 0.0037,
       "seg": 21
     },
     {
       "text": "cuesta",
       "start": 66.966,
       "end": 67.267,
-      "score": 0.9997,
+      "score": 0.9964,
       "seg": 21
     },
     {
       "text": "seis",
-      "start": 67.347,
+      "start": 67.367,
       "end": 67.548,
-      "score": 0.9927,
+      "score": 0.9999,
       "seg": 21
     },
     {
       "text": "marineros.",
       "start": 67.588,
-      "end": 68.129,
-      "score": 0.9999,
+      "end": 68.109,
+      "score": 1.0,
       "seg": 21
     },
     {
       "text": "Navegar",
       "start": 68.591,
-      "end": 68.932,
-      "score": 0.9999,
+      "end": 68.912,
+      "score": 0.9998,
       "seg": 22
     },
     {
       "text": "cerca",
       "start": 69.012,
       "end": 69.253,
-      "score": 0.9997,
+      "score": 1.0,
       "seg": 22
     },
     {
       "text": "de",
       "start": 69.293,
       "end": 69.353,
-      "score": 0.9988,
+      "score": 0.8698,
       "seg": 22
     },
     {
       "text": "Caribdis",
       "start": 69.413,
       "end": 69.894,
-      "score": 0.9731,
+      "score": 0.9986,
       "seg": 22
     },
     {
       "text": "puede",
-      "start": 70.115,
+      "start": 70.135,
       "end": 70.336,
-      "score": 0.9201,
+      "score": 0.9999,
       "seg": 22
     },
     {
       "text": "destruir",
       "start": 70.396,
-      "end": 70.857,
-      "score": 0.9996,
+      "end": 70.837,
+      "score": 0.9999,
       "seg": 22
     },
     {
       "text": "el",
-      "start": 70.957,
+      "start": 70.977,
       "end": 71.037,
-      "score": 0.9989,
+      "score": 0.9997,
       "seg": 22
     },
     {
       "text": "barco",
       "start": 71.098,
       "end": 71.338,
-      "score": 0.9985,
+      "score": 1.0,
       "seg": 22
     },
     {
       "text": "entero.",
       "start": 71.378,
-      "end": 71.719,
-      "score": 0.9993,
+      "end": 71.699,
+      "score": 1.0,
       "seg": 22
     },
     {
       "text": "A",
       "start": 72.22,
       "end": 72.241,
-      "score": 0.9986,
+      "score": 0.9997,
       "seg": 23
     },
     {
       "text": "Odiseo",
       "start": 72.301,
       "end": 72.701,
-      "score": 0.8335,
+      "score": 0.7466,
       "seg": 23
     },
     {
       "text": "se",
-      "start": 72.741,
+      "start": 72.761,
       "end": 72.822,
-      "score": 0.9991,
+      "score": 0.9999,
       "seg": 23
     },
     {
       "text": "le",
       "start": 72.862,
       "end": 72.922,
-      "score": 0.9991,
+      "score": 0.9252,
       "seg": 23
     },
     {
       "text": "dice",
-      "start": 72.962,
-      "end": 73.182,
-      "score": 0.9998,
+      "start": 72.982,
+      "end": 73.202,
+      "score": 0.998,
       "seg": 23
     },
     {
       "text": "que",
       "start": 73.262,
       "end": 73.343,
-      "score": 0.9993,
+      "score": 0.9996,
       "seg": 23
     },
     {
       "text": "elija",
       "start": 73.403,
       "end": 73.703,
-      "score": 0.9973,
+      "score": 0.9995,
       "seg": 23
     },
     {
       "text": "a",
       "start": 73.783,
       "end": 73.803,
-      "score": 0.9933,
+      "score": 0.9996,
       "seg": 23
     },
     {
       "text": "Scylla",
-      "start": 73.884,
-      "end": 74.164,
-      "score": 0.6269,
+      "start": 73.863,
+      "end": 74.184,
+      "score": 0.0235,
       "seg": 23
     },
     {
       "text": "porque",
       "start": 74.284,
       "end": 74.505,
-      "score": 0.9973,
+      "score": 0.9972,
       "seg": 23
     },
     {
       "text": "perder",
       "start": 74.565,
-      "end": 74.865,
-      "score": 0.9996,
+      "end": 74.845,
+      "score": 0.9204,
       "seg": 23
     },
     {
       "text": "a",
       "start": 74.885,
-      "end": 74.905,
-      "score": 0.9988,
+      "end": 74.925,
+      "score": 0.9779,
       "seg": 23
     },
     {
       "text": "seis",
-      "start": 75.006,
+      "start": 74.986,
       "end": 75.166,
-      "score": 0.9993,
+      "score": 0.9997,
       "seg": 23
     },
     {
       "text": "personas",
       "start": 75.226,
-      "end": 75.747,
-      "score": 0.9999,
+      "end": 75.707,
+      "score": 0.9998,
       "seg": 23
     },
     {
       "text": "es",
-      "start": 75.927,
-      "end": 76.027,
-      "score": 0.9997,
+      "start": 75.947,
+      "end": 76.007,
+      "score": 1.0,
       "seg": 23
     },
     {
       "text": "mejor",
       "start": 76.068,
       "end": 76.328,
-      "score": 0.9999,
+      "score": 0.9325,
       "seg": 23
     },
     {
       "text": "que",
       "start": 76.368,
       "end": 76.448,
-      "score": 0.9901,
+      "score": 0.986,
       "seg": 23
     },
     {
       "text": "perderlo",
-      "start": 76.488,
-      "end": 76.909,
-      "score": 0.9996,
+      "start": 76.508,
+      "end": 76.889,
+      "score": 0.9999,
       "seg": 23
     },
     {
       "text": "todo.",
       "start": 76.969,
       "end": 77.19,
-      "score": 0.9997,
+      "score": 1.0,
       "seg": 23
     },
     {
       "text": "Tradiciones",
       "start": 77.611,
-      "end": 78.152,
-      "score": 0.9893,
+      "end": 78.132,
+      "score": 1.0,
       "seg": 24
     },
     {
       "text": "posteriores",
-      "start": 78.192,
-      "end": 78.774,
-      "score": 0.9998,
+      "start": 78.212,
+      "end": 78.754,
+      "score": 0.9906,
       "seg": 24
     },
     {
       "text": "situaron",
       "start": 78.874,
-      "end": 79.296,
-      "score": 0.9834,
+      "end": 79.276,
+      "score": 0.9996,
       "seg": 24
     },
     {
       "text": "el",
-      "start": 79.316,
-      "end": 79.396,
-      "score": 0.9992,
+      "start": 79.336,
+      "end": 79.376,
+      "score": 0.9996,
       "seg": 24
     },
     {
       "text": "paso",
-      "start": 79.456,
+      "start": 79.476,
       "end": 79.757,
-      "score": 0.9827,
+      "score": 0.9996,
       "seg": 24
     },
     {
       "text": "en",
       "start": 79.898,
-      "end": 79.978,
+      "end": 79.958,
       "score": 0.9995,
       "seg": 24
     },
     {
       "text": "el",
-      "start": 79.998,
-      "end": 80.078,
-      "score": 0.9987,
+      "start": 80.018,
+      "end": 80.058,
+      "score": 0.9971,
       "seg": 24
     },
     {
@@ -1577,190 +1570,190 @@
     },
     {
       "text": "de",
-      "start": 80.54,
-      "end": 80.6,
-      "score": 0.9995,
+      "start": 80.52,
+      "end": 80.58,
+      "score": 0.9093,
       "seg": 24
     },
     {
       "text": "Mesina,",
-      "start": 80.62,
-      "end": 81.021,
-      "score": 0.8601,
+      "start": 80.64,
+      "end": 81.041,
+      "score": 0.4566,
       "seg": 24
     },
     {
       "text": "entre",
       "start": 81.543,
       "end": 81.783,
-      "score": 0.9993,
+      "score": 0.8923,
       "seg": 24
     },
     {
       "text": "Sicilia",
       "start": 81.864,
       "end": 82.345,
-      "score": 0.8563,
+      "score": 0.9999,
       "seg": 24
     },
     {
       "text": "e",
       "start": 82.506,
       "end": 82.526,
-      "score": 0.9918,
+      "score": 0.9993,
       "seg": 24
     },
     {
       "text": "Italia",
       "start": 82.626,
       "end": 82.987,
-      "score": 0.9999,
+      "score": 1.0,
       "seg": 24
     },
     {
       "text": "peninsular.",
-      "start": 83.067,
+      "start": 83.087,
       "end": 83.609,
-      "score": 0.9986,
+      "score": 0.9836,
       "seg": 24
     },
     {
       "text": "La",
-      "start": 84.371,
+      "start": 84.391,
       "end": 84.431,
-      "score": 0.9998,
+      "score": 0.9999,
       "seg": 25
     },
     {
       "text": "frase",
-      "start": 84.491,
+      "start": 84.511,
       "end": 84.832,
-      "score": 0.9997,
+      "score": 1.0,
       "seg": 25
     },
     {
       "text": "\u00abentre",
       "start": 84.992,
       "end": 85.192,
-      "score": 0.9986,
+      "score": 0.9992,
       "seg": 25
     },
     {
       "text": "Scylla",
       "start": 85.252,
-      "end": 85.493,
-      "score": 0.6401,
+      "end": 85.513,
+      "score": 0.006,
       "seg": 25
     },
     {
       "text": "y",
       "start": 85.613,
       "end": 85.633,
-      "score": 0.9971,
+      "score": 0.9983,
       "seg": 25
     },
     {
       "text": "Caribdis\u00bb",
       "start": 85.693,
-      "end": 86.194,
-      "score": 0.9709,
+      "end": 86.174,
+      "score": 0.9961,
       "seg": 25
     },
     {
       "text": "se",
       "start": 86.615,
       "end": 86.675,
-      "score": 0.9998,
+      "score": 1.0,
       "seg": 25
     },
     {
       "text": "convirti\u00f3",
-      "start": 86.735,
+      "start": 86.755,
       "end": 87.135,
-      "score": 0.9548,
+      "score": 0.9999,
       "seg": 25
     },
     {
       "text": "en",
       "start": 87.256,
       "end": 87.316,
-      "score": 0.9995,
+      "score": 0.9998,
       "seg": 25
     },
     {
       "text": "una",
       "start": 87.356,
-      "end": 87.476,
-      "score": 0.9996,
+      "end": 87.456,
+      "score": 0.9918,
       "seg": 25
     },
     {
       "text": "forma",
-      "start": 87.516,
+      "start": 87.536,
       "end": 87.757,
-      "score": 0.9999,
+      "score": 1.0,
       "seg": 25
     },
     {
       "text": "de",
       "start": 87.817,
-      "end": 87.877,
-      "score": 0.9991,
+      "end": 87.857,
+      "score": 0.9998,
       "seg": 25
     },
     {
       "text": "describir",
       "start": 87.917,
-      "end": 88.398,
-      "score": 0.9994,
+      "end": 88.378,
+      "score": 0.9502,
       "seg": 25
     },
     {
       "text": "el",
-      "start": 88.538,
+      "start": 88.558,
       "end": 88.618,
-      "score": 0.9978,
+      "score": 0.9976,
       "seg": 25
     },
     {
       "text": "estar",
       "start": 88.658,
-      "end": 88.878,
-      "score": 0.9997,
+      "end": 88.858,
+      "score": 0.9998,
       "seg": 25
     },
     {
       "text": "atrapado",
       "start": 88.919,
-      "end": 89.379,
-      "score": 0.9996,
+      "end": 89.399,
+      "score": 1.0,
       "seg": 25
     },
     {
       "text": "entre",
-      "start": 89.56,
+      "start": 89.58,
       "end": 89.8,
-      "score": 0.9993,
+      "score": 0.9999,
       "seg": 25
     },
     {
       "text": "dos",
       "start": 89.88,
       "end": 90.061,
-      "score": 0.9978,
+      "score": 1.0,
       "seg": 25
     },
     {
       "text": "opciones",
       "start": 90.161,
-      "end": 90.561,
-      "score": 0.9995,
+      "end": 90.541,
+      "score": 0.9997,
       "seg": 25
     },
     {
       "text": "peligrosas.",
-      "start": 90.601,
-      "end": 91.223,
+      "start": 90.621,
+      "end": 91.202,
       "score": 0.9998,
       "seg": 25
     }

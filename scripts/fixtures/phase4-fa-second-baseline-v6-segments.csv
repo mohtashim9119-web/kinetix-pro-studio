@@ -1,0 +1,448 @@
+order,tag,text,startTime,duration,endTime,anchorSource
+0,001_child_seven,You are seven years old.,0,5.64,5.64,forced-alignment
+1,002_skin_shelter,You live inside a skin-covered shelter at the edge of a shallow valley.,5.64,4.25,9.89,forced-alignment
+2,003_mother_fire,The fire your mother tends smells like pine resin and scorched bone.,9.89,4.45,14.34,forced-alignment
+3,004_grandmother_asleep,Your grandmother is asleep against the far wall.,14.34,3.22,17.56,forced-alignment
+4,005_deep_night,It is deep in the night.,17.56,1.83,19.39,forced-alignment
+5,006_boy_alert,You are wide awake.,19.39,1.96,21.35,forced-alignment
+6,007_listening_outside,You can hear something outside.,21.35,1.78,23.13,forced-alignment
+7,008_unknown_void,You do not know what it is.,23.13,2.05,25.18,forced-alignment
+8,009_large_shadow,You only know the sound is large,25.18,2.27,27.45,forced-alignment
+9,010_close_danger,it is close,27.45,1.44,28.89,forced-alignment
+10,011_shivering_by_fire,and the fire is the only reason you are not screaming.,28.89,3.41,32.3,forced-alignment
+11,012_sudden_hush,The sound stops.,32.3,2.02,34.32,forced-alignment
+12,013_silent_prehistoric_night,The night goes quiet.,34.32,1.97,36.29,forced-alignment
+13,014_chest_tightens_fear,Your chest is tight in a way you have no word for.,36.29,3.48,39.77,forced-alignment
+14,015_mother_unmoved,Your mother does not look up.,39.77,2.15,41.92,forced-alignment
+15,016_feeding_the_hearth,She feeds the fire another stick without turning her head.,41.92,3.98,45.9,forced-alignment
+16,017_heavy_stillness,That stillness tells you something.,45.9,2.37,48.27,forced-alignment
+17,018_listening_mother_profile,She has been listening the whole time.,48.27,2.89,51.16,forced-alignment
+18,019_silent_observation,You watch her face and you learn your first lesson without a word being spoken.,51.16,5.4,56.56,forced-alignment
+19,020_lurking_darkness,The darkness past the firelight is not empty.,56.56,3.18,59.74,forced-alignment
+20,021_heavy_flint_spear,It has weight.,59.74,1.37,61.11,forced-alignment
+21,022_fire_boundary_void,The fire is the line between you and whatever lives on the other side of it.,61.11,4.66,65.77,forced-alignment
+22,023_sleeping_mother_side,You fall asleep against her side,65.77,2.54,68.31,forced-alignment
+23,024_hand_warm_stones,one hand on the warm stones ringing the hearth.,68.31,3.53,71.84,forced-alignment
+24,025_dream_sound_shapes,You dream about the sound.,71.84,2.12,73.96,forced-alignment
+25,026_frosty_morning_run,Morning comes bright and cold and you run out into the frost like nothing happened.,73.96,4.6,78.56,forced-alignment
+26,027_internal_change_face,But something stayed in you.,78.56,2.18,80.74,forced-alignment
+27,028_small_permanent_flake,Small and permanent.,80.74,2.79,83.53,forced-alignment
+28,029_night_understanding,A new understanding of what the night actually is.,83.53,3.7,87.23,forced-alignment
+29,030_watching_older_hunters,You start watching the older hunters differently.,87.23,2.91,90.14,forced-alignment
+30,031_sunset_gaze,You notice where their eyes go when the sun drops.,90.14,2.99,93.13,forced-alignment
+31,032_fire_gathering,You notice how they arrange themselves around the fire before full dark.,93.13,4.73,97.86,forced-alignment
+32,033_watchful_eyes,Nobody told them to do it.,97.86,2.18,100.04,forced-alignment
+33,034_natural_order,They just do.,100.04,1.68,101.72,forced-alignment
+34,035_nocturnal_formation,The band has a shape at night it does not have during the day.,101.72,3.83,105.55,forced-alignment
+35,036_outward_sentry,Certain men always face outward.,105.55,3,108.55,forced-alignment
+36,037_inner_circle,Certain men sleep closest to the fire’s edge.,108.55,3.36,111.91,forced-alignment
+37,038_spear_glint,The arrangement is not accidental.,111.91,2.34,114.25,forced-alignment
+38,039_river_trap,It is as deliberate as any trap your father sets in the river shallows.,114.25,4.96,119.21,forced-alignment
+39,040_outside_circle,You are not old enough to hold a position in that shape.,119.21,3.43,122.64,forced-alignment
+40,041_elder_lesson,But you are old enough to start learning what it means.,122.64,3.12,125.76,forced-alignment
+41,042_eleven_years,You are eleven.,125.76,2.67,128.43,forced-alignment
+42,043_night_migration,On nights when the band moves between camps,128.43,5.57,134,forced-alignment
+43,044_carrying_torch,your job is to carry one of the torches.,134,2.54,136.54,forced-alignment
+44,045_torch_materials,Birch bark and fat-soaked moss,136.54,2.37,138.91,forced-alignment
+45,046_sinew_binding,bound with sinew,138.91,1.26,140.17,forced-alignment
+46,047_proper_hold,held in both hands out in front of your body.,140.17,2.64,142.81,forced-alignment
+47,048_flickering_wind,The flame bends in the wind and you curve yourself around it,142.81,3.57,146.38,forced-alignment
+48,049_chest_protection,using your chest against the cold air.,146.38,2.74,149.12,forced-alignment
+49,050_hunters_ahead,The hunters move ahead.,149.12,2.07,151.19,forced-alignment
+50,051_center_column,You stay in the center column with the women and older children.,151.19,3.4,154.59,forced-alignment
+51,052_rear_guards,"Behind you, two of the most experienced men walk the rear with thrusting spears angled outward into the dark.",154.59,7.46,162.05,forced-alignment
+52,053_silent_men,They do not speak on night marches.,162.05,2.37,164.42,forced-alignment
+53,054_silent_tool,Their silence is a tool,164.42,1.63,166.05,forced-alignment
+54,055_spear_comparison,same as the spear.,166.05,0.98,167.03,forced-alignment
+55,056_dropping_torch,You drop the torch on the third night of your second season carrying it.,167.03,4.72,171.75,forced-alignment
+56,057_root_trip,You catch a root you did not see and the flame hits the ground and sputters and for three full heartbeats the column loses half its light.,171.75,8.16,179.91,forced-alignment
+57,058_silent_reaction,Nobody shouts.,179.91,1.82,181.73,forced-alignment
+58,059_daret_approaches,"But Daret, the rear guard",181.73,1.3,183.03,forced-alignment
+59,060_reassuring_hand,moves up beside you and puts his hand flat on your shoulder.,183.03,4.73,187.76,forced-alignment
+60,061_elder_touch,Not hard.,187.76,1.51,189.27,forced-alignment
+61,062_firm_grip,Not gentle.,189.27,1.29,190.56,forced-alignment
+62,063_scout_silhouette,Just there.,190.56,1.49,192.05,forced-alignment
+63,064_lighting_torch,He holds it until you have the torch burning again from the second carrier’s coals.,192.05,4.96,197.01,forced-alignment
+64,065_elder_leaves,Then he walks back to his post without a word.,197.01,3.15,200.16,forced-alignment
+65,066_torch_reflection,The lesson in that touch,200.16,2.15,202.31,forced-alignment
+66,067_group_danger,your mistake put people in danger.,202.31,2.32,204.63,forced-alignment
+67,068_scout_solitude,You are not punished for it.,204.63,2.22,206.85,forced-alignment
+68,069_scout_resolve,You are expected to understand that on your own.,206.85,2.82,209.67,forced-alignment
+69,070_scout_advancing,You do not drop a torch again.,209.67,2.07,211.74,forced-alignment
+70,071_night_column_walk,Those long column walks teach you how to read the night by its sounds.,211.74,4.49,216.23,forced-alignment
+71,072_neutral_owl,An owl is neutral.,216.23,1.74,217.97,forced-alignment
+72,073_sudden_silence,Every animal going silent at once is not.,217.97,2.72,220.69,forced-alignment
+73,074_erratic_wind,Wind through pine moves without any pattern.,220.69,2.65,223.34,forced-alignment
+74,075_rhythmic_movement,Something large moving through pine has a rhythm even when it is trying to suppress one.,223.34,4.86,228.2,forced-alignment
+75,076_feeling_change,You learn to feel the column change before you see it change.,228.2,3.61,231.81,forced-alignment
+76,077_lead_hunter_slows,When the lead hunter slows,231.81,1.88,233.69,forced-alignment
+77,078_column_stops,every person slows.,233.69,1.65,235.34,forced-alignment
+78,079_no_signal,No signal.,235.34,1.07,236.41,forced-alignment
+79,080_no_sound,No sound.,236.41,1.35,237.76,forced-alignment
+80,081_hearth_shift,The shift moves back through the group the way cold moves through water.,237.76,4.63,242.39,forced-alignment
+81,082_sleepless_vigil,You sleep lightly now even at camp.,242.39,2.42,244.81,forced-alignment
+82,083_unbidden_alertness,You did not decide to.,244.81,2.45,247.26,forced-alignment
+83,084_instinctive_grip,Your body made that choice without asking.,247.26,5.48,252.74,forced-alignment
+84,085_the_spear_bearer,You are sixteen and you carry your own spear.,252.74,4,256.74,forced-alignment
+85,086_spear_contrast,Not the heavy thrusting spear of the senior hunters.,256.74,2.73,259.47,forced-alignment
+86,087_throwing_spear_poise,A throwing spear,259.47,1.98,261.45,forced-alignment
+87,088_spear_craftsmanship,its flint point knapped by hand and bound to the shaft with pine pitch and wet sinew that dried hard as rock.,261.45,7.24,268.69,forced-alignment
+88,089_forward_scouting,They start sending you on forward runs.,268.69,2.42,271.11,forced-alignment
+89,090_tethered_distance,Never far.,271.11,1.43,272.54,forced-alignment
+90,091_scouts_walking,Never alone.,272.54,1.55,274.09,forced-alignment
+91,092_moving_with_korik,You go with Korik,274.09,1.68,275.77,forced-alignment
+92,093_korik_scout,"twenty-two, who has been scouting for four years.",275.77,2.87,278.64,forced-alignment
+93,094_scouts_ahead,The two of you move ahead of the main group by about the distance a man can shout and be heard.,278.64,5,283.64,forced-alignment
+94,095_reading_ground,Your job is to read the ground before everyone else walks onto it.,283.64,3.8,287.44,forced-alignment
+95,096_smell_first,You learn to smell before you look.,287.44,2.23,289.67,forced-alignment
+96,097_predator_presence,A predator’s presence reaches your nose before your mind names it.,289.67,3.6,293.27,forced-alignment
+97,098_thick_musky,"Something thick, musky, wrong in a way that is hard to describe.",293.27,5.46,298.73,forced-alignment
+98,099_sudden_stop,You catch it on your third run and stop walking.,298.73,3.44,302.17,forced-alignment
+99,100_korik_stops,Korik stops half a step after you.,302.17,2.53,304.7,forced-alignment
+100,101_shared_realization,He has it too.,304.7,1.73,306.43,forced-alignment
+101,102_frozen_scouts,The two of you stand without moving for a long count,306.43,3.11,309.54,forced-alignment
+102,103_held_breath,long enough for your own breathing to feel very loud.,309.54,3.7,313.24,forced-alignment
+103,104_silent_retreat,You back out the way water runs in reverse.,313.24,3.38,316.62,forced-alignment
+104,105_careful_steps,"Slow, continuous, nothing sudden enough to announce you.",316.62,5.39,322.01,forced-alignment
+105,106_empty_night,You never see the cave lion that night.,322.01,3.24,325.25,forced-alignment
+106,107_frost_tracks,But you find its tracks in the frost the next morning,325.25,3.33,328.58,forced-alignment
+107,108_spear_measure,two spear-lengths from where you stood.,328.58,2.22,330.8,forced-alignment
+108,109_giant_print,The print is wider than both your hands laid side by side.,330.8,3.44,334.24,forced-alignment
+109,110_long_stare,You look at it for a long time.,334.24,1.95,336.19,forced-alignment
+110,111_scout_returning_camp,You bring the information back.,336.19,2.25,338.44,forced-alignment
+111,112_scout_reporting_mission,That is the job.,338.44,1.78,340.22,forced-alignment
+112,113_scout_hiding_shadows,Not to engage.,340.22,1.63,341.85,forced-alignment
+113,114_scout_restrained_grip,Not to prove anything.,341.85,1.75,343.6,forced-alignment
+114,115_scout_observing_turning,"See, register, return.",343.6,3.08,346.68,forced-alignment
+115,116_scout_missed_threat,A scout who sees too little endangers the band.,346.68,3,349.68,forced-alignment
+116,117_scout_imagined_monster,A scout who imagines too much does the same.,349.68,3.75,353.43,forced-alignment
+117,118_scout_delivering_truth,What the job requires is exact truth delivered without drama.,353.43,4.46,357.89,forced-alignment
+118,119_scout_inner_tremble,You are not yet calm about it.,357.89,2.34,360.23,forced-alignment
+119,120_scout_steady_voice,Your voice holds when you report,360.23,1.96,362.19,forced-alignment
+120,121_still_hands,but your hands do not.,362.19,1.84,364.03,forced-alignment
+121,122_daret_watching,Daret watches your hands when you speak.,364.03,2.8,366.83,forced-alignment
+122,123_catching_gaze,You see him doing it.,366.83,1.62,368.45,forced-alignment
+123,124_working_hands,You start working on the hands.,368.45,2.3,370.75,forced-alignment
+124,125_night_circle,You are twenty and you have your first real position in the night circle.,370.75,8.15,378.9,forced-alignment
+125,126_eastern_post,The eastern post,378.9,1.7,380.6,forced-alignment
+126,127_river_treeline,facing the tree line where the river bends out of sight.,380.6,3.14,383.74,forced-alignment
+127,128_back_to_fire,You sit with your back to the fire so your eyes can adjust fully to the dark beyond the camp’s edge.,383.74,5.65,389.39,forced-alignment
+128,129_warmth_and_cold,The fire’s warmth is on your back and the night’s cold is on your face.,389.39,4.73,394.12,forced-alignment
+129,130_discomfort_point,The discomfort is the point.,394.12,2.2,396.32,forced-alignment
+130,131_drifting_guard,It keeps you from drifting.,396.32,1.88,398.2,forced-alignment
+131,132_guarding_stretch,You guard your stretch,398.2,1.59,399.79,forced-alignment
+132,133_wake_man,wake the next man,399.79,1.23,401.02,forced-alignment
+133,134_exhausted_sleep,sleep.,401.02,0.76,401.78,forced-alignment
+134,135_three_hours,Three hours at most before you are back up.,401.78,2.89,404.67,forced-alignment
+135,136_nightly_rotation,This runs every night,404.67,1.98,406.65,forced-alignment
+136,137_harsh_weather,no matter the weather.,406.65,1.16,407.81,forced-alignment
+137,138_cracking_ice,On the coldest nights when the river ice cracks and carries those sounds through the valley,407.81,4.7,412.51,forced-alignment
+138,139_restless_tribe,nobody sleeps deep and nobody sleeps long.,412.51,3.62,416.13,forced-alignment
+139,140_sudden_alertness,The body does not wait for the mind to decide if a sound is worth waking for.,416.13,4.97,421.1,forced-alignment
+140,141_night_listening,Night is not quiet.,421.1,2.13,423.23,forced-alignment
+141,142_noisy_void,It is full of noise,423.23,1.94,425.17,forced-alignment
+142,143_meaningless_noises,almost all of it meaningless.,425.17,2.5,427.67,forced-alignment
+143,144_howling_wind,Wind.,427.67,1.41,429.08,forced-alignment
+144,145_scurrying_creature,Small animals.,429.08,1.85,430.93,forced-alignment
+145,146_fire_settling,The fire settling.,430.93,1.71,432.64,forced-alignment
+146,147_frozen_branches,Branches pulling tight in the cold.,432.64,2.51,435.15,forced-alignment
+147,148_breathing_clan,Sleeping people breathing.,435.15,2.07,437.22,forced-alignment
+148,149_month_rotation,You spend your second month in rotation learning to separate the sounds that matter from the enormous volume that do not.,437.22,7.92,445.14,forced-alignment
+149,150_listening_intent,You are not listening for a sound.,445.14,2.88,448.02,forced-alignment
+150,151_scout_listening_void,You are listening for the absence of one.,448.02,1.18,449.2,forced-alignment
+151,152_frozen_brush_mice,When the brush mice stop moving through dry leaves,449.2,5.13,454.33,forced-alignment
+152,153_something_stopped_them,something stopped them.,454.33,1.53,455.86,forced-alignment
+153,154_silent_night_birds,When the night birds cut off mid-call,455.86,1.95,457.81,forced-alignment
+154,155_predator_passing_under,something passed under them.,457.81,2.06,459.87,forced-alignment
+155,156_scout_deep_realization,These gaps tell you more than any loud noise could.,459.87,3.5,463.37,forced-alignment
+156,157_scout_nervous_reflection,You get it wrong twice in your first season.,463.37,2.72,466.09,forced-alignment
+157,158_scout_false_alert,The first time you raise an alert for a branch dropping from a snow-loaded tree.,466.09,4.79,470.88,forced-alignment
+158,159_camp_standing_alert,The whole camp stands up and it takes several minutes to settle.,470.88,3.61,474.49,forced-alignment
+159,160_camp_forgiveness,Nobody is angry with you.,474.49,2.25,476.74,forced-alignment
+160,161_waste_chest,But the waste of it stays in your chest,476.74,2.56,479.3,forced-alignment
+161,162_false_alarm_burn,the specific burn of a false alarm,479.3,2.26,481.56,forced-alignment
+162,163_not_carrying_feeling,and you do not want to carry that feeling again.,481.56,2.77,484.33,forced-alignment
+163,164_waiting_too_long,The second time you wait too long.,484.33,2.65,486.98,forced-alignment
+164,165_talking_out_trust,You hear the interruption and you talk yourself out of trusting it.,486.98,3.93,490.91,forced-alignment
+165,166_dire_wolf_perimeter,The threat is a lone dire wolf testing the perimeter,490.91,3.52,494.43,forced-alignment
+166,167_smell_of_butchery,drawn by the smell of the previous day’s butchering.,494.43,3.54,497.97,forced-alignment
+167,168_daret_thrown_stone,Daret spots it from his post and turns it back with a thrown stone before it gets close.,497.97,5.57,503.54,forced-alignment
+168,169_daret_meets_scout,He finds you at your post afterward.,503.54,2.64,506.18,forced-alignment
+169,170_daret_speaks,He tells you one thing,506.18,1.79,507.97,forced-alignment
+170,171_scout_carrying_load,and you never stop carrying it.,507.97,2.48,510.45,forced-alignment
+171,172_body_instinct_grip,The body knows before the mind agrees.,510.45,3.01,513.46,forced-alignment
+172,173_broken_track_pattern,When something in you says a pattern has broken,513.46,3.3,516.76,forced-alignment
+173,174_enough_standing_tall,that is enough.,516.76,1.61,518.37,forced-alignment
+174,175_stepping_into_void,Stop waiting for your mind to finish arguing.,518.37,7.72,526.09,forced-alignment
+175,176_twenty_six_scout,You are twenty-six.,526.09,2,528.09,forced-alignment
+176,177_leading_in_darkness,Fear no longer leads when you move in darkness.,528.09,3.39,531.48,forced-alignment
+177,178_fear_running_alongside,It runs alongside you now,531.48,1.89,533.37,forced-alignment
+178,179_not_in_charge,present but not in charge.,533.37,2.29,535.66,forced-alignment
+179,180_late_autumn_transformation,The night that changes you comes in late autumn.,535.66,3.25,538.91,forced-alignment
+180,181_aurochs_drive,Your group drives a small aurochs herd toward a valley narrowing,538.91,3.91,542.82,forced-alignment
+181,182_breaking_aurochs,and three animals break sideways into the trees instead of funneling through.,542.82,4.79,547.61,forced-alignment
+182,183_chasing_hunters,Two hunters go after them.,547.61,2.3,549.91,forced-alignment
+183,184_mc_running,You are one.,549.91,2.17,552.08,forced-alignment
+184,185_yaro_running,The other is Yaro,552.08,2.1,554.18,forced-alignment
+185,186_yaro_age,thirty years old,554.18,1.06,555.24,forced-alignment
+186,187_composed_yaro,the most composed man on any hunt you have been on.,555.24,3.8,559.04,forced-alignment
+187,188_fading_light,The light is going fast.,559.04,2.41,561.45,forced-alignment
+188,189_heavy_timber,You push through the tree line into heavier timber and the animals are already gone ahead of you into the dark.,561.45,5.6,567.05,forced-alignment
+189,190_yaro_signal,Yaro signals to stop.,567.05,2.1,569.15,forced-alignment
+190,191_both_still,You both go still.,569.15,1.03,570.18,forced-alignment
+191,192_scout_listening,You listen.,570.18,2.06,572.24,forced-alignment
+192,193_low_ground,What you hear instead of aurochs is something low and close to the ground.,572.24,5.03,577.27,forced-alignment
+193,194_breathing_tension,A breathing that belongs to neither of you.,577.27,2.89,580.16,forced-alignment
+194,195_unseen_woods,You cannot locate it in the trees.,580.16,2.06,582.22,forced-alignment
+195,196_main_frozen,You do not move.,582.22,1.39,583.61,forced-alignment
+196,197_yaro_still,Yaro does not move.,583.61,2.25,585.86,forced-alignment
+197,198_stopped_breathing,The breathing stops.,585.86,1.94,587.8,forced-alignment
+198,199_three_seconds,Three seconds.,587.8,1.74,589.54,forced-alignment
+199,200_yaro_shifts,Then Yaro shifts his weight back,589.54,2.53,592.07,forced-alignment
+200,201_stealthy_footstep,one foot at a time,592.07,1.28,593.35,forced-alignment
+201,202_mirroring_scout,and you mirror him exactly.,593.35,2.48,595.83,forced-alignment
+202,203_backward_retreat,You walk backward out of the forest with your spear forward and your free hand trailing behind you to feel for the tree line.,595.83,7.03,602.86,forced-alignment
+203,204_meadow_run,You reach the open meadow and you both run,602.86,3.32,606.18,forced-alignment
+204,205_instinctual_flight,not deciding to run,606.18,1.5,607.68,forced-alignment
+205,206_scouts_sprinting,just running.,607.68,1.09,608.77,forced-alignment
+206,207_reporting_to_leader,You return to the main group and report.,608.77,2.53,611.3,forced-alignment
+207,208_leader_decision,The hunt leader listens and sends nobody back.,611.3,2.87,614.17,forced-alignment
+208,209_empty_meadow,The aurochs are gone.,614.17,1.77,615.94,forced-alignment
+209,210_ominous_timber,Whatever shared that timber with you was not worth finding.,615.94,3.37,619.31,forced-alignment
+210,211_hearth_reflection,That night by the fire you think about the three seconds after the breathing stopped.,619.31,4.27,623.58,forced-alignment
+211,212_watching_eyes,Something in the dark assessed you and made a decision.,623.58,3.19,626.77,forced-alignment
+212,213_pensive_stare,You do not know what it decided or why.,626.77,2.24,629.01,forced-alignment
+213,214_solitary_fire,You only know you are at the fire because whatever it was let you leave.,629.01,5.49,634.5,forced-alignment
+214,215_spear_grip,That is a different kind of knowledge than anything you were taught.,634.5,3.88,638.38,forced-alignment
+215,216_chest_revelation,It does not sit in the same place.,638.38,2.85,641.23,forced-alignment
+216,217_still_silence,You get quieter after that.,641.23,1.79,643.02,forced-alignment
+217,218_upright_posture,"Not afraid, but rearranged inside.",643.02,3.2,646.22,forced-alignment
+218,219_starry_void,You understand that surviving is not only about what you do.,646.22,4.4,650.62,forced-alignment
+219,220_lethal_gap,There is a space between your action and something else’s action,650.62,3.61,654.23,forced-alignment
+220,221_skill_removes,and in that space lives an element that no amount of skill removes entirely.,654.23,4.71,658.94,forced-alignment
+221,222_long_silence,You do not say this to anyone for a long time.,658.94,3.61,662.55,forced-alignment
+222,223_carrying_weight,You carry it.,662.55,1.78,664.33,forced-alignment
+223,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,forced-alignment
+224,225_night_scouts,You lead the night scouts now.,667.47,2.77,670.24,forced-alignment
+225,226_four_scouts,Four of them besides yourself,670.24,2.56,672.8,forced-alignment
+226,227_scout_ages,ranging from seventeen to twenty-four.,672.8,2.75,675.55,forced-alignment
+227,228_informal_bond,They are not yours in any formal sense.,675.55,3.03,678.58,forced-alignment
+228,229_no_formal_sense,There is no formal sense here.,678.58,2.41,680.99,forced-alignment
+229,230_slowing_pace,But when you slow,680.99,0.64,681.63,forced-alignment
+230,231_slowing_pace,they slow.,681.63,1.11,682.74,forced-alignment
+231,232_sudden_halt,"When you stop, they stop.",682.74,2.55,685.29,forced-alignment
+232,233_firelight_speech,When you speak at the fire before a hard night,685.29,4.1,689.39,forced-alignment
+233,234_focused_attention,their attention is different from what they give anyone else.,689.39,3.5,692.89,forced-alignment
+234,235_unasked_burden,You did not ask for this.,692.89,2.06,694.95,forced-alignment
+235,236_uncertain_start,You are not sure when it started.,694.95,2.1,697.05,forced-alignment
+236,237_heavy_weight,The weight of it is not the same as the fear from your younger years.,697.05,4.24,701.29,forced-alignment
+237,238_youthful_fear,That fear was about your own body.,701.29,2.22,703.51,forced-alignment
+238,239_internal_burden,This sits differently.,703.51,1.85,705.36,forced-alignment
+239,240_tribal_survival,It is about theirs.,705.36,1.83,707.19,forced-alignment
+240,241_fen_young_scout,Your youngest scout is Fen.,707.19,1.76,708.95,forced-alignment
+241,242_fen_excited_run,He has the instincts but his feet carry his excitement on runs.,708.95,5.5,714.45,forced-alignment
+242,243_fen_too_quick,"Too quick, consistently.",714.45,1.9,716.35,forced-alignment
+243,244_elder_watching_fen,You watch him for two full seasons and say almost nothing.,716.35,3.56,719.91,forced-alignment
+244,245_seasonal_contrast,You let him see the contrast.,719.91,2.02,721.93,forced-alignment
+245,246_elder_speaks_plainly,Then one evening before a run you tell him plainly,721.93,3.03,724.96,forced-alignment
+246,247_danger_lesson,slow is not about the danger being less.,724.96,2.77,727.73,forced-alignment
+247,248_stealthy_movement,Slow is about being harder to detect.,727.73,2.59,730.32,forced-alignment
+248,249_fast_after_decision,Fast is for after the decision has already been made.,730.32,4.34,734.66,forced-alignment
+249,250_before_the_moment,Before that moment,734.66,1.25,735.91,forced-alignment
+250,251_main_focused_observation,slow is the sharpest thing you have.,735.91,2.17,738.08,forced-alignment
+251,252_fen_slowing_run,On the next run he slows.,738.08,1.94,740.02,forced-alignment
+252,253_fen_measured_movement,Not completely.,740.02,1.42,741.44,forced-alignment
+253,254_main_observing_fen,But you can see it.,741.44,1.69,743.13,forced-alignment
+254,255_daret_hand_on_shoulder,You remember Daret’s hand on your shoulder over the dropped torch.,743.13,4.25,747.38,forced-alignment
+255,256_korik_stopping_in_dark,You remember Korik stopping half a step after you in the dark,747.38,3.72,751.1,forced-alignment
+256,257_wordless_confirmation_scent,that wordless confirmation that your nose had caught something real.,751.1,4.04,755.14,forced-alignment
+257,258_main_contemplative_ridge,The things that kept you alive were not only your own choices.,755.14,4.39,759.53,forced-alignment
+258,259_mentors_around_hearth,They were built into you by people who made room for you to learn without killing your willingness to try.,759.53,6.33,765.86,forced-alignment
+259,260_main_teaching_fen,You try to build that same room for Fen.,765.86,2.86,768.72,forced-alignment
+260,261_weary_leader,You do not always manage it.,768.72,1.88,770.6,forced-alignment
+261,262_stern_warning,Some nights the danger is too close and you have to be hard with them in ways you regret by the time you are sitting at the fire watching their faces.,770.6,8.62,779.22,forced-alignment
+262,263_temporary_dawn,Every dawn is temporary.,779.22,2.76,781.98,forced-alignment
+263,264_feeding_fire,The dark comes back the same way your mother fed the fire,781.98,3.6,785.58,forced-alignment
+264,265_unending_dark,"without announcement, without end.",785.58,6.6,792.18,forced-alignment
+265,266_forty_one_burden,You are forty-one.,792.18,2.01,794.19,forced-alignment
+266,267_leader_of_children,There are children here who have never known a night where someone other than you was the person the adults looked to when something moved at the perimeter.,794.19,9.19,803.38,forced-alignment
+267,268_morning_visitor,That reaches you one morning when a girl of about nine walks to you at the fire’s edge,803.38,5.15,808.53,forced-alignment
+268,269_gift_of_meat,puts a piece of dried meat in your hand,808.53,1.98,810.51,forced-alignment
+269,270_silent_departure,and walks away without any explanation.,810.51,2.24,812.75,forced-alignment
+270,271_holding_meat,You hold the meat and understand you have become something this group has no simple word for.,812.75,5.21,817.96,forced-alignment
+271,272_hunched_back,Your back has decades stored in it.,817.96,2.35,820.31,forced-alignment
+272,273_cold_grass,Long crouches in cold grass.,820.31,2.31,822.62,forced-alignment
+273,274_stillness_ache,The particular ache of held stillness.,822.62,3.22,825.84,forced-alignment
+274,275_morning_knees,Your knees announce themselves on cold mornings before you are fully awake.,825.84,4.63,830.47,forced-alignment
+275,276_not_old,You are not old by some measures.,830.47,2.63,833.1,forced-alignment
+276,277_night_body,But you are old the way that twenty years of moving at night makes a body old.,833.1,4.98,838.08,forced-alignment
+277,278_faster_men,There are faster men now.,838.08,1.9,839.98,forced-alignment
+278,279_sharper_ears,There are scouts with sharper ears.,839.98,2.29,842.27,forced-alignment
+279,280_saying_so,You say so.,842.27,1.23,843.5,forced-alignment
+280,281_hearth_counsel,You tell Fen,843.5,1.33,844.83,forced-alignment
+281,282_fen_leading,twenty-five now and leading runs you no longer go on,844.83,3.51,848.34,forced-alignment
+282,283_fen_keen_ears,that his ears are better than yours in the birch stands.,848.34,3.48,851.82,forced-alignment
+283,284_fen_modesty,He takes it as modesty at first.,851.82,2.54,854.36,forced-alignment
+284,285_elder_seriousness,You explain that it is not.,854.36,1.73,856.09,forced-alignment
+285,286_fact_to_act,It is a fact he needs to act on,856.09,3.11,859.2,forced-alignment
+286,287_growing_responsibility,and acting on it correctly means his responsibility at night is larger than it was,859.2,5.24,864.44,forced-alignment
+287,288_not_smaller,not smaller.,864.44,0.95,865.39,forced-alignment
+288,289_winter_predator_breach,A predator gets through the western perimeter on a winter night and kills one of the youngest members of the band before anyone can reach the site.,865.39,7.47,872.86,forced-alignment
+289,290_tragic_aftermath,The child is barely four years old.,872.86,2.58,875.44,forced-alignment
+290,291_eastern_post,You are at the eastern post.,875.44,2.16,877.6,forced-alignment
+291,292_distant_attack,The attack comes from the direction that is not yours.,877.6,3.4,881,forced-alignment
+292,293_sitting_brooding,You sit with that for a long time.,881,2.21,883.21,forced-alignment
+293,294_intense_thought,You go back through every decision of that night.,883.21,2.9,886.11,forced-alignment
+294,295_defensive_positioning,The positioning was right.,886.11,2.26,888.37,forced-alignment
+295,296_orderly_rotations,The rotations were right.,888.37,1.74,890.11,forced-alignment
+296,297_standard_arrangement,The arrangement was what it has always been.,890.11,2.7,892.81,forced-alignment
+297,298_heavy_burden,None of that lifts the weight.,892.81,2.2,895.01,forced-alignment
+298,299_realization_moment,What you arrive at,895.01,1.52,896.53,forced-alignment
+299,300_night_gap,"eventually, is that you can build the best structure knowledge and experience allow and the night will still find the gap that structure cannot close.",896.53,8.62,905.15,forced-alignment
+300,301_hearth_reflection,Accepting that without it hollowing out your readiness is harder than any technique you have ever learned.,905.15,6.27,911.42,forced-alignment
+301,302_night_sprint,Harder than any night run in open ground.,911.42,3.09,914.51,forced-alignment
+302,303_rebuilding_shelter,You rebuild.,914.51,1.56,916.07,forced-alignment
+303,304_closing_gap,You add a post that covers the gap the night found.,916.07,3.11,919.18,forced-alignment
+304,305_carrying_grief,You do not put down the grief.,919.18,2.13,921.31,forced-alignment
+305,306_flint_knapping,You carry it alongside everything else and you keep working.,921.31,5.66,926.97,forced-alignment
+306,307_forty_nine_years,You are forty-nine.,926.97,1.7,928.67,forced-alignment
+307,308_scouts_leading,Three of your old scouts lead their own groups now in different parts of the territory.,928.67,7.58,936.25,forced-alignment
+308,309_wide_river_meeting,When the bands come together at the seasonal meeting place by the wide river,936.25,3.84,940.09,forced-alignment
+309,310_scouts_at_fire,those men find you at the fire,940.09,1.89,941.98,forced-alignment
+310,311_quiet_hearth_talk,"sit close, and the talk moves between ordinary things and the kind of talk that only happens between people who have shared a particular kind of night.",941.98,8.92,950.9,forced-alignment
+311,312_fen_scouts_introduction,Fen brings two young scouts to you at the gathering.,950.9,3.54,954.44,forced-alignment
+312,313_fen_silent_gaze,He does not ask you to teach them anything.,954.44,2.7,957.14,forced-alignment
+313,314_scouts_settle_down,He places them near you and you understand what he is asking.,957.14,4.39,961.53,forced-alignment
+314,315_observing_over_time,You watch the two of them over several evenings.,961.53,2.92,964.45,forced-alignment
+315,316_scout_instinct_fear,One has good instincts but is afraid of fear,964.45,2.85,967.3,forced-alignment
+316,317_sharpening_bone_tool,which is the worst combination you know.,967.3,2,969.3,forced-alignment
+317,318_scout_on_ridge,The fear itself is not the problem.,969.3,2.61,971.91,forced-alignment
+318,319_eye_reflection_awareness,Fear is information.,971.91,2.35,974.26,forced-alignment
+319,320_body_warning_signal,The problem is what happens when the body’s warning triggers a second signal that overrides the first.,974.26,5.91,980.17,forced-alignment
+320,321_hearth_counsel,That young man needs to understand that the tightness in his chest before a hard night is not a sign of weakness arriving.,980.17,6.54,986.71,forced-alignment
+321,322_body_readiness,It is the body getting ready.,986.71,2.09,988.8,forced-alignment
+322,323_direct_speech,You tell him directly because he is young enough that direct still works.,988.8,4.3,993.1,forced-alignment
+323,324_youth_realization,You see it take in his face.,993.1,2.05,995.15,forced-alignment
+324,325_contrasting_student,The other one is nearly the opposite.,995.15,3,998.15,forced-alignment
+325,326_careless_ease,She moves into dark terrain with an ease that looks like calm but is actually the absence of proper attention.,998.15,7.09,1005.24,forced-alignment
+326,327_perimeter_lesson,You take her to the perimeter edge one evening and ask her to stand still and report what she notices.,1005.24,6.51,1011.75,forced-alignment
+327,328_obvious_sights,At first she reports the obvious.,1011.75,2.85,1014.6,forced-alignment
+328,329_patient_silence,You wait.,1014.6,1.32,1015.92,forced-alignment
+329,330_finer_observations,The reports get finer.,1015.92,1.9,1017.82,forced-alignment
+330,331_scent_at_slope,A smell change at the base of a slope.,1017.82,2.83,1020.65,forced-alignment
+331,332_fading_sound,A sound she had not consciously registered until it was gone.,1020.65,4.16,1024.81,forced-alignment
+332,333_passing_knowledge,You tell her that.,1024.81,1.69,1026.5,forced-alignment
+333,334_internal_noticing,That second kind of noticing.,1026.5,2.08,1028.58,forced-alignment
+334,335_tracking_skill,That is where the whole skill lives.,1028.58,2.99,1031.57,forced-alignment
+335,336_uncertain_mentorship,You are not certain you gave either of them what they needed.,1031.57,3.74,1035.31,forced-alignment
+336,337_mutual_exchange,You were not certain Daret and Korik gave you everything you needed.,1035.31,4.17,1039.48,forced-alignment
+337,338_final_gift,You gave what you had.,1039.48,2.08,1041.56,forced-alignment
+338,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,6.01,1047.57,forced-alignment
+339,340_fifty_eight,You are fifty-eight.,1047.57,4.08,1051.65,forced-alignment
+340,341_aging_temples,Your hair has gone pale at the edges.,1051.65,2.72,1054.37,forced-alignment
+341,342_steady_grip,Your hands are steady now,1054.37,2.05,1056.42,forced-alignment
+342,343_shaking_scout,the same hands that could not hold still over your first real guarding post.,1056.42,4.58,1061,forced-alignment
+343,344_marked_palms,They are also marked with everything the years put into them.,1061,3.19,1064.19,forced-alignment
+344,345_palm_scar,The white line across your left palm from a night in the limestone hills.,1064.19,4.36,1068.55,forced-alignment
+345,346_shortened_finger,The shortened finger on your right hand from something you do not describe in detail.,1068.55,4.59,1073.14,forced-alignment
+346,347_thickened_knuckles,The thickened knuckles from four decades of gripping things hard in the cold.,1073.14,4.6,1077.74,forced-alignment
+347,348_distant_bands,Other bands know your name.,1077.74,1.97,1079.71,forced-alignment
+348,349_stoic_presence,Not the way a man is known for a single event.,1079.71,3.28,1082.99,forced-alignment
+349,350_mountain_ridge,The way a specific ridge is known,1082.99,2.59,1085.58,forced-alignment
+350,351_river_crossing,or a reliable river crossing.,1085.58,2.78,1088.36,forced-alignment
+351,352_orient_landmark,A feature of the world that people orient by.,1088.36,3.79,1092.15,forced-alignment
+352,353_gathering_bands,When the bands gather and the talk turns to the night,1092.15,3.02,1095.17,forced-alignment
+353,354_dark_beast,to what lives in it,1095.17,1.44,1096.61,forced-alignment
+354,355_reading_tracks,to how to read an animal that is following you against one that only crossed your path,1096.61,4.45,1101.06,forced-alignment
+355,356_respectful_glance,people look toward where you are sitting.,1101.06,2.43,1103.49,forced-alignment
+356,357_sitting_quietly,Not because you stand and announce anything.,1103.49,2.89,1106.38,forced-alignment
+357,358_knowledge_face,Because over enough years your name has attached to a kind of knowledge people understand is not easily replaced.,1106.38,7.19,1113.57,forced-alignment
+358,359_listening_hunters,Young hunters from other bands sit near your fire and listen.,1113.57,3.51,1117.08,forced-alignment
+359,360_scout_wisdom,You know what they see.,1117.08,1.45,1118.53,forced-alignment
+360,361_daret_observation,The same thing you saw when you first looked at Daret.,1118.53,2.78,1121.31,forced-alignment
+361,362_survival_proof,Proof that surviving a long time is possible.,1121.31,3.14,1124.45,forced-alignment
+362,363_facing_night,An answer to the question of whether you can face the night across a whole life without it eventually winning.,1124.45,6.31,1130.76,forced-alignment
+363,364_the_full_cost,You tell them the full cost,1130.76,2.11,1132.87,forced-alignment
+364,365_recurrent_storytelling,same as you always do.,1132.87,1.51,1134.38,forced-alignment
+365,366_missing_calm,You tell them the calm they see was not always there.,1134.38,3.05,1137.43,forced-alignment
+366,367_dropped_torch,You tell them about the dropped torch,1137.43,2.27,1139.7,forced-alignment
+367,368_forest_terror,the three seconds in the forest,1139.7,1.93,1141.63,forced-alignment
+368,369_unreached_child,the child you could not reach in time.,1141.63,2.47,1144.1,forced-alignment
+369,370_dark_mercy,You tell them about the nights you got it right only because something in the dark chose to let you.,1144.1,6.8,1150.9,forced-alignment
+370,371_listening_scouts,Most of them hear the strength.,1150.9,2.79,1153.69,forced-alignment
+371,372_wide_eyed_fear,Fear as a tool.,1153.69,2.53,1156.22,forced-alignment
+372,373_slow_blade_draw,Slow as a weapon.,1156.22,1.71,1157.93,forced-alignment
+373,374_scout_instinct,The body ahead of the mind.,1157.93,1.96,1159.89,forced-alignment
+374,375_group_incomprehension,They do not take in the losses the same way.,1159.89,2.6,1162.49,forced-alignment
+375,376_observing_the_unready,They are not ready for them yet.,1162.49,2.43,1164.92,forced-alignment
+376,377_main_character_memory,You know this because you were not ready either,1164.92,2.95,1167.87,forced-alignment
+377,378_flashback_fire,sitting at someone else’s fire at their age,1167.87,2.94,1170.81,forced-alignment
+378,379_partial_understanding,being told the whole truth and only catching part of it.,1170.81,3.92,1174.73,forced-alignment
+379,380_scarred_hands_experience,The knowledge that comes from actual experience cannot be handed over by talking.,1174.73,5.57,1180.3,forced-alignment
+380,381_growth_lesson,It has to grow inside the living of it.,1180.3,2.51,1182.81,forced-alignment
+381,382_honesty_transfer,All you can do is be honest and let them take what they are able to carry right now.,1182.81,8,1190.81,forced-alignment
+382,383_sixty_four,You are sixty-four.,1190.81,2.96,1193.77,forced-alignment
+383,384_night_scouts,The night runs belong to someone else now.,1193.77,2.54,1196.31,forced-alignment
+384,385_lost_precision,Your legs still work but your eyes have lost the edge-of-darkness precision that forward scouting demands.,1196.31,6.15,1202.46,forced-alignment
+385,386_quiet_knowing,You know this without needing anyone to tell you.,1202.46,3.05,1205.51,forced-alignment
+386,387_handing_spear,Three winters ago you stepped back from active perimeter work and gave it fully to Fen’s people,1205.51,5.89,1211.4,forced-alignment
+387,388_fen_teaching,who have by now become the ones teaching the people after them.,1211.4,3.57,1214.97,forced-alignment
+388,389_unnamed_role,What you do now is harder to put a name to.,1214.97,3.6,1218.57,forced-alignment
+389,390_center_fire,You sit at the center fire on long winter nights when the band is settled deep in the valley and the cold has pulled everything close.,1218.57,7.56,1226.13,forced-alignment
+390,391_children_gathering,Children gather near you.,1226.13,2.3,1228.43,forced-alignment
+391,392_young_hunters_fire,Young hunters too new for real posts sit at the outer edge of your fire ring and listen to what you say in the dark hours.,1228.43,7.08,1235.51,forced-alignment
+392,393_intense_speaker,You are not telling stories to fill time.,1235.51,2.57,1238.08,forced-alignment
+393,394_passing_knowledge,You are passing something.,1238.08,2.16,1240.24,forced-alignment
+394,395_darets_hand,You describe what Daret’s hand felt like on your shoulder and what it meant.,1240.24,4.94,1245.18,forced-alignment
+395,396_forest_yaro,You describe the three seconds in the forest with Yaro when something in the dark made a choice.,1245.18,5.88,1251.06,forced-alignment
+396,397_failed_rescue,You describe the child you could not save and what you did in the weeks after,1251.06,4.82,1255.88,forced-alignment
+397,398_carrying_on,and why you did not let that weight take the work from you.,1255.88,3.38,1259.26,forced-alignment
+398,399_fens_realization,You describe the look on Fen’s face the first time slowing his feet made a difference he could feel in his whole body.,1259.26,6.95,1266.21,forced-alignment
+399,400_endless_dark,You tell them the dark cannot be finished.,1266.21,3.41,1269.62,forced-alignment
+400,401_nightfall_encroaching,It comes back every night,1269.62,1.84,1271.46,forced-alignment
+401,402_cyclical_darkness,the same as it always has,1271.46,1.68,1273.14,forced-alignment
+402,403_vigilant_embers,and it expects the same quality of attention on the thousandth night as it did on the first.,1273.14,6.32,1279.46,forced-alignment
+403,404_the_fire_line,You tell them the fire is the line and they are the ones responsible for keeping it fed.,1279.46,5.69,1285.15,forced-alignment
+404,405_ancient_hearth,You sit in the warmth of a hearth your family has tended across more seasons than you,1285.15,4.59,1289.74,forced-alignment
+405,406_listening_darkness,can count and you listen to the night the way you have listened to it for fifty years.,1289.74,4.55,1294.29,forced-alignment
+406,407_shadow_movement,You still catch the interruptions.,1294.29,2.13,1296.42,forced-alignment
+407,408_shifting_air,You still feel when the air outside the camp shifts in a certain way.,1296.42,4.15,1300.57,forced-alignment
+408,409_wise_gaze,The knowledge has not left you.,1300.57,3.11,1303.68,forced-alignment
+409,410_internal_instinct,It lives in a different place now,1303.68,2.28,1305.96,forced-alignment
+410,411_scout_transition,the place a thing moves to when it stops being something you do and becomes something you simply are.,1305.96,6.19,1312.15,forced-alignment
+411,412_youngest_scout,Fen’s youngest scout,1312.15,2.12,1314.27,forced-alignment
+412,413_fifteen_girl,a girl of fifteen,1314.27,1.43,1315.7,forced-alignment
+413,414_past_firelight,sits just past your firelight on a clear cold night,1315.7,3.05,1318.75,forced-alignment
+414,415_watching_treeline,watching the tree line.,1318.75,1.58,1320.33,forced-alignment
+415,416_straight_posture,Back straight but not locked.,1320.33,2.78,1323.11,forced-alignment
+416,417_balanced_weight,Weight even.,1323.11,1.59,1324.7,forced-alignment
+417,418_eyes_sweep,Eyes moving in a slow sweep rather than fixed on one point.,1324.7,4.55,1329.25,forced-alignment
+418,419_spear_hand,One hand loose on her spear shaft.,1329.25,2.65,1331.9,forced-alignment
+419,420_silent_watch,You watch her for a long time without making a sound.,1331.9,3.67,1335.57,forced-alignment
+420,421_hidden_observer_perspective,She does not know you are watching.,1335.57,2.2,1337.77,forced-alignment
+421,422_focused_work_detail,She is entirely in her work.,1337.77,2.53,1340.3,forced-alignment
+422,423_teaching_through_motion,She is doing the thing that cannot be scratched into bone or pressed into clay or passed through any medium other than one watching body alongside another watching body,1340.3,10.8,1351.1,forced-alignment
+423,424_generations_of_repetition,repeated across more generations than anyone alive can count.,1351.1,4.14,1355.24,forced-alignment
+424,425_passing_the_torch,She will teach the one after her.,1355.24,2.74,1357.98,forced-alignment
+425,426_next_generation_teaching,That one will teach the next.,1357.98,2.49,1360.47,forced-alignment
+426,427_knowledge_in_motion,The knowledge traveling the only way it has ever traveled,1360.47,3.72,1364.19,forced-alignment
+427,428_through_the_living,through the living,1364.19,1,1365.19,forced-alignment
+428,429_night_after_night,night after night,1365.19,1.3,1366.49,forced-alignment
+429,430_edge_of_light_and_dark,along the line where firelight ends and the dark begins.,1366.49,4.27,1370.76,forced-alignment
+430,431_child_huddling_mother,Somewhere right now a child is pressed against their mother’s side.,1370.76,4.33,1375.09,forced-alignment
+431,432_cave_entrance_vigil,There is a sound from outside.,1375.09,2.21,1377.3,forced-alignment
+432,433_child_eyes_firelight,The child has no word for what they feel.,1377.3,2.79,1380.09,forced-alignment
+433,434_tight_chest_anxiety,The tightness in the chest.,1380.09,1.97,1382.06,forced-alignment
+434,435_focused_attention_void,"The sudden, total attention.",1382.06,2.2,1384.26,forced-alignment
+435,436_solemn_child_profile,"The understanding, arriving without explanation",1384.26,3.25,1387.51,forced-alignment
+436,437_glowing_eyes_shadows,that the space past the firelight is not empty.,1387.51,3.19,1390.7,forced-alignment
+437,438_child_standing_resolve,That child will learn.,1390.7,1.85,1392.55,forced-alignment
+438,439_child_ear_listening,They will learn what the sounds mean.,1392.55,2.63,1395.18,forced-alignment
+439,440_slow_silent_tread,They will learn to slow their feet.,1395.18,2.52,1397.7,forced-alignment
+440,441_scout_cold_post,One day they will sit a cold post with their back to the fire and their face toward the dark.,1397.7,5.86,1403.56,forced-alignment
+441,442_scout_torch_wind,They will carry a torch in both hands and guard it with their body against the wind.,1403.56,5.2,1408.76,forced-alignment
+442,443_scout_cliff_edge,They will spend a whole life finding out what the night holds.,1408.76,3.81,1412.57,forced-alignment
+443,444_scout_past_watch,They always have.,1412.57,1.67,1414.24,forced-alignment
+444,445_scout_future_watch,They always will.,1414.24,1.66,1415.9,forced-alignment
+445,446_dark_landscape,The dark does not change.,1415.9,1.22,1417.12,forced-alignment
+446,447_scout_facing_dark,Only the ones who learn to face it.,1417.12,4.17,1421.29,forced-alignment

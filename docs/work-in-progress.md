@@ -787,12 +787,118 @@ sequencing note):**
    inside a chunk with genuine off-script speech) resolves via the wildcard rather than
    silent absorption. *Depends on:* the §7 item 2 owner ruling; naturally combines with
    slice 1 if built, since both touch `FaChunkInput`.
-6. **R-H second-baseline pass.** *Goal:* run the golden-baseline replay a second time
-   against real jonatasgrosman per-language model output (not the MMS-FA-derived first
-   baseline) and review per-boundary. *Exit criteria:* `scripts/phase4-handoff-replay-sync.test.ts`
-   gains a second FA pass; per-boundary diff reviewed, not blindly re-baselined. *Depends
-   on (hard precondition, not a scoping gap):* slice 1 landing a real per-language model
-   caller.
+6. **R-H second-baseline pass. DONE — MEASUREMENT COMPLETE, 2026-08-16.** *Goal:* run the
+   golden-baseline replay a second time against real jonatasgrosman per-language model
+   output and review per-boundary. *What ran:* a real Rust `fa::fa_align` capture — the
+   exact same function `fa_align_dev`/`fa_align_production` delegate to — called directly
+   against real corpus audio (`.work-phase4/replay/<key>/audio_16k.wav`) and the real
+   production chunk plan (`computeFaChunkPlan`, script-word-index attribution, the same
+   call `runForcedAlignmentForSync` makes), via a scratch `tauri::test::mock_context`
+   harness mirroring `fa_durable_wav_live.rs`'s own pattern (not committed — removed after
+   use, per this session's own scope discipline). Bypassed only the base64-encode/durable-
+   WAV-cache plumbing layer (`resolve_wav_and_align`), a disclosed simplification — the
+   audio fed in is already the exact 16kHz mono WAV that layer itself produces. Output fed
+   through the identical production pipeline the golden-replay harness itself runs
+   (`filterMalformedTokens` → `alignScenestoTranscript` → `distributeSegmentTimes`
+   (`anchorSource='forced-alignment'`) → `applyAnchorBasedTiming` → coverage gate →
+   `filterToCoveredSegments` → `snapCoveredBoundaries` → `headExtendFirstSegment`), matching
+   `App.tsx`'s own FA substitution point (§8) exactly. **All three corpus projects
+   captured** (not just V6): V6 (280 chunks, 133.1s wall-clock, 3874 words, 447/447
+   segments committed, 0 skipped), 173 (118 chunks, 75.7s, 1660 words, 175/175 committed, 0
+   skipped), Spanish (5 chunks, 13.6s, 249 words, 27/27 committed, 0 skipped). Output:
+   `scripts/fixtures/phase4-fa-second-baseline-{v6,173,spanish}-{segments,skipped}.csv`
+   (additive — the existing `phase4-baseline-*-segments.csv` Whisper golden stays
+   byte-identical, confirmed by golden replay staying 6/6 below).
+   **Per-boundary diff** (642 tag-matched boundaries across all three projects — skip-set
+   membership differs between the two runs, see below, so matching is by segment `tag`,
+   not array order): median |Δ|=0.00s, p90 0.285s(v6)/0.270s(173)/0.105s(spanish),
+   max=8.67s; 45/642 boundaries moved >0.5s, 25/642 moved >1.0s. **Coverage finding:** FA
+   produced **zero skipped segments on all three projects**, recovering the 3 V6 + 3 173 +
+   1 Spanish segments Whisper's turbo transcript could never match at all (the historical
+   "V6 skips exactly 27-29" / "173 skips exactly 0,12,111" finding — those very words are
+   now covered). The single largest mover (v6 `030_watching_older_hunters`, Δ+8.67s) is
+   explained by exactly this: FA's recovery of the immediately-preceding 3 skipped
+   segments (`027_internal_change_face`/`028_small_permanent_flake`/
+   `029_night_understanding`) shifts where the FOLLOWING segment's start boundary falls —
+   not a standalone FA error. **V6 seam 153→154 reproduced on this fresh run:** FA
+   457.81s vs. committed/owner-correct 457.83s (Δ0.02s) — matches the prior smoke-test
+   session's own figure exactly. **Confidence characterization:** `needsReview` (< `CONF_MIN`)
+   word rate 15.2%(v6)/10.5%(173)/10.0%(spanish); skews toward SHORT/function words (mean
+   length 3.71 vs. 4.24 chars overall on v6), not proper nouns broadly. Bucketing matched
+   segments by their own worst (min) word confidence shows **no clean monotonic
+   relationship** to boundary displacement (<0.05 conf: mean |Δ|=0.120s, n=316; ≥0.9 conf:
+   mean |Δ|=0.112s, n=216) — stated as a genuine non-finding, not massaged into one.
+   Hyphenated-compound segments show a small but statistically thin gap (mean
+   |Δ|=0.145s, n=28 vs. 0.107s, n=614 non-hyphenated) — plausible, not conclusive at this
+   n. *Explicitly out of scope, not done:* no FA parameter tuning; no default-gate flip
+   (`isFaGateOpen()` stays OFF); no fix attempted for anything found. *Exit criteria met:*
+   per-boundary diff produced and reviewed, not blindly re-baselined — the Whisper baseline
+   is untouched. *Remaining, genuinely the owner's:* the ear-verification listening list
+   below (12 items) is the input the owner needs before ruling on whether FA becomes the
+   default timing source.
+
+   **Ear-verification listening list (12 items, capped per this session's own scope),
+   prioritized by how much the answer would change the ruling, not purely by delta size**
+   — `whisper`/`fa` are each candidate's committed-vs-fresh-FA start time; listen window is
+   [start−2s, end+2s] of the relevant span:
+
+   | # | Project | Segment | Text | Whisper | FA | Listen window | Why it matters |
+   |---|---|---|---|---|---|---|---|
+   | 1 | v6 | `030_watching_older_hunters` (ord 26) | "You start watching the older hunters differently." | 78.56 | 87.23 | 76.5–92.1 | Largest single mover (Δ+8.67s) — explained on paper as FA recovering 3 preceding skipped segments, not a standalone error; the one case most likely to flip the ruling if the explanation is wrong |
+   | 2 | v6 | `027_internal_change_face` (whisper-skipped) | "But something stayed in you." | — (dropped) | 78.56–80.74 | 76.5–82.7 | No Whisper timestamp exists at all — is FA's placement even sane for genuinely unmatched audio? |
+   | 3 | v6 | `029_night_understanding` (whisper-skipped) | "A new understanding of what the night actually is." | — (dropped) | 83.53–87.23 | 81.5–89.2 | Other end of the same recovered 3-segment run — brackets item 2 |
+   | 4 | v6 | `308_scouts_leading` (ord 304) | "Three of your old scouts lead their own groups now in differ[ent parts]" | 931.40 | 928.67 | 926.7–938.3 | Second-largest mover (Δ−2.73s), no coverage-recovery explanation available |
+   | 5 | v6 | `043_night_migration` (ord 39) | "On nights when the band moves between camps" | 130.96 | 128.43 | 126.4–136.0 | Δ−2.53s, part of a 2-segment consecutive-mover run with `042_eleven_years` |
+   | 6 | 173 | `vessel_damage_clue` (ord 45) | "of whatever the last crew left behind, which includes whatev[er finishe]" | 174.74 | 172.91 | 170.9–181.3 | Largest 173-project mover, different corpus/register from v6 |
+   | 7 | v6 | `152_frozen_brush_mice` (ord 148) | "When the brush mice stop moving through dry leaves" | 451.03 | 449.20 | 447.2–456.3 | Sits inside the same 151→153 consecutive-mover cluster as the already owner-ruled 154 seam (item 8 below) — tests whether that seam's known defect extends to its neighbours |
+   | 8 | v6 | `154_silent_night_birds` / `155_predator_passing_under` seam | boundary between them | 457.83 | 457.81 | 455.8–459.9 | The owner-ear-tested seam (Phase 3c) — reproduced fresh this session (Δ0.02s); listed for completeness, already resolved (457.83 ruled correct) |
+   | 9 | spanish | `023_scylla_six_sailors` (ord 21) | "Navegar cerca de Scylla cuesta seis marineros." | 65.12 | 66.73 | 63.1–70.3 | Largest Spanish mover — the only non-English check on this list |
+   | 10 | 173 | `hostile_landscape` (ord 0) | "Some places in the 41st Millennium don't just kill soldiers." | 0.00 | 1.36 | 0.0–6.2 | Segment 0 / start-of-audio edge case — a boundary type none of the other movers test |
+   | 11 | 173 | `blue_monkey` (whisper-skipped) | "\"The blue monkey jumped over the moon\"." | — (dropped) | 36.96–37.73 | 34.96–39.73 | The planted known-skip test string, recovered by FA — short segment, tests placement precision on a recovered case |
+   | 12 | spanish | `001_scylla_intro` (whisper-skipped) | "Scylla." | — (dropped) | 0.00–1.06 | 0.0–3.1 | Single-word recovered segment at the very start of the Spanish file — smallest/hardest recovered case |
+
+   All 12 timestamps are against each project's own `audio_16k.wav`
+   (`.work-phase4/replay/<key>/`) — the same audio the app itself plays, just pre-transcoded
+   to 16kHz mono. Full underlying data (all 642 matched boundaries, top-20 movers, skip-set
+   diff): reconstructable from `scripts/fixtures/phase4-fa-second-baseline-*-segments.csv`
+   diffed against `scripts/fixtures/phase4-baseline-*-segments.csv` by `tag` — not persisted
+   as a separate report file per the single-tracker rule.
+
+   **R-H / R-Q status, this session.** Both are defined and tracked authoritatively in
+   `project-state.md` (protected file — this session does not edit it, per the standing
+   process rule §7 item 4 already established). Recorded here instead, alongside a
+   proposed diff for a future owner-approved pass:
+   - **R-H — now FULLY SATISFIED** (was "HALF SATISFIED" as of 2026-08-12). The second
+     pass ("FA swap run and reviewed per-boundary against that baseline") ran this
+     session — see item 6 above for the full measurement.
+   - **R-Q — RESOLVED.** `scripts/fixtures/phase4-fa-tokens-{v6,173,spanish}.json` /
+     `phase4-fa-baseline-{v6,173,spanish}-words.csv` (the fixtures `scripts/phase4-
+     handoff-replay-sync.test.ts`'s "R-H — forced-alignment fixture" describe block
+     reads) were regenerated this session against the real jonatasgrosman per-language
+     models (`measure-forced-alignment-hf.py`, Apache-2.0), superseding the barred MMS-FA
+     (CC-BY-NC-4.0, Decision 3) capture — see this session's changelog entry for exact
+     figures and the golden-replay re-verification (still 6/6, per-boundary reviewed, not
+     blindly re-baselined — the R-H describe block's own internal-consistency assertions,
+     not the segment-timing golden diff, are what this fixture pair feeds).
+
+   > **Proposed `project-state.md` diff (NOT applied — protected file, requires owner
+   > approval, same pattern as §7 item 4 above):**
+   > - **R-H**, current text ends: *"Amended 2026-08-12 (R-Q): HALF SATISFIED — the input
+   >   set/first baseline landed, but the second pass ("FA swap run and reviewed
+   >   per-boundary against that baseline") can't happen until Task 5 wires a real model;
+   >   recorded as a hard precondition on that slice."*
+   > - **Proposed replacement**: *"Amended 2026-08-16: FULLY SATISFIED. The second pass
+   >   ran — a real Rust `fa::fa_align` capture (jonatasgrosman ONNX, real production chunk
+   >   plans) against all three corpus projects, fed through the identical production
+   >   pipeline Apply Sync itself runs, reviewed per-boundary (not blindly re-baselined):
+   >   `docs/work-in-progress.md` §11 item 6, 2026-08-16."*
+   > - **R-Q**, current text: *"...Regenerating them against jonatasgrosman is an
+   >   obligation on the FA wiring slice (Task 5), not on the text normalizer."*
+   > - **Proposed replacement**: *"...RESOLVED 2026-08-16: `phase4-fa-tokens-{v6,173,
+   >   spanish}.json`/`phase4-fa-baseline-{v6,173,spanish}-words.csv` regenerated against
+   >   the real jonatasgrosman/wav2vec2-large-xlsr-53-{english,spanish} models via
+   >   `measure-forced-alignment-hf.py`, superseding the barred MMS-FA capture. Detail:
+   >   `docs/work-in-progress.md` §11 item 6 changelog, 2026-08-16."*
 7. **Phase 3b — language-keyed normalization (fr/de/pt).** *Goal:* per-language number
    words, currency, thousands separators, French elision. *Files:* new normalizer rules,
    `sync-pipeline-v2-plan.md` Part H.5 full spec. *Exit criteria:* English path provably
@@ -928,6 +1034,62 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16 — FA quality measurement: R-H second-baseline pass + R-Q fixture
+  regeneration.** Scope: measure and report only — no `src/`/`src-tauri/` change, no
+  parameter tuning, no default-gate flip (`isFaGateOpen()` stays OFF). Full write-up:
+  §11 item 6 above (measurement) and the R-H/R-Q status block immediately after it
+  (fixture regeneration). Summary:
+  - **R-H second baseline (item 6):** real Rust `fa::fa_align` capture (jonatasgrosman
+    ONNX, real production `computeFaChunkPlan` chunk plans, script-word-index
+    attribution) against all three corpus projects' real audio, via a scratch
+    `tauri::test::mock_context` harness mirroring `fa_durable_wav_live.rs`'s own pattern
+    (not committed). V6: 280 chunks/133.1s/3874 words/447 kept/0 skipped. 173: 118
+    chunks/75.7s/1660 words/175 kept/0 skipped. Spanish: 5 chunks/13.6s/249 words/27
+    kept/0 skipped. Output run through the real production pipeline
+    (`filterMalformedTokens`→`alignScenestoTranscript`→`distributeSegmentTimes`
+    (`'forced-alignment'`)→`applyAnchorBasedTiming`→coverage gate→
+    `filterToCoveredSegments`→`snapCoveredBoundaries`→`headExtendFirstSegment`), written
+    additively to `scripts/fixtures/phase4-fa-second-baseline-{v6,173,spanish}-
+    {segments,skipped}.csv` — the existing Whisper `phase4-baseline-*-segments.csv`
+    stays byte-identical (confirmed: golden replay 6/6, unchanged).
+    Per-boundary diff (642 tag-matched boundaries): median |Δ|=0.00s, p90
+    0.285s/0.270s/0.105s (v6/173/spanish), max=8.67s, 45 boundaries >0.5s, 25 >1.0s.
+    FA produced 0 skips on all three projects, recovering 7 segments Whisper's turbo
+    transcript never matched at all (V6 ×3, 173 ×3, Spanish ×1) — explains the single
+    largest mover (v6 `030_watching_older_hunters`, Δ+8.67s: FA's recovery of the 3
+    immediately-preceding skipped segments shifts where this segment's own start falls,
+    not a standalone FA error). V6 seam 153→154 reproduced fresh: FA 457.81s vs.
+    committed/owner-correct 457.83s (Δ0.02s) — matches the prior smoke-test session's
+    figure exactly. `needsReview` word rate 15.2%/10.5%/10.0% (v6/173/spanish), skewed
+    toward short function words; bucketed by min-segment-word-confidence, boundary
+    displacement shows NO clean monotonic relationship to confidence (<0.05 conf mean
+    |Δ|=0.120s n=316 vs. ≥0.9 conf mean |Δ|=0.112s n=216) — a genuine non-finding, stated
+    as such rather than massaged. Hyphenated-compound segments: mean |Δ|=0.145s (n=28)
+    vs. 0.107s (n=614 non-hyphenated) — thin signal, not conclusive at this n. A 12-item
+    ear-verification listening list (§11, after item 6) is queued for the owner —
+    prioritized by ruling impact, not raw delta size.
+  - **R-Q (fixture regeneration):** `scripts/fixtures/phase4-fa-tokens-{v6,173,
+    spanish}.json`/`phase4-fa-baseline-{v6,173,spanish}-words.csv` (the R-H
+    port-fidelity fixture pair `phase4-handoff-replay-sync.test.ts`'s own describe block
+    reads) regenerated via `scripts/measure-forced-alignment-hf.py` against the real
+    jonatasgrosman/wav2vec2-large-xlsr-53-{english,spanish} models (Apache-2.0),
+    superseding the original MMS-FA (CC-BY-NC-4.0, barred by Decision 3) capture. Same
+    pad-sec-3.0/neighbour-midpoint measurement convention as the original — model
+    backend only changed. V6: 444 segments/384.2s (154.6s one-time model load + 229.2s
+    align)/3857 words/0 failed/0 dropped. 173: 172 segments/120.9s (3.8s load, HF cache
+    warm)/1645 words/0 failed/0 dropped. Spanish: 26 segments/242.9s (228.5s load, first
+    Spanish-model load this session)/247 words/0 failed/1 segment with an unrepresentable
+    word. Golden replay re-run after the swap: still 6/6, including the R-H describe
+    block's own internal-consistency assertions (CSV-matches-JSON, required caveat
+    substrings) against the new jonatasgrosman-derived pair.
+  - **Not done, explicitly out of scope:** low-confidence characterization beyond the
+    correlation stated above; any FA parameter change; any default-gate flip. Runtime UX
+    (~231s smoke-test / ~133-243s this session's per-project figures, no progress UI) is
+    a separate, already-known deferred item (the sync loading screen), not a new finding.
+  Verified: `npm test`, `npm run lint`, `cargo check --features fa-inference`, golden
+  replay 6/6 (all confirmed after fixture regeneration and scratch-file cleanup — see
+  this commit's own numbers).
 
 - **2026-08-15 — FA-on smoke test: first real forced-alignment run, end to end.**
   Scope: prove ONE real `fa_align_production` call completes against real audio through the
