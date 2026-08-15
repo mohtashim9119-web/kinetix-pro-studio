@@ -239,3 +239,85 @@ describe('existing normalizer semantics are unchanged by WS4', () => {
     expect(canonicalizeForFilename('Hero’s Shot.jpg')).toBe("Hero's Shot.jpg");
   });
 });
+
+// Phase 3c (sync-pipeline-v2-plan.md H.5/:3821-3839 scope addition) — qi
+// bookkeeping fixes for es/fr/de/pt. Both are gated behind an explicit
+// `languageCode` argument; omitting it (every pre-existing call site) must
+// stay byte-identical to today's English behavior — the frozen alignment
+// baseline invariant (CLAUDE.md Testing section).
+describe('canonicalize — languageCode omitted stays byte-identical (English baseline)', () => {
+  it('still reads a comma as a thousands separator with no languageCode', () => {
+    expect(canonicalize('2,500')).toEqual(['two', 'thousand', 'five', 'hundred']);
+  });
+
+  it('still reads a period as a decimal point with no languageCode', () => {
+    expect(canonicalize('3.5')).toEqual(['three', 'point', 'five']);
+  });
+
+  it('still ASCII-folds a diacritic away with no languageCode', () => {
+    expect(canonicalize('café')).toEqual(['caf']);
+  });
+
+  it('stays unchanged when languageCode is explicitly "en"', () => {
+    expect(canonicalize('1.234,56 café', 'en')).toEqual(canonicalize('1.234,56 café'));
+  });
+});
+
+describe('canonicalize — es/fr/de/pt invert the thousands/decimal separators', () => {
+  it('drops a period thousands separator (German)', () => {
+    expect(canonicalize('2.500', 'de')).toEqual(['two', 'thousand', 'five', 'hundred']);
+  });
+
+  it('reads a comma as the decimal mark (German)', () => {
+    expect(canonicalize('3,5', 'de')).toEqual(['three', 'point', 'five']);
+  });
+
+  it('correctly parses a combined thousands+decimal number (Spanish)', () => {
+    // "3.456,78" is English's "3,456.78" under the es/fr/de/pt convention.
+    expect(canonicalize('3.456,78', 'es')).toEqual([
+      'three', 'thousand', 'four', 'hundred', 'fifty', 'six', 'point', 'seven', 'eight',
+    ]);
+  });
+
+  it('no longer mangles the combined case digit-by-digit (regression guard)', () => {
+    // Prior (unfixed) behavior read the same string under English rules
+    // (comma=thousands, period=decimal) as "three point four five six seven eight".
+    expect(canonicalize('3.456,78', 'fr')).not.toEqual([
+      'three', 'point', 'four', 'five', 'six', 'seven', 'eight',
+    ]);
+  });
+
+  it('a plain integer with no separators is unaffected (Portuguese)', () => {
+    expect(canonicalize('23', 'pt')).toEqual(canonicalize('23'));
+  });
+});
+
+describe('canonicalize — es/fr/de/pt preserve native diacritics', () => {
+  it('keeps an acute accent (Spanish)', () => {
+    expect(canonicalize('café', 'es')).toEqual(['café']);
+  });
+
+  it('keeps an eñe (Spanish)', () => {
+    expect(canonicalize('año', 'es')).toEqual(['año']);
+  });
+
+  it('keeps a cedilla (French)', () => {
+    expect(canonicalize('garçon', 'fr')).toEqual(['garçon']);
+  });
+
+  it('keeps an umlaut and eszett (German)', () => {
+    expect(canonicalize('straße größer', 'de')).toEqual(['straße', 'größer']);
+  });
+
+  it('keeps a tilde and cedilla (Portuguese)', () => {
+    expect(canonicalize('não coração', 'pt')).toEqual(['não', 'coração']);
+  });
+
+  it('still strips genuine punctuation, not just ASCII punctuation', () => {
+    expect(canonicalize('café, garçon!', 'fr')).toEqual(['café', 'garçon']);
+  });
+
+  it('canonicalizeSceneDoc also preserves diacritics when languageCode is passed', () => {
+    expect(canonicalizeSceneDoc('café (aside)', 'fr')).toEqual(['café']);
+  });
+});

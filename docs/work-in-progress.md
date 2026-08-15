@@ -103,7 +103,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
 | **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
-| 3c | 1 | **NOT STARTED** | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
+| 3c | 1 | **PARTIALLY DONE, 2026-08-15** — the two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE; the phase's original scope, hyphen-asymmetry, remains **NOT STARTED** (owner-deferred this pass, see changelog) | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` (unaffected by this pass). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, this session's changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
 | 5 | 3 | **NOT STARTED** | — | Stage 1 + 2 locks; heading-wildcard Option A logic (decided, not coded) | Replace `computeBoundarySearchWindow`/`isBoundarySilenceCandidate` with the fence |
@@ -1555,3 +1555,98 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   `src/services/faTextNormalize.test.ts`, `src/services/faTextNormalize.ts`
   — no protected file touched, no new doc file, nothing moved into or out
   of `scripts/fixtures/`.
+
+- **2026-08-15 — Phase 3c qi-bookkeeping fixes: diacritic-preserving fold +
+  thousands/decimal separator inversion, es/fr/de/pt** (the two items
+  reassigned here by the Phase 3b remainder audit — `sync-pipeline-v2-plan.md`
+  H.5/:3821-3839 scope addition, this doc's own §3/§10). **Hyphen-asymmetry
+  itself — Phase 3c's original scope and the actual Stage 1 lock blocker —
+  is explicitly OUT OF SCOPE this pass and stays NOT STARTED.**
+
+  **Owner decision surfaced before any code was written.** This session's
+  task description framed the hyphen fix as aligning `textNormalize.ts` vs.
+  `faTextNormalize.ts` hyphen handling — checked against
+  `sync-pipeline-v2-plan.md` directly and found not to match: the real bug is
+  `canonicalize()`'s own hyphen-splitting (`resolveHyphen`, the pre-existing
+  R1 NUMBER_WORDS carve-out — WS1a, `a3494d4`) vs. real Whisper transcript
+  tokenization; it deliberately shifts English token/word indices ("the last
+  index-shifting event of Stage 1" — directly in tension with the task's own
+  stated byte-identical-English constraint); it has no algorithm specified
+  anywhere in the plan yet; and its own process requires a human re-listen of
+  the affected boundary set before it's considered safe, which this session
+  cannot perform. Put to the owner directly rather than guessed at or
+  designed unilaterally. **Decision: skip hyphen-asymmetry this pass** —
+  leave it NOT STARTED, as the ledger already and correctly stated. Also
+  confirmed with the owner: do NOT implement `faTextNormalize.ts`'s
+  thousands-separator gap — permanently foreclosed by the 2026-08-15
+  multi-word-output decision (b); no override requested.
+
+  **What shipped: two qi-bookkeeping-only fixes in `textNormalize.ts`'s
+  `canonicalize()`**, gated behind a new optional `languageCode?: 'en' |
+  'es' | 'fr' | 'de' | 'pt'` parameter — omitted or `'en'` is the exact
+  pre-existing code path, byte-for-byte, so the frozen English alignment
+  baseline (`CLAUDE.md` Testing invariant) is untouched by construction:
+    1. **Thousands/decimal separator inversion.** es/fr/de/pt read
+       "1.234,56" as English's "1,234.56"; the prior code applied English's
+       rules unconditionally and misread it digit-by-digit ("one point two
+       three four five six"). Fixed by swapping which punctuation mark plays
+       which role when `languageCode` is one of the four, ahead of the
+       existing (untouched) `digitTokenToWords`/`cardinalToWords` expansion.
+       Per-language number-WORD translation stays a separate, unstarted gap —
+       this fix corrects separator PARSING only, matching the module's
+       pre-existing English-words-regardless-of-language convention.
+    2. **Diacritic-preserving fold.** Step 10's ASCII-only strip
+       (`[^a-z0-9\s-]`) destroyed every native accent for es/fr/de/pt
+       ("café" -> "caf"). Broadened to a Unicode-letter-aware class
+       (`[^\p{L}0-9\s-]`) under the same language gate.
+
+  **Threaded through to the actual qi-computation call site, not just the
+  normalizer.** `languageCode` was already plumbed as far as
+  `computeFaChunkPlanWithAttribution`'s post-cut `applyFaTextNormalization`
+  step (Phase 3b Slice 1), but never reached `computeRunContext`'s
+  `normalize`/`normalizeSceneDoc` calls — the ones that actually produce the
+  `qi` word counts chunk boundaries are cut on. Added the same optional
+  `languageCode` parameter to `whisperService.ts`'s `canonicalizeForAlignment`/
+  `normalize`/`normalizeSceneDoc` and to `faChunkPlan.ts`'s
+  `computeRunContext`, and wired `computeFaChunkPlanWithAttribution`'s
+  existing `languageCode` argument into that call too. No other call site —
+  `whisperService.ts`'s own production Hirschberg matching engine
+  (`extractSegmentAlignments`) included — passes a `languageCode` today, so
+  live sync matching for any of the 5 supported languages is unaffected; this
+  stays exactly the qi-bookkeeping-only fix the plan doc scoped it as.
+
+  **No Rust changes.** `faTextNormalize.ts`/`text.rs` already preserve
+  diacritics correctly (a per-character vocab-aware normalizer, not an ASCII
+  fold), and its own thousands-separator gap is the permanently-foreclosed
+  one above — neither file needed editing.
+
+  **Files:** `src/services/textNormalize.ts` (+`languageCode` param on
+  `canonicalize`/`canonicalizeSceneDoc`, language-gated steps 5/6/10),
+  `src/services/whisperService.ts` (+`languageCode` param threaded through
+  `canonicalizeForAlignment`/`normalize`/`normalizeSceneDoc`),
+  `src/services/faChunkPlan.ts` (+`languageCode` param on `computeRunContext`,
+  wired from `computeFaChunkPlanWithAttribution`), `src/services/textNormalize.test.ts`
+  (+16 unit tests: English-baseline-unchanged guards, separator-inversion
+  cases including a combined thousands+decimal case and a digit-by-digit-
+  mangling regression guard, diacritic-preservation cases for all 4
+  languages), `src/services/faChunkPlan.test.ts` (+2 wiring tests:
+  byte-identical when `languageCode` is omitted or explicitly `'en'`; a
+  non-English `languageCode` produces a well-formed plan for diacritic +
+  inverted-separator text without throwing).
+
+  **Verified:** `npm run lint` clean; `npm test` 80 files/2093 passed/1
+  skipped (was 2075/1, +18: 16 in `textNormalize.test.ts` + 2 in
+  `faChunkPlan.test.ts`, 0 regressions); `cargo check --features fa-inference`
+  clean, `cargo test --features fa-inference` 206 passed/19 ignored,
+  unchanged (no Rust file touched, re-run anyway); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged — cannot move,
+  since the golden-replay corpus is all-English and no call site in its path
+  ever passes a non-`'en'` `languageCode`.
+
+  **Phase 3c status: qi-bookkeeping sub-items DONE. Hyphen-asymmetry — the
+  phase's original scope and the actual Stage 1 lock blocker
+  (`sync-pipeline-v2-plan.md:3725-3726`) — remains NOT STARTED, unchanged by
+  this pass**, owner-deferred (see decision note above; also §3's Master
+  Phase Board row, updated in this same commit). `git status`: 5 files
+  changed (3 source, 2 test) — no protected file touched, no new doc file,
+  nothing moved into or out of `scripts/fixtures/`.

@@ -100,12 +100,16 @@ function computeRunContext(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): RunContext {
   // Mirrors whisperService.ts's extractSegmentAlignments `tokenWords`
   // expansion: a Whisper token may canonicalize to multiple (or zero) words.
+  // `languageCode` (Phase 3c, qi-bookkeeping-only — see textNormalize.ts's
+  // own doc comment): omitted by every call site except this one's own
+  // caller, so the frozen English path never takes the non-English branch.
   const tokenWords: Array<{ word: string; tokenIdx: number }> = [];
   for (let i = 0; i < tokens.length; i++) {
-    for (const word of normalize(tokens[i]!.text)) {
+    for (const word of normalize(tokens[i]!.text, languageCode)) {
       if (word.length > 0) tokenWords.push({ word, tokenIdx: i });
     }
   }
@@ -115,7 +119,7 @@ function computeRunContext(
   const queryWords: string[] = [];
   const rawTokens: RawScriptToken[] = [];
   for (const seg of segments) {
-    const words = seg.text && seg.text.trim() ? normalizeSceneDoc(seg.text) : [];
+    const words = seg.text && seg.text.trim() ? normalizeSceneDoc(seg.text, languageCode) : [];
     const segQiStart = queryWords.length;
     for (const w of words) if (w.length > 0) queryWords.push(w);
 
@@ -123,7 +127,7 @@ function computeRunContext(
     let qi = segQiStart;
     for (const raw of seg.text.split(/\s+/)) {
       if (raw.length === 0) continue;
-      const produced = normalizeSceneDoc(raw).filter(w => w.length > 0).length;
+      const produced = normalizeSceneDoc(raw, languageCode).filter(w => w.length > 0).length;
       rawTokens.push({ text: raw, qiStart: qi, qiEnd: qi + produced });
       qi += produced;
     }
@@ -590,7 +594,10 @@ export function computeFaChunkPlanWithAttribution(
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
 ): FaChunk[] {
-  const ctx = computeRunContext(segments, tokens, silences, audioDuration);
+  // `languageCode` also drives `computeRunContext`'s qi bookkeeping (Phase 3c) —
+  // not just `applyFaTextNormalization` below, which is a separate, later step
+  // over the already-cut chunk text (see that function's own doc comment).
+  const ctx = computeRunContext(segments, tokens, silences, audioDuration, languageCode);
 
   let chunks: FaChunk[];
   if (attribution === 'segment-start-time') {

@@ -56,8 +56,8 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
  * same word sequence; anything not covered is a LOCAL diff cost in the
  * Hirschberg aligner below, never an asymmetric cascade.
  */
-export function canonicalizeForAlignment(s: string): string[] {
-  return canonicalize(s);
+export function canonicalizeForAlignment(s: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
+  return canonicalize(s, languageCode);
 }
 
 // ---------------------------------------------------------------------------
@@ -69,8 +69,8 @@ export function canonicalizeForAlignment(s: string): string[] {
  * canonicalizeForAlignment so numbers/contractions/symbols canonicalize
  * identically on the script and Whisper-token sides (D16).
  */
-export function normalize(s: string): string[] {
-  return canonicalizeForAlignment(s);
+export function normalize(s: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
+  return canonicalizeForAlignment(s, languageCode);
 }
 
 /**
@@ -86,9 +86,9 @@ export function normalize(s: string): string[] {
  * classification rather than just cleaning up its words (architecture doc
  * §3.8(b), final bullet).
  */
-export function normalizeSceneDoc(s: string): string[] {
-  const stripped = canonicalizeSceneDoc(s);
-  return stripped.length > 0 ? stripped : normalize(s);
+export function normalizeSceneDoc(s: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
+  const stripped = canonicalizeSceneDoc(s, languageCode);
+  return stripped.length > 0 ? stripped : normalize(s, languageCode);
 }
 
 // --- Alignment instrumentation (__ALIGN_INSTRUMENT__) ------------------------

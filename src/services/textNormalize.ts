@@ -214,26 +214,57 @@ function expandDigitsInto(tok: string, out: string[]): void {
 // --- Public entry points ----------------------------------------------------
 
 /**
+ * Non-English `qi`-bookkeeping fixes (Phase 3c, `sync-pipeline-v2-plan.md`
+ * H.5/:3821-3839 scope-addition; hyphen-asymmetry itself stays out of scope —
+ * NOT STARTED, see `docs/work-in-progress.md` §3). Gated behind an explicit
+ * `languageCode` argument so every existing caller (nothing passes one today
+ * outside `faChunkPlan.ts`'s `qi` computation) is byte-for-byte unaffected —
+ * the frozen English alignment baseline (`CLAUDE.md` Testing invariant) never
+ * sees this branch.
+ */
+const NON_ENGLISH_CANONICALIZE_LANGUAGES = new Set(['es', 'fr', 'de', 'pt']);
+
+/**
  * The full alignment tokenizer (doc §3.2). Deterministic and applied
  * IDENTICALLY to both the scene-doc word side and the Whisper-token side, so a
  * spelled-out number ("thirty seven") and Whisper's digit output ("37") — or a
  * hyphenated compound and its glued form — collapse to the SAME word sequence,
  * and anything not covered here still normalizes symmetrically (a local diff
  * cost in the Hirschberg aligner, never an asymmetric desync).
+ *
+ * `languageCode` (optional, default English behavior): es/fr/de/pt invert
+ * English's thousands/decimal separator convention ("1.234,56" reads as
+ * English's "1,234.56") and preserve native diacritics in step 10 instead of
+ * ASCII-folding them away — both fixed here, not translated into
+ * language-specific number WORDS, which stays a separate, unstarted gap
+ * (`sync-pipeline-v2-plan.md` H.5).
  */
-export function canonicalize(text: string): string[] {
+export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
   // Steps 1, 3, 8, 9 (shared primitive) then 2 (lowercase).
   let t = foldUnicodeHygiene(text).toLowerCase();
 
   // Step 4 — contraction expansion (apostrophes already folded to ASCII above).
   t = t.replace(CONTRACTION_RE, m => CONTRACTIONS[m] ?? m);
 
-  // Step 5 — drop thousands separators between digits (11,000 -> 11000).
-  t = t.replace(/(\d),(\d)/g, '$1$2');
+  const nonEnglish = languageCode !== undefined && NON_ENGLISH_CANONICALIZE_LANGUAGES.has(languageCode);
 
-  // Step 6 — decimals: "3.5" -> "3 point 5"; fractional digits kept single so
-  // the per-token expansion reads them digit-by-digit ("three point five").
-  t = t.replace(/(\d+)\.(\d+)/g, (_m, a: string, b: string) => ` ${a} point ${b.split('').join(' ')} `);
+  if (nonEnglish) {
+    // Step 5' — es/fr/de/pt use period as the thousands separator: drop it
+    // between digits ("1.234" -> "1234"). Was previously left to Step 6's
+    // English decimal-point regex, which misread it as a decimal point.
+    t = t.replace(/(\d)\.(\d)/g, '$1$2');
+    // Step 6' — es/fr/de/pt use comma as the decimal mark: "1234,56" ->
+    // "1234 point 5 6" (fractional digits kept single, same convention as
+    // English's own digit-by-digit reading below).
+    t = t.replace(/(\d+),(\d+)/g, (_m, a: string, b: string) => ` ${a} point ${b.split('').join(' ')} `);
+  } else {
+    // Step 5 — drop thousands separators between digits (11,000 -> 11000).
+    t = t.replace(/(\d),(\d)/g, '$1$2');
+
+    // Step 6 — decimals: "3.5" -> "3 point 5"; fractional digits kept single so
+    // the per-token expansion reads them digit-by-digit ("three point five").
+    t = t.replace(/(\d+)\.(\d+)/g, (_m, a: string, b: string) => ` ${a} point ${b.split('').join(' ')} `);
+  }
 
   // Step 7 — currency + spoken symbols.
   t = t.replace(/\$\s?(\d+)/g, ' $1 dollars '); // "$5" -> "5 dollars" (spoken order)
@@ -244,7 +275,12 @@ export function canonicalize(text: string): string[] {
 
   // Step 10 — strip remaining non-alphanumeric to spaces, PRESERVING the hyphen
   // (co-operate must survive as one token; the R1 carve-out below decides split).
-  t = t.replace(/[^a-z0-9\s-]/g, ' ');
+  // es/fr/de/pt additionally preserve native Unicode letters (diacritics) —
+  // "café" stays "café" rather than folding to "caf " — instead of the
+  // ASCII-only `a-z0-9` class English uses.
+  t = nonEnglish
+    ? t.replace(/[^\p{L}0-9\s-]/gu, ' ')
+    : t.replace(/[^a-z0-9\s-]/g, ' ');
 
   // Step 11 — whitespace tokenize.
   const rawTokens = t.split(/\s+/).filter(Boolean);
@@ -408,8 +444,8 @@ export function stripStageDirections(text: string): string {
  * risking an asymmetry. `canonicalize` and `canonicalizeForFilename` keep their
  * exact prior semantics.
  */
-export function canonicalizeSceneDoc(text: string): string[] {
-  return canonicalize(stripStageDirections(text));
+export function canonicalizeSceneDoc(text: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
+  return canonicalize(stripStageDirections(text), languageCode);
 }
 
 /**

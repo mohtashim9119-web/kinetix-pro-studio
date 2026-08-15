@@ -507,3 +507,54 @@ describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3b Sl
     );
   });
 });
+
+// Phase 3c (sync-pipeline-v2-plan.md H.5/:3821-3839 scope addition) — the
+// `languageCode` argument also threads into `computeRunContext`'s qi
+// bookkeeping (textNormalize.ts's `canonicalize`), not just the post-cut
+// `applyFaTextNormalization` step the Slice 1 tests above cover. These tests
+// verify the wiring is real (not dead code) and that omitting it — every
+// call site today — stays byte-identical to the pre-Phase-3c plan.
+describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3c (qi-bookkeeping languageCode)', () => {
+  function nonEnglishNumberFixture() {
+    // "3.456,78" (es/fr/de/pt convention) is a single space-delimited raw
+    // token. Under the pre-fix English-rules parse it garbles to 7 words
+    // ("three point four five six seven eight"); correctly parsed it's 9
+    // ("three thousand four hundred fifty six point seven eight") — a real
+    // qi/word-count difference `computeRunContext` must pick up.
+    const segments = [
+      seg('s0', 'kittens likes purple 3.456,78', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+    return { segments, tokens, silences, audioDuration: 8 };
+  }
+
+  it('is byte-identical whether languageCode is omitted or explicitly "en"', () => {
+    const { segments, tokens, silences, audioDuration } = nonEnglishNumberFixture();
+    const omitted = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'script-word-index');
+    const explicitEnglish = computeFaChunkPlan(segments, tokens, silences, audioDuration, 'script-word-index', 'en');
+    expect(explicitEnglish).toEqual(omitted);
+  });
+
+  it('a non-English languageCode does not throw and produces a well-formed plan (diacritics + inverted separators)', () => {
+    const segments = [
+      seg('s0', 'café garçon straße 2.500,50', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+
+    for (const lang of ['es', 'fr', 'de', 'pt'] as const) {
+      const chunks = computeFaChunkPlan(segments, tokens, silences, 8, 'script-word-index', lang);
+      expect(chunks.length).toBeGreaterThan(0);
+      expect(chunks.every(c => c.text.trim().length > 0)).toBe(true);
+    }
+  });
+});
