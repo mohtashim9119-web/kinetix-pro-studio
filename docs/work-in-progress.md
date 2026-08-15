@@ -151,6 +151,14 @@ The plan document's own Part L (`sync-pipeline-v2-plan.md`) partially contradict
 document's "aligner is exonerated, defect is picker-only" conclusion — the aligner's spans
 can be correct while the timestamps those spans point at are not; both can hold at once.
 
+**2026-08-16, WS1 Session A.5 — NO PHASE ADVANCED THIS SESSION.** Stated explicitly rather
+than left to inference: every row of this board is unchanged. The session was feasibility
+and instrumentation only (R-R buildability, FA-gate mutation test, blast-radius sizing,
+fixture hygiene, doc integrity). Phase 3 does not advance because Session B — the
+`findAgreeingSilence` rewrite — is now blocked on an owner ruling, not on engineering time;
+see §11 item 6's ADDENDUM 4 and `sync-pipeline-v2-plan.md`'s "R-R FEASIBILITY FINDINGS"
+block for the open question. No `src/`/`src-tauri/` behavior-bearing file changed.
+
 ---
 
 ### §4. Phase 3 (Task 5) Component Ledger
@@ -627,6 +635,57 @@ labels. Key findings beyond the table above:
   (b), (e) remain open and are not resolved by this pass. Longest remaining
   pole: (b), the fr/de/pt corpus gap — data acquisition in three languages,
   not verification of data that already exists.
+
+**FA replay gate — mutation test and extension (WS1 Session A.5, 2026-08-16).**
+The gate R10 asked for was supposed to replay derived boundaries through
+`faAnchors.ts`'s `findAgreeingSilence`. What shipped at 37e9271 imported
+nothing from `src/` at all — it read `scripts/fixtures/` CSVs and asserted
+values inside them. Measured, not assumed: five temporary mutations of
+`findAgreeingSilence` (each applied alone and reverted) were run against both
+the original gate and an extended one.
+
+| Mutation | What it does | Original gate (8 tests) | Extended gate (12 tests) |
+|---|---|---|---|
+| M1 | anchor shifted +1 token index | 🟢 8/8 pass | 🔴 4 fail |
+| M2 | anchor time shifted +0.3s | 🟢 8/8 pass | 🔴 4 fail |
+| M3 | agreement check disabled (nearest silence at any distance) | 🟢 8/8 pass | 🔴 4 fail |
+| M4 | selection preference inverted (furthest within tolerance) | 🟢 8/8 pass | 🟢 12/12 pass — see below |
+| M5 | **items-6/7 error class reproduced at a currently-correct boundary** (v6 anchor 460.56, the chunk holding the ear-verified 457.83 seam) | 🟢 8/8 pass | 🔴 2 fail |
+
+**M4 is not a gate hole — it is unexercisable on this corpus, proved rather
+than argued.** Session A measured 0/481 anchors with more than one competing
+silence within `ANCHOR_AGREEMENT_SEC` of the same token; where there is
+exactly one candidate, "nearest" and "furthest" select it identically. Run
+under M4, the anchor/run/chunk digests come back byte-identical on all three
+corpora. Only new corpus material with genuinely competing silences could
+exercise it.
+
+**Extension (`scripts/phase4-fa-replay.test.ts`, third describe block, +4
+tests → 12).** Replays the anchor path through the REAL production functions
+(`computeRuns`/`computeFaChunkPlan` → `computeFaAnchors` →
+`findAgreeingSilence`), still fully offline from committed fixtures — no
+model, no `ORT_DYLIB_PATH`, no network. Pins per corpus: run count, accepted
+anchor count, chunk count, Model P gaplessness over the run partition, and
+sha256 digests of the anchor time set / run partition / chunk plan; plus four
+NAMED chunk windows spelled out in full (the two windows that produce items 6
+and 7, and the V6 seam 150/151 control). **Why the chunk plan is the complete
+cut:** `findAgreeingSilence` reaches a committed boundary through exactly one
+channel — anchors → runs → chunk plan → Rust — and ONNX inference is
+deterministic in (audio window, text), so identical chunk plans give identical
+FA words. Any boundary movement this function causes must first appear as a
+chunk-plan diff. **Fidelity measured, not assumed:** the offline
+reconstruction matches the real production capture
+(`.work-phase4/replay/*/fa_production_chunks.json`) 280/280 (v6) and 118/118
+(173) chunks byte-identical; Spanish differs at one forced-split boundary
+(recon 61.36 vs captured 65.58) precisely because that capture predates
+616abb2 — the same staleness item 9's manifest note records. **Still a change
+detector, not a correctness assertion:** the pinned values include the
+known-bad windows exactly as they are wrong today. **What it still cannot
+do:** replay the inference leg itself (chunk plan → FA words →
+`snapCoveredBoundaries` → boundary). Session B still owes a real FA
+re-capture. Cost: the gate goes from 0.3s to ~11s (V6's Hirschberg pass over
+3900×3998 words dominates), so its two heaviest tests carry an explicit
+120s timeout.
 
 ---
 
@@ -1420,6 +1479,159 @@ sequencing note):**
      ("boundaries" used for two different countable quantities across two sessions), not
      a computational error in either one. Recommend, going forward: "642 committed
      segments (tag-matched)" and "639 interior boundaries" as disambiguated names.
+     **Completed 2026-08-16 (Session A.5) — there is a THIRD quantity, 649, and all
+     three now reconcile arithmetically.** 649 = FA's own committed segment count
+     (v6 447 + 173 175 + spanish 27), the correct denominator for anything measured on
+     the FA side, because FA skips nothing. 642 = the tag-matched subset comparable
+     against Whisper, i.e. 649 − 7, where the 7 are exactly the segments Whisper skipped
+     and FA recovered (v6 447−444=3, 173 175−172=3, spanish 27−26=1 — the same "3 V6 +
+     3 173 + 1 Spanish" this item records above). 639 = 642 − 3 interior boundaries.
+     Disambiguated names going forward: **"649 FA-committed segments", "642 tag-matched
+     boundaries", "639 interior boundaries"** — and cite this line rather than
+     re-deriving. Verified this session by recomputing the FA-vs-Whisper per-tag diff
+     from the committed fixtures: 642 shared tags, 45 moved >0.5s, 25 moved >1.0s, max
+     8.67s at `030_watching_older_hunters` — reproducing 580ba0f's figures exactly.
+
+   **ADDENDUM 4 — WS1 Session A.5, 2026-08-16: R-R's decided fix is NOT buildable as
+   written; Session B remains BLOCKED on an owner ruling. Items 6 and 7 have DIFFERENT
+   mechanisms. No `src/`/`src-tauri/` file changed; gate stays OFF.**
+
+   - **Items 6, 7 status: still RULED (R-R), still UNIMPLEMENTED, now BLOCKED — and the
+     block is an owner decision, not engineering time.** R-R amends R.1(c) to require
+     "evidence that the silence actually falls in the matched word's own token-to-token
+     gap." Measured: **that gap does not exist in this token stream.** Whisper turbo
+     emits a gapless partition — adjacent-token gap is exactly 0.000s for 3451/3988 (v6),
+     1635/1835 (173), 331/362 (spanish) pairs, p50 0.000s on all three — and 451 of the
+     481 accepted anchors (93.8%) have no silence anywhere in their own token gap. Items
+     6 and 7 are both in that 451 (`gapSec === 0` at each). Weaker index rules that decide
+     identity by *seam containment* rather than by a gap DO work and DO reject both
+     culpable anchors; the full inventory, the four-tier independence definition, the
+     provenance map and the owner's options are in `sync-pipeline-v2-plan.md`'s
+     **"R-R FEASIBILITY FINDINGS"** block, placed directly after R-R itself.
+   - **Blast radius — measured, and it is large.** A committed boundary can only move if
+     the chunk carrying its words changed (ONNX inference is deterministic in (audio
+     window, text)), so a chunk-plan diff is an exact upper bound with no FA run needed.
+     Over 649 FA-committed segments: **179 (27.6%)** could move under the narrowest rule
+     (reject a silence containing zero token seams), **460 (70.9%)** under seam-ownership
+     rejection, **610 (94.0%)** and **636 (98.0%)** under the two full-selection rewrites.
+     Only the narrowest leaves the ear-verified V6 seam 150/151 control untouched.
+     **Magnitude buckets could NOT be produced and no number is invented here:** the only
+     rigorous offline bound is the candidate chunk window itself, which is seconds wide,
+     so it classifies essentially every at-risk boundary as ">1.0s possible" and
+     discriminates nothing. Producing real buckets needs a real FA re-capture under the
+     candidate rule (a `tauri:dev:fa` build plus the `tauri::test::mock_context` harness
+     Session A used; ~320s of inference across the three corpora).
+   - **Overlap with the known movers (45/642 >0.5s): weak, and reported as weak.** Against
+     the narrowest rule 19/45 known movers fall in the at-risk set against 12.4 expected
+     by chance (1.53x, one-sided p=0.024) — a real but modest signal at n=45. The three
+     broader rules touch so much of the corpus that their overlap is statistically
+     indistinguishable from chance (1.10x p=0.198; 0.99x p=0.715; 1.00x p=0.772). The
+     8.67s `030_watching_older_hunters` outlier is at-risk under all four — which,
+     given at-risk fractions of 28-98%, carries almost no information.
+   - **R-S's 12/12 fresh-listening bar does NOT survive (exit E3), except for the
+     narrowest option.** A 12-item sample cannot validate a change that may move 179-636
+     boundaries. Restructuring options for the owner — **not a decision**, and the
+     estimate assumes ~25s of listening per boundary (locate, play in context, judge),
+     the rate the 12-item pass actually ran at:
+       - *(i) keep 12/12* — defensible ONLY for the narrowest rule if it is additionally
+         proved to leave every >0.5s known mover untouched. ~5 min.
+       - *(ii) full census of the >0.5s known movers (45)* — ~20 min. Catches regressions
+         where they are already worst, misses new movers in the currently-clean 597.
+       - *(iii) stratified sample by movement magnitude*, drawn AFTER an FA re-capture
+         makes magnitudes knowable: all >1.0s movers plus n=15 sampled from 0.1-1.0s plus
+         n=10 from the unchanged set as a control. ~35-45 min, and the control arm is what
+         makes a "no collateral damage" claim mean anything.
+       - *(iv) two-tier bar* — tier 1 (12/12 fresh list) gates merging behind the OFF
+         toggle; tier 2 (option iii) gates flipping the default. Spreads the ear cost
+         across two sessions and matches R7's existing split between the toggle and the
+         default.
+     **Recommended for the owner's consideration: (iv), with (iii) as its tier 2.** The
+     scarce resource is the owner's ears, and a control arm costs 10 boundaries.
+   - **Cross-anchor mechanism (Session A's open item): CONFIRMED for item 6, REFUTED for
+     item 7 — they are not one mechanism.** The hypothesis was "two independently-clean
+     anchors bracketing a spuriously short run."
+       - *Item 6 — confirmed in structure, corrected in detail.* Run 38 is
+         `[173.12, 174.96]`, 1.84s, bracketed by two `agreed-anchor` boundaries, carrying
+         5 script words ("residue of whatever the last") whose audio actually runs to
+         ~176.0s. Inside it every FA word collapses (confidences 1.4e-5 to 1.1e-3,
+         `needsReview` on all five) while the words on either side score 0.995 and 0.999.
+         The bracketing anchors are NOT "independently clean": the early one comes from
+         silence `[172.70, 173.12]`, which lies **wholly inside** Whisper token 464
+         ("chemical", `[172.57, 173.18]`) and contains no token seam at all; the late one
+         (`[174.52, 174.96]`, token 470 "crew") contains one seam that is not its own.
+         Both are exactly what a seam-containment test rejects.
+       - *The 0.55s → 1.83s amplification is REAL, and it is item 6's alone.* Full
+         arithmetic: FA places "of" (the segment's first word) at **173.32**; Whisper
+         places it at **173.87**; the FA onset is **0.55s early**. `snapBoundaries.ts`
+         then snaps from that onset to the nearest detected silence — from 173.32 the
+         distances are 0.20s back to `[172.70,173.12]` and 1.20s forward to
+         `[174.52,174.96]`, so it takes the earlier one and commits its midpoint
+         **172.91**; from Whisper's 173.87 the distances are 0.75s back and 0.65s forward,
+         so it would have taken the later one and committed **174.74** — the ear-correct
+         value. The 1.83s error is precisely the gap between two adjacent silence
+         midpoints (174.74 − 172.91), and a 0.55s onset error is what flips the choice
+         between them. **`snapBoundaries.ts` is the amplifier here**, exactly as §11's
+         Lead B recorded; it is out of scope for the R-R fix and must not be touched, but
+         it is why a sub-second FA error surfaces as a multi-second boundary error.
+       - *Item 7 — the amplification does NOT apply, and the brief's premise that it does
+         is wrong.* Item 7's committed 449.20 is **not a silence midpoint** — no snap
+         participates. It is the midpoint of FA's own word seam: FA ends "one" at 449.18
+         and starts "when" at 449.22. The word error IS the boundary error (~1.81s), with
+         no amplification step. This confirms Lead B's earlier finding ("in v6, FA's
+         449.20 is an unsnapped word onset") against fresh measurement. Item 7's cause is
+         upstream: chunk 80 is `[448.34, 451.70]`, 3.36s carrying 8 words whose audio runs
+         past 452s, and its END anchor comes from silence `[450.36, 451.70]` — which
+         swallows **three** token seams (1222/1223/1224), so by index it identifies none of
+         them and is accepted purely on the 0.10s proximity to token 1225's onset.
+       - *Consequence:* the two items share a SHAPE (a too-short, too-early chunk window
+         produced by an anchor that timestamp-proximity accepted and index-identity would
+         reject) but not a mechanism (snap-flip amplification vs. direct FA misplacement),
+         and not a culpable anchor (item 6's is the run's START, item 7's is the run's
+         END). Any fix must be validated against both separately.
+   - **R.10's detection signal does NOT separate item 10 — reported, not rewritten (the
+     rule is the owner's).** R.10 keys on per-word FA confidence collapse against a
+     segment-level `alignConfidence` of 1.000 (item 11, `blue_monkey`: 7/7 words
+     `needsReview`, min raw confidence 1.9e-08, `alignConfidence` 1.000). Spot-checked
+     against items 9 and 10 using the committed second-baseline analysis:
+       - *item 11* — 7/7 `needsReview`, min 1.88e-08, `alignConfidence` 1.000. **Fires.**
+       - *item 10* (`hostile_landscape`) — 4/9 `needsReview`, min 4.8e-06,
+         `alignConfidence` **0.769, not 1.000**. **Does not fire.** The segment R.10 must
+         actually catch for item 10 is its neighbour `perilous_realms` (the unspoken
+         on-screen title that steals the onset): 7/7 `needsReview`, min 1.35e-06 — but
+         `alignConfidence` **0.778**, so the conjunction still fails on its second half.
+       - *item 9* (`023_scylla_six_sailors`) — 6/7 `needsReview`, min 6.8e-07,
+         `alignConfidence` 1.000. **Fires — and should not:** item 9 is the forced-split
+         attribution bug, already closed by 616abb2, not scripted-text-never-spoken. A
+         false positive for R.10's stated purpose.
+       - *Discrimination:* "every word `needsReview`" is genuinely rare (16/649 segments,
+         2.5%) and is the load-bearing half. The `alignConfidence == 1.000` half is
+         **degenerate on v6** — all 447 v6 segments have `alignConfidence` exactly 1.000,
+         so on that corpus the conjunct carries zero information. `minWordConfidence <
+         1e-6` alone fires on 23.4% (173) and 42.1% (v6) of segments and is far too broad
+         to be part of a gate.
+       - *Conclusion:* R.10's spec needs revisiting before it is built — the signal as
+         written catches item 11, misses item 10 (both halves of the conjunction fail on
+         the segment that matters), and mis-fires on item 9. **Flagged for the owner. Not
+         rewritten here.**
+   - **Documentation integrity sweep (Step 5).** (a) *item 8 vs item 9 mislabel:* **no
+     occurrence found in any committed doc.** Every "item 8" reference in
+     `docs/work-in-progress.md`, `project-state.md`, `CLAUDE.md` and
+     `scripts/phase4-fa-replay.test.ts` correctly denotes the V6 seam 150/151 control,
+     and 616abb2's own commit message and this document's line ~1595 both correctly
+     attribute the forced-split fix to item 9. The mislabel existed only in Session A's
+     brief, never in the repository — nothing to correct. (b) *642/639:* already recorded
+     durably at this item's (f) bullet above; extended this session with the third
+     quantity, 649. (c) *457.72 vs 457.83:* unambiguous in the gate (its V6-seam block
+     spells out all three quantities explicitly) and in the Phase 3c entry; one loose
+     phrasing corrected below. (d) *One error found and fixed:* Session A's changelog
+     entry cited "`scripts/fixtures/README.md`'s changelog" — that file has no changelog
+     section and never has; the provenance it meant is the "Forced-alignment fixture
+     (R-H...)" section. Corrected in place.
+   - **All measurements are offline and reproducible from committed fixtures.** The
+     reconstruction of the production chunk plan was validated against the real capture
+     (v6 280/280, 173 118/118 byte-identical) and reproduces Session A's 481 anchors
+     (329/148/4) exactly. Temporary mutations used for the candidate-rule measurements
+     were reverted; `git diff` over `src/` and `src-tauri/` is empty.
 
 7. **Phase 3b — language-keyed normalization (fr/de/pt).** *Goal:* per-language number
    words, currency, thousands separators, French elision. *Files:* new normalizer rules,
@@ -1563,6 +1775,57 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 
 ## Changelog
 
+- **2026-08-16 — WS1 Session A.5: R-R found not buildable as written, FA replay gate made
+  to bite, blast radius measured, items 6/7 separated (no fix, no tuning, gate stays OFF).**
+  Feasibility and instrumentation checkpoint per owner brief. **Session B is now BLOCKED on
+  an owner ruling, not on engineering time.** Full write-up: §11 item 6's ADDENDUM 4;
+  independence definition, provenance map and the owner's four options in
+  `sync-pipeline-v2-plan.md`'s "R-R FEASIBILITY FINDINGS" block, placed directly after R-R.
+  - **R-R's amended R.1(c) is not satisfiable against this token stream (exit E1).** It
+    requires the silence to fall in "the matched word's own token-to-token gap"; Whisper
+    turbo emits a gapless partition — adjacent-token gap is exactly 0.000s for 3451/3988
+    (v6), 1635/1835 (173), 331/362 (spanish) pairs — and 451 of 481 accepted anchors
+    (93.8%) have no silence in their own gap, items 6 and 7 among them. Seam-CONTAINMENT
+    rules do work and reject both culpable anchors; the genuinely independent third source
+    R-R(2) presupposes exists only as FA's own output, i.e. only in a two-pass design at
+    ~2x FA wall-clock. **Nothing implemented; the owner rules.**
+  - **The FA replay gate did not cover the code it names.** M1-M5 mutations of
+    `findAgreeingSilence` all left it green, M5 (the items-6/7 regression, reproduced at a
+    currently-correct boundary) included, because the gate imported nothing from `src/`.
+    Extended (+4 tests, 8 → 12) to replay the anchor path through the real
+    `computeRuns`/`computeFaChunkPlan`, still fully offline. M1/M2/M3/M5 now go red; M4 is
+    proved to be an unexercisable no-op on this corpus rather than a hole. Matrix and
+    design rationale in §9.
+  - **Blast radius: 179 (27.6%) to 636 (98.0%) of 649 FA-committed boundaries** depending
+    on which index rule is chosen — exact upper bounds from a chunk-plan diff, no FA run
+    needed. **R-S's 12/12 fresh-listening bar does not survive (exit E3)** except for the
+    narrowest option; four restructuring options with listening-time estimates offered to
+    the owner, none taken. Magnitude buckets deliberately NOT produced — the only rigorous
+    offline bound is non-discriminating, and inventing one would be worse than saying so.
+  - **Items 6 and 7 are two mechanisms, not one.** Item 6: cross-anchor bracketing
+    CONFIRMED (run 38 = `[173.12, 174.96]`, 1.84s for 5 words), with the full 0.55s → 1.83s
+    arithmetic closed end-to-end — FA puts "of" at 173.32 vs Whisper's 173.87, and that
+    0.55s flips `snapBoundaries.ts`'s choice between two adjacent silences whose midpoints
+    are 172.91 and 174.74. Item 7: the amplification does NOT apply — 449.20 is FA's own
+    word-seam midpoint with no snap involved, so the word error IS the boundary error.
+    The bracketing anchors are also not "independently clean" in either case; both are
+    exactly what a seam-containment test rejects.
+  - **Fixture disposition:** the `phase4-fa-second-baseline-*` family (6 CSVs) RETAINED,
+    not deleted or refreshed — it is load-bearing for the gate, and only one row of one
+    file (Spanish `023_scylla_six_sailors`, 66.73 vs current 65.12) is stale. Marked in
+    `scripts/fixtures/README.md`, which also had its now-false "read by nothing" note
+    corrected.
+  - **Doc sweep:** the item-8/item-9 mislabel does NOT exist in any committed doc (Session
+    A's brief only). 642/639 extended with the reconciling third quantity, **649**.
+    Session A's citation of a non-existent `scripts/fixtures/README.md` changelog, and one
+    loose 457.72-vs-457.83 phrasing, both corrected. **R.10's detection signal spot-checked
+    and found not to separate item 10** (its `alignConfidence == 1.000` conjunct is
+    degenerate on v6 — constant across all 447 segments) while mis-firing on item 9;
+    flagged for the owner, not rewritten.
+  - **No `src/`/`src-tauri/` behavior-bearing file changed.** All temporary mutations
+    reverted; `git diff` over `src/` and `src-tauri/` empty. Only
+    `scripts/phase4-fa-replay.test.ts` (the gate) changed on the code side.
+
 - **2026-08-16 — WS1 Session A: nine owner rulings recorded, CLAUDE.md invariant
   sharpened, FA replay gate built, true anchor exposure measured (no fix, no tuning,
   gate stays OFF).** Checkpoint task per owner brief — record rulings and build the
@@ -1585,7 +1848,8 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   - **FA baselines validated at HEAD, not refreshed — the task's own premise that
     Spanish would be stale was checked and found not to hold.** Re-ran
     `measure-forced-alignment-hf.py` (the same capture path 580ba0f used, confirmed
-    from `scripts/fixtures/README.md`'s changelog) for all three corpora against the
+    from `scripts/fixtures/README.md`'s "Forced-alignment fixture (R-H)" section — that
+    file has no changelog section; corrected 2026-08-16, Session A.5) for all three corpora against the
     committed `phase4-baseline-*-segments.csv` windows. Result: **0/3857 (v6),
     0/1645 (173), 0/247 (spanish) differing word rows — all three byte-identical to
     the committed fixtures, including Spanish.** Reason: this fixture family
@@ -1796,7 +2060,10 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   (array index 153→154 in this project's current numbering, not "150" — this project has
   been resynced/renumbered since the historical measurement docs were written): FA gave
   457.81s. Known owner-ear-tested-correct value (§11 item 8 above): 457.83s (0.02s off).
-  Documented Whisper baseline: 457.72s "call" end (0.09s off). Observation only — no
+  Documented Whisper baseline: 457.72s "call" end — the raw per-word Whisper token END for
+  "call", a WORD-level quantity, NOT a competing candidate for this segment boundary (the
+  0.09s below is a distance between two different kinds of number, not a boundary error).
+  Observation only — no
   conclusion about which method is "better," per this session's explicit scope.**
   Gates run this session (confirming zero regressions from zero `src/`/`src-tauri/` changes):
   `npm test`, `npm run lint`, `cargo check --features fa-inference`, golden replay — all

@@ -44,10 +44,30 @@
 //
 // Golden replay (`phase4-handoff-replay-sync.test.ts`) is untouched by this
 // file and must stay 6/6.
+//
+// SESSION A.5 EXTENSION (Step 2c). Everything above this line describes the
+// FIXTURE-LEVEL half of this gate, which is all that existed at 37e9271. That
+// half never imports `src/` at all, so it is blind to any change in the code
+// that PRODUCES those fixtures: the Step 2b mutation matrix ran M1-M5 against
+// `faAnchors.ts`'s `findAgreeingSilence` and every one of them stayed GREEN,
+// M5 (the items-6/7 regression this gate exists to catch, reproduced at a
+// currently-correct boundary) included. The third describe block at the bottom
+// of this file closes that hole by replaying `findAgreeingSilence`'s real
+// downstream product — the anchor set, the R.0 run partition, and the
+// production chunk plan — through the REAL production functions
+// (`faChunkPlan.ts`'s `computeRuns`/`computeFaChunkPlan`, which call
+// `computeFaAnchors`, which calls `findAgreeingSilence`), still fully offline
+// from committed fixtures. See that block's own header for why the chunk plan
+// is the causally complete cut point, and for the one leg that provably
+// cannot be replayed offline.
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
+import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
+import type { TranscriptToken, VideoSegment } from '../src/types';
+import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const FIXTURES = resolve(REPO, 'scripts', 'fixtures');
@@ -316,4 +336,216 @@ describe('WS1 Session A — FA replay gate (R10): V6 seam 150/151 (Phase 3c cont
       `(Δcommitted-fa=${(committedCorrect - faSecondBaseline).toFixed(2)}s — ear-pass item 8, both ✓)`,
     );
   });
+});
+
+// ===========================================================================
+// WS1 Session A.5 (Step 2c) — LIVE REPLAY OF THE ANCHOR PATH.
+//
+// WHY THIS EXISTS. R10 asked for a replay of FA word timings AND derived
+// segment boundaries through the downstream path — i.e. through
+// `faAnchors.ts`'s `findAgreeingSilence`. What shipped at 37e9271 was
+// fixture-level structural pinning only. Step 2b measured the consequence
+// directly: five mutations of `findAgreeingSilence` (+1 token-index shift,
+// +0.3s time shift, agreement check disabled, nearest/furthest preference
+// inverted, and the items-6/7 error class reproduced at a currently-correct
+// boundary) all left the gate GREEN. A gate that stays green while the
+// function it names in its own header is rewritten is not a gate.
+//
+// WHAT IS REPLAYED, AND WHY IT IS THE COMPLETE CUT. `findAgreeingSilence`
+// reaches a committed segment boundary through exactly one channel: it fixes
+// the R.1 anchor set, the anchors fix the R.0 run partition, and the runs fix
+// the production chunk plan (`computeFaChunkPlan`) that
+// `forcedAlignmentRun.ts:81` hands to Rust. Rust's ONNX inference is
+// deterministic given (audio window, text) — so two chunk plans that are
+// row-for-row identical produce identical FA word timings, and any boundary
+// movement attributable to this function must first appear as a chunk-plan
+// difference. Pinning the plan row-for-row is therefore a complete change
+// detector for `findAgreeingSilence`, not a proxy for one.
+//
+// WHAT IS *NOT* REPLAYED (stated, not papered over). The inference leg
+// itself — chunk plan -> FA word timings -> `snapCoveredBoundaries` ->
+// committed boundary — still cannot run here: it needs the real ONNX runtime
+// and the per-language `model.onnx`, which this harness deliberately does not
+// have. So this block proves "the chunk plan did/did not change"; it cannot
+// prove "the boundary moved to 174.74". The KNOWN_BAD manifest above remains
+// the mechanism that records the second half, and Session B still owes a real
+// FA re-capture when its fix lands.
+//
+// FIDELITY, MEASURED NOT ASSUMED (Session A.5): this reconstruction was diffed
+// against the real production capture (`.work-phase4/replay/*/
+// fa_production_chunks.json`, the plan actually sent to Rust for the R-H
+// second baseline): v6 280/280 and 173 118/118 chunks byte-identical, zero
+// differences. Spanish differs at exactly one boundary (chunk 3/4, recon
+// 61.36 vs captured 65.58) because that capture predates 616abb2's
+// forced-split attribution fix and was never regenerated — the same staleness
+// the item-9 manifest note above records. The pinned Spanish values below are
+// the CURRENT (post-616abb2) ones, which is what a change detector must pin.
+//
+// STILL A CHANGE DETECTOR, NOT A CORRECTNESS ASSERTION. Every number below is
+// what `findAgreeingSilence` produces TODAY, wrong boundaries included: the
+// `173` chunk [173.12, 174.96] and the `v6` chunk [448.34, 451.70] pinned by
+// name are precisely the too-early, too-short windows that produce ear-pass
+// items 6 and 7. When Session B's rewrite lands, these assertions go RED and
+// that is the expected, named diff — update the values, do not widen the
+// tolerance.
+// ===========================================================================
+
+interface AnchorPathSpec {
+  key: Corpus;
+  audioDuration: number;
+  /** `computeRuns` output length, and how many of those runs end on a real
+   *  R.1 agreed anchor (the rest are corpus-end / forced splits). */
+  runCount: number;
+  anchorCount: number;
+  chunkCount: number;
+  /** sha256(first 16 hex) over the serialized structure — the whole-corpus
+   *  change detector. Row-level readability comes from NAMED_WINDOWS below. */
+  anchorDigest: string;
+  runDigest: string;
+  chunkDigest: string;
+}
+
+const ANCHOR_PATH: AnchorPathSpec[] = [
+  {
+    key: 'v6', audioDuration: 1421.29,
+    runCount: 330, anchorCount: 329, chunkCount: 280,
+    anchorDigest: '8b92c55878bcc134', runDigest: 'bb5e7a91ee5ce919', chunkDigest: 'fd9b4264a640ef3d',
+  },
+  {
+    key: '173', audioDuration: 709.01,
+    runCount: 149, anchorCount: 148, chunkCount: 118,
+    anchorDigest: '9f7cbdb9b69e6356', runDigest: 'b7856966498cb1ae', chunkDigest: 'a3a9ff8389763f80',
+  },
+  {
+    key: 'spanish', audioDuration: 92.04,
+    runCount: 6, anchorCount: 4, chunkCount: 5,
+    anchorDigest: 'ac2408783c30f62f', runDigest: '41a72024d26d3389', chunkDigest: 'c7e4be33cf7ab3c7',
+  },
+];
+
+/** Chunk windows spelled out in full so a failure names a real boundary
+ *  instead of only flipping a digest. Each is tied to an entry in KNOWN_BAD
+ *  above, or to the V6 seam 150/151 control. */
+const NAMED_WINDOWS: Array<{
+  corpus: Corpus; chunkIndex: number; startSec: number; endSec: number; why: string;
+}> = [
+  {
+    corpus: '173', chunkIndex: 32, startSec: 161.46, endSec: 173.12,
+    why: 'item 6: the run ENDING at 173.12 — anchor from silence [172.70,173.12], which lies wholly ' +
+      'inside Whisper token 464 ("chemical", 172.57-173.18) and contains no token seam at all.',
+  },
+  {
+    corpus: '173', chunkIndex: 33, startSec: 173.12, endSec: 174.96,
+    why: 'item 6 PROXIMATE CAUSE: a 1.84s window carrying 5 script words ("residue of whatever the last") ' +
+      'whose audio actually runs to ~176.0s. FA collapses inside it (every word confidence <2e-3) and the ' +
+      'boundary commits at 172.91. Session B is expected to move this window.',
+  },
+  {
+    corpus: 'v6', chunkIndex: 80, startSec: 448.34, endSec: 451.7,
+    why: 'item 7 PROXIMATE CAUSE: a 3.36s window carrying "for the absence of one. When the brush mice stop", ' +
+      'whose audio runs past 452s. Its END anchor comes from silence [450.36,451.70], which swallows THREE ' +
+      'token seams (1222/1223/1224) — ambiguous by index, accepted only on timestamp proximity.',
+  },
+  {
+    corpus: 'v6', chunkIndex: 81, startSec: 451.7, endSec: 460.56,
+    why: 'V6 seam 150/151 control (ear-pass item 8, both sources ✓): the chunk containing the ' +
+      '154_silent_night_birds / 155_predator_passing_under seam at 457.83. Must NOT move.',
+  },
+];
+
+function loadAnchorPathInputs(key: Corpus): {
+  tokens: TranscriptToken[]; silences: SilenceInterval[]; segments: VideoSegment[];
+} {
+  const tokens: TranscriptToken[] = loadCsv(`phase4-baseline-${key}-words.csv`)
+    .map(r => ({ text: r.text!, startSec: Number(r.startSec), endSec: Number(r.endSec) }));
+  const silences: SilenceInterval[] = loadCsv(`phase4-baseline-${key}-silences.csv`)
+    .map(r => ({ startSec: Number(r.startSec), endSec: Number(r.endSec) }));
+  // Text only. `computeFaAnchors` never reads a segment's TIMING — the anchor
+  // set is a function of (script word sequence, Whisper tokens, silences,
+  // audioDuration) alone — so this CSV's FA-committed startTimes are inert
+  // here; it is used because it is the one committed fixture carrying the
+  // complete, pre-skip-filter parse in order (447/175/27 rows), which is what
+  // `App.tsx:2842`'s `anchorTimed` array hands to `runForcedAlignmentForSync`.
+  const segments: VideoSegment[] = loadCsv(`phase4-fa-second-baseline-${key}-segments.csv`).map(r => ({
+    id: r.tag!, text: r.text!, startTime: Number(r.startTime), duration: Number(r.duration),
+    transition: 'none', animation: 'none', order: Number(r.order),
+  }) as unknown as VideoSegment);
+  return { tokens, silences, segments };
+}
+
+/** V6's Hirschberg pass (3900 query words x 3998 subject words) dominates the
+ *  cost here — several seconds per call, and `computeRuns` and
+ *  `computeFaChunkPlan` each run their own. Well past vitest's 5s default, and
+ *  not worth restructuring production code (exporting `computeRunContext`) to
+ *  avoid: this session is explicitly no-production-code. */
+const ANCHOR_PATH_TIMEOUT_MS = 120_000;
+
+const r3 = (n: number): string => n.toFixed(3);
+const digest = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, 16);
+
+describe('WS1 Session A.5 — FA replay gate II: the anchor path, replayed through real production code', () => {
+  for (const spec of ANCHOR_PATH) {
+    it(`${spec.key}: computeFaAnchors -> runs -> chunk plan reproduces its pinned structure`, () => {
+      const { tokens, silences, segments } = loadAnchorPathInputs(spec.key);
+      const runs = computeRuns(segments, tokens, silences, spec.audioDuration);
+      const chunks = computeFaChunkPlan(segments, tokens, silences, spec.audioDuration);
+      const anchorTimes = runs.filter(r => r.endProvenance === 'agreed-anchor').map(r => r.windowEnd);
+
+      expect(runs.length, `${spec.key}: R.0 run count`).toBe(spec.runCount);
+      expect(anchorTimes.length, `${spec.key}: accepted R.1 anchor count`).toBe(spec.anchorCount);
+      expect(chunks.length, `${spec.key}: production chunk count`).toBe(spec.chunkCount);
+
+      // Model P (CLAUDE.md) over the run partition itself, not just over the
+      // committed segments: gapless, monotonic, spanning [0, audioDuration].
+      expect(runs[0]!.windowStart, `${spec.key}: first run must start at 0`).toBe(0);
+      expect(
+        Math.abs(runs[runs.length - 1]!.windowEnd - spec.audioDuration),
+        `${spec.key}: last run must end at audioDuration`,
+      ).toBeLessThan(1e-6);
+      for (let i = 1; i < runs.length; i++) {
+        expect(
+          Math.abs(runs[i]!.windowStart - runs[i - 1]!.windowEnd),
+          `${spec.key}: gap or overlap between run ${i - 1} and run ${i}`,
+        ).toBeLessThan(1e-9);
+      }
+
+      const failHint = (what: string): string =>
+        `${spec.key}: ${what} changed. This is the SOLE channel by which faAnchors.ts's ` +
+        `findAgreeingSilence reaches a committed boundary, so a change here IS a behavior change. ` +
+        `If this is Session B's R-R rewrite landing, re-pin the digests and the NAMED_WINDOWS rows ` +
+        `in the same commit and record the movement in docs/work-in-progress.md §11 — do not delete ` +
+        `the assertion.`;
+
+      expect(digest(anchorTimes.map(r3).join('|')), failHint('the R.1 anchor time set')).toBe(spec.anchorDigest);
+      expect(
+        digest(runs.map(r => `${r3(r.windowStart)},${r3(r.windowEnd)},${r.startProvenance},${r.endProvenance}`).join('|')),
+        failHint('the R.0 run partition (windows + provenance)'),
+      ).toBe(spec.runDigest);
+      expect(
+        digest(chunks.map(c => `${r3(c.startSec)},${r3(c.endSec)},${c.text}`).join('|')),
+        failHint('the production chunk plan (windows + attributed text)'),
+      ).toBe(spec.chunkDigest);
+    }, ANCHOR_PATH_TIMEOUT_MS);
+  }
+
+  it('the named chunk windows behind ear-pass items 6/7 and the V6 seam control are unmoved', () => {
+    const cache = new Map<Corpus, ReturnType<typeof computeFaChunkPlan>>();
+    for (const w of NAMED_WINDOWS) {
+      if (!cache.has(w.corpus)) {
+        const spec = ANCHOR_PATH.find(s => s.key === w.corpus)!;
+        const { tokens, silences, segments } = loadAnchorPathInputs(w.corpus);
+        cache.set(w.corpus, computeFaChunkPlan(segments, tokens, silences, spec.audioDuration));
+      }
+      const chunk = cache.get(w.corpus)![w.chunkIndex];
+      expect(chunk, `${w.corpus}: chunk ${w.chunkIndex} does not exist — the plan's SHAPE changed`).toBeDefined();
+      expect(
+        Math.abs(chunk!.startSec - w.startSec),
+        `${w.corpus} chunk ${w.chunkIndex} startSec: pinned ${w.startSec}, got ${chunk!.startSec}. ${w.why}`,
+      ).toBeLessThan(0.005);
+      expect(
+        Math.abs(chunk!.endSec - w.endSec),
+        `${w.corpus} chunk ${w.chunkIndex} endSec: pinned ${w.endSec}, got ${chunk!.endSec}. ${w.why}`,
+      ).toBeLessThan(0.005);
+    }
+  }, ANCHOR_PATH_TIMEOUT_MS);
 });

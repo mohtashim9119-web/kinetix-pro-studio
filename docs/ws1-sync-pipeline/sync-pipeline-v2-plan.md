@@ -1472,6 +1472,126 @@ anchor computation, so deferring would leave a known-bad anchor mechanism
 live and un-owned through however many further sessions elapse before Phase
 5 starts.
 
+**R-R FEASIBILITY FINDINGS (WS1 Session A.5, 2026-08-16) — FINDINGS ONLY, NOT
+A RULING. Session B stays blocked.** Read immediately after R-R above; these
+measure whether R-R's decided fix is buildable from the inputs it presupposes.
+Every number below is measured offline from committed `scripts/fixtures/`
+against the real, unmodified `computeFaAnchors`/`computeFaChunkPlan`; the
+reconstruction was validated against the real production capture (v6 280/280
+and 173 118/118 chunks byte-identical), and it reproduces Session A's 481
+anchors (v6 329 / 173 148 / spanish 4) exactly.
+
+*(a) Independence, defined.* A corroborating source is **independent** for
+anchoring purposes iff no part of the evidence it contributes derives from the
+same decode whose error it is meant to catch. Four tiers, in the order they
+should be trusted:
+
+| Tier | Source | Independent of a Whisper *timestamp* error? | Carries INDEX? | Carries TIME? |
+|---|---|---|---|---|
+| T0 | The Whisper decode — Hirschberg ops, token text, token timestamps | **No** (all one decode) | yes | yes, but unreliable |
+| T1 | A different acoustic model over the same audio — FA/ONNX word spans + per-word confidence | yes | yes (conditioned on script `qi`) | yes |
+| T2 | The audio signal, no ASR — `silenceDetector.ts`'s RMS scan | yes | **no** | yes |
+| T3 | The script side, no audio — scene doc, `qi` ranges, `faChunkPlan.ts`'s `RawScriptToken` | yes | yes | **no** |
+
+Only T1, T2, T3 count as independent. T2 and T3 are each independent but
+*half-blind*: T2 knows when the room was quiet and nothing about which word
+that was; T3 knows the word order and nothing about the clock. Deciding "this
+silence IS the seam before script word *w*" needs one source carrying **both**
+a trustworthy index and a trustworthy time. Only T1 does — and T1 is
+downstream of the anchors.
+
+*(b) Provenance map — the three "agreeing sources" are two, structurally.*
+`syncConstants.ts:493-499` names three: the Hirschberg map from `w` to a
+Whisper token, that token's onset, and a silence ending before it. In code
+(`faAnchors.ts:140-153`) the first two are one lookup, not two sources:
+`computeAnchors` resolves `op.qi → matchedSubjectOf → subjectTokenIdx →
+tokens[tokenIdx]`, then passes **that same token's** `startSec` into
+`findAgreeingSilence` (`faAnchors.ts:150`). No comparison is ever performed
+between them — there is nothing to compare, they are one token read twice.
+The single real test in the function is
+`Math.abs(tokenStartSec - s.endSec) <= 0.15` (`faAnchors.ts:121-122`), i.e.
+T0-timestamp against T2-silence. This is structural, true by construction for
+every anchor, which is exactly Session A's 481/481 count read off the code
+rather than off a log. **So the corroborator is not circular — T2 is genuinely
+independent. What is unsound is that the test is a distance, and distance
+cannot establish identity.**
+
+*(c) The measured obstacle: R-R's amended R.1(c) is not satisfiable against
+this token stream.* R-R amends R.1(c) to require "evidence that the silence
+actually falls in the matched word's own token-to-token gap." Whisper turbo
+emits a **gapless partition**, not spaced words: adjacent-token gap is exactly
+zero for 3451/3988 (v6), 1635/1835 (173) and 331/362 (spanish) pairs — p50
+gap 0.000s on all three. There is no interval to fall into. Measured
+consequence: of the 481 accepted anchors, **30 (6.2%) have their chosen
+silence inside the token-index gap and 451 (93.8%) have no silence there at
+all.** Both ear-pass items are in the 451: items 6 and 7 each sit at a
+`gapSec === 0` seam. Nor is this a property of the silences — of 547/239/27
+detected silences, only 9/79/3 lie in a real inter-word gap; 460/98/22
+straddle **two or more** token spans, i.e. the acoustic silence is inside
+words that Whisper claims are being spoken.
+
+*(d) Weaker index rules exist, and they do reject the two known-bad anchors.*
+Two rules that decide identity by index without needing a gap were measured
+(as temporary mutations, reverted):
+  - **containment** — the silence must contain the token seam it claims
+    (`tokens[T].startSec` strictly inside it): 220/481 of today's anchors
+    survive;
+  - **unique containment** — and that seam must be the only one it contains
+    (a silence swallowing several seams identifies none of them): 70/481
+    survive.
+Both correctly reject item 6's culpable anchor (silence `[172.70, 173.12]`
+lies **wholly inside** Whisper token 464 "chemical" `[172.57, 173.18]` — it
+contains no token seam at all) and item 7's (silence `[450.36, 451.70]`
+swallows **three** seams, 1222/1223/1224). So an index-based identity test is
+constructible; it just cannot take the "token-to-token gap" form R-R's
+amendment specifies.
+
+*(e) The genuinely independent THIRD source does exist, but only in a
+two-pass order.* T1 (FA's own per-word spans + confidence) is the only source
+carrying both index and time. It is unavailable to a single-pass anchor
+computation because the anchors are what build the chunk windows FA runs in.
+A two-pass shape is therefore forced: pass 1 windows the audio **without
+anchors** (the R-P forced-split machinery already does exactly this — longest
+silence inside a `MAX_RUN_SEC` span, no anchor input); pass 2 re-anchors using
+pass 1's FA word spans as the index-bearing, time-bearing corroborator against
+T2's silences, with the R.7 `CONF_MIN` floor discriminating a trustworthy FA
+word from a collapsed one. Estimated cost: **~2x FA wall-clock** (V6 ~231s ->
+~460s), which collides with R7's runtime note.
+
+*(f) Blast radius.* Because Rust ONNX inference is deterministic in (audio
+window, text), a committed boundary can only move if the chunk carrying its
+words changed — so a chunk-plan diff is an exact upper bound with no FA run
+needed. Measured over all 649 FA-committed segments:
+
+| Candidate rule | chunks (v6/173/es) | boundaries that COULD move | item 6 | item 7 | V6 seam 150/151 control |
+|---|---|---|---|---|---|
+| baseline | 280/118/5 | — | — | — | — |
+| reject silence containing **zero** token seams | 251/81/5 | **179 (27.6%)** | window changes | unchanged | **unchanged** |
+| reject silence not containing **its own** seam | 151/52/5 | **460 (70.9%)** | changes | changes | changes |
+| select by seam containment | 406/97/6 | **610 (94.0%)** | changes | changes | changes |
+| + unique containment | 111/65/2 | **636 (98.0%)** | changes | changes | changes |
+
+*(g) OPEN QUESTION FOR THE OWNER — Session B cannot start until this is
+ruled.* R-R decided "merge (1) token-index matching and (2) independent
+two-pass corroboration". (2) is achievable only as T1, i.e. only by actually
+running FA twice. (1) is achievable only in a containment form, not the
+token-to-token-gap form the amendment specifies. And every variant except the
+narrowest can move 70-98% of the corpus, including the one boundary the ear
+has certified correct. Options, laid out — the choice is the owner's, and this
+document records none of them as taken:
+
+  1. **Amend R.1(c) to seam CONTAINMENT and stay single-pass.** Keeps T0xT2,
+     drops the unbuildable gap clause, fixes both items. Cheapest; leaves the
+     corroborator count at two independent tiers, not three.
+  2. **Build the two-pass T1 design R-R(2) actually requires.** Genuinely
+     three-source. Costs ~2x FA runtime and a new pass-1 windowing path.
+  3. **Narrowest fix only** — reject a silence containing zero token seams.
+     Fixes item 6, leaves item 7 open, and is the only variant measured to
+     leave the V6 seam control untouched. Smallest acceptance burden by far.
+  4. **Re-scope**: fix nothing in `faAnchors.ts` and route items 6/7 to
+     Phase 5's fence — which R-R already rejected, and which this session
+     surfaces no new evidence for.
+
 **R.2 — Padding, and how it is bounded.** A run's audio window is
 
 ```

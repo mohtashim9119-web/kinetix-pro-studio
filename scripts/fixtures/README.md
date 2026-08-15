@@ -11,8 +11,8 @@ and by name inside `scripts/phase4-restore-replay-inputs.py`,
 `scripts/phase4-step-s-structural-checks.py`,
 `scripts/phase4-step-q-spanish-clips.py`, `scripts/phase4-step-u-score-spanish.py`,
 and `scripts/phase3-reference-validity-step-b-phoneme.py`. The 6 R-H-second-baseline
-CSVs are the one exception — evidence artifacts, read by no script (see their own
-section). Moving or renaming any hardcoded-path file here requires updating every
+CSVs were the one exception when they landed, but no longer are: `scripts/phase4-fa-replay.test.ts`
+reads all six by hardcoded name (see their own section). Moving or renaming any hardcoded-path file here requires updating every
 one of those paths in the same commit, or the golden-replay test breaks (see
 `docs/history.md`'s 2026-08-09 docs-restructure entry for the earlier version of
 this mistake).
@@ -69,9 +69,27 @@ convention. Both address R-H; only this one was ever in scope for R-Q.
 
 ## R-H second baseline — real production FA run (2026-08-16)
 
-Read by nothing (evidence artifacts for the R-H/item-6 measurement session,
-`docs/work-in-progress.md` §11 item 6 — not wired into any test or gate, per
-that session's own scope: measure and report, do not act on findings).
+**Read by `scripts/phase4-fa-replay.test.ts`** (the FA replay gate) — all six
+files, by hardcoded name. This corrects the original "read by nothing" note
+here: that was true only between 580ba0f (which captured them) and 37e9271
+(which made them load-bearing). Moving or renaming any of the six now breaks
+that gate, exactly like the golden-baseline files at the top of this README.
+
+**KNOWN STALE — one row, one file (WS1 Session A.5, 2026-08-16).**
+`phase4-fa-second-baseline-spanish-segments.csv` predates 616abb2's
+forced-split chunk-attribution fix and was never regenerated: its
+`023_scylla_six_sailors` row still reads `66.73`, while current code produces
+`65.12` (the ear-correct value). RETAINED deliberately rather than deleted or
+refreshed — refreshing needs a real Rust ONNX capture, and the file is
+load-bearing for the gate — with the staleness recorded in three places that
+a reader cannot miss: here, the gate's own `KNOWN_BAD` item-9 entry
+(`status: 'fixed'`, deliberately NOT asserted against the stale value), and
+`docs/work-in-progress.md` §11. Verified this session: the v6 and 173 files
+are NOT stale — reconstructing the production chunk plan at HEAD reproduces
+the real capture 280/280 and 118/118 chunks byte-identical, as expected for
+two corpora with zero forced splits. Regenerate all six together when Session
+B's fix lands.
+
 Captured by calling the real, unmodified `fa::fa_align` (the function
 `fa_align_dev`/`fa_align_production` both delegate to) directly against each
 project's own real 16kHz audio and the real PRODUCTION chunk plan
