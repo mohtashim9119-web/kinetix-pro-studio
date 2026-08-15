@@ -85,7 +85,7 @@ lock-gate text, not copied from the deleted file uncritically).
 
 | Stage | Lock-gate text (plan.md line range) | Criteria | Met? | Evidence | Blocker |
 |---|---|---|---|---|---|
-| **1 — Prepare** | `:3820-3826` | Contract IN + 1→2 verified guarantee-by-guarantee; inspector run on ≥1 tight-pause + ≥1 long-pause project, thresholds met; determinism check passed; non-English corpus resolved or accepted in writing; no Stage 1 defect deferred downstream; cross-cutting regression checklist (D.-1) clean | **NOT MET** | Phase 0/1b/2a/2b done; Phase 3 (Task 5) dev-only, not production; Phase 3c not started | (a) smear thresholds still unmet until Phase 3 production-lands; (b) fr/de/pt corpus absent (Spanish partially accepted, reopens once Phase 3b ships Spanish-specific code); (d) Contract IN/1→2 verification not run; (e) regression checklist not run; Phase 3c (hyphen asymmetry, the last Stage-1 index-shifting event) not started — see §3 |
+| **1 — Prepare** | `:3820-3826` | Contract IN + 1→2 verified guarantee-by-guarantee; inspector run on ≥1 tight-pause + ≥1 long-pause project, thresholds met; determinism check passed; non-English corpus resolved or accepted in writing; no Stage 1 defect deferred downstream; cross-cutting regression checklist (D.-1) clean | **NOT MET** | Phase 0/1b/2a/2b done; Phase 3 (Task 5) dev-only, not production; **Phase 3c CLOSED 2026-08-15** (qi-bookkeeping sub-items DONE; hyphen-asymmetry CLOSED by written acceptance, no code change — `sync-pipeline-v2-plan.md`'s Phase 3c entry) | (a) smear thresholds still unmet until Phase 3 production-lands; (b) fr/de/pt corpus absent (Spanish partially accepted, reopens once Phase 3b ships Spanish-specific code); (d) Contract IN/1→2 verification not run; (e) regression checklist not run — see §3. Phase 3c is no longer a blocker |
 | **2 — Align and Select** | `:3843-3846` | Contract 2→3 verified (timing-free type, partition order, skip semantics pinned); R6/R10/R12 closed or accepted in writing; regression checklist clean | **NOT MET** | Only the neutrality-exempt Phase 1 sub-item shipped (deleted a redundant gap-fill in `alignScenestoTranscript`, `whisperService.ts:1342`) | Phase 4 (the literal restructure) not started — blocked on Stage 1 lock |
 | **3 — Place** | `:3863-3867` | Contract 3→4 verified (fence-inside-gap, contiguity-by-arithmetic, single lock-handling site, no clamps); `pairIdx-20` closed or accepted; the 8 seam-exemption cases + 20 controls hold; regression checklist clean | **NOT MET** | Nothing shipped | Phases 5/6/6b not started — blocked on Stage 1 + Stage 2 locks |
 | **4 — Finalize and Report** | `:3875-3880` | Contract OUT verified (severity taxonomy, gap list); 6-question reader rubric passes; 96.2% figure retired in favor of `verification-baseline.csv`; regression checklist clean; all standing docs updated | **NOT MET** | Nothing shipped | Phase 7 not started — blocked on Stage 1/2/3 locks |
@@ -101,9 +101,9 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
+| **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring UNBLOCKED, not yet started** | — | None (3b and 3c both landed 2026-08-15) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5. Option B's gate-sequencing condition (§11 item 1) is now satisfied |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
-| 3c | 1 | **PARTIALLY DONE, 2026-08-15** — the two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE; the phase's original scope, hyphen-asymmetry, remains **NOT STARTED** (owner-deferred this pass, see changelog) | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` (unaffected by this pass). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, this session's changelog entry |
+| 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
 | 5 | 3 | **NOT STARTED** | — | Stage 1 + 2 locks; heading-wildcard Option A logic (decided, not coded) | Replace `computeBoundarySearchWindow`/`isBoundarySilenceCandidate` with the fence |
@@ -557,12 +557,14 @@ cross-referenced against `src/types.ts` live:
 | P3 | Drop-distribution reporting | ✅ | `syncContracts.ts:102` `analyzeDropDistribution` |
 | P4 | Silence ascending/disjoint runtime assertion | ❌ | grepped `silence-scan-anomaly` across `src/` — zero hits; Phase 4, REQUIRED ADDITION, not built |
 | P5 | Silence-scan-failed vs. no-silence-found, type-level | ✅ | `silenceDetector.ts:21-22` — `{status:'ok', silences}` \| `{status:'error', errorMessage}` |
-| P6 | Same language-keyed normalizer, byte-identical English path | ❌ | Phase 3b/3c not started — see §3, §10 |
+| P6 | Same language-keyed normalizer, byte-identical English path | ❌ | Phase 3b DONE, Phase 3c CLOSED (2026-08-15, by written acceptance — the hyphen-asymmetry manifestation of this requirement is accepted, not fixed); not yet owner-verified guarantee-by-guarantee as P6 itself requires — see §3, §10 |
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
-**5 of 8 met** (P1, P2, P3, P5, P7-partial); P4/P6/P8 open, all tied to phases not yet
-started (3b/3c, 4) — consistent with Stage 1/2 both being unlocked (§2).
+**5 of 8 met** (P1, P2, P3, P5, P7-partial); P4/P8 tied to Phase 4 (not started); P6 is
+open on process (owner guarantee-by-guarantee verification, item 12) even though the
+phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
+unlocked (§2).
 
 ---
 
@@ -616,8 +618,9 @@ additive, not a fix to a live diacritic-loss bug.
    changelog).** **Rule 2 (Spanish cardinals 0-30) DONE, 2026-08-15 (Phase 3b
    Slice 3, see changelog) — 31+/other-languages/decimals/currency/thousands
    separators remain unstarted.**
-4. Land Phase 3c (hyphen-asymmetry fix) — **NOT STARTED — owner: project owner**; also
-   directly blocks Stage 1 lock regardless of FA.
+4. Phase 3c (hyphen-asymmetry) — **CLOSED, 2026-08-15, by written acceptance, no code
+   change** (§3, §11 item 8) — no longer blocks Stage 1 lock. `textNormalize.ts` is
+   unchanged by this closure, consistent with item 2's byte-identical constraint.
 5. Source real `fa-vocab-<lang>.json` files for the production build path (today only
    under `scripts/fixtures/`) and wire them into `faTextNormalize.ts` at the eventual
    chunk-building call site.
@@ -683,10 +686,10 @@ sequencing note):**
    "capability-gated production wiring" item named throughout §4/§6/§7. *Depends on:* §7
    item 2 (R.5 whether/when) — affects this slice's shape (does the production command need
    to surface per-word confidence/wildcard data, or just a single `t0`?) but does not block
-   starting it. **Sequencing block (Option B, 2026-08-15):** does not start until Phase 3b
-   and 3c (items 7-8 below) both land — the gate stays off through both and flips once,
-   after 3c, so the boundary set is measured exactly once. This is a decision-imposed
-   block, not a technical one — see the Phase 3 row (`sync-pipeline-v2-plan.md`, §3 above).
+   starting it. **Sequencing block (Option B, 2026-08-15): LIFTED, 2026-08-15.** Phase 3b
+   and 3c (items 7-8 below) have both now landed (3c closed by written acceptance, not by
+   code — see its own entry) — the gate-sequencing condition is satisfied and this slice is
+   ready to start. See the Phase 3 row (`sync-pipeline-v2-plan.md`, §3 above).
 2. **`FaEvent` → UI progress consumer.** *Goal:* a real progress bar/status consumer for
    `FaEvent::Progress`/`Done`/`Error`, mirroring `useWhisper.ts`'s existing pattern for
    `WhisperEvent`. *Files:* new hook (e.g. `useForcedAlignment.ts`) consuming
@@ -722,11 +725,16 @@ sequencing note):**
    `sync-pipeline-v2-plan.md` Part H.5 full spec. *Exit criteria:* English path provably
    byte-identical to today's baseline (gate); fr/de/pt rules land, dormant behind language
    keys until corpus material arrives to verify them. **Needs an owner.**
-8. **Phase 3c — hyphen-asymmetry fix.** *Goal:* fix `textNormalize.ts` gluing a
-   mid-call hyphenated word into one alignment word while Whisper emits two tokens. *Exit
-   criteria:* the fix lands, its own re-listen of the affected set completes, tokens/word
-   indices shift one final time (the last Stage-1 index-shifting event). **Directly gates
-   Stage 1 lock — needs an owner.**
+8. **Phase 3c — hyphen-asymmetry.** **CLOSED, 2026-08-15 — by written acceptance, no code
+   change.** The fix (splitting hyphenated compounds on the script side) was measured
+   against both corpus projects: 19 genuine compounds, 8 clean-split-fixable, but splitting
+   produced exactly one boundary change in the entire corpus (V6 seg 150, 457.83→458.12),
+   and the owner's ear-test confirmed 457.83 (current, unfixed) is correct and 458.12 is
+   wrong — no silence snap involved, a pure anchored-only midpoint shift. Fixing it would
+   make one boundary worse for no corpus-wide gain, so it is accepted as a documented Stage
+   1 defect under D.-1 criterion 3 rather than fixed. Full ruling, mechanism, and revisit
+   trigger (Phase 5's fence changing this seam's anchor derivation): `sync-pipeline-v2-plan.md`'s
+   Phase 3c entry. **No longer gates Stage 1 lock** — item 12 below is unblocked on this item.
 9. **Task 2 — Slice 2, re-derive the 50/50 silence-split rule.** Independent of Task 5;
    cleanly decoupled from the editor path (verified twice per the pre-consolidation
    record). *Exit criteria:* `snapBoundaries.ts` + Apply-Sync plumbing re-derived against
@@ -743,8 +751,9 @@ sequencing note):**
     (owner inspection); determinism check (Phase 0, likely already satisfied, re-confirm);
     cross-cutting regression checklist (D.-1, 9 items: locks, skipped segments, headings,
     no-voiceover path, silence-scan failure, empty-token fallback, persistence/reload,
-    export/preview consumers, DEV harnesses). *Depends on:* items 1 (Phase 3 production
-    landing) and 8 (Phase 3c) both landing first.
+    export/preview consumers, DEV harnesses). *Depends on:* item 1 (Phase 3 production
+    landing) — item 8 (Phase 3c) is CLOSED as of 2026-08-15 (by written acceptance, not code)
+    and no longer blocks this item.
 13. **STAGE 1 LOCK.** *Exit criteria:* §2's Stage 1 row, all criteria met. *Depends on:*
     items 1, 8, 12.
 14. **Phase 4 — the Stage 2 restructure.** Timing-free Stage 2 return type; single Stage 1
@@ -1650,3 +1659,76 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   Phase Board row, updated in this same commit). `git status`: 5 files
   changed (3 source, 2 test) — no protected file touched, no new doc file,
   nothing moved into or out of `scripts/fixtures/`.
+
+- **2026-08-15 — Phase 3c CLOSED by written ruling: hyphen-asymmetry accepted,
+  NO CODE CHANGE. Phase 3c fully closed.** Closes the one remaining Phase 3c
+  sub-item left open by the qi-bookkeeping pass above, under D.-1's own
+  allowance ("closed OR explicitly accepted in writing with a reason
+  recorded here") — the same allowance Phase 2a's Step 5 used for Spanish
+  boundary verification (`sync-pipeline-v2-plan.md:381`).
+
+  **Basis, established across three prior sessions plus this session's
+  owner ear-test:** 19 genuine hyphenated compounds across the V6 + 173
+  corpus; 8 clean-split-fixable, 11 permanently blocked by Whisper's own
+  sub-word fragmentation regardless of script-side normalization. Splitting
+  the 8 fixable compounds produced exactly ONE boundary change in the
+  entire corpus: V6 segment 150 (`154_silent_night_birds`)'s end, moving
+  from 457.83s to 458.12s. The owner ear-tested both candidates: **457.83
+  (current, unfixed) is correct; 458.12 (post-split) is WRONG.** Variants A
+  and B (two candidate splitting strategies) were replay-identical on this
+  corpus, so reducing scope between them buys nothing.
+
+  **Mechanism — measured, not inferred: no silence snap participates.**
+  Zero silence-detector candidates exist in the window on either side of
+  this boundary, both before and after the change. The boundary is the
+  plain midpoint of segment 150's last-matched word and segment 151's
+  first-matched word. Unsplit, "mid-call" fails to match, so the anchor
+  falls back to "cut" (ending 457.14) instead of "call" (ending 457.72);
+  midpointing against segment 151's first match (458.52) gives 457.83.
+  Split, "call" matches and the same arithmetic gives 458.12. The
+  tokenizer defect is producing the better answer by arithmetic
+  coincidence, not by correctness — the load-bearing detail of this
+  ruling, not a footnote.
+
+  **Ruling: no code change.** Fixing 8-of-19 compounds to make the corpus's
+  one measured boundary worse is not worth the index-shift-plus-re-listen
+  cost 3c's own scope already priced in. The defect is accepted as a known,
+  documented Stage 1 defect under D.-1 criterion 3. **Revisit trigger:** the
+  moment Phase 5's fence changes how this seam's anchor is derived (no
+  longer a last-match/first-match midpoint), this acceptance is voided and
+  V6 seg 150 must be re-listened to before Phase 5 can claim the eleven
+  word-shift cases are its only regression surface.
+
+  **Phase 5 warning pinned forward (highest-shelf-life output of this
+  investigation).** Added a standing-counterexample warning at Phase 5's
+  own entry, plus short cross-reference notes at Phase 6 and 6b: any future
+  change that recovers more true word matches at a compound-hyphen seam
+  will silently reproduce this regression unless that seam is specifically
+  re-listened to — "the fence recovers more matches" is not, by itself,
+  evidence of a better boundary. Also recorded, explicitly marked as a
+  hypothesis from one data point and not a rule: the last-matched-word /
+  first-matched-word midpoint may not be the right placement model in
+  general, since the owner's ear preferred the earlier cut over the more
+  central one — a cut may belong nearer the end of speech than the centre
+  of a pause. Phase 5 is directed to test this, not adopt it.
+
+  **Cross-references updated:** `sync-pipeline-v2-plan.md`'s Contract 1→2
+  P6 row (hyphen-asymmetry manifestation now closed by acceptance) and the
+  Stage 1 lock gate's blocking-list section (Phase 3c removed as an
+  outstanding blocker). This doc's §2 (Stage 1 row), §3 (Phase 3/3c rows),
+  §9 (P6), §10 (item 4), and §11 (items 1, 8, 12) updated to match — Option
+  B's gate-sequencing block on item 1 (capability-gated production wiring)
+  is LIFTED, since its condition ("3b and 3c both land") is now satisfied.
+
+  **No code changed.** `src/` and `src-tauri/` untouched, zero new files,
+  `project-state.md`/`docs/history.md` untouched (known stale by owner
+  decision), golden replay not re-baselined. Verification run this pass:
+  `npm test`, `npm run lint`, and the golden replay (`scripts/phase4-handoff-replay-sync.test.ts`)
+  — all unchanged from the current baseline, as expected for a doc-only
+  ruling.
+
+  **Phase 3c status: FULLY CLOSED.** Both sub-items (qi-bookkeeping,
+  hyphen-asymmetry) are closed — the former by code, the latter by written
+  acceptance. This unblocks §11 item 1 (capability-gated production wiring,
+  no longer sequencing-blocked) and removes Phase 3c from Stage 1's
+  outstanding blocker list (§2).
