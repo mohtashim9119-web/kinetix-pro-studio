@@ -382,6 +382,20 @@ with a known, architecturally-guaranteed gap; (c) descope permanently — would 
 owner ruling D1's explicit scope, not a default any doc can make unilaterally.
 *Owner, trigger:* project owner; before or during the capability-gated production-wiring
 slice (§11, item 4) — the slice's own shape depends on the answer.
+*NEW EVIDENCE, 2026-08-16 (ear-pass root-cause session, §11 item 6's addendum below) —
+R.5's value is now MEASURED, and it is partial, not a cure-all.* R.5 would have prevented
+exactly **2 of the 7** ear-verified FA failures (items 4 and 5, the unscripted "Level N …"
+recitations) — established by a real FA re-run, not by argument: giving that audio its own
+segment (a manual stand-in for R.5's wildcard, identical in effect under R-E since the
+wildcard span goes to the preceding segment) moved both boundaries onto the ear-correct
+value exactly, 130.96 and 931.40, with no other boundary in the project disturbed. R.5
+would NOT have prevented items 6, 7, 9, 10 or 11 — those are a false-anchor defect, a
+chunk-plan attribution bug, and the mirror-image case (scripted text that is never spoken,
+which a wildcard absorbs audio for but never drops text for). **Implication for this
+decision:** R.5 is confirmed real and worth building, but it does not by itself make FA
+reliable, so "build R.5" cannot substitute for the confidence-gate / false-anchor /
+forced-split work the addendum identifies. Sequencing it ahead of those is a choice, not
+an obvious win.
 
 **3. Branch protection on `main`.**
 *Current state (live-verified):* `main` has no branch protection (`gh api .../branches/main/protection`
@@ -940,6 +954,200 @@ sequencing note):**
    >   the real jonatasgrosman/wav2vec2-large-xlsr-53-{english,spanish} models via
    >   `measure-forced-alignment-hf.py`, superseding the barred MMS-FA capture. Detail:
    >   `docs/work-in-progress.md` §11 item 6 changelog, 2026-08-16."*
+   **ADDENDUM to item 6 — ear-pass root-cause diagnosis, 2026-08-16 (diagnosis only; no
+   `src/`/`src-tauri/` change, no tuning, gate stays OFF).** The owner completed the 12-item
+   ear pass above: **5 correct, 7 wrong**. This pass attributes a mechanism to each of the
+   12 and answers three specific leads. All instrumentation was reverted (working tree
+   clean; `npm test` 2107 passed, `npm run lint` clean, `cargo check --features
+   fa-inference` clean, golden replay 6/6 — all unchanged).
+
+   *Evidence base:* the second baseline's own gitignored per-word artifacts
+   (`.work-phase4/replay/<key>/fa_production_words.json` / `fa_production_chunks.json` /
+   `fa_second_baseline_analysis.json`), each project's `transcript_tokens.json` and
+   `silences_app.json`, direct RMS envelopes off `audio_16k.wav`, and two fresh real
+   `fa_onnx::align_chunked` passes over V6.
+
+   **Four mechanisms cover all 7 failures. None is unexplained.**
+   1. **Unscripted audio the scene doc has no segment for — items 4, 5 (v6).** Whisper's
+      own transcript shows "Level two. The boy who carries fire." at 125.54–129.01 and
+      "Level 8. The one who teaches what cannot be taught easily." at 925.14–928.93; neither
+      is in the scene doc. Forced alignment must place every scripted word somewhere, so the
+      following scripted words are dragged backward onto that audio ("are" stretched to
+      1.42s at confidence 0.0002). Whisper's matcher is free to leave those words unmatched
+      and therefore is not dragged. **Confirmed by experiment, not argument** — see the
+      item-5 experiment below.
+   2. **Scripted text that is never spoken — items 10, 11 (173).** `perilous_realms` ("The
+      Hardest Warhammer 40K Environments to Fight In", the on-screen title) and the planted
+      `blue_monkey` string are both absent from the audio (RMS + Whisper transcript both
+      confirm). FA has no drop path, so it carved 0–1.36s and 36.96–37.73s out of the
+      neighbouring real speech to host them. Whisper's coverage gate dropped both correctly.
+      This is the exact mirror image of mechanism 1, and R.5 does not address it.
+   3. **False anchor from Whisper timestamp smear — items 6, 7.** Both chunk seams here are
+      well-formed on paper (anchor skew 0.06s and 0.10s, well inside `ANCHOR_AGREEMENT_SEC`),
+      and both are wrong. Direct RMS shows v6 has real silence at 450.40–451.70 and 173 at
+      174.55–174.95, while Whisper's tokens ("brush"@451.24, "the"@174.51) sit *inside* those
+      silences — smear of ~1.0–1.2s. `faAnchors.ts`'s `findAgreeingSilence` matches a
+      detected silence against a raw Whisper token **timestamp**, so the "three-source
+      agreement" is really two sources: the alignment op and the token onset both come from
+      the same smeared Whisper output, and only the silence is independent. The seam
+      therefore lands 5 script words (v6) / 2 script words (173) out of register, and FA is
+      forced to cram those words into the preceding silence at ~0 confidence.
+      Independently corroborated by FA itself: the *next* chunk places "moving" at 452.92 and
+      "crew" at 176.04 at confidence 1.0000 / 0.9990 — i.e. FA agrees with the RMS, not with
+      Whisper. This is the same failure `CLAUDE.md`'s standing invariant already forbids
+      elsewhere ("never build a boundary search window from raw token *timestamps*"), applied
+      to a code path that predates it.
+   4. **`faChunkPlan.ts` forced-split attribution bug — item 9 (spanish). An ordinary bug,
+      not an FA limitation.** `runQiRanges` gives a `'forced-split-*'`-terminated run an
+      empty `qi` range by design ("a force-split subdivides the WINDOW but never the TEXT"),
+      and `attributeByIndex` then folds that run's *window* backward into the previous chunk.
+      The text whose audio lives in that window stays with the *next* chunk. Measured on the
+      Spanish corpus: anchors are correct (qi 179 `que` ↔ 61.36) and runs are correct, but
+      run 4 `[61.36, 65.58)` is forced-split, so chunk 3 becomes `[34.46, 65.58)` ending at
+      "…por lo" while chunk 4 becomes `[65.58, 92.04)` starting at "que" — whose real onset
+      is 61.35. FA had no window containing that audio and crammed 8 words into 1.14s at
+      0.0000 confidence. **Census across the whole corpus: exactly one forced split exists
+      (v6 0/330 runs, 173 0/149, spanish 1/6) and it produces exactly one of the seven
+      failures.** The module's own doc comment states this path "never fires on the real 173
+      corpus … so it is a correctness guard, not a tuned path" — it fires on Spanish, and
+      when it fires it mis-attributes a whole run. It will fire on any project with a >30s
+      (`MAX_RUN_SEC`) anchor-free stretch, which is a low-anchor-density condition, not a
+      language condition.
+
+   **12-item mechanism table** (FA/Whisper = committed start of the named boundary;
+   `L`/`R` = FA's own confidence on the last word before / first word after the boundary):
+
+   | # | Proj | Segment (boundary) | FA | Whisper | Ear | L conf | R conf | Mechanism |
+   |---|---|---|---|---|---|---|---|---|
+   | 1 | v6 | `030_watching_older_hunters` start | 87.23 | 78.56 | FA ✓ | 0.9999 | 0.9935 | Well-formed chunk; FA recovered 3 segments Whisper dropped, so the Δ+8.67s is bookkeeping, not error |
+   | 2 | v6 | `027_internal_change_face` start | 78.56 | (dropped) | FA ✓ | 0.9997 | 0.9618 | Coverage recovery — the plan doc's "flash-attention content dropout, V6 segs 27-29" case |
+   | 3 | v6 | `029_night_understanding` start | 83.53 | (dropped) | FA ✓ | 0.9988 | 0.9993 | Same recovered run |
+   | 4 | v6 | `308_scouts_leading` start | 928.67 | 931.40 | W ✓ | 0.0001 | 0.0128 | (1) unscripted "Level 8 …" 925.14–928.93 |
+   | 5 | v6 | `043_night_migration` start | 128.43 | 130.96 | W ✓ | 0.0000 | 0.0000 | (1) unscripted "Level two …" 125.54–129.01 |
+   | 6 | 173 | `vessel_damage_clue` start | 172.91 | 174.74 | W ✓ | 0.0011 | 0.0000 | (3) false anchor; Whisper "the/last" smeared into real silence 174.55–174.95 |
+   | 7 | v6 | `152_frozen_brush_mice` start | 449.20 | 451.03 | W ✓ | 0.0006 | 0.0015 | (3) false anchor; Whisper "brush/mice/stop" smeared into real silence 450.40–451.70 |
+   | 8 | v6 | `155_predator_passing_under` start | 457.81 | 457.83 | both ✓ | 0.6814 | 0.9979 | Well-formed chunk, clean silence, high confidence — the "FA working as designed" control |
+   | 9 | es | `023_scylla_six_sailors` start | 66.73 | 65.12 | W ✓ | 0.0000 | 0.0000 | (4) forced-split chunk-plan bug |
+   | 10 | 173 | `perilous_realms` / head | 1.36 | 0.00 | W ✓ | (start) | 0.0000 | (2) scripted title never spoken |
+   | 11 | 173 | `blue_monkey` span | 36.96–37.73 | (dropped) | W ✓ | 0.0000 | 0.0000 | (2) planted string never spoken |
+   | 12 | es | `001_scylla_intro` span | 0.00–1.06 | (dropped) | FA ✓ | (start) | 0.0147 | Coverage recovery — "Scylla." IS spoken twice (0.12–0.64, 0.84–1.21); Whisper wrongly dropped it |
+
+   **Item 11's confidence, asked explicitly: FA was NOT confidently wrong.** All 7
+   `blue_monkey` words scored below `CONF_MIN`, `minWordConfidence` 1.9e-08,
+   `needsReviewCount` 7/7. Same for `perilous_realms` (7/7, 1.3e-06). The segment-level
+   `alignConfidence` of 1.000 those rows also carry is the *text-match* confidence (every
+   script word found a token), not an acoustic one — the two must not be conflated.
+
+   **Confidence is a strong but imperfect predictor, stated with its exception.** Taking the
+   two words immediately adjacent to each tested boundary: all 7 failures have BOTH below
+   0.013; 4 of the 5 correct have BOTH at or above 0.68. The single false positive is item
+   12 (0.0147, correct anyway) — a one-word segment at corpus start, R.6's own known edge
+   case. So `needsReview` had **perfect recall (7/7) and one false positive out of 5** on
+   this sample. A corpus-wide chunk census adds context: 13.7% of all 5783 words are
+   flagged, and the flag rate falls monotonically with chunk length (42.5% in sub-2s chunks
+   → 5.1% in ≥12s chunks; all 19 chunks where *every* word is flagged have median duration
+   1.58s). *Correlation only* — R.2 padding was already built and measured net-unfavorable
+   (D24), so the naive "short chunks starve the model of context" reading is not supported
+   by the one experiment that tested it. Counter-example from this session's own re-run:
+   after the item-5 fix, "on nights when" still scores 0.0000 while landing within 0.08s of
+   the truth — a low score marks risk, not error.
+
+   **THE OWNER'S ITEM-5 EXPERIMENT — RUN, AND IT CORRECTS.** Method: rebuild the V6 scene
+   doc with one added segment carrying the unscripted "Level Two. The Boy Who Carries Fire."
+   text (and, in a second variant, "Level Eight. …" for item 4), regenerate the production
+   chunk plan through the real `computeFaChunkPlan`, re-run the real
+   `fa_onnx::align_chunked` against the real 16 kHz audio, and push the result through the
+   identical post-FA pipeline the second baseline used.
+   - *Harness fidelity proven first:* the unmodified control reproduces the committed
+     second baseline exactly — 280/280 identical chunks and **0 of 3874 word rows differing**
+     from `fa_production_words.json`, committing `043_night_migration` at 128.43 as recorded.
+   - *Result:* `043_night_migration` moves to **130.96** and `308_scouts_leading` to
+     **931.40** — the ear-correct values for items 5 and 4, exactly, to the centisecond.
+     At the word level "you are eleven" moves from 125.96–128.34 (confidence 0.0000/0.0002/
+     0.0000) to 129.54–130.34 (0.9984/1.0000/0.9351), and "you are forty-nine" from
+     927.28–928.64 to 929.72–930.78 (0.9620/1.0000/0.9993).
+   - *No collateral damage:* of 447 boundaries shared with the control, **4 moved** — the two
+     tested ones and the two segments whose text the insertion displaced. 443 unchanged.
+   - *Answer to the owner's hypothesis:* **no, FA does not still misalign.** Given a segment
+     for the extra audio, FA places it correctly and the tested boundary is exact.
+
+   **LEAD B — the repeated 1.83s is a COINCIDENCE, shown by construction, not by hand-waving.**
+   Across all 642 boundaries FA and Whisper share, |Δ| = 1.83s occurs exactly twice — and
+   several other 2-decimal values collide just as often (0.30s ×4, 0.23s ×4, 0.27s ×3) among
+   the 81 non-zero deltas, so a 2× collision is unremarkable. Decisively, the two 1.83s are
+   arrived at by *different arithmetic*: in 173, both boundaries are silence midpoints and
+   1.83s is simply the distance between two adjacent ones (172.91 = mid of [172.700,173.120),
+   174.74 = mid of [174.520,174.960)); in v6, Whisper's 451.03 is a silence midpoint but FA's
+   449.20 is an unsnapped word onset, so the same number is a midpoint-minus-onset. It is
+   also not a frame constant: 1.83s is 91.5 frames at the model's 20 ms stride — not an
+   integer, so no stride, padding, resample or index off-by-N can produce it. **Not one bug.
+   Do not spend on it.** The one real finding underneath it is worth keeping: `snapBoundaries`
+   *amplifies* sub-second word error into multi-second boundary error by snapping to a
+   different silence — 173's raw FA onset was only 0.55s early, which was enough to select
+   the previous silence instead of the next.
+
+   **LEAD C — both "FA later" items are misfiled; neither is a head/warmup or a Spanish
+   effect.** Item 10 is not leading silence, music, breath or first-chunk warmup: the 173
+   audio simply begins with "Some places in the 41st millennium…" at 0.16s and the scene
+   doc's first segment is an unspoken on-screen title — mechanism (2), Lead A's mirror
+   image, not a distinct failure. Item 9 is not language- or model-specific either: it is the
+   forced-split attribution bug, mechanism (4), which fires on any project whose anchor
+   density leaves a >`MAX_RUN_SEC` gap. **Implication for the fr/de/pt gap:** the Spanish
+   result carries no evidence of a Spanish-model weakness — where the chunk plan was sound,
+   Spanish FA scored 0.94–1.00 throughout, and it recovered a real segment (item 12) Whisper
+   dropped. The transferable risk to fr/de/pt is *low anchor density* (Spanish produced 4
+   anchors over 92s), not the acoustic model.
+
+   **Grouping — one mechanism explains more than one failure in every case:** (1) → items
+   4, 5. (2) → items 10, 11. (3) → items 6, 7. (4) → item 9. Four mechanisms, seven failures,
+   nothing left over and nothing manufactured.
+
+   **Inherent vs. missing-feature vs. bug — the categorisation the ruling actually turns on:**
+   - *Inherent to forced alignment (2 of 7: items 10, 11).* FA's defining property is that
+     every target token gets a position. "This scripted line is not in the audio" has no
+     representation in a CTC forced-alignment objective, so FA cannot drop it. This is not
+     tunable. It is, however, **detectable** — FA flagged 7/7 words on both — so the honest
+     framing is "inherent to alignment, fixable at the layer above it (a drop/skip gate on
+     acoustic confidence, which is what Whisper's coverage gate already is)."
+   - *Missing feature, R.5 (2 of 7: items 4, 5).* Measured, not assumed — the experiment
+     above corrects both exactly. See §7 item 2's new-evidence paragraph.
+   - *Ordinary bugs (3 of 7: items 6, 7, 9).* The false-anchor timestamp dependency
+     (`faAnchors.ts`'s `findAgreeingSilence`, items 6 and 7) and the forced-split empty-`qi`
+     attribution (`faChunkPlan.ts`'s `runQiRanges`/`attributeByIndex`, item 9) are defects in
+     the chunk-plan layer, not in forced alignment. Both are Whisper-side inputs to FA: FA
+     was handed the wrong window and did the best a forced aligner can with it. **Neither is
+     a reason to judge FA itself.**
+   - *Honest read on "can FA ever be perfect":* on this evidence, **no single-source pipeline
+     can be**, and FA's failures are more repairable than they first look — 3 of 7 are bugs
+     in code FA doesn't own, 2 are a feature already scoped and now measured to work, and
+     only 2 are inherent, with a detection signal already present in the wire format. What
+     the evidence does *not* support is that fixing all of this makes FA perfect: item 8's
+     0.02s and item 6's amplification-through-snapping both show the last few hundred
+     milliseconds are governed by `snapBoundaries`, not by the timing source at all.
+   - *Nothing in the 12 is unexplained.* Two residual uncertainties are stated rather than
+     resolved: (a) why the model's confidence collapses across a whole short chunk rather
+     than only at its edges is correlational here, and R.2's negative result rules out the
+     obvious explanation; (b) item 6's ear-correct 174.74 sits ~0.7s after Whisper's own
+     "of" onset, so what the ear is judging there is the snapped silence midpoint, not the
+     word onset — worth remembering before treating any single boundary as word-level truth.
+
+   **Hybrid — presented as an option, not a recommendation.** The data does line up with a
+   split rather than one winner: FA skipped 0 segments where Whisper skipped 3/3/1, and 4 of
+   the 5 ear-correct items are FA recovering segments Whisper wrongly dropped (items 2, 3, 12)
+   or the bookkeeping consequence of that (item 1) — coverage is FA's clear strength.
+   Meanwhile every FA failure is flagged by FA's own `needsReview`, which is already on the
+   wire (`FaWordSpan.needsReview`, `fa.rs`), so a per-boundary source choice is available
+   today without new plumbing: take FA's boundary when its two adjacent words clear
+   `CONF_MIN`, fall back to Whisper's when they do not. On this sample that rule yields 12/12
+   — it accepts all 5 correct FA boundaries (item 12's 0.0147 is a *span* FA supplies and
+   Whisper has no candidate for, so there is nothing to fall back to) and rejects all 7 wrong
+   ones. **Caveats the owner should weigh before reading that as a plan:** n = 12, chosen by
+   this programme as the *most interesting* boundaries rather than at random, so 12/12 is not
+   a generalisation; a mixed-source project has no single `anchorSource` provenance, which
+   §4's word-timing schema and the R-E/Model P rulings would both need to absorb; and fixing
+   mechanisms (3) and (4) would change which boundaries are low-confidence in the first
+   place, so the rule should be re-measured after those, not before.
+
 7. **Phase 3b — language-keyed normalization (fr/de/pt).** *Goal:* per-language number
    words, currency, thousands separators, French elision. *Files:* new normalizer rules,
    `sync-pipeline-v2-plan.md` Part H.5 full spec. *Exit criteria:* English path provably
@@ -1075,6 +1283,50 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16 — FA ear-pass root-cause diagnosis (diagnosis only; no fix, no tuning,
+  gate stays OFF).** The owner's 12-item ear pass came back 5 correct / 7 wrong. This pass
+  attributes a mechanism to all 12 and chases the three named leads. Full write-up: §11
+  item 6's addendum above; R.5 consequence recorded at §7 item 2. Summary:
+  - **Four mechanisms, seven failures, none unexplained.** (1) unscripted audio with no
+    segment → items 4, 5; (2) scripted text never spoken → items 10, 11; (3) false anchor
+    from Whisper timestamp smear across a real silence (`faAnchors.ts`'s
+    `findAgreeingSilence` agrees on a raw token *timestamp*, so two of the "three sources"
+    are the same Whisper output) → items 6, 7; (4) `faChunkPlan.ts` forced-split
+    empty-`qi` attribution bug → item 9.
+  - **Owner's item-5 experiment: RUN, and it corrects.** Control reproduces the committed
+    second baseline exactly (280/280 chunks, 0/3874 word rows differing). With a segment
+    added for the extra audio, `043_night_migration` commits at **130.96** and
+    `308_scouts_leading` at **931.40** — the ear-correct values exactly; 4 of 447 shared
+    boundaries moved, 443 unchanged.
+  - **Lead B closed: the repeated 1.83s is coincidence.** 2 occurrences in 642 shared
+    boundaries (0.30s and 0.23s each occur 4×); the two are reached by different arithmetic
+    (silence-midpoint minus silence-midpoint vs. silence-midpoint minus unsnapped onset);
+    and 1.83s is 91.5 model frames, not an integer. Real finding underneath it:
+    `snapBoundaries` amplifies a 0.55s word error into a 1.83s boundary error by selecting
+    a different silence.
+  - **Lead C closed: both "FA later" items were misfiled.** Item 10 is mechanism (2), not a
+    head/warmup case; item 9 is mechanism (4), not a Spanish-model effect — forced splits
+    are 1/6 runs on Spanish and 0/330, 0/149 on v6/173. Transferable fr/de/pt risk is low
+    anchor density, not the acoustic model.
+  - **R.5 IMPLICATION (may promote it from deferred):** measured to prevent **2 of 7**
+    failures, and measured NOT to prevent items 6, 7, 9, 10, 11. Real and worth building;
+    not a cure-all, and not a substitute for the confidence-gate / false-anchor /
+    forced-split work.
+  - **Categorisation:** 2 of 7 inherent to forced alignment (but detectable — FA flagged
+    7/7 words on both), 2 of 7 missing-feature (R.5), 3 of 7 ordinary bugs in the
+    chunk-plan layer FA does not own.
+  - **Hybrid assessed as an option, not recommended:** FA's own `needsReview` separates the
+    sample perfectly (all 7 failures have both boundary-adjacent words < 0.013; 4 of 5
+    correct have both ≥ 0.68; item 12 the sole false positive at 0.0147), so a per-boundary
+    source choice needs no new plumbing — but n=12, non-randomly chosen, and fixing
+    mechanisms (3)/(4) would change the confidence landscape it keys off.
+  - *Method/verification:* all instrumentation reverted (a temporary `#[ignore]`d
+    `fa_onnx.rs` runner and a temporary vitest harness, both deleted). Two real
+    `align_chunked` passes over V6 audio via `ORT_DYLIB_PATH` set inline. `npm test` 2107
+    passed / 1 skipped, `npm run lint` clean, `cargo check --features fa-inference` clean,
+    golden replay 6/6 — all unchanged. No `src/`/`src-tauri/` file touched; no fixture
+    re-baselined; `isFaGateOpen()` still OFF.
 
 - **2026-08-16 — D.-1 criterion 2 evidence dossier assembled (evidence only, no
   ruling).** Contract IN + Contract 1→2 (Part J) verified guarantee-by-guarantee
