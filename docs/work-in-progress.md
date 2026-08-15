@@ -566,6 +566,47 @@ open on process (owner guarantee-by-guarantee verification, item 12) even though
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
 
+**2026-08-16 — D.-1 criterion 2 evidence dossier assembled (no ruling).** Full
+guarantee-by-guarantee evidence (code file:line, mechanism, named tests, DIRECT/
+PARTIAL/ABSENT/CHANGED label per item) for Contract IN's 9 rows and Contract 1→2's
+12 rows delivered in-chat for owner inspection — not committed as a repo file per
+task constraints (owner inspection, not a doc artifact). Extends this section's P1-P8
+table above to producer+consumer rows on both contracts, with stricter per-item test
+labels. Key findings beyond the table above:
+- **CHANGED (new, not previously itemized):** `validate1to2` (wraps P2/P3 —
+  `validateTokenOrdering`/`analyzeDropDistribution`) is invoked only from
+  `useWhisper.ts:290`, inside `startTranscription`'s fresh-transcription staging
+  path — never from `alignSegmentsFromCachedTranscript`/`alignFromCache`, the
+  function the Apply-Sync commit path (including the FA branch, `App.tsx:2869`)
+  actually calls. P2/P3 therefore never validate the array Apply Sync commits
+  from — true before FA landed too, but FA sharpens the gap since the
+  FA-substituted token array is never validated by either check, at any point.
+- **P8 (bundled Stage 1 output object) and P4 (silence ascending/disjoint runtime
+  assertion):** confirmed absent by direct grep, consistent with the table above —
+  both remain Phase 4 scope, not a Stage 1 regression.
+- **Contract IN A4** (asset-tag ≤1-asset / asset-feeds-≤1-segment): console-only
+  warning path is test-covered for the collision-detection half; the
+  "asset feeds at most one segment" half is untested for the exact-match tier.
+- D.-1's 9-item regression checklist: none of the 9 items have been run as
+  literally specified (real corpus project, running app) — matches the plan's
+  own "(e) not yet run" status. Automated proxy tests exist and pass for locks,
+  skipped-segment boundaries, headings, export/preview consumers; weak-to-no
+  proxy coverage for the no-voiceover path, empty-token fallback,
+  `lastTranscribedFileIdentity` persistence, and the three DEV harness globals.
+- Two of three contract-table UNENFORCED assumptions have no written
+  acceptance yet: Contract IN A3 (script/scene language vs. `Project.language`)
+  and Contract 1→2 A4 (alignment cost bound / `__ALIGN_INSTRUMENT__` dormant).
+  Draft acceptance text for both was prepared for the owner to adopt or edit,
+  not recorded here as fact.
+- `npm test` (2107/2107 + 1 skip), `npm run lint`, `cargo check --features
+  fa-inference`, and the golden replay (`phase4-handoff-replay-sync.test.ts`,
+  6/6) all re-confirmed clean during dossier assembly — no code touched.
+- **Net effect on Stage 1 lock blocking list (line ~3876 of the plan doc):**
+  item (d) is now a short owner read instead of an open-ended dig; items (a),
+  (b), (e) remain open and are not resolved by this pass. Longest remaining
+  pole: (b), the fr/de/pt corpus gap — data acquisition in three languages,
+  not verification of data that already exists.
+
 ---
 
 ### §10. Non-English Normalizer Gap
@@ -1034,6 +1075,19 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16 — D.-1 criterion 2 evidence dossier assembled (evidence only, no
+  ruling).** Contract IN + Contract 1→2 (Part J) verified guarantee-by-guarantee
+  is one of five items blocking Stage 1's lock (plan doc line ~3876). This pass
+  assembled the code/test/measurement evidence for all 21 rows (9 in Contract IN,
+  12 in Contract 1→2) so the owner's own inspection (D.-1 criterion 2 requires
+  it be by owner, not inferred from green tests) is a short read instead of a
+  fresh dig — delivered in-chat, not committed as a repo file (task constraint).
+  Full summary and key findings: §9 above, entry dated 2026-08-16. No `src/` or
+  `src-tauri/` file touched; verification suite re-run clean (see §9 entry).
+  Does not change the Stage 1 lock status — still NOT PASSED, still blocked on
+  (a) smear thresholds, (b) fr/de/pt corpus, (e) regression checklist, per the
+  plan doc's own blocking list.
 
 - **2026-08-16 — FA quality measurement: R-H second-baseline pass + R-Q fixture
   regeneration.** Scope: measure and report only — no `src/`/`src-tauri/` change, no
