@@ -2037,9 +2037,9 @@
       "textTokenIds": []
     },
     {
-      "language": "fr",
+      "language": "en",
       "input": "23",
-      "note": "es cardinal 0-30 unaffected-language control: fr digit word still drops exactly as before",
+      "note": "es cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
       "words": [
         {
           "input": "23",
@@ -2727,9 +2727,9 @@
       "textTokenIds": []
     },
     {
-      "language": "fr",
+      "language": "en",
       "input": "3",
-      "note": "pt cardinal 0-20/30 unaffected-language control: fr digit word still drops exactly as before",
+      "note": "pt cardinal 0-20/30 unaffected-language control: en digit word still drops exactly as before",
       "words": [
         {
           "input": "3",
@@ -2741,6 +2741,620 @@
       ],
       "text": "",
       "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "0",
+      "note": "fr cardinal 0-30: lower boundary value",
+      "words": [
+        {
+          "input": "0",
+          "representable": true,
+          "mapped": "zéro",
+          "reason": null,
+          "tokenIds": [
+            32,
+            39,
+            24,
+            21
+          ]
+        }
+      ],
+      "text": "zéro",
+      "textTokenIds": [
+        32,
+        39,
+        24,
+        21
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "1",
+      "note": "fr cardinal 0-30: bare digit expands to a spelled word",
+      "words": [
+        {
+          "input": "1",
+          "representable": true,
+          "mapped": "un",
+          "reason": null,
+          "tokenIds": [
+            27,
+            20
+          ]
+        }
+      ],
+      "text": "un",
+      "textTokenIds": [
+        27,
+        20
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "16",
+      "note": "fr cardinal 0-30: last non-hyphenated teen (seize)",
+      "words": [
+        {
+          "input": "16",
+          "representable": true,
+          "mapped": "seize",
+          "reason": null,
+          "tokenIds": [
+            25,
+            11,
+            15,
+            32,
+            11
+          ]
+        }
+      ],
+      "text": "seize",
+      "textTokenIds": [
+        25,
+        11,
+        15,
+        32,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "17",
+      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-sept)",
+      "words": [
+        {
+          "input": "17",
+          "representable": true,
+          "mapped": "dix-sept",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            30,
+            6,
+            25,
+            11,
+            22,
+            26
+          ]
+        }
+      ],
+      "text": "dix-sept",
+      "textTokenIds": [
+        10,
+        15,
+        30,
+        6,
+        25,
+        11,
+        22,
+        26
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "18",
+      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-huit)",
+      "words": [
+        {
+          "input": "18",
+          "representable": true,
+          "mapped": "dix-huit",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            30,
+            6,
+            14,
+            27,
+            15,
+            26
+          ]
+        }
+      ],
+      "text": "dix-huit",
+      "textTokenIds": [
+        10,
+        15,
+        30,
+        6,
+        14,
+        27,
+        15,
+        26
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "19",
+      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-neuf)",
+      "words": [
+        {
+          "input": "19",
+          "representable": true,
+          "mapped": "dix-neuf",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            30,
+            6,
+            20,
+            11,
+            27,
+            12
+          ]
+        }
+      ],
+      "text": "dix-neuf",
+      "textTokenIds": [
+        10,
+        15,
+        30,
+        6,
+        20,
+        11,
+        27,
+        12
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "20",
+      "note": "fr cardinal 0-30: boundary value (vingt)",
+      "words": [
+        {
+          "input": "20",
+          "representable": true,
+          "mapped": "vingt",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            13,
+            26
+          ]
+        }
+      ],
+      "text": "vingt",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        13,
+        26
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "22",
+      "note": "fr cardinal 0-30: hyphenated \"vingt-X\" shape, one token in/out (vingt-deux)",
+      "words": [
+        {
+          "input": "22",
+          "representable": true,
+          "mapped": "vingt-deux",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            13,
+            26,
+            6,
+            10,
+            11,
+            27,
+            30
+          ]
+        }
+      ],
+      "text": "vingt-deux",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        13,
+        26,
+        6,
+        10,
+        11,
+        27,
+        30
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "29",
+      "note": "fr cardinal 0-30: upper end of the hyphenated \"vingt-X\" shape (vingt-neuf)",
+      "words": [
+        {
+          "input": "29",
+          "representable": true,
+          "mapped": "vingt-neuf",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            13,
+            26,
+            6,
+            20,
+            11,
+            27,
+            12
+          ]
+        }
+      ],
+      "text": "vingt-neuf",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        13,
+        26,
+        6,
+        20,
+        11,
+        27,
+        12
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "30",
+      "note": "fr cardinal 0-30: upper boundary value (trente)",
+      "words": [
+        {
+          "input": "30",
+          "representable": true,
+          "mapped": "trente",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            11,
+            20,
+            26,
+            11
+          ]
+        }
+      ],
+      "text": "trente",
+      "textTokenIds": [
+        26,
+        24,
+        11,
+        20,
+        26,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "il a 17 ans",
+      "note": "fr cardinal 0-30: expansion survives inside a phrase",
+      "words": [
+        {
+          "input": "il",
+          "representable": true,
+          "mapped": "il",
+          "reason": null,
+          "tokenIds": [
+            15,
+            18
+          ]
+        },
+        {
+          "input": "a",
+          "representable": true,
+          "mapped": "a",
+          "reason": null,
+          "tokenIds": [
+            7
+          ]
+        },
+        {
+          "input": "17",
+          "representable": true,
+          "mapped": "dix-sept",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            30,
+            6,
+            25,
+            11,
+            22,
+            26
+          ]
+        },
+        {
+          "input": "ans",
+          "representable": true,
+          "mapped": "ans",
+          "reason": null,
+          "tokenIds": [
+            7,
+            20,
+            25
+          ]
+        }
+      ],
+      "text": "il a dix-sept ans",
+      "textTokenIds": [
+        15,
+        18,
+        4,
+        7,
+        4,
+        10,
+        15,
+        30,
+        6,
+        25,
+        11,
+        22,
+        26,
+        4,
+        7,
+        20,
+        25
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "21",
+      "note": "fr cardinal negative: 21 is the permanent \"vingt et un\" three-word wall, stays dropped",
+      "words": [
+        {
+          "input": "21",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"21\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "31",
+      "note": "fr cardinal negative: 31 is past the scope cap, stays dropped",
+      "words": [
+        {
+          "input": "31",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "2.5",
+      "note": "fr cardinal negative: decimal stays dropped, out of scope",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"2.5\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "05",
+      "note": "fr cardinal negative: leading zero is not a bare cardinal, stays dropped",
+      "words": [
+        {
+          "input": "05",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"05\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "17",
+      "note": "fr cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
+      "words": [
+        {
+          "input": "17",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"17\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "fr",
+      "input": "j`ai 17 ans",
+      "note": "fr elision + fr cardinal 0-30 co-fire: backtick elision fold and cardinal expansion both fire in one phrase",
+      "words": [
+        {
+          "input": "j`ai",
+          "representable": true,
+          "mapped": "j'ai",
+          "reason": null,
+          "tokenIds": [
+            16,
+            5,
+            7,
+            15
+          ]
+        },
+        {
+          "input": "17",
+          "representable": true,
+          "mapped": "dix-sept",
+          "reason": null,
+          "tokenIds": [
+            10,
+            15,
+            30,
+            6,
+            25,
+            11,
+            22,
+            26
+          ]
+        },
+        {
+          "input": "ans",
+          "representable": true,
+          "mapped": "ans",
+          "reason": null,
+          "tokenIds": [
+            7,
+            20,
+            25
+          ]
+        }
+      ],
+      "text": "j'ai dix-sept ans",
+      "textTokenIds": [
+        16,
+        5,
+        7,
+        15,
+        4,
+        10,
+        15,
+        30,
+        6,
+        25,
+        11,
+        22,
+        26,
+        4,
+        7,
+        20,
+        25
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "qu`il a 22 ans",
+      "note": "fr elision + fr cardinal 0-30 co-fire: backtick elision fold and a hyphenated cardinal both survive together",
+      "words": [
+        {
+          "input": "qu`il",
+          "representable": true,
+          "mapped": "qu'il",
+          "reason": null,
+          "tokenIds": [
+            23,
+            27,
+            5,
+            15,
+            18
+          ]
+        },
+        {
+          "input": "a",
+          "representable": true,
+          "mapped": "a",
+          "reason": null,
+          "tokenIds": [
+            7
+          ]
+        },
+        {
+          "input": "22",
+          "representable": true,
+          "mapped": "vingt-deux",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            13,
+            26,
+            6,
+            10,
+            11,
+            27,
+            30
+          ]
+        },
+        {
+          "input": "ans",
+          "representable": true,
+          "mapped": "ans",
+          "reason": null,
+          "tokenIds": [
+            7,
+            20,
+            25
+          ]
+        }
+      ],
+      "text": "qu'il a vingt-deux ans",
+      "textTokenIds": [
+        23,
+        27,
+        5,
+        15,
+        18,
+        4,
+        7,
+        4,
+        28,
+        15,
+        20,
+        13,
+        26,
+        6,
+        10,
+        11,
+        27,
+        30,
+        4,
+        7,
+        20,
+        25
+      ]
     }
   ]
 }

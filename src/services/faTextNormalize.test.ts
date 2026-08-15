@@ -398,8 +398,12 @@ describe('faTextNormalize — Spanish cardinal numbers 0-30 (Part H.5 Rule 2)', 
     expect(result.words[0]!.reason).toContain('digit');
   });
 
-  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
-    const result = normalizeForForcedAlignment('23', 'fr', VOCABS.fr);
+  it('other languages are unaffected: the same digit under "en" still drops exactly as before', () => {
+    // NOTE: was "fr" until Rule 5 (French cardinals, Part H.5) shipped —
+    // "23" under fr now expands to "vingt-trois", so fr stopped being a
+    // valid unaffected-language witness. "en" has no cardinal rule and
+    // structurally never will (see faTextNormalize.ts's H.5 module comment).
+    const result = normalizeForForcedAlignment('23', 'en', VOCABS.en);
     expect(result.words[0]!.representable).toBe(false);
     expect(result.words[0]!.reason).toContain('digit');
   });
@@ -455,8 +459,12 @@ describe('faTextNormalize — German cardinal numbers 0-30 (Part H.5 Rule 3, Pha
     expect(result.words[0]!.reason).toContain('digit');
   });
 
-  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
-    const result = normalizeForForcedAlignment('23', 'fr', VOCABS.fr);
+  it('other languages are unaffected: the same digit under "en" still drops exactly as before', () => {
+    // NOTE: was "fr" until Rule 5 (French cardinals, Part H.5) shipped —
+    // "23" under fr now expands to "vingt-trois", so fr stopped being a
+    // valid unaffected-language witness. "en" has no cardinal rule and
+    // structurally never will (see faTextNormalize.ts's H.5 module comment).
+    const result = normalizeForForcedAlignment('23', 'en', VOCABS.en);
     expect(result.words[0]!.representable).toBe(false);
     expect(result.words[0]!.reason).toContain('digit');
   });
@@ -523,10 +531,106 @@ describe('faTextNormalize — Portuguese cardinal numbers 0-20 and 30 (Part H.5 
     expect(result.words[0]!.reason).toContain('digit');
   });
 
-  it('other languages are unaffected: the same digit under "fr" still drops exactly as before', () => {
-    const result = normalizeForForcedAlignment('3', 'fr', VOCABS.fr);
+  it('other languages are unaffected: the same digit under "en" still drops exactly as before', () => {
+    // NOTE: was "fr" until Rule 5 (French cardinals, Part H.5) shipped —
+    // "3" under fr now expands to "trois", so fr stopped being a valid
+    // unaffected-language witness. "en" has no cardinal rule and
+    // structurally never will (see faTextNormalize.ts's H.5 module comment).
+    const result = normalizeForForcedAlignment('3', 'en', VOCABS.en);
     expect(result.words[0]!.representable).toBe(false);
     expect(result.words[0]!.reason).toContain('digit');
+  });
+});
+
+describe('faTextNormalize — French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b close)', () => {
+  // SCOPE: bare cardinal integers 0-30 EXCLUDING 21, French only. 17-19 and
+  // 22-29 are hyphenated single words ("dix-sept", "vingt-trois") — one
+  // token in, one token out, same as any other language's flat cardinal
+  // table; see `expandFrenchCardinal`'s own comment block in
+  // faTextNormalize.ts for why the multi-token-output worry that stalled
+  // this rule doesn't apply. 21 ("vingt et un", 3 words under traditional
+  // orthography) is the sole excluded value, permanently blocked by
+  // decision (b) — same wall as Spanish 31+/Portuguese 21-29.
+
+  const POSITIVE_CASES: Array<[input: string, mapped: string]> = [
+    ['0', 'zéro'],
+    ['1', 'un'],
+    ['16', 'seize'],
+    ['17', 'dix-sept'],
+    ['18', 'dix-huit'],
+    ['19', 'dix-neuf'],
+    ['20', 'vingt'],
+    ['22', 'vingt-deux'],
+    ['29', 'vingt-neuf'],
+    ['30', 'trente'],
+  ];
+
+  it.each(POSITIVE_CASES)('"%s" expands to "%s"', (input, mapped) => {
+    const result = normalizeForForcedAlignment(input, 'fr', VOCABS.fr);
+    expect(result.words).toHaveLength(1);
+    expect(result.words[0]!.representable).toBe(true);
+    expect(result.words[0]!.mapped).toBe(mapped);
+    expect(result.text).toBe(mapped);
+  });
+
+  it('a hyphenated expansion (17-19, 22-29) stays exactly one word, not two', () => {
+    // The specific worry that stalled this rule: does "dix-sept" (one input
+    // token) become two output words? It does not — proven directly by
+    // .toHaveLength(1) above for every hyphenated case, restated here as an
+    // explicit regression guard against that exact concern.
+    const result = normalizeForForcedAlignment('dix-sept sont ici', 'fr', VOCABS.fr);
+    expect(result.words).toHaveLength(3);
+    expect(result.words[0]!.mapped).toBe('dix-sept');
+  });
+
+  it('expansion survives inside a phrase', () => {
+    const result = normalizeForForcedAlignment('il a 17 ans', 'fr', VOCABS.fr);
+    expect(result.text).toBe('il a dix-sept ans');
+    expect(result.words.every(w => w.representable)).toBe(true);
+  });
+
+  it('negative: 21 is the permanent three-word wall ("vingt et un"), not a missing entry', () => {
+    const result = normalizeForForcedAlignment('21', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: 31 is past the scope cap, stays dropped', () => {
+    const result = normalizeForForcedAlignment('31', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a decimal ("2.5") stays dropped, out of scope', () => {
+    const result = normalizeForForcedAlignment('2.5', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('negative: a leading-zero form ("05") is not a bare cardinal and stays dropped', () => {
+    const result = normalizeForForcedAlignment('05', 'fr', VOCABS.fr);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  it('other languages are unaffected: the same digit under "en" still drops exactly as before', () => {
+    const result = normalizeForForcedAlignment('17', 'en', VOCABS.en);
+    expect(result.words[0]!.representable).toBe(false);
+    expect(result.words[0]!.reason).toContain('digit');
+  });
+
+  describe('Rule 1 x Rule 5 co-fire (elision + cardinal expansion in one phrase)', () => {
+    it('backtick elision fold and cardinal expansion both fire, independently, in one phrase', () => {
+      const result = normalizeForForcedAlignment('j`ai 17 ans', 'fr', VOCABS.fr);
+      expect(result.text).toBe("j'ai dix-sept ans");
+      expect(result.words.every(w => w.representable)).toBe(true);
+    });
+
+    it('backtick elision fold and a hyphenated cardinal both survive together', () => {
+      const result = normalizeForForcedAlignment('qu`il a 22 ans', 'fr', VOCABS.fr);
+      expect(result.text).toBe("qu'il a vingt-deux ans");
+      expect(result.words.every(w => w.representable)).toBe(true);
+    });
   });
 });
 

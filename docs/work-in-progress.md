@@ -102,7 +102,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
 | **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring BLOCKED ON 3C BY DECISION** | — | Phase 3c landing (Option B gate sequencing, 2026-08-15 — §11 item 1) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5 |
-| 3b | 1 | **IN PROGRESS, NOT COMPLETE** (Rules 1-4 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR; currency/thousands-separator expansion and Portuguese 21-29 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) — the remaining sub-item (French cardinals beyond Rule 1) inherits this same phase-level assignment, not separately unowned | French cardinal expansion beyond Rule 1 blocked on its own irregular "et"-exception design, not attempted this pass | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
+| 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **NOT STARTED** | project owner (assigned 2026-08-15) | — | Hyphen-asymmetry fix — the last Stage-1 index-shifting event; **directly blocks Stage 1 lock**, `sync-pipeline-v2-plan.md:3725-3726` |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
 | 4 | 2 | **NOT STARTED** | — | Stage 1 lock | Restructure into 4 stages; timing-free Stage 2 return type; 5+3→5 change-detector |
@@ -1438,3 +1438,120 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   `scripts/generate-fa-text-fixture.ts`, `src-tauri/src/fa/text.rs`,
   `src/services/faTextNormalize.test.ts`, `src/services/faTextNormalize.ts`
   — 7 files, no protected file touched, no new doc file.
+
+- **2026-08-15 — French cardinal numbers 0-30 minus 21, Part H.5 Rule 5
+  (Phase 3b close).** Same shape as Rules 2-4. Last owned Phase 3b item.
+
+  **Scope surfaced and put to the owner before any code was written, per
+  this slice's own instruction.** Two questions, both answered before
+  implementation: (1) scope — 0-30 minus 21, vs. Rule 4's 0-20+30
+  precedent, vs. 0-20-only; owner chose **0-30 minus 21**. (2) how to treat
+  21 — traditional "vingt et un" (3 words, excluded) vs. the 1990-reform
+  "vingt-et-un" (1 hyphenated token, includable); owner chose **exclude,
+  traditional spelling**, keeping this project off reform orthography with
+  no other precedent for it anywhere in this module.
+
+  **The multi-token-output worry that stalled this item since Rule 4 shipped
+  is a false alarm — traced through both consumers before implementation,
+  not assumed away.** French 17-19 and 22-29 are hyphenated single words
+  ("dix-sept", "vingt-trois"), not two-token expansions. Word splitting is
+  whitespace-only (`/\s+/` / `is_js_whitespace`) on both sides — hyphen was
+  never a separator, so a hyphenated cardinal was always going to be one
+  token in. On the decode side, `fa_onnx.rs`'s `merge_char_spans_to_words`
+  splits only on the vocab's `|` word-delimiter id, and `-` is an ordinary
+  character in the fr vocab (confirmed live: `fa-vocab-fr.json`'s vocab
+  object contains `-`) — so a hyphenated cardinal merges back into exactly
+  one `WordSpan`. The one-`FaWordResult`/`WordResult`-per-input-token
+  contract (decision (b)) holds; `qi` word-count attribution is untouched
+  either way, since it derives from `canonicalize`/`normalizeSceneDoc` on
+  RAW segment text, never from this module's output
+  (`faChunkPlan.ts:360-371,628`, re-confirmed this pass). **Net: no reason
+  found to exclude 17-19/22-29, and no reason for this rule to land after
+  Phase 3c** — checked directly, not inferred.
+
+  **Phase 3c hyphen-emission interaction — checked, no ordering
+  dependency.** The committed fixture already contained hyphenated FA
+  output before this rule (`well-known`, `arbeits-platz`, `était-il`, an
+  em-dash-to-hyphen fold) — Rule 5 is not the first rule to emit a hyphen.
+  Phase 3c's scope is `textNormalize.ts`'s `canonicalize`, a module FA input
+  never routes through. 3b → 3c sequencing is unaffected.
+
+  **Rule 1 x Rule 5 ordering — structurally disjoint, no interaction
+  possible.** Elision fold fires only on a `prefix + backtick + vowel-or-
+  mute-h` shape; cardinal expansion fires only on an all-digit `stripped`
+  token. No input can match both shapes at once, so pipeline order between
+  them is a non-issue by construction — verified with two co-fire fixture/
+  test cases in the same phrase (`` j`ai 17 ans `` -> `j'ai dix-sept ans`;
+  `` qu`il a 22 ans `` -> `qu'il a vingt-deux ans`), not just argued in
+  prose.
+
+  **No PT-PT/PT-BR-style regional fork exists in French 0-30** (Belgian/
+  Swiss "septante"/"huitante"/"nonante" only diverge at 70/80/90, outside
+  this scope) — nothing else to decide at this scope beyond the 21 call
+  above. "un" is the bare-cardinal citation form (mirrors "uno"/"um"), not
+  the feminine "une".
+
+  **Both sides changed together, proven to agree** via the existing
+  `fixture_parity` hard gate: 18 new corpus cases added to
+  `scripts/generate-fa-text-fixture.ts` (positives — 0, 1, 16, 17, 18, 19,
+  20, 22, 29, 30, expansion inside a phrase; negatives — 21 the three-word
+  wall, 31 past the scope cap, 2.5 decimal, 05 leading zero; one
+  unaffected-language control under `en`; two Rule-1-x-Rule-5 co-fire
+  phrases), fixture regenerated from the live TS module (97 entries total,
+  was 79), and
+  `fa::text::fixture_parity::fixture_matches_rust_port_for_every_entry_all_five_languages`
+  passes against all 97.
+
+  **Housekeeping, same commit — continues the pattern Rule 4's own
+  housekeeping note already flagged.** Rules 2, 3, and 4's "other languages
+  are unaffected" witness tests (TS: `faTextNormalize.test.ts`; Rust:
+  `text.rs`'s three `negative_*_expansion_is_language_gated` tests) all used
+  `fr` as the control digit's language — valid when written, but Rule 5
+  makes `fr` stop being neutral (e.g. `"23"` under `fr` now expands to
+  `"vingt-trois"` instead of dropping). All three switched to `en`, plus
+  Rule 5's own new control test uses `en` too. Chose `en` specifically
+  (not just "whichever language is untaken today") because it is the one
+  language this module's own H.5 module comment states will structurally
+  never get a cardinal rule — a more durable witness than `fr` or `pt` were,
+  which were each eventually claimed by their own rule.
+
+  **Files:** `src/services/faTextNormalize.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts` (+19 unit tests: 10 positive
+  table-driven, 1 hyphenated-stays-one-word regression guard, 1
+  phrase-survival, 1 negative-wall (21), 1 scope-cap negative (31), 1
+  decimal negative, 1 leading-zero negative, 1 language-gate negative
+  (switched to `en`), 2 Rule-1 x Rule-5 co-fire, plus the 3 Rule 2/3/4
+  control-language fixes), `scripts/generate-fa-text-fixture.ts` (+18
+  corpus cases, +1 required-coverage substring, 2 control-language fixes),
+  `scripts/fixtures/fa-text-normalize-fixture.json` (regenerated).
+  **Untouched, verified:** `textNormalize.ts`/`canonicalize` (not imported
+  by this diff, not in `git diff --stat`); the Slice 1 byte-identical
+  English chunk-plan test (`faChunkPlan.test.ts`) still passes unchanged.
+
+  **Phase 3b status: DONE — PHASE CLOSED.** Every H.5 rule assigned to this
+  phase is now either shipped (Rules 1-5) or permanently out of scope under
+  decision (b) (currency, thousands separators, Portuguese 21-29, French
+  21). No open Phase 3b item remains. The pre-existing Task 5 prerequisite
+  (diacritic destruction) and `textNormalize.ts`'s thousands-separator
+  mangling stay reassigned to Phase 3c (prior session's commit) — not a 3b
+  exit criterion, unaffected by this closure. **Unblocks Phase 3c**
+  (hyphen-asymmetry fix, `sync-pipeline-v2-plan.md:3818-3819`), whose entry
+  and the Stage 1 lock gate this closure feeds into are intentionally left
+  untouched by this pass — this slice's hard constraint scopes the
+  ledger-doc edit to Phase 3b's own row plus this changelog entry only, not
+  a re-derivation of every doc that cites Phase 3b's status.
+
+  **Verified:** `cargo check` clean (default + `--features fa-inference`);
+  `cargo test` 132/132 (was 114/114, +18 new Rust unit tests, 0
+  regressions); `cargo test --features fa-inference` 206 passed/19 ignored
+  (was 188/19 ignored, +18, 0 regressions); `cargo clippy --all-targets
+  --features fa-inference` 4 pre-existing warnings, 0 new (unchanged); `npm
+  run lint` clean; `npm test` 80 files/2075 passed/1 skipped (was 2038/1,
+  +37: 19 explicit TS unit tests + 18 fixture-driven drift-guard cases, 0
+  regressions); golden replay (`scripts/phase4-handoff-replay-sync.test.ts`)
+  6/6, unchanged — did not move, not re-baselined. `git status`: 6 files
+  changed — `docs/work-in-progress.md`, `scripts/fixtures/fa-text-normalize-fixture.json`,
+  `scripts/generate-fa-text-fixture.ts`, `src-tauri/src/fa/text.rs`,
+  `src/services/faTextNormalize.test.ts`, `src/services/faTextNormalize.ts`
+  — no protected file touched, no new doc file, nothing moved into or out
+  of `scripts/fixtures/`.

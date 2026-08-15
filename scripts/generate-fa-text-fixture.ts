@@ -151,7 +151,7 @@ const CORPUS: CorpusCase[] = [
   { lang: 'es', input: '31', note: 'es cardinal negative: 31 is a multi-word "y" compound, out of scope, stays dropped' },
   { lang: 'es', input: '2.5', note: 'es cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'es', input: '05', note: 'es cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'fr', input: '23', note: 'es cardinal 0-30 unaffected-language control: fr digit word still drops exactly as before' },
+  { lang: 'en', input: '23', note: 'es cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
 
   // -- German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder) --
   { lang: 'de', input: '23', note: 'de cardinal 0-30: bare digit expands to a spelled word' },
@@ -179,7 +179,30 @@ const CORPUS: CorpusCase[] = [
   { lang: 'pt', input: '31', note: 'pt cardinal negative: 31 is past the scope cap, stays dropped' },
   { lang: 'pt', input: '2.5', note: 'pt cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'pt', input: '05', note: 'pt cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'fr', input: '3', note: 'pt cardinal 0-20/30 unaffected-language control: fr digit word still drops exactly as before' },
+  { lang: 'en', input: '3', note: 'pt cardinal 0-20/30 unaffected-language control: en digit word still drops exactly as before' },
+
+  // -- French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b
+  //    close, 2026-08-15) --
+  { lang: 'fr', input: '0', note: 'fr cardinal 0-30: lower boundary value' },
+  { lang: 'fr', input: '1', note: 'fr cardinal 0-30: bare digit expands to a spelled word' },
+  { lang: 'fr', input: '16', note: 'fr cardinal 0-30: last non-hyphenated teen (seize)' },
+  { lang: 'fr', input: '17', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-sept)' },
+  { lang: 'fr', input: '18', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-huit)' },
+  { lang: 'fr', input: '19', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-neuf)' },
+  { lang: 'fr', input: '20', note: 'fr cardinal 0-30: boundary value (vingt)' },
+  { lang: 'fr', input: '22', note: 'fr cardinal 0-30: hyphenated "vingt-X" shape, one token in/out (vingt-deux)' },
+  { lang: 'fr', input: '29', note: 'fr cardinal 0-30: upper end of the hyphenated "vingt-X" shape (vingt-neuf)' },
+  { lang: 'fr', input: '30', note: 'fr cardinal 0-30: upper boundary value (trente)' },
+  { lang: 'fr', input: 'il a 17 ans', note: 'fr cardinal 0-30: expansion survives inside a phrase' },
+  { lang: 'fr', input: '21', note: 'fr cardinal negative: 21 is the permanent "vingt et un" three-word wall, stays dropped' },
+  { lang: 'fr', input: '31', note: 'fr cardinal negative: 31 is past the scope cap, stays dropped' },
+  { lang: 'fr', input: '2.5', note: 'fr cardinal negative: decimal stays dropped, out of scope' },
+  { lang: 'fr', input: '05', note: 'fr cardinal negative: leading zero is not a bare cardinal, stays dropped' },
+  { lang: 'en', input: '17', note: 'fr cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
+
+  // -- Rule 1 x Rule 5 co-fire: French elision + cardinal expansion --------
+  { lang: 'fr', input: 'j`ai 17 ans', note: 'fr elision + fr cardinal 0-30 co-fire: backtick elision fold and cardinal expansion both fire in one phrase' },
+  { lang: 'fr', input: 'qu`il a 22 ans', note: 'fr elision + fr cardinal 0-30 co-fire: backtick elision fold and a hyphenated cardinal both survive together' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -203,6 +226,7 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'es cardinal 0-30',
   'de cardinal 0-30',
   'pt cardinal 0-20/30',
+  'fr cardinal 0-30',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {

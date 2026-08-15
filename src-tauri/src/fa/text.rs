@@ -527,6 +527,56 @@ fn expand_portuguese_cardinal(stripped: &str) -> Option<&'static str> {
 }
 
 // ---------------------------------------------------------------------------
+// French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b close,
+// 2026-08-15) - mirrors `FRENCH_CARDINALS_0_30`/`expandFrenchCardinal` in
+// faTextNormalize.ts. French 17-19 and 22-29 are HYPHENATED single words
+// ("dix-sept", "vingt-trois") — verified harmless to the one-`WordResult`-
+// per-input-token contract before this rule was scoped: word splitting is
+// whitespace-only (`is_js_whitespace`, never hyphen), and
+// `fa_onnx.rs::merge_char_spans_to_words` splits only on the vocab `|`
+// delimiter id (`-` is an ordinary fr vocab member) — so a hyphenated
+// cardinal is one token in, one `WordResult`/`WordSpan` out, same as
+// Spanish's "veintitrés" or Portuguese's "dezenove". 21 ("vingt et un", a
+// space-linked 3-word compound under traditional orthography) is the one
+// value in 0-30 that is NOT single-word — excluded here as a table hole,
+// same permanent wall as Spanish 31+ and Portuguese 21-29 under decision
+// (b). "un" is the bare-cardinal citation form (mirrors "uno"/"um"), not
+// the feminine "une". No PT-PT/PT-BR-style regional fork exists in French
+// 0-30 (Belgian/Swiss forks only diverge at 70/80/90).
+// ---------------------------------------------------------------------------
+
+/// Index `n` -> its French spelling, for `n` in 0..=30. `None` at index 21:
+/// no single-word spelling exists under traditional orthography ("vingt et
+/// un" is 3 words), permanently blocked by decision (b) — not a missing
+/// table entry. Mirrors `FRENCH_CARDINALS_0_30`.
+const FRENCH_CARDINALS_0_30: &[Option<&str>] = &[
+    Some("zéro"), Some("un"), Some("deux"), Some("trois"), Some("quatre"), Some("cinq"), Some("six"),
+    Some("sept"), Some("huit"), Some("neuf"), Some("dix"), Some("onze"), Some("douze"), Some("treize"),
+    Some("quatorze"), Some("quinze"), Some("seize"), Some("dix-sept"), Some("dix-huit"), Some("dix-neuf"),
+    Some("vingt"), None, Some("vingt-deux"), Some("vingt-trois"), Some("vingt-quatre"), Some("vingt-cinq"),
+    Some("vingt-six"), Some("vingt-sept"), Some("vingt-huit"), Some("vingt-neuf"), Some("trente"),
+];
+
+/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+/// "0"), no sign, no separators — anything else returns `None` and the
+/// caller falls through to the pre-existing digit-drop path unchanged.
+/// Also returns `None` for 21 (in range but structurally excluded — see
+/// module comment above). Mirrors `expandFrenchCardinal`.
+fn expand_french_cardinal(stripped: &str) -> Option<&'static str> {
+    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if stripped.len() > 1 && stripped.starts_with('0') {
+        return None;
+    }
+    let n: u32 = stripped.parse().ok()?;
+    if n > 30 {
+        return None;
+    }
+    FRENCH_CARDINALS_0_30.get(n as usize).copied().flatten()
+}
+
+// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -583,6 +633,7 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         Language::Es => expand_spanish_cardinal(stripped),
         Language::De => expand_german_cardinal(stripped),
         Language::Pt => expand_portuguese_cardinal(stripped),
+        Language::Fr => expand_french_cardinal(stripped),
         _ => None,
     };
     let candidate: &str = cardinal_expansion.unwrap_or(stripped);
@@ -886,10 +937,14 @@ mod tests {
 
     #[test]
     fn negative_spanish_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "fr"
-        // still drops exactly as it did before this rule.
+        // Other languages are unaffected: the same bare digit under "en"
+        // still drops exactly as it did before this rule. NOTE: was "fr"
+        // until Rule 5 (French cardinals) shipped — "23" under fr now
+        // expands to "vingt-trois", so fr stopped being a valid
+        // unaffected-language witness; "en" has no cardinal rule and
+        // structurally never will.
         let v = vocab(&['v', 'e', 'i', 'n', 't', 'r', 's']);
-        let result = normalize_word("23", Language::Fr, &v);
+        let result = normalize_word("23", Language::En, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("digit"));
     }
@@ -962,10 +1017,12 @@ mod tests {
 
     #[test]
     fn negative_german_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "fr"
-        // still drops exactly as it did before this rule.
+        // Other languages are unaffected: the same bare digit under "en"
+        // still drops exactly as it did before this rule. NOTE: was "fr"
+        // until Rule 5 (French cardinals) shipped — see the Spanish variant
+        // of this test above for the full explanation.
         let v = vocab(&['d', 'r', 'e', 'i', 'u', 'n', 'z', 'a', 'g']);
-        let result = normalize_word("23", Language::Fr, &v);
+        let result = normalize_word("23", Language::En, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("digit"));
     }
@@ -1086,12 +1143,179 @@ mod tests {
 
     #[test]
     fn negative_portuguese_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "fr"
-        // still drops exactly as it did before this rule.
+        // Other languages are unaffected: the same bare digit under "en"
+        // still drops exactly as it did before this rule. NOTE: was "fr"
+        // until Rule 5 (French cardinals) shipped — see the Spanish variant
+        // of this test above for the full explanation.
         let v = vocab(&['t', 'r', 'e', 's']);
-        let result = normalize_word("3", Language::Fr, &v);
+        let result = normalize_word("3", Language::En, &v);
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    // -- French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b
+    // close) -
+    //
+    // SCOPE: bare cardinal integers 0-30 EXCLUDING 21, French only. 17-19
+    // and 22-29 are hyphenated single words ("dix-sept", "vingt-trois") —
+    // one token in, one token out; see `expand_french_cardinal`'s own doc
+    // comment for why the multi-token-output worry that stalled this rule
+    // doesn't apply. 21 ("vingt et un", 3 words under traditional
+    // orthography) is the sole excluded value, permanently blocked by
+    // decision (b).
+
+    fn fr_cardinal_vocab() -> HashSet<char> {
+        // Every letter needed to spell "zéro".."trente" plus the hyphen
+        // 17-19/22-29 need. Deliberately separate from fr_vocab() above
+        // (Rule 1's elision-test helper), which is scoped only to Rule 1's
+        // own words and lacks c/f/g/p/r/z/é/- entirely.
+        vocab(&[
+            'z', 'é', 'r', 'o', 'u', 'n', 'd', 'e', 'x', 't', 'q', 'a', 'c', 'i', 's', 'h', 'v', 'g', 'f', 'p', '-',
+        ])
+    }
+
+    #[test]
+    fn french_cardinal_boundary_zero_expands() {
+        let result = normalize_word("0", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("zéro"));
+    }
+
+    #[test]
+    fn french_cardinal_bare_digit_expands() {
+        let result = normalize_word("1", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("un"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_teen_17_is_one_word_dix_sept() {
+        let result = normalize_word("17", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dix-sept"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_teen_18_is_one_word_dix_huit() {
+        let result = normalize_word("18", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dix-huit"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_teen_19_is_one_word_dix_neuf() {
+        let result = normalize_word("19", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("dix-neuf"));
+    }
+
+    #[test]
+    fn french_cardinal_boundary_twenty_expands() {
+        let result = normalize_word("20", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("vingt"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_vingt_deux_22_is_one_word() {
+        let result = normalize_word("22", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("vingt-deux"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_vingt_neuf_29_is_one_word() {
+        let result = normalize_word("29", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("vingt-neuf"));
+    }
+
+    #[test]
+    fn french_cardinal_boundary_thirty_expands() {
+        let result = normalize_word("30", Language::Fr, &fr_cardinal_vocab());
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("trente"));
+    }
+
+    #[test]
+    fn french_cardinal_hyphenated_expansion_stays_one_word_result_not_two() {
+        // The specific worry that stalled this rule: does one hyphenated
+        // input token produce two WordResults? It does not.
+        let v = fr_cardinal_vocab();
+        let result = normalize_for_forced_alignment("dix-sept sont ici", Language::Fr, &v);
+        assert_eq!(result.words.len(), 3);
+        assert_eq!(result.words[0].mapped.as_deref(), Some("dix-sept"));
+    }
+
+    #[test]
+    fn french_cardinal_survives_inside_a_phrase() {
+        let v = fr_cardinal_vocab();
+        let result = normalize_for_forced_alignment("il a 17 ans", Language::Fr, &v);
+        let digit_word = result.words.iter().find(|w| w.input == "17").unwrap();
+        assert!(digit_word.representable);
+        assert_eq!(digit_word.mapped.as_deref(), Some("dix-sept"));
+    }
+
+    #[test]
+    fn negative_french_cardinal_21_is_the_permanent_three_word_wall() {
+        let result = normalize_word("21", Language::Fr, &fr_cardinal_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_french_cardinal_31_is_past_the_scope_cap() {
+        let result = normalize_word("31", Language::Fr, &fr_cardinal_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_french_cardinal_decimal_stays_dropped() {
+        let result = normalize_word("2.5", Language::Fr, &fr_cardinal_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_french_cardinal_leading_zero_stays_dropped() {
+        let result = normalize_word("05", Language::Fr, &fr_cardinal_vocab());
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    #[test]
+    fn negative_french_cardinal_expansion_is_language_gated() {
+        let v = vocab(&['d', 'i', 'x', 's', 'e', 'p', 't']);
+        let result = normalize_word("17", Language::En, &v);
+        assert!(!result.representable);
+        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    }
+
+    // -- Rule 1 x Rule 5 co-fire (elision + cardinal expansion) -------------
+
+    fn fr_elision_and_cardinal_vocab() -> HashSet<char> {
+        // Union of fr_vocab()'s elision letters and fr_cardinal_vocab()'s
+        // cardinal letters, plus the apostrophe the elision fold needs.
+        vocab(&[
+            'j', 'a', 'i', 'q', 'u', 'l', 'n', 's', 'd', 'x', 't', 'e', 'p', 'v', 'g', '-', '\'',
+        ])
+    }
+
+    #[test]
+    fn elision_backtick_fold_and_cardinal_expansion_both_fire_in_one_phrase() {
+        let v = fr_elision_and_cardinal_vocab();
+        let result = normalize_for_forced_alignment("j`ai 17 ans", Language::Fr, &v);
+        assert_eq!(result.text, "j'ai dix-sept ans");
+        assert!(result.words.iter().all(|w| w.representable));
+    }
+
+    #[test]
+    fn elision_backtick_fold_and_a_hyphenated_cardinal_both_survive_together() {
+        let v = fr_elision_and_cardinal_vocab();
+        let result = normalize_for_forced_alignment("qu`il a 22 ans", Language::Fr, &v);
+        assert_eq!(result.text, "qu'il a vingt-deux ans");
+        assert!(result.words.iter().all(|w| w.representable));
     }
 }
 

@@ -331,6 +331,67 @@ function expandPortugueseCardinal(stripped: string): string | undefined {
   return PORTUGUESE_CARDINALS_0_30[n];
 }
 
+// ---------------------------------------------------------------------------
+// French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b close,
+// 2026-08-15 — sync-pipeline-v2-plan.md's H.5 decision block, scope call
+// recorded in docs/work-in-progress.md's changelog).
+//
+// French 17-19 and 22-29 are HYPHENATED single words ("dix-sept",
+// "vingt-trois") — verified harmless to the one-`FaWordResult`-per-input-
+// token contract before this rule was scoped: word splitting is whitespace-
+// only (this module's own `/\s+/`, mirrored by the Rust port's
+// `is_js_whitespace`), never on hyphen, so a hyphenated cardinal is one
+// token in and one token out, exactly like Spanish's "veintitrés" or
+// Portuguese's "dezenove". `fa_onnx.rs`'s `merge_char_spans_to_words` (the
+// other half of the contract) splits only on the vocab's `|` word-delimiter
+// id, and `-` is an ordinary character in the fr vocab — so a hyphenated
+// cardinal merges back into a single `WordSpan` too. No blast radius on
+// chunk `qi` attribution either: that's derived from `canonicalize`/
+// `normalizeSceneDoc` on RAW segment text, never from this module's output
+// (`faChunkPlan.ts`'s own doc comment, cross-checked directly this pass).
+//
+// 21 is the one value in 0-30 that is NOT single-word: "vingt et un" is a
+// space-linked 3-word compound, the same permanent wall as Spanish 31+ and
+// Portuguese 21-29 under decision (b) — excluded here as a table hole, not
+// a missing entry. (The post-1990 reform spelling "vingt-et-un" IS a single
+// hyphenated token and would be representable, but this project has no
+// existing convention favoring reform orthography anywhere else in this
+// module, so traditional "vingt et un" — and therefore exclusion — is what
+// ships; owner call, 2026-08-15.)
+//
+// No PT-PT/PT-BR-style regional spelling fork exists anywhere in 0-30 for
+// French (Belgian/Swiss "septante"/"huitante"/"nonante" only diverge at
+// 70/80/90, well outside this scope). "un" is the bare-cardinal citation
+// form, mirroring Rule 2's "uno" and Rule 4's "um" — not the feminine
+// agreement form "une".
+// ---------------------------------------------------------------------------
+
+/** Index `n` -> its French spelling, for `n` in 0..=30. `undefined` at index
+ *  21: no single-word spelling exists under traditional orthography ("vingt
+ *  et un" is 3 words), permanently blocked by decision (b) — not a missing
+ *  table entry. */
+const FRENCH_CARDINALS_0_30: readonly (string | undefined)[] = [
+  'zéro', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
+  'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept',
+  'dix-huit', 'dix-neuf', 'vingt',
+  undefined,
+  'vingt-deux', 'vingt-trois', 'vingt-quatre', 'vingt-cinq', 'vingt-six', 'vingt-sept', 'vingt-huit', 'vingt-neuf',
+  'trente',
+];
+
+/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
+ *  "0"), no sign, no separators — anything else returns `undefined` and the
+ *  caller falls through to the pre-existing digit-drop path unchanged.
+ *  Also returns `undefined` for 21 (in range but structurally excluded —
+ *  see module comment above). Mirrors `expandPortugueseCardinal`'s contract. */
+function expandFrenchCardinal(stripped: string): string | undefined {
+  if (!/^[0-9]+$/.test(stripped)) return undefined;
+  if (stripped.length > 1 && stripped[0] === '0') return undefined;
+  const n = Number(stripped);
+  if (n > 30) return undefined;
+  return FRENCH_CARDINALS_0_30[n];
+}
+
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
  *  boundary-punctuation stripping, then (Spanish only) a bare-0-30-cardinal
@@ -366,7 +427,9 @@ function normalizeWord(
       ? expandGermanCardinal(stripped)
       : languageCode === 'pt'
         ? expandPortugueseCardinal(stripped)
-        : undefined;
+        : languageCode === 'fr'
+          ? expandFrenchCardinal(stripped)
+          : undefined;
   const candidate = cardinalExpansion ?? stripped;
 
   if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {
