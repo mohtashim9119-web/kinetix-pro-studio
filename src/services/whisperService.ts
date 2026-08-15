@@ -1483,10 +1483,19 @@ export function computeCoverageSummary(
 /**
  * Applies time windows from `alignments` to `segments`, respecting
  * `segment.locked === true` (locked segments are left unchanged).
+ *
+ * `anchorSource` (WS1 Task 5, docs/work-in-progress.md §11 item 1, owner
+ * ruling R-G — `'forced-alignment' > 'whisper' > 'estimate'`, demote-only)
+ * defaults to `'whisper'`, preserving every existing call site's behavior
+ * byte-for-byte. A forced-alignment production caller passes
+ * `'forced-alignment'` explicitly — the value is always stated by the
+ * caller who knows which timing source actually produced `alignments`,
+ * never inferred here.
  */
 export function distributeSegmentTimes(
   segments: VideoSegment[],
   alignments: Array<{ t0: number; t1: number }>,
+  anchorSource: 'whisper' | 'forced-alignment' = 'whisper',
 ): VideoSegment[] {
   const updated = segments.map((seg, i) => {
     if (seg.locked) return seg;
@@ -1497,8 +1506,8 @@ export function distributeSegmentTimes(
       ...seg,
       startTime: Number(a.t0.toFixed(3)),
       duration: Number(duration.toFixed(3)),
-      anchorStart: Number(a.t0.toFixed(3)), // Whisper-derived anchor overwrites char-weight estimate
-      anchorSource: 'whisper' as const,
+      anchorStart: Number(a.t0.toFixed(3)), // aligner-derived anchor overwrites char-weight estimate
+      anchorSource,
     };
   });
 

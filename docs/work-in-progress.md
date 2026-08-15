@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **ALIGNER COMPLETE, dev-only — production wiring UNBLOCKED, not yet started** | — | None (3b and 3c both landed 2026-08-15) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default, dev-only reachable — full detail §4/§5. Option B's gate-sequencing condition (§11 item 1) is now satisfied |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED, gate OFF — not yet turned on** | — | None; the FA-on measurement session (§11 item 6) is next | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. **2026-08-15 (this session): `fa_align_production` (`fa_production.rs`) is now a real, reachable, `isFaGateOpen()`-gated production caller** — see §11 item 1's own entry and the changelog below. Gate stays OFF by default (owner ruling D2); golden replay proven byte-identical gate-off (6/6, unchanged) |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -674,22 +674,86 @@ task 8 (K13 fix) — see §3.
 **Ready now, in parallel (nothing blocking any of them, except item 1 — see its
 sequencing note):**
 
-1. **Capability-gated production wiring slice.** *Goal:* a non-dev, `isFaGateOpen()`-gated
-   caller of `fa_align` reachable from the real running app, replacing the
-   DEV-only-`fa_align_dev` path for real Apply-Sync timing. *Files:* `App.tsx` (new branch
-   at `:2792-2837`, §8), a new production Tauri command mirroring `fa_align_dev`'s already-
-   proven `AppHandle`-resolution path minus the dev wrapper, `faWordTimings` writer into
-   `Project` (`types.ts:401`, schema exists, unused). *Exit criteria:* a real
-   `invoke('fa_align', ...)` call exists in `src/`, gated by `isFaGateOpen()`; toggling the
-   Settings control changes which timing source Apply Sync actually uses; golden replay
-   still 3/3 with the gate OFF (byte-identical default behavior). *Discharges:* the
-   "capability-gated production wiring" item named throughout §4/§6/§7. *Depends on:* §7
-   item 2 (R.5 whether/when) — affects this slice's shape (does the production command need
-   to surface per-word confidence/wildcard data, or just a single `t0`?) but does not block
-   starting it. **Sequencing block (Option B, 2026-08-15): LIFTED, 2026-08-15.** Phase 3b
-   and 3c (items 7-8 below) have both now landed (3c closed by written acceptance, not by
-   code — see its own entry) — the gate-sequencing condition is satisfied and this slice is
-   ready to start. See the Phase 3 row (`sync-pipeline-v2-plan.md`, §3 above).
+1. **Capability-gated production wiring slice. DONE — WIRED, GATE OFF, 2026-08-15.** *Goal:*
+   a non-dev, `isFaGateOpen()`-gated caller of `fa_align` reachable from the real running
+   app, replacing the DEV-only-`fa_align_dev` path for real Apply-Sync timing.
+   *What actually shipped (this session, scope deliberately bounded — does NOT turn FA on,
+   does NOT produce the R-H second golden baseline, does NOT measure FA timing quality; see
+   item 6 below for what's still needed):*
+   - **Rust:** `fa_dev.rs`'s `fa_align_dev` body extracted into `pub(crate) async fn
+     resolve_wav_and_align(...)` (model-manifest verify, content-addressed audio decode,
+     `fa::ensure_durable_wav`, delegate to `fa_align` — unchanged behavior, byte-identical);
+     new `src-tauri/src/fa_production.rs`'s `fa_align_production` is a thin wrapper calling
+     the same helper under its own temp-cache namespace (`kinetix-fa-production-inputs`, vs.
+     `fa_align_dev`'s `kinetix-fa-dev-inputs` — a real production call and a devtools call
+     against the same audio content can never collide). Registered in `lib.rs`'s
+     `invoke_handler!`. No gate on the Rust side — exactly like `fa_align`/`whisper_transcribe`,
+     gating is the frontend's job.
+   - **TS:** new `src/services/forcedAlignmentRun.ts`'s `runForcedAlignmentForSync` — mirrors
+     `__faDevAlign`'s own audio-fetch/chunk-plan/`Channel<FaEvent>` steps, calls
+     `invoke('fa_align_production', ...)`, reshapes a successful `Done` via
+     `faWordSpansToTranscriptTokens`. **Fail-clean contract: never throws** — unsupported
+     language, empty chunk plan, any IPC rejection (`ModelNotFound`/`InferenceFailed`/
+     `ModelHashMismatch`/`Cancelled`), or an `FaEvent::Error` all resolve to `null`, not a
+     thrown error.
+   - **App.tsx** (`:2792-2837` insertion point, §8 — confirmed accurate at this session's
+     start, unchanged by this session): between `applyAnchorBasedTiming` (anchor-timed,
+     not-yet-committed segments) and the `alignFromCache` call, a new branch calls
+     `runForcedAlignmentForSync` iff `isFaGateOpen()`; its result (or `null`) replaces
+     `projectRef.current.transcriptTokens!` at the `tokens` argument exactly as §8 described.
+   - **R-G (anchorSource):** `distributeSegmentTimes` (`whisperService.ts`) and
+     `alignFromCache`/`alignSegmentsFromCachedTranscript` (`useWhisper.ts`) each gained an
+     optional `anchorSource: 'whisper' | 'forced-alignment'` parameter, defaulting to
+     `'whisper'` — both pre-existing call sites (this function's own live Option-A path,
+     and `useWhisper.ts:294`'s other `distributeSegmentTimes` call) are byte-identical by
+     construction (untouched, default parameter). The new FA branch passes
+     `'forced-alignment'` explicitly only when `runForcedAlignmentForSync` actually
+     succeeded — never inferred, exactly as R-G requires.
+   - **`faWordTimings` writer** (`types.ts:401`, schema existed, unused): now written on the
+     single Apply-Sync commit (`App.tsx`'s `setProject` call) — set to the FA word tokens
+     when FA succeeded this run, explicitly cleared (`undefined`) otherwise, per the
+     clean-slate re-sync invariant (CLAUDE.md) — a project never carries a prior run's stale
+     FA word timings forward.
+   - **R-E / Model P:** untouched by this slice — no new gap-emission path was introduced;
+     `computeFaChunkPlan`'s existing empty-run-folding behavior (assigns a textless/wildcard
+     span to the preceding chunk) is reused unmodified.
+   - **R-J (`preserveSegmentLocks`):** untouched — still called at its existing
+     post-`autoMatchSegments` site (`App.tsx:3071`, shifted only by this session's earlier
+     line insertions, not moved into `applyAnchorBasedTiming` or anywhere else).
+   - **Tests:** `src/services/forcedAlignmentRun.test.ts` (9 tests — every fail-clean branch:
+     unsupported language, undefined language, empty chunk plan, IPC rejection, `FaEvent::Error`,
+     zero-word `Done`, synchronous-throw safety, plus 2 success-path tests) and
+     `src/services/whisperService.anchorSource.test.ts` (5 tests — default/explicit `'whisper'`,
+     explicit `'forced-alignment'`, uniform application across segments, locked-segment
+     exemption). Deliberately separate files from the regression-locked `syncTiming.test.ts`
+     (CLAUDE.md's Testing invariant) — this session touches none of its cases.
+   - **What is NOT done, needs the FA-on session (item 6):** the gate has never been flipped
+     on against a real model — no `ORT_DYLIB_PATH`, no `model.onnx` present anywhere this
+     session ran. `runForcedAlignmentForSync`'s success path is proven only against mocked
+     IPC responses (unit tests above), not a real ONNX forward pass through
+     `fa_align_production`. No FA timing quality was measured; none of this session's changes
+     depend on any such measurement.
+   *Exit criteria (met):* a real `invoke('fa_align_production', ...)` call exists in `src/`,
+   gated by `isFaGateOpen()`; toggling the existing Settings control (ProjectSettingsModal.tsx,
+   already wired since D17 — no new UI needed this session) changes which timing source Apply
+   Sync uses; golden replay still 6/6 with the gate OFF (byte-identical default behavior — the
+   "3/3" this criterion was originally written against is stale wording predating the replay's
+   growth to 6 cases, corrected here in passing). *Discharges:* the "capability-gated
+   production wiring" item named throughout §4/§6/§7. *Verified this session:* `npm test`
+   82 files/2107 passed/1 skipped (was 80/2093/1, +2 files/+14 tests, 0 regressions); `npm run
+   lint` clean; `cargo check` clean both configs; `cargo test` 132 passed (unconditional,
+   unchanged); `cargo test --features fa-inference` 206 passed/19 ignored (unchanged — 0 new
+   Rust tests, since `fa_align_production` has no testable surface beyond what
+   `fa_align_dev`'s existing tests already cover through the shared `resolve_wav_and_align`
+   helper); `cargo clippy --features fa-inference` 4 pre-existing warnings, 0 new (the
+   refactor's two new multi-argument Tauri-command-shaped functions were
+   `#[allow(clippy::too_many_arguments)]`-annotated, matching `fa_align`/`fa_align_dev`'s own
+   already-accepted shape, rather than left as new warnings); golden replay
+   (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6, unchanged — the core proof that gate-off
+   is byte-identical to `a5d7ca1`. *Depends on:* §7 item 2 (R.5 whether/when) — DEFERRED
+   2026-08-15 (see that item), so this slice shipped without R.5, matching that ruling exactly.
+   **Sequencing block (Option B, 2026-08-15): LIFTED, 2026-08-15,** satisfied before this
+   session started (Phase 3b/3c both landed) — see the Phase 3 row (§3 above).
 2. **`FaEvent` → UI progress consumer.** *Goal:* a real progress bar/status consumer for
    `FaEvent::Progress`/`Done`/`Error`, mirroring `useWhisper.ts`'s existing pattern for
    `WhisperEvent`. *Files:* new hook (e.g. `useForcedAlignment.ts`) consuming
@@ -1732,3 +1796,60 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   acceptance. This unblocks §11 item 1 (capability-gated production wiring,
   no longer sequencing-blocked) and removes Phase 3c from Stage 1's
   outstanding blocker list (§2).
+
+- **2026-08-15 — Phase 3 production wiring: `fa_align_production` reachable,
+  gated, GATE STAYS OFF.** Closes §11 item 1's "not yet started" status —
+  see that item's own entry above for the full breakdown; summarized here.
+  **Explicit scope boundary honored:** this session wires the path and
+  leaves it off — it does NOT turn FA on, does NOT produce the R-H second
+  golden baseline, and does NOT measure FA timing quality (all three remain
+  §11 item 6, blocked on a real `ORT_DYLIB_PATH` + `model.onnx`, neither
+  present anywhere this session ran). **Rust:** `fa_dev.rs`'s `fa_align_dev`
+  body extracted into `pub(crate) async fn resolve_wav_and_align` (behavior
+  unchanged); new `fa_production.rs`'s `fa_align_production` is a thin
+  wrapper over the same helper, its own temp-cache namespace
+  (`kinetix-fa-production-inputs`), registered in `lib.rs`. **TS:** new
+  `src/services/forcedAlignmentRun.ts`'s `runForcedAlignmentForSync` —
+  fail-clean (never throws; every failure mode resolves to `null`) —
+  wired into `App.tsx`'s `cachedTokensReady` branch at the exact `:2792-2837`
+  insertion point §8 named, gated by `isFaGateOpen()`. **R-G:**
+  `distributeSegmentTimes`/`alignFromCache` gained an optional
+  `anchorSource` parameter (default `'whisper'`, both pre-existing call
+  sites untouched); the new branch passes `'forced-alignment'` only on a
+  real FA success. **`faWordTimings`** (`types.ts:401`) now has its first
+  writer — set on FA success, explicitly cleared otherwise (clean-slate
+  re-sync). R-E/Model P and R-J (`preserveSegmentLocks`'s call site)
+  untouched by construction — no new gap-emission path, no call-site move.
+  **Tests:** 14 new (`forcedAlignmentRun.test.ts` ×9 — every fail-clean
+  branch plus 2 success-path cases, `whisperService.anchorSource.test.ts`
+  ×5), both files deliberately separate from the regression-locked
+  `syncTiming.test.ts`. **Verified:** `npm test` 82 files/2107 passed/1
+  skipped (was 80/2093/1, +2 files/+14 tests, 0 regressions); `npm run lint`
+  clean; `cargo check` clean both configs; `cargo test` 132 passed
+  (unconditional, unchanged); `cargo test --features fa-inference` 206
+  passed/19 ignored (unchanged, 0 new Rust tests — `fa_align_production` has
+  no testable surface beyond what `fa_align_dev`'s existing tests already
+  cover through the shared helper); `cargo clippy --features fa-inference`
+  4 pre-existing warnings, 0 new (2 new `too_many_arguments` warnings from
+  the refactor were `#[allow]`-annotated, matching `fa_align`/`fa_align_dev`'s
+  own already-accepted signature shape); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) **6/6, unchanged — the core
+  proof that gate-off is byte-identical to `a5d7ca1`.** No UI work needed —
+  `ProjectSettingsModal.tsx`'s High-Precision Auto-Sync toggle (D17) already
+  exists and already drives `isFaToggleOn()`. **Preconditions for the
+  FA-on session (§11 item 6):** a real per-language `model.onnx` placed
+  where `fa_model_path` resolves it (`app_local_data_dir()`, R-D, manual-
+  placement fallback — see `fa.rs`'s model-path resolver), a matching
+  entry in `scripts/fixtures/fa-onnx-manifest.json` (or the SHA-256 check
+  in `verify_model_manifest`/`resolve_wav_and_align` rejects it as
+  `ModelHashMismatch`), `ORT_DYLIB_PATH` pointing at a real onnxruntime
+  dylib (R-N packaging still undecided — §7 item 5 — but any dylib
+  satisfying `ort`'s `load-dynamic` load works for local dev/measurement),
+  running under `npm run tauri:dev:fa` (the `fa-inference` Cargo feature),
+  and flipping the Settings toggle (High-Precision Auto-Sync) on in a real
+  running app. **Not verified this session, stated explicitly rather than
+  inferred:** the success path (`Done` event → `faWordSpansToTranscriptTokens`
+  → `alignFromCache` → committed segments) is proven only against mocked
+  IPC responses in `forcedAlignmentRun.test.ts` — no real ONNX forward pass
+  has been run through `fa_align_production` by this session, and no claim
+  is made about FA output quality, timing accuracy, or the R-H baseline.

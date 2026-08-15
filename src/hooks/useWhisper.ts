@@ -68,6 +68,13 @@ async function alignSegmentsFromCachedTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   durationSecs: number,
+  // WS1 Task 5, docs/work-in-progress.md §11 item 1, owner ruling R-G:
+  // defaults to 'whisper', preserving both existing call sites' behavior
+  // (this function's own live-Option-A caller and App.tsx's direct Option C
+  // call) byte-for-byte. The forced-alignment production branch (App.tsx's
+  // cachedTokensReady block) passes 'forced-alignment' explicitly when it
+  // substitutes FA-derived tokens for `tokens` above.
+  anchorSource: 'whisper' | 'forced-alignment' = 'whisper',
 ): Promise<AlignFromCacheResult> {
   const silenceResult = await fetchAndDetectSilences(audioAsset);
   // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
@@ -91,7 +98,7 @@ async function alignSegmentsFromCachedTranscript(
   }
 
   const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs);
-  const updated = distributeSegmentTimes(segments, alignments);
+  const updated = distributeSegmentTimes(segments, alignments, anchorSource);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
   // alignFromCache even runs. Click 1 otherwise commits the plain aligner's
@@ -160,6 +167,7 @@ export interface UseWhisperApi {
     segments: VideoSegment[],
     tokens: TranscriptToken[],
     durationSecs: number,
+    anchorSource?: 'whisper' | 'forced-alignment',
   ) => Promise<AlignFromCacheResult>;
 }
 

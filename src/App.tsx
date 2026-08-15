@@ -104,6 +104,8 @@ import {
 import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
 import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
+import { isFaGateOpen } from './services/faGate';
+import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -2811,6 +2813,13 @@ export default function App() {
     }
 
     let finalTimedSegments: VideoSegment[];
+    // WS1 Task 5, docs/work-in-progress.md §11 item 1 — set only when the FA
+    // capability gate was open AND forced alignment actually succeeded this
+    // run; persisted verbatim onto `Project.faWordTimings` by the single
+    // commit below (schema: types.ts's `faWordTimings?: TranscriptToken[]`).
+    // Stays undefined on every gate-off run — a project synced with the gate
+    // off never gains this field, matching every pre-FA project's shape.
+    let faWordTimingsResult: TranscriptToken[] | undefined;
     // Boundary-quality checker (waveform-watcher program, Phase 1) — captured
     // only on the cachedTokensReady/Whisper-snapped branch below, since only
     // that branch has real per-segment token alignments to check a fallback
@@ -2831,11 +2840,38 @@ export default function App() {
     let pendingLogSummary: SyncRunSummary | undefined;
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
+
+      // WS1 Task 5 — production forced-alignment wiring (docs/work-in-
+      // progress.md §11 item 1). Gate defaults OFF (`isFaGateOpen()` =
+      // `isFaCapable() && isFaToggleOn()`, faGate.ts) — when it's off,
+      // `faTokens` stays null and this whole branch is a no-op, so behavior
+      // is byte-identical to before this branch existed. When the gate is
+      // on, `runForcedAlignmentForSync` fails CLEAN on any error (no model
+      // present, hash mismatch, inference error, unsupported language,
+      // empty chunk plan) — it returns null rather than throwing, so a
+      // failed FA attempt always falls through to the cached Whisper tokens
+      // below, never aborts the sync and never half-applies timing.
+      const faTokens = isFaGateOpen()
+        ? await runForcedAlignmentForSync(
+            voiceoverAsset!,
+            anchorTimed,
+            projectRef.current.transcriptTokens!,
+            audioDuration,
+            projectRef.current.language,
+          )
+        : null;
+      // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
+      // stated explicitly by this branch (the code path that actually
+      // produced `faTokens`), never inferred downstream.
+      const anchorSourceForRun: 'whisper' | 'forced-alignment' = faTokens ? 'forced-alignment' : 'whisper';
+      if (faTokens) faWordTimingsResult = faTokens;
+
       const aligned = await alignFromCache(
         voiceoverAsset!,
         anchorTimed,
-        projectRef.current.transcriptTokens!,
+        faTokens ?? projectRef.current.transcriptTokens!,
         audioDuration,
+        anchorSourceForRun,
       );
 
       // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
@@ -3097,6 +3133,13 @@ export default function App() {
       voiceoverId: newVoiceoverId,
       segments: lockRestoredSegments,
       headings: clampHeadingsToDuration(prev.headings ?? [], audioDuration),
+      // WS1 Task 5, §11 item 1 — clean-slate re-sync (CLAUDE.md's Sync/
+      // Whisper invariants): every Apply Sync re-derives this fresh, exactly
+      // like anchorStart. A gate-off or FA-fallback run explicitly clears
+      // any FA word timings a PRIOR run may have left behind, rather than
+      // leaving stale word indices attached to a segment structure they no
+      // longer describe.
+      faWordTimings: faWordTimingsResult,
     }));
     syncMark('setProject:called');
     // Post-commit paint boundary: rAF fires after React commits + the browser

@@ -9,6 +9,7 @@
 // which OTHER CRATES may name these modules.
 pub mod fa;
 pub mod fa_dev;
+mod fa_production;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
@@ -144,6 +145,7 @@ pub fn run() {
             fa::fa_align,
             fa::fa_cancel,
             fa_dev::fa_align_dev,
+            fa_production::fa_align_production,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,

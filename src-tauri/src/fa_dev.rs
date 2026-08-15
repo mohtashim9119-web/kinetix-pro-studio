@@ -140,6 +140,45 @@ pub async fn fa_align_dev(
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
+    resolve_wav_and_align(
+        app, state, model_cache, audio_b64, audio_ext_hint, chunks, language, on_event,
+        "kinetix-fa-dev-inputs",
+    )
+    .await
+}
+
+/// Shared body behind both `fa_align_dev` (above) and the production,
+/// capability-gated `fa_align_production` (`fa_production.rs`,
+/// docs/work-in-progress.md §11 item 1): resolves + manifest-verifies the
+/// model, decodes `audio_b64` into a content-addressed temp file under
+/// `input_cache_dir_name` (a caller-owned namespace so a devtools call and a
+/// real Apply-Sync call against the same audio content can never collide on
+/// the same path), obtains a durable 16kHz mono WAV via
+/// `fa::ensure_durable_wav`, then delegates to the real, unmodified
+/// `fa_align`. Extracted as its own function (rather than duplicated) so the
+/// production command is provably running the exact same
+/// resolve-then-delegate path this dev command has already been live-verified
+/// against a real `AppHandle<Wry>` (D25 A1) — one implementation, two thin
+/// command wrappers.
+// One more argument than `fa_align_dev` itself (`input_cache_dir_name`), the
+// caller-owned namespace this extraction exists to parameterize — same
+// already-accepted shape as `fa_align`/`fa_align_dev`'s own
+// `#[allow(clippy::too_many_arguments)]`-worthy Tauri-command signatures
+// (AppHandle + 2 States + several plain args + a Channel is inherent to this
+// module's IPC boundary, not a design smell to fix by bundling into a
+// struct).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn resolve_wav_and_align(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, FaState>,
+    model_cache: tauri::State<'_, FaModelCache>,
+    audio_b64: String,
+    audio_ext_hint: String,
+    chunks: Vec<FaChunkInput>,
+    language: String,
+    on_event: Channel<FaEvent>,
+    input_cache_dir_name: &str,
+) -> Result<(), FaError> {
     let model_path = fa_model_path(&app, &language)?;
     verify_model_manifest(&model_path, &language)?;
 
@@ -147,8 +186,8 @@ pub async fn fa_align_dev(
         .decode(&audio_b64)
         .map_err(|e| dev_error(format!("base64 decode failed: {e}")))?;
 
-    let input_dir = std::env::temp_dir().join("kinetix-fa-dev-inputs");
-    fs::create_dir_all(&input_dir).map_err(|e| dev_error(format!("create dev input cache dir: {e}")))?;
+    let input_dir = std::env::temp_dir().join(input_cache_dir_name);
+    fs::create_dir_all(&input_dir).map_err(|e| dev_error(format!("create audio input cache dir: {e}")))?;
     let mut hasher = crate::sha256::Sha256::new();
     hasher.update(&audio_bytes);
     let content_key = crate::sha256::hex_digest(&hasher.finish());
