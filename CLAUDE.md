@@ -118,7 +118,7 @@ Standing rules that are true today and must not be broken. (Pulled out of the ol
 - **A video segment always plays at its native rate** — `VideoSegment` has no `playbackSpeed` field; changing a segment's duration (by drag or otherwise) never changes its playback speed. (`globalPlaybackSpeed`, the separate per-project scrub-speed control, is unrelated and still a real field.)
 
 **Sync / Whisper**
-- Boundary/breath classification must use token *indices* (from the Hirschberg alignment pass), never raw Whisper timestamps — timestamps can smear 100–900ms across a real silence seam.
+- **Timestamps may measure distance; they must never decide identity.** Whether two things ARE the same thing (a boundary, an R.1 anchor, a breath-vs-boundary silence) is token-index business — from the Hirschberg alignment pass — never raw-timestamp proximity: timestamps can smear 100–900ms across a real silence seam, so "close" can masquerade as "the same." Scope is the whole sync/FA pipeline, not one file — worked violation: `faAnchors.ts`'s `findAgreeingSilence` matching an anchor by timestamp proximity (ear-pass items 6/7, `docs/work-in-progress.md` §11).
 - A Whisper rescue claim may only take tokens no other segment's global alignment pass already matched, and its earliest claimed token must sit before the first token any *later* segment truly matched — order, not distance, distinguishes a legitimate rescue from a false-positive one.
 - `Project.language` is sticky once set (by detection or explicit override) — a later transcription never silently re-detects while a language is already stored.
 - Sync accuracy is verified for five languages (English, Spanish, French, Portuguese, German — `constants.ts`'s `SUPPORTED_LANGUAGES`, backed by the `ggml-large-v3-turbo.bin` model); other whisper-cli codes are accepted, never blocked, but trip an `unsupported-language` sync-log warning.
@@ -189,7 +189,7 @@ App.tsx                 — top-level state + orchestration only
 | A filter in `FILTERS` without a `getFilterStyle` case | Shows in dropdown, applies nothing |
 | Non-globally-unique segment IDs | Timeline and React keys break on collision |
 | `-framerate` on an ffmpeg mux of a raw annexb stream | Wrong per-packet duration for PTS-less packets — use `-r <fps>` |
-| Classify breath-vs-boundary silence, or build a boundary search window, from raw token *timestamps* | Whisper timestamps blur across a real seam; token indices don't (`snapBoundaries.ts`) |
+| Use raw-timestamp proximity to decide two things are the same (a boundary, an R.1 anchor, a breath-vs-boundary silence) anywhere in the sync/FA pipeline | Timestamps blur 100–900ms across a real seam — "close" isn't "the same"; identity is token-index business (`snapBoundaries.ts`, `faAnchors.ts`) |
 | `FontFace.load(url)` inside the WebCodecs export worker | Fails with a NetworkError against fonts.gstatic.com in real WKWebView — fetch bytes on the main thread instead (`fontResolver.ts`) |
 | Assume a canvas-source `VideoFrame`/`VideoEncoder` config has a `colorSpace` field | Only the buffer-source overload has one — tag color space at mux time instead |
 | Call `setProjectRaw` outside `App.tsx`'s `setProject`/`setProjectSilent` | Desynchronizes `liveProjectRef`, corrupting the next `setProject` call's `prev` |

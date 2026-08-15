@@ -111,6 +111,13 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-16 (owner ruling R4, WS1 Session A):** R.5 (unscripted-audio wildcard, row "3" above
+via §7 item 2) and its newly-specified companion R.10 (scripted-text-never-spoken,
+`sync-pipeline-v2-plan.md`) are now pulled into Stage 1's own lock gate — see §11 item 13's
+amended dependency list and `sync-pipeline-v2-plan.md`'s STAGE 1 LOCK GATE. Neither changes
+status in this row (Phase 3/Task 5 stays "PRODUCTION PATH WIRED, gate OFF"); this is a Stage-1
+lock-gate criteria change, not a Phase 3 implementation change.
+
 **Other WS1 tasks, outside the phase/stage numbering** (carried from the pre-consolidation
 ledger, still live):
 
@@ -1292,6 +1299,128 @@ sequencing note):**
    If forced to rank: option 1 is the most principled, but needs a design pass before coding.
    **Waiting for a ruling before any code change — none made this session.**
 
+   **ADDENDUM 3 — WS1 Session A, 2026-08-16: nine owner rulings recorded, items 6/7
+   RULED (fix scoped, implementation pending Session B), true anchor exposure measured
+   (owner ruling R8). No `src/`/`src-tauri/` file changed; gate stays OFF.** Closes the
+   "waiting for a ruling" line immediately above for items 6/7 specifically (R1/R2 of
+   the nine rulings below); the four fix options ADDENDUM 2 listed are resolved:
+
+   - **Items 6, 7 status: RULED, fix scoped, implementation pending Session B** (owner
+     ruling R-R, `sync-pipeline-v2-plan.md`, next to R.1(c)). Decided: merge options 1
+     (token-index matching) and 2 (independent two-pass corroboration) — rewrite
+     `findAgreeingSilence` so corroboration is evidence of an actual token-to-token gap,
+     not raw-timestamp proximity, restructured into two passes so the corroborating
+     source is genuinely independent of the Whisper output that produced the candidate.
+     Options 3 (tighten `ANCHOR_AGREEMENT_SEC`) and 4 (defer to Phase 5) explicitly
+     REJECTED, not deferred — reasons recorded in the ruling. No code changed.
+   - **FA-default acceptance bar fixed now** (owner ruling R-S): 12/12 on a FRESH
+     listening list (not the 12-item list already used to diagnose this), zero
+     boundaries >1.0s from ear-correct, and runtime resolved.
+   - **Runtime note, updated per R7:** V6's ~231s wall-clock is accepted AS-IS for the
+     existing opt-in toggle — no optimization scoped or needed to ship the toggle. It
+     remains a blocker only for flipping the DEFAULT, separately from (and in addition
+     to) the 12/12 and 1.0s criteria above.
+   - **CLAUDE.md invariant sharpened** (owner ruling R2): the "token indices, never raw
+     timestamps" invariant is now scope-global (was `snapBoundaries.ts`-only) and
+     reframed as "timestamps may measure, never decide identity" — `faAnchors.ts`'s
+     `findAgreeingSilence` is the worked violation cited inline.
+   - **New FA replay gate** (owner ruling R10): `scripts/phase4-fa-replay.test.ts`,
+     offline, fixtures-only, pinning current FA behavior (including the known-bad items
+     4/5/6/7/10/11) so Session B's fix shows as a named, expected diff instead of a
+     silent drift only the owner's ear would catch. Golden replay untouched, still 6/6.
+   - **R.5/R.10 pulled into Stage 1 scope** (owner ruling R4) — see §3's 2026-08-16 note
+     and §11 item 13's amended dependency list. R.10 (companion to R.5, "scripted text
+     never spoken") is newly specified in `sync-pipeline-v2-plan.md`, next to R.5.
+   - **fr/de/pt corpus formally deferred out of Stage 1** (owner ruling R-T,
+     `sync-pipeline-v2-plan.md`, next to Phase 3b) — the Rules 1-5 unexercised-against-
+     real-audio risk is carried forward explicitly for whichever later stage takes
+     non-English.
+   - **`DOCUMENTATION_AUDIT_REPORT.md` stays untracked** (owner ruling R9) — a
+     deliberate scratch working file, not committed, not flagged as a problem.
+
+   **True anchor exposure — measured (owner ruling R8), replacing the 116/639 proxy.**
+   Temporary instrumentation was added to `faAnchors.ts`'s `computeAnchors`/
+   `findAgreeingSilence` (an exported `__DEBUG_ANCHOR_LOG` array + a per-accepted-anchor
+   competing-silence count), driven by the REAL `computeFaAnchors`/`alignQueryToSubject`
+   against the real `anchorTimed` parse (the same array `App.tsx`'s
+   `runForcedAlignmentForSync(voiceoverAsset, anchorTimed, ...)` call passes — not the
+   post-skip/post-snap `finalSegments` array `fa-run-distribution.ts` uses for its own,
+   different purpose) and the real committed `transcript_tokens.json`/`silences_app.json`
+   fixtures, all three corpora, fully offline. Reverted before this session finished —
+   `git diff src/services/faAnchors.ts` is empty, confirmed byte-identical.
+   - **(a) Total anchors accepted: 481** (v6 329, 173 148, spanish 4) — out of 447/175/27
+     parsed segments per corpus. This is the REAL R.1-admissible set (real Hirschberg
+     match + real 4-word run-survival gate), materially smaller than the proxy's
+     over-counted candidate pool (the proxy admitted it "over-counts vs. the real
+     algorithm, which also requires a real Hirschberg match and
+     `RUN_SURVIVAL_MIN_RUN_LONG`'s 4-word contiguous run").
+   - **(b) Anchors with >1 competing silence within `ANCHOR_AGREEMENT_SEC` of the SAME
+     token: 0 of 481 (0.0%), all three corpora.** Measured, not assumed — and it directly
+     falsifies the "two silences compete for one token" mental model: items 6 and 7 each
+     have `competingSilenceCount=1` (their own chosen silence is the ONLY one within
+     0.15s of that specific token's onset — no literal competition).
+   - **(c) Anchors with ≥2 of 3 sources tracing to the same Whisper output: 481 of 481
+     (100%), structural, not probabilistic — this is the ACTUAL circularity condition,
+     and it is universal, not a minority.** By construction: `computeAnchors` resolves
+     `subjectIdx → tokenIdx → token`, then calls `findAgreeingSilence(token.startSec,
+     silences)` — R.1(a) (the Hirschberg match) and R.1(b) (that match's own token onset)
+     are reading the SAME single Whisper token twice, for every anchor, unconditionally.
+     Only R.1(c) (the RMS silence) is a genuinely independent source. This matches
+     ADDENDUM 2's qualitative claim exactly ("the alignment op and the token onset both
+     come from the same smeared Whisper output, and only the silence is independent") —
+     now a certified count, not an inference.
+   - **(d) Overlap with the known movers (45/642 >0.5s, 25/642 >1.0s): inconclusive, and
+     said so rather than forced.** (b)'s literal signal (competing silences at one token)
+     has zero overlap with the movers, by construction of (b)=0 — it does not discriminate.
+     (c) is present on 100% of anchors including every mover — it also does not
+     discriminate, because it is universal. **What actually produces items 6/7 is a
+     CROSS-anchor pattern**, not a per-anchor one: TWO SEPARATE, individually-unambiguous
+     anchors (each with `competingSilenceCount=1`, from two DIFFERENT smeared tokens)
+     jointly bracket a spurious short run between them. An attempt to measure this
+     directly (flagging interior runs under 3.0s between two `agreed-anchor` boundaries,
+     then mapping each to its nearest FA-committed segment tag for a mover lookup)
+     produced 142/72/0 candidate short runs per corpus — too noisy to trust: a 3.0s
+     threshold flags a large fraction of ALL runs in this corpus (silence density here
+     runs ~one every 2.5-3s per the plan doc's own Part K measurement, so "short run" at
+     that threshold is closer to "typical run"), and the nearest-committed-segment tag
+     lookup mostly failed to resolve (chunk-plan attribution, not raw anchor windows,
+     determines the FINAL committed segment starts, so the two don't line up 1:1). This
+     attempt was discarded rather than reported as a real number — **flagged as a genuine
+     open item for Session B**, which will need exactly this kind of cross-anchor analysis
+     to validate its own two-pass corroboration design.
+   - **(e) Items 6 and 7 in the at-risk set: YES, confirmed directly** —
+     173 item 6: `qi=434 tokenIdx=465 tokenStartSec=173.18 chosenSilence=[172.70,173.12]
+     competingSilenceCount=1`; v6 item 7: `qi=1190 tokenIdx=1217 tokenStartSec=448.32
+     chosenSilence=[447.70,448.34] competingSilenceCount=1`. Both present in the real
+     accepted-anchor log, both with `competingSilenceCount=1` (consistent with (b)'s 0%
+     finding — neither item is a "competing silence" case; both are the universal (c)
+     structural case).
+   - **Measured N vs. the 116 estimate: not directly comparable, stated as such rather
+     than forced into a single "high/low/close" verdict.** The proxy's 116/639 measured
+     "candidate anchors whose nearest true boundary is contested by another candidate" —
+     a different unit (boundary-level, over-counted) from this session's 481 (real,
+     admissible, anchor-level) and 0/481 or 481/481 (per-anchor structural counts). What
+     the real measurement adds: the proxy's implied ~18.2% "at risk" rate is, if anything,
+     an UNDER-estimate of the true structural-precondition population — (c) shows the
+     precondition is 100% of real anchors, not 18%. But 100%-universal is also a WEAKER
+     signal for predicting which specific anchor breaks a boundary (2 of 481, both found)
+     than a discriminating ~18% figure would be, if that figure had been measuring the
+     real risk driver — which, per (d), it wasn't; the real driver is the unmeasured
+     cross-anchor pattern.
+   - **642 vs. 639 boundary-count discrepancy — resolved, both figures correct for what
+     they each individually measure; no error found.** 642 = the sum of Whisper's own
+     KEPT segment counts across the three corpora (v6 444 + 173 172 + spanish 26 = 642) —
+     used wherever the R-H second baseline compares FA against Whisper BY TAG (one
+     comparable value per kept segment, i.e. per "boundary" in the sense of "this
+     segment's own start"). 639 = 642 − 3, the number of INTERIOR pairwise boundaries
+     between adjacent kept segments (N−1 per corpus, since each corpus's very first kept
+     segment's start isn't "between" two segments — summed: 171+443+25=639) — used
+     wherever the anchor-exposure proxy counts boundary PAIRS. Both are internally
+     consistent with their own stated definition; the discrepancy was ambiguous labeling
+     ("boundaries" used for two different countable quantities across two sessions), not
+     a computational error in either one. Recommend, going forward: "642 committed
+     segments (tag-matched)" and "639 interior boundaries" as disambiguated names.
+
 7. **Phase 3b — language-keyed normalization (fr/de/pt).** *Goal:* per-language number
    words, currency, thousands separators, French elision. *Files:* new normalizer rules,
    `sync-pipeline-v2-plan.md` Part H.5 full spec. *Exit criteria:* English path provably
@@ -1327,7 +1456,13 @@ sequencing note):**
     landing) — item 8 (Phase 3c) is CLOSED as of 2026-08-15 (by written acceptance, not code)
     and no longer blocks this item.
 13. **STAGE 1 LOCK.** *Exit criteria:* §2's Stage 1 row, all criteria met. *Depends on:*
-    items 1, 8, 12.
+    items 1, 8, 12, **and — added 2026-08-16, owner ruling R4, WS1 Session A — R.5
+    (unscripted-audio wildcard) and R.10 (scripted-text-never-spoken, R.5's companion)
+    each built and verified, or explicitly accepted in writing with a reason and a
+    reopening trigger.** Reverses the 2026-08-15 "R.5 is not a Stage 1 lock criterion"
+    ordering decision (`sync-pipeline-v2-plan.md:4618`) — both rules address 4 of the 7
+    ear-pass failures (items 4/5/10/11) found after that decision was written. Full
+    ruling: `sync-pipeline-v2-plan.md`'s amended STAGE 1 LOCK GATE and its R4/R-T entries.
 14. **Phase 4 — the Stage 2 restructure.** Timing-free Stage 2 return type; single Stage 1
     output object (closes P8); 5+3→5 skip-semantics change-detector; R6/R10/R12 closed or
     accepted in writing; `App.tsx:1686`'s `handleToggleLock` re-wired to the collapsed
@@ -1427,6 +1562,72 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16 — WS1 Session A: nine owner rulings recorded, CLAUDE.md invariant
+  sharpened, FA replay gate built, true anchor exposure measured (no fix, no tuning,
+  gate stays OFF).** Checkpoint task per owner brief — record rulings and build the
+  regression gate the items-6/7 fix (Session B) needs to exist before it lands; does
+  NOT implement that fix. Full write-up: §11 item 6's ADDENDUM 3 (rulings + anchor
+  exposure); `sync-pipeline-v2-plan.md`'s R-R/R-S/R-T/R4/R.10 entries; `CLAUDE.md` §4.
+  Summary:
+  - **Nine owner rulings recorded** (R1-R9 in the owner's own numbering; R-R/R-S/R-T
+    in `sync-pipeline-v2-plan.md`'s own ruling-letter sequence, next free after R-Q):
+    items 6/7 fix decided (rewrite `findAgreeingSilence` on token indices, two
+    independent passes — merges the plan doc's fix-options 1+2, explicitly rejects
+    3 and 4); CLAUDE.md's timestamp invariant sharpened and made scope-global; a
+    companion rule to R.5 specified as **R.10** (scripted text never spoken — items
+    10/11's mechanism); both R.5 and R.10 pulled into Stage 1's lock gate (reverses a
+    2026-08-15 decision); fr/de/pt corpus formally deferred out of Stage 1 with the
+    Rules-1-5-unexercised risk carried forward explicitly; an FA-default acceptance
+    bar fixed (12/12 fresh listen, zero >1.0s boundaries, runtime resolved); V6's
+    ~231s runtime accepted for the opt-in toggle, not the default;
+    `DOCUMENTATION_AUDIT_REPORT.md` confirmed to stay untracked.
+  - **FA baselines validated at HEAD, not refreshed — the task's own premise that
+    Spanish would be stale was checked and found not to hold.** Re-ran
+    `measure-forced-alignment-hf.py` (the same capture path 580ba0f used, confirmed
+    from `scripts/fixtures/README.md`'s changelog) for all three corpora against the
+    committed `phase4-baseline-*-segments.csv` windows. Result: **0/3857 (v6),
+    0/1645 (173), 0/247 (spanish) differing word rows — all three byte-identical to
+    the committed fixtures, including Spanish.** Reason: this fixture family
+    (`phase4-fa-baseline-*-words.csv`/`phase4-fa-tokens-*.json`, "port-fidelity
+    reference") uses fixed per-segment pad-sec-3.0 windows and never calls
+    `faChunkPlan.ts`'s `attributeByIndex` at all — 616abb2's fix cannot have touched
+    it. The Spanish movement 616abb2 actually measured (66.73→65.12) was in the
+    OTHER FA fixture family (`phase4-fa-second-baseline-spanish-segments.csv`, "R-H
+    second baseline," a real production-chunk-plan capture) — that fixture predates
+    616abb2 and, being "read by nothing" per its own README section until this
+    session's new gate, was never regenerated; it still shows the pre-fix 66.73.
+    Not refreshed (would need a real Rust ONNX capture, out of this session's scope)
+    — documented as a known-stale evidence artifact instead, in the new gate's own
+    KNOWN_BAD manifest (item 9, `status: 'fixed'`, not asserted against the stale
+    fixture value).
+  - **New FA replay gate: `scripts/phase4-fa-replay.test.ts`** (8 tests, all passing,
+    fully offline). Pins the `phase4-fa-second-baseline-*` fixtures' structural shape
+    (row/skip counts, Model P contiguity, corpus-start/end) and a KNOWN_BAD manifest
+    (items 4/5/6/7/10/11, current FA value vs. ear-correct, sourced from `docs/work-
+    in-progress.md`'s own mechanism table) so Session B's fix shows as a named,
+    expected diff. V6 seam 150/151 (154/155, the Phase 3c control) represented with
+    all three quantities (committed-correct 457.83, raw Whisper token 457.72,
+    FA 457.81). Golden replay untouched, confirmed still 6/6.
+  - **True anchor exposure measured, replacing the 116/639 heuristic proxy** — full
+    numbers in §11 item 6's ADDENDUM 3. Headline: 481 real accepted anchors across all
+    three corpora (not the proxy's over-counted candidate pool); 0/481 have a literally
+    competing silence at the same token (falsifies the "two silences compete" mental
+    model); 481/481 (100%, structural) have R.1(a)/(b) tracing to the identical single
+    Whisper token — the real, universal circularity condition, now a certified count.
+    Mover-overlap ((d) in the ruling) is stated as genuinely inconclusive — the real
+    items-6/7 driver is an unmeasured cross-anchor pattern (two independently-clean
+    anchors bracketing a spurious short run), flagged as open work for Session B rather
+    than forced into a number a noisy first attempt didn't support. The 642-vs-639
+    boundary-count discrepancy is resolved: both are correct for different countable
+    quantities (642 = Σ Whisper-kept segments per corpus; 639 = 642 − 3 interior
+    pairwise boundaries), not a computational error.
+  - **Verification:** `npm test`, `npm run lint`, `cargo check --features fa-inference`,
+    `cargo test --features fa-inference`, golden replay (6/6) and the new FA replay
+    gate (8/8) all re-run clean after this session's edits — exact counts in this
+    session's own commit message. No `src/`/`src-tauri/` behavior-bearing file changed;
+    the one temporary instrumentation edit (`faAnchors.ts`, Step 5) was reverted —
+    `git diff src/services/faAnchors.ts` empty, confirmed.
 
 - **2026-08-16 — FA ear-pass root-cause diagnosis (diagnosis only; no fix, no tuning,
   gate stays OFF).** The owner's 12-item ear pass came back 5 correct / 7 wrong. This pass

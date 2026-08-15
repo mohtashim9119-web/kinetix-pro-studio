@@ -1424,6 +1424,54 @@ unrecoverable without a second pass. The costs are not symmetric, so the test
 is deliberately conservative in the rejection direction. Both constants live
 in `syncConstants.ts`, never hardcoded at a call site.
 
+**R-R ruling (owner, 2026-08-16) — R.1(c)'s corroboration test is unsound;
+items 6/7 fix decided as a rewrite, two rejected alternatives named.** The
+ear-pass root-cause diagnosis (`b36f6c2`, independently re-derived `f8250a3`,
+both recorded in `docs/work-in-progress.md`'s §11 item 6 addenda) traced
+ear-pass items 6 (173, `vessel_damage_clue`: FA 172.91 vs. ear-correct 174.74)
+and 7 (v6, `152_frozen_brush_mice`: FA 449.20 vs. ear-correct 451.03) to the
+same mechanism: `faAnchors.ts`'s `findAgreeingSilence` (R.1(c)'s
+implementation) tests `Math.abs(tokenStartSec - s.endSec) <=
+ANCHOR_AGREEMENT_SEC` — a raw Whisper token *timestamp* compared against a
+detected silence, exactly the class of failure CLAUDE.md's standing invariant
+exists to forbid. Both items share one shape: an anchor fires on a word deep
+inside the CORRECT segment's own text (not its first word) because that
+word's Whisper timestamp coincidentally sits within 0.15s of an unrelated
+real silence, stranding the segment's opening words in the wrong FA chunk at
+near-zero confidence.
+
+Four options were on the table: (1) match on token indices instead of
+timestamp proximity; (2) require genuinely independent corroboration (a
+second, non-Whisper-timing signal) before accepting an anchor; (3) tighten
+`ANCHOR_AGREEMENT_SEC` or require minimum spacing between adjacent anchors;
+(4) defer wholly to Phase 5's fence.
+
+**Decided: merge (1) and (2).** `findAgreeingSilence` is to be rewritten so
+corroboration happens on TOKEN INDICES, not timestamp proximity, and
+restructured into two passes so the corroborating source is genuinely
+independent of the Whisper output that produced the candidate — a rewrite of
+the function's evidence model, not a threshold tweak to its existing
+single-pass shape. **Amends R.1(c)** as written above (the "(c) a detected
+silence interval ends immediately before it" clause): the corroboration test
+must be evidence that the silence actually falls in the matched word's own
+token-to-token gap, not proximity between the silence and the word's
+*reported* onset — the same precedent `snapBoundaries.ts`'s own
+breath/boundary classification already set for the identical problem.
+Implementation is Session B (`faAnchors.ts`); this ruling records the
+decision only — no `src/`/`src-tauri/` file is touched this session.
+
+**Options (3) and (4) explicitly rejected, not merely deferred.** (3) —
+tightening `ANCHOR_AGREEMENT_SEC` — treats the symptom (two anchors
+bracketing one true boundary) without touching the timestamp-vs-index root
+cause the invariant already names; an arbitrary threshold with no principled
+derivation risks suppressing correct closely-spaced anchors in fast dialogue.
+(4) — deferring to Phase 5 — is rejected because `faAnchors.ts` is Phase
+3/Task 5 (R.1) scope, not Phase 5's stated scope (`snapBoundaries.ts`
+specifically); nothing in this document says Phase 5's fence subsumes R.1's
+anchor computation, so deferring would leave a known-bad anchor mechanism
+live and un-owned through however many further sessions elapse before Phase
+5 starts.
+
 **R.2 — Padding, and how it is bounded.** A run's audio window is
 
 ```
@@ -1507,6 +1555,53 @@ the whole wildcard gap to the PRECEDING segment (its asset simply holds longer),
 which preserves invariant (b) unchanged, is the least visible option on screen,
 and is logged as an explicit `unscripted-gap` sync-log entry so it is
 inspectable rather than silent.
+
+**R.10 — Scripted text never spoken (companion to R.5, next free rule
+identifier after R.9; the mirror-image direction — owner ruling R3, WS1
+Session A, 2026-08-16).** R.5 covers real audio the script doesn't account
+for. This rule covers the opposite: script words with no matching audio at
+all — an on-screen-only title, a planted test string never voiced. Forced
+alignment has no drop path for this: a CTC objective is required to place
+every target token *somewhere*, so unspoken scripted words are carved out of
+whichever real speech happens to be adjacent, stealing that speech's own
+words into the same window at near-zero confidence (ear-pass items 10
+`perilous_realms`, 11 `blue_monkey`, `docs/work-in-progress.md`'s 12-item
+mechanism table).
+
+**Detection signal, measured not assumed.** Both item 10 and item 11 score
+7/7 words below `CONF_MIN` at the per-word ACOUSTIC confidence FA itself
+already emits (`FaWordSpan.needsReview`) — item 11's minimum raw confidence
+1.9e-08, item 10's 1.3e-06 — while each segment's own Hirschberg-derived
+`alignConfidence` reads 1.000, because that figure is TEXT-match confidence
+(every script word found a token), not acoustic. The two must not be
+conflated: `alignConfidence` cannot see this failure at all; only FA's own
+per-word confidence can.
+
+**Expected behaviour, recommended, not yet ruled on implementation.** Mirror
+Whisper's own existing coverage gate — the same graceful-degradation
+precedent R.7 below already establishes for a different trigger: when a
+matched segment's words are overwhelmingly below `CONF_MIN`, treat the
+segment as unmatched and drop it, rather than committing timing an alignment
+was forced into place with no real acoustic evidence behind it. This is
+inherent to a forced-alignment objective, not a bug in `faAnchors.ts` or
+`faChunkPlan.ts` (`docs/work-in-progress.md`'s "inherent vs. missing-feature
+vs. bug" categorization) — so the fix is a drop/skip gate layered on FA's
+output, not a change to the alignment computation itself.
+
+**Relationship to R.5.** Exact mirror image: R.5 is audio the script doesn't
+cover (absorbed via a CTC wildcard); R.10 is script the audio doesn't cover
+(dropped via a confidence gate). Both are currently unimplemented in the
+committed FA path, and both are pulled into Stage 1 scope together by the
+amended STAGE 1 LOCK GATE below (owner ruling R4) rather than left for a
+later phase to rediscover independently — Phase 3c's own history (above)
+is exactly what happens when a stage locks around a known, scheduled-later
+defect.
+
+**Ruling status.** Specified here to the same depth R.5 carries, not yet
+built, and its own implementation approach (the drop-gate threshold; whether
+it reuses `CONF_MIN` as-is or needs its own constant) is still an open
+decision, tracked in `docs/work-in-progress.md` — the same status R.5 held
+before ruling R-E closed its destination question.
 
 **R.6 — Corpus start and end.**
 
@@ -1603,6 +1698,32 @@ analysis of *how* the cascade worked, and it does not change R.7's requirement
 recurs whenever a committed slot is too tight). It does mean the case is
 **latent, not live**, and this document should stop describing it in the present
 tense.
+
+**R-S ruling (owner, 2026-08-16) — FA-default acceptance bar, fixed now,
+before the items 6/7 fix lands.** Before `isFaGateOpen()`'s default can flip
+from OFF to ON, three conditions must all hold:
+
+  (i)   **12/12 on a FRESH listening list** drawn from the post-fix run — not
+        the 12-item list `docs/work-in-progress.md`'s §11 item 6 already used.
+        That list informed the R-R ruling above and the items-6/7 diagnosis
+        itself; it is not itself the acceptance gate, because scoring a fix
+        against boundaries chosen before the fix existed would not be a fair
+        test of it.
+  (ii)  **Zero boundaries more than 1.0s from ear-correct**, across whatever
+        set (i)'s fresh listening list draws from.
+  (iii) **Runtime**, resolved per the acceptance below.
+
+**Runtime — accepted for an opt-in toggle; NOT resolved for the default.**
+V6's ~231s full-chunked-run wall-clock (`docs/work-in-progress.md`'s §11
+item 1 smoke-test follow-on) is accepted as-is for the existing opt-in
+Settings toggle — no optimization work is scoped this session, and none
+blocks the items-6/7 fix. It remains a blocker only for flipping the
+DEFAULT: criterion (iii) above cannot be marked met until a runtime figure —
+optimized or otherwise — is separately ruled acceptable for a change that
+runs on every Apply Sync, not an opt-in one. This is an explicit acceptance,
+not silence: shipping the toggle today is unblocked; shipping it as the
+default is not, and runtime is one of the three reasons why, alongside (i)
+and (ii) above.
 
 ---
 
@@ -3815,6 +3936,28 @@ French's vocab additionally contains non-French letters (ć č ō œ š ș) — 
 training-data hygiene oddity in the upstream model, footnote-only, no rule
 implication.
 
+**R-T ruling (owner, 2026-08-16) — non-English corpus deferred out of Stage 1
+scope; fr/de/pt normalization-rule risk carried forward explicitly.** The
+French/Portuguese/German corpus will not be supplied for Stage 1. Recorded
+here as one explicit, dated ruling rather than left as the scattered
+"corpus absent, accepted in writing" notes this document already carries —
+Phase 2a's Step 5 (`:381` above, Spanish boundary-verification specifically)
+and the STAGE 1 LOCK GATE's own blocking list (below, fr/de/pt corpus
+absence generally). Those notes stand; this ruling is their explicit closure
+going into Stage 1 lock, not a replacement for either.
+
+**Carried-forward risk, stated so it is not silently assumed clean.** Phase
+3b's Rules 1-5 (French elision; Spanish/German/Portuguese/French cardinal
+numbers 0-20/30, §3b `docs/work-in-progress.md`) have **shipped**, but have
+**never been exercised against real audio** for French, Portuguese, or
+German — only Spanish has a real corpus project, and even Spanish's boundary
+correctness remains unverified by ear (Phase 2a's Step 5 acceptance, `:381`
+above). This risk does not resolve itself by Stage 1 locking; it lands,
+explicitly, on whichever later stage first takes on non-English corpus
+material — that stage's own entry must re-open this note rather than assume
+Phase 3b's dormant rules are correct because they compiled and passed
+English-only tests.
+
 ### Phase 3c — Hyphen asymmetry (moved from old Phase 8 — see K1)
 textNormalize.ts glues mid-call into one alignment word while Whisper emits two tokens, so neither matches and the segment’s end is understated. Six occurrences on V6, timing impact on one. This rewrites the alignment corpus on both sides and interacts with the deliberate NUMBER_WORDS carve-out, so it’s its own commit with its own re-listen of the set. It shifts English token/word indices — the last index-shifting event of Stage 1, after which baselines are stable for the rest of the programme (K9).
 
@@ -3861,8 +4004,19 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
 - Contract IN and Contract 1→2 (Part J) verified guarantee-by-guarantee by owner inspection.
 - Inspector inspected across ≥1 tight-pause and ≥1 long-pause project; smear distribution recorded in Phase 1b’s entry; numeric thresholds met (as finalized by 2b).
 - Determinism check passed (Phase 0).
-- Non-English corpus status resolved: either H.8’s minimum corpus exists and was exercised, or the specific gap is accepted in writing here with a reason and a reopening trigger.
+- Non-English corpus status resolved: either H.8’s minimum corpus exists and was exercised, or the specific gap is accepted in writing here with a reason and a reopening trigger (see the R-T ruling, above, for fr/de/pt).
 - No Stage 1 defect deferred downstream (the hyphen asymmetry and threshold questions are closed inside Stage 1 by 3c/3d — that is why they moved).
+- **R.5 (unscripted-audio wildcard) and R.10 (scripted-text-never-spoken, its
+  companion) are each either built and verified, or explicitly accepted in
+  writing here with a reason and a reopening trigger — amended 2026-08-16
+  (owner ruling R4, WS1 Session A).** This reverses the 2026-08-15 decision
+  below (`:4618` further down this document) that R.5 was not a Stage 1 lock
+  criterion. Together the two rules address 4 of the 7 ear-pass failures
+  (items 4, 5 → R.5; items 10, 11 → R.10, `docs/work-in-progress.md`'s
+  mechanism table) found after that 2026-08-15 decision was written — locking
+  Stage 1 with defects already known and scheduled for repair two stages
+  later is the exact pattern the Phase 3c ruling (above) and D.-1's hard rule
+  already warn against.
 - Cross-cutting regression checklist (D.-1) run and clean.
 
 **Status as of 2026-08-05: NOT PASSED.** Explicit blocking list, recorded so the next session doesn't re-derive it:
@@ -3873,7 +4027,15 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   (e) cross-cutting regression checklist (D.-1) not yet run;
   (f) ~~`verification-baseline.csv` carried 69 blank `phase-2a` verdict cells (47 existing boundaries + 22 new sync-log-flagged candidates) awaiting the owner's ear~~ **RESOLVED 2026-08-11.** All 69 are closed: the 47 existing boundaries were scored during Phase 2a's own listening pass, which passed its correct-count gate (38/44 verified, ≥30-of-47 threshold met — see Phase 2a's entry above); the remaining 22 new sync-log-flagged candidates are DEFERRED, non-blocking, by owner ruling R-A (2026-08-11) — WS1 does not pause for an ear-listening pass to fill them in.
 
-**Update 2026-08-15: Phase 3c CLOSED, by written acceptance, no code change — see Phase 3c's own entry above.** The hyphen-tokenization mismatch was never separately itemized in this blocking list (K1's phase-move already folded it into criterion 3851's "no Stage 1 defect deferred downstream — closed inside Stage 1 by 3c/3d"), but is recorded here explicitly since the plan's own §3c row and `docs/work-in-progress.md`'s §2 cross-reference this section directly. Phase 3c is fully closed (qi-bookkeeping sub-items DONE 2026-08-15; hyphen-asymmetry CLOSED-by-acceptance 2026-08-15) and drops off the blocking list entirely. Outstanding: (a) smear thresholds (needs Phase 3 production landing), (b) fr/de/pt corpus absent, (d) Contract IN/1→2 guarantee-by-guarantee verification not run, (e) regression checklist not run.
+**Update 2026-08-15: Phase 3c CLOSED, by written acceptance, no code change — see Phase 3c's own entry above.** The hyphen-tokenization mismatch was never separately itemized in this blocking list (K1's phase-move already folded it into criterion 3851's "no Stage 1 defect deferred downstream — closed inside Stage 1 by 3c/3d"), but is recorded here explicitly since the plan's own §3c row and `docs/work-in-progress.md`'s §2 cross-reference this section directly. Phase 3c is fully closed (qi-bookkeeping sub-items DONE 2026-08-15; hyphen-asymmetry CLOSED-by-acceptance 2026-08-15) and drops off the blocking list entirely. Outstanding: (a) smear thresholds (needs Phase 3 production landing), (b) fr/de/pt corpus absent (see the R-T ruling, above), (d) Contract IN/1→2 guarantee-by-guarantee verification not run, (e) regression checklist not run.
+
+**Update 2026-08-16 (owner ruling R4, WS1 Session A): (f) R.5 and R.10 added
+to the blocking list.** Reverses the 2026-08-15 "R.5 is not a Stage 1 lock
+criterion" decision (`:4618` further down this document) — see the amended
+STAGE 1 LOCK GATE criteria above and the R4 entry there for the reasoning.
+Outstanding is now (a)-(e) as already listed, plus **(f) R.5 (unscripted-
+audio wildcard) and R.10 (scripted-text-never-spoken) each unbuilt and not
+yet accepted in writing.**
 
 Near-term sequence: Phase 2b is read-only and measurement-exempt from stage ordering, so it can proceed in parallel with the owner's Phase 2a listening pass.
 
@@ -4633,3 +4795,18 @@ production wiring's own landing for no Stage-1-lock benefit. **Reopen trigger:**
 the next time work begins on `docs/work-in-progress.md` §11 item 1 (production
 wiring) or item 6 (R-H second-baseline pass) — whichever lands first — R.5 (item
 5) should be scoped concretely as the following slice, before Phase 4 begins.
+
+**Superseded 2026-08-16 (owner ruling R4, WS1 Session A).** The "R.5 is not a
+Stage 1 lock criterion" ordering decision above is reversed — R.5, together
+with its newly-specified companion R.10 (scripted-text-never-spoken, `:1509`
+above), is now a Stage 1 lock gate criterion (STAGE 1 LOCK GATE, `:3860`
+above). Reasoning for the reversal: R.5/R.10 together address 4 of the 7
+ear-pass failures found after this decision was originally written
+(`docs/work-in-progress.md`'s 2026-08-16 root-cause diagnosis, items 4/5/10/
+11) — locking Stage 1 with defects already known and scheduled for repair
+two stages later is the exact pattern D.-1's hard rule and the Phase 3c
+ruling already warn against. D25 B1's own finding above — the condition R.5
+exists to handle remains reachable and silently-absorbed under the shipped
+path — still holds and is why neither rule needed to ship before this
+reversal was ruled; it means the reversal was safe to make late, not that it
+should have stayed deferred indefinitely.
