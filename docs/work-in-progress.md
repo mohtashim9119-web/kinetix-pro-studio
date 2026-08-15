@@ -2393,3 +2393,66 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   IPC responses in `forcedAlignmentRun.test.ts` — no real ONNX forward pass
   has been run through `fa_align_production` by this session, and no claim
   is made about FA output quality, timing accuracy, or the R-H baseline.
+
+- **2026-08-16 — Fix: `faChunkPlan.ts` forced-split attribution bug, ear-pass
+  item 9. CLOSES ear-pass item 9 (mechanism (4), `b36f6c2`'s diagnosis).
+  Items 6/7 (false-anchor timestamp-smear, `faAnchors.ts`'s
+  `findAgreeingSilence`) remain open, next session. Gate stays OFF.**
+  Independently re-derived the diagnosis before coding, per this session's
+  own brief: agreed with `b36f6c2` in full, and sharpened one point —
+  `attributeByIndex`'s empty-run handling was documented as "mirroring
+  `runsToChunks`'s own empty-run rule," but the two modes need OPPOSITE fold
+  directions (text flows backward in `runsToChunks`, forward in
+  `attributeByIndex`'s placement scan for an empty-`qi` range specifically),
+  so applying the same backward fold to both was the bug itself, not an
+  unrelated regression.
+  **Fix (`src/services/faChunkPlan.ts`, `attributeByIndex`):** a text-less
+  run now folds its window in the direction its text actually went — FORWARD
+  (via the existing `pendingStart` mechanism) when `qiHi === qiLo` (a forced
+  split, whose text the placement scan always pools into the NEXT range),
+  BACKWARD (extend the previous chunk, unchanged) otherwise. One `if` added;
+  `runsToChunks`/segment-start-time attribution untouched. R-P (split
+  selection), R-E (no gap — the shared boundary still moves for both
+  neighbors in the same step, never independently), Model P, and the
+  demote-only `anchorSource` ordering are all unaffected by construction.
+  **Red-then-green:** `src/services/faChunkPlan.test.ts` gained 4 tests in a
+  new forced-split-after-a-real-anchor fixture (the shape the existing suite
+  missed — every prior forced-split fixture had the split as run 0, where
+  `attributeByIndex`'s `chunks.length === 0` branch was already correct).
+  Confirmed red at HEAD first (`word 3 ("hats") has onset 1.5s but its chunk
+  covers [31.5, 40)`), then green after the fix — 32/32 in the file.
+  **Real-corpus measurement** (scratch harness: TS replay of
+  `parseProjectData` → `applyAnchorBasedTiming` → `computeFaChunkPlan`,
+  scratch Rust `fa_onnx::align_chunked` call, both reverted before this
+  commit — not part of the diff): harness fidelity proven first (unmodified
+  pre-fix regeneration reproduces the committed R-H second-baseline chunk
+  plans exactly — 280/280 v6, 118/118 173, 5/5 spanish, byte-identical).
+  Post-fix: **`023_scylla_six_sailors` moves from 66.73 to 65.12 — the
+  ear-correct value, exactly, to the centisecond.** Its neighbor
+  `022_ship_trapped`'s end moves in lockstep to the same 65.12 (the shared
+  boundary) — 2 of Spanish's 27 boundaries moved, both the same seam, 25
+  unchanged. **V6 (447 boundaries) and 173 (175 boundaries): zero movement**,
+  as predicted for a corpus with no forced split — chunk plans and FA word
+  output are byte-identical old vs. new (0/3874 v6 word rows differ, 0/1660
+  173 word rows differ). **Confidence:** the 9 words between the "que"
+  anchor and the next real anchor flip from ~0.0000 (`needsReview`) to
+  ~0.99+ (not flagged) — they were previously being aligned against the
+  wrong 4.2s-displaced window. Net Spanish `needsReview` count drops 25→14.
+  **One side effect, reported not fixed (out of scope):** the now-correctly-
+  shortened preceding chunk's last two words ("por"/"lo") flip from high to
+  ~0.0000 confidence — a tighter, un-padded window (R.2 padding is this
+  module's own documented out-of-scope item, `faChunkPlan.ts:48-51`) leaves
+  less slack at the chunk's tail. Does not move the `022`/`023` boundary
+  itself (driven by `023`'s own first word + silence-snap, not by `022`'s
+  internal word confidences) and does not regress: this is a word newly and
+  correctly flagged `needsReview`, not a wrong commit.
+  **Verification:** `npm test` 82 files/2111 passed/1 skipped (unchanged
+  count, +4 new tests replacing headroom — see file-level diff); `npm run
+  lint` clean; `cargo check --features fa-inference` clean; `cargo test
+  --features fa-inference` 206 passed/19 ignored (unchanged); golden replay
+  (`scripts/phase4-handoff-replay-sync.test.ts`) **6/6, unchanged — default
+  (gate-off) path is byte-identical.** No R-H fixture rows touched (this
+  session's FA re-run was a scratch harness against `.work-phase4/replay/`,
+  not a fixture regeneration — `scripts/fixtures/phase4-fa-baseline-*`
+  untouched, confirmed by golden replay's own R-H describe block staying
+  green).

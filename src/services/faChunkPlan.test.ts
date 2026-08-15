@@ -383,6 +383,115 @@ describe('computeFaChunkPlanWithAttribution', () => {
   });
 });
 
+describe('computeFaChunkPlanWithAttribution — forced-split attribution (ear-pass item 9)', () => {
+  /**
+   * A forced split that is NOT the first run — the shape the whole existing
+   * suite misses. `computeFaChunkPlan`'s own "merges a run with no owning
+   * segment" test above also force-splits, but its split run is run 0, so
+   * `attributeByIndex` takes the `chunks.length === 0` / `pendingStart` branch,
+   * which was always correct. The defect only appears once a chunk has already
+   * been emitted before the split.
+   *
+   * Fixture: one real R.1 anchor at t=1.5 ("hats", qi 3), then a 38.5s
+   * anchor-free stretch that R-P must force-split at 1.5 + MAX_RUN_SEC = 31.5
+   * (no detected silence lies fully inside that window, so it is a
+   * `'forced-split-max-run'`). Runs: [0,1.5) agreed-anchor, [1.5,31.5)
+   * forced-split, [31.5,40) corpus-end.
+   *
+   * `runQiRanges` gives the middle run an EMPTY qi range, so all of its text is
+   * pooled into the [31.5,40) run. Before the fix `attributeByIndex` folded
+   * that run's WINDOW backward onto chunk 0 instead, leaving 9 of the 12 words
+   * in a chunk whose audio window starts at 31.5 — the Spanish
+   * `023_scylla_six_sailors` failure in miniature.
+   */
+  function forcedSplitAfterAnchorFixture() {
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 6),
+      seg('s1', 'dragons chase silver moons', 6, 24),
+      seg('s2', 'falcons guard hidden castles', 30, 10),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const onsets = [0, 0.5, 1.0, 1.5, 6, 12, 18, 24, 30, 33, 36, 38];
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, onsets[i]!, onsets[i]! + 0.4));
+    // Exactly one admissible anchor: "hats" at 1.5. Every other token sits far
+    // more than ANCHOR_AGREEMENT_SEC (0.15) from this silence's endSec.
+    const silences: SilenceInterval[] = [silence(1.5)];
+    return { segments, tokens, silences, audioDuration: 40, words, onsets };
+  }
+
+  it('keeps a forced-split run\'s window with the text that window\'s audio actually carries', () => {
+    const { segments, tokens, silences, audioDuration, words, onsets } =
+      forcedSplitAfterAnchorFixture();
+    const chunks = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'script-word-index',
+    );
+
+    // The property under test, stated semantically: every script word's REAL
+    // audio onset must fall inside the window of the chunk that holds it.
+    // Forced-split mis-attribution violates this and nothing else in the suite
+    // checks it.
+    let wordIdx = 0;
+    for (const chunk of chunks) {
+      for (const w of chunk.text.split(' ').filter(x => x.length > 0)) {
+        const onset = onsets[wordIdx]!;
+        expect(
+          onset >= chunk.startSec && onset < chunk.endSec,
+          `word ${wordIdx} ("${w}") has onset ${onset}s but its chunk covers ` +
+            `[${chunk.startSec}, ${chunk.endSec})`,
+        ).toBe(true);
+        wordIdx++;
+      }
+    }
+    expect(wordIdx).toBe(words.length);
+  });
+
+  it('folds the empty-qi-range window FORWARD onto the chunk that received its text', () => {
+    const { segments, tokens, silences, audioDuration } = forcedSplitAfterAnchorFixture();
+    const chunks = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'script-word-index',
+    );
+
+    expect(chunks).toEqual([
+      { startSec: 0, endSec: 1.5, text: 'kittens likes purple' },
+      { startSec: 1.5, endSec: 40, text: 'hats dragons chase silver moons falcons guard hidden castles' },
+    ]);
+  });
+
+  it('still covers the full audio gaplessly across the forced split (R-E)', () => {
+    const { segments, tokens, silences, audioDuration, words } = forcedSplitAfterAnchorFixture();
+    const chunks = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'script-word-index',
+    );
+
+    expect(chunks[0]!.startSec).toBe(0);
+    expect(chunks[chunks.length - 1]!.endSec).toBe(audioDuration);
+    for (let i = 0; i < chunks.length - 1; i++) {
+      expect(chunks[i]!.endSec).toBe(chunks[i + 1]!.startSec);
+    }
+    // No word gained, lost, or reordered by the fold.
+    expect(chunks.flatMap(c => c.text.split(' ').filter(w => w.length > 0))).toEqual(words);
+    for (const c of chunks) expect(c.endSec).toBeGreaterThan(c.startSec);
+  });
+
+  it('leaves segment-start-time attribution\'s own backward fold untouched', () => {
+    // The two modes need OPPOSITE fold directions: in segment-start-time an
+    // empty run's audio belongs to a segment that started earlier and is
+    // already attributed backward, so extending the previous chunk is correct
+    // there. This fixture's empty run under that mode is the LAST one,
+    // [31.5, 40) — s2's startTime (30) falls in [1.5, 31.5), so s2's text sits
+    // behind its own audio and the backward fold reunites them. Pinned at the
+    // pre-fix value; the fix must not move it.
+    const { segments, tokens, silences, audioDuration } = forcedSplitAfterAnchorFixture();
+    const byTime = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, audioDuration, 'segment-start-time',
+    );
+    expect(byTime).toEqual([
+      { startSec: 0, endSec: 1.5, text: 'kittens likes purple hats' },
+      { startSec: 1.5, endSec: 40, text: 'dragons chase silver moons falcons guard hidden castles' },
+    ]);
+  });
+});
+
 describe('computeFaChunkPlanWithAttribution — coalesced index attribution', () => {
   // Regression test for the Slice D13 Step 4 bug: qi ranges MUST be coalesced
   // in lockstep with time ranges, not re-derived from an already-coalesced

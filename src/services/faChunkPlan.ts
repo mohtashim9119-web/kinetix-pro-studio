@@ -502,9 +502,13 @@ function coalesceRunQiRanges(ranges: readonly RunQiRange[], targetSec: number): 
  *    CTC-infeasibility, the exact failure D11 §4 recorded; its text merges
  *    FORWARD into the next run, which is the run that actually contains that
  *    audio.
- *  - a run with audio but NO TEXT (an empty `qi` range). Its window extends the
- *    previous chunk, mirroring `runsToChunks`'s own existing empty-run rule so
- *    both attribution modes handle text-less windows identically.
+ *  - a run with audio but NO TEXT. Its window folds into whichever neighbor
+ *    received the text that window's audio actually carries — FORWARD for an
+ *    empty `qi` range (a forced split, whose text the scan above pools into the
+ *    next range), BACKWARD otherwise (a non-empty range that drew no token: the
+ *    token covering those `qi` began earlier and is already attributed back).
+ *    `runsToChunks`, whose text flows the other way, folds backward in both
+ *    cases — the two modes are mirror images here, not identical.
  */
 function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly RawScriptToken[]): FaChunk[] {
   if (ranges.length === 0) return [];
@@ -529,11 +533,27 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
   const chunks: FaChunk[] = [];
   let pendingStart: number | undefined;
   for (let i = 0; i < ranges.length; i++) {
-    const run = ranges[i]!.run;
+    const range = ranges[i]!;
+    const run = range.run;
     const text = textsByRun[i]!.join(' ');
     if (text.length === 0) {
-      if (chunks.length > 0) chunks[chunks.length - 1]!.endSec = run.windowEnd;
-      else pendingStart = pendingStart ?? run.windowStart;
+      // WHICH WAY A TEXT-LESS WINDOW FOLDS DEPENDS ON WHERE ITS TEXT WENT.
+      // An EMPTY qi range (`qiHi === qiLo` — a forced split, `runQiRanges`'s
+      // own rule) did not lose its text: the placement scan above always steps
+      // PAST an empty range, because the following range shares its `qiLo`, so
+      // those words are pooled into the NEXT chunk. The window must travel
+      // forward with them. Extending the previous chunk instead (the branch
+      // below) strands this run's audio in a chunk that holds none of its text
+      // while those words wait in a chunk whose window starts after they were
+      // spoken — the ear-pass item 9 defect. A NON-empty range that still drew
+      // no token is the opposite case (the token covering those `qi` began
+      // earlier and is already attributed backward), so it keeps the backward
+      // fold, matching `runsToChunks`'s rule for its own mode. Either way no
+      // gap is emitted (R-E): the shared boundary moves for both neighbors at
+      // once, never for one alone.
+      const foldsForward = range.qiHi === range.qiLo && i < ranges.length - 1;
+      if (foldsForward || chunks.length === 0) pendingStart = pendingStart ?? run.windowStart;
+      else chunks[chunks.length - 1]!.endSec = run.windowEnd;
       continue;
     }
     chunks.push({ startSec: pendingStart ?? run.windowStart, endSec: run.windowEnd, text });
