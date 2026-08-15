@@ -727,12 +727,21 @@ sequencing note):**
      explicit `'forced-alignment'`, uniform application across segments, locked-segment
      exemption). Deliberately separate files from the regression-locked `syncTiming.test.ts`
      (CLAUDE.md's Testing invariant) — this session touches none of its cases.
-   - **What is NOT done, needs the FA-on session (item 6):** the gate has never been flipped
-     on against a real model — no `ORT_DYLIB_PATH`, no `model.onnx` present anywhere this
-     session ran. `runForcedAlignmentForSync`'s success path is proven only against mocked
-     IPC responses (unit tests above), not a real ONNX forward pass through
-     `fa_align_production`. No FA timing quality was measured; none of this session's changes
-     depend on any such measurement.
+   - **Follow-on, 2026-08-15 (smoke-test session): real end-to-end run DONE — quality
+     review (item 6) still NOT done.** `fa_align_production` reached and returned `Done` for
+     real, against the real V6 corpus project (447 segments, `en`) via the actual Apply Sync
+     UI path (gate flipped on through `ProjectSettingsModal.tsx`'s real toggle, not a test
+     harness): all 447 segments committed with `anchorSource: 'forced-alignment'`,
+     `Project.faWordTimings` persisted (3874 words), wall-clock ~231s for the full chunked
+     run. Full provisioning trail (model/dylib discovery, the two failed attempts and their
+     root causes, exact reproduction steps) recorded in the changelog entry below — the
+     short version: a prior session had already fully provisioned all 5 `model.onnx` files
+     and a matching `libonnxruntime.dylib` existed in an unrelated project venv; the only
+     real blocker was operational (`ORT_DYLIB_PATH` not reaching the actual running process),
+     not a code or provisioning gap. **Still NOT done, still needs item 6:** no second golden-
+     baseline pass, no per-boundary quality review, no judgement on whether FA timing is
+     better or worse than Whisper's — this session was reachability/plumbing only, explicitly
+     out of scope for quality. Zero `src/`/`src-tauri/` changes — see the changelog entry.
    *Exit criteria (met):* a real `invoke('fa_align_production', ...)` call exists in `src/`,
    gated by `isFaGateOpen()`; toggling the existing Settings control (ProjectSettingsModal.tsx,
    already wired since D17 — no new UI needed this session) changes which timing source Apply
@@ -919,6 +928,69 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-15 — FA-on smoke test: first real forced-alignment run, end to end.**
+  Scope: prove ONE real `fa_align_production` call completes against real audio through the
+  real running app — not a quality assessment, not the R-H second baseline (§11 item 6,
+  still open). **Zero `src/`/`src-tauri/` changes.**
+  **Provisioning inventory (all found already in place from a prior session — nothing
+  downloaded this session):** all 5 `fa-models/<lang>/model.onnx` already sat at
+  `fa_model_path`'s resolved location (`~/Library/Application Support/com.kinetix.pro-studio/
+  fa-models/<lang>/model.onnx`, per `fa.rs`'s `app_local_data_dir` ladder); `en`'s SHA-256
+  matched `scripts/fixtures/fa-onnx-manifest.json` exactly (`48a3c2e1…6240f`,
+  `jonatasgrosman/wav2vec2-large-xlsr-53-english` @ revision `569a6236…`). No onnxruntime
+  dylib in Homebrew/system, but `libonnxruntime.1.23.2.dylib` (x86_64, matching this
+  machine) existed inside `.work-phase4/spike-runtime/venv/lib/python3.11/site-packages/
+  onnxruntime/capi/` — an unrelated prior-session Python venv, gitignored. The V6 corpus
+  project itself was already loaded in the app's own WebKit localStorage (`kinetix:project:
+  77d465c0-…`, 447 segments, cached Whisper transcript) from prior work; its `project.language`
+  was unset (predates the field) — set to `en` via the Settings language dropdown this
+  session, a real one-time UI action, not a code change.
+  **Two real failures hit and fixed, both operational, neither a code bug:**
+  (1) `npm run tauri:dev:fa`'s window belonged to a *different*, stale pre-existing
+  `target/release/bundle/macos/Kinetix Pro Studio.app` process that macOS kept
+  auto-relaunching by bundle id (`com.kinetix.pro-studio`) whenever the computer-use tooling
+  touched it — the actual `tauri dev` debug process never got a window under the granted
+  bundle identity. Fixed by building a real bundle (`npx tauri build --debug -f
+  fa-inference`, ~53s) and driving that .app directly instead of the raw `cargo run` binary.
+  (2) First real Apply Sync attempt reached `fa_align_production` and failed clean —
+  `Error: failed to initialize onnxruntime: ORT_DYLIB_PATH not set` (surfaced via
+  `forcedAlignmentRun.ts`'s `console.warn`, caught in WKWebView devtools) — because the
+  app process had been launched raw via Bash *before* `ORT_DYLIB_PATH` was set in that
+  shell; `runForcedAlignmentForSync`'s fail-clean contract worked exactly as designed
+  (silent fallback to Whisper timing, `anchorSource: 'whisper'` on all 447 segments, sync
+  still completed 447/447 — no half-committed state, no crash). Fixed by relaunching the
+  same `.app/Contents/MacOS/app` binary with `ORT_DYLIB_PATH=<path> ` prefixed directly on
+  the exec line, then re-triggering Apply Sync (re-staging `Script.txt` via the file-replace
+  picker, since `isStagedEmpty` disables the button once a project has nothing newly staged).
+  **Reproduction, exact commands:**
+  ```
+  npx tauri build --debug -f fa-inference   # ~53s, produces src-tauri/target/debug/bundle/macos/Kinetix Pro Studio.app
+  ORT_DYLIB_PATH="<repo>/.work-phase4/spike-runtime/venv/lib/python3.11/site-packages/onnxruntime/capi/libonnxruntime.1.23.2.dylib" \
+    "<repo>/src-tauri/target/debug/bundle/macos/Kinetix Pro Studio.app/Contents/MacOS/app"
+  ```
+  **Result (second attempt, ORT_DYLIB_PATH correctly set):** `fa_align_production` returned
+  `Done`, wall-clock ~231s for 447 chunks over ~1421s of audio. All 447 segments committed
+  `anchorSource: 'forced-alignment'`; `Project.faWordTimings` persisted, 3874 words (vs.
+  4517 raw Whisper tokens — expected, FA's output has no punctuation-only tokens). 0/3874
+  monotonicity violations, 0 negative-duration words, first word at 0.24s, last at 1420.38s
+  (project audio duration 1421.26s) — both inside bounds. 596/3874 words (~15%) flagged
+  `needsReview` (confidence < 0.3), concentrated in a few short low-confidence spans (e.g.
+  first word "you": confidence 0.00075) — a real quality signal, not investigated further
+  per this session's scope. Spot check against the cached Whisper tokens: ballpark-consistent
+  word-for-word in the 452–460s window checked, off by tens to a few hundred ms per word
+  (expected — two different alignment methods), no wild divergence. **V6 seam observation
+  (array index 153→154 in this project's current numbering, not "150" — this project has
+  been resynced/renumbered since the historical measurement docs were written): FA gave
+  457.81s. Known owner-ear-tested-correct value (§11 item 8 above): 457.83s (0.02s off).
+  Documented Whisper baseline: 457.72s "call" end (0.09s off). Observation only — no
+  conclusion about which method is "better," per this session's explicit scope.**
+  Gates run this session (confirming zero regressions from zero `src/`/`src-tauri/` changes):
+  `npm test`, `npm run lint`, `cargo check --features fa-inference`, golden replay — all
+  unchanged from `e6c0e29`'s baseline (see this session's own commit for exact numbers).
+  **Follow-on:** §11 item 1's own entry above records this run inline. Item 6 (R-H second
+  golden-baseline pass, per-boundary quality review) is next and still fully open — this
+  session proves the plumbing works, not that the timing is good.
 
 - **2026-08-15 — WS1 consolidation close-out audit.** Full
   audit-fix-reaudit pass against the 2026-08-14 consolidation (`9cf5867`).
