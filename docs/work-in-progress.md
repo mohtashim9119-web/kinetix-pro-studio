@@ -1148,6 +1148,150 @@ sequencing note):**
    mechanisms (3) and (4) would change which boundaries are low-confidence in the first
    place, so the rule should be re-measured after those, not before.
 
+   **ADDENDUM 2 to item 6 — items 6/7 false-anchor circularity, independent re-derivation
+   checkpoint, 2026-08-16 (diagnosis + proposal only; no `src/`/`src-tauri/` change, no fix,
+   gate stays OFF).** Owner asked for an independent mechanism trace of ear-pass items 6
+   (173, `vessel_damage_clue`) and 7 (v6, `152_frozen_brush_mice`), a population scope, and
+   fix options — explicitly a checkpoint, not a fix. **Evidence base: the same committed
+   second-baseline artifacts `b36f6c2` used** (`.work-phase4/replay/{173,v6}/{transcript_tokens,
+   silences_app,golden_baseline_segments,fa_production_chunks,fa_production_words,
+   fa_second_baseline_analysis}.json`) — no FA re-run. Disposable analysis scripts lived only
+   in the session scratchpad, never in the repo; `git status` clean, verified.
+
+   **Item 6, independently traced.** Two real silences bracket the true boundary: A =
+   [172.70,173.12] (mid 172.91) and B = [174.52,174.96] (mid 174.74, the ear-correct value —
+   also what the non-FA golden path already commits, `golden_baseline_segments.json`).
+   `findAgreeingSilence` fires on the Hirschberg-matched word "residue" — LAST word of the
+   PRECEDING segment `pungent_vapor` — whose Whisper token starts at 173.18, 0.06s from
+   silence A's `endSec` (173.12), inside `ANCHOR_AGREEMENT_SEC` (0.15s). This mints a
+   chunk-plan boundary at 173.12 with no relation to the real segment boundary: "residue" is
+   textually the correct last word of its own segment, but the silence the algorithm keyed
+   off is a Whisper micro-timing artifact — silence A sits INSIDE the Whisper-reported span
+   of "chemical," an earlier word, i.e. that word's own timestamp is smeared. A second,
+   separately-formed anchor fires on "crew" (4 words into the FOLLOWING segment's own text) —
+   token start 175.02, 0.06s from silence B's `endSec` (174.96) — correctly landing near the
+   true boundary. Net effect, confirmed directly in `fa_production_chunks.json`: the chunk
+   plan carves an unwanted extra 1.84s micro-chunk `[173.12,174.96]` holding "of whatever the
+   last" (4 words belonging entirely to `vessel_damage_clue`), which FA must force-align with
+   none of its own real acoustic content there. Confidence for those 4 words: 0.0/0.0001/
+   0.0001/0.0 (`fa_production_words.json`) — matches `b36f6c2`'s table (L=0.0011, R=0.0000)
+   exactly.
+
+   **Item 7, independently traced.** Real silences: A = [447.70,448.34] (mid 448.02), B =
+   [450.36,451.70] (mid 451.03, ear-correct). `fa_production_chunks.json`'s actual boundary
+   sequence: `…448.34 | "for the absence of one. When the brush mice stop" | 451.70 |
+   "moving through dry leaves…"`. The false anchor sits at 451.70, triggered by "moving" — the
+   SIXTH word of the CORRECT segment's own text ("When the brush mice stop moving…") — whose
+   token starts at 451.80, 0.10s from silence B's `endSec` (451.70). The segment's first five
+   words get trapped in the preceding chunk and crammed into a window ending at 451.70 when
+   their real spoken content (Whisper's own times: "brush" 451.24, "mice" 451.32, "stop"
+   451.51) barely fits before that edge — confidence 0.0006/0.0015, matching `b36f6c2`'s table.
+   Same shape as item 6: the anchor fires on a word deep inside the CORRECT segment's own
+   text, not its first word, because that word's Whisper timestamp coincides with a
+   real-but-unrelated silence. FA's own committed 449.20 (`fa_second_baseline_analysis.json`)
+   is confirmed NOT a silence-derived value at all (no silence in this project has that
+   midpoint or endpoint) — **re-confirms, does not re-litigate, Lead B's closed 1.83s
+   coincidence finding**; that arithmetic was not re-chased per the brief.
+
+   **Residual not fully re-derived — stated as inference, not measurement.** The exact
+   arithmetic converting the false micro-chunk into `vessel_damage_clue`'s final committed
+   172.91 was run by a now-deleted scratch harness in `b36f6c2`'s own session and is not
+   reproducible from the committed JSON alone. What IS confirmed: 172.91 is silence A's
+   midpoint, so some downstream step re-selects silence A once the false micro-chunk has
+   corrupted nearby word-level positions — the same amplification `b36f6c2` named, now traced
+   to originate in `faAnchors.ts`, not in the downstream snap step. **Phase 5 implication:**
+   treat the false ANCHOR as root cause and the snap's wrong-silence pick as amplification of
+   an already-corrupted input, not an independent defect.
+
+   **Invariant verdict — differs from `b36f6c2` on one material point.** Quote, `CLAUDE.md`
+   §4: *"Boundary/breath classification must use token indices … never raw Whisper
+   timestamps — timestamps can smear 100–900ms across a real silence seam."* Do-not list:
+   *"Classify breath-vs-boundary silence, or build a boundary search window, from raw token
+   timestamps | … (`snapBoundaries.ts`)."* Quote, `faAnchors.ts`'s `findAgreeingSilence`
+   (~line 114-128): tests `Math.abs(tokenStartSec - s.endSec) <= ANCHOR_AGREEMENT_SEC` — a raw
+   Whisper token TIMESTAMP compared to a silence, exactly the named pattern. `b36f6c2` called
+   this "the same failure CLAUDE.md's standing invariant already forbids elsewhere … applied
+   to a code path that predates it" — treating `faAnchors.ts` as legacy code written before
+   the rule existed. **`git log` shows the opposite: the invariant line landed 2026-08-09
+   (`53b26ee`); `faAnchors.ts` was authored 2026-08-12 (`e0c9c89`) — three days AFTER.** Not a
+   grandfather case. Not a clean violation either, though: the invariant's own text and its
+   Do-Not-list citation both name `snapBoundaries.ts` and "boundary/breath classification"
+   specifically — deciding whether a detected silence is a segment boundary or an internal
+   breath — a different operation from `findAgreeingSilence`'s job (deciding whether a
+   Hirschberg-matched word's reported time corroborates a nearby silence closely enough to
+   mint an R.1 anchor). `snapBoundaries.ts` itself still uses raw timestamps for its own
+   window/distance test (`computeBoundarySearchWindow`, `isBoundarySilenceCandidate`) — only
+   its breath/boundary *classification* is index-based — so the invariant's "never raw
+   timestamps" line is already narrower in practice than its literal wording, in the very file
+   it cites. **Verdict: not a clean invariant violation as literally scoped, but new code
+   (written after the rule existed) repeating the exact failure mode the invariant exists to
+   prevent, in a sibling subsystem the invariant's text doesn't name — a grey area leaning
+   toward "should have been caught," not a sanctioned exception.** Nothing in `faAnchors.ts`'s
+   header or the R-O/R-P ruling record argues the timestamp comparison was a deliberate,
+   considered exception. **This materially updates `b36f6c2` and should be weighed in the
+   ruling.**
+
+   **Population scope — heuristic, inference not a certified count.** No committed artifact
+   preserves the real R.1 anchor set (needs the real Hirschberg `TokenAlignment`, not saved in
+   the second-baseline JSON; re-running FA/alignment was out of scope). Proxy built from
+   committed data only: replicate `isDistinctive` + `findAgreeingSilence` over every Whisper
+   token (over-counts vs. the real algorithm, which also requires a real Hirschberg match and
+   `RUN_SURVIVAL_MIN_RUN_LONG`'s 4-word contiguous run), attribute each candidate anchor to
+   its nearest true (golden-baseline) segment boundary, flag a boundary when a candidate
+   anchor OTHER than the one whose silence actually contains it is also nearest to it. Result
+   across 173 + v6 + spanish (639 true boundaries): **116/639 (18.2%)** carry this structural
+   precondition — 52/171 (173, 30.4%), 62/443 (v6, 14.0%), 2/25 (spanish, 8.0%). Both items 6
+   and 7 appear in the underlying anchor data (confirmed by direct inspection, not just the
+   aggregate) — 173's `pungent_vapor`→`vessel_damage_clue` boundary is one of the 52; v6's
+   flagged set independently reproduces the same anchor ("for"@448.34) implicated in item 7's
+   fragmentation, though the proxy's nearest-boundary attribution assigns it to the PRECEDING
+   boundary (150→151) rather than 151→152 — a known limitation (the real algorithm doesn't
+   attribute anchors to a "nearest" true boundary at all; every anchor is a run boundary
+   regardless), stated rather than smoothed over. **Reading:** items 6/7 were not statistically
+   unlucky — the structural precondition is common (~1 in 5 boundaries in this sample), driven
+   by silence density (~one every 2.5-3s) relative to `ANCHOR_AGREEMENT_SEC`'s 0.15s tolerance
+   and ordinary Whisper micro-timing noise. Whether a given precondition actually flips the
+   FINAL committed boundary depends on the downstream snap step this session did not fully
+   re-derive (see residual above), so 116 is an EXPOSURE upper bound, not a confirmed-wrong
+   count — only 2 of 116 are ear-verified wrong today. **Given the exposure rate this reads as
+   urgent-if-FA-ships, not a two-boundary curiosity — but the true failure rate inside the 116
+   is unmeasured.**
+
+   **Fix options — proposed, not implemented, no ruling made:**
+   1. *Match on token indices, not timestamps, per the invariant* — require the silence to
+      fall in an actual token-to-token gap for the matched word, `fillsTokenGapWithinSpan`-
+      style evidence, instead of raw-timestamp proximity. Most consistent with the standing
+      invariant and this codebase's own precedent for the identical problem in
+      `snapBoundaries.ts`. *Risk:* `faAnchors.ts`'s anchors are single-word, not adjacent-pair
+      boundaries — porting the idea needs a real design pass, and may sharply cut the anchor
+      count (many CORRECT anchors likely rely on the same shortcut). *Golden replay impact:*
+      zero by construction (gate off, module unwired). *Needs an owner design pass, not a
+      same-session fix.*
+   2. *Require genuinely independent corroboration* before accepting an anchor (e.g. a second
+      non-Whisper-timing signal). *Risk:* circular as stated — FA's own confidence doesn't
+      exist yet when anchors are being built (anchors are what construct FA's chunk plan);
+      would need a two-pass build-anchors/run-FA/re-validate restructure. *Owner ruling
+      needed:* yes, Phase-5-adjacent scope change.
+   3. *Tighten `ANCHOR_AGREEMENT_SEC` or require minimum spacing between adjacent anchors* —
+      cheapest change, directly targets the "two anchors bracket one true boundary" shape both
+      items exhibit, doesn't touch the timestamp-vs-index question. *Risk:* arbitrary
+      threshold, no principled derivation yet, could suppress correct closely-spaced anchors
+      in fast dialogue; needs tuning against the 116-boundary proxy set (or a real re-run)
+      before trusting it. *Golden replay impact:* zero (unwired). Smallest and most testable
+      of the four — not the same as obviously correct, since it doesn't address the invariant
+      question, only the symptom.
+   4. *Defer wholly to Phase 5* — Phase 5 (§11 item 16) already deletes
+      `computeBoundarySearchWindow`/`isBoundarySilenceCandidate`/`fillsTokenGapWithinSpan` and
+      replaces the picker with "the fence." *Against deferring:* `faAnchors.ts` is Phase
+      3/Task 5 scope (R.1), not Phase 5's stated scope (`snapBoundaries.ts` specifically) —
+      nothing in the plan doc says Phase 5 subsumes R.1's anchor computation, so deferring may
+      just leave this broken indefinitely with no committed owner.
+
+   **No option here is a clean, no-ruling-needed bug fix** — all four touch either the
+   invariant's practical boundary or the R.1 anchor design the plan doc already specifies.
+   If forced to rank: option 1 is the most principled, but needs a design pass before coding.
+   **Waiting for a ruling before any code change — none made this session.**
+
 7. **Phase 3b — language-keyed normalization (fr/de/pt).** *Goal:* per-language number
    words, currency, thousands separators, French elision. *Files:* new normalizer rules,
    `sync-pipeline-v2-plan.md` Part H.5 full spec. *Exit criteria:* English path provably
@@ -2456,3 +2600,51 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   not a fixture regeneration — `scripts/fixtures/phase4-fa-baseline-*`
   untouched, confirmed by golden replay's own R-H describe block staying
   green).
+
+- **2026-08-16 — Ear-pass items 6/7 false-anchor circularity: independent
+  re-derivation checkpoint (diagnosis + proposal only; no fix, no tuning, gate
+  stays OFF).** Full write-up: §11 item 6's "ADDENDUM 2" above. Owner asked
+  for an independent mechanism trace, population scope, and fix options for
+  the two remaining ear-pass failures `b36f6c2` attributed to `faAnchors.ts`'s
+  `findAgreeingSilence`. Summary:
+  - **Mechanism independently confirmed for both items**, from the committed
+    second-baseline artifacts (no FA re-run). Item 6: `findAgreeingSilence`
+    fires on "residue" (last word of the PRECEDING segment) because its
+    Whisper token timestamp sits 0.06s from an unrelated silence, minting a
+    spurious chunk boundary that strands "of whatever the last" (4 words
+    belonging to the FOLLOWING segment) in a 1.84s micro-chunk at ~0
+    confidence. Item 7: same shape — the false anchor fires on "moving," the
+    SIXTH word of the correct segment's own text, stranding its first five
+    words in the preceding chunk.
+  - **Invariant verdict differs from `b36f6c2` on one material point:**
+    `b36f6c2` called `faAnchors.ts` "a code path that predates" the
+    CLAUDE.md timestamp invariant; `git log` shows the opposite —
+    the invariant landed 2026-08-09 (`53b26ee`), `faAnchors.ts` was authored
+    2026-08-12 (`e0c9c89`), three days later. Not a grandfather case. Still
+    not a clean violation as literally scoped (the invariant's own text names
+    `snapBoundaries.ts` and "boundary/breath classification" specifically, a
+    different operation from anchor corroboration) — verdict: new code
+    repeating the invariant's exact failure mode in a sibling subsystem the
+    invariant's text doesn't name. Grey area leaning toward "should have been
+    caught," not a sanctioned exception.
+  - **Population scope (heuristic proxy, not a certified count):** 116/639
+    (18.2%) true boundaries across 173/v6/spanish carry the same structural
+    precondition (a competing false anchor near a true boundary) items 6/7
+    exhibit. Items 6 and 7 both independently reproduce in the underlying
+    data. Reading: not statistically unlucky — the precondition is common;
+    whether it flips a FINAL committed boundary depends on an unmeasured
+    downstream step, so 116 is an exposure upper bound, not a confirmed-wrong
+    count.
+  - **Four fix options proposed, none implemented:** (1) match on token
+    indices per the invariant, most principled, needs a design pass; (2)
+    require independent corroboration, circular as stated, needs a two-pass
+    restructure; (3) tighten `ANCHOR_AGREEMENT_SEC`/minimum anchor spacing,
+    cheapest and most testable, doesn't address the invariant question; (4)
+    defer to Phase 5, but `faAnchors.ts` is Phase 3/Task 5 scope, not named
+    in Phase 5's stated scope. **No ruling made — waiting on the owner.**
+  - *Method/verification:* all analysis via disposable scratch scripts in the
+    session scratchpad only, never in the repo — `git status` clean
+    throughout, no `src/`/`src-tauri/` file touched. `npm test` 2111
+    passed/1 skipped, `npm run lint` clean, `cargo check --features
+    fa-inference` clean, golden replay 6/6 — all unchanged (no code changed
+    to change them). `isFaGateOpen()` still OFF.
