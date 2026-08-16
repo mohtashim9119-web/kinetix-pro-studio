@@ -1,1 +1,1 @@
-segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun
+segmentIndex,segmentTag,segmentText,startTime,duration,endTime,matchedWords,totalWords,confidence,longestRun

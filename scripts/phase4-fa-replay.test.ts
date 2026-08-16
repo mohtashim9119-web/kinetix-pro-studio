@@ -30,13 +30,14 @@
 // Runs fully OFFLINE from committed fixtures only. No model, no
 // ORT_DYLIB_PATH, no network — passes in a clean checkout.
 //
-// CHANGE DETECTOR, NOT A CORRECTNESS ASSERTION — with ONE exception. The
-// pinned values below include the ear-pass's still-open KNOWN-BAD boundaries
-// (items 4/5/7/10/11) exactly as FA currently gets them wrong: this file
-// passing does not mean FA is right, only that it is the SAME wrong it was
-// when those values were pinned. The exception is item 6, which is now a
-// POSITIVE assertion at its ear-correct 174.74 (see its own `it` block) —
-// there, red means regression, not drift.
+// CHANGE DETECTOR, NOT A CORRECTNESS ASSERTION — with a GROWING set of
+// exceptions. The pinned values below include the ear-pass's still-open
+// KNOWN-BAD boundaries exactly as FA currently gets them wrong: this file
+// passing does not mean FA is right, only that it is the SAME wrong it was when
+// those values were pinned. The exceptions are `CLOSED_BY_POSITIVE_ASSERTION`,
+// where red means regression rather than drift — item 6 at 174.74, item 9 at
+// 65.12, items 4/5 at 931.40/130.96 (R.5), and items 10/11 (R.10). KNOWN_BAD is
+// down to three entries, all R.11.
 //
 // WS1 SESSION B RE-PIN. Owner ruling R-U (the zero-seam rejection rule)
 // landed in `faAnchors.ts`'s `findAgreeingSilence`, and the
@@ -86,6 +87,36 @@
 // reproduced at a currently-correct boundary, all still go RED. M4 remains a
 // true no-op, verified by chunk-plan equality on all three corpora rather
 // than by the gate staying green.
+//
+// WS1 SESSION E RE-PIN (R.10 — scripted text never spoken,
+// `src/services/faUnspokenGate.ts`). The FIRST re-pin that changes the SHAPE of
+// a corpus rather than a boundary value, and the one thing to read here is why
+// that shape change does NOT mean the anchor path moved:
+//   - 173 commits 173 segments instead of 175 and skips 2. `perilous_realms`
+//     (an on-screen-only title) and `blue_monkey` (a planted, never-voiced test
+//     string) are scripted text the audio never says. A CTC objective must
+//     place every target token somewhere, so FA had carved both out of their
+//     neighbours' speech at max word confidence 1.7e-05 / 6.4e-06; R.10 refuses
+//     them and hands them to the same skip path Whisper's own drops use.
+//   - items 10 and 11 CONVERTED out of KNOWN_BAD. Item 10 (`hostile_landscape`)
+//     is now a positive assertion at its ear-correct 0.00, residual 0.000s.
+//     Item 11 has no numeric target — the ear-correct outcome is that the scene
+//     is not committed at all — so it converted to an ABSENCE assertion, the
+//     register's first. `REGISTER_HIGH_WATER` 5 -> 3.
+//   - v6 and spanish are UNCHANGED, every value and every row.
+//   - all three chunk digests, all three run digests and all three anchor
+//     digests are BIT-IDENTICAL, because R.10 runs after inference and never
+//     touches the chunk plan. That required fixing `loadAnchorPathInputs`,
+//     which had been relying on `-segments.csv` being the complete pre-skip
+//     parse — true only while FA skipped nothing. It now merges `-segments.csv`
+//     with `-skipped.csv` to rebuild the real 447/175/27 parse; reading the
+//     shortened file alone flips 173's chunk digest to b24e4e63bae5f2b3, which
+//     would have been a false alarm pointing at `faAnchors.ts` for a change two
+//     stages downstream of it. Measured both ways before the fix was written.
+//   - M1-M5 re-run after re-pinning: M1/M2/M3/M5 RED, M4 green and reconfirmed a
+//     TRUE no-op by chunk-plan BYTE equality on all three corpora. M5 — the
+//     items-6/7 error class at a currently-correct boundary — is red for the
+//     FOURTH consecutive re-pin. `faAnchors.ts` sha256 b61e94cb… unchanged.
 //
 // Golden replay (`phase4-handoff-replay-sync.test.ts`) is untouched by this
 // file and must stay 6/6.
@@ -180,10 +211,31 @@ type Corpus = (typeof CORPORA)[number];
  *  progress.md` §11 item 6: "FA produced zero skipped segments on all three
  *  projects, recovering the 3 V6 + 3 173 + 1 Spanish segments Whisper's
  *  turbo transcript could never match at all"). */
-const EXPECTED_SHAPE: Record<Corpus, { segmentCount: number; skippedCount: number; audioDuration: number }> = {
-  v6: { segmentCount: 447, skippedCount: 0, audioDuration: 1421.29 },
-  '173': { segmentCount: 175, skippedCount: 0, audioDuration: 709.01 },
-  spanish: { segmentCount: 27, skippedCount: 0, audioDuration: 92.04 },
+const EXPECTED_SHAPE: Record<Corpus, {
+  segmentCount: number; skippedCount: number; audioDuration: number;
+  /** The COMPLETE, pre-skip-filter parse — `segmentCount + skippedCount`, and
+   *  the number of scenes the scene doc actually contains. Held separately
+   *  because the anchor-path replay below needs the complete array and the
+   *  committed one is no longer it (see `loadAnchorPathInputs`). */
+  parsedSegmentCount: number;
+  /** WS1 Session E — which scenes were skipped, by tag, in pre-filter index
+   *  order. Pins R.10's FIRING SET, not just its size: a rule that started
+   *  dropping a different segment would otherwise pass on the count alone. */
+  skippedTags: string[];
+}> = {
+  v6: { segmentCount: 447, skippedCount: 0, parsedSegmentCount: 447, skippedTags: [], audioDuration: 1421.29 },
+  // WS1 Session E (R.10): 175 -> 173 committed, 0 -> 2 skipped. `perilous_realms`
+  // (an on-screen-only title) and `blue_monkey` (a planted, never-voiced test
+  // string) are scripted text the audio never says; FA was forced to carve them
+  // out of their neighbours' speech and now refuses them instead. Both are
+  // segments the Whisper path ALREADY drops — `phase4-baseline-173-skipped.csv`
+  // lists exactly these two at exactly these indices, which is independent,
+  // pre-existing confirmation that R.10 removed a divergence rather than a scene.
+  '173': {
+    segmentCount: 173, skippedCount: 2, parsedSegmentCount: 175,
+    skippedTags: ['perilous_realms', 'blue_monkey'], audioDuration: 709.01,
+  },
+  spanish: { segmentCount: 27, skippedCount: 0, parsedSegmentCount: 27, skippedTags: [], audioDuration: 92.04 },
 };
 
 /**
@@ -242,25 +294,10 @@ const KNOWN_BAD: KnownBadRow[] = [
       '"when" starts 449.22) with no silence involved at all, and the R-U zero-seam rule left it bit-identical, exactly ' +
       'as R-V predicted. Scoped after Stage 1; stays known-bad until R.11 is built.',
   },
-  {
-    id: 'item-10', origin: 'ear-12', item: 10, corpus: '173', tag: 'hostile_landscape', owningRule: 'R.10', closingCommit: '',
-    faValue: 1.36, earCorrect: 0.00,
-    mechanism: 'R.10 (scripted text never spoken: on-screen-only title "perilous_realms" steals its neighbour\'s onset)',
-    status: 'open',
-    note: 'R.10 is specified, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
-  },
-  {
-    id: 'item-11', origin: 'ear-12', item: 11, corpus: '173', tag: 'blue_monkey', owningRule: 'R.10', closingCommit: '',
-    faValue: 36.96, earCorrect: null,
-    mechanism: 'R.10 (scripted text never spoken: the planted "blue monkey" string is never voiced)',
-    status: 'open',
-    note: 'Whisper drops this segment entirely and the ear agreed that is correct — there is no numeric earCorrect ' +
-      'to converge on; the fix is R.10\'s drop/skip gate, not a different timestamp. FA commits a real [36.96, 37.73) ' +
-      'span for it instead of dropping it. Session B\'s instant-strict reading of R-U moved that span to ' +
-      '[37.73, 38.50); R-AA\'s seam-region reading (WS1 Session B.1) does NOT move it, so this pin is back at its ' +
-      'pre-Session-B 36.96. Either way the mechanism is untouched — only the numbers a wrong-by-construction span ' +
-      'happens to carry. Not this session\'s scope; R.10 is specified, not built.',
-  },
+  // ---- WS1 Session E: items 10 and 11 LEFT this table. R.10 landed
+  // (`src/services/faUnspokenGate.ts`) and both converted into positive
+  // assertions below — item 10 at its ear-correct 0.00, item 11 as an ABSENCE
+  // assertion, which is what `earCorrect: null` has always meant.
   // ---- WS1 Session D: the two defects owner ruling R-AF's OV3 triage
   // confirmed by ear. Neither has an ear-item number (they came from a blinded
   // 5-row sitting, not the 12-item list), which is what `origin`/`id` exist
@@ -364,17 +401,30 @@ const REGISTER_ROSTER = [
  *  It was then lowered because R.5 landed in the same commit and closed items
  *  4 and 5 into positive assertions, taking the open count 7 -> 5.
  *
+ *  WS1 Session E LOWERED it 5 -> 3. R.10 landed and closed items 10 and 11,
+ *  the only two entries that rule owned. The three that remain are all R.11
+ *  (item 7, `ov3-abysmal-opinion`, `ov3-226-four-scouts`) and are Session F's
+ *  entire scope — so this number is now exactly "the size of R.11".
+ *
  *  This may be lowered when entries close. Raising it is allowed only with
  *  the full ceremony above — see the failure message on the shrink-only
  *  test. */
-const REGISTER_HIGH_WATER = 5;
+const REGISTER_HIGH_WATER = 3;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
  *  that replaced its known-bad pin. This is what makes deletion impossible:
  *  a row leaves KNOWN_BAD only by arriving here, and arriving here means the
  *  ear-correct value is asserted against the committed fixture. */
 const CLOSED_BY_POSITIVE_ASSERTION: Array<{
-  id: string; item?: number; corpus: Corpus; tag: string; earCorrect: number;
+  id: string; item?: number; corpus: Corpus; tag: string;
+  /** The ear-verified correct boundary — or `null` when the ear-correct
+   *  outcome is "this scene is NOT committed as a timed segment at all"
+   *  (item 11). A null entry asserts the tag's ABSENCE from the committed
+   *  fixture, which is every bit as much a positive assertion as a number:
+   *  re-committing that scene fails the test. WS1 Session E widened this from
+   *  `number` when R.10 gave the register its first non-numeric closure.
+   *  `KNOWN_BAD.earCorrect` has carried the same convention since Session A. */
+  earCorrect: number | null;
   closingCommit: string; why: string;
 }> = [
   {
@@ -399,6 +449,25 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'Survived both re-pins unchanged, which is the point of pinning the ear-correct value.',
   },
   {
+    id: 'item-10', item: 10, corpus: '173', tag: 'hostile_landscape', earCorrect: 0.00,
+    closingCommit: 'WS1-SESSION-E',
+    why: 'R.10 (scripted text never spoken, `src/services/faUnspokenGate.ts`). The on-screen-only title ' +
+      '`perilous_realms` ("The Hardest Warhammer 40K Environments to Fight In") is never voiced, but a CTC ' +
+      'objective must place every target token somewhere, so FA carved it out of [0.00, 1.36] and pushed this ' +
+      'segment\'s onset to 1.36. With the title refused, this becomes the first committed segment and ' +
+      '`headExtendFirstSegment` stretches it back to 0. Residual 0.000s against the ear-correct 0.00.',
+  },
+  {
+    id: 'item-11', item: 11, corpus: '173', tag: 'blue_monkey', earCorrect: null,
+    closingCommit: 'WS1-SESSION-E',
+    why: 'R.10. The planted "blue monkey jumped over the moon" test string is never voiced; Whisper drops the ' +
+      'scene entirely and the ear agreed that is correct, so there was never a numeric target to converge on — ' +
+      'the fix is the drop, not a different timestamp. FA committed a real [36.96, 37.73) span for it at max ' +
+      'word confidence 6.4257e-06; R.10 refuses it and `ancient_nature_thriving` absorbs the 0.77s under Model P ' +
+      '(duration 2.34 -> 3.11), leaving the partition gapless. This entry asserts ABSENCE: if the tag ever ' +
+      'reappears in the committed fixture, R.10 has regressed.',
+  },
+  {
     id: 'item-9', item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', earCorrect: 65.12,
     closingCommit: '616abb2',
     why: 'Forced-split chunk-plan attribution bug. The fixture refresh in WS1 Session B means the ' +
@@ -410,8 +479,8 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
 describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (1) THE STAGE 1 LOCK'S MACHINE CHECK. Un-skip when the manifest empties.
   it.skip(
-    'the Zero-Defect Register is EMPTY — SKIPPED: 5 open defects ' +
-    '(item 7 R.11, item 10 R.10, item 11 R.10, ov3-abysmal-opinion R.11, ov3-226-four-scouts R.11). ' +
+    'the Zero-Defect Register is EMPTY — SKIPPED: 3 open defects, all R.11 ' +
+    '(item 7, ov3-abysmal-opinion, ov3-226-four-scouts). ' +
     'Stage 1 does not lock while this test is skipped. Un-skip it in the commit ' +
     'that closes the last entry.',
     () => {
@@ -455,8 +524,30 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
 
   // (3b) ...and the positive assertions are real assertions against the fixture.
   for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
-    it(`${c.id} (${c.corpus} ${c.tag}) is pinned at its EAR-CORRECT ${c.earCorrect} — closed by ${c.closingCommit}`, () => {
+    const target = c.earCorrect === null ? 'NOT COMMITTED AT ALL' : `EAR-CORRECT ${c.earCorrect}`;
+    it(`${c.id} (${c.corpus} ${c.tag}) is pinned at its ${target} — closed by ${c.closingCommit}`, () => {
       const row = loadFaSecondBaseline(c.corpus).find(r => r.tag === c.tag);
+
+      if (c.earCorrect === null) {
+        // The ear-correct outcome is an ABSENCE. Asserted in both directions:
+        // the scene must be gone from the committed timeline AND still present
+        // in the skip fixture, so "dropped" can never degrade into "silently
+        // lost from both files".
+        expect(
+          row,
+          `${c.id}: ${c.corpus} "${c.tag}" is COMMITTED again at ${row?.startTime}. This is a CLOSED ` +
+          `register entry whose ear-correct outcome is that the scene is not committed at all — red here ` +
+          `means R.10 REGRESSED. Do not re-pin it. ${c.why}`,
+        ).toBeUndefined();
+        const skipped = loadCsv(`phase4-fa-second-baseline-${c.corpus}-skipped.csv`);
+        expect(
+          skipped.map(r => r.segmentTag),
+          `${c.id}: dropped from the timeline but missing from the skip fixture too — a scene must be ` +
+          `accounted for in exactly one of the two files.`,
+        ).toContain(c.tag);
+        return;
+      }
+
       expect(row, `${c.corpus} ${c.tag} row`).toBeDefined();
       expect(
         Math.abs(row!.startTime - c.earCorrect),
@@ -510,6 +601,12 @@ describe('WS1 Session A — FA replay gate (R10): structural shape, offline, fix
 
       expect(rows.length, `${key}: FA-committed segment count`).toBe(expected.segmentCount);
       expect(skipped.length, `${key}: FA-committed skip count`).toBe(expected.skippedCount);
+      expect(skipped.map(r => r.segmentTag), `${key}: WHICH scenes were skipped (R.10's firing set)`)
+        .toEqual(expected.skippedTags);
+      expect(
+        rows.length + skipped.length,
+        `${key}: committed + skipped must still account for every parsed scene`,
+      ).toBe(expected.parsedSegmentCount);
 
       // Model P (CLAUDE.md invariant): every row's anchorSource is
       // 'forced-alignment', order is contiguous from 0, and the partition
@@ -573,7 +670,7 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest itself covers item 7, 10, 11 + the two OV3 triage entries exactly once each', () => {
+  it('the manifest itself covers item 7 + the two OV3 triage entries exactly once each', () => {
     // Item 6 left this table in WS1 Session B: it is FIXED and now carries a
     // POSITIVE assertion of its own (below), which is a stronger guard than a
     // known-bad pin — a regression there fails on the ear-correct value, not
@@ -581,9 +678,11 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     // fixture refresh means the Spanish baseline finally SHOWS 65.12, so
     // there is no stale value left to warn a reader about. WS1 Session D:
     // items 4 and 5 left the same way (R.5 landed), and the two OV3 triage
-    // defects arrived.
+    // defects arrived. WS1 Session E: items 10 and 11 left when R.10 landed —
+    // item 10 at its ear-correct 0.00, item 11 as an ABSENCE assertion. What
+    // remains is exactly R.11, and it is Session F's whole scope.
     expect([...KNOWN_BAD.map(k => k.id)].sort()).toEqual([
-      'item-10', 'item-11', 'item-7', 'ov3-226-four-scouts', 'ov3-abysmal-opinion',
+      'item-7', 'ov3-226-four-scouts', 'ov3-abysmal-opinion',
     ]);
   });
 
@@ -780,16 +879,52 @@ function loadAnchorPathInputs(key: Corpus): {
     .map(r => ({ text: r.text!, startSec: Number(r.startSec), endSec: Number(r.endSec) }));
   const silences: SilenceInterval[] = loadCsv(`phase4-baseline-${key}-silences.csv`)
     .map(r => ({ startSec: Number(r.startSec), endSec: Number(r.endSec) }));
-  // Text only. `computeFaAnchors` never reads a segment's TIMING — the anchor
-  // set is a function of (script word sequence, Whisper tokens, silences,
-  // audioDuration) alone — so this CSV's FA-committed startTimes are inert
-  // here; it is used because it is the one committed fixture carrying the
-  // complete, pre-skip-filter parse in order (447/175/27 rows), which is what
-  // `App.tsx:2842`'s `anchorTimed` array hands to `runForcedAlignmentForSync`.
-  const segments: VideoSegment[] = loadCsv(`phase4-fa-second-baseline-${key}-segments.csv`).map(r => ({
-    id: r.tag!, text: r.text!, startTime: Number(r.startTime), duration: Number(r.duration),
-    transition: 'none', animation: 'none', order: Number(r.order),
-  }) as unknown as VideoSegment);
+  // What this needs is the COMPLETE, PRE-SKIP-FILTER parse in order
+  // (447/175/27 rows) — the array `App.tsx`'s `anchorTimed` hands to
+  // `runForcedAlignmentForSync`, which is built before any skip decision
+  // exists. Until WS1 Session E the `-segments.csv` fixture WAS that array, but
+  // only by coincidence: FA happened to skip nothing on all three corpora, so
+  // committed and parsed were the same 175 rows.
+  //
+  // R.10 ended that coincidence — 173 now commits 173 rows and skips 2 — so the
+  // complete parse is reconstructed here by re-inserting the `-skipped.csv`
+  // rows at their own `segmentIndex`, exactly as the Whisper-side baseline pair
+  // (`phase4-baseline-*-segments.csv` + `-skipped.csv`) has always been split.
+  // Reading `-segments.csv` alone would silently feed a SHORTER array and flip
+  // the chunk digest — a false alarm attributing to `faAnchors.ts` a change that
+  // happens two stages downstream of it. Measured, not assumed: the merged
+  // array reproduces all three pinned digests bit-identically, which is the
+  // proof that R.10 does not touch the chunk plan.
+  //
+  // The skipped rows carry `startTime`/`duration` for this one purpose. They are
+  // FROZEN INPUTS, not outputs — the values those scenes carried before R.10
+  // refused them — so that this change detector's input stays constant across a
+  // change that is not about the anchor path. `computeFaAnchors` never reads
+  // segment timing at all; `computeFaChunkPlan`'s text attribution does.
+  const parse = (r: Record<string, string>, text: string, order: number): VideoSegment => ({
+    id: r.segmentTag ?? r.tag!, text, startTime: Number(r.startTime), duration: Number(r.duration),
+    transition: 'none', animation: 'none', order,
+  }) as unknown as VideoSegment;
+
+  const committed = loadCsv(`phase4-fa-second-baseline-${key}-segments.csv`);
+  const skippedRows = loadCsv(`phase4-fa-second-baseline-${key}-skipped.csv`);
+  const skippedByIndex = new Map(skippedRows.map(r => [Number(r.segmentIndex), r]));
+  const total = committed.length + skippedRows.length;
+  const segments: VideoSegment[] = [];
+  let next = 0;
+  for (let i = 0; i < total; i++) {
+    const sk = skippedByIndex.get(i);
+    if (sk) { segments.push(parse(sk, sk.segmentText!, i)); continue; }
+    const c = committed[next++]!;
+    segments.push(parse(c, c.text!, i));
+  }
+  if (segments.length !== EXPECTED_SHAPE[key].parsedSegmentCount) {
+    throw new Error(
+      `${key}: reconstructed parse is ${segments.length} rows, expected ` +
+      `${EXPECTED_SHAPE[key].parsedSegmentCount} — the segments/skipped fixture pair no longer ` +
+      `accounts for every scene.`,
+    );
+  }
   return { tokens, silences, segments };
 }
 

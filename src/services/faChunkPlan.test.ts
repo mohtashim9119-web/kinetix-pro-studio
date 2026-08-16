@@ -727,10 +727,28 @@ describe('computeFaChunkPlan — R.5 unscripted-audio excision (WS1 Session D)',
       .map(r => ({ text: r.text!, startSec: Number(r.startSec), endSec: Number(r.endSec) }));
     const silences: SilenceInterval[] = csv(`phase4-baseline-${key}-silences.csv`)
       .map(r => ({ startSec: Number(r.startSec), endSec: Number(r.endSec) }));
-    const segments: VideoSegment[] = csv(`phase4-fa-second-baseline-${key}-segments.csv`).map(r => ({
-      id: r.tag!, text: r.text!, startTime: Number(r.startTime), duration: Number(r.duration),
-      transition: 'none', animation: 'none', order: Number(r.order),
-    }) as unknown as VideoSegment);
+    // The COMPLETE, pre-skip-filter parse — the array production hands
+    // `computeFaChunkPlan`, built before any skip decision exists. Until WS1
+    // Session E the `-segments.csv` fixture WAS that array, but only because FA
+    // skipped nothing; R.10 now drops two 173 scenes into `-skipped.csv`, so the
+    // two files have to be merged back by `segmentIndex` to rebuild it. Same
+    // reconstruction, and the same reason, as `scripts/phase4-fa-replay.test.ts`'s
+    // own `loadAnchorPathInputs`.
+    const mk = (r: Record<string, string>, text: string, order: number): VideoSegment => ({
+      id: r.segmentTag ?? r.tag!, text, startTime: Number(r.startTime), duration: Number(r.duration),
+      transition: 'none', animation: 'none', order,
+    }) as unknown as VideoSegment;
+    const committedRows = csv(`phase4-fa-second-baseline-${key}-segments.csv`);
+    const skippedRows = csv(`phase4-fa-second-baseline-${key}-skipped.csv`);
+    const skippedByIndex = new Map(skippedRows.map(r => [Number(r.segmentIndex), r]));
+    const segments: VideoSegment[] = [];
+    let nextCommitted = 0;
+    for (let i = 0; i < committedRows.length + skippedRows.length; i++) {
+      const sk = skippedByIndex.get(i);
+      if (sk) { segments.push(mk(sk, sk.segmentText!, i)); continue; }
+      const c = committedRows[nextCommitted++]!;
+      segments.push(mk(c, c.text!, i));
+    }
     const audioDuration = { v6: 1421.29, '173': 709.01, spanish: 92.04 }[key];
     return { tokens, silences, segments, audioDuration };
   }
@@ -812,6 +830,12 @@ describe('computeFaChunkPlan — R.5 unscripted-audio excision (WS1 Session D)',
     // disjoint: R.10's two firing segments (`perilous_realms`, `blue_monkey`)
     // are both in 173, and 173 has zero R.5 runs — so the two rules cannot
     // co-fire on any segment of any committed corpus.
+    //
+    // WS1 Session E: R.10 has since LANDED, so both segments now live in
+    // `phase4-fa-second-baseline-173-skipped.csv` rather than the committed
+    // one. `corpus()` merges the pair back into the complete pre-skip parse, so
+    // this test still asks its original question — the chunk plan R.5 acts on
+    // is built BEFORE R.10 runs, and R.10 must not have changed it.
     const { tokens, silences, segments, audioDuration } = corpus('173');
     const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
     expect(excisedSpans(chunks)).toEqual([]);

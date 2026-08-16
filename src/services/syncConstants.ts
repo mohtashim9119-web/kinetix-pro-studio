@@ -536,6 +536,45 @@ export const MAX_RUN_SEC = 30;
 export const CONF_MIN = 0.3;
 
 // ---------------------------------------------------------------------------
+// R.10 — scripted text never spoken (`faUnspokenGate.ts`).
+//
+// ITS OWN CONSTANT, DELIBERATELY NOT `CONF_MIN` — owner directive recorded at
+// the R-Z respec (`sync-pipeline-v2-plan.md`), and the two must never be let
+// to drift into each other. They answer different questions:
+//
+//   CONF_MIN (0.3)          "is this word worth a human review?"
+//   R10_MAX_WORD_CONF (5e-4) "was this text spoken at all?"
+//
+// Three orders of magnitude apart, and the difference is load-bearing:
+// `CONF_MIN` fires on 16 of 649 committed boundaries, 14 of which are
+// perfectly ordinary short spoken lines ("The night goes quiet.").
+//
+// DERIVED, NOT FITTED. Measured over all 649 boundaries of the three
+// committed corpora against the post-R.5 FA capture (WS1 Session E Step 1):
+// the highest scoring true positive is `perilous_realms` at 1.7248e-5 and the
+// nearest negative is spanish `001_scylla_intro` at 1.4653e-2, an 850x gap
+// with nothing inside it. The threshold is the GEOMETRIC MIDPOINT of those two
+// nearest points — sqrt(1.7248e-5 * 1.4653e-2) = 5.0273e-4 — rounded to one
+// significant figure, so it sits ~29x clear on both sides. Against the five
+// genuinely-spoken lines Whisper missed and FA correctly recovered (0.99-1.00)
+// the margin is 5.8e4x.
+//
+// Re-derived independently in WS1 Session D and again in Session E after R.5
+// changed 224 v6 word confidences; the value did not move, and no boundary
+// crossed it.
+export const R10_MAX_WORD_CONF = 5e-4;
+
+// R.10's third conjunct: a segment with a single FA word carries too little
+// evidence to be called never-spoken. Adjudicated rather than assumed — the
+// only corpus case it speaks to is spanish `001_scylla_intro` ("Scylla.", one
+// word), which is spoken TWICE and whose `matched: false` is a subword
+// tokenization artifact. `R10_MAX_WORD_CONF` already excludes it on its own;
+// this is kept because it excludes it for a second, independently correct
+// reason, and is the guard that survives if a future corpus produces a
+// one-word segment that IS quiet.
+export const R10_MIN_WORD_COUNT = 2;
+
+// ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //
 // A hyphenated token is split on its hyphens IFF every sub-part is a number

@@ -2317,6 +2317,176 @@ independently in Session D — it selects exactly `perilous_realms` and
 > in the session brief so the constant's separateness survives the session
 > that creates it.
 
+> **BUILT — WS1 Session E, 2026-08-17. R.10 SHIPPED; see ruling R-AH below for
+> the final spec as built, the behaviour decision, and the correction this
+> ruling itself needs.** Production surface: `src/services/faUnspokenGate.ts`
+> (new), `syncConstants.ts` (`R10_MAX_WORD_CONF = 5e-4`, `R10_MIN_WORD_COUNT`),
+> and `App.tsx` wiring. **NOT `faChunkPlan.ts`** — the session brief expected
+> it and the expectation was wrong; see R-AH(c). Items 10 and 11 both resolve
+> and converted to positive assertions.
+
+---
+
+**R-AH ruling (2026-08-17, WS1 Session E) — R.10 IS BUILT. Its detection
+signal survived re-validation unchanged; its BEHAVIOUR is "hand the segment to
+the skip path that already exists"; and R-Z's own numbers turn out to have
+been RIGHT, measured against a different token array than the session that
+refuted them used.**
+
+**(a) The Session C discriminant, re-validated on the POST-R.5 capture.** R.5
+had since changed 88 of 3874 v6 word rows at fixture resolution (857 at full
+float precision) and **224 word confidences**, and `maxWordConfidence` reads
+FA output directly — so the whole discriminant was re-measured over all 649
+boundaries before anything was built on it.
+
+| | Session C (pre-R.5) | Session E (post-R.5) |
+|---|---|---|
+| true positives | 2/2 | **2/2** — `perilous_realms`, `blue_monkey` |
+| false positives | 0/649 | **0/649** |
+| separation margin | 850× | **850×** (1.7248e-05 vs 1.4653e-02) |
+| vs. the genuine FA recoveries | ~58,000× | **5.76e+4×** |
+| boundaries that CROSSED the discriminant | — | **0** |
+
+Every one of the eight `matched === false` segments has a **bit-identical**
+`maxWordConfidence` before and after R.5. That is not luck, and the structural
+reason is worth keeping: **conjunct (1) reads only Whisper tokens and script
+text, neither of which R.5 touches**, so the eligible population is invariant
+under R.5 by construction; only conjunct (2) was ever at risk, and only for
+the three members of the eight that live in v6 — all of which sit ~2000× above
+the threshold. The 0.65 inversion does **not** repeat here.
+
+*Conjunct (3) is honestly reported as INERT on the committed corpora.*
+`(1) ∧ (2)` alone already gives 2/2 and 0 false positives; `wordCount >= 2`
+removes nothing further, because the only case it speaks to (spanish
+`001_scylla_intro`, one word) is already excluded by conjunct (2) at 1.4653e-02.
+Session C said as much ("both are kept because they exclude it for different
+and independently correct reasons") and that reading stands — it is kept as
+defence-in-depth, not as a load-bearing term, and this document now says which
+it is.
+
+**(b) THE R-Z 0.769 / 0.778 PAIR IS RESOLVED — AND R-Z WAS RIGHT.** Session C
+recorded both figures as premise failures ("`perilous_realms` scores 0.0000,
+not 0.778 — the thief/victim adjacency does not exist"). Measured this session
+against both token arrays on the same segments:
+
+| segment | `alignConfidence` vs WHISPER tokens | vs FA tokens |
+|---|---|---|
+| `hostile_landscape` | **0.7692** | **0.7692** |
+| `perilous_realms` | 0.0000 (`matched:false`) | **0.7778** |
+| `blue_monkey` | 0.0000 (`matched:false`) | **1.0000** |
+
+**Every number R-Z recorded is real and reproducible — 0.769, 0.778 and 1.000
+— measured against the FA-token alignment**, which is the correct array to read
+when diagnosing an FA defect. Session C measured the WHISPER-token alignment
+and concluded the figures did not exist. Both measurements were sound; they
+were of different quantities. R-Z's actual claim also holds: thief and victim
+sit **0.0086 apart** on FA-token `alignConfidence`, so a detector keyed on that
+number genuinely cannot separate them — and R-Z's conclusion (delete the
+conjunct rather than re-threshold it) was right for the right reason.
+**Session C's "two premises in R-Z are WRONG on measurement" is hereby
+corrected to "measured on a different token array."** The discriminant it
+produced is unaffected and stands.
+
+**A SECOND INSTANCE OF THE SAME FAILURE MODE, named because two makes a
+pattern.** Session D found Session C's R.5 threshold (0.65) had been measured
+with a Python `SequenceMatcher` proxy and inverted against production. (b)
+above is the same mode again: a measurement was compared against one taken on a
+different artifact. A third instance occurred *inside* this session — the Step 5
+harness fed the gate FA words through a scratch helper that drops `confidence`,
+and R.10 silently detected nothing. **The rule this earns: a measurement only
+refutes another measurement if it was taken on the same artifact — same token
+array, same normalizer, same segment array, same capture — and the artifact must
+be named alongside the number.** The Session E numbers above each name theirs.
+
+**(c) THE PRODUCTION SURFACE — `faChunkPlan.ts` WAS THE WRONG EXPECTATION, and
+it is structurally impossible.** R.10's signal requires FA's per-word
+confidence. `computeFaChunkPlan` runs *before* inference and has no access to
+it. The rule therefore lives in a new pure service,
+`src/services/faUnspokenGate.ts`, exactly as R.10's own spec always said ("a
+drop/skip gate layered on FA's output, not a change to the alignment
+computation itself"). Final surface: `faUnspokenGate.ts` (new),
+`syncConstants.ts` (the constant), `App.tsx` (orchestration + the skip
+reason). `faAnchors.ts` is byte-identical, sha256 `b61e94cb…`; `faChunkPlan.ts`,
+`snapBoundaries.ts`, `silenceDetector.ts`, `faGate.ts`, the Hirschberg aligner
+and all Rust are untouched.
+
+**(d) THE BEHAVIOUR DECISION — drop, by forcing `matched: false` and letting
+the EXISTING skip path run.** Four options were considered; this one wins on
+every axis and needed no new machinery at all.
+
+| option | fixes | breaks |
+|---|---|---|
+| **drop via `filterToCoveredSegments` (CHOSEN)** | both items; neighbour absorbs the span; head-extend handles the index-0 case | nothing measured |
+| zero-width segment | keeps the row | a 0s segment is not a thing this codebase has, and Model P's own DEV assertions would have to learn about it |
+| merge into a neighbour | keeps the row | invents a scene the user did not write, and the merged text would be spoken by nobody |
+| mark and leave in place | most visible | leaves the defective timing committed, which is the whole complaint |
+
+*Model P (b) and R-E no-gaps: PRESERVED, verified rather than asserted.* Across
+all three corpora after the drop: **0 partition violations**, max
+`|end[i] − start[i+1]|` = 1.14e-13 (float noise), first segment at 0.0000, last
+at `audioDuration`, and Σ duration = `audioDuration` exactly. The preceding
+survivor absorbs the span — `ancient_nature_thriving` 2.34 → 3.11 (+0.77, which
+is `blue_monkey`'s whole span). **Exit E2 does NOT fire.**
+
+*The qi contract: UNTOUCHED, and Session C's prediction is refuted.* Session C
+called this "the single highest-risk part of building R.10," reasoning that
+dropping a segment removes its words from `normalizeSceneDoc`'s sequence so the
+chunk plan must be rebuilt after the drop. That is true only if the drop
+precedes chunk planning. **It does not** — the gate runs after inference, so
+`normalizeSceneDoc` counts, `computeRunContext` offsets, `faChunkPlan.ts`
+indexing and `assertQiMapConsistent` are all bit-identical. Proof, not
+argument: all three anchor digests, all three run digests and all three chunk
+digests are unchanged.
+
+*Locked segments: no new exposure, and the reason is a subset property.*
+`preserveSegmentLocks` treats a segment absent from the new array as "the user
+deleted this scene" and discards the lock silently — an existing owner ruling
+this rule does not reopen. It does not need to: **conjunct (1) is
+`matched === false` under Whisper, so R.10's firing set is a strict subset of
+the segments the shipped default path (FA gate OFF) already drops.** R.10
+cannot cost a user a lock the default already keeps. Independent, pre-existing
+corroboration: `scripts/fixtures/phase4-baseline-173-skipped.csv` — committed
+long before this session — lists exactly `perilous_realms` and `blue_monkey`,
+at exactly indices 0 and 12. R.10 removes a divergence, not a scene.
+
+**(e) THE CONSTANT.** `R10_MAX_WORD_CONF = 5e-4` in `syncConstants.ts`, its own
+constant per the owner directive above, plus `R10_MIN_WORD_COUNT = 2`. Derived,
+not fitted: the **geometric midpoint** of the two nearest measured points,
+√(1.7248e-05 × 1.4653e-02) = 5.0273e-04, rounded to one significant figure —
+~29× clear on both sides. Re-derived on the post-R.5 capture and unmoved.
+
+**(f) BLAST RADIUS — predicted and actual, and they are the same computation.**
+R.10 needs **no new inference**: it never changes the chunk plan, and FA output
+is a deterministic function of (audio, chunk plan), so the frozen word capture
+IS the post-R.10 capture. **0 FA word rows differ** on any corpus. Committed
+boundaries: **649 → 647**, with **3 changed** (2 dropped, 1 moved) — v6 and
+spanish bit-identical, every value and every row. Full row diff at re-pin: **6
+changed fields/rows, 0 UNEXPECTED**. Well inside exit E3.
+
+**(g) R.5 ↔ R.10, both directions, with the order stated.** R.5 acts at
+chunk-plan construction, strictly *before* inference; R.10 acts on FA's output,
+strictly *after*. Within one Apply Sync there is no feedback path in either
+direction. R.5 → R.10: can only move a member of the fixed eight across the
+confidence threshold, and measured, it moved none. R.10 → R.5: the next run's
+segments come from `parseProjectData`, so the chunk plan input is unchanged —
+verified by digest. **Measured overlap on the post-R.5 capture: 0. Exit E4
+clear.** No arbitration rule is needed and none was written; the detector
+refuses any `matched === true` segment at any confidence, which is asserted as
+a test.
+
+**(h) ONE GATE DEFECT R.10 EXPOSED, fixed in the same commit.** The replay
+gate's `loadAnchorPathInputs` fed `computeFaChunkPlan` the
+`-segments.csv` fixture, relying on it being the COMPLETE pre-skip parse — true
+only while FA skipped nothing on every corpus. With 173 down to 173 committed
+rows it would have fed a shorter array and flipped 173's chunk digest to
+`b24e4e63bae5f2b3`: **a false alarm pointing at `faAnchors.ts` for a change two
+stages downstream of it.** Both readings were measured before the fix was
+written. `-segments.csv` and `-skipped.csv` are now merged by `segmentIndex`
+back into the real 447/175/27 parse — the same split the Whisper-side baseline
+pair has always used — and the skipped fixture carries `startTime`/`duration`
+as frozen inputs for that reconstruction. `src/services/faChunkPlan.test.ts`'s
+own corpus loader took the identical fix.
+
 
 **R.6 — Corpus start and end.**
 

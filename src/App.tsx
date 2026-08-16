@@ -106,6 +106,11 @@ import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import { isFaGateOpen } from './services/faGate';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
+import {
+  detectUnspokenScriptSegmentsFromWhisper,
+  applyUnspokenScriptGate,
+  R10_SKIP_REASON,
+} from './services/faUnspokenGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -949,10 +954,18 @@ export function evaluateCoverageGate(
 /** Why a segment was left off the timeline (doc §3.5(c), R4-4).
  *  `matched === false` is the sole gate — a segment with zero true matches,
  *  OR (Bug C, consecutive-run survival requirement, 2026-08-02) real matched
- *  words that never form a qualifying contiguous run, is skipped. Either way
- *  the only possible skip reason remains 'no audio match'; 'low confidence'
- *  has never been a skip reason since the Bug 2 fix. */
-export type SegmentSkipReason = 'no audio match';
+ *  words that never form a qualifying contiguous run, is skipped. 'low
+ *  confidence' has never been a skip reason since the Bug 2 fix and still is
+ *  not one.
+ *
+ *  WS1 Session E adds the second member, and it does NOT weaken that gate:
+ *  R.10 (`faUnspokenGate.ts`) forces `matched: false` on its own findings
+ *  BEFORE `filterToCoveredSegments` runs, so the keep test is unchanged. The
+ *  reason string only records WHICH of the two things went wrong. R.10's
+ *  firing set is a subset of the segments Whisper alone already refuses, so
+ *  this member can only ever re-label a skip that would have happened anyway
+ *  on the FA-gate-off default path. */
+export type SegmentSkipReason = 'no audio match' | typeof R10_SKIP_REASON;
 
 /**
  * One skipped segment, recorded for the sync log. `segmentIndex` is 0-based
@@ -1027,6 +1040,14 @@ export interface CoveredSegmentFilter {
 export function filterToCoveredSegments(
   segments: VideoSegment[],
   coverage: SegmentAlignment[],
+  // R.10 (`faUnspokenGate.ts`) — the PRE-filter indices this run's
+  // scripted-text-never-spoken gate flagged. Purely a REPORTING input: the keep
+  // test is still `matched === false` and nothing else, because the gate has
+  // already forced `matched: false` on exactly these indices before this
+  // function is called. All this changes is which reason the skip record
+  // carries into the sync log, so "the audio never said this" reads
+  // differently from "the aligner could not find it".
+  unspokenScriptIndices?: ReadonlySet<number>,
 ): CoveredSegmentFilter {
   const kept: VideoSegment[] = [];
   const keptAlignments: SegmentAlignment[] = [];
@@ -1043,7 +1064,7 @@ export function filterToCoveredSegments(
     skipped.push({
       segmentIndex: i,
       segmentText: seg.text ?? '',
-      reason: 'no audio match',
+      reason: unspokenScriptIndices?.has(i) ? R10_SKIP_REASON : 'no audio match',
       segmentTag: seg.tag || undefined,
       matchedWords: cov?.matchedWords,
       totalWords: cov?.totalWords,
@@ -2892,12 +2913,50 @@ export default function App() {
         return;
       }
 
+      // WS1 R.10 (faUnspokenGate.ts) — SCRIPTED TEXT NEVER SPOKEN. Forced
+      // alignment has no drop path (a CTC objective must place every target
+      // token somewhere), so an on-screen-only title or a planted, never-voiced
+      // string gets carved out of whichever real speech sits next to it and
+      // steals that speech's own onset. This gate refuses those segments and
+      // hands them to the skip path below.
+      //
+      // Runs ONLY when FA actually produced the tokens — with the gate off,
+      // `faTokens` is null and this is a no-op, so the default path is
+      // byte-identical to before this existed. It also runs AFTER
+      // `evaluateCoverageGate` on purpose: whether the audio corresponds to the
+      // doc AT ALL is a judgement on the raw alignment, and must not be
+      // influenced by a per-segment refusal.
+      //
+      // Its conjunct (1) is the WHISPER alignment's own `matched`, which is why
+      // `projectRef.current.transcriptTokens` (not `aligned.tokens`, which are
+      // the FA tokens on this branch) is what goes in.
+      const unspokenScript = faTokens
+        ? detectUnspokenScriptSegmentsFromWhisper(
+            aligned.segments,
+            projectRef.current.transcriptTokens!,
+            faTokens,
+            aligned.silences,
+            audioDuration,
+          )
+        : [];
+      const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
+      if (unspokenScript.length > 0) {
+        console.warn(
+          `[sync] R.10 — ${unspokenScript.length} scripted segment(s) never spoken, dropped:`,
+          unspokenScript,
+        );
+      }
+
       // R4-1/R4-2 — skip unmatched. Only audio-covered segments reach the
       // timeline; the rest are dropped (no char-fallback, no interpolation) and
       // recorded for the sync log. Skipped segments leave real gaps: the audio
       // keeps playing as one continuous file, and no neighbour is stretched to
       // cover the hole.
-      const { kept, skipped, keptAlignments } = filterToCoveredSegments(aligned.segments, aligned.coverage);
+      const { kept, skipped, keptAlignments } = filterToCoveredSegments(
+        aligned.segments,
+        coverageAfterR10,
+        new Set(unspokenScript.map(f => f.segmentIndex)),
+      );
 
       if (import.meta.env.DEV && skipped.length > 0) {
         console.warn(
@@ -2911,14 +2970,17 @@ export default function App() {
       // (`recoveredVia` set only for an ACCEPTED claim — see AlignResult's
       // doc comment; a rejected claim leaves the segment genuinely
       // zero-matched, and shows up in `skipped` above instead) gets one
-      // 'rescue' log entry below. Built from `aligned.coverage`/
+      // 'rescue' log entry below. Built from `coverageAfterR10`/
       // `aligned.segments` — the PRE-filter arrays, same indexing
       // `buildSkipLogEntries` uses — since a rescued segment is by
       // definition `matched: true` and therefore always in `kept`, but the
       // PRE-filter index is what the message displays (1-based).
+      // R.10's gate clears `recoveredVia`/`recoveredRegion` on anything it
+      // drops, so a segment cannot be reported as recovered and skipped in
+      // the same run's log.
       const rescued: RescuedSegmentRecord[] = [];
-      for (let i = 0; i < aligned.coverage.length; i++) {
-        const cov = aligned.coverage[i];
+      for (let i = 0; i < coverageAfterR10.length; i++) {
+        const cov = coverageAfterR10[i];
         if (cov?.recoveredVia && cov.recoveredRegion) {
           rescued.push({
             segmentIndex: i,
