@@ -29,6 +29,21 @@ function sil(startSec: number, endSec: number): SilenceInterval {
   return { startSec, endSec };
 }
 
+/** R-U (WS1 Session B) — an anchor-CANDIDATE token, built to the shape the
+ *  zero-seam rejection rule requires: the token's own start (a token seam,
+ *  for any token but the first) lies STRICTLY INSIDE its agreeing silence,
+ *  rather than merely abutting that silence's edge. `sil(s - 0.1, s)` plus a
+ *  token starting at `s - 0.05` is that shape; the anchor's `timeSec` is
+ *  still the silence's `endSec` (`s`), so every pinned time below is
+ *  unchanged by the rule.
+ *
+ *  A silence that only TOUCHES a seam at its edge spans nothing and is
+ *  rejected — which is why the pre-R-U fixture form (`tok(w, s, …)` against
+ *  `sil(s - 0.1, s)`) no longer produces an anchor. */
+function candidateTok(text: string, silenceEndSec: number): TranscriptToken {
+  return tok(text, silenceEndSec - 0.05, silenceEndSec + 0.5);
+}
+
 /** All-match alignment: query word `i` matches subject index `i`. */
 function allMatchAlignment(n: number): TokenAlignment {
   const ops: TokenAlignmentOp[] = [];
@@ -77,16 +92,23 @@ describe('computeFaAnchors', () => {
     const words = ['alpha', 'bravo', 'charlie', 'delta', 'hotel'];
     const alignment = allMatchAlignment(words.length);
     const starts = [1, 3, 5, 7, 9];
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
     const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, identityMapping(tokens.length));
 
-    expect(anchors.map(a => a.qi)).toEqual([0, 1, 2, 3, 4]);
-    expect(anchors.map(a => a.timeSec)).toEqual(starts);
+    // qi 0 is absent, and that is R-U working as specified rather than a gap
+    // in the fixture: the FIRST token has no token seam before it, so no
+    // silence can span one there, so it can never carry an R.1 anchor. The
+    // corpus start is already a boundary (`'corpus-start'`, run 0 below) — it
+    // does not need an anchor to also assert it. Every LATER admissible token
+    // still becomes an anchor unconditionally, which is what R.1's "no
+    // selection among candidates" text means.
+    expect(anchors.map(a => a.qi)).toEqual([1, 2, 3, 4]);
+    expect(anchors.map(a => a.timeSec)).toEqual([3, 5, 7, 9]);
     expect(runs.map(r => [r.windowStart, r.windowEnd])).toEqual([
-      [0, 1], [1, 3], [3, 5], [5, 7], [7, 9], [9, 12],
+      [0, 3], [3, 5], [5, 7], [7, 9], [9, 12],
     ]);
     assertNoGaps(runs);
   });
@@ -110,7 +132,7 @@ describe('computeFaAnchors', () => {
 
     const words = ['alpha', 'bravo', 'charlie', 'MISMATCH', 'delta', 'hotel', 'india', 'kilo'];
     const starts = [1, 3, 5, 7, 9, 11, 13, 15];
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 18;
 
@@ -143,7 +165,7 @@ describe('computeFaAnchors', () => {
     const words = ['on', 'alpha', 'bravo', 'charlie', 'delta'];
     const alignment = allMatchAlignment(words.length);
     const starts = [1, 3, 5, 7, 9];
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
@@ -158,7 +180,7 @@ describe('computeFaAnchors', () => {
     const words = ['your', 'alpha', 'bravo', 'charlie', 'delta'];
     const alignment = allMatchAlignment(words.length);
     const starts = [1, 3, 5, 7, 9];
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
@@ -203,7 +225,7 @@ describe('computeFaAnchors', () => {
     const words = ['alpha', 'bravo', 'charlie', 'delta'];
     const alignment = allMatchAlignment(words.length);
     const starts = [4, 5, 6, 7]; // single anchor lands wherever the agreeing silence is
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = [sil(4.9, 5)]; // only qi=1 ("bravo") agrees
     const audioDuration = 10;
 
@@ -232,7 +254,7 @@ describe('computeFaAnchors', () => {
       31, 33, 10, 34, 36, 38, // block 2 (qi 6-11): anchor at qi=8, t=10
       61, 63, 15, 64, 66, 68, // block 3 (qi 12-17): anchor at qi=14, t=15
     ];
-    const tokens = words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5));
+    const tokens = words.map((w, i) => candidateTok(w, starts[i]!));
     const silences = [sil(4.9, 5), sil(9.9, 10), sil(14.9, 15)];
     const audioDuration = 50;
 
@@ -258,7 +280,7 @@ describe('computeFaAnchors', () => {
     const fillerToken = tok('...', 0, 0.5);
     const words = ['alpha', 'bravo', 'charlie', 'delta', 'hotel'];
     const starts = [1, 3, 5, 7, 9];
-    const tokens = [fillerToken, ...words.map((w, i) => tok(w, starts[i]!, starts[i]! + 0.5))];
+    const tokens = [fillerToken, ...words.map((w, i) => candidateTok(w, starts[i]!))];
     const silences = starts.map(s => sil(s - 0.1, s));
     const audioDuration = 12;
 
@@ -278,5 +300,137 @@ describe('computeFaAnchors', () => {
     expect(anchors.map(a => a.qi)).toEqual([0, 1, 2, 3, 4]);
     expect(anchors.map(a => a.tokenIdx)).toEqual([1, 2, 3, 4, 5]);
     expect(anchors.map(a => a.timeSec)).toEqual(starts);
+  });
+});
+
+// ===========================================================================
+// R-U (WS1 Session B) — the ZERO-SEAM REJECTION RULE.
+//
+// Owner ruling R-U replaces R-R's unbuildable token-to-token-gap clause: a
+// silence that spans no token seam is rejected as a boundary candidate
+// regardless of proximity. It is a VETO on structurally impossible silences,
+// not a SELECTOR among plausible ones — the R2 invariant applied as written
+// (`CLAUDE.md` §4: "Timestamps may measure distance; they must never decide
+// identity").
+//
+// SCOPE, stated so a later reader does not mistake it for an oversight: the
+// veto applies to `findAgreeingSilence` (R.1 agreement) ONLY, not to R-P's
+// `longestSilenceInWindow` (the R.4 forced split). Those answer different
+// questions — "is this silence the boundary between these two words?" versus
+// "where is the least-bad place to cut a run that has run too long?" — and
+// only the first is an identity claim. Extending the veto to R-P would also
+// move the production chunk plan away from the one Session B's Step 3
+// measured, which is what every number in `docs/work-in-progress.md` §11's
+// R-Y table describes.
+// ===========================================================================
+
+/** Whisper turbo emits a gapless partition (measured: 3451/3988 v6, 1635/1835
+ *  173, 331/362 spanish adjacent pairs have a zero-width gap), so a token seam
+ *  is a single instant: `tokens[i].startSec === tokens[i-1].endSec`. These
+ *  fixtures use that shape rather than the isolated-token shape, because the
+ *  rule under test is defined against it. */
+function gaplessTokens(words: string[], bounds: number[]): TranscriptToken[] {
+  return words.map((w, i) => tok(w, bounds[i]!, bounds[i + 1]!));
+}
+
+describe('computeFaAnchors — R-U zero-seam rejection rule', () => {
+  // Four gapless tokens over [10, 14): seams at 11, 12, 13.
+  const WORDS = ['alpha', 'bravo', 'charlie', 'delta'];
+  const BOUNDS = [10, 11, 12, 13, 14];
+  const AUDIO = 20;
+
+  function anchorsFor(silences: SilenceInterval[]): ReturnType<typeof computeFaAnchors> {
+    const tokens = gaplessTokens(WORDS, BOUNDS);
+    return computeFaAnchors(allMatchAlignment(WORDS.length), tokens, silences, AUDIO, identityMapping(tokens.length));
+  }
+
+  it('REJECTS a silence spanning zero token seams (it lies wholly inside one token span)', () => {
+    // [11.2, 11.8] sits entirely inside "bravo" [11, 12) — it separates
+    // nothing. "charlie" starts at 12, only 0.2s from this silence's endSec,
+    // so the OLD proximity-only test would have accepted it: this asserts the
+    // veto, not the tolerance.
+    const { anchors } = anchorsFor([sil(11.2, 11.8)]);
+    expect(anchors).toEqual([]);
+  });
+
+  it('ACCEPTS a silence spanning exactly one token seam', () => {
+    // [11.8, 12.1] straddles the "bravo"/"charlie" seam at 12. "charlie"'s
+    // own onset (12) is 0.1s from endSec (12.1), inside ANCHOR_AGREEMENT_SEC.
+    const { anchors } = anchorsFor([sil(11.8, 12.1)]);
+    expect(anchors.map(a => a.tokenIdx)).toEqual([2]);
+    expect(anchors.map(a => a.timeSec)).toEqual([12.1]);
+  });
+
+  it('ACCEPTS a silence spanning two or more token seams — that is the COMMON real case, not collateral', () => {
+    // Measured on the real corpora (Session A.5 census): of 547/239/27
+    // detected silences, 460/98/22 straddle two or more token spans. A rule
+    // that rejected those would veto most of the corpus, which R-U does not.
+    // [10.9, 12.1] swallows the seams at 11 AND 12.
+    const { anchors } = anchorsFor([sil(10.9, 12.1)]);
+    expect(anchors.map(a => a.tokenIdx)).toEqual([2]);
+    expect(anchors.map(a => a.timeSec)).toEqual([12.1]);
+  });
+
+  it('ear-pass item 6: the false anchor at 173.12 is vetoed, and the real seam silence at 174.96 anchors instead', () => {
+    // The real configuration, from scripts/fixtures/phase4-baseline-173-{words,
+    // silences}.csv (docs/work-in-progress.md §11): Whisper token 464
+    // "chemical" spans [172.57, 173.18], and detected silence [172.70, 173.12]
+    // lies WHOLLY INSIDE it — zero seams. The next token's onset (173.18) is
+    // 0.06s from that silence's endSec, well inside ANCHOR_AGREEMENT_SEC, so
+    // proximity alone accepted it and `snapBoundaries` then committed
+    // `vessel_damage_clue` at 172.91. The ear-correct boundary derives from
+    // the NEXT silence, [174.52, 174.96], which does span a real seam.
+    const words = ['chemical', 'residue', 'whatever', 'lastcrew', 'stored'];
+    const bounds = [172.57, 173.18, 173.60, 174.10, 174.90, 175.40];
+    const tokens = gaplessTokens(words, bounds);
+    const alignment = allMatchAlignment(words.length);
+
+    const falseAnchorSilence = sil(172.70, 173.12); // inside "chemical" — zero seams
+    const realSeamSilence = sil(174.52, 174.96);    // straddles the seam at 174.90
+
+    // Both present, exactly as the real audio has them.
+    const { anchors } = computeFaAnchors(
+      alignment, tokens, [falseAnchorSilence, realSeamSilence], 300, identityMapping(tokens.length),
+    );
+
+    expect(anchors.map(a => a.timeSec), 'the 173.12 false anchor must be gone').not.toContain(173.12);
+    expect(anchors.map(a => a.timeSec)).toEqual([174.96]);
+
+    // And the veto is what did it: the same silence at the same distance is
+    // still accepted once a seam actually falls inside it.
+    const widened = computeFaAnchors(
+      alignment, tokens, [sil(172.70, 173.30), realSeamSilence], 300, identityMapping(tokens.length),
+    );
+    expect(widened.anchors.map(a => a.timeSec)).toEqual([173.30, 174.96]);
+  });
+
+  it('no surviving candidate anywhere: the run simply is not split there, and R-P force-splits instead', () => {
+    // Every silence is zero-seam, so R.1 produces nothing. The FALLBACK is not
+    // a substitute anchor and not an error — the enclosing run just stays
+    // whole, and once it exceeds MAX_RUN_SEC the R.4/R-P forced split takes
+    // over. R-P is deliberately NOT seam-vetoed (see this block's scope note),
+    // so it still picks the longest silence in the window: [11.2, 11.8] is
+    // 0.6s against [12.1, 12.4]'s 0.3s, so the split lands on 11.8.
+    const tokens = gaplessTokens(WORDS, BOUNDS);
+    const silences = [sil(11.2, 11.8), sil(12.1, 12.4)]; // both wholly inside one token
+    const audioDuration = MAX_RUN_SEC + 5; // one forced split's worth, no more
+
+    const { anchors, runs } = computeFaAnchors(
+      allMatchAlignment(WORDS.length), tokens, silences, audioDuration, identityMapping(tokens.length),
+    );
+
+    expect(anchors).toEqual([]);
+    expect(runs).toEqual([
+      { windowStart: 0, windowEnd: 11.8, startProvenance: 'corpus-start', endProvenance: 'forced-split-silence' },
+      { windowStart: 11.8, windowEnd: audioDuration, startProvenance: 'forced-split-silence', endProvenance: 'corpus-end' },
+    ]);
+  });
+
+  it('the FIRST token can never anchor: there is no token seam before it', () => {
+    // A silence covering the very start of the corpus spans no seam by
+    // construction — seams begin at tokens[1]. The corpus start is already a
+    // boundary (`'corpus-start'`), so nothing is lost.
+    const { anchors } = anchorsFor([sil(9.5, 10.5)]); // contains no seam: seams start at 11
+    expect(anchors).toEqual([]);
   });
 });

@@ -75,27 +75,39 @@ here: that was true only between 580ba0f (which captured them) and 37e9271
 (which made them load-bearing). Moving or renaming any of the six now breaks
 that gate, exactly like the golden-baseline files at the top of this README.
 
-**KNOWN STALE — one row, one file (WS1 Session A.5, 2026-08-16).**
-`phase4-fa-second-baseline-spanish-segments.csv` predates 616abb2's
-forced-split chunk-attribution fix and was never regenerated: its
-`023_scylla_six_sailors` row still reads `66.73`, while current code produces
-`65.12` (the ear-correct value). RETAINED deliberately rather than deleted or
-refreshed — refreshing needs a real Rust ONNX capture, and the file is
-load-bearing for the gate — with the staleness recorded in three places that
-a reader cannot miss: here, the gate's own `KNOWN_BAD` item-9 entry
-(`status: 'fixed'`, deliberately NOT asserted against the stale value), and
-`docs/work-in-progress.md` §11. Verified this session: the v6 and 173 files
-are NOT stale — reconstructing the production chunk plan at HEAD reproduces
-the real capture 280/280 and 118/118 chunks byte-identical, as expected for
-two corpora with zero forced splits. Regenerate all six together when Session
-B's fix lands.
+**REGENERATED, and no longer stale (WS1 Session B, 2026-08-16).** The
+`-segments.csv` files for all three corpora were re-captured after owner
+ruling R-U (the zero-seam rejection rule) landed in `faAnchors.ts`. This
+clears A.5's KNOWN-STALE marker on `phase4-fa-second-baseline-spanish-
+segments.csv`: its `023_scylla_six_sailors` row now reads the live `65.12`
+instead of the pre-616abb2 `66.73`, so there is no stale value left for the
+gate's `KNOWN_BAD` table to warn about (item 9 was removed from it). The
+`-skipped.csv` files are unchanged — still 0 skips on all three, header-only.
+
+What changed in this regeneration, in full: 16 committed boundaries moved (6
+v6, 10 173, 0 spanish) under R-U, plus the 1 spanish boundary 616abb2 had
+already fixed but that this file had never shown. Every moved row is listed
+by name in `docs/work-in-progress.md` §11's R-Y re-capture table; none of the
+16 is ear-verified yet.
+
+**Before trusting a regeneration, validate the driver against the fixture it
+is about to overwrite.** That is what was done here, and it is the only reason
+these files could be replaced safely: the re-capture driver was first run
+against the PREVIOUS capture's own words and reproduced all three committed
+`-segments.csv` files **byte-for-byte**, which independently re-verified A.5's
+claim that the v6 and 173 files were accurate at HEAD (they were) rather than
+taking it on trust. Only then was the changed input — the post-R-U chunk plan
+— fed through the same driver.
 
 Captured by calling the real, unmodified `fa::fa_align` (the function
 `fa_align_dev`/`fa_align_production` both delegate to) directly against each
 project's own real 16kHz audio and the real PRODUCTION chunk plan
 (`computeFaChunkPlan`, script-word-index attribution — the same call
 `runForcedAlignmentForSync` makes for a real Apply-Sync run with the FA gate
-on), via a scratch `tauri::test::mock_context` harness (not committed) — then
+on), via a scratch `tauri::test::mock_context` harness (not committed; WS1
+Session B's re-capture used the same construction, a `harness = false`
+integration-test binary calling `fa::fa_align` with `ORT_DYLIB_PATH` set
+inline) — then
 fed through the exact same pipeline (`filterMalformedTokens` →
 `alignScenestoTranscript` → `distributeSegmentTimes` → `applyAnchorBasedTiming`
 → coverage gate → `filterToCoveredSegments` → `snapCoveredBoundaries` →

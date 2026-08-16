@@ -111,6 +111,14 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-16 (WS1 Session B) — NOTHING ON THIS BOARD ADVANCES.** Stated explicitly rather
+than left to inference: owner ruling R-U (the zero-seam rejection rule) landed real
+production code in `faAnchors.ts` and moved 16 committed FA boundaries, but Phase 3/Task 5
+stays **"PRODUCTION PATH WIRED, gate OFF"** — the FA gate is still OFF by default and
+neither R-X tier has been listened to, so no phase's exit criteria are met. No other row
+changes either. The one row-adjacent fact worth recording: §3 row 2 (Task 2, 50/50
+silence-split) is unaffected — `snapBoundaries.ts` was not touched this session.
+
 **2026-08-16 (owner ruling R4, WS1 Session A):** R.5 (unscripted-audio wildcard, row "3" above
 via §7 item 2) and its newly-specified companion R.10 (scripted-text-never-spoken,
 `sync-pipeline-v2-plan.md`) are now pulled into Stage 1's own lock gate — see §11 item 13's
@@ -1705,6 +1713,288 @@ CI is green (existing 4 gates run clean, `fa-ort-matrix.yml` still green).
 Full record for cross-cutting (non-WS1-specific) rulings: `docs/history.md`'s "Decisions
 Log — Dissolved from `docs/decisions/`" section, indexed at `project-state.md` §5.
 
+**WS1 SESSION B (2026-08-16) — R-U implemented, R-Y re-capture measured, gate re-pinned.**
+Six owner rulings recorded (`sync-pipeline-v2-plan.md`): **R-U** zero-seam rejection rule,
+**R-V** unbundling item 7 into new defect class **R.11**, **R-W** rejecting the two-pass T1
+design, **R-X** the two-tier acceptance bar amending R-S(i), **R-Y** authorising the
+pre-implementation re-capture, **R-Z** reopening R.10's detector as an independent track.
+Identifiers R-U…R-Z were the next free letters after R-T; R.11 the next free rule number
+after R.10. **The letter series is now exhausted through Z** — the next ruling needs a new
+convention.
+
+**(a) Path exposure, established from the code before anything was written (exit S5,
+clear).** `findAgreeingSilence` is FA-ONLY. It is module-private in `faAnchors.ts` and has
+exactly one caller, `computeAnchors`, which has exactly one caller, `computeFaAnchors`,
+whose only production caller is `faChunkPlan.ts`'s `computeRuns`. That reaches production
+through exactly two paths: `forcedAlignmentRun.ts:81`, called only from `App.tsx:2854`
+behind `isFaGateOpen() ? … : null`, and `App.tsx:3612`'s `__faDevAlign`, a DEV-only
+devtools-console global that never writes to the project. **The Whisper anchoring path
+never imports `faAnchors.ts` at all.** The `anchorSource` parameter
+(`useWhisper.ts:77` → `distributeSegmentTimes`, `whisperService.ts:1495`) gates NOTHING —
+it is written verbatim onto each segment as a provenance label and read nowhere in the
+timing arithmetic; what actually differs between the two paths is the token array
+substituted at `App.tsx:2871` (`faTokens ?? transcriptTokens`).
+
+**(b) R-Y re-capture — real ONNX inference, not a reconstruction.** Method, in the order
+that makes it trustworthy: (1) a Node driver was built that reproduces `App.tsx`'s FA
+branch end to end minus the Rust leg; (2) it was fed the PREVIOUS capture's own words and
+reproduced all three committed `phase4-fa-second-baseline-*-segments.csv` fixtures
+**byte-for-byte**, which is what licenses reading its later output as measurement; (3) a
+scratch `harness = false` Tauri binary re-ran the real `fa::fa_align` over the post-R-U
+chunk plans (173 77.7s / 81 chunks, v6 154.1s / 251 chunks, spanish unchanged at 5 chunks
+so not re-run); (4) a determinism control re-ran 173 at HEAD's own plan and reproduced the
+original capture's 1660 word texts and timings bit-identically (confidences differ by
+≤3e-8, a float-serialization artifact; `needsReview` identical on all 1660).
+
+  **(a) TOTAL MOVED: 16 / 649 boundaries (2.5%)** — v6 6/447, 173 10/175, spanish 0/27.
+  Against A.5's 179/649 upper bound: **well under, and every one of the 16 is inside the
+  at-risk set** that bound describes, so the bound's derivation holds. Exit S1 clear.
+
+  **(b) magnitude buckets:** `<0.1s` 0, `0.1–0.5s` 0, `0.5–1.0s` 4 (2 v6, 2 173), `>1.0s`
+  12 (4 v6, 8 173). The rule does not make small adjustments — it either leaves a boundary
+  alone or moves it a long way. That is expected of a veto that deletes an anchor outright
+  rather than nudging one.
+
+  **(c) direction:** 15 later, 1 earlier (v6 `340_fifty_eight`, −1.95s). Max +20.23s, max
+  −1.95s. Strongly one-directional, which is itself worth the ear's attention.
+
+  **(d) overlap with the 580ba0f FA-vs-Whisper movers** (re-derived independently this
+  session and reproducing 580ba0f exactly: 642 shared tags, 45 moved >0.5s, 25 >1.0s):
+  **6 of the 45 are in this rule's moved set against 1.1 expected under uniform placement
+  — 5.4× enrichment**; 3 of the 25 >1.0s movers against 0.6 expected, 4.9×. A.5 predicted
+  1.53× against the 179-boundary at-risk set; the realised set is 16 boundaries, so the
+  concentration is far higher than predicted. The 8.67s v6 `030_watching_older_hunters`
+  outlier is **UNMOVED**.
+
+  **(e) item 6 — RESOLVED.** 173 `vessel_damage_clue` 172.91 → **174.74**, the ear-correct
+  value, residual **0.000s** (tolerance used: 0.005s, the gate's own per-row tolerance and
+  finer than the 0.01s the CSVs carry — an exact hit needs no looser one). Exit S3 clear.
+
+  **(f) item 7 — UNCHANGED at 449.20**, bit-identical, exactly as R-V predicts. Reported,
+  not celebrated: this is the mechanism model being confirmed, and it is why item 7 became
+  R.11 rather than staying bundled with R-R.
+
+  **(g) V6 seam 150/151 — UNMOVED.** `155_predator_passing_under` still 457.81; its chunk
+  `[451.70, 460.56]` is bit-identical (index 81 → 73 only because earlier windows merged).
+  Exit S2 clear.
+
+  **(h) the 7 Whisper-skipped, FA-recovered boundaries: 1 of 7 moved.** 173 `blue_monkey`
+  36.96 → 37.73 (+0.77). That is ear-pass item 11 — a segment the ear agreed should be
+  DROPPED entirely, not retimed — so the movement changes numbers on a span that is
+  wrong by construction either way; R.10 still owns it. The other six (v6
+  `027_internal_change_face`, `028_small_permanent_flake`, `029_night_understanding`; 173
+  `perilous_realms`, `shadow_loss`; spanish `001_scylla_intro`) are unmoved.
+
+  **Every moved boundary, by name:**
+
+   | project | idx | segment | pre-R-U | post-R-U | Δ | bucket |
+   |---|---|---|---|---|---|---|
+   | 173 | 5 | `abysmal_opinion` | 16.50 | 17.88 | +1.38 | >1.0s |
+   | 173 | 12 | `blue_monkey` | 36.96 | 37.73 | +0.77 | 0.5-1.0s |
+   | 173 | 13 | `eternal_focus` | 37.73 | 38.50 | +0.77 | 0.5-1.0s |
+   | 173 | 47 | `vessel_damage_clue` | 172.91 | 174.74 | +1.83 | >1.0s |
+   | 173 | 143 | `unstable_spirit_journey` | 586.28 | 606.51 | +20.23 | >1.0s |
+   | 173 | 144 | `broken_link` | 593.88 | 609.24 | +15.36 | >1.0s |
+   | 173 | 145 | `battle_network` | 597.83 | 609.99 | +12.16 | >1.0s |
+   | 173 | 146 | `protection_failure` | 603.69 | 612.51 | +8.82 | >1.0s |
+   | 173 | 147 | `entry_clash` | 609.24 | 613.57 | +4.33 | >1.0s |
+   | 173 | 148 | `unstable_energy_consequence` | 612.51 | 615.30 | +2.79 | >1.0s |
+   | v6 | 59 | `060_reassuring_hand` | 183.03 | 184.02 | +0.99 | 0.5-1.0s |
+   | v6 | 223 | `224_thirty_three` | 664.33 | 666.08 | +1.75 | >1.0s |
+   | v6 | 224 | `225_night_scouts` | 667.47 | 669.05 | +1.58 | >1.0s |
+   | v6 | 225 | `226_four_scouts` | 670.24 | 671.18 | +0.94 | 0.5-1.0s |
+   | v6 | 241 | `242_fen_excited_run` | 708.95 | 710.11 | +1.16 | >1.0s |
+   | v6 | 339 | `340_fifty_eight` | 1047.57 | 1045.62 | -1.95 | >1.0s |
+
+  **Read the 173 143–148 cluster first.** Six consecutive boundaries in the 586–615s
+  region move together, and `view_trapped_warrior` (ord 142) absorbs the slack as a
+  **26.80s** segment against that project's ~4s norm. It is the single riskiest thing in
+  this change set and the reason R-X's control arm exists.
+
+**(c) Implementation.** `src/services/faAnchors.ts` only, ~55 lines: `tokenSeamTimes`
+(interior seams, sorted defensively), `spansATokenSeam` (binary search for a seam strictly
+inside the silence), and the veto placed FIRST inside `findAgreeingSilence`'s candidate
+loop. **What each surviving numeric now decides:** `ANCHOR_AGREEMENT_SEC` (0.15s) decides
+only SELECTION among structurally admissible survivors — how far to look, which survivor
+to prefer; `SEAM_INTERIOR_EPSILON` (1e-9, local to `faAnchors.ts`, deliberately not in
+`syncConstants.ts`) is a strict-inequality guard against float equality, not a tolerance —
+there is no distance below which a seam "counts as" spanned. **No distance comparison is
+left deciding identity.** No tuning constant was added.
+
+  Two things were verified rather than assumed. The shipped form (veto-then-select, binary
+  search) produces a **byte-identical chunk plan on all three corpora** to the linear-scan,
+  select-then-veto variant A.5 measured — so Step 3's numbers describe the shipped code,
+  and M4's premise (no anchor has a competing candidate within tolerance) still holds under
+  the new candidate set. Tests: 6 new cases (zero seams rejected; one seam accepted; ≥2
+  seams accepted — 460/98/22 of real silences do this, so it must not be collateral; the
+  item-6 configuration with its real numbers; no-surviving-candidate, where the fallback is
+  that the run simply is not split and R-P force-splits instead; and the first-token case).
+  13 pre-existing fixtures in `faAnchors.test.ts`/`faChunkPlan.test.ts` needed their
+  silences widened to actually span a seam — they had modelled a silence ABUTTING a token
+  start, which real Whisper output does not produce. Every pinned anchor time is unchanged
+  by those edits, deliberately; the one expectation that genuinely changed is that the
+  first token of a transcript can no longer anchor (there is no seam before it).
+
+**(d) Gate re-pin (§9 cross-reference).** `scripts/phase4-fa-replay.test.ts` went red on 4
+tests, all expected per the measurement, none unexplained; re-pinned to 13 tests (+1). The
+`phase4-fa-second-baseline-*-segments.csv` fixtures were regenerated from the R-Y capture
+(v6 10 changed rows, 173 14, spanish 2 — more rows than boundaries because Model P's
+gapless partition means moving a boundary also rewrites the preceding segment's duration;
+spanish's 2 are 616abb2's fix, nothing new). KNOWN_BAD before: items 4, 5, 6, 7, 9, 10, 11.
+After: items **4, 5, 7, 10, 11** — item 6 left for a POSITIVE assertion pinned at its
+ear-correct 174.74 (the only correctness assertion in the file; red there means
+regression), item 9 left because 616abb2 closed it and the refreshed Spanish fixture now
+shows the live 65.12, and item 11's value re-pinned 36.96 → 37.73. **M1–M5 re-run against
+the re-pinned gate: M1, M2, M3, M5 RED; M4 green.** M5 — the items-6/7 error class
+reproduced at a currently-correct boundary — is caught twice, by the v6 anchor digest and
+by the V6-seam NAMED_WINDOWS row naming the boundary: the gate was not de-fanged by
+re-pinning. M4 was reconfirmed a TRUE no-op by chunk-plan equality on all three corpora,
+not merely by the gate staying green.
+
+**(e) R-X listening lists — DRAWN, NOT LISTENED TO. Session C, owner.**
+
+**Tier 1 — TOGGLE gate (R-X tier 1, superseding R-S(i)'s flat 12/12). 12/12 required.**
+The 12 largest-magnitude boundaries R-U moved, after excluding every tag that
+appears on §11 item 6's original 12-item ear list — R-S(i) requires a list drawn
+fresh from the post-fix run, and scoring a fix against boundaries chosen before it
+existed is exactly what that criterion rules out. (`vessel_damage_clue`, item 6, is
+excluded for that reason and needs no re-listen: it is already ear-verified at
+174.74 and now carries a positive assertion in the FA replay gate.)
+For each: is the PROPOSED boundary where the scene change belongs?
+
+| # | project | idx | segment | current | proposed | Δ | bucket | audio window |
+|---|---|---|---|---|---|---|---|---|
+| 1 | 173 | 143 | `unstable_spirit_journey` | 586.28 | 606.51 | +20.23 | >1.0s | `ffplay -ss 584.28 -t 24.23 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 2 | 173 | 144 | `broken_link` | 593.88 | 609.24 | +15.36 | >1.0s | `ffplay -ss 591.88 -t 19.36 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 3 | 173 | 145 | `battle_network` | 597.83 | 609.99 | +12.16 | >1.0s | `ffplay -ss 595.83 -t 16.16 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 4 | 173 | 146 | `protection_failure` | 603.69 | 612.51 | +8.82 | >1.0s | `ffplay -ss 601.69 -t 12.82 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 5 | 173 | 147 | `entry_clash` | 609.24 | 613.57 | +4.33 | >1.0s | `ffplay -ss 607.24 -t 8.33 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 6 | 173 | 148 | `unstable_energy_consequence` | 612.51 | 615.30 | +2.79 | >1.0s | `ffplay -ss 610.51 -t 6.79 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 7 | v6 | 339 | `340_fifty_eight` | 1047.57 | 1045.62 | -1.95 | >1.0s | `ffplay -ss 1043.62 -t 5.95 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 8 | v6 | 223 | `224_thirty_three` | 664.33 | 666.08 | +1.75 | >1.0s | `ffplay -ss 662.33 -t 5.75 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 9 | v6 | 224 | `225_night_scouts` | 667.47 | 669.05 | +1.58 | >1.0s | `ffplay -ss 665.47 -t 5.58 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 10 | 173 | 5 | `abysmal_opinion` | 16.50 | 17.88 | +1.38 | >1.0s | `ffplay -ss 14.50 -t 5.38 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 11 | v6 | 241 | `242_fen_excited_run` | 708.95 | 710.11 | +1.16 | >1.0s | `ffplay -ss 706.95 -t 5.16 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 12 | v6 | 59 | `060_reassuring_hand` | 183.03 | 184.02 | +0.99 | 0.5-1.0s | `ffplay -ss 181.03 -t 4.99 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+
+**Tier 2 — DEFAULT gate (R-X tier 2). BLINDED, 32 boundaries.** 16 boundaries R-U
+moved and 16 it did not touch, presented identically and in mixed order. The window
+is a FIXED ±4s on every row on purpose: a window sized to each boundary's own delta
+would have announced the arm before a note was played. **Score all 32 before opening
+the key.** For each: is the boundary under test where the scene change belongs?
+
+| # | project | idx | segment | boundary under test | audio window |
+|---|---|---|---|---|---|
+| 1 | 173 | 5 | `abysmal_opinion` | 17.88 | `ffplay -ss 13.88 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 2 | 173 | 72 | `poisonous_terrain_shift` | 276.28 | `ffplay -ss 272.28 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 3 | v6 | 28 | `029_night_understanding` | 83.53 | `ffplay -ss 79.53 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 4 | 173 | 47 | `vessel_damage_clue` | 174.74 | `ffplay -ss 170.74 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 5 | 173 | 44 | `wall_split_path` | 161.33 | `ffplay -ss 157.33 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 6 | spanish | 20 | `021_charybdis_whirlpool` | 58.69 | `ffplay -ss 54.69 -t 8.00 -autoexit .work-phase4/replay/spanish/audio_16k.wav` |
+| 7 | v6 | 224 | `225_night_scouts` | 669.05 | `ffplay -ss 665.05 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 8 | v6 | 364 | `365_recurrent_storytelling` | 1132.87 | `ffplay -ss 1128.87 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 9 | v6 | 241 | `242_fen_excited_run` | 710.11 | `ffplay -ss 706.11 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 10 | 173 | 99 | `reveal_secret_chamber` | 389.34 | `ffplay -ss 385.34 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 11 | 173 | 145 | `battle_network` | 609.99 | `ffplay -ss 605.99 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 12 | v6 | 308 | `309_wide_river_meeting` | 936.25 | `ffplay -ss 932.25 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 13 | v6 | 419 | `420_silent_watch` | 1331.90 | `ffplay -ss 1327.90 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 14 | 173 | 126 | `policy_check` | 508.83 | `ffplay -ss 504.83 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 15 | 173 | 143 | `unstable_spirit_journey` | 606.51 | `ffplay -ss 602.51 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 16 | v6 | 253 | `254_main_observing_fen` | 741.44 | `ffplay -ss 737.44 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 17 | 173 | 12 | `blue_monkey` | 37.73 | `ffplay -ss 33.73 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 18 | v6 | 59 | `060_reassuring_hand` | 184.02 | `ffplay -ss 180.02 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 19 | v6 | 225 | `226_four_scouts` | 671.18 | `ffplay -ss 667.18 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 20 | v6 | 84 | `085_the_spear_bearer` | 252.74 | `ffplay -ss 248.74 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 21 | 173 | 159 | `nature_hazard` | 662.98 | `ffplay -ss 658.98 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 22 | v6 | 139 | `140_sudden_alertness` | 416.13 | `ffplay -ss 412.13 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 23 | 173 | 147 | `entry_clash` | 613.57 | `ffplay -ss 609.57 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 24 | v6 | 223 | `224_thirty_three` | 666.08 | `ffplay -ss 662.08 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 25 | 173 | 148 | `unstable_energy_consequence` | 615.30 | `ffplay -ss 611.30 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 26 | v6 | 339 | `340_fifty_eight` | 1045.62 | `ffplay -ss 1041.62 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 27 | 173 | 144 | `broken_link` | 609.24 | `ffplay -ss 605.24 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 28 | v6 | 194 | `195_unseen_woods` | 580.16 | `ffplay -ss 576.16 -t 8.00 -autoexit .work-phase4/replay/v6/audio_16k.wav` |
+| 29 | spanish | 7 | `008_heads_moving` | 17.27 | `ffplay -ss 13.27 -t 8.00 -autoexit .work-phase4/replay/spanish/audio_16k.wav` |
+| 30 | 173 | 17 | `sight_blur` | 52.19 | `ffplay -ss 48.19 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 31 | 173 | 13 | `eternal_focus` | 38.50 | `ffplay -ss 34.50 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+| 32 | 173 | 146 | `protection_failure` | 612.51 | `ffplay -ss 608.51 -t 8.00 -autoexit .work-phase4/replay/173/audio_16k.wav` |
+
+<details><summary><b>Tier 2 KEY — do not open until all 32 rows are scored</b></summary>
+
+| # | segment | arm | pre-R-U | post-R-U | Δ | bucket |
+|---|---|---|---|---|---|---|
+| 1 | `abysmal_opinion` | MOVED | 16.50 | 17.88 | +1.38 | >1.0s |
+| 2 | `poisonous_terrain_shift` | CONTROL | 276.28 | 276.28 | +0.00 | — |
+| 3 | `029_night_understanding` | CONTROL | 83.53 | 83.53 | +0.00 | — |
+| 4 | `vessel_damage_clue` | MOVED | 172.91 | 174.74 | +1.83 | >1.0s |
+| 5 | `wall_split_path` | CONTROL | 161.33 | 161.33 | +0.00 | — |
+| 6 | `021_charybdis_whirlpool` | CONTROL | 58.69 | 58.69 | +0.00 | — |
+| 7 | `225_night_scouts` | MOVED | 667.47 | 669.05 | +1.58 | >1.0s |
+| 8 | `365_recurrent_storytelling` | CONTROL | 1132.87 | 1132.87 | +0.00 | — |
+| 9 | `242_fen_excited_run` | MOVED | 708.95 | 710.11 | +1.16 | >1.0s |
+| 10 | `reveal_secret_chamber` | CONTROL | 389.34 | 389.34 | +0.00 | — |
+| 11 | `battle_network` | MOVED | 597.83 | 609.99 | +12.16 | >1.0s |
+| 12 | `309_wide_river_meeting` | CONTROL | 936.25 | 936.25 | +0.00 | — |
+| 13 | `420_silent_watch` | CONTROL | 1331.90 | 1331.90 | +0.00 | — |
+| 14 | `policy_check` | CONTROL | 508.83 | 508.83 | +0.00 | — |
+| 15 | `unstable_spirit_journey` | MOVED | 586.28 | 606.51 | +20.23 | >1.0s |
+| 16 | `254_main_observing_fen` | CONTROL | 741.44 | 741.44 | +0.00 | — |
+| 17 | `blue_monkey` | MOVED | 36.96 | 37.73 | +0.77 | 0.5-1.0s |
+| 18 | `060_reassuring_hand` | MOVED | 183.03 | 184.02 | +0.99 | 0.5-1.0s |
+| 19 | `226_four_scouts` | MOVED | 670.24 | 671.18 | +0.94 | 0.5-1.0s |
+| 20 | `085_the_spear_bearer` | CONTROL | 252.74 | 252.74 | +0.00 | — |
+| 21 | `nature_hazard` | CONTROL | 662.98 | 662.98 | +0.00 | — |
+| 22 | `140_sudden_alertness` | CONTROL | 416.13 | 416.13 | +0.00 | — |
+| 23 | `entry_clash` | MOVED | 609.24 | 613.57 | +4.33 | >1.0s |
+| 24 | `224_thirty_three` | MOVED | 664.33 | 666.08 | +1.75 | >1.0s |
+| 25 | `unstable_energy_consequence` | MOVED | 612.51 | 615.30 | +2.79 | >1.0s |
+| 26 | `340_fifty_eight` | MOVED | 1047.57 | 1045.62 | -1.95 | >1.0s |
+| 27 | `broken_link` | MOVED | 593.88 | 609.24 | +15.36 | >1.0s |
+| 28 | `195_unseen_woods` | CONTROL | 580.16 | 580.16 | +0.00 | — |
+| 29 | `008_heads_moving` | CONTROL | 17.27 | 17.27 | +0.00 | — |
+| 30 | `sight_blur` | CONTROL | 52.19 | 52.19 | +0.00 | — |
+| 31 | `eternal_focus` | MOVED | 37.73 | 38.50 | +0.77 | 0.5-1.0s |
+| 32 | `protection_failure` | MOVED | 603.69 | 612.51 | +8.82 | >1.0s |
+
+</details>
+
+
+  **Estimated listening time** at A.5's ~25s/boundary: Tier 1 12 × 25s ≈ **5 min**; Tier 2
+  32 × 25s ≈ **13 min**, of which Tier 1's rows are not reused (the two lists are disjoint
+  in presentation — Tier 2 is blinded and single-valued), so budget **~18 min total**.
+
+**(f) R-Z — R.10 detector, open independent track.** Documented only; full text in
+`sync-pipeline-v2-plan.md` beside R.10. Not a Session C blocker.
+
+**(g) Side-task sweep — nothing obsoleted, one item newly informed.**
+  - §11 item 9 / §3 row 2 (**Task 2, 50/50 silence-split re-derivation**): unaffected.
+    `snapBoundaries.ts` was untouched. Worth flagging that this session confirmed
+    `snapBoundaries.ts` is the AMPLIFIER behind item 6 — from the false 173.12 anchor it
+    picked `[172.70,173.12]`→172.91 where from a correct anchor it picks
+    `[174.52,174.96]`→174.74, and that 1.83s is the distance between two adjacent silence
+    midpoints. That is context for Slice 2, not a change to its scope.
+  - §11 item 10 (**Task 3, stale-anchor scroll degradation test**): the suspected overlap
+    does not exist. That item is about anchor STALENESS across re-syncs; R-U changes which
+    silences may become anchors within a single run. Neither obsoletes nor blocks it.
+  - §11 item 11 (**Contract 1→2 gaps**, §9 P4/P6/P8): unaffected. P4's silence assertion
+    concerns the Stage-1 output contract, not R.1's admissibility test.
+  - **Word-shift leftovers**: unaffected — none of the 16 moved boundaries is a word-shift
+    case, and the word-shift harness reads the Whisper path, which R-U cannot reach (see
+    (a)).
+
+**(h) PREMISE CHECK — the seam DEFINITION is unruled and it matters. Owner decision needed
+before Session C listens.** Full evidence and table in `sync-pipeline-v2-plan.md` under
+"OPEN AGAINST R-U". In short: R-U says "spans a token seam"; the shipped reading treats a
+seam as the instant `tokens[i].startSec` and requires strict containment, which is right
+where Whisper is gapless (86–91% of pairs) and over-rejects where it is not — a silence
+sitting cleanly inside a real inter-word GAP spans no instant and is vetoed, which is the
+opposite of the intent A.5 stated. The seam-REGION reading was measured this session:
+**69/649 upper bound and 4/649 actual movers** (a strict subset of the shipped 16), reaching
+the **same** ear-correct 174.74 on item 6 and leaving item 7 and the V6 seam alone. It was
+NOT shipped because R-U was ruled on the 179/649 profile and every stop-and-rule exit was
+calibrated to it. Its FA inference is already captured
+(`.work-phase4/recap/words-VG-*.json`), so adopting it is a re-measure, not a re-derivation.
+
+
 **Deferred / Known Bugs (WS1, non-Task-5):**
 - `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5
   (`src/services/snapBoundaries.ts`) — the omitted 5th parameter silently defaults to
@@ -1774,6 +2064,48 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16 — WS1 Session B: the zero-seam rejection rule (R-U) implemented, measured
+  before it was built, and the FA replay gate re-pinned without being de-fanged.** First
+  session since `616abb2` authorised to write production code, and it wrote it in exactly
+  one file. Full write-up: §11's Session B block; six rulings (R-U, R-V + new rule R.11,
+  R-W, R-X, R-Y, R-Z) in `sync-pipeline-v2-plan.md`.
+  - **R-U replaces R-R's unbuildable clause with a structural VETO.** A silence spanning
+    no token seam is rejected as a boundary candidate regardless of proximity.
+    `ANCHOR_AGREEMENT_SEC` keeps only its selection job; **no distance comparison decides
+    identity any more**. This is the worked example of `CLAUDE.md` §4's "timestamps may
+    measure distance; they must never decide identity" — the invariant named this failure
+    class before the measurement found it. `src/services/faAnchors.ts` only; no tuning
+    constant added.
+  - **Measured with real ONNX inference BEFORE implementation (R-Y), and the measurement
+    describes the shipped code.** 16/649 boundaries moved (6 v6, 10 173, 0 spanish) against
+    A.5's 179/649 upper bound, all inside the at-risk set that bound describes. **Item 6
+    resolves to 174.74 exactly** — the ear-correct value, residual 0.000s. Item 7 is
+    bit-identical at 449.20 (R-V predicted it; `faAnchors.ts` cannot reach it, hence new
+    defect class R.11). The V6 seam 150/151 control did not move. All five stop-and-rule
+    exits clear. Buckets: 0 under 0.5s, 4 at 0.5–1.0s, 12 above 1.0s; 15 later, 1 earlier;
+    5.4× enriched against the 45 known >0.5s FA-vs-Whisper movers.
+  - **The re-capture driver was validated against the fixtures it was about to overwrite.**
+    Fed the previous capture's own words it reproduced all three committed
+    `phase4-fa-second-baseline-*-segments.csv` files byte-for-byte, and a determinism
+    control reproduced 1660 word timings bit-identically. Only then were the fixtures
+    regenerated. A.5's KNOWN-STALE marker on the Spanish file is cleared — it now shows the
+    live 65.12.
+  - **Gate re-pinned to 13 tests and re-mutated: M1/M2/M3/M5 still RED.** M5 is the one
+    that matters (the items-6/7 error class at a currently-correct boundary) and it is now
+    caught twice, including by a NAMED_WINDOWS row that names the boundary. M4 reconfirmed
+    a true no-op by chunk-plan equality, not by the gate staying green. Item 6 left
+    KNOWN_BAD for a POSITIVE assertion pinned at 174.74 — the file's only correctness
+    assertion; item 9 left because 616abb2 closed it and the fixture finally shows it.
+  - **PREMISE CHECK, unresolved and owner-facing: R-U's seam DEFINITION was never ruled
+    on.** The shipped instant-and-strict reading over-rejects a silence sitting cleanly in
+    a real inter-word gap — the opposite of the stated intent. The seam-REGION reading was
+    measured this session at **69/649 upper bound and 4/649 actual movers, a strict subset
+    of the shipped 16**, reaching the same 174.74 on item 6. Shipped as measured anyway,
+    deliberately, because R-U was ruled on the 179/649 profile and every exit was
+    calibrated to it. §11(h).
+  - **R-X's two listening lists are drawn but NOT listened to** — that is Session C's, and
+    the owner's. ~18 min. FA gate stays OFF; golden replay 6/6 unchanged.
 
 - **2026-08-16 — WS1 Session A.5: R-R found not buildable as written, FA replay gate made
   to bite, blast radius measured, items 6/7 separated (no fix, no tuning, gate stays OFF).**

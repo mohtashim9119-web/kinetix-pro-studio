@@ -30,17 +30,39 @@
 // Runs fully OFFLINE from committed fixtures only. No model, no
 // ORT_DYLIB_PATH, no network — passes in a clean checkout.
 //
-// CHANGE DETECTOR, NOT A CORRECTNESS ASSERTION. The pinned values below
-// include the ear-pass's KNOWN-BAD boundaries (items 4/5/6/7/10/11) exactly
-// as FA currently gets them wrong — this test passing does not mean FA is
-// right, only that it is the SAME wrong it was at this session's HEAD
-// (`f8250a3`). Session B's planned rewrite of `faAnchors.ts`'s
-// `findAgreeingSilence` (owner ruling R-R, `sync-pipeline-v2-plan.md`) is
-// expected to move items 6 and 7 toward their `earCorrect` values. When that
-// happens and `phase4-fa-second-baseline-*` is regenerated (real Rust
-// capture, same process §11 item 6 used), THIS FILE'S KNOWN_BAD table and
-// its per-row assertions must be updated in the same commit — a failure here
-// after that fix lands is the diff to read as progress, not as breakage.
+// CHANGE DETECTOR, NOT A CORRECTNESS ASSERTION — with ONE exception. The
+// pinned values below include the ear-pass's still-open KNOWN-BAD boundaries
+// (items 4/5/7/10/11) exactly as FA currently gets them wrong: this file
+// passing does not mean FA is right, only that it is the SAME wrong it was
+// when those values were pinned. The exception is item 6, which is now a
+// POSITIVE assertion at its ear-correct 174.74 (see its own `it` block) —
+// there, red means regression, not drift.
+//
+// WS1 SESSION B RE-PIN. Owner ruling R-U (the zero-seam rejection rule)
+// landed in `faAnchors.ts`'s `findAgreeingSilence`, and the
+// `phase4-fa-second-baseline-*-segments.csv` fixtures were regenerated from a
+// real ONNX re-capture — the same process §11 item 6 used, and reproducible:
+// the regeneration driver was first validated by replaying the PREVIOUS
+// capture's words through it and reproducing all three committed fixtures
+// byte-for-byte. What moved, and why, in one line each:
+//   - item 6 (173 `vessel_damage_clue`) 172.91 -> 174.74, the ear-correct
+//     value, residual 0.000s. FIXED; it left KNOWN_BAD for a positive pin.
+//   - 15 other boundaries moved (6 v6 + 10 173 total, spanish 0), all inside
+//     Session A.5's 179/649 upper bound and all listed in
+//     `docs/work-in-progress.md` §11's R-Y re-capture table. None is ear-verified either
+//     way yet — that is Session C's listening pass.
+//   - item 7 (v6 `152_frozen_brush_mice`) is bit-identical at 449.20, exactly
+//     as owner ruling R-V predicted: it is an FA word-timing defect (R-U),
+//     not an anchoring defect (R.11), and no change inside `faAnchors.ts` can
+//     reach it.
+//   - item 9 left KNOWN_BAD: 616abb2 closed it, and the Spanish fixture now
+//     shows the live 65.12 instead of the stale 66.73.
+//   - the V6 seam 150/151 control did not move (stop-and-rule exit S2 clear).
+// The M1-M5 mutation matrix was re-run against these re-pinned values: M1,
+// M2, M3 and — the one that matters — M5, the items-6/7 error class
+// reproduced at a currently-correct boundary, all still go RED. M4 remains a
+// true no-op, verified by chunk-plan equality on all three corpora rather
+// than by the gate staying green.
 //
 // Golden replay (`phase4-handoff-replay-sync.test.ts`) is untouched by this
 // file and must stay 6/6.
@@ -179,26 +201,13 @@ const KNOWN_BAD: KnownBadRow[] = [
     note: 'R.5 is scoped, not built. Not Session B scope.',
   },
   {
-    item: 6, corpus: '173', tag: 'vessel_damage_clue', faValue: 172.91, earCorrect: 174.74,
-    mechanism: "faAnchors.ts's findAgreeingSilence: false anchor from Whisper timestamp smear (owner ruling R-R)",
-    status: 'open',
-    note: 'Session B scope — findAgreeingSilence rewrite (R-R ruling, sync-pipeline-v2-plan.md). Expected to move toward 174.74.',
-  },
-  {
     item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', faValue: 449.20, earCorrect: 451.03,
-    mechanism: "faAnchors.ts's findAgreeingSilence: false anchor from Whisper timestamp smear (owner ruling R-R)",
+    mechanism: 'R.11 (FA word-timing defect: FA\'s own word-seam midpoint, no silence involved) — opened by owner ruling R-V',
     status: 'open',
-    note: 'Session B scope — findAgreeingSilence rewrite (R-R ruling, sync-pipeline-v2-plan.md). Expected to move toward 451.03.',
-  },
-  {
-    item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', faValue: 66.73, earCorrect: 65.12,
-    mechanism: "faChunkPlan.ts's attributeByIndex: forced-split window mis-attribution",
-    status: 'fixed',
-    note: 'CLOSED by 616abb2 — current code produces 65.12 (verified: commit 616abb2\'s own real-corpus measurement). ' +
-      'The 66.73 above is what scripts/fixtures/phase4-fa-second-baseline-spanish-segments.csv still shows, because ' +
-      'that fixture predates 616abb2 and — being "read by nothing" per its own README section until this file — was ' +
-      'never regenerated. NOT asserted below: asserting a known-stale fixture value as "current" would be a false ' +
-      'regression signal. Recorded here so a future reader does not mistake the stale fixture for live behavior.',
+    note: 'NOT reachable by faAnchors.ts (owner ruling R-V, WS1 Session B — unbundled from R-R and given its own ' +
+      'defect class, R.11). Session B measured it directly: 449.20 is FA\'s OWN word-seam midpoint ("one" ends 449.18, ' +
+      '"when" starts 449.22) with no silence involved at all, and the R-U zero-seam rule left it bit-identical, exactly ' +
+      'as R-V predicted. Scoped after Stage 1; stays known-bad until R.11 is built.',
   },
   {
     item: 10, corpus: '173', tag: 'hostile_landscape', faValue: 1.36, earCorrect: 0.00,
@@ -207,12 +216,14 @@ const KNOWN_BAD: KnownBadRow[] = [
     note: 'R.10 is specified, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
   },
   {
-    item: 11, corpus: '173', tag: 'blue_monkey', faValue: 36.96, earCorrect: null,
+    item: 11, corpus: '173', tag: 'blue_monkey', faValue: 37.73, earCorrect: null,
     mechanism: 'R.10 (scripted text never spoken: the planted "blue monkey" string is never voiced)',
     status: 'open',
     note: 'Whisper drops this segment entirely and the ear agreed that is correct — there is no numeric earCorrect ' +
       'to converge on; the fix is R.10\'s drop/skip gate, not a different timestamp. FA currently commits a real ' +
-      '[36.96, 37.73) span for it instead of dropping it. Not Session B scope.',
+      '[37.73, 38.50) span for it instead of dropping it. That span moved (from [36.96, 37.73)) under Session B\'s ' +
+      'R-U rule — the mechanism is untouched, only the numbers the wrong-by-construction span happens to carry. ' +
+      'Not Session B scope.',
   },
 ];
 
@@ -288,9 +299,31 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest itself covers items 4, 5, 6, 7, 9, 10, 11 exactly once each', () => {
+  it('the manifest itself covers items 4, 5, 7, 10, 11 exactly once each', () => {
+    // Item 6 left this table in WS1 Session B: it is FIXED and now carries a
+    // POSITIVE assertion of its own (below), which is a stronger guard than a
+    // known-bad pin — a regression there fails on the ear-correct value, not
+    // on a wrong one. Item 9 left too: 616abb2 closed it, and this session's
+    // fixture refresh means the Spanish baseline finally SHOWS 65.12, so
+    // there is no stale value left to warn a reader about.
     const items = KNOWN_BAD.map(k => k.item).sort((a, b) => a - b);
-    expect(items).toEqual([4, 5, 6, 7, 9, 10, 11]);
+    expect(items).toEqual([4, 5, 7, 10, 11]);
+  });
+
+  it('ear-pass item 6 (R-U, fixed): 173 vessel_damage_clue is pinned at its EAR-CORRECT 174.74', () => {
+    // The only positive correctness assertion in this file. Everything else
+    // pins what FA currently does, right or wrong; this pins what the owner's
+    // ear verified. Owner ruling R-U (the zero-seam rejection rule,
+    // `sync-pipeline-v2-plan.md`) vetoed the false anchor at 173.12 — a
+    // detected silence [172.70, 173.12] lying wholly inside Whisper token 464
+    // "chemical" [172.57, 173.18], spanning no token seam at all — and the
+    // boundary landed on 174.74 exactly, residual 0.000s.
+    //
+    // If this goes red, forced alignment has REGRESSED on a boundary that was
+    // measured correct. Do not re-pin it to whatever the new run produces.
+    const row = loadFaSecondBaseline('173').find(r => r.tag === 'vessel_damage_clue');
+    expect(row, '173 vessel_damage_clue row').toBeDefined();
+    expect(Math.abs(row!.startTime - 174.74), `ear-correct 174.74, got ${row!.startTime}`).toBeLessThan(0.005);
   });
 });
 
@@ -408,13 +441,13 @@ interface AnchorPathSpec {
 const ANCHOR_PATH: AnchorPathSpec[] = [
   {
     key: 'v6', audioDuration: 1421.29,
-    runCount: 330, anchorCount: 329, chunkCount: 280,
-    anchorDigest: '8b92c55878bcc134', runDigest: 'bb5e7a91ee5ce919', chunkDigest: 'fd9b4264a640ef3d',
+    runCount: 297, anchorCount: 296, chunkCount: 251,
+    anchorDigest: 'cc1c2beb09df70d9', runDigest: 'f6876fe35f69e763', chunkDigest: 'fd0ab5d23d2ad083',
   },
   {
     key: '173', audioDuration: 709.01,
-    runCount: 149, anchorCount: 148, chunkCount: 118,
-    anchorDigest: '9f7cbdb9b69e6356', runDigest: 'b7856966498cb1ae', chunkDigest: 'a3a9ff8389763f80',
+    runCount: 110, anchorCount: 107, chunkCount: 81,
+    anchorDigest: 'db721a683dd4127f', runDigest: '063df1b1fccb0766', chunkDigest: 'b80a2319803d748e',
   },
   {
     key: 'spanish', audioDuration: 92.04,
@@ -430,26 +463,24 @@ const NAMED_WINDOWS: Array<{
   corpus: Corpus; chunkIndex: number; startSec: number; endSec: number; why: string;
 }> = [
   {
-    corpus: '173', chunkIndex: 32, startSec: 161.46, endSec: 173.12,
-    why: 'item 6: the run ENDING at 173.12 — anchor from silence [172.70,173.12], which lies wholly ' +
-      'inside Whisper token 464 ("chemical", 172.57-173.18) and contains no token seam at all.',
+    corpus: '173', chunkIndex: 22, startSec: 161.46, endSec: 174.96,
+    why: 'item 6, RESOLVED by R-U. The two pre-R-U chunks — [161.46, 173.12] and [173.12, 174.96] — are now ONE ' +
+      'window, because the anchor that cut them at 173.12 came from silence [172.70, 173.12], which lies wholly ' +
+      'inside Whisper token 464 ("chemical", 172.57-173.18) and spans no token seam. The committed boundary moved ' +
+      '172.91 -> 174.74, the ear-correct value. This window must NOT split again at 173.12.',
   },
   {
-    corpus: '173', chunkIndex: 33, startSec: 173.12, endSec: 174.96,
-    why: 'item 6 PROXIMATE CAUSE: a 1.84s window carrying 5 script words ("residue of whatever the last") ' +
-      'whose audio actually runs to ~176.0s. FA collapses inside it (every word confidence <2e-3) and the ' +
-      'boundary commits at 172.91. Session B is expected to move this window.',
+    corpus: 'v6', chunkIndex: 72, startSec: 448.34, endSec: 451.7,
+    why: 'item 7, UNCHANGED by R-U and expected to stay so (owner ruling R-V). Its END anchor comes from silence ' +
+      '[450.36, 451.70], which swallows THREE token seams (1222/1223/1224) — many seams, not zero, so the zero-seam ' +
+      'veto never fires here. Item 7 is an FA word-timing defect (R.11), reachable only from outside faAnchors.ts. ' +
+      'Its chunk INDEX moved 80 -> 72 because earlier windows merged; its BOUNDS must not move.',
   },
   {
-    corpus: 'v6', chunkIndex: 80, startSec: 448.34, endSec: 451.7,
-    why: 'item 7 PROXIMATE CAUSE: a 3.36s window carrying "for the absence of one. When the brush mice stop", ' +
-      'whose audio runs past 452s. Its END anchor comes from silence [450.36,451.70], which swallows THREE ' +
-      'token seams (1222/1223/1224) — ambiguous by index, accepted only on timestamp proximity.',
-  },
-  {
-    corpus: 'v6', chunkIndex: 81, startSec: 451.7, endSec: 460.56,
-    why: 'V6 seam 150/151 control (ear-pass item 8, both sources ✓): the chunk containing the ' +
-      '154_silent_night_birds / 155_predator_passing_under seam at 457.83. Must NOT move.',
+    corpus: 'v6', chunkIndex: 73, startSec: 451.7, endSec: 460.56,
+    why: 'V6 seam 150/151 control (ear-pass item 8, both sources correct): the chunk containing the ' +
+      '154_silent_night_birds / 155_predator_passing_under seam at 457.83. R-U predicted this does not move, and ' +
+      'it did not (stop-and-rule exit S2). Index moved 81 -> 73; bounds must not move.',
   },
 ];
 

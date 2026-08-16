@@ -20,8 +20,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 18,019_no_stopping,Detenerse solo le daría otra oportunidad.,53.06,2.77,55.83,forced-alignment
 19,020_the_passage_layout,"Scylla también comparte el paso con Caribdis,",55.83,2.86,58.69,forced-alignment
 20,021_charybdis_whirlpool,"un remolino gigante en el lado opuesto,",58.69,2.5,61.19,forced-alignment
-21,022_ship_trapped,por lo que la tripulación no puede simplemente alejarse más.,61.19,5.54,66.73,forced-alignment
-22,023_scylla_six_sailors,Navegar cerca de Scylla cuesta seis marineros.,66.73,1.6,68.33,forced-alignment
+21,022_ship_trapped,por lo que la tripulación no puede simplemente alejarse más.,61.19,3.93,65.12,forced-alignment
+22,023_scylla_six_sailors,Navegar cerca de Scylla cuesta seis marineros.,65.12,3.21,68.33,forced-alignment
 23,024_whirlpool_ship_wreck,Navegar cerca de Caribdis puede destruir el barco entero.,68.33,3.63,71.96,forced-alignment
 24,025_odysseus_lesser_evil,A Odiseo se le dice que elija a Scylla porque perder a seis personas es mejor que perderlo todo.,71.96,5.45,77.41,forced-alignment
 25,026_messina_strait_map,"Tradiciones posteriores situaron el paso en el estrecho de Mesina, entre Sicilia e Italia peninsular.",77.41,6.54,83.95,forced-alignment

@@ -1592,6 +1592,137 @@ document records none of them as taken:
      Phase 5's fence — which R-R already rejected, and which this session
      surfaces no new evidence for.
 
+---
+
+**R-U ruling (owner, 2026-08-16) — the ZERO-SEAM REJECTION RULE, adopted as
+R-R's replacement mechanism. IMPLEMENTED, WS1 Session B.** Read this
+immediately after A.5's feasibility findings above: it takes option 3 of that
+section's (g), and it is the reason options 1, 2 and 4 are now closed.
+
+*The mechanism.* A silence that spans **no token seam** is rejected as a
+boundary candidate, regardless of proximity. It is a **VETO** on structurally
+impossible silences — not a SELECTOR among plausible ones. `faAnchors.ts`'s
+`findAgreeingSilence` applies it per candidate, before any distance is
+computed; `ANCHOR_AGREEMENT_SEC` keeps only its selection job (how far to
+look, which structurally admissible survivor to prefer) and no longer decides
+identity at all.
+
+*Why this form, and not a better corroborator.* A.5 corrected the diagnosis
+and the correction is the whole ruling. `silenceDetector.ts` was never
+circular — it is genuinely signal-derived and independent of Whisper, so
+R-R(b)'s independence problem did not exist. The real defect is that a
+silence carries a trustworthy TIME but no INDEX, and `findAgreeingSilence`
+bridged that gap with `|tokenStartSec - s.endSec| <= 0.15` — distance
+deciding identity, which `CLAUDE.md` §4's Sync/Whisper invariant forbids in
+those words: *timestamps may measure distance; they must never decide
+identity*. **This ruling is the worked example of that invariant applied
+correctly.** The fix is not better corroboration; it is to stop asking a
+distance question and ask a structural one — does this silence span a token
+seam at all? — which is a property of the silence itself, not a comparison
+against a timestamp. The invariant predicted this failure class before the
+measurement found it.
+
+*R-R's token-to-token-gap clause is unbuildable and is superseded here.*
+Whisper turbo emits a gapless partition: adjacent-token gap is 0.000s for
+3451/3988 (v6), 1635/1835 (173), 331/362 (spanish). 451 of 481 anchors
+(93.8%) have no silence in their own gap, items 6 and 7 included.
+
+*The three wider rules are REJECTED.* They buy item 7 coverage they cannot
+deliver, at a blast radius the ear cannot audit, and they move the V6 seam
+control the ear has already certified:
+
+| Rejected rule | Blast radius (upper bound) | V6 seam 150/151 |
+|---|---|---|
+| reject silence not containing **its own** seam | 460/649 (70.9%) | moves |
+| select by seam containment | 610/649 (94.0%) | moves |
+| + unique containment | 636/649 (98.0%) | moves |
+
+*What was measured, and what it cost (WS1 Session B, R-Y re-capture).* Upper
+bound 179/649 (27.6%); **actual movement 16/649 (2.5%)** — 6 v6, 10 173, 0
+spanish, every one of them inside the upper-bound set. Item 6 (173
+`vessel_damage_clue`) resolves to **174.74 exactly**, the ear-correct value,
+residual 0.000s. Item 7 is bit-identical at 449.20, as R-V predicts. The V6
+seam 150/151 control does not move. Per-boundary table:
+`docs/work-in-progress.md` §11.
+
+*One consequence, recorded because it is intended and not an oversight.* The
+FIRST token of a transcript can never carry an R.1 anchor — there is no token
+seam before it for a silence to span. The corpus start is already a boundary
+(`'corpus-start'`); it does not need an anchor to also assert it.
+
+*Scope, recorded for the same reason.* The veto applies to R.1's agreement
+test only, NOT to R-P's `longestSilenceInWindow` (the R.4 forced split). Those
+answer different questions — "is this silence the boundary between these two
+words?" versus "where is the least-bad place to cut a run that has run too
+long?" — and only the first is an identity claim.
+
+**OPEN AGAINST R-U — the seam DEFINITION was never ruled on, and it is
+load-bearing. Owner decision needed before Session C's listening pass.** R-U
+says "spans a token seam". Session B implemented, and A.5 measured, the
+reading in which a seam is the instant `tokens[i].startSec` and the silence
+must contain it STRICTLY. That reading is exactly right where Whisper is
+gapless (86-91% of adjacent pairs) and demonstrably over-rejects where it is
+not: in the 537/200/31 pairs that DO carry a positive gap, the seam is not an
+instant but the interval `[tokens[i-1].endSec, tokens[i].startSec]`, and a
+silence sitting cleanly INSIDE that gap — the ideal boundary marker — spans
+no instant and is vetoed. That is the opposite of the intent A.5 stated for
+this rule ("it lies wholly inside one token's span").
+
+The seam-REGION reading (silence overlaps `[tokens[i-1].endSec,
+tokens[i].startSec]`) was measured this session and is strictly better on both
+axes:
+
+| reading | upper bound | measured movers | item 6 | item 7 | V6 seam |
+|---|---|---|---|---|---|
+| instant, strict (SHIPPED) | 179/649 (27.6%) | **16/649** | 174.74 ✓ | unmoved | unmoved |
+| instant, closed | 132/649 (20.3%) | not run | — | — | — |
+| seam REGION | 69/649 (10.6%) | **4/649** | 174.74 ✓ | unmoved | unmoved |
+
+The region reading's 4 movers are a strict SUBSET of the shipped reading's 16.
+It reaches the same ear-correct 174.74 on item 6, leaves item 7 and the V6
+seam alone, and asks the ear to adjudicate a quarter as many boundaries.
+
+**Shipped as measured anyway, deliberately.** R-U was ruled on the 179/649
+profile, every stop-and-rule exit this session ran under was calibrated to it,
+and switching readings unilaterally would have voided both the measurement and
+R-X's sample. The owner rules; this entry is the evidence to rule on. If the
+region reading is adopted, the R-Y re-capture, the gate re-pin and R-X's
+listening sample must all be redrawn from it — the FA inference for it is
+already captured (`.work-phase4/recap/words-VG-*.json`), so that is a
+re-measure, not a re-derivation.
+
+**R-V ruling (owner, 2026-08-16) — ear-pass item 7 is UNBUNDLED from R-R and
+becomes defect class R.11.** Items 6 and 7 were bundled on a coincidence of
+magnitude — both ~1.83s early — and they are different defects.
+
+**R.11 — FA word-seam midpoint error (next free rule identifier; SCOPED,
+NOT BUILT; placed AFTER Stage 1).** *Mechanism:* forced alignment's own
+per-word timings put two adjacent words' spans back-to-back, and the boundary
+commits at the midpoint of that FA-internal word seam. No detected silence
+participates at any point. *Evidence:* v6 `152_frozen_brush_mice`, committed
+449.20 — FA has "one" ending at 449.18 and "when" starting at 449.22, and
+449.20 is exactly their midpoint; ear-correct is 451.03. *Why `faAnchors.ts`
+cannot reach it:* that module runs strictly BEFORE any FA pass and consumes
+only (Hirschberg output, Whisper tokens, silences, duration). It never sees an
+FA word timing, so no change to it — R-U included — can move this boundary.
+Confirmed by measurement, not argument: under R-U item 7 is bit-identical at
+449.20. *Placement:* after Stage 1. Holding R-R open for item 7 blocked a
+buildable fix for item 6, which is what this ruling ends.
+
+**R-W ruling (owner, 2026-08-16) — the two-pass T1 design is REJECTED, on R7
+grounds.** Option 2 of A.5's (g). ~460s for V6 against an already-accepted
+231s opt-in ceiling (R-S), to buy a corroborator R-U does not need.
+
+**R-Y ruling (owner, 2026-08-16) — the FA re-capture under the chosen rule was
+AUTHORISED BEFORE implementation, read-only, to convert A.5's 179 upper bound
+into real magnitudes.** This is what makes R-X's stratified sample drawable:
+the magnitude buckets do not exist until it runs. Executed in WS1 Session B;
+results in `docs/work-in-progress.md` §11. Method, recorded because the result
+is only as trustworthy as it: the re-capture driver was validated by replaying
+the PREVIOUS capture's own words through it and reproducing all three
+committed `phase4-fa-second-baseline-*-segments.csv` fixtures byte-for-byte,
+BEFORE the changed input was fed through it.
+
 **R.2 — Padding, and how it is bounded.** A run's audio window is
 
 ```
@@ -1723,6 +1854,37 @@ it reuses `CONF_MIN` as-is or needs its own constant) is still an open
 decision, tracked in `docs/work-in-progress.md` — the same status R.5 held
 before ruling R-E closed its destination question.
 
+**R-Z ruling (owner, 2026-08-16) — R.10's RESPEC is an INDEPENDENT TRACK, not
+a Session B dependency. OPEN.** The spec above is not rewritten by this
+ruling; only its detection signal is reopened, and only as its own track.
+
+*What fails.* R.10's detector as currently written cannot separate ear-pass
+item 10, which is the case it most needs to catch. Measured, on v6/173:
+
+  * `hostile_landscape` (item 10) scores `alignConfidence` **0.769**, and its
+    own culprit `perilous_realms` scores **0.778**. The two are 0.009 apart —
+    a detector keyed on this number cannot tell the stolen segment from the
+    thief.
+  * The `alignConfidence == 1.000` conjunct is **degenerate on v6**: constant
+    across all 447 segments, so it contributes no discrimination at all there.
+  * The same conjunction **false-fires on item 9**, which is a chunk-plan
+    attribution defect (closed by `616abb2`), not a never-spoken-text defect.
+
+*What a working signal would need.* It must separate a segment whose words
+were STOLEN from the segment that stole them — and those two sit adjacent, at
+nearly the same `alignConfidence`, by construction. `alignConfidence` is
+TEXT-match confidence and is blind to this by definition (the spec above
+already says so); the discriminating quantity has to come from FA's own
+per-word ACOUSTIC confidence and from WHERE the low-confidence words sit
+inside the segment, not from a per-segment scalar. Direction, not a design:
+the thief's low-confidence words cluster at one end (the stolen span it was
+forced to cover); the victim's are spread across its whole span. Nothing here
+is measured yet.
+
+*Status.* Documented only, this session. No respec written, no detector
+built, not a Session B or Session C blocker.
+
+
 **R.6 — Corpus start and end.**
 
   * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,
@@ -1820,7 +1982,16 @@ recurs whenever a committed slot is too tight). It does mean the case is
 tense.
 
 **R-S ruling (owner, 2026-08-16) — FA-default acceptance bar, fixed now,
-before the items 6/7 fix lands.** Before `isFaGateOpen()`'s default can flip
+before the items 6/7 fix lands.**
+
+> **SUPERSEDED IN PART by R-X (owner, 2026-08-16), below.** R-S's criterion
+> (i) — a flat 12/12 on one fresh listening list — is now the bar for the
+> TOGGLE only. The DEFAULT needs R-X's stratified sample plus an
+> unmoved-boundary control arm as well. R-S is left standing verbatim below
+> because criteria (ii) and (iii) are unamended and still in force, and
+> because R-X is an amendment to it, not a replacement of it.
+
+Before `isFaGateOpen()`'s default can flip
 from OFF to ON, three conditions must all hold:
 
   (i)   **12/12 on a FRESH listening list** drawn from the post-fix run — not
@@ -1844,6 +2015,33 @@ runs on every Apply Sync, not an opt-in one. This is an explicit acceptance,
 not silence: shipping the toggle today is unblocked; shipping it as the
 default is not, and runtime is one of the three reasons why, alongside (i)
 and (ii) above.
+
+---
+
+**R-X ruling (owner, 2026-08-16) — TWO-TIER acceptance bar, amending R-S(i).**
+R-S(i)'s flat 12/12 is split by what it gates:
+
+  **Tier 1 — the TOGGLE.** 12/12 on a fresh listening list, drawn from the
+  post-fix run. Unchanged from R-S(i) in substance; only its scope narrows.
+
+  **Tier 2 — the DEFAULT.** Tier 1, plus a **stratified sample across the
+  magnitude buckets** R-Y's re-capture produces, plus an **unmoved-boundary
+  CONTROL ARM**. The control arm is the point of the amendment: a listening
+  pass that only ever hears boundaries the fix moved cannot distinguish "the
+  fix is good" from "this listener says yes to everything", and R-S(i)'s flat
+  list had no way to tell those apart. The listener must not be told which arm
+  a boundary belongs to.
+
+  **The buckets do not exist until R-Y runs, so the sample cannot be drawn
+  before then.** That ordering is the reason R-Y was authorised as its own
+  read-only step ahead of implementation rather than folded into it.
+
+R-S(ii) (zero boundaries more than 1.0s from ear-correct) and R-S(iii)
+(runtime, unresolved for the default) are unamended and still gate Tier 2.
+
+Both lists were drawn in WS1 Session B and are recorded in
+`docs/work-in-progress.md` §11. Neither has been listened to: the listening
+pass is the owner's, in Session C.
 
 ---
 

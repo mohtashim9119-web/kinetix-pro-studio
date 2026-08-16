@@ -57,8 +57,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 55,056_dropping_torch,You drop the torch on the third night of your second season carrying it.,167.03,4.72,171.75,forced-alignment
 56,057_root_trip,You catch a root you did not see and the flame hits the ground and sputters and for three full heartbeats the column loses half its light.,171.75,8.16,179.91,forced-alignment
 57,058_silent_reaction,Nobody shouts.,179.91,1.82,181.73,forced-alignment
-58,059_daret_approaches,"But Daret, the rear guard",181.73,1.3,183.03,forced-alignment
-59,060_reassuring_hand,moves up beside you and puts his hand flat on your shoulder.,183.03,4.73,187.76,forced-alignment
+58,059_daret_approaches,"But Daret, the rear guard",181.73,2.29,184.02,forced-alignment
+59,060_reassuring_hand,moves up beside you and puts his hand flat on your shoulder.,184.02,3.74,187.76,forced-alignment
 60,061_elder_touch,Not hard.,187.76,1.51,189.27,forced-alignment
 61,062_firm_grip,Not gentle.,189.27,1.29,190.56,forced-alignment
 62,063_scout_silhouette,Just there.,190.56,1.49,192.05,forced-alignment
@@ -221,10 +221,10 @@ order,tag,text,startTime,duration,endTime,anchorSource
 219,220_lethal_gap,There is a space between your action and something else’s action,650.62,3.61,654.23,forced-alignment
 220,221_skill_removes,and in that space lives an element that no amount of skill removes entirely.,654.23,4.71,658.94,forced-alignment
 221,222_long_silence,You do not say this to anyone for a long time.,658.94,3.61,662.55,forced-alignment
-222,223_carrying_weight,You carry it.,662.55,1.78,664.33,forced-alignment
-223,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,forced-alignment
-224,225_night_scouts,You lead the night scouts now.,667.47,2.77,670.24,forced-alignment
-225,226_four_scouts,Four of them besides yourself,670.24,2.56,672.8,forced-alignment
+222,223_carrying_weight,You carry it.,662.55,3.53,666.08,forced-alignment
+223,224_thirty_three,You are thirty-three.,666.08,2.97,669.05,forced-alignment
+224,225_night_scouts,You lead the night scouts now.,669.05,2.13,671.18,forced-alignment
+225,226_four_scouts,Four of them besides yourself,671.18,1.62,672.8,forced-alignment
 226,227_scout_ages,ranging from seventeen to twenty-four.,672.8,2.75,675.55,forced-alignment
 227,228_informal_bond,They are not yours in any formal sense.,675.55,3.03,678.58,forced-alignment
 228,229_no_formal_sense,There is no formal sense here.,678.58,2.41,680.99,forced-alignment
@@ -239,8 +239,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 237,238_youthful_fear,That fear was about your own body.,701.29,2.22,703.51,forced-alignment
 238,239_internal_burden,This sits differently.,703.51,1.85,705.36,forced-alignment
 239,240_tribal_survival,It is about theirs.,705.36,1.83,707.19,forced-alignment
-240,241_fen_young_scout,Your youngest scout is Fen.,707.19,1.76,708.95,forced-alignment
-241,242_fen_excited_run,He has the instincts but his feet carry his excitement on runs.,708.95,5.5,714.45,forced-alignment
+240,241_fen_young_scout,Your youngest scout is Fen.,707.19,2.92,710.11,forced-alignment
+241,242_fen_excited_run,He has the instincts but his feet carry his excitement on runs.,710.11,4.34,714.45,forced-alignment
 242,243_fen_too_quick,"Too quick, consistently.",714.45,1.9,716.35,forced-alignment
 243,244_elder_watching_fen,You watch him for two full seasons and say almost nothing.,716.35,3.56,719.91,forced-alignment
 244,245_seasonal_contrast,You let him see the contrast.,719.91,2.02,721.93,forced-alignment
@@ -337,8 +337,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 335,336_uncertain_mentorship,You are not certain you gave either of them what they needed.,1031.57,3.74,1035.31,forced-alignment
 336,337_mutual_exchange,You were not certain Daret and Korik gave you everything you needed.,1035.31,4.17,1039.48,forced-alignment
 337,338_final_gift,You gave what you had.,1039.48,2.08,1041.56,forced-alignment
-338,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,6.01,1047.57,forced-alignment
-339,340_fifty_eight,You are fifty-eight.,1047.57,4.08,1051.65,forced-alignment
+338,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,4.06,1045.62,forced-alignment
+339,340_fifty_eight,You are fifty-eight.,1045.62,6.03,1051.65,forced-alignment
 340,341_aging_temples,Your hair has gone pale at the edges.,1051.65,2.72,1054.37,forced-alignment
 341,342_steady_grip,Your hands are steady now,1054.37,2.05,1056.42,forced-alignment
 342,343_shaking_scout,the same hands that could not hold still over your first real guarding post.,1056.42,4.58,1061,forced-alignment

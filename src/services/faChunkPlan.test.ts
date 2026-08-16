@@ -9,7 +9,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution } from './faChunkPlan';
+import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution, computeRuns } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
 import { vocabCharsFromRawVocab } from './faTextNormalize';
@@ -35,7 +35,19 @@ function token(text: string, startSec: number, endSec: number): TranscriptToken 
 // synthetic anchor below is built to clear, mirroring faAnchors.test.ts's
 // own fixture-construction technique.
 function silence(endSec: number): SilenceInterval {
-  return { startSec: endSec - 0.3, endSec };
+  // Width 0.6s, not 0.3s, because of R-U (WS1 Session B): a silence must SPAN
+  // a token seam to be admissible at all, and every token fixture below uses a
+  // stride of 0.4-0.5s, so a 0.3s-wide silence reaches back past no seam and
+  // would now be vetoed outright. Reaching 0.6s back puts the PRECEDING
+  // token's onset strictly inside it — a real seam — while leaving `endSec`,
+  // and therefore every anchor time pinned in this file, exactly unchanged.
+  //
+  // Note which seam does the work: it is the preceding token's, not the
+  // anchored token's own. That is the real shape too — the silence sits
+  // BEFORE the word it anchors, so the seam it spans belongs to an earlier
+  // token, and the anchored token's onset is what `ANCHOR_AGREEMENT_SEC`
+  // matches against `endSec` afterwards.
+  return { startSec: endSec - 0.6, endSec };
 }
 
 describe('computeFaChunkPlan', () => {
@@ -216,7 +228,14 @@ describe('computeFaChunkPlanCoalesced', () => {
 
     // Coalescing actually did something (fewer, larger chunks).
     expect(coalesced.length).toBeLessThan(baseline.length);
-    for (const c of coalesced) expect(c.endSec - c.startSec).toBeLessThanOrEqual(10);
+    // The `<= target` ceiling is `coalesceRuns`'s OWN contract (its doc
+    // comment: "a hard ceiling, not a target average"), so assert it against
+    // `coalesceRuns`'s own output. The finished CHUNK plan may exceed it
+    // legitimately: `runsToChunks` folds a run that owns no segment text into
+    // its neighbour AFTER coalescing, and that fold has no ceiling of its own.
+    for (const r of coalesceRuns(computeRuns(segments, tokens, silences, 40), 10)) {
+      expect(r.windowEnd - r.windowStart).toBeLessThanOrEqual(10);
+    }
 
     // Gapless, spans the same full range as the unmerged plan.
     expect(coalesced[0]!.startSec).toBe(baseline[0]!.startSec);
@@ -370,7 +389,11 @@ describe('computeFaChunkPlanWithAttribution', () => {
     const segments = [seg('s0', 'kittens likes purple hats dragons chase silver moons', 0, 8)];
     const words = segments[0]!.text.split(' ');
     const tokens: TranscriptToken[] = words.map((w, i) => token(w, i, i + 0.8));
-    const silences: SilenceInterval[] = [silence(tokens[4]!.startSec)];
+    // This fixture's token stride is 1.0s, wider than `silence()`'s 0.6s
+    // reach-back, so it needs its own width to span a seam at all under R-U
+    // (see `silence()`'s comment). `endSec` — and therefore the anchor time —
+    // is the same value `silence(tokens[4].startSec)` would have produced.
+    const silences: SilenceInterval[] = [{ startSec: tokens[4]!.startSec - 1.5, endSec: tokens[4]!.startSec }];
 
     const byTime = computeFaChunkPlan(segments, tokens, silences, 8, 'segment-start-time');
     const byIndex = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index');

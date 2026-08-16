@@ -3,16 +3,16 @@ order,tag,text,startTime,duration,endTime,anchorSource
 1,hostile_landscape,Some places in the 41st Millennium don’t just kill soldiers.,1.36,2.82,4.18,forced-alignment
 2,testing_parameters,They take apart the conditions under which a soldier can function in the first place.,4.18,4.96,9.14,forced-alignment
 3,military_collapse,"Training, equipment, formation, doctrine, gone before the first contact report.",9.14,5.29,14.43,forced-alignment
-4,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,2.07,16.5,forced-alignment
-5,abysmal_opinion,They’re the worst,16.5,2.01,18.51,forced-alignment
+4,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,3.45,17.88,forced-alignment
+5,abysmal_opinion,They’re the worst,17.88,0.63,18.51,forced-alignment
 6,lethal_nature_hazard,because the environment was already doing the killing before the enemy showed up.,18.51,4.65,23.16,forced-alignment
 7,rugged_survivalist,"Number Six, Catachan.",23.16,1.77,24.93,forced-alignment
 8,ancient_training_grounds,"Before Catachan produced the Imperium’s most capable baseline human soldiers,",24.93,5.13,30.06,forced-alignment
 9,historical_visual,the planet had a simpler reputation.,30.06,2.59,32.65,forced-alignment
 10,barren_ruin,It killed everything on it.,32.65,1.97,34.62,forced-alignment
-11,ancient_nature_thriving,The jungle didn’t evolve around human warfare.,34.62,2.34,36.96,forced-alignment
-12,blue_monkey,"""The blue monkey jumped over the moon"".",36.96,0.77,37.73,forced-alignment
-13,eternal_focus,"It spent millions of years optimizing toward a single outcome,",37.73,4.49,42.22,forced-alignment
+11,ancient_nature_thriving,The jungle didn’t evolve around human warfare.,34.62,3.11,37.73,forced-alignment
+12,blue_monkey,"""The blue monkey jumped over the moon"".",37.73,0.77,38.5,forced-alignment
+13,eternal_focus,"It spent millions of years optimizing toward a single outcome,",38.5,3.72,42.22,forced-alignment
 14,fatal_surge,and anything with a nervous system is on the wrong side of that outcome.,42.22,3.84,46.06,forced-alignment
 15,moist_short_circuit,Humidity wrecks unprotected electronics inside a few hours.,46.06,4.38,50.44,forced-alignment
 16,energy_rust,Las-charge packs corrode.,50.44,1.75,52.19,forced-alignment
@@ -45,8 +45,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 43,orientation_conflict,Gravity plates from different ships pull in competing,158.97,2.36,161.33,forced-alignment
 44,wall_split_path,directions in rooms separated by a single bulkhead.,161.33,4.58,165.91,forced-alignment
 45,industrial_gas_leak,Sections pressurize and vent without warning when something fails.,165.91,4.1,170.01,forced-alignment
-46,pungent_vapor,"The atmosphere, where it exists at all, is a chemical residue",170.01,2.9,172.91,forced-alignment
-47,vessel_damage_clue,"of whatever the last crew left behind, which includes whatever finished them.",172.91,6.41,179.32,forced-alignment
+46,pungent_vapor,"The atmosphere, where it exists at all, is a chemical residue",170.01,4.73,174.74,forced-alignment
+47,vessel_damage_clue,"of whatever the last crew left behind, which includes whatever finished them.",174.74,4.58,179.32,forced-alignment
 48,creature_flexibility,Genestealers are adapted to this geometry in ways that standard assault doctrine isn’t.,179.32,6.08,185.4,forced-alignment
 49,weightless_physics_defiance,They don’t need consistent gravity.,185.4,1.85,187.25,forced-alignment
 50,rapid_duct_transit,They move through ventilation shafts with the velocity of a launched round,187.25,4.18,191.43,forced-alignment
@@ -141,13 +141,13 @@ order,tag,text,startTime,duration,endTime,anchorSource
 139,unbound_chaos,is what gets stripped away the moment control fails.,563.5,2.93,566.43,forced-alignment
 140,erratic_tide,Navigation stops working because Warp currents have no fixed relationship to physical distances.,566.43,6.41,572.84,forced-alignment
 141,chronal_drift,"Time becomes operationally non-linear: vessels have exited transit weeks before they entered,",572.84,6.87,579.71,forced-alignment
-142,view_trapped_warrior,"as measured by external observers, and some have never exited despite correct departure coordinates.",579.71,6.57,586.28,forced-alignment
-143,unstable_spirit_journey,Crew psychological integrity declines in proportion to transit duration and proximity to Warp anomalies.,586.28,7.6,593.88,forced-alignment
-144,broken_link,Communication with anything outside the hull is severed.,593.88,3.95,597.83,forced-alignment
-145,battle_network,"Supply lines, reinforcements, intelligence, extraction, everything a military force depends on",597.83,5.86,603.69,forced-alignment
-146,protection_failure,"for sustained operation, ceases to function the moment the Geller field goes.",603.69,5.55,609.24,forced-alignment
-147,entry_clash,The final boarding of the Vengeful Spirit illustrated,609.24,3.27,612.51,forced-alignment
-148,unstable_energy_consequence,what even partial Warp exposure does at close range.,612.51,4.42,616.93,forced-alignment
+142,view_trapped_warrior,"as measured by external observers, and some have never exited despite correct departure coordinates.",579.71,26.8,606.51,forced-alignment
+143,unstable_spirit_journey,Crew psychological integrity declines in proportion to transit duration and proximity to Warp anomalies.,606.51,2.73,609.24,forced-alignment
+144,broken_link,Communication with anything outside the hull is severed.,609.24,0.75,609.99,forced-alignment
+145,battle_network,"Supply lines, reinforcements, intelligence, extraction, everything a military force depends on",609.99,2.52,612.51,forced-alignment
+146,protection_failure,"for sustained operation, ceases to function the moment the Geller field goes.",612.51,1.06,613.57,forced-alignment
+147,entry_clash,The final boarding of the Vengeful Spirit illustrated,613.57,1.73,615.3,forced-alignment
+148,unstable_energy_consequence,what even partial Warp exposure does at close range.,615.3,1.63,616.93,forced-alignment
 149,warp_lightning_entry,"A targeted teleport assault,",616.93,2.01,618.94,forced-alignment
 150,engine_flash_array,"the most controlled form of Warp-adjacent transit available, was used as a dispersion mechanism.",618.94,5.74,624.68,forced-alignment
 151,team_disperse,The loyalist strike force scattered across a corrupted interior.,624.68,4.57,629.25,forced-alignment

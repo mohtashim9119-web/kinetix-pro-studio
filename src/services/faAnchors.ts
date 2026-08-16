@@ -107,17 +107,81 @@ function contiguousMatchRunLength(ops: readonly TokenAlignmentOp[], qi: number):
   return len;
 }
 
+/** A seam exactly ON a silence's edge is not INSIDE it. This is a
+ *  strict-inequality guard against float equality, not a tolerance: there is
+ *  no distance below which a seam "counts as" spanned, so widening it would
+ *  reintroduce exactly the proximity reasoning R-U removed. Deliberately NOT
+ *  in `syncConstants.ts` — that file holds tuning constants, and this is not
+ *  one. */
+const SEAM_INTERIOR_EPSILON = 1e-9;
+
+/** Every INTERIOR token seam, ascending: the instant between token `i-1` and
+ *  token `i`, for `i >= 1`, taken as `tokens[i].startSec`.
+ *
+ *  Sorted defensively rather than assumed: `spansATokenSeam` binary-searches
+ *  this array, and a single out-of-order token would silently make that search
+ *  wrong instead of merely slow.
+ *
+ *  Note the consequence, which is intended: the FIRST token has no seam before
+ *  it, so it can never carry an R.1 anchor. The corpus start is already a
+ *  boundary (`'corpus-start'`); it does not need an anchor to also assert it. */
+function tokenSeamTimes(tokens: readonly TranscriptToken[]): number[] {
+  const seams: number[] = [];
+  for (let i = 1; i < tokens.length; i++) seams.push(tokens[i]!.startSec);
+  return seams.sort((a, b) => a - b);
+}
+
+/**
+ * R-U (WS1 Session B) — the ZERO-SEAM REJECTION RULE, stated structurally.
+ *
+ * Does this silence span a token seam at all? That is a property of the
+ * silence itself, measured against the token index space — not a comparison
+ * against any timestamp. A silence lying wholly inside one token's own span
+ * (the ear-pass item 6 shape: `[172.70, 173.12]` inside token 464
+ * "chemical" `[172.57, 173.18]`) separates nothing, and therefore cannot mark
+ * a boundary however close it happens to sit to one.
+ *
+ * This is the R2 invariant applied as written (`CLAUDE.md` §4 Sync/Whisper:
+ * "Timestamps may measure distance; they must never decide identity"). The
+ * predecessor of this function decided IDENTITY — "this silence is that
+ * boundary" — from raw-timestamp proximity alone, which is the failure this
+ * invariant names.
+ */
+function spansATokenSeam(silence: SilenceInterval, seamTimes: readonly number[]): boolean {
+  // First seam strictly after the silence starts; the silence spans a seam
+  // iff that seam also falls strictly before the silence ends.
+  let lo = 0;
+  let hi = seamTimes.length;
+  const after = silence.startSec + SEAM_INTERIOR_EPSILON;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (seamTimes[mid]! > after) hi = mid;
+    else lo = mid + 1;
+  }
+  const first = seamTimes[lo];
+  return first !== undefined && first < silence.endSec - SEAM_INTERIOR_EPSILON;
+}
+
 /** R.1(c) + agreement test: the silence whose `endSec` is closest to
  *  `tokenStartSec`, within `ANCHOR_AGREEMENT_SEC` — or `undefined` if none
  *  agrees. I6: the anchor's time value is this silence's `endSec`, never
- *  `tokenStartSec` itself. */
+ *  `tokenStartSec` itself.
+ *
+ *  R-U: the structural veto runs FIRST, per candidate, so a silence that spans
+ *  no token seam is out of the running before any distance is computed. What
+ *  is left for `ANCHOR_AGREEMENT_SEC` is strictly a SELECTION job among
+ *  structurally admissible survivors — how far to look, and which survivor to
+ *  prefer — never the identity question of whether a silence IS this
+ *  boundary. Nothing here decides identity by distance. */
 function findAgreeingSilence(
   tokenStartSec: number,
   silences: readonly SilenceInterval[],
+  seamTimes: readonly number[],
 ): SilenceInterval | undefined {
   let best: SilenceInterval | undefined;
   let bestDist = Infinity;
   for (const s of silences) {
+    if (!spansATokenSeam(s, seamTimes)) continue; // R-U veto — structure, before distance
     const dist = Math.abs(tokenStartSec - s.endSec);
     if (dist <= ANCHOR_AGREEMENT_SEC && dist < bestDist) {
       best = s;
@@ -137,6 +201,7 @@ function computeAnchors(
   subjectTokenIdx: ArrayLike<number>,
 ): FaAnchor[] {
   const anchors: FaAnchor[] = [];
+  const seamTimes = tokenSeamTimes(tokens); // R-U — computed once per run, not per candidate
   for (const op of alignment.ops) {
     if (op.type !== 'match') continue;
     const subjectIdx = alignment.matchedSubjectOf[op.qi];
@@ -147,7 +212,7 @@ function computeAnchors(
     if (!token) continue;
     if (!isDistinctive(token.text)) continue; // R-O
     if (contiguousMatchRunLength(alignment.ops, op.qi) < RUN_SURVIVAL_MIN_RUN_LONG) continue; // R.1(b)
-    const silence = findAgreeingSilence(token.startSec, silences); // R.1(c) + I6
+    const silence = findAgreeingSilence(token.startSec, silences, seamTimes); // R.1(c) + I6 + R-U
     if (!silence) continue;
     anchors.push({ qi: op.qi, tokenIdx, timeSec: silence.endSec });
   }
