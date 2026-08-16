@@ -51,6 +51,29 @@
 //     Session A.5's 179/649 upper bound and all listed in
 //     `docs/work-in-progress.md` §11's R-Y re-capture table. None is ear-verified either
 //     way yet — that is Session C's listening pass.
+//
+// WS1 SESSION B.1 RE-PIN (owner ruling R-AA — the SEAM REGION reading). R-U's
+// mechanism is unchanged; its seam DEFINITION is amended from the instant
+// `tokens[i].startSec` to the interval `[tokens[i-1].endSec, tokens[i].startSec]`.
+// The region reading's movers are a strict SUBSET of the instant reading's:
+// 4/649 instead of 16/649 (3 v6 + 1 173 + 0 spanish), re-measured from Session
+// B's own captured FA inference for this reading, which the shipped code
+// reproduces chunk-for-chunk. What that means for this file:
+//   - item 6 (173 `vessel_damage_clue`) still resolves to 174.74. Its positive
+//     assertion below survives BOTH re-pins unchanged, which is the point of
+//     pinning the ear-correct value rather than the current one.
+//   - item 7 and the V6 seam 150/151 control are untouched again; the three
+//     NAMED_WINDOWS keep their exact BOUNDS and only their indices move.
+//   - item 11 (173 `blue_monkey`) does NOT move under the region reading, so
+//     its known-bad pin goes back to its pre-Session-B 36.96.
+//   - the 12 boundaries the instant reading moved and this one does not are
+//     reverted in the fixtures to their pre-Session-B values, and recorded as
+//     named candidate defects in `docs/work-in-progress.md` §11 — three of them
+//     are in the 44 known >0.5s FA-vs-Whisper movers and are being left unfixed
+//     by this ruling, deliberately and on the record.
+// M1-M5 were re-run against these re-pinned values: M5 (the items-6/7 error
+// class reproduced at a currently-correct boundary) goes RED, and M4 remains a
+// true no-op verified by chunk-plan equality on all three corpora.
 //   - item 7 (v6 `152_frozen_brush_mice`) is bit-identical at 449.20, exactly
 //     as owner ruling R-V predicted: it is an FA word-timing defect (R-U),
 //     not an anchoring defect (R.11), and no change inside `faAnchors.ts` can
@@ -216,14 +239,15 @@ const KNOWN_BAD: KnownBadRow[] = [
     note: 'R.10 is specified, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
   },
   {
-    item: 11, corpus: '173', tag: 'blue_monkey', faValue: 37.73, earCorrect: null,
+    item: 11, corpus: '173', tag: 'blue_monkey', faValue: 36.96, earCorrect: null,
     mechanism: 'R.10 (scripted text never spoken: the planted "blue monkey" string is never voiced)',
     status: 'open',
     note: 'Whisper drops this segment entirely and the ear agreed that is correct — there is no numeric earCorrect ' +
-      'to converge on; the fix is R.10\'s drop/skip gate, not a different timestamp. FA currently commits a real ' +
-      '[37.73, 38.50) span for it instead of dropping it. That span moved (from [36.96, 37.73)) under Session B\'s ' +
-      'R-U rule — the mechanism is untouched, only the numbers the wrong-by-construction span happens to carry. ' +
-      'Not Session B scope.',
+      'to converge on; the fix is R.10\'s drop/skip gate, not a different timestamp. FA commits a real [36.96, 37.73) ' +
+      'span for it instead of dropping it. Session B\'s instant-strict reading of R-U moved that span to ' +
+      '[37.73, 38.50); R-AA\'s seam-region reading (WS1 Session B.1) does NOT move it, so this pin is back at its ' +
+      'pre-Session-B 36.96. Either way the mechanism is untouched — only the numbers a wrong-by-construction span ' +
+      'happens to carry. Not this session\'s scope; R.10 is specified, not built.',
   },
 ];
 
@@ -441,13 +465,13 @@ interface AnchorPathSpec {
 const ANCHOR_PATH: AnchorPathSpec[] = [
   {
     key: 'v6', audioDuration: 1421.29,
-    runCount: 297, anchorCount: 296, chunkCount: 251,
-    anchorDigest: 'cc1c2beb09df70d9', runDigest: 'f6876fe35f69e763', chunkDigest: 'fd0ab5d23d2ad083',
+    runCount: 313, anchorCount: 312, chunkCount: 264,
+    anchorDigest: 'f3f469a68664596a', runDigest: '4d95968b519576da', chunkDigest: '14fbd829e54f0869',
   },
   {
     key: '173', audioDuration: 709.01,
-    runCount: 110, anchorCount: 107, chunkCount: 81,
-    anchorDigest: 'db721a683dd4127f', runDigest: '063df1b1fccb0766', chunkDigest: 'b80a2319803d748e',
+    runCount: 143, anchorCount: 142, chunkCount: 112,
+    anchorDigest: 'd2e3f269cd884a26', runDigest: '4e9af8b426d90c3d', chunkDigest: 'b4c4611508f7b58e',
   },
   {
     key: 'spanish', audioDuration: 92.04,
@@ -463,24 +487,28 @@ const NAMED_WINDOWS: Array<{
   corpus: Corpus; chunkIndex: number; startSec: number; endSec: number; why: string;
 }> = [
   {
-    corpus: '173', chunkIndex: 22, startSec: 161.46, endSec: 174.96,
-    why: 'item 6, RESOLVED by R-U. The two pre-R-U chunks — [161.46, 173.12] and [173.12, 174.96] — are now ONE ' +
-      'window, because the anchor that cut them at 173.12 came from silence [172.70, 173.12], which lies wholly ' +
-      'inside Whisper token 464 ("chemical", 172.57-173.18) and spans no token seam. The committed boundary moved ' +
-      '172.91 -> 174.74, the ear-correct value. This window must NOT split again at 173.12.',
+    corpus: '173', chunkIndex: 31, startSec: 161.46, endSec: 174.96,
+    why: 'item 6, RESOLVED by R-U and STILL resolved under R-AA\'s seam-region reading. The two pre-R-U chunks — ' +
+      '[161.46, 173.12] and [173.12, 174.96] — are ONE window, because the anchor that cut them at 173.12 came from ' +
+      'silence [172.70, 173.12], which lies wholly inside Whisper token 464 ("chemical", 172.57-173.18) and spans no ' +
+      'token seam under either reading. The committed boundary moved 172.91 -> 174.74, the ear-correct value. This ' +
+      'window must NOT split again at 173.12. Its BOUNDS are bit-identical to the instant reading\'s; only the chunk ' +
+      'INDEX moved (22 -> 31), because the region reading restores 35 anchors earlier in the corpus.',
   },
   {
-    corpus: 'v6', chunkIndex: 72, startSec: 448.34, endSec: 451.7,
-    why: 'item 7, UNCHANGED by R-U and expected to stay so (owner ruling R-V). Its END anchor comes from silence ' +
-      '[450.36, 451.70], which swallows THREE token seams (1222/1223/1224) — many seams, not zero, so the zero-seam ' +
-      'veto never fires here. Item 7 is an FA word-timing defect (R.11), reachable only from outside faAnchors.ts. ' +
-      'Its chunk INDEX moved 80 -> 72 because earlier windows merged; its BOUNDS must not move.',
+    corpus: 'v6', chunkIndex: 76, startSec: 448.34, endSec: 451.7,
+    why: 'item 7, UNCHANGED by R-U and by R-AA, and expected to stay so (owner ruling R-V). Its END anchor comes from ' +
+      'silence [450.36, 451.70], which swallows THREE token seams (1222/1223/1224) — many seams, not zero, so the ' +
+      'zero-seam veto never fires here under either reading. Item 7 is an FA word-timing defect (R.11), reachable ' +
+      'only from outside faAnchors.ts. Its chunk INDEX moved 80 -> 72 (R-U) -> 76 (R-AA) as earlier windows merged ' +
+      'and re-split; its BOUNDS have never moved.',
   },
   {
-    corpus: 'v6', chunkIndex: 73, startSec: 451.7, endSec: 460.56,
+    corpus: 'v6', chunkIndex: 77, startSec: 451.7, endSec: 460.56,
     why: 'V6 seam 150/151 control (ear-pass item 8, both sources correct): the chunk containing the ' +
       '154_silent_night_birds / 155_predator_passing_under seam at 457.83. R-U predicted this does not move, and ' +
-      'it did not (stop-and-rule exit S2). Index moved 81 -> 73; bounds must not move.',
+      'it did not; R-AA does not move it either (stop-and-rule exit S2, cleared twice). Index moved 81 -> 73 -> 77; ' +
+      'bounds must not move.',
   },
 ];
 

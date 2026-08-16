@@ -1594,6 +1594,19 @@ document records none of them as taken:
 
 ---
 
+> **SEAM DEFINITION SUPERSEDED by R-AA (owner, 2026-08-16, WS1 Session B.1),
+> below.** R-U's MECHANISM below — a structural veto applied per candidate
+> before any distance is computed — is unamended and was never reopened. What
+> is superseded is the DEFINITION of a seam: R-U shipped with a seam as the
+> INSTANT `tokens[i].startSec` under strict containment; R-AA reads it as the
+> INTERVAL `[tokens[i-1].endSec, tokens[i].startSec]` under closed-interval
+> overlap. Consequently the "179/649 upper bound, 16/649 actual" profile in
+> this entry's *What was measured* paragraph is superseded by **69/649 upper
+> bound, 4/649 actual**, and the 16 are superseded by a strict subset of
+> themselves. Item 6 still resolves to 174.74; item 7 and the V6 seam control
+> are still unmoved. The three REJECTED wider rules below stay rejected —
+> R-AA narrows this rule, it does not reopen them.
+
 **R-U ruling (owner, 2026-08-16) — the ZERO-SEAM REJECTION RULE, adopted as
 R-R's replacement mechanism. IMPLEMENTED, WS1 Session B.** Read this
 immediately after A.5's feasibility findings above: it takes option 3 of that
@@ -1656,8 +1669,9 @@ answer different questions — "is this silence the boundary between these two
 words?" versus "where is the least-bad place to cut a run that has run too
 long?" — and only the first is an identity claim.
 
-**OPEN AGAINST R-U — the seam DEFINITION was never ruled on, and it is
-load-bearing. Owner decision needed before Session C's listening pass.** R-U
+**~~OPEN AGAINST R-U~~ — RULED, 2026-08-16, WS1 Session B.1: the seam-REGION
+reading is ADOPTED (R-AA, immediately below). This block is left standing as
+R-AA's evidence base.** R-U
 says "spans a token seam". Session B implemented, and A.5 measured, the
 reading in which a seam is the instant `tokens[i].startSec` and the silence
 must contain it STRICTLY. That reading is exactly right where Whisper is
@@ -1690,6 +1704,85 @@ region reading is adopted, the R-Y re-capture, the gate re-pin and R-X's
 listening sample must all be redrawn from it — the FA inference for it is
 already captured (`.work-phase4/recap/words-VG-*.json`), so that is a
 re-measure, not a re-derivation.
+
+---
+
+**IDENTIFIER CONVENTION, recorded so the next session does not rediscover it.**
+The single-letter ruling series is EXHAUSTED at R-Z. Ruling identifiers
+continue as **R-AA, R-AB, R-AC, …** — two letters, ASCII-sorting naturally
+after R-Z, requiring no renumbering of anything already recorded. Rule numbers
+(`R.1`, `R.11`, …) are a SEPARATE, unaffected series and continue as integers;
+the next free rule number is R.12.
+
+**R-AA ruling (owner, 2026-08-16, WS1 Session B.1) — the SEAM-REGION reading is
+ADOPTED, amending R-U's seam definition only. IMPLEMENTED.**
+
+*What changes.* A seam is the INTERVAL `[tokens[i-1].endSec, tokens[i].startSec]`
+— everything between the end of one token and the start of the next — and a
+silence spans it when the two overlap as closed intervals. R-U's mechanism (a
+structural veto per candidate, before any distance is computed) is unchanged
+and was not reopened; `ANCHOR_AGREEMENT_SEC` keeps its selection-only job.
+
+*Why, and this is the load-bearing half: the region reading is the more
+FAITHFUL application of the R2 invariant, not merely the cheaper one.* The
+instant reading takes a seam to be `tokens[i].startSec`. That instant is an
+ARTIFACT of gapless decoding, not a fact about the audio: it exists as the
+seam only because Whisper turbo happens to emit `tokens[i-1].endSec ===
+tokens[i].startSec` for most pairs. Where a real gap exists (537/3988 v6,
+200/1835 173, 31/362 spanish adjacent pairs), the seam is the gap, and a
+silence sitting cleanly INSIDE that gap — the single most convincing boundary
+marker this pipeline can observe — contains no instant and was vetoed. The
+instant reading also rejected a silence whose own `endSec` IS the token onset,
+i.e. R.1(c) agreement at distance 0.000s, for touching rather than containing.
+Both are the structural question answered against the wrong structure. R2 says
+identity is token-INDEX business; the seam interval is exactly what the token
+index space says lies between two tokens, whereas the instant is what one
+token's timestamp says about itself.
+
+*Blast radius, re-measured from Session B's own captured FA inference for this
+reading (`.work-phase4/recap/{plan,words,segs}-VG-*`), which the shipped code
+reproduces chunk-for-chunk on all three corpora:*
+
+| | instant, strict (superseded) | seam REGION (adopted) |
+|---|---|---|
+| upper bound | 179/649 (27.6%) | **69/649 (10.6%)** |
+| measured movers | 16/649 (2.5%) | **4/649 (0.6%)** — 3 v6, 1 173, 0 spanish |
+| item 6 | 174.74 ✓ (residual 0.000s) | **174.74 ✓ (residual 0.000s)** |
+| item 7 | unmoved, 449.20 | unmoved, 449.20 |
+| V6 seam 150/151 | unmoved | unmoved |
+| item 11 `blue_monkey` | moved 36.96 → 37.73 | **does not move** |
+| pre-existing fixture rows disturbed | 13 | 1 |
+
+The 4 are a strict subset of the 16, verified row-for-row (`VG \ VE = ∅`).
+
+*The enrichment survives the narrowing — the one genuinely open question when
+this ruling was taken, and it is answered on measurement, not assertion.*
+Against the known FA-vs-Whisper disagreement set, the region reading's 4
+movers contain **3 of the 44** boundaries that disagree by >0.5s (expected
+0.27 under uniform placement, **11.1x**, p = 0.0011) and **2 of the 24** that
+disagree by >1.0s (expected 0.15, **13.5x**, p = 0.0075). The instant reading's
+16 contained 6 and 3 of the same sets (5.5x and 5.1x). So the DENSITY of
+known-suspect boundaries roughly doubles under the narrower rule: 3 of the 4
+surviving movers are in the 44, against 3 of the 12 dropped. The narrowing
+keeps the arm where the signal is and discards mostly boundaries with no
+independent evidence against them — 9 of the 12 dropped are in neither set.
+Stated with its limit: n = 4, so this is a direction, not a proof.
+
+*The 12 dropped boundaries are NAMED CANDIDATE DEFECTS, left unfixed by this
+ruling on the record.* Full table in `docs/work-in-progress.md` §11. Three of
+them are in the 44 (`173 protection_failure`, `173 abysmal_opinion` — also in
+the 24 — and `v6 226_four_scouts`) and are the ones a later rule should
+revisit; the other nine, including the entire 173 ord 143-148 cluster and item
+11's `blue_monkey`, have no independent evidence against them and were moved
+by the instant reading alone.
+
+*What the numbers cost, stated because the 45/25 figures quoted since 580ba0f
+are slightly wrong.* Re-derived this session from the current fixtures, the
+FA-vs-Whisper disagreement sets are **44 (>0.5s) and 24 (>1.0s)**, not 45/25.
+The difference is exactly one row — spanish `023_scylla_six_sailors` — which
+cleared both thresholds only because its committed value was the stale
+pre-616abb2 66.73; at the live 65.12 it clears neither. Anything citing 45/25
+is citing a figure contaminated by the same staleness ear-pass item 9 records.
 
 **R-V ruling (owner, 2026-08-16) — ear-pass item 7 is UNBUNDLED from R-R and
 becomes defect class R.11.** Items 6 and 7 were bundled on a coincidence of
@@ -2042,6 +2135,43 @@ R-S(ii) (zero boundaries more than 1.0s from ear-correct) and R-S(iii)
 Both lists were drawn in WS1 Session B and are recorded in
 `docs/work-in-progress.md` §11. Neither has been listened to: the listening
 pass is the owner's, in Session C.
+
+**AMENDED, 2026-08-16 (WS1 Session B.1), for R-AA — the lists are REDRAWN and
+Session B's are superseded.** R-AA moves 4 boundaries, not 16, so Tier 1's
+original construction ("the 12 largest movers, excluding every tag on the
+original 12-item ear list") no longer has 12 movers to draw from. The redrawn
+structure, which changes what fills each tier but not what either tier gates:
+
+  **Tier 1 — 12 SCORED rows, all fresh: the 3 movers that are not already
+  ear-verified, plus 9 boundaries R-AA does NOT move**, stratified by corpus
+  (5 v6 / 3 173 / 1 spanish) and by FA-vs-Whisper disagreement bucket, and
+  drawn from a pool that excludes every tag on the original 12-item ear list.
+  A 12-row toggle gate cannot be filled with movers alone at n = 4; filling it
+  with fresh unmoved boundaries keeps R-S(i)'s 12/12 bar intact and makes it a
+  harder test, not an easier one — a rule that moved the wrong boundaries and
+  a rule that moved nothing are both caught.
+
+  **Ear-pass item 6 (`vessel_damage_clue`) is the 4th mover and is listed
+  separately as a DISCLOSED, UNSCORED positive control.** It is already
+  ear-verified at 174.74 and carries a positive assertion in the FA replay
+  gate. Scoring it toward 12/12 would count a boundary chosen before the fix
+  existed, which R-S(i) rules out in those words. It is shown so the census of
+  all 4 movers is complete, not to be graded.
+
+  **Tier 2 — 8 BLINDED rows: all 4 movers plus a 4-boundary unmoved control
+  arm**, mixed, uniform columns, one boundary value per row, a FIXED ±4s
+  window on every row, arms disclosed only in a collapsed key. Same blinding
+  discipline as Session B's list; the arm ratio stays 1:1 as R-X requires.
+
+  **Ordering, new and load-bearing: Tier 2 must be scored BEFORE Tier 1** when
+  both run in one sitting. Tier 1 discloses each row's arm, and 4 of its rows
+  reappear blinded in Tier 2 — scoring Tier 1 first would unblind half the
+  control experiment. Session B's lists had the same overlap and did not say
+  this.
+
+Estimated listening cost at ~25s/boundary: 21 rows (13 Tier 1 including the
+unscored control + 8 Tier 2) ≈ **9 minutes**, against ~19 minutes for Session
+B's 44-row draw. Redrawn lists: `docs/work-in-progress.md` §11.
 
 ---
 

@@ -107,32 +107,58 @@ function contiguousMatchRunLength(ops: readonly TokenAlignmentOp[], qi: number):
   return len;
 }
 
-/** A seam exactly ON a silence's edge is not INSIDE it. This is a
- *  strict-inequality guard against float equality, not a tolerance: there is
- *  no distance below which a seam "counts as" spanned, so widening it would
- *  reintroduce exactly the proximity reasoning R-U removed. Deliberately NOT
- *  in `syncConstants.ts` — that file holds tuning constants, and this is not
- *  one. */
-const SEAM_INTERIOR_EPSILON = 1e-9;
-
-/** Every INTERIOR token seam, ascending: the instant between token `i-1` and
- *  token `i`, for `i >= 1`, taken as `tokens[i].startSec`.
+/** The seam between token `i-1` and token `i` as an INTERVAL: everything
+ *  between the end of the previous token and the start of this one. Whisper
+ *  turbo emits a gapless partition for most adjacent pairs (3451/3988 v6,
+ *  1635/1835 173, 331/362 spanish), where this interval degenerates to the
+ *  single instant `tokens[i].startSec`; in the 537/200/31 pairs that carry a
+ *  positive gap it is a real, non-empty interval, and that is the interval a
+ *  boundary-marking silence actually sits in.
  *
- *  Sorted defensively rather than assumed: `spansATokenSeam` binary-searches
- *  this array, and a single out-of-order token would silently make that search
- *  wrong instead of merely slow.
+ *  `min`/`max` rather than `[prevEnd, thisStart]` directly: an overlapping
+ *  pair (`prevEnd > thisStart`) would otherwise produce an inverted interval
+ *  that matches nothing. No such pair exists in any of the three corpora
+ *  (0/3988, 0/1835, 0/362 measured) — this is a well-formedness guard, not a
+ *  tuned path.
  *
  *  Note the consequence, which is intended: the FIRST token has no seam before
  *  it, so it can never carry an R.1 anchor. The corpus start is already a
  *  boundary (`'corpus-start'`); it does not need an anchor to also assert it. */
-function tokenSeamTimes(tokens: readonly TranscriptToken[]): number[] {
-  const seams: number[] = [];
-  for (let i = 1; i < tokens.length; i++) seams.push(tokens[i]!.startSec);
-  return seams.sort((a, b) => a - b);
+export interface SeamIndex {
+  /** Seam interval starts, ascending. */
+  starts: number[];
+  /** `maxEnd[i]` = the largest seam-interval END among seams `0..i`. Makes the
+   *  overlap test a single binary search: sorting by start alone is not enough,
+   *  because a wide early seam can overlap a silence that a later, narrower one
+   *  does not. */
+  maxEnd: number[];
+}
+
+function tokenSeamIndex(tokens: readonly TranscriptToken[]): SeamIndex {
+  const seams: Array<[number, number]> = [];
+  for (let i = 1; i < tokens.length; i++) {
+    const prevEnd = tokens[i - 1]!.endSec;
+    const thisStart = tokens[i]!.startSec;
+    seams.push(prevEnd <= thisStart ? [prevEnd, thisStart] : [thisStart, prevEnd]);
+  }
+  // Sorted defensively rather than assumed: `spansATokenSeam` binary-searches
+  // this index, and a single out-of-order token would silently make that search
+  // wrong instead of merely slow.
+  seams.sort((a, b) => a[0] - b[0]);
+  const starts: number[] = [];
+  const maxEnd: number[] = [];
+  let running = -Infinity;
+  for (const [a, b] of seams) {
+    starts.push(a);
+    running = Math.max(running, b);
+    maxEnd.push(running);
+  }
+  return { starts, maxEnd };
 }
 
 /**
- * R-U (WS1 Session B) — the ZERO-SEAM REJECTION RULE, stated structurally.
+ * R-U (WS1 Session B, seam DEFINITION amended by R-AA in Session B.1) — the
+ * ZERO-SEAM REJECTION RULE, stated structurally.
  *
  * Does this silence span a token seam at all? That is a property of the
  * silence itself, measured against the token index space — not a comparison
@@ -141,25 +167,36 @@ function tokenSeamTimes(tokens: readonly TranscriptToken[]): number[] {
  * "chemical" `[172.57, 173.18]`) separates nothing, and therefore cannot mark
  * a boundary however close it happens to sit to one.
  *
+ * A seam is the INTERVAL `[tokens[i-1].endSec, tokens[i].startSec]`, and
+ * "spans" means the silence and that interval overlap as closed intervals
+ * (R-AA). The predecessor reading took a seam to be the instant
+ * `tokens[i].startSec` and required strict containment, which is right exactly
+ * where Whisper is gapless and over-rejects everywhere else: a silence sitting
+ * cleanly inside a real inter-token gap — the ideal boundary marker — contains
+ * no instant, and a silence whose own `endSec` IS the token onset (perfect
+ * R.1(c) agreement, distance 0.000s) was rejected for touching rather than
+ * containing.
+ *
  * This is the R2 invariant applied as written (`CLAUDE.md` §4 Sync/Whisper:
  * "Timestamps may measure distance; they must never decide identity"). The
  * predecessor of this function decided IDENTITY — "this silence is that
  * boundary" — from raw-timestamp proximity alone, which is the failure this
- * invariant names.
+ * invariant names. Interval overlap is not a distance test: there is no
+ * threshold, and no pair of endpoints is ever compared for nearness.
  */
-function spansATokenSeam(silence: SilenceInterval, seamTimes: readonly number[]): boolean {
-  // First seam strictly after the silence starts; the silence spans a seam
-  // iff that seam also falls strictly before the silence ends.
+function spansATokenSeam(silence: SilenceInterval, seams: SeamIndex): boolean {
+  // Last seam whose interval STARTS at or before this silence ends; the
+  // silence overlaps some seam iff the widest seam end among those reaches
+  // back to the silence's own start.
+  const { starts, maxEnd } = seams;
   let lo = 0;
-  let hi = seamTimes.length;
-  const after = silence.startSec + SEAM_INTERIOR_EPSILON;
+  let hi = starts.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (seamTimes[mid]! > after) hi = mid;
-    else lo = mid + 1;
+    if (starts[mid]! <= silence.endSec) lo = mid + 1;
+    else hi = mid;
   }
-  const first = seamTimes[lo];
-  return first !== undefined && first < silence.endSec - SEAM_INTERIOR_EPSILON;
+  return lo > 0 && maxEnd[lo - 1]! >= silence.startSec;
 }
 
 /** R.1(c) + agreement test: the silence whose `endSec` is closest to
@@ -176,12 +213,12 @@ function spansATokenSeam(silence: SilenceInterval, seamTimes: readonly number[])
 function findAgreeingSilence(
   tokenStartSec: number,
   silences: readonly SilenceInterval[],
-  seamTimes: readonly number[],
+  seams: SeamIndex,
 ): SilenceInterval | undefined {
   let best: SilenceInterval | undefined;
   let bestDist = Infinity;
   for (const s of silences) {
-    if (!spansATokenSeam(s, seamTimes)) continue; // R-U veto — structure, before distance
+    if (!spansATokenSeam(s, seams)) continue; // R-U veto — structure, before distance
     const dist = Math.abs(tokenStartSec - s.endSec);
     if (dist <= ANCHOR_AGREEMENT_SEC && dist < bestDist) {
       best = s;
@@ -201,7 +238,7 @@ function computeAnchors(
   subjectTokenIdx: ArrayLike<number>,
 ): FaAnchor[] {
   const anchors: FaAnchor[] = [];
-  const seamTimes = tokenSeamTimes(tokens); // R-U — computed once per run, not per candidate
+  const seams = tokenSeamIndex(tokens); // R-U — computed once per run, not per candidate
   for (const op of alignment.ops) {
     if (op.type !== 'match') continue;
     const subjectIdx = alignment.matchedSubjectOf[op.qi];
@@ -212,7 +249,7 @@ function computeAnchors(
     if (!token) continue;
     if (!isDistinctive(token.text)) continue; // R-O
     if (contiguousMatchRunLength(alignment.ops, op.qi) < RUN_SURVIVAL_MIN_RUN_LONG) continue; // R.1(b)
-    const silence = findAgreeingSilence(token.startSec, silences, seamTimes); // R.1(c) + I6 + R-U
+    const silence = findAgreeingSilence(token.startSec, silences, seams); // R.1(c) + I6 + R-U
     if (!silence) continue;
     anchors.push({ qi: op.qi, tokenIdx, timeSec: silence.endSec });
   }

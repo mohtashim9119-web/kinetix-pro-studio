@@ -221,10 +221,10 @@ order,tag,text,startTime,duration,endTime,anchorSource
 219,220_lethal_gap,There is a space between your action and something else’s action,650.62,3.61,654.23,forced-alignment
 220,221_skill_removes,and in that space lives an element that no amount of skill removes entirely.,654.23,4.71,658.94,forced-alignment
 221,222_long_silence,You do not say this to anyone for a long time.,658.94,3.61,662.55,forced-alignment
-222,223_carrying_weight,You carry it.,662.55,3.53,666.08,forced-alignment
-223,224_thirty_three,You are thirty-three.,666.08,2.97,669.05,forced-alignment
-224,225_night_scouts,You lead the night scouts now.,669.05,2.13,671.18,forced-alignment
-225,226_four_scouts,Four of them besides yourself,671.18,1.62,672.8,forced-alignment
+222,223_carrying_weight,You carry it.,662.55,1.78,664.33,forced-alignment
+223,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,forced-alignment
+224,225_night_scouts,You lead the night scouts now.,667.47,2.77,670.24,forced-alignment
+225,226_four_scouts,Four of them besides yourself,670.24,2.56,672.8,forced-alignment
 226,227_scout_ages,ranging from seventeen to twenty-four.,672.8,2.75,675.55,forced-alignment
 227,228_informal_bond,They are not yours in any formal sense.,675.55,3.03,678.58,forced-alignment
 228,229_no_formal_sense,There is no formal sense here.,678.58,2.41,680.99,forced-alignment

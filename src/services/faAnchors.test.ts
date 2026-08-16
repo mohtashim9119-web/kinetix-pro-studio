@@ -37,9 +37,11 @@ function sil(startSec: number, endSec: number): SilenceInterval {
  *  still the silence's `endSec` (`s`), so every pinned time below is
  *  unchanged by the rule.
  *
- *  A silence that only TOUCHES a seam at its edge spans nothing and is
- *  rejected — which is why the pre-R-U fixture form (`tok(w, s, …)` against
- *  `sil(s - 0.1, s)`) no longer produces an anchor. */
+ *  Strict containment is no longer REQUIRED — R-AA (WS1 Session B.1) reads a
+ *  seam as the interval `[tokens[i-1].endSec, tokens[i].startSec]` and accepts
+ *  a silence that overlaps it, touching included. This helper keeps the
+ *  strictly-inside shape anyway, because it satisfies both readings and every
+ *  time pinned below was measured under it. */
 function candidateTok(text: string, silenceEndSec: number): TranscriptToken {
   return tok(text, silenceEndSec - 0.05, silenceEndSec + 0.5);
 }
@@ -305,6 +307,9 @@ describe('computeFaAnchors', () => {
 
 // ===========================================================================
 // R-U (WS1 Session B) — the ZERO-SEAM REJECTION RULE.
+// Seam DEFINITION amended by R-AA (WS1 Session B.1) — see the SEAM REGION
+// block at the bottom of this file for the cases that distinguish the two
+// readings.
 //
 // Owner ruling R-U replaces R-R's unbuildable token-to-token-gap clause: a
 // silence that spans no token seam is rejected as a boundary candidate
@@ -431,6 +436,77 @@ describe('computeFaAnchors — R-U zero-seam rejection rule', () => {
     // construction — seams begin at tokens[1]. The corpus start is already a
     // boundary (`'corpus-start'`), so nothing is lost.
     const { anchors } = anchorsFor([sil(9.5, 10.5)]); // contains no seam: seams start at 11
+    expect(anchors).toEqual([]);
+  });
+});
+
+// ===========================================================================
+// R-AA (WS1 Session B.1) — the SEAM REGION reading.
+//
+// R-U's mechanism (a structural veto, applied before any distance is computed)
+// is unchanged. What changed is what a seam IS. R-U shipped with a seam as the
+// INSTANT `tokens[i].startSec`, requiring strict containment — correct exactly
+// where Whisper is gapless (3451/3988 v6, 1635/1835 173, 331/362 spanish) and
+// over-rejecting everywhere else. A seam is the INTERVAL
+// `[tokens[i-1].endSec, tokens[i].startSec]`, and a silence spans it when the
+// two overlap as closed intervals.
+//
+// The three cases below are the ones on which the readings disagree; the rest
+// of the R-U block above passes identically under both.
+// ===========================================================================
+
+describe('computeFaAnchors — R-AA seam REGION reading', () => {
+  const WORDS = ['alpha', 'bravo', 'charlie', 'delta', 'hotel'];
+  const AUDIO = 40;
+
+  function anchorsFor(tokens: TranscriptToken[], silences: SilenceInterval[]): ReturnType<typeof computeFaAnchors> {
+    return computeFaAnchors(allMatchAlignment(WORDS.length), tokens, silences, AUDIO, identityMapping(tokens.length));
+  }
+
+  /** `alpha` ends at 11 and `bravo` starts at 11.6: a real 0.6s inter-token
+   *  gap, the 537/200/31-pair case. Everything after `bravo` stays gapless so
+   *  no second candidate competes. */
+  const GAPPED: TranscriptToken[] = [
+    tok('alpha', 10, 11),
+    tok('bravo', 11.6, 12.6),
+    tok('charlie', 12.6, 13.6),
+    tok('delta', 13.6, 14.6),
+    tok('hotel', 14.6, 15.6),
+  ];
+
+  it('ACCEPTS a silence lying wholly INSIDE a positive inter-token gap — the case the instant reading vetoed', () => {
+    // [11.15, 11.5] sits cleanly inside the gap [11, 11.6]: it starts after
+    // "alpha" has finished and ends before "bravo" begins, which is the ideal
+    // boundary marker. It contains NO instant — `tokens[i].startSec` is 11.6,
+    // outside it — so the instant reading rejected it and the boundary lost
+    // its anchor. Its endSec is 0.1s from "bravo"'s onset, inside
+    // ANCHOR_AGREEMENT_SEC, so selection then keeps it.
+    const { anchors } = anchorsFor(GAPPED, [sil(11.15, 11.5)]);
+    expect(anchors.map(a => a.tokenIdx)).toEqual([1]);
+    expect(anchors.map(a => a.timeSec)).toEqual([11.5]);
+  });
+
+  it('ACCEPTS a silence whose endSec IS the token onset — perfect R.1(c) agreement, formerly rejected for touching', () => {
+    // Gapless seam at 12 ("bravo" ends, "charlie" starts). Silence [11.5, 12]
+    // ends exactly on it: agreement distance 0.000s, the strongest R.1(c)
+    // agreement obtainable. The instant reading required the seam to be
+    // STRICTLY inside the silence and therefore threw this away; under the
+    // region reading the degenerate seam interval [12, 12] overlaps [11.5, 12]
+    // and it anchors. This is the one place the region reading is not
+    // identical to the instant reading on gapless input, and it is deliberate.
+    const gapless = gaplessTokens(WORDS, [10, 11, 12, 13, 14, 15]);
+    const { anchors } = anchorsFor(gapless, [sil(11.5, 12)]);
+    expect(anchors.map(a => a.tokenIdx)).toEqual([2]);
+    expect(anchors.map(a => a.timeSec)).toEqual([12]);
+  });
+
+  it('STILL REJECTS a silence lying wholly inside one token span, next to a real gap', () => {
+    // R-U's whole purpose, re-asserted against the widened reading: [12.2,
+    // 12.5] is inside "bravo" [11.6, 12.6] and touches neither the gap seam
+    // [11, 11.6] before it nor the degenerate seam at 12.6 after it. "charlie"
+    // starts 0.1s after this silence ends, so proximity alone would still take
+    // it — this is the veto, not the tolerance.
+    const { anchors } = anchorsFor(GAPPED, [sil(12.2, 12.5)]);
     expect(anchors).toEqual([]);
   });
 });

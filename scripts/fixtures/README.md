@@ -90,6 +90,20 @@ already fixed but that this file had never shown. Every moved row is listed
 by name in `docs/work-in-progress.md` §11's R-Y re-capture table; none of the
 16 is ear-verified yet.
 
+**NARROWED AGAIN (WS1 Session B.1, 2026-08-16, owner ruling R-AA).** R-U's
+seam DEFINITION was amended from the instant `tokens[i].startSec` to the
+interval `[tokens[i-1].endSec, tokens[i].startSec]`, and the v6 and 173
+`-segments.csv` files were replaced with that reading's own captured output.
+**4 of the 16 boundaries above still move (3 v6, 1 173, 0 spanish); the other
+12 are back at their exact pre-Session-B (`7468ff3`) values** — the v6 file
+now differs from `7468ff3` at 3 boundaries / 6 rows and the 173 file at 1
+boundary / 2 rows, everything else byte-identical. The spanish file is
+untouched by this change and keeps its item-9 refresh (65.12). Both the
+surviving 4 and the reverted 12 are listed by name in
+`docs/work-in-progress.md` §11's Session B.1 block; the 12 are recorded there
+as named candidate defects, not as resolved. Still no ear verification on any
+of them — that is Session C. The `-skipped.csv` files are again unchanged.
+
 **Before trusting a regeneration, validate the driver against the fixture it
 is about to overwrite.** That is what was done here, and it is the only reason
 these files could be replaced safely: the re-capture driver was first run
