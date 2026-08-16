@@ -199,6 +199,14 @@ interface KnownBadRow {
   item: number;
   corpus: Corpus;
   tag: string;
+  /** The owning rule this entry closes under — the rule that must be BUILT
+   *  before this row can be converted. WS1 Session C: made an explicit field
+   *  rather than prose inside `mechanism`, so the register can be grouped by
+   *  owning rule without parsing English. */
+  owningRule: 'R.5' | 'R.10' | 'R.11';
+  /** The commit that closed this entry. EMPTY until closed — filled in by the
+   *  same commit that converts the row into a positive assertion below. */
+  closingCommit: string;
   /** FA's currently committed value, as of this session's HEAD. */
   faValue: number;
   /** The ear-verified correct value, or `null` when the correct behavior is
@@ -212,19 +220,22 @@ interface KnownBadRow {
 
 const KNOWN_BAD: KnownBadRow[] = [
   {
-    item: 4, corpus: 'v6', tag: '308_scouts_leading', faValue: 928.67, earCorrect: 931.40,
+    item: 4, corpus: 'v6', tag: '308_scouts_leading', owningRule: 'R.5', closingCommit: '',
+    faValue: 928.67, earCorrect: 931.40,
     mechanism: 'R.5 (unscripted audio: "Level 8..." present in the WAV, absent from the scene doc)',
     status: 'open',
     note: 'R.5 is scoped, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
   },
   {
-    item: 5, corpus: 'v6', tag: '043_night_migration', faValue: 128.43, earCorrect: 130.96,
+    item: 5, corpus: 'v6', tag: '043_night_migration', owningRule: 'R.5', closingCommit: '',
+    faValue: 128.43, earCorrect: 130.96,
     mechanism: 'R.5 (unscripted audio: "Level two..." present in the WAV, absent from the scene doc)',
     status: 'open',
     note: 'R.5 is scoped, not built. Not Session B scope.',
   },
   {
-    item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', faValue: 449.20, earCorrect: 451.03,
+    item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', owningRule: 'R.11', closingCommit: '',
+    faValue: 449.20, earCorrect: 451.03,
     mechanism: 'R.11 (FA word-timing defect: FA\'s own word-seam midpoint, no silence involved) — opened by owner ruling R-V',
     status: 'open',
     note: 'NOT reachable by faAnchors.ts (owner ruling R-V, WS1 Session B — unbundled from R-R and given its own ' +
@@ -233,13 +244,15 @@ const KNOWN_BAD: KnownBadRow[] = [
       'as R-V predicted. Scoped after Stage 1; stays known-bad until R.11 is built.',
   },
   {
-    item: 10, corpus: '173', tag: 'hostile_landscape', faValue: 1.36, earCorrect: 0.00,
+    item: 10, corpus: '173', tag: 'hostile_landscape', owningRule: 'R.10', closingCommit: '',
+    faValue: 1.36, earCorrect: 0.00,
     mechanism: 'R.10 (scripted text never spoken: on-screen-only title "perilous_realms" steals its neighbour\'s onset)',
     status: 'open',
     note: 'R.10 is specified, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
   },
   {
-    item: 11, corpus: '173', tag: 'blue_monkey', faValue: 36.96, earCorrect: null,
+    item: 11, corpus: '173', tag: 'blue_monkey', owningRule: 'R.10', closingCommit: '',
+    faValue: 36.96, earCorrect: null,
     mechanism: 'R.10 (scripted text never spoken: the planted "blue monkey" string is never voiced)',
     status: 'open',
     note: 'Whisper drops this segment entirely and the ear agreed that is correct — there is no numeric earCorrect ' +
@@ -250,6 +263,167 @@ const KNOWN_BAD: KnownBadRow[] = [
       'happens to carry. Not this session\'s scope; R.10 is specified, not built.',
   },
 ];
+
+// ===========================================================================
+// WS1 SESSION C — THE ZERO-DEFECT REGISTER.
+//
+// Ruling R-AD (`sync-pipeline-v2-plan.md`, "WS1 SESSION C RULINGS") makes the
+// `KNOWN_BAD` manifest above THE Zero-Defect Register, and makes "the register
+// is empty" a criterion of the STAGE 1 LOCK GATE. That turns "Stage 1 has zero
+// defects" from a claim somebody writes in a doc into a test that is currently
+// failing-by-skip and must be made to pass.
+//
+// Four properties are enforced below, each with its own test:
+//
+//  (1) THE REGISTER IS EMPTY — `it.skip`, with the open items named in its
+//      skip reason. Un-skipping it is the Stage 1 lock's machine check. It is
+//      skipped rather than failing so a red suite always means a REGRESSION,
+//      never "the known work isn't done yet"; the skip reason carries the
+//      list, so the manifest can never quietly grow without the reason going
+//      stale next to it.
+//
+//  (2) THE REGISTER ONLY EVER SHRINKS — `REGISTER_HIGH_WATER` records the
+//      largest the manifest has ever been. Growth is a hard failure with an
+//      explicit message, so adding a sixth open defect cannot happen as a
+//      silent one-line diff: it takes a deliberate edit to a constant whose
+//      name says what it means.
+//
+//  (3) AN ENTRY CANNOT BE DELETED, ONLY CONVERTED — `REGISTER_ROSTER` lists
+//      every ear-pass item that has EVER been in the register. Every roster
+//      member must be either (a) still open in KNOWN_BAD, or (b) present in
+//      `CLOSED_BY_POSITIVE_ASSERTION` below, which is asserted against the
+//      committed fixture at the EAR-CORRECT value. Removing a row from
+//      KNOWN_BAD without adding its positive assertion fails this test. This
+//      is the pattern item 6 already follows at 174.74, generalized so it is
+//      no longer one hand-written `it` block that a future session might not
+//      think to copy.
+//
+//  (4) EVERY OPEN ENTRY NAMES ITS OWNING RULE AND HAS NO CLOSING COMMIT —
+//      bookkeeping consistency, so `closingCommit` cannot be filled in while
+//      the row is still open, and a closed row cannot lack one.
+// ===========================================================================
+
+/** Every ear-pass item that has ever been in the register. APPEND-ONLY.
+ *  Removing a number from this list is how the register would get falsified,
+ *  so the roster is the thing that must not shrink, while KNOWN_BAD is the
+ *  thing that must. */
+const REGISTER_ROSTER = [4, 5, 6, 7, 9, 10, 11] as const;
+
+/** High-water mark for the OPEN manifest. WS1 Session C: 5 (items 4,5,7,10,11).
+ *  This may be lowered when entries close. It must never be raised — see the
+ *  failure message on the shrink-only test. */
+const REGISTER_HIGH_WATER = 5;
+
+/** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
+ *  that replaced its known-bad pin. This is what makes deletion impossible:
+ *  a row leaves KNOWN_BAD only by arriving here, and arriving here means the
+ *  ear-correct value is asserted against the committed fixture. */
+const CLOSED_BY_POSITIVE_ASSERTION: Array<{
+  item: number; corpus: Corpus; tag: string; earCorrect: number;
+  closingCommit: string; why: string;
+}> = [
+  {
+    item: 6, corpus: '173', tag: 'vessel_damage_clue', earCorrect: 174.74,
+    closingCommit: '92746cf',
+    why: 'R-U zero-seam rejection (and still resolved under R-AA seam-region). Residual 0.000s. ' +
+      'Survived both re-pins unchanged, which is the point of pinning the ear-correct value.',
+  },
+  {
+    item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', earCorrect: 65.12,
+    closingCommit: '616abb2',
+    why: 'Forced-split chunk-plan attribution bug. The fixture refresh in WS1 Session B means the ' +
+      'Spanish baseline finally SHOWS the live 65.12 instead of the stale 66.73, so this can now ' +
+      'carry a real positive assertion rather than only a note. WS1 Session C converted it.',
+  },
+];
+
+describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
+  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. Un-skip when the manifest empties.
+  it.skip(
+    'the Zero-Defect Register is EMPTY — SKIPPED: 5 open defects ' +
+    '(item 4 R.5, item 5 R.5, item 7 R.11, item 10 R.10, item 11 R.10). ' +
+    'Stage 1 does not lock while this test is skipped. Un-skip it in the commit ' +
+    'that closes the last entry.',
+    () => {
+      expect(
+        KNOWN_BAD.filter(k => k.status === 'open').map(k => `item ${k.item} (${k.owningRule}, ${k.corpus} ${k.tag})`),
+        'the Zero-Defect Register still has open entries',
+      ).toEqual([]);
+    },
+  );
+
+  // (2) SHRINK-ONLY.
+  it('the register only ever SHRINKS (open count <= high-water mark)', () => {
+    const open = KNOWN_BAD.filter(k => k.status === 'open');
+    expect(
+      open.length,
+      `The Zero-Defect Register GREW: ${open.length} open entries against a high-water mark of ` +
+      `${REGISTER_HIGH_WATER}. A new defect is not forbidden — but it must be recorded deliberately: ` +
+      `raise REGISTER_HIGH_WATER in the same commit, add the item to REGISTER_ROSTER, and record it in ` +
+      `docs/work-in-progress.md §11's register table. Do NOT raise the constant to make this green ` +
+      `without doing the other two. Open items now: ${open.map(k => k.item).join(', ')}.`,
+    ).toBeLessThanOrEqual(REGISTER_HIGH_WATER);
+  });
+
+  // (3) CONVERSION, NOT DELETION.
+  it('every roster entry is either still open or CLOSED BY A POSITIVE ASSERTION', () => {
+    const open = new Set(KNOWN_BAD.filter(k => k.status === 'open').map(k => k.item));
+    const closed = new Set(CLOSED_BY_POSITIVE_ASSERTION.map(c => c.item));
+    for (const item of REGISTER_ROSTER) {
+      expect(
+        open.has(item) || closed.has(item),
+        `Register item ${item} has VANISHED: it is neither open in KNOWN_BAD nor present in ` +
+        `CLOSED_BY_POSITIVE_ASSERTION. An entry may only be CONVERTED, never deleted — move it to ` +
+        `CLOSED_BY_POSITIVE_ASSERTION with its ear-correct value and the commit that closed it.`,
+      ).toBe(true);
+      expect(
+        open.has(item) && closed.has(item),
+        `Register item ${item} is BOTH open and closed — one of the two lists is stale.`,
+      ).toBe(false);
+    }
+  });
+
+  // (3b) ...and the positive assertions are real assertions against the fixture.
+  for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
+    it(`item ${c.item} (${c.corpus} ${c.tag}) is pinned at its EAR-CORRECT ${c.earCorrect} — closed by ${c.closingCommit}`, () => {
+      const row = loadFaSecondBaseline(c.corpus).find(r => r.tag === c.tag);
+      expect(row, `${c.corpus} ${c.tag} row`).toBeDefined();
+      expect(
+        Math.abs(row!.startTime - c.earCorrect),
+        `item ${c.item}: ear-correct ${c.earCorrect}, got ${row!.startTime}. This is a CLOSED register ` +
+        `entry with a positive assertion — red here means forced alignment REGRESSED on a boundary ` +
+        `that was measured correct. Do not re-pin it to whatever the new run produces. ${c.why}`,
+      ).toBeLessThan(0.005);
+    });
+  }
+
+  // (4) BOOKKEEPING CONSISTENCY.
+  it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
+    for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
+      expect(['R.5', 'R.10', 'R.11'], `item ${kb.item}: owningRule`).toContain(kb.owningRule);
+      expect(kb.closingCommit, `item ${kb.item} is still open but already names a closing commit`).toBe('');
+    }
+    for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
+      expect(c.closingCommit.length, `closed item ${c.item} must name the commit that closed it`).toBeGreaterThan(0);
+    }
+  });
+
+  // (5) The register's own census, printed so a reader of CI output can see the
+  //     state of the programme without opening this file.
+  it('register census (informational)', () => {
+    const open = KNOWN_BAD.filter(k => k.status === 'open');
+    const byRule = new Map<string, number[]>();
+    for (const k of open) byRule.set(k.owningRule, [...(byRule.get(k.owningRule) ?? []), k.item]);
+    // eslint-disable-next-line no-console
+    console.log(
+      `[fa-replay:register] OPEN ${open.length}/${REGISTER_HIGH_WATER} — ` +
+      [...byRule.entries()].map(([r, items]) => `${r}: items ${items.join('/')}`).join('; ') +
+      ` | CLOSED ${CLOSED_BY_POSITIVE_ASSERTION.length} (${CLOSED_BY_POSITIVE_ASSERTION.map(c => `item ${c.item}@${c.closingCommit}`).join(', ')})` +
+      ` | roster ${REGISTER_ROSTER.length}`,
+    );
+    expect(open.length + CLOSED_BY_POSITIVE_ASSERTION.length).toBe(REGISTER_ROSTER.length);
+  });
+});
 
 describe('WS1 Session A — FA replay gate (R10): structural shape, offline, fixtures only', () => {
   for (const key of CORPORA) {

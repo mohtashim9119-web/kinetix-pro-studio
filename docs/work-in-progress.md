@@ -134,6 +134,15 @@ amended dependency list and `sync-pipeline-v2-plan.md`'s STAGE 1 LOCK GATE. Neit
 status in this row (Phase 3/Task 5 stays "PRODUCTION PATH WIRED, gate OFF"); this is a Stage-1
 lock-gate criteria change, not a Phase 3 implementation change.
 
+**2026-08-16/17 (WS1 Session C): NOTHING ADVANCES on this board — stated explicitly.** The
+ear pass closed and both R-X tiers passed, which discharges R-S(i)/R-X Tier 1 and Tier 2 as
+*acceptance criteria* — but Phase 3/Task 5 stays **"PRODUCTION PATH WIRED, gate OFF"**, and
+no other row changes. The reason is ruling **R-AD**: the FA default flip is deferred to the
+final act of Stage 1, gated on an empty Zero-Defect Register (5 open entries today), so
+passing the listening bar does not by itself move any phase. §3 row 2 (Task 2, 50/50
+silence-split) is again unaffected — `snapBoundaries.ts` was not touched. The only committed
+code change this session is `scripts/phase4-fa-replay.test.ts` (the register).
+
 **Other WS1 tasks, outside the phase/stage numbering** (carried from the pre-consolidation
 ledger, still live):
 
@@ -2339,6 +2348,404 @@ For each: is the boundary under test where the scene change belongs?
     reason recorded in (b) above.
 
 
+---
+
+**WS1 SESSION C (2026-08-16/17) — the ear pass closes; the ZERO-DEFECT PROGRAM opens.
+Five rulings recorded, three of them OVERRIDES; the Zero-Defect Register built and made
+machine-checkable; two blocking diagnoses measured. NO production code changed —
+`git diff` over `src/` and `src-tauri/` is empty except `scripts/phase4-fa-replay.test.ts`.
+FA gate stays OFF.**
+
+**(a) Rulings — R-AB..R-AF, recorded in `sync-pipeline-v2-plan.md`'s "WS1 SESSION C
+RULINGS" block.** Owner aliases in brackets. Rule-number series untouched; next free
+rule number is still **R.12**.
+
+| id | alias | what | overrides |
+|---|---|---|---|
+| **R-AB** | RC1 | Tier 2 satisfied; the ordering defect recorded (Tier 1 scored first, spending Tier 2's blinding). Result stands; blinded-tier-first is binding on the next draw. | — |
+| **R-AC** | RC4 | Unscored disclosed control accepted; Tier 1 12/12 stands. | — |
+| **R-AD** | OV1 | **FA default flip DEFERRED to the final act of Stage 1, gated on an EMPTY register.** | owner's RC2 ("FA default ON now") |
+| **R-AE** | OV2 | **Item 7 / R.11 PULLED INTO Stage 1.** | R-V's "*Placement:* after Stage 1" |
+| **R-AF** | OV3 | **The three RC3 candidates TRIAGED, not parked.** | owner's RC3 ("park them") |
+
+Each override is reachable from what it overrides: R-AD from R-S(iii)'s runtime paragraph
+and from the STAGE 1 LOCK GATE; R-AE from R-V/R.11; R-AF from R-AA's "12 dropped"
+paragraph; R-AB from R-AA's Tier-ordering amendment. **RC2 and RC3 had never been written
+into any document** — both are now recorded verbatim inside the ruling that overrides
+them, because an override pointing at nothing is not an override.
+
+**Scope, written into the lock gate rather than a footnote:** Stage 1's "zero defects" is
+**en/es only**. R-T defers fr/de/pt and that corpus does not exist. Carried risk, recorded
+against whichever later stage takes non-English: **text-normalization Rules 1-5 shipped
+for French, Portuguese and German and have never once been exercised against real audio.**
+
+**(b) THE ZERO-DEFECT REGISTER — reconciled across four sources.** Sources: the plan doc's
+rule text, this ledger's 12-item mechanism table, the FA gate's `KNOWN_BAD` manifest, and
+the ear-pass results. All four agree on the five open entries; no source carried an entry
+the others lacked.
+
+| ear item | corpus / tag | current | ear-correct | owning rule | in Stage 1 via | status |
+|---|---|---|---|---|---|---|
+| 4 | v6 `308_scouts_leading` | 928.67 | 931.40 | R.5 | R4 | OPEN |
+| 5 | v6 `043_night_migration` | 128.43 | 130.96 | R.5 | R4 | OPEN |
+| 7 | v6 `152_frozen_brush_mice` | 449.20 | 451.03 | R.11 | **R-AE** | OPEN |
+| 10 | 173 `hostile_landscape` | 1.36 | 0.00 | R.10 | R4 | OPEN |
+| 11 | 173 `blue_monkey` | 36.96 | *(drop, no numeric target)* | R.10 | R4 | OPEN |
+| 6 | 173 `vessel_damage_clue` | — | **174.74 asserted** | R-U/R-AA | — | CLOSED `92746cf` |
+| 9 | spanish `023_scylla_six_sailors` | — | **65.12 asserted** | forced-split | — | CLOSED `616abb2` |
+
+Item 9 was CONVERTED this session: it had been carried as a note only, and the Session B
+fixture refresh means the Spanish baseline now shows the live 65.12, so it can carry a
+real positive assertion. **Register: 5 open, 2 closed, roster 7.**
+
+**Exit status: X1 clear, X2 FLAGGED, X3 clear-but-qualified, X4 clear.** See (c)/(d).
+
+**(c) Enforcement — how each requirement is actually held** (`scripts/phase4-fa-replay.test.ts`,
+new `describe('WS1 Session C — the Zero-Defect Register')`):
+
+| requirement | mechanism |
+|---|---|
+| a test asserting the manifest is empty, skipped with a reason naming the open items | `it.skip('the Zero-Defect Register is EMPTY — SKIPPED: 5 open defects (item 4 R.5, …)')`. Skipped rather than red so a red suite always means REGRESSION, never "work not done". Un-skipping it is the Stage 1 lock's machine check, and it is now a criterion in the plan doc's STAGE 1 LOCK GATE. |
+| the manifest may only ever shrink, loudly | `REGISTER_HIGH_WATER = 5` + a test asserting `open.length <= REGISTER_HIGH_WATER`, whose failure message demands the constant, the roster and this ledger all be updated together. Growth cannot be a silent one-line diff. |
+| each entry carries item, rule, current, ear-correct, closing commit | `KnownBadRow` gained `owningRule` and `closingCommit` (empty until closed) as typed fields; `item`/`faValue`/`earCorrect` already existed. A bookkeeping test enforces that open rows have no closing commit and closed rows have one. |
+| removing an entry requires a positive assertion replacing it | `REGISTER_ROSTER` (append-only, all 7 items ever registered) + `CLOSED_BY_POSITIVE_ASSERTION`. Every roster member must be open in `KNOWN_BAD` **or** present in the closed list, and each closed entry generates its own `it` asserting the committed fixture at the **ear-correct** value. Deleting a row without converting it fails the roster test. This generalizes the pattern item 6 already followed at 174.74 so a future session cannot forget to copy it. |
+
+Gate size: **13 → 19 passing + 1 skipped.** M5 re-proved RED after the extension (2 failed
+/ 17 passed / 1 skipped) — the register did not weaken the gate. Mutation applied and
+reverted by explicit snapshot copy, never `git checkout`; `faAnchors.ts` sha256
+`b61e94cb…` identical before and after.
+
+**(d) DIAGNOSIS A — the R.10 detector respec. A clean discriminant EXISTS. Two premises in
+R-Z are WRONG on measurement.**
+
+*Method.* The real production aligner (`alignScenestoTranscript` after
+`filterMalformedTokens`) run over all three corpora from committed fixtures, joined to the
+R-AA FA word capture (`.work-phase4/recap/words-VG-*.json`, byte-identical `segs-VG-*` to
+the committed fixtures) with FA words attributed to segments by sequence alignment
+(monotonic, 0 unattributed, 649/649 segments).
+
+*Premise failures, measured against four independent input variants (filtered/raw tokens,
+with/without silences+duration, FA-baseline/Whisper-baseline segment arrays) — every
+variant gives the same answer:*
+
+| R-Z claim | measured |
+|---|---|
+| `perilous_realms` scores `alignConfidence` **0.778**, 0.009 from its victim | **0.0000** (0/9), `matched: false`. It is **0.769 away**, not 0.009. |
+| `blue_monkey` scores `alignConfidence` **1.000** | **0.0000** (0/7), `matched: false` |
+| item 9 `023_scylla_six_sailors` scores **1.000** and false-fires | **0.2857** (2/7) — it does **not** false-fire on the corrected signal |
+| the `alignConfidence == 1.000` conjunct is **degenerate on v6** (all 447 exactly 1.000) | **331/447 (74%)**, not 447. Informative, not constant. |
+| `hostile_landscape` 0.769 | **0.7692** ✓ — the one figure that reproduces |
+
+**The thief/victim adjacency that motivated R-Z does not exist.** It was an artifact of
+those numbers. The victim keeps most of its tokens (10/13); the thief has **none** — the
+two are maximally separated, not adjacent, and the asymmetry is structural, not a
+threshold to tune.
+
+*Also measured: R.10's own spec signal has a base rate its spec never checked.* "Every word
+`needsReview`" fires on **16 of 649** segments (2.5%), and 14 of those are perfectly
+ordinary short spoken lines — `150_listening_intent` ("You are not listening for a sound."),
+`013_silent_prehistoric_night` ("The night goes quiet."), `042_eleven_years` ("You are
+eleven."). FA's per-word confidence is near-zero across large parts of the corpus, so
+"7/7 below `CONF_MIN`" is **not** diagnostic on its own. The spec calls this signal
+"measured not assumed"; it was measured on the positives only.
+
+***The discriminant.*** A segment is scripted-text-never-spoken when **all three** hold:
+
+```
+  (1) the Whisper alignment REFUSED it        alignResult.matched === false
+  (2) FA had no acoustic support anywhere      max(word.confidence) < 5e-4
+  (3) it is not a single-word segment          wordCount >= 2
+```
+
+*Performance over all 649 segments: fires on exactly 2 — `perilous_realms` and
+`blue_monkey`. **2/2 true positives, 0 false positives.*** Every conjunct is load-bearing
+and each alone over-fires:
+
+| rule | fires | TP | FP |
+|---|---|---|---|
+| (1) alone | 8 | 2 | 6 |
+| (2) alone | 10 | 2 | 8 |
+| "all words `needsReview`" (R.10 as specified) | 16 | 2 | 14 |
+| (1) ∧ "all words `needsReview`" | 3 | 2 | 1 |
+| **(1) ∧ (2) ∧ (3)** | **2** | **2** | **0** |
+
+*Separation margin.* Highest positive `maxWordConfidence` **1.725e-05** (`perilous_realms`);
+lowest negative **1.465e-02** (spanish `001_scylla_intro`) — a **850×** gap with nothing
+inside it. Against the segments that matter most — the 5 genuinely-spoken lines Whisper
+missed and FA correctly recovered — the gap is **~58,000×** (they sit at 0.99–1.00). The
+threshold `5e-4` is the **geometric midpoint** of the two nearest points (√(1.725e-05 ×
+1.465e-02) = 5.03e-04), i.e. derived, not fitted — 30× clear on both sides.
+
+*Conjunct (3) adjudicated, not assumed.* The only thing (3) removes is spanish
+`001_scylla_intro` ("Scylla.", 1 word). It is **not** a never-spoken case: Whisper
+transcribes `S`+`illa` at [0.12, 0.64] **and again** at [0.84, 1.21] — the word is spoken
+twice, and `matched: false` is a subword-tokenization artifact (script "Scylla" vs a
+Spanish narrator's pronunciation), while its 1.5e-02 confidence is FA correctly signalling
+orthographic uncertainty. Either (2) or (3) excludes it; both are kept because they
+exclude it for different and independently correct reasons.
+
+*Behaviour at the adjacency:* `hostile_landscape` (victim) `matched: true`, does not fire.
+Item 9 `matched: true`, does not fire. Both correct.
+
+***R.10 RESPEC, to buildable depth.***
+  - **Trigger.** Evaluated once per segment, on FA's output, after `alignScenestoTranscript`
+    and after the FA word timings return — a drop/skip gate layered on FA's output, not a
+    change to the alignment computation. Unchanged from the original spec on this point.
+  - **Signal.** `alignResult.matched === false` **∧** `max(faWords.confidence) < R10_MAX_WORD_CONF`
+    **∧** `faWords.length >= 2`. **`alignConfidence` is not used at all** — the original
+    spec was right that it is text-match confidence and blind to this; R-Z was right to
+    reopen the signal; the fix is to delete the conjunct, not re-threshold it.
+  - **Threshold.** `R10_MAX_WORD_CONF = 5e-4`, derived above. **It is NOT `CONF_MIN`** —
+    `CONF_MIN` (0.3) over-fires 16/649. Give it its own constant in `syncConstants.ts`;
+    do not reuse `CONF_MIN`, and do not let the two drift into each other.
+  - **Expected behaviour.** Treat the segment as unmatched and drop it (R.7's
+    skip-and-flag), emit an `unspoken-script` sync-log finding naming the segment. Under
+    Model P the dropped span is absorbed by the preceding segment exactly as R-E already
+    rules for R.5's wildcard.
+  - **Interaction with R.5 — they cannot both fire.** R.5 triggers on *audio with no
+    script counterpart* (an unclaimed Whisper-token run); R.10 on a *segment with no audio
+    counterpart* (`matched === false`). A segment cannot simultaneously have zero matched
+    tokens and be the owner of a surplus token run. Measured: the R.5 candidate set and
+    the R.10 firing set are **disjoint** on all three corpora. No arbitration rule needed;
+    an assertion that they never both fire on the same segment is cheap and worth adding.
+  - **Effect on the qi contract.** Dropping a segment removes its words from
+    `normalizeSceneDoc`'s sequence, so `computeRunContext`'s offsets and `faChunkPlan.ts`'s
+    indexing must be computed **after** the drop, not before — the same ordering
+    requirement item 9's forced-split attribution bug (`616abb2`) already established.
+    This is the single highest-risk part of building R.10 and is where session E's
+    `assertQiMapConsistent` should bite first.
+
+**(e) DIAGNOSIS B — item 7 root cause. It is NOT a word-seam-midpoint defect; that is the
+symptom. R-V's reachability claim is too strong.**
+
+*What was already known:* the boundary 449.20 is the midpoint of FA's own word seam ("one"
+ends 449.18, "when" starts 449.22), no silence and no anchor participates. That says where
+the number comes from.
+
+*(a) The drift, traced across the whole region.* Ground truth (Whisper, unforced):
+
+```
+  You are not listening for a sound   [444.38 … 446.31]     -> seg 150
+  You are listening for the absence of one [447.09 … 449.64] -> seg 151
+  <<< 1.60s with NO transcribed speech at all >>>
+  brush mice stop moving through dry leaves [451.24 … 453.03] -> seg 152
+```
+
+The script for segment 152 is *"**When the** brush mice stop moving through dry leaves"* —
+and **Whisper never transcribed "When the"** anywhere in that hole. (It transcribes "When
+the" perfectly 6 seconds later at 455.44 for `154_silent_night_birds`, so this is not a
+systematic Whisper failure on those words.)
+
+FA's placement of segment 152, with confidences:
+
+```
+  when[449.22-449.30] 1.5e-03   the[449.32-449.44] 3.0e-06   brush[449.52-449.82] 1.4e-05
+  mice[449.86-449.96] 1.4e-06   stop[450.18-451.68] 5.2e-07   <-- 1.50s long, spans the silence
+  moving[452.92-453.18] 1.0e+00 through 9.7e-01  dry 1.0e+00  leaves 1.0e+00
+```
+
+Five words crushed into the front at 1e-03…1e-07, then confidence snaps to 1.0 at
+"moving". **The drift starts at segment 149 and recovers fully by segment 152's sixth
+word** — bounded, non-compounding, exactly as R.8 Case 3 predicts.
+
+*(b) The mechanism, established by evidence rather than assumed.* The R.1 anchor at
+**451.70** (the end of detected silence [450.36, 451.70]) cuts the chunk plan **mid-segment**:
+segment 152's 9 words are split 5/4 across chunks `[448.34, 451.70]` and `[451.70, 460.56]`.
+The first window is handed "when the brush mice stop" — but the audio for those words
+(`brush` 451.24, `mice` 451.32, `stop` 451.51 per Whisper) lies **at or beyond that window's
+END**, and 1.34s of the window's 3.36s is detected silence. FA, required to place every
+target token somewhere, crushes them into the only frames available. **Cause: a chunk
+window whose attributed text does not fit its audio. The word-seam midpoint is what
+`snapBoundaries.ts` correctly computes from that wrong input.**
+
+Candidates eliminated: *text-side mismatch* — the script text is correct and normalizes
+correctly; *genuine acoustic ambiguity* — refuted by confidence snapping to 1.0 within the
+same segment; *Viterbi pathology* — the path is monotonic and recovers, so it is behaving
+as designed on a bad window. *Chunk-window edge effect* — **confirmed, this is it.** An
+R.5/R.6 wildcard covering the 1.60s hole would also relieve it, which is why the two rules
+must be built in the order given in (g).
+
+*(c) Siblings — a small CLASS, not a one-off.* Boundaries that are an FA word-seam
+midpoint **and** back-to-back (seam gap ≤ 0.05s) **and** have no detected silence spanning
+them: **10 of 646 internal boundaries.**
+
+| corpus | tag | boundary |
+|---|---|---|
+| 173 | `blue_monkey` | 36.96 |
+| v6 | `056_dropping_torch` | 167.03 |
+| 173 | `rugged_landscape` | 228.48 |
+| v6 | `087_throwing_spear_poise` | 259.47 |
+| 173 | `ancient_guardian_mechanism` | 382.20 |
+| **v6** | **`152_frozen_brush_mice` (item 7)** | **449.20** |
+| v6 | `167_smell_of_butchery` | 494.43 |
+| v6 | `231_slowing_pace` | 681.63 |
+| v6 | `403_vigilant_embers` | 1273.14 |
+| v6 | `406_listening_darkness` | 1289.74 |
+
+For contrast, **39** boundaries are word-seam midpoints *with* a silence spanning them
+(median seam gap 0.52s) — those are the rule working correctly. None of the other 9 is
+ear-verified; they are candidates, not confirmed defects, and must not be added to the
+register on this evidence alone.
+
+*(d) Where the fix lands: `faChunkPlan.ts` (R.7's fit precheck / text attribution), with a
+possible companion in `faAnchors.ts` (anchor admissibility). **Exit X1 does NOT fire.***
+`snapBoundaries.ts` is **not** required: its spoken-edge-midpoint fallback
+(`snapBoundaries.ts:336`) is behaving correctly given the inputs it receives — feed FA's
+"when" its true ~451.1 onset and the same untouched code lands near the ear-correct 451.03.
+The Hirschberg aligner is not implicated either.
+
+*(e) Interaction with R-AA: confirmed neither causes nor masks it.* Item 7's end anchor
+comes from silence [450.36, 451.70], which **swallows** three token seams — many, not zero
+— so R-U/R-AA's zero-seam veto structurally cannot fire there, and item 7 is bit-identical
+under both readings. **Warning for session F, measured so the R-U mistake is not repeated a
+third time: the tempting symmetric fix — "veto a silence that swallows token seams" — is
+catastrophically broad. 62.9% of v6 silences (344/547), 22.2% of 173 and 63.0% of spanish
+swallow at least one whole Whisper token.** A blanket multi-seam veto is not the fix.
+
+*Starting signal for session F, measured, offered as a starting point and explicitly not a
+rule:* chunk "fit" = attributed script words ÷ Whisper token onsets inside the window.
+Corpus median **1.00**, p90 **1.12**; item 7's chunk is **1.43**, ranking **10th of 381
+chunks**. Real signal, top-3% outlier, but **not** self-sufficient — it must be combined
+with the per-word confidence collapse. Session F measures that combination before ruling.
+
+**(f) R.5 SPEC — brought to buildable depth, grounded in both real cases.**
+
+*The two cases, measured (not previously written down at this resolution):*
+
+| item | unscripted audio actually present in the WAV | span | consequence |
+|---|---|---|---|
+| 5 | *"Level two. The boy who carries fire."* | [125.54, 129.01] | FA put `042_eleven_years` ("You are eleven.") onto it at [125.96, 128.34]; boundary 128.43 vs ear 130.96 |
+| 4 | *"Level 8. The one who teaches what cannot be taught easily."* | [925.14, 928.93] | FA put `307_forty_nine_years` ("You are forty-nine.") onto it at [927.28, 928.64]; boundary 928.67 vs ear 931.40 |
+
+Both victim segments are in the 16 all-words-`needsReview` set — that is the *effect*, and
+it is why the R.10 signal must not be keyed on it.
+
+***Detection — how unscripted audio is recognised with no script counterpart.*** Not by
+timestamps. **By unclaimed Whisper-token RUNS in the token index space**: tokens covered by
+no matched segment's `[firstTokenIdx, lastTokenIdx]` span, grouped into maximal runs of
+≥3 tokens. Measured recall: this surfaces **all 10** of v6's unscripted "Level N"
+recitations — Level one/two/three/four/5/6/7/8/9/10 — matching Step K's independently
+counted 10 headings exactly. **10/10 recall.**
+
+*Precision needs a second term, and it was measured, not guessed.* Raw runs: 48 across the
+three corpora (13 v6 / 22 173 / 13 spanish); most are subword-fragment noise from the
+matcher ("Cat ac an" = Catachan, "bulk head ions press ur ize"). Exact-substring rejection
+against the script is too weak (leaves 32). **Fuzzy containment against the flattened
+script separates cleanly:** every one of the 10 true headings scores **0.58–0.60**, and
+every false candidate scores **≥ 0.67** — no points between.
+
+```
+  unscripted-audio run  <=>  run length >= 3 tokens
+                        AND  bestFuzzyContainment(run, script) < 0.65
+```
+
+**At 0.65: 10/10 recall, 0 false positives across all three corpora.** *Measured caveat,
+stated because it is the part that must be re-derived:* the containment ratio above is a
+Python `SequenceMatcher` **proxy**. Session D must re-derive the threshold against the
+production `isFuzzyMatch`/`canonicalizeForAlignment`. What transfers is the **shape** —
+headings sit well below the noise floor with a clear gap — not the literal 0.65.
+
+***Behaviour.*** The run's span becomes a CTC wildcard between the two neighbouring
+segments inside the R.0 run, absorbing that audio at zero alignment cost. Per **R-E**
+(already ruled, 2026-08-11) the wildcard span is assigned to the **preceding** segment, so
+Model P and Σ-duration are preserved unchanged; logged as an `unscripted-gap` sync-log
+entry so it is inspectable rather than silent.
+
+***Contract effects.*** `normalizeSceneDoc` word counts are **unchanged** (the wildcard adds
+no script words); `computeRunContext` offsets are unchanged for the same reason;
+`faChunkPlan.ts` gains a wildcard element in the chunk text that must **not** consume a qi
+index — this is the qi-contract risk and where `assertQiMapConsistent` must bite.
+**R.10 interaction:** disjoint by construction and measured disjoint (see (d)).
+**R-AA interaction:** none — R.5 operates on unclaimed token runs; R-AA operates on
+silence-vs-seam containment for anchor admissibility. Different inputs, different stage.
+
+***Expected blast radius, with the method for measuring it before building.*** A.5's
+already-run experiment for item 5 (adding a segment for the extra "Level Two…" audio)
+produced **0/3874 differing FA word rows and 4/447 moved boundaries** — so the mechanism is
+local. Method for session D, to be run *before* the build: insert wildcard spans at the 10
+detected v6 runs into the chunk plan only, re-run `computeFaChunkPlan` offline, and diff
+the plan row-for-row against the committed pins. Anything beyond the chunks adjacent to the
+10 runs is unexpected and stops the build.
+
+**(g) X2 — FLAGGED. R.10 and R.11 interact; sequencing needs the ruling below.** Two
+measured couplings, both one-directional:
+  1. `blue_monkey` (item 11, R.10) is **a member of item 7's 10-boundary sibling class**.
+     Building R.10 drops that segment, so the class census changes from 10 to 9 **before
+     session F measures it**.
+  2. 173's worst chunk-fit outlier (ratio **2.14**, the highest of all 381 chunks) is the
+     chunk containing `blue_monkey` — the same never-spoken text inflating the fit signal
+     session F intends to use.
+
+Neither changes item 7 itself; both change the *population* session F must measure against.
+**Consequence: R.10 (session E) must land before R.11 (session F) measures its class.**
+That is the order the spine already had, so no re-sequencing is required — but it is now a
+dependency with a reason, not an accident, and session F must **re-run the sibling census
+after E lands** rather than reusing the 10 above.
+
+**(h) X3 — clear, with one qualification the owner should see.** Reconciliation found no
+defect class missing from the register. But the 8 Whisper-unmatched segments include 6 that
+are **not** defects — they are the segments FA correctly **recovers** (v6
+`027_internal_change_face`, `028_small_permanent_flake`, `029_night_understanding`; 173
+`shadow_loss`; spanish `001_scylla_intro`, `003_scylla_six_necks`), all at FA confidence
+0.99–1.00. This ledger's §11 item 6 records that recovery as "3 V6 + 3 173 + **1** Spanish";
+measured today it is **3 + 3 + 2**. The extra Spanish row is `003_scylla_six_necks`, and the
+discrepancy is consistent with the post-`616abb2` fixture refresh. **Not a defect, not a
+register entry — a stale count, corrected here.**
+
+**(i) OV3 TRIAGE LIST — 5 rows, blinded, ~2 minutes. DO NOT open the key until scored.**
+Three RC3 candidates plus two unmoved controls, mixed, uniform columns, one boundary value
+per row, fixed ±4s window. Question per row: *is the boundary at the stated time correct?*
+
+| # | window (copy-paste) | boundary |
+|---|---|---|
+| 1 | `173` @ **599.69 – 607.69** | **603.69** |
+| 2 | `v6` @ **431.15 – 439.15** | **435.15** |
+| 3 | `173` @ **12.50 – 20.50** | **16.50** |
+| 4 | `v6` @ **666.24 – 674.24** | **670.24** |
+| 5 | `173` @ **324.38 – 332.38** | **328.38** |
+
+<details><summary><b>OV3 KEY — do not open until all 5 rows are scored</b></summary>
+
+Row 1 = 173 `protection_failure` (RC3 candidate; in the 44). Row 2 = v6
+`148_breathing_clan` (**control**, unmoved, not on any prior ear list). Row 3 = 173
+`abysmal_opinion` (RC3 candidate; in the 44 **and** the 24). Row 4 = v6 `226_four_scouts`
+(RC3 candidate; in the 44). Row 5 = 173 `celestial_behemoth` (**control**, unmoved).
+
+Each RC3 row resolves to exactly one of: **correct as-is** → closed on the record;
+**defective** → enters the register (raise `REGISTER_HIGH_WATER`, extend `REGISTER_ROSTER`,
+add the row); **undecidable by ear** → closed with a named further step. A control scored
+"wrong" invalidates the sitting.
+</details>
+
+**(j) THE PROGRAM — ordered path from here to Stage 1 lock.** Standing requirements for
+**every** build session D–F, stated once and binding on all three: the FA replay gate will
+go red; every changed row classified **EXPECTED or UNEXPECTED before re-pinning**; M1–M5
+re-run after re-pinning with **M5 RED**; M4 reconfirmed a no-op **by chunk-plan equality,
+not by colour**; the V6 seam 150/151 unmoved at **457.83** with chunk `[451.70, 460.56]`
+bit-identical; item 6's positive assertion at **174.74** surviving; **golden replay 6/6**;
+`scripts/fixtures/phase4-baseline-*.csv` byte-identical.
+
+| session | builds | depends on | closes | gate behaviour | acceptance test |
+|---|---|---|---|---|---|
+| **D** | **R.5** unscripted-audio wildcard | Session C spec (f); re-derive the fuzzy threshold on the production matcher first | items **4, 5** | red at the 2 boundaries + the chunks adjacent to the 10 v6 runs; nothing else | items 4/5 convert to positive assertions at 931.40 / 130.96; blast radius ≤ the pre-measured envelope |
+| **E** | **R.10** drop gate | Session C respec (d); **R.5 landed** (qi ordering) | items **10, 11** | red at 173's first two boundaries; segment count 175 → 174 | item 10 converts at 0.00; item 11 converts to "not committed at all"; R.5/R.10 never co-fire |
+| **F** | **R.11** item-7 fix | Session C diagnosis (e); **E landed** (X2 — re-run the sibling census first) | item **7** | red at 449.20 → 451.03 | item 7 converts at 451.03; the other 9 siblings each classified EXPECTED/UNEXPECTED |
+| **G** | no code | D–F landed | — | green | D-1 regression checklist (9 items, never run) + Contract 1→2 human pass (dossier at `0d8420f`) |
+| **H** | no code | **register EMPTY** | — | green, `register is EMPTY` un-skipped | full-corpus ear pass, fresh blinded draw, **Tier 2 scored before any disclosing tier** (R-AB) |
+| **I** | FA default flip | H passed; R-N + Step T + runtime resolved | — | green | Stage 1 LOCK |
+
+*Session G's 9 checklist items — automatable now vs. needs a human:* the numeric/structural
+ones (determinism, contiguity, coverage, qi consistency, chunk-plan equality) are
+automatable today from committed fixtures; **Contract IN and Contract 1→2's
+guarantee-by-guarantee verification is explicitly owner inspection** per the lock gate's own
+wording and cannot be automated away. Session G must report the split rather than quietly
+automating the human half.
+
+*Still unresolved for session I beyond the register, all three re-opened by R-AD:*
+**R-N** static-link vs `load-dynamic` packaging; **Step T** model download; and the
+**~231s V6 runtime**, which R-S(iii) and R7 both leave open for the DEFAULT specifically
+and which RC2 would have overridden silently.
+
 **Deferred / Known Bugs (WS1, non-Task-5):**
 - `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5
   (`src/services/snapBoundaries.ts`) — the omitted 5th parameter silently defaults to
@@ -2408,6 +2815,58 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-16/17 — WS1 Session C: the ear pass closes, three owner decisions overridden,
+  the Zero-Defect Register built and made machine-checkable, two blocking diagnoses
+  measured.** No production code: `git diff` over `src/`/`src-tauri/` is empty except
+  `scripts/phase4-fa-replay.test.ts`. FA gate stays OFF. Full write-up: §11's Session C
+  block; rulings R-AB..R-AF in `sync-pipeline-v2-plan.md`'s "WS1 SESSION C RULINGS".
+  - **R-AB/R-AC (aliases RC1/RC4)** — Tier 2 satisfied, Tier 1 12/12 with the disclosed
+    unscored control accepted. The **ordering defect is recorded**: Tier 1 was scored
+    first, spending Tier 2's blinding. Result stands; blinded-tier-first is binding on the
+    next draw (session H).
+  - **R-AD (OV1) overrides RC2 — the FA default flip is DEFERRED**, not cancelled, to the
+    final act of Stage 1, released by an **empty register**. Defaulting onto five known ear
+    failures contradicts the zero-defect goal (the same pattern R4 already ruled against one
+    level down); RC2 also silently overrode R7 and R-S(iii) on the ~231s runtime, now
+    re-opened; and R-N/Step T mean the flip is inert today anyway.
+  - **R-AE (OV2) overrides R-V's placement — item 7 / R.11 is pulled INTO Stage 1.**
+  - **R-AF (OV3) overrides RC3 — the three candidates are TRIAGED, not parked.** ~75s of
+    listening; blinded 5-row list (3 candidates + 2 controls) drawn in §11.
+  - **Stage 1's "zero defects" is scoped to en/es, in the lock gate text itself** — fr/pt/de
+    normalization Rules 1-5 have never been exercised against real audio.
+  - **The register is now a test.** `KNOWN_BAD` IS the Zero-Defect Register: a skipped
+    `register is EMPTY` test is the Stage 1 lock's machine check; `REGISTER_HIGH_WATER`
+    makes growth loud; `REGISTER_ROSTER` + `CLOSED_BY_POSITIVE_ASSERTION` make an entry
+    convertible but not deletable. Item 9 converted to a real positive assertion at 65.12.
+    Gate **13 → 19 passing + 1 skipped**, and **M5 re-proved RED** after the extension.
+  - **Diagnosis A — R.10 has a clean discriminant, and two R-Z premises are wrong.**
+    Measured on the real production aligner across four input variants: `perilous_realms`
+    scores `alignConfidence` **0.000**, not 0.778, and `blue_monkey` **0.000**, not 1.000 —
+    so the thief/victim adjacency that motivated R-Z **does not exist**; and the
+    `== 1.000` conjunct is **331/447 on v6**, not degenerate. R.10's own "7/7 words
+    `needsReview`" signal has an unmeasured base rate of **16/649**. New rule —
+    `matched === false` ∧ `maxWordConfidence < 5e-4` ∧ `wordCount >= 2` — fires on
+    **exactly 2 of 649, 2/2 TP, 0 FP**, margin **850×**, threshold derived as the geometric
+    midpoint. Respec written to buildable depth.
+  - **Diagnosis B — item 7 is a chunk-window defect, not a word-seam defect.** Whisper
+    transcribes **nothing** in the 1.60s between "one" (449.64) and "brush" (451.24); the
+    R.1 anchor at 451.70 splits segment 152's words 5/4 across two chunks, handing the first
+    window text whose audio lies past its end. **Sibling class: 10 of 646** (vs 39 healthy
+    midpoint boundaries that do sit in a silence). **Fix lands in `faChunkPlan.ts` —
+    X1 does NOT fire**; `snapBoundaries.ts` is computing correctly from bad input.
+    Measured warning for session F: a symmetric "veto multi-seam silences" rule would hit
+    **62.9% of v6 silences**.
+  - **R.5 spec to buildable depth.** Detection is unclaimed Whisper-token runs — **10/10
+    recall on v6's ten "Level N" recitations**, matching Step K's independent count — plus
+    a fuzzy-containment term that gives **0 false positives** across all three corpora.
+    Both real cases measured end-to-end for the first time.
+  - **X2 FLAGGED:** `blue_monkey` sits in item 7's sibling class and in the worst chunk-fit
+    outlier, so R.10 (session E) must land before R.11 (session F) re-measures. X1, X3, X4
+    clear. Stale count corrected: FA recovers **3+3+2** Whisper-unmatched segments, not
+    3+3+1.
+  - **Program to Stage 1 lock sequenced D→I** with per-session dependencies, register
+    entries closed, gate behaviour and acceptance tests, plus the standing D–F requirements.
 
 - **2026-08-16 — WS1 Session B.1: the seam-REGION reading adopted (R-AA), 16 moved
   boundaries narrowed to 4, gate re-pinned a second time and re-proved against M5.** The

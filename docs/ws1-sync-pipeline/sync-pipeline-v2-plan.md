@@ -1772,7 +1772,10 @@ Stated with its limit: n = 4, so this is a direction, not a proof.
 ruling on the record.* Full table in `docs/work-in-progress.md` §11. Three of
 them are in the 44 (`173 protection_failure`, `173 abysmal_opinion` — also in
 the 24 — and `v6 226_four_scouts`) and are the ones a later rule should
-revisit; the other nine, including the entire 173 ord 143-148 cluster and item
+revisit — **those three are the RC3 candidates, and they are now TRIAGED, not
+parked, by ruling R-AF (WS1 Session C, the "WS1 SESSION C RULINGS" block
+above), which overrides the owner's ear-pass decision RC3 to park them; the
+blinded triage list is drawn in `docs/work-in-progress.md` §11**; the other nine, including the entire 173 ord 143-148 cluster and item
 11's `blue_monkey`, have no independent evidence against them and were moved
 by the instant reading alone.
 
@@ -1794,7 +1797,27 @@ per-word timings put two adjacent words' spans back-to-back, and the boundary
 commits at the midpoint of that FA-internal word seam. No detected silence
 participates at any point. *Evidence:* v6 `152_frozen_brush_mice`, committed
 449.20 — FA has "one" ending at 449.18 and "when" starting at 449.22, and
-449.20 is exactly their midpoint; ear-correct is 451.03. *Why `faAnchors.ts`
+449.20 is exactly their midpoint; ear-correct is 451.03.
+
+> **PLACEMENT OVERRIDDEN by R-AD's sibling R-AE (2026-08-16, WS1 Session C,
+> above at the "WS1 SESSION C RULINGS" block) — R.11 is PULLED INTO STAGE 1.**
+> This ruling's substance (item 7 is its own defect class, unbundled from R-R,
+> a different mechanism from item 6) stands unchanged; only its "*Placement:*
+> after Stage 1" clause below is superseded.
+>
+> **The reachability claim in the next paragraph is ALSO too strong, on
+> measurement** — see WS1 Session C's Diagnosis B in
+> `docs/work-in-progress.md` §11. It is true that `faAnchors.ts` never sees an
+> FA word timing, and true that R-U/R-AA leave item 7 bit-identical. It does
+> NOT follow that no anchor-side change can reach it: Session C measured that
+> item 7's chunk window `[448.34, 451.70]` is cut by an R.1 anchor at 451.70
+> that lands in the middle of the segment's own speech, and that the window is
+> handed 5 script words whose audio (per Whisper: `brush` 451.24, `mice`
+> 451.32, `stop` 451.51) lies at or beyond its END. The word-seam midpoint is
+> the SYMPTOM; the too-short window is the mechanism, and that window is
+> `faChunkPlan.ts`/`faAnchors.ts` territory.
+
+*Why `faAnchors.ts`
 cannot reach it:* that module runs strictly BEFORE any FA pass and consumes
 only (Hirschberg output, Whisper tokens, silences, duration). It never sees an
 FA word timing, so no change to it — R-U included — can move this boundary.
@@ -1815,6 +1838,123 @@ is only as trustworthy as it: the re-capture driver was validated by replaying
 the PREVIOUS capture's own words through it and reproducing all three
 committed `phase4-fa-second-baseline-*-segments.csv` fixtures byte-for-byte,
 BEFORE the changed input was fed through it.
+
+---
+
+## WS1 SESSION C RULINGS (2026-08-16/17) — the ear pass closes, and the ZERO-DEFECT PROGRAM opens
+
+**Identifier note.** Five rulings are recorded here under the two-letter series
+this document's own IDENTIFIER CONVENTION block (`:1709`) established: **R-AB,
+R-AC, R-AD, R-AE, R-AF**. The owner's session brief referred to them as RC1,
+RC4, OV1, OV2, OV3; those aliases are kept inline so the brief and this
+document can be read against each other. The rule-number series is untouched —
+**next free rule number is still R.12**; nothing here creates a new `R.n`.
+
+**R-AB ruling (owner, 2026-08-16) — TIER 2 IS SATISFIED; the ORDERING DEFECT is
+recorded (alias RC1).** Both R-X tiers ran and both passed: Tier 1 12/12 scored
+plus the disclosed unscored control, Tier 2 8/8. All 4 R-AA movers passed in
+both tiers; 13 unmoved controls passed across both.
+
+*The defect, recorded rather than smoothed over.* R-AA's amendment (`:2165`)
+states in terms that **Tier 2 must be scored BEFORE Tier 1**, because Tier 1
+discloses each row's arm and 4 of its rows reappear blinded in Tier 2. Tier 1
+was scored first. That spent Tier 2's blinding on exactly the rows the control
+experiment existed to test. **The result stands** — the owner rules it
+accepted, and the unmoved-control arm passing is independent evidence against
+the "this listener says yes to everything" failure R-X was written to catch.
+But the blinding is spent, so Tier 2's 8/8 is corroboration, not the
+independent confirmation its design intended. **Binding on the next draw: the
+blinded tier is scored before any disclosing tier, without exception.** Session
+H (`docs/work-in-progress.md` §11) inherits this as a hard precondition.
+
+**R-AC ruling (owner, 2026-08-16) — the UNSCORED CONTROL is ACCEPTED (alias
+RC4).** Tier 1's 12/12 stands with `vessel_damage_clue` (ear-pass item 6)
+disclosed and unscored. R-S(i) bars scoring a boundary chosen before the fix
+existed, and item 6 is exactly that; it was shown so the census of all 4 R-AA
+movers is complete, not to be graded. See R-AA's amendment at `:2152`.
+
+---
+
+### The three overrides — recorded as overrides, on the owner's explicit authority
+
+The owner's standing instruction, quoted because an override without its
+warrant is just a contradiction: *"if my decisions are causing trouble, you can
+override them — do what's best, permanent, long term."*
+
+**R-AD ruling (2026-08-16) — the FA DEFAULT FLIP is DEFERRED, not cancelled
+(alias OV1). OVERRIDES the owner's ear-pass decision RC2 ("FA default ON
+now").**
+
+*The decision being overridden, recorded here because it was never written
+into this document and an override must be readable next to what it
+overrides.* **RC2 (owner, ear pass, 2026-08-16): flip `isFaGateOpen()`'s
+default from OFF to ON now, on the strength of Tier 1 12/12 and Tier 2 8/8.**
+RC2 also, by implication, overrode R7 and R-S(iii) — the ~231s V6 runtime that
+both of those rulings hold open as an unresolved blocker for the DEFAULT
+specifically (R-S's own "Runtime — accepted for an opt-in toggle; NOT resolved
+for the default", `:2098`).
+
+*What R-AD substitutes.* The flip becomes the **FINAL act of Stage 1**, and its
+release condition is exact and machine-checkable: **the Zero-Defect Register is
+empty** (`scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` manifest at length 0,
+with the currently-skipped `register is empty` test passing). Not "mostly
+empty", not "empty except the deferred ones". Empty.
+
+*Three reasons, in order of weight.*
+  1. **It contradicts the owner's own stated end goal.** The goal is Stage 1
+     locked with absolute zero bugs. Defaulting to a path that carries five
+     known ear failures (items 4, 5, 7, 10, 11) makes those five the behaviour
+     every user gets on every Apply Sync. R4 (`:4480`) already ruled on this
+     exact pattern one level down — it pulled R.5 and R.10 *into* Stage 1
+     precisely so the stage would not lock over defects scheduled for later.
+     Flipping the default before those land is the same pattern one level up.
+  2. **It silently re-decides the runtime question.** RC2 overrode R7 and
+     R-S(iii) without re-arguing them. Deferring the flip means that override
+     can be taken deliberately, once the register is closed and we know
+     whether any optimisation happened. **The ~231s V6 wall-clock is recorded
+     here as STILL UNRESOLVED for the default** — see R-S(iii) (`:2098`) and
+     R7, neither of which this ruling discharges.
+  3. **The flip is inert today anyway.** R-N packaging (static-link vs
+     `load-dynamic`) and Step T model download are both unresolved, so a user
+     without a `model.onnx` and an `ORT_DYLIB_PATH` gets a cleanly-failing FA
+     call regardless of the default. Flipping a default that cannot engage is
+     not a shipped feature.
+
+**The owner's intent is preserved in full: FA becomes the default. It becomes
+the default on a clean register.**
+
+**R-AE ruling (2026-08-16) — ear-pass item 7 / R.11 is PULLED INTO STAGE 1
+(alias OV2). OVERRIDES R-V's placement clause (`:1795`, "*Placement:* after
+Stage 1").** Zero defects means zero. A known ear failure sitting on the path
+that is about to become the default cannot sit outside the lock scope. R-V's
+*substance* is untouched — item 7 is still its own defect class R.11, still
+unbundled from R-R, still a distinct mechanism from item 6. Only its schedule
+moves. See also the Session C root-cause diagnosis
+(`docs/work-in-progress.md` §11), which finds R-V's stated reachability claim
+too strong.
+
+**R-AF ruling (2026-08-16) — the three RC3 candidates are TRIAGED, not parked
+(alias OV3). OVERRIDES the owner's ear-pass decision RC3 ("park them for
+later").**
+
+*The decision being overridden.* **RC3 (owner, ear pass, 2026-08-16): the three
+named candidate defects R-AA left unfixed — `173 protection_failure`, `173
+abysmal_opinion`, `v6 226_four_scouts` — are parked for a later rule.** They
+are the three of R-AA's twelve dropped boundaries that carry independent
+evidence against them (all three in the 44 >0.5s FA-vs-Whisper disagreement
+set; `abysmal_opinion` also in the 24 >1.0s set) — see R-AA's own "12 dropped"
+paragraph at `:1770` and the full table in `docs/work-in-progress.md` §11.
+
+*Why the override.* Parking is the right call when triage is expensive. Here it
+is three boundaries at ~25s of listening each — roughly **75 seconds**. The
+owner's own "never ignore a defect" principle is honoured better by resolving
+them now than by filing them where a later session must rediscover why they
+were filed. Each resolves to exactly one of: **correct as-is** (closed on the
+record), **defective** (enters the Zero-Defect Register), or **undecidable by
+ear** (closed with a named further step). The triage list is drawn and ready in
+`docs/work-in-progress.md` §11; running it is the owner's, and it is ~2 minutes.
+
+---
 
 **R.2 — Padding, and how it is bounded.** A run's audio window is
 
@@ -2109,6 +2249,15 @@ not silence: shipping the toggle today is unblocked; shipping it as the
 default is not, and runtime is one of the three reasons why, alongside (i)
 and (ii) above.
 
+> **STILL UNRESOLVED, and deliberately re-opened — see ruling R-AD (WS1
+> Session C, the "WS1 SESSION C RULINGS" block above).** The owner's ear-pass
+> decision RC2 ("FA default ON now") would have overridden this criterion (iii)
+> and R7 together, without re-arguing either. R-AD DEFERS that flip to the
+> final act of Stage 1, gated on an empty Zero-Defect Register — which means
+> criterion (iii) above is live, not discharged, and the ~231s V6 wall-clock
+> must be separately ruled acceptable (optimized or otherwise) before the
+> default moves. R7 is likewise undischarged.
+
 ---
 
 **R-X ruling (owner, 2026-08-16) — TWO-TIER acceptance bar, amending R-S(i).**
@@ -2168,6 +2317,14 @@ structure, which changes what fills each tier but not what either tier gates:
   reappear blinded in Tier 2 — scoring Tier 1 first would unblind half the
   control experiment. Session B's lists had the same overlap and did not say
   this.
+
+> **THIS ORDERING WAS VIOLATED ON THE RUN, and the result is accepted anyway —
+> ruling R-AB (alias RC1, WS1 Session C, the "WS1 SESSION C RULINGS" block
+> above).** Tier 1 was scored first, spending Tier 2's blinding on the four
+> mover rows. Both tiers passed (Tier 1 12/12 + disclosed control, Tier 2 8/8)
+> and the result stands, but Tier 2's 8/8 is corroboration rather than the
+> independent confirmation R-X designed it to be. R-AB makes "blinded tier
+> first" a hard precondition on the next draw (Session H).
 
 Estimated listening cost at ~25s/boundary: 21 rows (13 Tier 1 including the
 unscored control + 8 Tier 2) ≈ **9 minutes**, against ~19 minutes for Session
@@ -4466,6 +4623,29 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   later is the exact pattern the Phase 3c ruling (above) and D.-1's hard rule
   already warn against.
 - Cross-cutting regression checklist (D.-1) run and clean.
+- **The ZERO-DEFECT REGISTER is EMPTY — added 2026-08-16 (ruling R-AD, WS1
+  Session C).** The register IS
+  `scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` manifest, and the check is
+  the `the Zero-Defect Register is empty` test in that file, which is
+  `it.skip`-ed today with the open items named in its skip reason. Stage 1 does
+  not lock while that test is skipped or red. Entries may only ever be
+  CONVERTED (deleted and replaced by a positive assertion at the ear-correct
+  value, the pattern ear-pass item 6 follows at 174.74), never simply removed.
+- **FA default flip (`isFaGateOpen()` OFF → ON) is the FINAL act of Stage 1**,
+  taken only once the register is empty — ruling R-AD, which defers the
+  owner's ear-pass decision RC2. Criterion R-S(iii) (runtime, ~231s on V6) and
+  R7 are undischarged and gate it alongside the register.
+
+**SCOPE OF "ZERO DEFECTS" — en/es ONLY, stated here and not in a footnote.**
+Ruling R-T (above, next to Phase 3b) defers French, Portuguese and German out
+of Stage 1, and the owner has not supplied that corpus. So every zero-defect
+claim in this gate is scoped to **English and Spanish** — the two languages the
+verification corpus actually contains (v6 + 173 en, spanish es). **The carried
+risk, recorded against whichever later stage takes non-English:
+text-normalization Rules 1-5 shipped for fr/pt/de and have never once been
+exercised against real audio in any of them.** "Stage 1 locked with zero
+defects" must never be read, quoted, or summarised as unqualified — it means
+*zero defects in en/es, with fr/pt/de untested by construction*.
 
 **Status as of 2026-08-05: NOT PASSED.** Explicit blocking list, recorded so the next session doesn't re-derive it:
   (a) smear thresholds unmet → needs Phase 3. **Sharpened by Phase 2b (2026-08-05):** the thresholds are now FINALIZED (four of them, see Phase 1b's entry) and the shipped config fails **7 of 8 readings** across the two projects. The blocker is no longer "smear is too high" — it is **"the timing source is of the wrong kind": it emits gapless word spans (93–98% of transitions) and silently deletes words via zero-duration timestamps (68 on V6, 44 on 173).** DTW is eliminated as a remedy (measured zero effect); only forced alignment can clear this;
