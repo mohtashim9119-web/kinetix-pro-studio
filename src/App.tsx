@@ -111,6 +111,7 @@ import {
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
 } from './services/faUnspokenGate';
+import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -3079,6 +3080,32 @@ export default function App() {
       // wherever the aligner's matched span put it — the first spoken word,
       // not necessarily 0). Stretch it back to 0 the same way.
       finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
+
+      // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
+      // ONLY when FA actually produced the tokens (mirrors R.10's own
+      // gating) and only AFTER the final committed array exists, since
+      // detection compares the COMMITTED boundary against a real silence's
+      // midpoint. `anchorTimed`/`projectRef.current.transcriptTokens!` are
+      // the SAME (complete, pre-skip, raw-token) inputs
+      // `runForcedAlignmentForSync` gave `computeFaChunkPlan` to produce the
+      // real chunk plan FA was run against — required for the detector's
+      // own word-index attribution to mean anything.
+      if (faTokens) {
+        const seamFitFindings = detectSeamFitDefects(
+          anchorTimed,
+          projectRef.current.transcriptTokens!,
+          faTokens,
+          aligned.silences,
+          audioDuration,
+        );
+        if (seamFitFindings.length > 0) {
+          console.warn(
+            `[sync] R.11 — ${seamFitFindings.length} chunk-fit boundary correction(s):`,
+            seamFitFindings,
+          );
+        }
+        finalTimedSegments = applySeamFitCorrections(finalTimedSegments, seamFitFindings);
+      }
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface

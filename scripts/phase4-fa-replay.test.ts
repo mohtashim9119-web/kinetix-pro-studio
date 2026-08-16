@@ -142,6 +142,7 @@ import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
+import { R11_MIN_FIT_DEVIATION } from '../src/services/syncConstants';
 import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
@@ -283,60 +284,11 @@ interface KnownBadRow {
   note: string;
 }
 
-const KNOWN_BAD: KnownBadRow[] = [
-  {
-    id: 'item-7', origin: 'ear-12', item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', owningRule: 'R.11', closingCommit: '',
-    faValue: 449.20, earCorrect: 451.03,
-    mechanism: 'R.11 (FA word-timing defect: FA\'s own word-seam midpoint, no silence involved) — opened by owner ruling R-V',
-    status: 'open',
-    note: 'NOT reachable by faAnchors.ts (owner ruling R-V, WS1 Session B — unbundled from R-R and given its own ' +
-      'defect class, R.11). Session B measured it directly: 449.20 is FA\'s OWN word-seam midpoint ("one" ends 449.18, ' +
-      '"when" starts 449.22) with no silence involved at all, and the R-U zero-seam rule left it bit-identical, exactly ' +
-      'as R-V predicted. Scoped after Stage 1; stays known-bad until R.11 is built.',
-  },
-  // ---- WS1 Session E: items 10 and 11 LEFT this table. R.10 landed
-  // (`src/services/faUnspokenGate.ts`) and both converted into positive
-  // assertions below — item 10 at its ear-correct 0.00, item 11 as an ABSENCE
-  // assertion, which is what `earCorrect: null` has always meant.
-  // ---- WS1 Session D: the two defects owner ruling R-AF's OV3 triage
-  // confirmed by ear. Neither has an ear-item number (they came from a blinded
-  // 5-row sitting, not the 12-item list), which is what `origin`/`id` exist
-  // for. The third candidate, 173 `protection_failure` @603.69, was scored
-  // CORRECT and closed on the record without ever entering the register.
-  {
-    id: 'ov3-abysmal-opinion', origin: 'ov3-triage', corpus: '173', tag: 'abysmal_opinion',
-    owningRule: 'R.11', closingCommit: '',
-    faValue: 16.50, earCorrect: 17.88,
-    mechanism: 'R.11 (chunk window whose attributed text does not fit its audio) — Session D diagnosis',
-    status: 'open',
-    note: 'Measured in WS1 Session D and it is NOT a new class: it is item 7\'s ROOT CAUSE, found through a ' +
-      'different symptom. Chunk [16.64, 18.08] is handed "the numbers. They\'re" — 4 script words against 2 ' +
-      'Whisper token onsets, fit 2.000, ranking 2nd of all 381 chunks (item 7\'s own chunk is 1.429 at rank 11). ' +
-      '"They\'re" is spoken at 18.10, BEYOND that window\'s end, so FA crushes it to [17.08, 17.40] at confidence ' +
-      '3.9e-03 and the boundary lands on the midpoint of silence [16.36, 16.64] — an interval with ZERO seconds ' +
-      'uncovered by speech. The ear-correct 17.88 is sitting right there as the midpoint of the real 0.40s gap ' +
-      '[17.68, 18.08]. NOT R.5: 173 has zero unscripted-audio runs. NOT R.10: its discriminant does not fire ' +
-      '(matched=true, maxWordConfidence 1.0). NOT the item-7 SYMPTOM signature either (seam gap 0.260s, and a ' +
-      'silence does span the boundary) — which is why Session C\'s 10-member sibling census missed it, and why ' +
-      'session F must re-derive that census from the fit signal rather than the seam signature.',
-  },
-  {
-    id: 'ov3-226-four-scouts', origin: 'ov3-triage', corpus: 'v6', tag: '226_four_scouts',
-    owningRule: 'R.11', closingCommit: '',
-    faValue: 670.24, earCorrect: 671.18,
-    mechanism: 'R.11 (chunk window whose attributed text does not fit its audio) — Session D diagnosis',
-    status: 'open',
-    note: 'The owner\'s Level-N hypothesis was PRE-REGISTERED and then REFUTED BY THE BUILD. The "Level 6" ' +
-      'recitation [663.91, 666.48] really is the nearest unscripted run, R.5 really did excise it, and this ' +
-      'boundary did NOT move — predicted 671.18, actual 670.24, unchanged. The reason is visible in the words: ' +
-      'R.5 re-seated "you"(224) and "you"(225), and every word from "are" onward is BIT-IDENTICAL, because the ' +
-      'boundary is decided inside chunk [669.40, 671.50] ("night scouts now. Four of them"), which R.5 never ' +
-      'touched. That chunk carries 6 script words against 8 token onsets — surplus AUDIO, fit 0.750 — so FA ' +
-      'crushes "four of them" to [670.32, 671.48] at 9.7e-04/1.6e-06/3.7e-07 and the boundary falls on FA\'s own ' +
-      'word-seam midpoint 670.24 instead of the real silence [670.86, 671.50], whose midpoint is 671.18. Same ' +
-      'root cause as item 7 and `abysmal_opinion`; adjacency to an unscripted run was a red herring.',
-  },
-];
+// ---- WS1 Session F: item 7 and both OV3-triage entries LEFT this table.
+// R.11 landed (`src/services/faSeamFitGate.ts`) and all three converted to
+// positive assertions below, each at its exact ear-correct value. The
+// register is EMPTY.
+const KNOWN_BAD: KnownBadRow[] = [];
 
 // ===========================================================================
 // WS1 SESSION C — THE ZERO-DEFECT REGISTER.
@@ -402,14 +354,25 @@ const REGISTER_ROSTER = [
  *  4 and 5 into positive assertions, taking the open count 7 -> 5.
  *
  *  WS1 Session E LOWERED it 5 -> 3. R.10 landed and closed items 10 and 11,
- *  the only two entries that rule owned. The three that remain are all R.11
- *  (item 7, `ov3-abysmal-opinion`, `ov3-226-four-scouts`) and are Session F's
- *  entire scope — so this number is now exactly "the size of R.11".
+ *  the only two entries that rule owned.
+ *
+ *  WS1 Session F LOWERED it 3 -> 0. R.11 landed (`src/services/
+ *  faSeamFitGate.ts`) and closed the three remaining entries — item 7,
+ *  `ov3-abysmal-opinion`, `ov3-226-four-scouts` — the whole of R.11's known
+ *  scope. THE REGISTER IS EMPTY. Session F's detector also surfaced one NEW,
+ *  structurally identical, UNVERIFIED candidate (v6 `192_scout_listening`,
+ *  committed 570.18 -> 571.07) — deliberately NOT added to the register or
+ *  this roster: it came from neither the 12-item ear pass nor a triage
+ *  sitting, and entering it here without an ear pass would misrepresent
+ *  suspicion as guilt (the exact distinction R-AG's "membership in the 44 is
+ *  suspicion, not guilt" ruling draws). It IS reflected in the committed FA
+ *  second-baseline fixture (the rule fired for real) and is carried forward
+ *  as an explicit open triage item — see `docs/work-in-progress.md` §11.
  *
  *  This may be lowered when entries close. Raising it is allowed only with
  *  the full ceremony above — see the failure message on the shrink-only
  *  test. */
-const REGISTER_HIGH_WATER = 3;
+const REGISTER_HIGH_WATER = 0;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
  *  that replaced its known-bad pin. This is what makes deletion impossible:
@@ -474,22 +437,64 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'Spanish baseline finally SHOWS the live 65.12 instead of the stale 66.73, so this can now ' +
       'carry a real positive assertion rather than only a note. WS1 Session C converted it.',
   },
+  {
+    id: 'item-7', item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', earCorrect: 451.03,
+    closingCommit: 'WS1-SESSION-F',
+    why: 'R.11 (chunk-fit boundary correction, `src/services/faSeamFitGate.ts`). Chunk [448.34, 451.70] ' +
+      'carries 10 script words against 7 Whisper token onsets (fit 1.4286) — FA crushes "when the brush mice ' +
+      'stop" into near-zero-confidence garbage (max 1.49e-3 in the correction span) instead of the real ' +
+      'silence [450.36, 451.70] that already, correctly, anchors the chunk\'s own end (an untouched R.1 ' +
+      'agreed anchor). Corrected to that silence\'s midpoint, residual 0.000s against the ear-correct 451.03.',
+  },
+  {
+    id: 'ov3-abysmal-opinion', item: undefined, corpus: '173', tag: 'abysmal_opinion', earCorrect: 17.88,
+    closingCommit: 'WS1-SESSION-F',
+    why: 'R.11 — item 7\'s own root cause, found through a different symptom (WS1 Session D diagnosis). ' +
+      'Chunk [16.64, 18.08] carries "the numbers. They\'re" (fit 1.5, text surplus); FA crushes it to near-zero ' +
+      'confidence (max 3.895e-3 in the correction span) instead of the real silence [17.68, 18.08] anchoring ' +
+      'the chunk\'s own end. Corrected to that silence\'s midpoint, residual 0.000s against the ear-correct 17.88.',
+  },
+  {
+    id: 'ov3-226-four-scouts', item: undefined, corpus: 'v6', tag: '226_four_scouts', earCorrect: 671.18,
+    closingCommit: 'WS1-SESSION-F',
+    why: 'R.11, same root cause. Chunk [669.40, 671.50] carries "night scouts now. Four of them" (fit 0.75, ' +
+      'audio surplus); FA crushes "four of them" to near-zero confidence (max 9.693e-4 in the correction span) ' +
+      'instead of the real silence [670.86, 671.50] anchoring the chunk\'s own end. Corrected to that silence\'s ' +
+      'midpoint, residual 0.000s against the ear-correct 671.18. Adjacency to R.5\'s "Level 6" excision two ' +
+      'segments earlier (the owner\'s pre-registered, refuted Level-N hypothesis, WS1 Session D) was a red ' +
+      'herring — R.11 fires here for the same chunk-fit reason as item 7 and `abysmal_opinion`, unrelated to R.5.',
+  },
 ];
 
+/** WS1 Session F — R.11's own detector surfaced ONE new, structurally
+ *  identical, UNVERIFIED candidate beyond the three register members. It is
+ *  reflected for real in the committed FA second-baseline fixture (the rule
+ *  fired, corrected 570.18 -> 571.07, exactly as `detectSeamFitDefects`
+ *  computes) but is deliberately NOT in `REGISTER_ROSTER` or
+ *  `CLOSED_BY_POSITIVE_ASSERTION` — it came from neither the 12-item ear
+ *  pass nor an owner triage sitting, so entering it as a positive assertion
+ *  would misrepresent suspicion as guilt. Pinned here as its own change
+ *  detector (not a correctness assertion) so a regression in the fixture is
+ *  still caught, without claiming an ear pass that never happened. */
+const UNVERIFIED_R11_CANDIDATE = {
+  corpus: 'v6' as const, tag: '192_scout_listening', pinnedValue: 571.07,
+  why: 'Same evidentiary shape as the three register members: chunk [569.80, 571.36] carries "you both go ' +
+    'still. you listen." — fit 1.5 — and the correction span holds near-zero FA confidence throughout ' +
+    '(max 4.073e-5). Flagged for an owner ear pass (docs/work-in-progress.md §11); NOT ear-verified.',
+};
+
 describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
-  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. Un-skip when the manifest empties.
-  it.skip(
-    'the Zero-Defect Register is EMPTY — SKIPPED: 3 open defects, all R.11 ' +
-    '(item 7, ov3-abysmal-opinion, ov3-226-four-scouts). ' +
-    'Stage 1 does not lock while this test is skipped. Un-skip it in the commit ' +
-    'that closes the last entry.',
-    () => {
-      expect(
-        KNOWN_BAD.filter(k => k.status === 'open').map(k => `${k.id} (${k.owningRule}, ${k.corpus} ${k.tag})`),
-        'the Zero-Defect Register still has open entries',
-      ).toEqual([]);
-    },
-  );
+  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. UN-SKIPPED — WS1 Session F closed
+  // the last three entries (item 7, ov3-abysmal-opinion, ov3-226-four-scouts)
+  // via R.11. The register is EMPTY. Red here means a NEW defect entered
+  // KNOWN_BAD without the shrink-only guard below catching it first, which
+  // should not be possible — treat a failure here as a bug in the guard.
+  it('the Zero-Defect Register is EMPTY', () => {
+    expect(
+      KNOWN_BAD.filter(k => k.status === 'open').map(k => `${k.id} (${k.owningRule}, ${k.corpus} ${k.tag})`),
+      'the Zero-Defect Register still has open entries',
+    ).toEqual([]);
+  });
 
   // (2) SHRINK-ONLY.
   it('the register only ever SHRINKS (open count <= high-water mark)', () => {
@@ -670,20 +675,13 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest itself covers item 7 + the two OV3 triage entries exactly once each', () => {
-    // Item 6 left this table in WS1 Session B: it is FIXED and now carries a
-    // POSITIVE assertion of its own (below), which is a stronger guard than a
-    // known-bad pin — a regression there fails on the ear-correct value, not
-    // on a wrong one. Item 9 left too: 616abb2 closed it, and this session's
-    // fixture refresh means the Spanish baseline finally SHOWS 65.12, so
-    // there is no stale value left to warn a reader about. WS1 Session D:
-    // items 4 and 5 left the same way (R.5 landed), and the two OV3 triage
-    // defects arrived. WS1 Session E: items 10 and 11 left when R.10 landed —
-    // item 10 at its ear-correct 0.00, item 11 as an ABSENCE assertion. What
-    // remains is exactly R.11, and it is Session F's whole scope.
-    expect([...KNOWN_BAD.map(k => k.id)].sort()).toEqual([
-      'item-7', 'ov3-226-four-scouts', 'ov3-abysmal-opinion',
-    ]);
+  it('the manifest is EMPTY — WS1 Session F closed the last three entries via R.11', () => {
+    // Item 6 left this table in WS1 Session B; item 9 in Session C; items 4/5
+    // in Session D (R.5); items 10/11 in Session E (R.10); item 7 and both
+    // OV3 triage entries in Session F (R.11). KNOWN_BAD is now empty — every
+    // roster member is accounted for in CLOSED_BY_POSITIVE_ASSERTION instead
+    // (test (3) above already enforces this pairing).
+    expect(KNOWN_BAD.map(k => k.id)).toEqual([]);
   });
 
   it('ear-pass item 6 (R-U, fixed): 173 vessel_damage_clue is pinned at its EAR-CORRECT 174.74', () => {
@@ -700,6 +698,61 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     const row = loadFaSecondBaseline('173').find(r => r.tag === 'vessel_damage_clue');
     expect(row, '173 vessel_damage_clue row').toBeDefined();
     expect(Math.abs(row!.startTime - 174.74), `ear-correct 174.74, got ${row!.startTime}`).toBeLessThan(0.005);
+  });
+});
+
+describe('WS1 Session F — R.11: chunk-fit boundary correction', () => {
+  it('item 7, ov3-abysmal-opinion, ov3-226-four-scouts are pinned at their EAR-CORRECT values', () => {
+    const v6 = loadFaSecondBaseline('v6');
+    const c173 = loadFaSecondBaseline('173');
+    const item7 = v6.find(r => r.tag === '152_frozen_brush_mice');
+    const scouts = v6.find(r => r.tag === '226_four_scouts');
+    const opinion = c173.find(r => r.tag === 'abysmal_opinion');
+    expect(item7, 'item 7 row').toBeDefined();
+    expect(Math.abs(item7!.startTime - 451.03), `item 7: ear-correct 451.03, got ${item7!.startTime}`).toBeLessThan(0.005);
+    expect(scouts, '226_four_scouts row').toBeDefined();
+    expect(Math.abs(scouts!.startTime - 671.18), `226_four_scouts: ear-correct 671.18, got ${scouts!.startTime}`).toBeLessThan(0.005);
+    expect(opinion, 'abysmal_opinion row').toBeDefined();
+    expect(Math.abs(opinion!.startTime - 17.88), `abysmal_opinion: ear-correct 17.88, got ${opinion!.startTime}`).toBeLessThan(0.005);
+  });
+
+  it('the new UNVERIFIED candidate (192_scout_listening) is reflected in the fixture — pinned as a change detector, not a correctness claim', () => {
+    const v6 = loadFaSecondBaseline('v6');
+    const row = v6.find(r => r.tag === UNVERIFIED_R11_CANDIDATE.tag);
+    expect(row, '192_scout_listening row').toBeDefined();
+    expect(
+      Math.abs(row!.startTime - UNVERIFIED_R11_CANDIDATE.pinnedValue),
+      `192_scout_listening moved from its pinned (unverified) ${UNVERIFIED_R11_CANDIDATE.pinnedValue} to ` +
+      `${row!.startTime}. This is NOT an ear-verified correctness assertion — if this is an intentional R.11 ` +
+      `change, re-pin the value; if unexpected, it is a real regression in the detector or the fixture.`,
+    ).toBeLessThan(0.005);
+  });
+
+  it('controls unmoved by R.11: item 6 (174.74), V6 seam 150/151 (457.81), items 4/5 (931.40/130.96), items 10/11 (0.00/dropped)', () => {
+    const v6 = loadFaSecondBaseline('v6');
+    const c173 = loadFaSecondBaseline('173');
+    expect(c173.find(r => r.tag === 'vessel_damage_clue')!.startTime).toBeCloseTo(174.74, 2);
+    expect(v6.find(r => r.tag === '155_predator_passing_under')!.startTime).toBeCloseTo(457.81, 2);
+    expect(v6.find(r => r.tag === '308_scouts_leading')!.startTime).toBeCloseTo(931.40, 2);
+    expect(v6.find(r => r.tag === '043_night_migration')!.startTime).toBeCloseTo(130.96, 2);
+    expect(c173.find(r => r.tag === 'hostile_landscape')!.startTime).toBeCloseTo(0.00, 2);
+    expect(c173.find(r => r.tag === 'blue_monkey')).toBeUndefined();
+  });
+
+  it('M6 — a mutation specific to R.11 must turn this gate RED (mutation-matrix entry, verified this session)', () => {
+    // Documents the mutation actually run this session (not committed as a
+    // standing mutant — matches M1-M5's own established pattern of a
+    // manually-verified-per-session matrix, not permanent CI infrastructure):
+    // R11_MIN_FIT_DEVIATION raised above item 7/abysmal_opinion/
+    // 226_four_scouts's own fitDeviation (1.3333, the lowest of the three)
+    // makes ALL THREE registered corrections fail to fire, which flips both
+    // the register-empty test and the three ear-correct pins above to RED.
+    // Verified directly against the real production detector this session —
+    // see the WS1 Session F ledger entry (docs/work-in-progress.md §11) for
+    // the exact run. This test itself only documents the mutation was run
+    // and confirms the CURRENT (unmutated) state stays green, which is what
+    // licenses trusting the mutation result reported in the ledger.
+    expect(R11_MIN_FIT_DEVIATION).toBeLessThan(4 / 3); // 226_four_scouts's own fitDeviation — must stay reachable.
   });
 });
 

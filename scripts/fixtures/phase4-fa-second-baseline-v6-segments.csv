@@ -149,8 +149,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 147,148_breathing_clan,Sleeping people breathing.,435.15,2.07,437.22,forced-alignment
 148,149_month_rotation,You spend your second month in rotation learning to separate the sounds that matter from the enormous volume that do not.,437.22,7.92,445.14,forced-alignment
 149,150_listening_intent,You are not listening for a sound.,445.14,2.88,448.02,forced-alignment
-150,151_scout_listening_void,You are listening for the absence of one.,448.02,1.18,449.2,forced-alignment
-151,152_frozen_brush_mice,When the brush mice stop moving through dry leaves,449.2,5.13,454.33,forced-alignment
+150,151_scout_listening_void,You are listening for the absence of one.,448.02,3.01,451.03,forced-alignment
+151,152_frozen_brush_mice,When the brush mice stop moving through dry leaves,451.03,3.3,454.33,forced-alignment
 152,153_something_stopped_them,something stopped them.,454.33,1.53,455.86,forced-alignment
 153,154_silent_night_birds,When the night birds cut off mid-call,455.86,1.95,457.81,forced-alignment
 154,155_predator_passing_under,something passed under them.,457.81,2.06,459.87,forced-alignment
@@ -189,8 +189,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 187,188_fading_light,The light is going fast.,559.04,2.41,561.45,forced-alignment
 188,189_heavy_timber,You push through the tree line into heavier timber and the animals are already gone ahead of you into the dark.,561.45,5.6,567.05,forced-alignment
 189,190_yaro_signal,Yaro signals to stop.,567.05,2.1,569.15,forced-alignment
-190,191_both_still,You both go still.,569.15,1.03,570.18,forced-alignment
-191,192_scout_listening,You listen.,570.18,2.06,572.24,forced-alignment
+190,191_both_still,You both go still.,569.15,1.92,571.07,forced-alignment
+191,192_scout_listening,You listen.,571.07,1.17,572.24,forced-alignment
 192,193_low_ground,What you hear instead of aurochs is something low and close to the ground.,572.24,5.03,577.27,forced-alignment
 193,194_breathing_tension,A breathing that belongs to neither of you.,577.27,2.89,580.16,forced-alignment
 194,195_unseen_woods,You cannot locate it in the trees.,580.16,2.06,582.22,forced-alignment
@@ -223,8 +223,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 221,222_long_silence,You do not say this to anyone for a long time.,658.94,3.61,662.55,forced-alignment
 222,223_carrying_weight,You carry it.,662.55,1.78,664.33,forced-alignment
 223,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,forced-alignment
-224,225_night_scouts,You lead the night scouts now.,667.47,2.77,670.24,forced-alignment
-225,226_four_scouts,Four of them besides yourself,670.24,2.56,672.8,forced-alignment
+224,225_night_scouts,You lead the night scouts now.,667.47,3.71,671.18,forced-alignment
+225,226_four_scouts,Four of them besides yourself,671.18,1.62,672.8,forced-alignment
 226,227_scout_ages,ranging from seventeen to twenty-four.,672.8,2.75,675.55,forced-alignment
 227,228_informal_bond,They are not yours in any formal sense.,675.55,3.03,678.58,forced-alignment
 228,229_no_formal_sense,There is no formal sense here.,678.58,2.41,680.99,forced-alignment

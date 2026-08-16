@@ -2,8 +2,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 0,hostile_landscape,Some places in the 41st Millennium don’t just kill soldiers.,0,4.18,4.18,forced-alignment
 1,testing_parameters,They take apart the conditions under which a soldier can function in the first place.,4.18,4.96,9.14,forced-alignment
 2,military_collapse,"Training, equipment, formation, doctrine, gone before the first contact report.",9.14,5.29,14.43,forced-alignment
-3,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,2.07,16.5,forced-alignment
-4,abysmal_opinion,They’re the worst,16.5,2.01,18.51,forced-alignment
+3,grim_horizon,These aren’t the worst battlefields because of the numbers.,14.43,3.45,17.88,forced-alignment
+4,abysmal_opinion,They’re the worst,17.88,0.63,18.51,forced-alignment
 5,lethal_nature_hazard,because the environment was already doing the killing before the enemy showed up.,18.51,4.65,23.16,forced-alignment
 6,rugged_survivalist,"Number Six, Catachan.",23.16,1.77,24.93,forced-alignment
 7,ancient_training_grounds,"Before Catachan produced the Imperium’s most capable baseline human soldiers,",24.93,5.13,30.06,forced-alignment

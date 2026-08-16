@@ -1792,7 +1792,15 @@ becomes defect class R.11.** Items 6 and 7 were bundled on a coincidence of
 magnitude — both ~1.83s early — and they are different defects.
 
 **R.11 — FA word-seam midpoint error (next free rule identifier; SCOPED,
-NOT BUILT; placed AFTER Stage 1).** *Mechanism:* forced alignment's own
+NOT BUILT; placed AFTER Stage 1).**
+
+> **BUILT — WS1 Session F, 2026-08-17. See ruling R-AI below (`:2489`-ish, after R-AH) for
+> the final spec as built, the root cause on all three register members (item 7 plus the two
+> OV3 triage entries — the "word-seam midpoint" framing below was right for item 7 but
+> incomplete: the general mechanism is chunk-fit, of which the zero-real-silence word seam is
+> one symptom, not the whole class), and the F6 finding on the FA-default flip.**
+
+*Mechanism:* forced alignment's own
 per-word timings put two adjacent words' spans back-to-back, and the boundary
 commits at the midpoint of that FA-internal word seam. No detected silence
 participates at any point. *Evidence:* v6 `152_frozen_brush_mice`, committed
@@ -2487,6 +2495,67 @@ pair has always used — and the skipped fixture carries `startTime`/`duration`
 as frozen inputs for that reconstruction. `src/services/faChunkPlan.test.ts`'s
 own corpus loader took the identical fix.
 
+
+---
+
+**R-AI ruling (2026-08-17, WS1 Session F) — R.11 IS BUILT; the ZERO-DEFECT REGISTER REACHES
+ZERO; F6 (FA-default flip) FIRES and the flip does not ship.**
+
+**(a) Surface, as built — NOT `faChunkPlan.ts`/`faAnchors.ts`, the same finding R.10
+established, re-derived rather than assumed to transfer.** `src/services/faSeamFitGate.ts`
+(new, pure), `syncConstants.ts` (`R11_MIN_FIT_DEVIATION`, `R11_MAX_SPAN_WORD_CONF`,
+`R11_MIN_CORRECTION_SEC`), `App.tsx` wiring after `headExtendFirstSegment`, gated on
+`faTokens` truthy. Both `faChunkPlan.ts` and `faAnchors.ts` are READ (their output is
+required detection input — the chunk plan's fit ratio, the run provenance) but detection is
+only meaningful once the COMMITTED boundary exists to compare against a chunk edge's real
+silence midpoint, which is FA's own inference OUTPUT. Full mechanism, root cause on all
+three register members (re-measured against the real captured FA output, not cited),
+the false positive that forced a third conjunct, and the measured 4/649 blast radius:
+`docs/work-in-progress.md` §11's Session F block.
+
+**(b) The signal is suspicion, not the structural zero R.5/R.10 achieved — stated as a
+ruling, not a caveat.** `R11_MIN_FIT_DEVIATION`'s own margin (worst known-bad 1.3333 vs.
+nearest negative 1.2857, geometric midpoint 1.3093) sits within 0.0016 of an unverified
+structurally-similar candidate (173 `architectural_pivot`). This is why R.11's build is
+scoped to what real evidence supports — the three register members plus the one new
+candidate the detector itself surfaced (v6 `192_scout_listening`) — rather than to a wider,
+unverified population. `192_scout_listening` is pinned as a change detector in the FA replay
+gate, explicitly NOT as a positive/correctness assertion, and is carried forward to Step 8's
+ear list rather than silently treated as confirmed.
+
+**(c) The register is EMPTY.** `REGISTER_HIGH_WATER` 3 → 0
+(`scripts/phase4-fa-replay.test.ts`); the Stage-1-lock machine check
+(`the Zero-Defect Register is EMPTY`) is un-skipped and passing for the first time. This
+closes the Zero-Defect Program R-AD opened (WS1 Session C).
+
+**(d) F6 — the FA-default flip does NOT ship this session, and the reason is structural,
+not a runtime or accuracy gap.** `isFaToggleOn()` (`faGate.ts`) persists a GLOBAL,
+per-machine key via `uiStateStore` — it is not a per-project field, and `isFaGateOpen()` is
+re-read on every single Apply Sync (`App.tsx:2875`'s `cachedTokensReady` branch). Flipping
+its stored-`undefined` default from `false` to `true` would, on the very next Apply Sync of
+ANY existing project, engage FA for any user whose machine has Tauri capability AND a real
+`model.onnx` already placed — a real, silent retime with no per-project consent gate,
+regardless of whether that user ever chose FA for that specific project. This is the exact
+condition the session brief names F6 for. **The actual blocker a future flip session must
+clear is a design one, not a measurement one: `isFaToggleOn()` needs a per-project
+representation (e.g. a `Project.faHighPrecisionSyncEnabled` field) so a default change can
+apply to newly-synced projects without reaching backward into ones already synced under the
+old default.** Not designed or built this session.
+
+**(e) Fail-clean measurements taken anyway, real, not estimated** (this machine carries real
+local models and a real ORT dylib from a prior session): missing `ORT_DYLIB_PATH` —
+near-instant, checked before any file I/O; absent model file — 266.7µs; corrupted model at
+REAL SIZE (a full ~1.26 GiB copy of the real `en` model, one byte flipped mid-file, not the
+existing unit test's 19-byte synthetic fixture) — **77.43s in the DEBUG build `npm run
+tauri:dev`/`tauri:dev:fa` actually produces** (the only mode FA can currently run in at all —
+release packaging/Step T remain unresolved), **5.25s in a RELEASE build**. This is a real,
+previously unmeasured cost: `verify_model_manifest`'s full-file SHA-256 runs on EVERY FA
+call with no caching, so even a healthy model pays roughly the release-mode-equivalent
+figure (~5-8s/language) on top of the already-documented ~231s v6 / ~76s 173 inference
+wall-clock (restated from the 2026-08-15 smoke test, not re-measured this session) — a
+non-trivial overhead specifically in debug mode for the shorter 173 corpus.
+
+---
 
 **R.6 — Corpus start and end.**
 

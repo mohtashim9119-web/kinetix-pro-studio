@@ -575,6 +575,73 @@ export const R10_MAX_WORD_CONF = 5e-4;
 export const R10_MIN_WORD_COUNT = 2;
 
 // ---------------------------------------------------------------------------
+// R.11 — chunk-fit boundary correction (`faSeamFitGate.ts`).
+//
+// THE SIGNAL: a chunk's FIT — attributed script words / Whisper token onsets
+// inside its own window. A chunk whose text does not fit its audio forces FA
+// (a CTC objective must place every target token somewhere) to crush word
+// timings into implausible positions; the committed boundary near that
+// chunk's edge lands on FA's own internal garbage instead of the REAL
+// silence that the chunk's own edge is already, correctly, anchored to
+// (`faAnchors.ts`'s untouched R.1 three-source-agreement anchor — I6: always
+// a detected silence's endSec).
+//
+// DERIVED, NOT FITTED, BUT NOT AS CLEAN AS R.10's 850x MARGIN — stated
+// plainly rather than dressed up. Measured over all 649 boundaries (WS1
+// Session F): the worst (lowest-deviation) of the three known register
+// defects is v6 `226_four_scouts` at deviation 1.3333 (fit 0.75 = 6 script
+// words / 8 token onsets); the nearest negative comparable — the
+// highest-deviation boundary below it whose committed value ALREADY sits at
+// its chunk edge's own silence midpoint, i.e. needs no correction — is v6
+// `444_scout_past_watch` at 1.2857. The threshold is the geometric midpoint
+// of those two: sqrt(1.3333 * 1.2857) = 1.3093. Unlike R10_MAX_WORD_CONF's
+// 850x gap, this margin is narrow — 173 `architectural_pivot` (deviation
+// 1.3077) sits just 0.0016 below it and also exhibits the same structural
+// mismatch, unverified. R.11 is NOT a clean structural zero the way R.5's
+// qiHole===0 or R-U's zero-seam test are; it is closer in character to the
+// original 44-boundary FA-vs-Whisper suspicion set — membership is
+// suspicion, not guilt, and every boundary this fires on beyond the three
+// ear-verified register members is a genuinely open triage item, not a
+// silently-applied correction the way R.10's drop was.
+export const R11_MIN_FIT_DEVIATION = 1.3093;
+
+// R.11's minimum correction magnitude — a candidate whose chunk-edge
+// silence midpoint sits within this of the already-committed value needs no
+// correction at all (it is already right), regardless of how extreme the
+// chunk's fit is. 50ms is float/rounding noise, not a semantic distance —
+// it is not derived from the corpus the way R11_MIN_FIT_DEVIATION is; it
+// exists only to make a true no-op provably inert rather than rewriting a
+// segment to the value it already has.
+export const R11_MIN_CORRECTION_SEC = 0.05;
+
+// R.11's THIRD conjunct, added after `R11_MIN_FIT_DEVIATION` alone was
+// measured to false-fire on v6 `125_night_circle` — a boundary R.5 already
+// fixed correctly (372.35, itself sitting exactly on a real silence's own
+// midpoint), which R11_MIN_FIT_DEVIATION alone could not tell apart from a
+// genuine defect. The fix mirrors R.10's own shape: require every FA word
+// inside the [committed, corrected] span to carry NO real acoustic support.
+// A boundary the pipeline already got right sits in a span where FA is
+// genuinely confident (measured: 125_night_circle's span holds one word at
+// confidence 0.0301, and every OTHER false candidate measured in the same
+// pass sits above 0.99); a boundary crushed by a bad-fit chunk sits in a
+// span where nothing is.
+//
+// DERIVED, NOT FITTED. Measured over the WS1 Session F candidate set (every
+// boundary R11_MIN_FIT_DEVIATION alone flags, all three corpora, against the
+// real captured FA word output): the worst (highest) max-in-span confidence
+// among the three known register defects is 173 `abysmal_opinion` at
+// 3.8954e-3; the nearest negative comparable is v6 `125_night_circle` at
+// 3.0145e-2. The threshold is the geometric midpoint of those two:
+// sqrt(3.8954e-3 * 3.0145e-2) = 1.0835e-2 — a ~2.8x margin on each side.
+// Smaller than R.10's 850x, and stated as such rather than dressed up — see
+// `faSeamFitGate.ts`'s own header for the honest characterization of R.11's
+// overall separation quality. This constant answers a DIFFERENT question
+// than `R10_MAX_WORD_CONF` (was ANY text ever spoken here at all, vs. is
+// THIS specific mis-corrected span acoustically empty) and is deliberately
+// its own constant for the same reason `R10_MAX_WORD_CONF` is not `CONF_MIN`.
+export const R11_MAX_SPAN_WORD_CONF = 1.0835e-2;
+
+// ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).
 //
 // A hyphenated token is split on its hyphens IFF every sub-part is a number

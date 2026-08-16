@@ -641,6 +641,16 @@ open on process (owner guarantee-by-guarantee verification, item 12) even though
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
 
+**2026-08-17 (WS1 Session F) — R.11's effect on Contract 1→2: NONE. Measured, not assumed.**
+R.11 runs even later than R.10 — after the fully-committed, `headExtendFirstSegment`-ed
+segment array exists — and only ever rewrites `startTime`/`duration` on already-committed
+segments; it adds no segment, drops none, and reads `faChunkPlan.ts`/`faAnchors.ts` output
+without re-invoking either with different arguments. `normalizeSceneDoc` word counts,
+`computeRunContext` offsets, `assertQiMapConsistent`, and all three anchor/run/chunk digests
+are bit-identical before and after (verified: `git diff --stat src-tauri/` empty, and the
+FA replay gate's `ANCHOR_PATH` block — which pins those exact digests — required zero re-pin
+this session). No row in the table above changes. Golden replay 6/6.
+
 **2026-08-17 (WS1 Session E) — R.10's effect on Contract 1→2: NONE. Measured, not assumed.**
 R.10 runs AFTER inference, on FA's output, so nothing upstream of it moves: `normalizeSceneDoc`
 word counts, `computeRunContext` offsets and `faChunkPlan.ts`'s indexing are all bit-identical,
@@ -3174,6 +3184,198 @@ green at rest and RED under M5.
 
 ---
 
+**WS1 SESSION F (2026-08-17) — R.11 BUILT; the register reaches ZERO; F6 blocks the FA
+default flip this session.** Third BUILD session of the Zero-Defect Program, and the one
+that closes it. Ruling: **R-AI** (R.11 as built, its two-conjunct-plus-structural-test
+detection, the false-positive it took two iterations to exclude, and the F6 finding).
+
+**(a) STEP 1 — the sibling census, re-derived from the FIT signal over the CURRENT chunk
+plan (390 chunks — 273 v6 + 112 173 + 5 spanish, not the stale "381" figure Session D's own
+prose cited, which predates R.5's chunk-plan growth 264→273; both `chunkCount` fields in
+this ledger's own ANCHOR_PATH tables have said 273/112/5 since Session D's own build,
+so the 381 in prose was already inconsistent with the committed pins it sat next to).**
+Attribution must be by SCRIPT-WORD INDEX, not time containment — FA's crushed output can
+land outside its own chunk's nominal time window (measured directly: `abysmal_opinion`'s
+committed 16.50 sits inside chunk 4's raw window, not chunk 5's, even though chunk 5's TEXT
+is what produced it), which is the mechanism itself, not an artifact of the census method.
+A structural (fit-deviation + chunk-edge-silence + FA-confidence-in-span) test, run over
+all 649 boundaries, converges on exactly **4 candidates**: the three register members plus
+one new, unverified sibling, v6 `192_scout_listening` (committed 570.18) — see (c) below.
+**N = 4, not "wildly off" the old ~10-member symptom-based estimate in the direction Session
+D's own X3 finding predicted (undercounted), though the specific old number does not survive
+re-derivation either way** — the symptom census and the fit census are simply different
+instruments.
+
+**(b) STEP 2 — root cause, independently re-measured against the real captured FA word/
+silence output (`.work-phase4/replay/*/fa_production_words.json`, `silences_app.json` —
+gitignored, present on the machine that ran this session's measurements) for all three
+register members. One mechanism, confirmed numerically, not cited from Session D's prose:**
+
+| defect | chunk | fit | committed (wrong) | evidence | ear-correct = real silence midpoint |
+|---|---|---|---|---|---|
+| item 7 `152_frozen_brush_mice` | v6 [448.34, 451.70] | 10/7 = 1.4286 | 449.20 (FA word-seam midpoint, zero real gap) | span [449.20,451.03] max FA conf 1.490e-3 | **451.03** = mid([450.36, 451.70]) |
+| `abysmal_opinion` | 173 [16.64, 18.08] | 3/2 = 1.5 | 16.50 (midpoint of the WRONG nearby silence [16.36,16.64]) | span [16.50,17.88] max FA conf 3.895e-3 | **17.88** = mid([17.68, 18.08]) |
+| `226_four_scouts` | v6 [669.40, 671.50] | 6/8 = 0.75 | 670.24 (FA word-seam midpoint, zero real gap) | span [670.24,671.18] max FA conf 9.693e-4 | **671.18** = mid([670.86, 671.50]) |
+
+In every case the real silence backing the correction is the SAME silence that already,
+correctly, anchors the containing chunk's own edge (an untouched R.1 three-source-agreement
+anchor — `faAnchors.ts`'s I6 invariant, "an agreed anchor's time is always a detected
+silence's `endSec`") — the anchor path was never wrong; the defect is that the FINAL
+per-segment boundary, computed downstream from FA's own crushed word timings inside a
+badly-fit chunk, never consults it. Selection-order was already refuted for
+`abysmal_opinion` at 0 flips (Session C measurement, unrepeated here) — not re-proposed.
+**One mechanism for all three; F2 does not fire.**
+
+**(c) THE FALSE POSITIVE THAT FORCED A THIRD CONJUNCT.** Fit-deviation alone (even gated at
+the worst known case, `226_four_scouts`'s 1.3333) also fires on v6 `125_night_circle`,
+proposing 372.35 → 373.70. Checked against the real capture: **372.35 is R.5's OWN
+already-correct output**, sitting exactly on a real, SEPARATE silence's midpoint
+(`[371.94, 372.76]`) — chunk-fit extremity elsewhere in the same chunk does not make this
+specific boundary wrong. The fix, mirroring R.10's own evidentiary shape: require every FA
+word inside `[min(committed,corrected), max(committed,corrected)]` to carry no real
+acoustic support. `125_night_circle`'s span holds "are" at confidence 0.0301 — genuine
+support, ~7.7x above the worst true positive's 0.0039 — while all three register members'
+spans are uniformly near-zero. **`R11_MAX_SPAN_WORD_CONF = 1.0835e-2`**
+(`syncConstants.ts`), the geometric midpoint of those two, ~2.8x clear on each side —
+narrower than R.10's 850x margin, stated as such rather than dressed up.
+
+**(d) STEP 3 — spec, surface, and the two derived constants.** Production surface:
+**`src/services/faSeamFitGate.ts` (new, pure)**, `syncConstants.ts`
+(`R11_MIN_FIT_DEVIATION = 1.3093`, `R11_MAX_SPAN_WORD_CONF = 1.0835e-2`,
+`R11_MIN_CORRECTION_SEC = 0.05`), `App.tsx` wiring (post-`headExtendFirstSegment`, gated on
+`faTokens` truthy — mirrors R.10's own gating). **NOT `faChunkPlan.ts`/`faAnchors.ts`**: both
+are read (their real output — the chunk plan, the run provenance — is required detection
+input) but detection is only meaningful once the COMMITTED boundary exists to compare
+against a chunk edge's silence midpoint, which is FA's own inference OUTPUT, produced
+downstream of both modules — the same "signal's availability point, not convenience"
+finding R.10 established, re-derived independently rather than assumed to transfer.
+`R11_MIN_FIT_DEVIATION` is the geometric midpoint of the worst known-bad chunk-fit deviation
+(`226_four_scouts`, 4/3) and the nearest negative comparable (v6 `444_scout_past_watch`,
+9/7) — **a real margin, but a narrow one**: 173 `architectural_pivot` (deviation 1.3077)
+sits 0.0016 below the threshold and structurally resembles a candidate; R.11's own header
+states plainly that this is suspicion, not the structural-zero R.5/R.10 achieved.
+**Predicted and measured blast radius: 4/649** — 3 register members + 1 new unverified
+(v6 `192_scout_listening`), matching the R.5 (8/649) / R.10 (3/649) order of magnitude, no
+surprise growth. **Mutual exclusion, measured:** R.10 — 173 `hostile_landscape` (item 10's
+own scope) structurally resembles a candidate at the detector level (its containing chunk is
+contaminated by `perilous_realms`' own never-spoken title text) but becomes the FINAL
+array's own segment 0 after R.10 drops `perilous_realms`, and `applySeamFitCorrections`
+explicitly declines any correction at final-array index 0 (`headExtendFirstSegment` already
+forces it to 0 regardless) — **0 real overlap**, verified by a dedicated test. R.5 — the
+false positive in (c) above IS the measured overlap point; the third conjunct closes it,
+**0 overlap after the fix**. R-U — unrelated signal spaces (R-U tests Whisper-token seam
+zero-width; R.11 tests FA-crushed-span confidence), **0 overlap by construction**, not
+separately measured. **Two adjacent R.11 corrections** compose left-to-right against a
+mutable working copy (tested); **zero Whisper tokens across a span** is handled by conjunct
+(3) declining for lack of usable evidence (never vacuously passing), matching R.10's own
+"missing confidence is unusable evidence, never zero" rule exactly.
+
+**(e) STEP 4 — build, tests first.** `src/services/faSeamFitGate.test.ts` (16 tests): the
+derived-constant geometric-midpoint checks; all three register members firing at their
+EXACT ear-correct value against real corpus fixtures + real FA-confidence literals; the
+125_night_circle false-positive guard; the 192_scout_listening new-candidate case;
+threshold-strictness sanity; the 001_scylla_intro near-miss (segment-0 exclusion, distinct
+from R.10's own near-miss reasoning); Model P contiguity (gapless partition, adjacent
+corrections compose, a dropped-upstream finding is silently skipped, a final-index-0 finding
+is declined). **Two real bugs were caught and fixed by these tests, not found by inspection:**
+(1) an edge-selection bug — testing a single-boundary chunk's boundary against BOTH its
+start and end edges rather than only the one it is actually WORD-ALIGNED to (cumulative
+script-word-offset test) produced a meaningless "corrected" value from an unrelated earlier
+silence for item 7/`226_four_scouts`; (2) a Model P bug in `applySeamFitCorrections` —
+adjusting only the predecessor's duration without also shrinking the corrected segment's OWN
+duration by the same delta silently opened a gap/overlap at its OWN far boundary. Both fixed
+in the same session before any fixture was touched.
+
+**(f) STEP 5 — measured through the real production function** (`detectSeamFitDefects`,
+imported not reimplemented) against the full real FA word captures, all three corpora:
+**4/649 total**, v6 3 + 173 1 + spanish 0. All three register members land EXACTLY on their
+ear-correct pins (451.03, 671.18, 17.88); the new candidate corrects 570.18 → 571.07. The
+frozen `phase4-fa-second-baseline-{v6,173}-segments.csv` fixtures were regenerated via the
+real `applySeamFitCorrections` (R.11 needs no new inference, same precedent as R.10 — it
+never touches the chunk plan) — **only the 8 affected rows (6 v6 + 2 173) changed, byte-for-
+byte identical elsewhere**, verified by diff against the pre-regeneration originals.
+Controls held: item 6 174.74, V6 seam 150/151 457.81, items 4/5 (931.40/130.96), items 10/11
+(0.00/dropped) — all re-asserted in a dedicated test block. Golden replay 6/6, unchanged.
+
+**(g) STEP 6 — gate re-pin, register EMPTY.** `KNOWN_BAD` is now `[]`. Item 7,
+`ov3-abysmal-opinion` and `ov3-226-four-scouts` converted to `CLOSED_BY_POSITIVE_ASSERTION`
+at their exact ear-correct values. **`REGISTER_HIGH_WATER` 3 → 0.** The Stage-1-lock machine
+check (`the Zero-Defect Register is EMPTY`) is **UN-SKIPPED and passing** for the first time.
+v6 `192_scout_listening` is pinned as its own change detector (NOT a positive/correctness
+assertion — it came from neither the 12-item ear pass nor an owner triage sitting, so
+entering it as verified would misrepresent suspicion as guilt, the same distinction R-AG
+drew for the 44-mover set) — flagged explicitly for Step 8's fresh ear list. **M1–M5 held
+green at rest**; **M6 (R.11-specific: `R11_MIN_FIT_DEVIATION` raised above all three known-bad
+deviations) verified RED** — 6 assertions fail across two independent files (the gate's own
+ear-correct pins and the unit suite's own real-fixture detection tests), then reverted and
+reconfirmed green. `npm test` **85 files / 2195 passed / 1 skipped** (the 1 skip is
+`dragSessionHarness.test.ts`'s own pre-existing, unrelated skip — the register-empty skip is
+GONE); `npm run lint` clean; `cargo check --features fa-inference` clean; `cargo test
+--features fa-inference` **206 passed / 19 ignored, unchanged** (R.11 is TS-only — zero Rust
+files touched, confirmed by an empty `git diff --stat src-tauri/`); golden replay 6/6.
+
+**The register, before and after.**
+
+| | open | roster | high-water | membership |
+|---|---|---|---|---|
+| before Session F | 3 | 9 | 3 | item 7, `ov3-abysmal-opinion`, `ov3-226-four-scouts` — all R.11 |
+| after R.11 landed | **0** | 9 | **0** | — EMPTY |
+
+**(h) STEP 7 — Stage 1 lock package. F6 FIRES: the FA default flip does NOT ship this
+session.** `isFaToggleOn()` (`faGate.ts`) is a GLOBAL, per-machine `uiStateStore` key, not a
+per-project field — `isFaGateOpen()` is read fresh on every single Apply Sync
+(`cachedTokensReady`'s branch, `App.tsx:2875`), so flipping its stored-`undefined` default
+from `false` to `true` would, on the VERY NEXT Apply Sync of ANY existing project, engage FA
+for any user whose machine has both Tauri capability and a real `model.onnx` already placed
+— a real, silent retime with no per-project or explicit-consent gate, regardless of whether
+that user ever chose FA for that project. This is exactly the condition the session brief
+names as F6. **The flip is not implemented this session.**
+
+*Fail-clean measurements, real, not estimated* (this machine has real local models + a real
+ORT dylib provisioned from a prior session — `~/Library/Application Support/com.kinetix.
+pro-studio/fa-models/*/model.onnx`, `.work-phase4/spike-runtime/onnxruntime-osx-x86_64-*`):
+- **Missing `ORT_DYLIB_PATH`:** near-instant — `fa_onnx.rs`'s `run_forward_pass` reads the
+  env var as its own first line and returns before opening any file (existing test
+  `missing_dylib_returns_ort_init_error`, part of the standard 206-test sweep at 0.16s total).
+- **Absent model file:** **266.7µs** — `verify_model_manifest`'s `hash_file` fails at the
+  file-open step; no hashing attempted (scratch-measured, real path, this session).
+- **Corrupted model file, REAL SIZE** (a full-size ~1.26 GiB copy of the real `en` model
+  with one byte flipped mid-file, not the existing unit test's 19-byte synthetic fixture,
+  which says nothing about realistic cost since `hash_file` must stream whatever bytes ARE
+  present): **77.43s in a DEBUG build** — the ONLY build `npm run tauri:dev`/`tauri:dev:fa`
+  produces, and therefore the only mode FA can currently run in at all (Step T/release
+  packaging remains unresolved) — versus **5.25s in a RELEASE build**. **This is a real,
+  previously unmeasured cost**: every FA call, model-corrupted or not, pays `verify_model_
+  manifest`'s full-file SHA-256 EVERY invocation (no caching), so a genuinely healthy debug-
+  build FA run pays roughly this same ~5-8s-per-language tax (release-mode-equivalent; the
+  corrupted case's 77s is DEBUG-specific and would apply identically to a healthy model too)
+  on top of the already-documented ~231s v6 / ~76s 173 inference wall-clock — non-trivial for
+  173 specifically (~7-10% overhead) if measured in debug mode, negligible in release.
+  **Runtime restated (not re-measured this session — citing the existing measured figures):**
+  ~231s v6, ~76s 173, both smoke-tested 2026-08-15 (§11 item 1's own entry above).
+- **Detection cost of the model-presence check:** the same `hash_file` call above IS the
+  presence+integrity check (a file that doesn't exist fails in µs before hashing; a file
+  that exists but doesn't match the manifest pays the full hash regardless of size) — so
+  "detection cost" and "corrupted-model cost" are the same measurement.
+
+Since F6 fires, the flip's own tests (model-present, model-absent, explicit-on,
+explicit-off) are not built this session — building tests for a change that does not ship
+would be dead code exercising a decision not taken.
+
+**Deferred / Known items (WS1 Session F):**
+- v6 `192_scout_listening` — a real, structurally well-evidenced, UNVERIFIED R.11 candidate
+  (committed 570.18 → 571.07 in the regenerated fixture, pinned as a change detector, not a
+  correctness claim). Owes an owner ear pass before it can be treated as confirmed — folded
+  into Step 8's fresh ear list below, not the Zero-Defect Register (it has neither an
+  ear-pass item number nor a triage-sitting origin).
+- The per-machine (not per-project) shape of `isFaToggleOn()` is itself worth a design
+  decision before any future default-flip attempt: a per-project field (stored in
+  `Project.faHighPrecisionSyncEnabled` or similar) would let a flip apply only to NEWLY
+  synced projects without silently reaching backward into existing ones. Not designed or
+  built this session — flagged as the actual blocker a future flip session needs to clear.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -3231,6 +3433,53 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-17 — WS1 Session F: R.11 BUILT, the Zero-Defect Register reaches ZERO;
+  F6 blocks the FA-default flip this session.** Production code:
+  `src/services/faSeamFitGate.ts` (new, pure — `detectSeamFitDefects`/
+  `applySeamFitCorrections`), `syncConstants.ts` (`R11_MIN_FIT_DEVIATION`,
+  `R11_MAX_SPAN_WORD_CONF`, `R11_MIN_CORRECTION_SEC`), `App.tsx` (wiring, post-
+  `headExtendFirstSegment`, gated on `faTokens` truthy). `faAnchors.ts` byte-identical
+  (sha256 `b61e94cb…`, untouched); `faChunkPlan.ts`, `snapBoundaries.ts`, `silenceDetector.ts`,
+  the Hirschberg aligner and all Rust untouched (`git diff --stat src-tauri/` empty). FA gate
+  stays OFF (R-AD unaffected — see F6 below, a SEPARATE finding about the default's own
+  future flip, not this session's build). Full write-up: §11's Session F block; ruling
+  **R-AI** in `sync-pipeline-v2-plan.md`.
+  - **Census re-derived from the FIT signal, not the stale seam signature**: 390 chunks at
+    current HEAD (not the "381" Session D's own prose cited, predating R.5's chunk-plan
+    growth), attribution by script-word index (time-containment attribution mis-locates the
+    defect itself — FA's crushed output lands outside its own chunk's nominal window).
+    Converges on 4 real candidates: the 3 register members + 1 new unverified
+    (v6 `192_scout_listening`).
+  - **One mechanism for all three register defects, independently re-measured against the
+    real captured FA word/silence output**: a chunk's attributed text doesn't fit its audio;
+    FA crushes word timings into a garbage span; the ear-correct value is always the midpoint
+    of the real silence that already, correctly, anchors the containing chunk's own edge (an
+    untouched R.1 anchor). All three land EXACTLY on their ear-correct pins (451.03, 17.88,
+    671.18).
+  - **A real false positive (v6 `125_night_circle`, an already-correct R.5 output) forced a
+    third conjunct** — every FA word in the correction span must carry no real acoustic
+    support (`R11_MAX_SPAN_WORD_CONF`, geometric midpoint, ~2.8x margin — narrower than
+    R.10's 850x, stated plainly rather than dressed up). Two real implementation bugs (an
+    edge-selection error, a Model P duration error) were caught and fixed by the test suite
+    before any fixture was touched.
+  - **Blast radius 4/649, measured through the real production function against the full
+    real FA captures** — matches the R.5 (8/649) / R.10 (3/649) order of magnitude. Frozen
+    fixtures regenerated with only the 8 affected rows changed, byte-identical elsewhere.
+    All controls (item 6, V6 seam 150/151, items 4/5, items 10/11) held.
+  - **Register: `REGISTER_HIGH_WATER` 3 → 0. The Stage-1-lock machine check is UN-SKIPPED
+    and PASSING for the first time.** `npm test` 85 files / 2195 passed / 1 skipped
+    (unrelated pre-existing skip); lint clean; `cargo check`/`cargo test --features
+    fa-inference` unchanged (206/19, zero Rust files touched); golden replay 6/6; M1-M5 green
+    at rest, M6 (R.11-specific) verified RED then reverted.
+  - **F6 fires on the FA-default flip: NOT shipped this session.** `isFaToggleOn()` is a
+    GLOBAL per-machine setting, not per-project — flipping its default would silently retime
+    every existing project's next Apply Sync for any user with FA capability and a model
+    already present, with no per-project consent gate. Real fail-clean measurements taken
+    anyway: absent model 266.7µs, missing `ORT_DYLIB_PATH` near-instant, corrupted model
+    (real 1.26 GiB size) 77.43s in the DEBUG build `tauri:dev` actually uses (5.25s release)
+    — a previously unmeasured, non-trivial per-call tax on top of the existing ~231s v6/~76s
+    173 inference figures (restated, not re-measured this session).
 
 - **2026-08-17 — WS1 Session E: R.10 BUILT, items 10 and 11 CLOSED, the Zero-Defect
   Register down to 3 — all R.11.** Production code: `src/services/faUnspokenGate.ts` (new,
