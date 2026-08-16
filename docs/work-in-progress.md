@@ -127,6 +127,16 @@ neither R-X tier has been listened to, so no phase's exit criteria are met. No o
 changes either. The one row-adjacent fact worth recording: §3 row 2 (Task 2, 50/50
 silence-split) is unaffected — `snapBoundaries.ts` was not touched this session.
 
+**2026-08-17 (WS1 Session D) — NOTHING ON THIS BOARD ADVANCES. Stated explicitly.** R.5
+(unscripted-audio) was BUILT and landed real production code in `faChunkPlan.ts`, closing
+ear-pass items 4 and 5 and moving 8 committed FA boundaries. Phase 3/Task 5 nevertheless stays
+**"PRODUCTION PATH WIRED, gate OFF"**: ruling R-AD keeps the FA default flip as the final act
+of Stage 1, released only by an EMPTY Zero-Defect Register, and the register still holds 5 open
+entries. No other row changes. Row-adjacent facts worth recording: §3 row 2 (Task 2, 50/50
+silence-split) is unaffected — `snapBoundaries.ts` was not touched; and `faAnchors.ts` is
+byte-identical (sha256 `b61e94cb…`), which the replay gate proves independently by its
+`anchorDigest`/`runDigest` being unchanged on all three corpora.
+
 **2026-08-16 (owner ruling R4, WS1 Session A):** R.5 (unscripted-audio wildcard, row "3" above
 via §7 item 2) and its newly-specified companion R.10 (scripted-text-never-spoken,
 `sync-pipeline-v2-plan.md`) are now pulled into Stage 1's own lock gate — see §11 item 13's
@@ -619,6 +629,19 @@ cross-referenced against `src/types.ts` live:
 open on process (owner guarantee-by-guarantee verification, item 12) even though the
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
+
+**2026-08-17 (WS1 Session D) — R.5's effect on Contract 1→2: NONE. Measured, not assumed.**
+R.5 changes where the chunk plan is CUT, never how many script words exist or what `qi` index
+any of them carries: `normalizeSceneDoc` word counts are unchanged, `computeRunContext`'s
+offsets are unchanged, and `assertQiMapConsistent` — the guard that would fire if per-token and
+whole-segment normalization disagreed — is untouched and still passing on all three corpora.
+The one structural change is that the chunk plan's WINDOWS are no longer contiguous (an
+excised span leaves a gap). That is legal and was checked against the consumer rather than
+assumed: `fa_onnx.rs`'s `align_chunked` processes each chunk independently and offsets its
+words by `chunk.start_sec`, and its windowed-output invariants (non-decreasing times,
+non-overlap, each word inside its own chunk window) all hold across a gap. Chunk-window
+contiguity was never a contract row; **Model P** governs `project.segments`, which R.5 does not
+touch. No row in the table above changes. Golden replay 6/6 is the canary and it stayed 6/6.
 
 **2026-08-16 — D.-1 criterion 2 evidence dossier assembled (no ruling).** Full
 guarantee-by-guarantee evidence (code file:line, mechanism, named tests, DIRECT/
@@ -2727,9 +2750,9 @@ bit-identical; item 6's positive assertion at **174.74** surviving; **golden rep
 
 | session | builds | depends on | closes | gate behaviour | acceptance test |
 |---|---|---|---|---|---|
-| **D** | **R.5** unscripted-audio wildcard | Session C spec (f); re-derive the fuzzy threshold on the production matcher first | items **4, 5** | red at the 2 boundaries + the chunks adjacent to the 10 v6 runs; nothing else | items 4/5 convert to positive assertions at 931.40 / 130.96; blast radius ≤ the pre-measured envelope |
-| **E** | **R.10** drop gate | Session C respec (d); **R.5 landed** (qi ordering) | items **10, 11** | red at 173's first two boundaries; segment count 175 → 174 | item 10 converts at 0.00; item 11 converts to "not committed at all"; R.5/R.10 never co-fire |
-| **F** | **R.11** item-7 fix | Session C diagnosis (e); **E landed** (X2 — re-run the sibling census first) | item **7** | red at 449.20 → 451.03 | item 7 converts at 451.03; the other 9 siblings each classified EXPECTED/UNEXPECTED |
+| **D** ✅ **DONE 2026-08-17** | **R.5** unscripted-audio EXCISION (the wildcard is unreachable — see R.5's final spec) | Session C spec (f), whose 0.65 threshold did NOT survive re-derivation; replaced by the threshold-free `qiHole == 0` test | items **4, 5** ✅ + absorbed the OV3 triage | red at 8 boundaries, all v6; 173/spanish chunk plans bit-identical | ✅ items 4/5 converted at 931.40 / 130.96, residual 0.000s; blast radius 8/649, inside the envelope |
+| **E** ← NEXT | **R.10** drop gate | Session C respec (d) + the owner's `R10_MAX_WORD_CONF` named-constant directive; **R.5 landed** ✅ | items **10, 11** | red at 173's first two boundaries; segment count 175 → 174 | item 10 converts at 0.00; item 11 converts to "not committed at all"; R.5/R.10 never co-fire (measured disjoint, 0 overlap) |
+| **F** | **R.11** item-7 fix — now owns **3** register entries, not 1 | Session C diagnosis (e) + Session D's two triage diagnoses; **E landed** (X2); census MUST be re-derived from the FIT signal, not the seam signature | item **7**, `ov3-abysmal-opinion`, `ov3-226-four-scouts` | red at 449.20 → 451.03, 16.50 → 17.88, 670.24 → 671.18 | all three convert; the re-derived sibling class each classified EXPECTED/UNEXPECTED |
 | **G** | no code | D–F landed | — | green | D-1 regression checklist (9 items, never run) + Contract 1→2 human pass (dossier at `0d8420f`) |
 | **H** | no code | **register EMPTY** | — | green, `register is EMPTY` un-skipped | full-corpus ear pass, fresh blinded draw, **Tier 2 scored before any disclosing tier** (R-AB) |
 | **I** | FA default flip | H passed; R-N + Step T + runtime resolved | — | green | Stage 1 LOCK |
@@ -2745,6 +2768,203 @@ automating the human half.
 **R-N** static-link vs `load-dynamic` packaging; **Step T** model download; and the
 **~231s V6 runtime**, which R-S(iii) and R7 both leave open for the DEFAULT specifically
 and which RC2 would have overridden silently.
+
+---
+
+**WS1 SESSION D (2026-08-17) — R.5 BUILT; the OV3 triage absorbed; the owner's Level-N
+hypothesis pre-registered and REFUTED.** First BUILD session of the Zero-Defect Program.
+Rulings: **R-AG** (triage outcome + register schema), R-AD/R-AE/R-AF ratified, R.5's final
+spec as built, and the finding that both triage defects are **R.11** so **R.12 stays free**.
+
+**(a) The OV3 triage, absorbed.** Identity mapping was re-verified against §11(i)'s collapsed
+key BEFORE acting on it — all 5 rows match the owner's table, and both controls (row 2 v6
+`148_breathing_clan`, row 5 173 `celestial_behemoth`) scored CORRECT, so the sitting stands.
+
+| row | project | boundary | identity | verdict | disposition |
+|---|---|---|---|---|---|
+| 1 | 173 | 603.69 | `protection_failure` (candidate, in the 44) | **Correct** | closed on the record |
+| 2 | v6 | 435.15 | `148_breathing_clan` (**control**) | Correct | control passed |
+| 3 | 173 | 16.50 | `abysmal_opinion` (candidate, in the 44 **and** the 24) | **WRONG** | register, R.11 |
+| 4 | v6 | 670.24 | `226_four_scouts` (candidate, in the 44) | **WRONG** | register, R.11 |
+| 5 | 173 | 328.38 | `celestial_behemoth` (**control**) | Correct | control passed |
+
+**CORROBORATION FINDING, recorded because it cuts against the natural suspicion:** a member of
+the 44 known >0.5s FA-vs-Whisper movers was scored CORRECT by ear. **Membership in the 44 is
+suspicion, not guilt** — the 44 is a set of disagreements between two imperfect sources, not a
+defect list. This is direct corroborating evidence for R-AA's narrowing of 16 movers to 4: a
+boundary R-AA declined to move turns out not to have needed moving.
+
+**The register, before and after.**
+
+| | open | roster | high-water | membership |
+|---|---|---|---|---|
+| before Session D | 5 | 7 | 5 | items 4, 5, 7, 10, 11 |
+| after the triage absorbed | 7 | 9 | **7** | items 4, 5, 7, 10, 11 + `ov3-abysmal-opinion`, `ov3-226-four-scouts` |
+| after R.5 landed | **5** | 9 | **5** | item 7 (R.11), item 10 (R.10), item 11 (R.10), `ov3-abysmal-opinion` (R.11), `ov3-226-four-scouts` (R.11) |
+
+Schema extension: rows carry a stable string `id` and `origin: 'ear-12' | 'ov3-triage'`;
+`REGISTER_ROSTER` holds ids rather than numbers; a test asserts an `ear-12` row has its item
+number and an `ov3-triage` row has NOT acquired one. Exit **D5** did not fire — no other check
+was weakened to accommodate the growth.
+
+**(b) STEP 2 — the owner's Level-N hypothesis, PRE-REGISTERED and then REFUTED BY THE BUILD.**
+The claim: v6 `226_four_scouts` @670.24 is wrong because a "Level N" heading precedes it, i.e.
+it is an R.5 case rather than its own defect.
+
+*Adjacency: TRUE, with one correction.* The "Level 6. The one they follow" recitation sits at
+`[663.91, 666.48]`, 3.76s before the boundary — but it precedes `224_thirty_three`, **two**
+segments earlier, not the immediately preceding `225_night_scouts`. The mechanism looked right:
+FA had put "you are thirty-three" ON the heading at `[665.46, 667.20]` (confidences 1.0e-05,
+3.6e-04, 2.5e-05) and the degradation ran forward through 225 and into 226's first three words,
+recovering at "besides" (671.96, confidence 0.995).
+
+*Prediction, written down BEFORE the build:* **671.18** — the Whisper-committed value, chosen
+because items 4 and 5's ear-correct values are exactly their Whisper-committed values (931.40
+and 130.96, verified in the fixture).
+
+*Result: REFUTED. Predicted 671.18, actual 670.24, difference −0.94s — the boundary did not
+move at all.* Not a partial result; a null one. R.5 fired on that exact recitation and excised
+it. What the word timings show is why: R.5 re-seated "you"(224) and "you"(225), and **every word
+from "are" onward is bit-identical**, because 670.24 is decided inside chunk `[669.40, 671.50]`,
+which R.5 never touched. Adjacency to an unscripted run was a red herring, and building the
+rule was the only thing that could have shown it.
+
+**(c) STEP 3 — root cause of both triage defects: R.11. No new rule; R.12 stays free.** Full
+write-up at the plan doc's "BOTH TRIAGE DEFECTS ARE R.11" block. Headline numbers:
+
+| defect | chunk | script words | token onsets | fit | rank of 381 | direction |
+|---|---|---|---|---|---|---|
+| 173 `abysmal_opinion` @16.50 | `[16.64, 18.08]` "the numbers. They're" | 4 | 2 | **2.000** | **2** (top 0.5%) | text surplus |
+| v6 `226_four_scouts` @670.24 | `[669.40, 671.50]` "night scouts now. Four of them" | 6 | 8 | **0.750** | 355 (bottom 7%) | audio surplus |
+| v6 item 7 @449.20 (for scale) | `[448.34, 451.70]` | 10 | 7 | 1.429 | 11 (top 2.9%) | text surplus |
+
+Both are item 7's root cause — *a chunk window whose attributed text does not fit its audio* —
+and in both cases the ear-correct value is sitting in the data as the midpoint of a real
+silence the pipeline passed over (17.88 from `[17.68, 18.08]`; 671.18 from `[670.86, 671.50]`).
+
+*Eliminated by measurement:* NOT R.5 (173 has zero unscripted runs; `226_four_scouts` was
+tested by building R.5 and watching it not move). NOT R.10 (`matched === true`, max word
+confidence 1.0 / 0.999). NOT a new spurious-silence rule — the tempting "reject a silence
+containing no real inter-token gap" veto covers **142 of 649** committed boundaries, including
+item 6 @174.74 and item 9 @65.12, both ear-confirmed CORRECT and both CLOSED positive
+assertions. Recorded so a later session does not rediscover it as an idea.
+
+> **X3 QUALIFIED, not broken.** Session C's "no defect class is missing from the register" holds
+> — the class was already there as R.11. What is wrong is Session C's *census method*: its
+> 10-member sibling list was drawn on the SYMPTOM signature (word-seam midpoint + back-to-back
+> seam + no spanning silence), and BOTH new entries fail that signature while being the class.
+> **Session F must re-derive the census from the FIT signal, not the seam signature.**
+
+**(d) STEP 4 — the R.5 detector, re-derived against production code. Session C's threshold does
+not survive.**
+
+| | Session C proxy (Python `SequenceMatcher`) | production matcher |
+|---|---|---|
+| 10 true recitations | 0.58 – 0.60 | **0.2500 – 0.6000** |
+| 38 false candidates | ≥ 0.67 | **0.0000 – 0.4000** |
+| separation | clean gap at 0.65 | **none — overlapping, and INVERTED** |
+
+Both the number and the direction fail. `isFuzzyMatch`, the other production candidate, is
+boolean and fires on 6/48 runs, none of them a recitation. **There is no production containment
+threshold — a finding, not a tuning failure.** Session C's own caveat ("what transfers is the
+shape, not the literal 0.65") turns out to have been too optimistic: the shape does not
+transfer either.
+
+*What does separate them, with no threshold at all:* `qiHole == 0` — zero UNMATCHED SCRIPT
+words lying opposite the run. **10/10 recall, 0/38 false positives, over all three corpora.**
+Every true positive is exactly 0; the nearest false positive is 1. A structural zero of the
+same kind as R-U's zero-seam veto, not a tuned edge. The reasoning is mechanical: a false
+candidate is a mis-tokenization of a word that IS in the script, so the script word it
+fragments necessarily failed to match; genuinely unscripted audio has no script counterpart to
+fail. 48 raw runs total (13 v6 / 22 173 / 13 spanish), reproducing Session C's count exactly.
+
+*Mutual exclusion with R.10 (exit D4): CLEAR, 0 overlap.* Session C's R.10 discriminant
+(`matched === false` ∧ `maxWordConfidence < 5e-4` ∧ `wordCount >= 2`) was re-run independently
+and reproduces 2/2 true positives, 0 false positives over 649 — `perilous_realms` and
+`blue_monkey`, both in 173. 173 has **zero** R.5 runs, so the two rules cannot co-fire on any
+segment of any committed corpus.
+
+*Production surface (exit D1): `faChunkPlan.ts` alone.* Not `faAnchors.ts` (sha256 unchanged,
+and the gate's `anchorDigest`/`runDigest` prove it independently), not `snapBoundaries.ts`, not
+`silenceDetector.ts`, not the Hirschberg aligner, not `faGate.ts`, not `fa/text.rs`.
+
+*Predicted blast radius vs. actual.* Prior: A.5's item-5 experiment moved 4/447 with 0/3874
+differing word rows. Predicted "the chunks adjacent to the 10 runs, and nothing else"; actual
+**8/649 boundaries, all v6**, with 173 and spanish chunk plans **bit-identical**. Under the D2
+trigger (an order of magnitude beyond 4) by a wide margin.
+
+**(e) STEP 5/6 — the built rule, measured.** Real ONNX re-capture, not a reconstruction. Method,
+in the order that makes it trustworthy: (1) a Node driver reproducing `App.tsx`'s FA branch end
+to end minus the Rust leg was fed the PREVIOUS capture's own words and reproduced both committed
+fixtures **byte-for-byte** (v6 447/447 rows, 173 175/175, zero diffs) — that is what licenses
+reading its later output as measurement; (2) a scratch `#[ignore]`d harness appended to a
+snapshot copy of `fa_onnx.rs` ran the real `align_chunked`; (3) a **determinism control** re-ran
+three UNCHANGED chunks and reproduced the existing capture bit-identically before any new number
+was read; (4) the harness was removed and `fa_onnx.rs` restored to its snapshot, sha256 verified.
+
+*Which chunks needed fresh inference, and which did not:* HEAD's 264 chunks → R.5's 273. Exactly
+**10 removed and 19 added**; **254 of 273 are unchanged**. The full 273-chunk plan was re-run
+anyway (136.9s, 3874 words, zero CTC-infeasibility fallbacks), which doubles as an independent
+check that the 254 unchanged chunks reproduce.
+
+**(a) TOTAL MOVED: 8 / 649 boundaries (1.2%)** — v6 8/447, 173 0/175, spanish 0/27.
+
+| project | idx | segment | old | new | Δ | Whisper |
+|---|---|---|---|---|---|---|
+| v6 | 41 | `042_eleven_years` | 125.76 | 127.17 | +1.41 | 127.17 |
+| v6 | 42 | `043_night_migration` | 128.43 | **130.96** | +2.53 | 130.96 |
+| v6 | 86 | `087_throwing_spear_poise` | 259.47 | 259.88 | +0.41 | 259.88 |
+| v6 | 124 | `125_night_circle` | 370.75 | 372.35 | +1.60 | 372.35 |
+| v6 | 175 | `176_twenty_six_scout` | 526.09 | 524.39 | −1.70 | 524.39 |
+| v6 | 265 | `266_forty_one_burden` | 792.18 | 790.33 | −1.85 | 790.33 |
+| v6 | 307 | `308_scouts_leading` | 928.67 | **931.40** | +2.73 | 931.40 |
+| v6 | 339 | `340_fifty_eight` | 1045.62 | 1047.57 | +1.95 | 1047.57 |
+
+**Every one of the 8 lands exactly on the Whisper-committed value.** That was not an input to
+the rule — R.5 never reads a Whisper boundary — so it is independent corroboration that the
+excision puts FA back on the audio the script actually describes.
+
+**(b) magnitude buckets (v6):** `<0.1s` 0, `0.1–0.5s` 1, `0.5–1.0s` 0, `>1.0s` 7. Direction: 6
+later, 2 earlier. 173 and spanish: all-zero buckets, nothing moved.
+
+**(c) items 4 and 5 — BOTH RESOLVE, residual 0.000s.** Item 5 `043_night_migration`
+128.43 → **130.96**; item 4 `308_scouts_leading` 928.67 → **931.40**. The confidence recovery is
+the proof the fix is real rather than coincidental: "eleven" moves 127.96 → 129.99 and its
+confidence goes **5.9e-07 → 1.0**. Both converted from KNOWN_BAD to positive assertions.
+
+**(d) the Step 2 prediction — DID NOT LAND.** Predicted 671.18, actual 670.24, difference
+−0.94s; the boundary did not move. See (b) above.
+
+**(e) controls, all held.** Item 6 unmoved at 174.74 (positive assertion, third consecutive
+re-pin survived); item 7 unmoved at 449.20; V6 seam 150/151 unmoved at 457.81 with chunk
+`[451.70, 460.56]` bit-identical (exit S2 cleared a third time); 173's chunk `[161.46, 174.96]`
+bit-identical; chunk fidelity v6 and 173 both reproduce their pinned structure.
+
+**(f) the FA-recovered boundaries: 0 of 7 moved.** v6's three (`027_internal_change_face`,
+`028_small_permanent_flake`, `029_night_understanding`) are bit-identical; 173's and spanish's
+sit in corpora R.5 does not touch at all.
+
+**(g) word-row diff: 88 / 3874 differ** (2.3%), all inside or adjacent to the 19 changed chunks.
+A.5's much narrower experiment gave 0/3874; this is larger because R.5 re-cuts ten windows
+rather than one, and it is reported as measured rather than compared away.
+
+**(f2) gate re-pin.** Full row diff: **31 changed fields across 16 rows, every one classified
+EXPECTED-PER-STEP-6, ZERO unexpected.** Rows exceed boundaries exactly as Model P requires — each
+moved boundary rewrites the preceding segment's `duration`/`endTime`, so 8 boundaries produce 16
+touched rows. Re-pinned: v6 `chunkCount` 264 → 273, `chunkDigest` → `d5dc8d7924dc8402`
+(`anchorDigest`/`runDigest` **unchanged**, 173 and spanish unchanged on all three); NAMED_WINDOWS
+v6 indices 76 → 79 and 77 → 80 with BOUNDS unmoved. Gate 19+1skip → **21 passing + 1 skipped**.
+
+**M1–M5 re-run after re-pinning: M1 RED, M2 RED, M3 RED, M4 green, M5 RED.** M5 — the items-6/7
+error class reproduced at a currently-correct boundary — is the one that matters and it is red
+for the third consecutive re-pin. **M4 reconfirmed a TRUE no-op by chunk-plan equality across
+all three corpora**, byte-comparing the serialized plans, not by the gate's colour.
+
+**Verification: `npm test` 83 files / 2148 passed / 2 skipped** (floor 2139 + 7 new R.5 tests +
+2 new positive assertions); `npm run lint` clean; `cargo check --features fa-inference` clean;
+`cargo test --features fa-inference` **206 passed / 19 ignored**; **golden replay 6/6, unmodified**
+(`phase4-baseline-*.csv` byte-identical — exit D3 canary clear); FA replay gate green at rest and
+RED under M5.
 
 **Deferred / Known Bugs (WS1, non-Task-5):**
 - `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5
@@ -2815,6 +3035,46 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-17 — WS1 Session D: R.5 BUILT (first build session of the Zero-Defect Program),
+  the OV3 triage absorbed, and a pre-registered owner hypothesis refuted by the build.**
+  Production code: `src/services/faChunkPlan.ts` only — `faAnchors.ts` byte-identical
+  (sha256 `b61e94cb…`), `snapBoundaries.ts`/`silenceDetector.ts`/`faGate.ts`/`fa/text.rs`
+  untouched. FA gate stays OFF (R-AD). Full write-up: §11's Session D block; rulings in
+  `sync-pipeline-v2-plan.md`'s "WS1 SESSION D RULINGS".
+  - **Session C's R.5 detection threshold did not survive contact with production code.**
+    The 0.65 fuzzy-containment cut was measured with a Python `SequenceMatcher` proxy;
+    against the production matcher the ten true recitations score 0.2500–0.6000 and the 38
+    false candidates 0.0000–0.4000 — overlapping AND inverted. No threshold exists. Replaced
+    by a threshold-free structural test, `qiHole == 0` (zero unmatched SCRIPT words opposite
+    the run): **10/10 recall, 0/38 false positives** across all three corpora, with every
+    true positive at exactly 0 and the nearest false positive at 1.
+  - **The specced "CTC wildcard" is not reachable** — `fa_viterbi.rs` is standard CTC with a
+    blank symbol and no wildcard label. R.5 ships as EXCISION of the span from the chunk
+    window, which is acoustically the same thing and lives entirely in `faChunkPlan.ts`.
+    Chunk windows stop being contiguous; verified legal against `align_chunked`'s own
+    windowed-output invariants rather than assumed. Model P is untouched.
+  - **Items 4 and 5 RESOLVE, residual 0.000s** at 931.40 and 130.96, and converted from
+    KNOWN_BAD to positive assertions. 8/649 boundaries move, all v6; 173 and spanish chunk
+    plans bit-identical; **all 8 land exactly on the Whisper-committed value**, which R.5
+    never reads. Word rows 88/3874. Real ONNX re-capture, driver validated byte-for-byte
+    against the previous capture first, determinism control bit-identical.
+  - **The owner's Level-N hypothesis for `226_four_scouts` was pre-registered at 671.18 and
+    REFUTED** — R.5 fired on the adjacent recitation and the boundary did not move (actual
+    670.24, difference −0.94s). Reported as the null result it is.
+  - **Both OV3 triage defects are R.11, not R.5 and not a new rule — R.12 stays free.** Both
+    are item 7's root cause (a chunk window whose text does not fit its audio):
+    `abysmal_opinion`'s chunk ranks **2nd of 381** on fit, worse than item 7's own 11th.
+    Consequence: Session C's 10-member sibling census used the SYMPTOM signature and misses
+    both, so **Session F must re-derive it from the FIT signal**.
+  - **`protection_failure` scored CORRECT by ear** — a member of the 44 movers that is not a
+    defect. Membership in the 44 is suspicion, not guilt; corroborates R-AA's narrowing.
+  - Register schema gains `id` + `origin`; `REGISTER_HIGH_WATER` 5 → 7 → 5 in one commit
+    (raised for the two new defects, lowered when items 4/5 closed); roster 7 → 9.
+  - Gate re-pinned: 31 changed fields / 16 rows, **0 unexpected**; 19+1skip → 21+1skip.
+    M1/M2/M3/M5 RED, M4 a true no-op by chunk-plan equality. `npm test` 83/2148/2 skipped;
+    lint clean; `cargo check`/`cargo test --features fa-inference` clean, 206 passed / 19
+    ignored; **golden replay 6/6, `phase4-baseline-*.csv` byte-identical**.
 
 - **2026-08-16/17 — WS1 Session C: the ear pass closes, three owner decisions overridden,
   the Zero-Defect Register built and made machine-checkable, two blocking diagnoses

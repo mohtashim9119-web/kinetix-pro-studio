@@ -1883,7 +1883,7 @@ override them — do what's best, permanent, long term."*
 
 **R-AD ruling (2026-08-16) — the FA DEFAULT FLIP is DEFERRED, not cancelled
 (alias OV1). OVERRIDES the owner's ear-pass decision RC2 ("FA default ON
-now").**
+now").** **RATIFIED by the owner 2026-08-17 (WS1 Session D).**
 
 *The decision being overridden, recorded here because it was never written
 into this document and an override must be readable next to what it
@@ -1925,7 +1925,7 @@ the default on a clean register.**
 
 **R-AE ruling (2026-08-16) — ear-pass item 7 / R.11 is PULLED INTO STAGE 1
 (alias OV2). OVERRIDES R-V's placement clause (`:1795`, "*Placement:* after
-Stage 1").** Zero defects means zero. A known ear failure sitting on the path
+Stage 1").** **RATIFIED by the owner 2026-08-17 (WS1 Session D).** Zero defects means zero. A known ear failure sitting on the path
 that is about to become the default cannot sit outside the lock scope. R-V's
 *substance* is untouched — item 7 is still its own defect class R.11, still
 unbundled from R-R, still a distinct mechanism from item 6. Only its schedule
@@ -1935,7 +1935,8 @@ too strong.
 
 **R-AF ruling (2026-08-16) — the three RC3 candidates are TRIAGED, not parked
 (alias OV3). OVERRIDES the owner's ear-pass decision RC3 ("park them for
-later").**
+later").** **RATIFIED by the owner 2026-08-17 (WS1 Session D), and EXECUTED —
+the triage ran; see R-AG below for its outcome.**
 
 *The decision being overridden.* **RC3 (owner, ear pass, 2026-08-16): the three
 named candidate defects R-AA left unfixed — `173 protection_failure`, `173
@@ -1953,6 +1954,186 @@ were filed. Each resolves to exactly one of: **correct as-is** (closed on the
 record), **defective** (enters the Zero-Defect Register), or **undecidable by
 ear** (closed with a named further step). The triage list is drawn and ready in
 `docs/work-in-progress.md` §11; running it is the owner's, and it is ~2 minutes.
+
+---
+
+## WS1 SESSION D RULINGS (2026-08-17) — the triage lands, and R.5 is BUILT
+
+**R-AG ruling (2026-08-17) — the OV3 triage outcome, and the register grows to
+7 before shrinking to 5.** R-AF's triage ran, blinded, five rows, both controls
+scored CORRECT (so the sitting is trustworthy). Outcome:
+
+| candidate | boundary | ear verdict | disposition |
+|---|---|---|---|
+| 173 `protection_failure` | 603.69 | **CORRECT** | closed on the record; never entered the register |
+| 173 `abysmal_opinion` | 16.50 | **DEFECTIVE** | enters the register, owning rule **R.11** |
+| v6 `226_four_scouts` | 670.24 | **DEFECTIVE** | enters the register, owning rule **R.11** |
+
+*Three things this ruling fixes on the record.*
+
+**(1) Membership in the 44 is suspicion, not guilt.** `protection_failure` is
+in the 44 known >0.5s FA-vs-Whisper movers, and the ear says its boundary is
+RIGHT. The 44 is a set of *disagreements between two imperfect sources*, not a
+defect list, and R-AA's decision to narrow 16 movers to 4 is corroborated
+rather than undermined by this — a boundary R-AA declined to move turns out not
+to have needed moving.
+
+**(2) The register schema gains an ORIGIN, not fake item numbers.** Both new
+entries came from a blinded 5-row sitting, not the 12-item ear list, so they
+have no item number and must not be given one. `KNOWN_BAD` rows now carry a
+stable string `id` plus `origin: 'ear-12' | 'ov3-triage'`, `REGISTER_ROSTER`
+holds ids, and a test asserts the pairing stays honest in both directions (an
+ear-12 entry must have its item number; a triage entry must not have acquired
+one).
+
+**(3) `REGISTER_HIGH_WATER` moved 5 -> 7 -> 5 in one commit, and both halves
+count.** It was RAISED because two new defects were confirmed — the guard doing
+precisely its job, making growth cost four coordinated edits rather than one
+silent line. It was then LOWERED because R.5 landed in the same commit and
+closed items 4 and 5. The register is 5 open at the end of Session D, the same
+number it was at the start, with a completely different membership.
+
+---
+
+**R.5 — FINAL SPEC AS BUILT (2026-08-17, WS1 Session D). Supersedes the
+Session C spec's DETECTION term and its BEHAVIOUR term; the mechanism and the
+R-E assignment are unchanged.**
+
+*What Session C specified, and what measuring it against production code
+found.* Session C's detector was "unclaimed Whisper-token runs of >= 3 tokens
+AND `bestFuzzyContainment(run, script) < 0.65`", measured with a Python
+`SequenceMatcher` proxy that put the ten true recitations at 0.58-0.60 and
+every false candidate at >= 0.67, and it flagged the number as needing
+re-derivation. Session D re-derived it. **The threshold does not transfer, and
+neither does the direction.** Against the production matcher (the run's own
+canonical words aligned to the flattened script by the same Hirschberg pass the
+pipeline uses), the ten recitations score **0.2500-0.6000** and the 38 false
+candidates **0.0000-0.4000** — overlapping across the whole 0.25-0.40 band, with
+the true positives mostly ABOVE the false ones rather than below. No threshold
+separates them. `isFuzzyMatch`, the other production candidate, is boolean and
+fires on 6/48 runs, none of them a recitation. **There is no production
+containment threshold. This is a finding, not a tuning failure.**
+
+*What separates them exactly, with no threshold at all.* A second STRUCTURAL
+test, in the index space the R2 invariant demands:
+
+```
+  unscripted-audio run  <=>  run length >= MIN_UNSCRIPTED_RUN_TOKENS (3)
+                        AND  qiHole == 0
+```
+
+where `qiHole` counts the UNMATCHED script words lying opposite the run — i.e.
+between the last script word whose matched token precedes the run and the first
+whose matched token follows it. The reasoning is mechanical rather than fitted:
+a false candidate is a **mis-tokenization of a word that IS in the script**
+("Catachan" arriving as `Cat`+`ac`+`an`, "Scylla" as `S`+`illa`), so the script
+word it fragments necessarily failed to match and the script side shows a hole.
+Genuinely unscripted audio has no script counterpart to fail, so every script
+word bracketing it matched and the hole is exactly zero.
+
+**Measured over all three corpora: 48 raw runs; `qiHole == 0` selects 10, the
+ten "Level N" recitations Step K counted independently — 10/10 recall, 0/38
+false positives.** The margin is the minimum possible and that is the point:
+every true positive is 0 and every false positive is >= 1, so this is a
+STRUCTURAL zero of the same kind as R-U's zero-seam veto, not a threshold near
+an edge. `001_scylla_intro`, the subword case Session C named as the one a
+threshold gets wrong, is rejected correctly.
+
+*BEHAVIOUR — EXCISION, because the specced CTC wildcard is not reachable.*
+Session C specified the run's span becoming "a CTC wildcard ... absorbing that
+audio at zero alignment cost". `fa_viterbi.rs` implements standard CTC with a
+blank symbol and **has no wildcard label**, so that form cannot be built from
+`faChunkPlan.ts` — it would need the Rust aligner, outside this session's
+permitted surface and a far larger change. Excising the span from the chunk
+window is the same thing acoustically (the neighbouring segments' words are
+never offered those frames) and IS reachable here: the containing chunk splits
+into the part before the run and the part after it, cut in the SCRIPT at
+`qiSplit`. A side that would carry no text is not emitted — its window is
+trimmed instead, which is what the corpus-start recitation needs and what keeps
+Rust's `text_to_token_ids` from seeing an empty chunk.
+
+*The chunk plan stops being contiguous, and that is legal.* `align_chunked`
+(`fa_onnx.rs`) processes each chunk independently and offsets its words by
+`chunk.start_sec`; its windowed-output invariants are non-decreasing times,
+non-overlap, and each word inside its own chunk window — all satisfied by a gap
+between windows. The chunk plan has never been required to partition
+`[0, audioDuration)`; that is **Model P**, which governs `project.segments` and
+is untouched. Per **R-E** the excised seconds belong to the PRECEDING segment,
+which is exactly what leaving the inter-chunk span unclaimed produces.
+
+*Contract effects, as built.* `normalizeSceneDoc` word counts unchanged;
+`computeRunContext` offsets unchanged; `assertQiMapConsistent` untouched and
+still passing (R.5 adds no script words and consumes no `qi` index — it only
+decides where an already-computed `qi` sequence is CUT). The R.1 anchor set and
+the R.0 run partition are **bit-identical on all three corpora** (`anchorDigest`
+and `runDigest` unchanged in the replay gate), which is the machine proof that
+`faAnchors.ts` is not involved.
+
+*Measured result.* v6 264 -> 273 chunks (nine splits + one corpus-start trim);
+173 and spanish chunk plans bit-identical. **8 of 649 committed boundaries move,
+all in v6, and every one of the 8 lands exactly on the Whisper-committed
+value.** Ear-pass items 4 and 5 both resolve with residual **0.000s** at 931.40
+and 130.96. Item 7 (449.20), the V6 seam 150/151 control (457.81) and all three
+v6 FA-recovered boundaries are unmoved. Full tables:
+`docs/work-in-progress.md` §11's Session D block.
+
+*Not built, deliberately.* The `unscripted-gap` sync-log entry R-E calls for.
+`faChunkPlan.ts` is a pure module with no logging surface, and the caller that
+would emit it is the Phase 3 production-wiring slice
+(`docs/work-in-progress.md` §11 item 1), which has not landed. `detectUnscripted
+Runs` is exported so that caller can emit the entry without re-deriving
+anything. Recorded as a deferral, not an omission.
+
+---
+
+**BOTH TRIAGE DEFECTS ARE R.11. No R.12 is created — R.12 remains the next free
+rule number (2026-08-17, WS1 Session D).**
+
+The session brief anticipated that `abysmal_opinion` might need a new rule, and
+that `226_four_scouts` might be an R.5 case. Measurement says neither. Both are
+**item 7's root cause**: *a chunk window whose attributed text does not fit its
+audio.* Session C established that as item 7's real mechanism (its `(e)`
+diagnosis: "the word-seam midpoint is what `snapBoundaries.ts` correctly
+computes from that wrong input"), and both new entries reproduce it exactly.
+
+*173 `abysmal_opinion` @16.50 — a text-SURPLUS window.* Chunk `[16.64, 18.08]`
+is handed "the numbers. They're": **4 script words against 2 Whisper token
+onsets, fit 2.000, rank 2 of all 381 chunks** — worse than item 7's own 1.429
+at rank 11. "They're" is spoken at **18.10, beyond that window's end**, so FA
+crushes it to `[17.08, 17.40]` at confidence 3.9e-03 and the boundary lands on
+the midpoint of silence `[16.36, 16.64]` — an interval with **zero seconds
+uncovered by speech**, lying wholly inside the continuous "because of the
+numbers". The ear-correct **17.88** is available in the data as the midpoint of
+the real 0.40s gap `[17.68, 18.08]`.
+
+*v6 `226_four_scouts` @670.24 — an audio-SURPLUS window.* Chunk
+`[669.40, 671.50]` carries "night scouts now. Four of them": 6 script words
+against 8 token onsets, **fit 0.750**. FA crushes "four of them" to
+`[670.32, 671.48]` at 9.7e-04/1.6e-06/3.7e-07 and the boundary falls on FA's own
+word-seam midpoint 670.24 instead of the real silence `[670.86, 671.50]`, whose
+midpoint is the ear-correct **671.18**.
+
+*Three candidate classes eliminated by measurement, not assumption.* NOT R.5:
+173 has zero unscripted-audio runs, and `226_four_scouts` was tested by BUILDING
+R.5 and watching it not move (see the Step 2 pre-registration below). NOT R.10:
+its discriminant does not fire on either (`matched === true`, max word
+confidence 1.0 and 0.999). NOT a new spurious-silence rule: the tempting
+"reject a silence with no real inter-token gap" veto covers **142 of 649
+committed boundaries**, including item 6 @174.74 and item 9 @65.12 — two
+positive assertions the ear has already confirmed CORRECT. That veto is
+catastrophically broad, in the same way Session C warned the symmetric
+multi-seam veto would be, and it is recorded here so a later session does not
+rediscover it as an idea.
+
+> **CONSEQUENCE FOR SESSION F, and it is a real one.** Session C's item-7
+> sibling census (10 of 646) was drawn on the SYMPTOM signature — word-seam
+> midpoint AND back-to-back seam AND no spanning silence. `abysmal_opinion`
+> fails that signature (seam gap 0.260s; a silence DOES span it) and
+> `226_four_scouts` fails it too (seam gap 0.160s), yet both are the class.
+> **The symptom census under-counts. Session F must re-derive it from the FIT
+> signal** — attributed script words / token onsets inside the window, which
+> ranks both new entries in the top 1% and 7% respectively — and must do so
+> AFTER R.10 lands (Session C's X2 dependency, unchanged).
 
 ---
 
@@ -2116,6 +2297,25 @@ is measured yet.
 
 *Status.* Documented only, this session. No respec written, no detector
 built, not a Session B or Session C blocker.
+
+*RESPEC — WS1 Session C (`docs/work-in-progress.md` §11(d)), plus the owner's
+Session D directive.* Session C measured the two numbers above and found BOTH
+premises wrong: `hostile_landscape` and `perilous_realms` score **0.000**, not
+0.769/0.778, so the thief/victim adjacency this ruling was built on does not
+exist. The working discriminant is `alignResult.matched === false` **∧**
+`max(faWords.confidence) < R10_MAX_WORD_CONF` **∧** `faWords.length >= 2`
+(2/2 true positives, 0 false positives over all 649 boundaries; re-confirmed
+independently in Session D — it selects exactly `perilous_realms` and
+`blue_monkey`, both in 173).
+
+> **OWNER DIRECTIVE (2026-08-17, WS1 Session D): `R10_MAX_WORD_CONF` gets its
+> OWN NAMED CONSTANT in `syncConstants.ts`. Do NOT reuse `CONF_MIN`, and do
+> not let the two drift into each other.** `CONF_MIN` (0.3) over-fires 16/649;
+> the R.10 threshold is 5e-4, three orders of magnitude away, and the two
+> answer different questions ("is this word worth reviewing?" versus "was this
+> text spoken at all?"). Session E builds it. Recorded here rather than only
+> in the session brief so the constant's separateness survives the session
+> that creates it.
 
 
 **R.6 — Corpus start and end.**

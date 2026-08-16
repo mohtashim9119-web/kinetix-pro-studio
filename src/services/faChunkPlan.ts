@@ -66,6 +66,21 @@ interface RawScriptToken {
   qiEnd: number;
 }
 
+/**
+ * One maximal stretch of transcribed audio that no committed segment's script
+ * accounts for — R.5's unit of work. `[tokenLo, tokenHi]` are inclusive Whisper
+ * token indices; `[startSec, endSec]` is the audio span they cover; `qiSplit`
+ * is the first script-word (`qi`) index whose matched token lies AFTER the run,
+ * i.e. the exact point in the script at which the run interrupts it.
+ */
+export interface UnscriptedRun {
+  tokenLo: number;
+  tokenHi: number;
+  startSec: number;
+  endSec: number;
+  qiSplit: number;
+}
+
 /** Everything one pass over the alignment produces. `computeRuns` returns only
  *  `runs` from this (its historical shape); index attribution additionally
  *  needs `anchors` (for their `qi`) and the raw-token/`qi` correspondence. */
@@ -74,6 +89,7 @@ interface RunContext {
   anchors: readonly FaAnchor[];
   rawTokens: RawScriptToken[];
   totalQi: number;
+  unscripted: UnscriptedRun[];
 }
 
 /**
@@ -118,10 +134,12 @@ function computeRunContext(
   // segment's scene-doc-normalized words, concatenated in segment order.
   const queryWords: string[] = [];
   const rawTokens: RawScriptToken[] = [];
+  const segQiRanges: Array<{ start: number; end: number }> = [];
   for (const seg of segments) {
     const words = seg.text && seg.text.trim() ? normalizeSceneDoc(seg.text, languageCode) : [];
     const segQiStart = queryWords.length;
     for (const w of words) if (w.length > 0) queryWords.push(w);
+    segQiRanges.push({ start: segQiStart, end: queryWords.length });
 
     if (!seg.text || !seg.text.trim()) continue;
     let qi = segQiStart;
@@ -139,7 +157,196 @@ function computeRunContext(
   const alignment = alignQueryToSubject(queryWords, subjectWords);
 
   const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
-  return { runs, anchors, rawTokens, totalQi: queryWords.length };
+  const unscripted = detectUnscriptedRuns(alignment.matchedSubjectOf, subjectTokenIdx, segQiRanges, tokens);
+  return { runs, anchors, rawTokens, totalQi: queryWords.length, unscripted };
+}
+
+// ---------------------------------------------------------------------------
+// R.5 — UNSCRIPTED AUDIO (WS1 Session D).
+//
+// THE DEFECT. Between two committed segments the narrator can say something
+// that appears in NO segment's script — V6's ten spoken "Level N ..." chapter
+// recitations are the measured instance (2.79-5.58s each). Forced alignment
+// must place every target token somewhere, so a chunk window that spans such a
+// recitation hands the neighbouring segments' words audio that is not theirs:
+// measured, FA puts `042_eleven_years` ("You are eleven.") onto the Level-two
+// recitation at [125.96, 128.34] and the following boundary lands at 128.43
+// against an ear-correct 130.96 (ear-pass items 4 and 5).
+//
+// DETECTION — TWO STRUCTURAL TESTS, NO THRESHOLD. WS1 Session C specified a
+// fuzzy-containment cut at 0.65 measured with a Python `SequenceMatcher`
+// stand-in, and flagged that the number had to be re-derived against
+// production code. Session D re-derived it and the stand-in does NOT transfer:
+// against the production matcher the ten true recitations score 0.2500-0.6000
+// and the 38 false candidates 0.0000-0.4000 — overlapping, and inverted
+// relative to the proxy, so no threshold separates them at all. What separates
+// them exactly is a pair of INDEX-SPACE tests, which is what `CLAUDE.md` §4's
+// "timestamps may measure distance; they must never decide identity" asks for:
+//
+//   unscripted-audio run  <=>  run length >= MIN_UNSCRIPTED_RUN_TOKENS
+//                         AND  no unmatched SCRIPT word lies opposite it
+//
+// The second test is the whole rule. A false candidate is a MIS-TOKENIZATION of
+// a word that IS in the script ("Catachan" arriving as `Cat`+`ac`+`an`,
+// "Scylla" as `S`+`illa`), so the script word it fragments necessarily failed
+// to match — the script side shows a hole. Genuinely unscripted audio has no
+// script counterpart to fail, so every script word bracketing it matched and
+// the hole is EXACTLY ZERO. Measured over all three corpora: 48 raw runs, and
+// `qiHole === 0` selects 10 of them — the ten recitations Step K counted
+// independently — with ZERO false positives (the next-best candidate sits at
+// 1, so this is a structural zero and not a tuned edge, the same shape as
+// R-U's zero-seam veto).
+//
+// BEHAVIOUR — EXCISION, the realisable form of R.5's "CTC wildcard". The
+// original spec called for a wildcard token absorbing the span at zero
+// alignment cost. `fa_viterbi.rs` implements standard CTC with a blank symbol
+// and has no wildcard label, so that form is not reachable from this module.
+// Excising the span from the chunk window is the same thing acoustically —
+// the neighbouring segments' words are never offered those frames — and it is
+// reachable here: the containing chunk is split into the part before the run
+// and the part after it, cut in the SCRIPT at `qiSplit`. `align_chunked`
+// (`fa_onnx.rs`) processes each chunk independently and offsets its words by
+// `chunk.start_sec`, so a gap between chunk windows is legal there; the chunk
+// plan has never been required to partition `[0, audioDuration)` (that is
+// Model P, which governs `project.segments`, not this array). Per ruling R-E
+// the excised seconds belong to the PRECEDING segment, which is what falls out
+// of leaving the boundary between the two split chunks unclaimed.
+// ---------------------------------------------------------------------------
+
+/** R.5's length floor: a run must be at least this many Whisper tokens to be
+ *  considered unscripted at all. Not a tuned threshold — it is the shortest
+ *  run that can carry a recitation, and it is inherited unchanged from WS1
+ *  Session C's spec, which measured it as sufficient (the ten true positives
+ *  run 4-12 tokens; the floor never binds on them). Its only job is to keep
+ *  one- and two-token transcription hiccups out of the candidate set before
+ *  the zero-hole test runs. */
+const MIN_UNSCRIPTED_RUN_TOKENS = 3;
+
+/**
+ * Every maximal run of Whisper tokens that no matched segment's span claims AND
+ * that no unmatched script word sits opposite — see the R.5 section header for
+ * why those two tests, and only those two, are the rule.
+ *
+ * "Claimed" is the SPAN rule, matching `whisperService.ts`'s
+ * `extractSegmentAlignments`: a token is claimed if it lies anywhere inside
+ * some segment's `[firstTokenIdx, lastTokenIdx]`, interior non-matches
+ * included. A token that merely failed to match INSIDE a segment its
+ * neighbours bracket is that segment's problem, not surplus audio.
+ */
+export function detectUnscriptedRuns(
+  matchedSubjectOf: ArrayLike<number>,
+  subjectTokenIdx: ArrayLike<number>,
+  segQiRanges: readonly { start: number; end: number }[],
+  tokens: readonly TranscriptToken[],
+): UnscriptedRun[] {
+  if (tokens.length === 0) return [];
+
+  // Each segment's matched token span, derived from the alignment already
+  // computed rather than from a second `extractSegmentAlignments` pass (V6's
+  // Hirschberg pass costs seconds; running it twice for the same answer is not
+  // worth it).
+  const claimed = new Uint8Array(tokens.length);
+  for (const range of segQiRanges) {
+    let lo = -1;
+    let hi = -1;
+    for (let qi = range.start; qi < range.end; qi++) {
+      const sj = matchedSubjectOf[qi];
+      if (sj === undefined || sj < 0) continue;
+      const ti = subjectTokenIdx[sj];
+      if (ti === undefined || ti < 0) continue;
+      if (lo < 0 || ti < lo) lo = ti;
+      if (ti > hi) hi = ti;
+    }
+    if (lo < 0) continue;
+    for (let i = lo; i <= hi && i < tokens.length; i++) claimed[i] = 1;
+  }
+
+  // `qi -> token index` for every matched script word, so the script-side hole
+  // and the split point are both read off the index space directly.
+  const qiToken = new Int32Array(matchedSubjectOf.length).fill(-1);
+  for (let qi = 0; qi < matchedSubjectOf.length; qi++) {
+    const sj = matchedSubjectOf[qi];
+    if (sj === undefined || sj < 0) continue;
+    const ti = subjectTokenIdx[sj];
+    if (ti !== undefined && ti >= 0) qiToken[qi] = ti;
+  }
+
+  const out: UnscriptedRun[] = [];
+  for (let scan = 0; scan < tokens.length; scan++) {
+    if (claimed[scan]) continue;
+    const lo = scan;
+    let hi = scan;
+    while (hi + 1 < tokens.length && !claimed[hi + 1]) hi++;
+    scan = hi; // maximal run consumed either way
+
+    if (hi - lo + 1 < MIN_UNSCRIPTED_RUN_TOKENS) continue;
+
+    // Bracket the run in script space: the last script word matched strictly
+    // before it, and the first matched strictly after it.
+    let qiBefore = -1;
+    let qiAfter = qiToken.length;
+    for (let qi = 0; qi < qiToken.length; qi++) {
+      const ti = qiToken[qi]!;
+      if (ti < 0) continue;
+      if (ti < lo) qiBefore = qi;
+      else if (ti > hi) { qiAfter = qi; break; }
+    }
+
+    // THE RULE: is any script word opposite this audio unmatched?
+    let hole = 0;
+    for (let qi = qiBefore + 1; qi < qiAfter; qi++) if (qiToken[qi]! < 0) hole++;
+    if (hole !== 0) continue;
+
+    out.push({
+      tokenLo: lo, tokenHi: hi,
+      startSec: tokens[lo]!.startSec, endSec: tokens[hi]!.endSec,
+      qiSplit: qiAfter,
+    });
+  }
+  return out;
+}
+
+/**
+ * Splits any chunk that wholly contains an unscripted run into the part before
+ * the run and the part after it, excising the run's own seconds from both.
+ *
+ * A side that would carry NO text is not emitted — the window is trimmed
+ * instead. That is not an edge case bolted on: V6's first recitation sits at
+ * corpus start with no preceding segment at all, so its "before" side is
+ * legitimately empty, and Rust's `text_to_token_ids` rejects an empty-text
+ * chunk outright (`EmptyTokenization`). A run that is not wholly inside one
+ * chunk is left alone rather than guessed at; measured on the real corpora all
+ * ten are wholly contained, so this is a correctness guard, not a tuned path.
+ */
+function exciseUnscriptedRuns(
+  chunks: readonly FaChunk[],
+  unscripted: readonly UnscriptedRun[],
+  textQi: ReadonlyMap<FaChunk, Array<{ text: string; qiStart: number }>>,
+): FaChunk[] {
+  if (unscripted.length === 0) return chunks as FaChunk[];
+
+  const out: FaChunk[] = [];
+  for (const chunk of chunks) {
+    const inside = unscripted.filter(u => u.startSec >= chunk.startSec && u.endSec <= chunk.endSec);
+    const toks = textQi.get(chunk);
+    if (inside.length === 0 || toks === undefined) { out.push(chunk); continue; }
+
+    // Left to right: emit [cursor, run.startSec] with the script up to
+    // `qiSplit`, then resume after the run.
+    let cursor = chunk.startSec;
+    let taken = 0;
+    for (const u of inside) {
+      const before = toks.slice(taken).filter(t => t.qiStart < u.qiSplit);
+      taken += before.length;
+      if (before.length > 0 && u.startSec > cursor) {
+        out.push({ startSec: cursor, endSec: u.startSec, text: before.map(t => t.text).join(' ') });
+      }
+      cursor = u.endSec;
+    }
+    const rest = toks.slice(taken);
+    if (rest.length > 0) out.push({ startSec: cursor, endSec: chunk.endSec, text: rest.map(t => t.text).join(' ') });
+  }
+  return out;
 }
 
 /** Per-token and whole-segment normalization must land on the same `qi` count —
@@ -510,14 +717,21 @@ function coalesceRunQiRanges(ranges: readonly RunQiRange[], targetSec: number): 
  *    `runsToChunks`, whose text flows the other way, folds backward in both
  *    cases — the two modes are mirror images here, not identical.
  */
-function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly RawScriptToken[]): FaChunk[] {
+function attributeByIndex(
+  ranges: readonly RunQiRange[],
+  rawTokens: readonly RawScriptToken[],
+  /** R.5: filled with each emitted chunk's own raw tokens, still carrying their
+   *  `qiStart`, so `exciseUnscriptedRuns` can cut a chunk's TEXT at a script
+   *  index without re-deriving the attribution it just performed. */
+  textQiOut?: Map<FaChunk, Array<{ text: string; qiStart: number }>>,
+): FaChunk[] {
   if (ranges.length === 0) return [];
 
-  const textsByRun: string[][] = ranges.map(() => []);
+  const textsByRun: Array<Array<{ text: string; qiStart: number }>> = ranges.map(() => []);
   let rangeIdx = 0;
   for (const tok of rawTokens) {
     while (rangeIdx < ranges.length - 1 && tok.qiStart >= ranges[rangeIdx + 1]!.qiLo) rangeIdx++;
-    textsByRun[rangeIdx]!.push(tok.text);
+    textsByRun[rangeIdx]!.push({ text: tok.text, qiStart: tok.qiStart });
   }
 
   // Fold zero-duration runs' text forward into the next run that has audio.
@@ -535,7 +749,7 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
   for (let i = 0; i < ranges.length; i++) {
     const range = ranges[i]!;
     const run = range.run;
-    const text = textsByRun[i]!.join(' ');
+    const text = textsByRun[i]!.map(t => t.text).join(' ');
     if (text.length === 0) {
       // WHICH WAY A TEXT-LESS WINDOW FOLDS DEPENDS ON WHERE ITS TEXT WENT.
       // An EMPTY qi range (`qiHi === qiLo` — a forced split, `runQiRanges`'s
@@ -556,7 +770,9 @@ function attributeByIndex(ranges: readonly RunQiRange[], rawTokens: readonly Raw
       else chunks[chunks.length - 1]!.endSec = run.windowEnd;
       continue;
     }
-    chunks.push({ startSec: pendingStart ?? run.windowStart, endSec: run.windowEnd, text });
+    const chunk: FaChunk = { startSec: pendingStart ?? run.windowStart, endSec: run.windowEnd, text };
+    chunks.push(chunk);
+    textQiOut?.set(chunk, textsByRun[i]!);
     pendingStart = undefined;
   }
   return chunks;
@@ -631,7 +847,13 @@ export function computeFaChunkPlanWithAttribution(
     // functions' doc comments for the bug that approach produces).
     const uncoalescedRanges = runQiRanges(ctx.runs, ctx.anchors, ctx.totalQi);
     const ranges = coalesceTargetSec === undefined ? uncoalescedRanges : coalesceRunQiRanges(uncoalescedRanges, coalesceTargetSec);
-    chunks = attributeByIndex(ranges, ctx.rawTokens);
+    // R.5 (WS1 Session D): excise unscripted audio from the windows it would
+    // otherwise force a neighbouring segment's words onto. Index attribution
+    // only — `'segment-start-time'` below is the pre-D23 rule, kept reachable
+    // purely as the byte-identical historical comparison
+    // (`faChunkPlan.test.ts`), and it carries no `qi` to cut a chunk's text at.
+    const textQi = new Map<FaChunk, Array<{ text: string; qiStart: number }>>();
+    chunks = exciseUnscriptedRuns(attributeByIndex(ranges, ctx.rawTokens, textQi), ctx.unscripted, textQi);
   }
 
   return languageCode !== undefined && vocabChars !== undefined

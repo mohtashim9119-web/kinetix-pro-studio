@@ -196,7 +196,20 @@ const EXPECTED_SHAPE: Record<Corpus, { segmentCount: number; skippedCount: numbe
  * fixture itself predates the fix that closed it (see the item-9 note).
  */
 interface KnownBadRow {
-  item: number;
+  /** Stable register key. Every entry has one; it is what `REGISTER_ROSTER`
+   *  holds and what `CLOSED_BY_POSITIVE_ASSERTION` matches on. WS1 Session D
+   *  introduced it because the OV3 triage produced defects with NO ear-item
+   *  number — they came from a blinded 5-row sitting, not the original 12-item
+   *  list — and inventing item numbers for them would have made the register
+   *  lie about where its entries came from. */
+  id: string;
+  /** WHERE this entry came from. `'ear-12'` = the original 12-item ear pass
+   *  (`item` is then set); `'ov3-triage'` = ruling R-AF's blinded triage of the
+   *  three R-AA candidates (`item` is undefined). A future origin adds a
+   *  member here rather than being forced into one of these. */
+  origin: 'ear-12' | 'ov3-triage';
+  /** The ear-pass item number — ONLY for `origin: 'ear-12'`. */
+  item?: number;
   corpus: Corpus;
   tag: string;
   /** The owning rule this entry closes under — the rule that must be BUILT
@@ -220,21 +233,7 @@ interface KnownBadRow {
 
 const KNOWN_BAD: KnownBadRow[] = [
   {
-    item: 4, corpus: 'v6', tag: '308_scouts_leading', owningRule: 'R.5', closingCommit: '',
-    faValue: 928.67, earCorrect: 931.40,
-    mechanism: 'R.5 (unscripted audio: "Level 8..." present in the WAV, absent from the scene doc)',
-    status: 'open',
-    note: 'R.5 is scoped, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
-  },
-  {
-    item: 5, corpus: 'v6', tag: '043_night_migration', owningRule: 'R.5', closingCommit: '',
-    faValue: 128.43, earCorrect: 130.96,
-    mechanism: 'R.5 (unscripted audio: "Level two..." present in the WAV, absent from the scene doc)',
-    status: 'open',
-    note: 'R.5 is scoped, not built. Not Session B scope.',
-  },
-  {
-    item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', owningRule: 'R.11', closingCommit: '',
+    id: 'item-7', origin: 'ear-12', item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', owningRule: 'R.11', closingCommit: '',
     faValue: 449.20, earCorrect: 451.03,
     mechanism: 'R.11 (FA word-timing defect: FA\'s own word-seam midpoint, no silence involved) — opened by owner ruling R-V',
     status: 'open',
@@ -244,14 +243,14 @@ const KNOWN_BAD: KnownBadRow[] = [
       'as R-V predicted. Scoped after Stage 1; stays known-bad until R.11 is built.',
   },
   {
-    item: 10, corpus: '173', tag: 'hostile_landscape', owningRule: 'R.10', closingCommit: '',
+    id: 'item-10', origin: 'ear-12', item: 10, corpus: '173', tag: 'hostile_landscape', owningRule: 'R.10', closingCommit: '',
     faValue: 1.36, earCorrect: 0.00,
     mechanism: 'R.10 (scripted text never spoken: on-screen-only title "perilous_realms" steals its neighbour\'s onset)',
     status: 'open',
     note: 'R.10 is specified, not built (sync-pipeline-v2-plan.md). Not Session B scope (Session B = R-R, items 6/7 only).',
   },
   {
-    item: 11, corpus: '173', tag: 'blue_monkey', owningRule: 'R.10', closingCommit: '',
+    id: 'item-11', origin: 'ear-12', item: 11, corpus: '173', tag: 'blue_monkey', owningRule: 'R.10', closingCommit: '',
     faValue: 36.96, earCorrect: null,
     mechanism: 'R.10 (scripted text never spoken: the planted "blue monkey" string is never voiced)',
     status: 'open',
@@ -261,6 +260,44 @@ const KNOWN_BAD: KnownBadRow[] = [
       '[37.73, 38.50); R-AA\'s seam-region reading (WS1 Session B.1) does NOT move it, so this pin is back at its ' +
       'pre-Session-B 36.96. Either way the mechanism is untouched — only the numbers a wrong-by-construction span ' +
       'happens to carry. Not this session\'s scope; R.10 is specified, not built.',
+  },
+  // ---- WS1 Session D: the two defects owner ruling R-AF's OV3 triage
+  // confirmed by ear. Neither has an ear-item number (they came from a blinded
+  // 5-row sitting, not the 12-item list), which is what `origin`/`id` exist
+  // for. The third candidate, 173 `protection_failure` @603.69, was scored
+  // CORRECT and closed on the record without ever entering the register.
+  {
+    id: 'ov3-abysmal-opinion', origin: 'ov3-triage', corpus: '173', tag: 'abysmal_opinion',
+    owningRule: 'R.11', closingCommit: '',
+    faValue: 16.50, earCorrect: 17.88,
+    mechanism: 'R.11 (chunk window whose attributed text does not fit its audio) — Session D diagnosis',
+    status: 'open',
+    note: 'Measured in WS1 Session D and it is NOT a new class: it is item 7\'s ROOT CAUSE, found through a ' +
+      'different symptom. Chunk [16.64, 18.08] is handed "the numbers. They\'re" — 4 script words against 2 ' +
+      'Whisper token onsets, fit 2.000, ranking 2nd of all 381 chunks (item 7\'s own chunk is 1.429 at rank 11). ' +
+      '"They\'re" is spoken at 18.10, BEYOND that window\'s end, so FA crushes it to [17.08, 17.40] at confidence ' +
+      '3.9e-03 and the boundary lands on the midpoint of silence [16.36, 16.64] — an interval with ZERO seconds ' +
+      'uncovered by speech. The ear-correct 17.88 is sitting right there as the midpoint of the real 0.40s gap ' +
+      '[17.68, 18.08]. NOT R.5: 173 has zero unscripted-audio runs. NOT R.10: its discriminant does not fire ' +
+      '(matched=true, maxWordConfidence 1.0). NOT the item-7 SYMPTOM signature either (seam gap 0.260s, and a ' +
+      'silence does span the boundary) — which is why Session C\'s 10-member sibling census missed it, and why ' +
+      'session F must re-derive that census from the fit signal rather than the seam signature.',
+  },
+  {
+    id: 'ov3-226-four-scouts', origin: 'ov3-triage', corpus: 'v6', tag: '226_four_scouts',
+    owningRule: 'R.11', closingCommit: '',
+    faValue: 670.24, earCorrect: 671.18,
+    mechanism: 'R.11 (chunk window whose attributed text does not fit its audio) — Session D diagnosis',
+    status: 'open',
+    note: 'The owner\'s Level-N hypothesis was PRE-REGISTERED and then REFUTED BY THE BUILD. The "Level 6" ' +
+      'recitation [663.91, 666.48] really is the nearest unscripted run, R.5 really did excise it, and this ' +
+      'boundary did NOT move — predicted 671.18, actual 670.24, unchanged. The reason is visible in the words: ' +
+      'R.5 re-seated "you"(224) and "you"(225), and every word from "are" onward is BIT-IDENTICAL, because the ' +
+      'boundary is decided inside chunk [669.40, 671.50] ("night scouts now. Four of them"), which R.5 never ' +
+      'touched. That chunk carries 6 script words against 8 token onsets — surplus AUDIO, fit 0.750 — so FA ' +
+      'crushes "four of them" to [670.32, 671.48] at 9.7e-04/1.6e-06/3.7e-07 and the boundary falls on FA\'s own ' +
+      'word-seam midpoint 670.24 instead of the real silence [670.86, 671.50], whose midpoint is 671.18. Same ' +
+      'root cause as item 7 and `abysmal_opinion`; adjacency to an unscripted run was a red herring.',
   },
 ];
 
@@ -303,15 +340,33 @@ const KNOWN_BAD: KnownBadRow[] = [
 //      the row is still open, and a closed row cannot lack one.
 // ===========================================================================
 
-/** Every ear-pass item that has ever been in the register. APPEND-ONLY.
- *  Removing a number from this list is how the register would get falsified,
- *  so the roster is the thing that must not shrink, while KNOWN_BAD is the
- *  thing that must. */
-const REGISTER_ROSTER = [4, 5, 6, 7, 9, 10, 11] as const;
+/** Every entry that has ever been in the register, by `id`. APPEND-ONLY.
+ *  Removing an id from this list is how the register would get falsified, so
+ *  the roster is the thing that must not shrink, while KNOWN_BAD is the thing
+ *  that must. WS1 Session D changed this from numbers to ids: the OV3 triage
+ *  produced two defects with no ear-item number at all, and the roster has to
+ *  be able to name them without inventing one. */
+const REGISTER_ROSTER = [
+  'item-4', 'item-5', 'item-6', 'item-7', 'item-9', 'item-10', 'item-11',
+  'ov3-abysmal-opinion', 'ov3-226-four-scouts',
+] as const;
 
-/** High-water mark for the OPEN manifest. WS1 Session C: 5 (items 4,5,7,10,11).
- *  This may be lowered when entries close. It must never be raised — see the
- *  failure message on the shrink-only test. */
+/** High-water mark for the OPEN manifest.
+ *
+ *  WS1 Session C: 5 (items 4,5,7,10,11).
+ *
+ *  WS1 Session D RAISED it to 7 and then LOWERED it to 5 in the same commit,
+ *  and both halves matter. It was raised because owner ruling R-AF's OV3
+ *  triage confirmed two NEW defects by ear (`abysmal_opinion`,
+ *  `226_four_scouts`) — the guard doing exactly its job: growth cost a
+ *  deliberate edit to this constant, an append to the roster above, an entry
+ *  in KNOWN_BAD, and a row in `docs/work-in-progress.md` §11's register table.
+ *  It was then lowered because R.5 landed in the same commit and closed items
+ *  4 and 5 into positive assertions, taking the open count 7 -> 5.
+ *
+ *  This may be lowered when entries close. Raising it is allowed only with
+ *  the full ceremony above — see the failure message on the shrink-only
+ *  test. */
 const REGISTER_HIGH_WATER = 5;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
@@ -319,17 +374,32 @@ const REGISTER_HIGH_WATER = 5;
  *  a row leaves KNOWN_BAD only by arriving here, and arriving here means the
  *  ear-correct value is asserted against the committed fixture. */
 const CLOSED_BY_POSITIVE_ASSERTION: Array<{
-  item: number; corpus: Corpus; tag: string; earCorrect: number;
+  id: string; item?: number; corpus: Corpus; tag: string; earCorrect: number;
   closingCommit: string; why: string;
 }> = [
   {
-    item: 6, corpus: '173', tag: 'vessel_damage_clue', earCorrect: 174.74,
+    id: 'item-4', item: 4, corpus: 'v6', tag: '308_scouts_leading', earCorrect: 931.40,
+    closingCommit: 'WS1-SESSION-D',
+    why: 'R.5 (unscripted-audio excision). The spoken "Level 8. The one who teaches what cannot be taught ' +
+      'easily." [925.14, 928.93] is excised from the chunk window, so `307_forty_nine_years` is no longer ' +
+      'offered heading frames for "You are forty-nine." Residual 0.000s against the ear-correct 931.40, and it ' +
+      'lands exactly on the Whisper-committed value too.',
+  },
+  {
+    id: 'item-5', item: 5, corpus: 'v6', tag: '043_night_migration', earCorrect: 130.96,
+    closingCommit: 'WS1-SESSION-D',
+    why: 'R.5 (unscripted-audio excision). Same mechanism as item 4, on "Level two. The boy who carries fire." ' +
+      '[125.54, 129.01]. The confidence recovery is the proof the fix is real rather than coincidental: ' +
+      '"eleven" moves 127.96 -> 129.99 and its confidence goes 5.9e-07 -> 1.0. Residual 0.000s.',
+  },
+  {
+    id: 'item-6', item: 6, corpus: '173', tag: 'vessel_damage_clue', earCorrect: 174.74,
     closingCommit: '92746cf',
     why: 'R-U zero-seam rejection (and still resolved under R-AA seam-region). Residual 0.000s. ' +
       'Survived both re-pins unchanged, which is the point of pinning the ear-correct value.',
   },
   {
-    item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', earCorrect: 65.12,
+    id: 'item-9', item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', earCorrect: 65.12,
     closingCommit: '616abb2',
     why: 'Forced-split chunk-plan attribution bug. The fixture refresh in WS1 Session B means the ' +
       'Spanish baseline finally SHOWS the live 65.12 instead of the stale 66.73, so this can now ' +
@@ -341,12 +411,12 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (1) THE STAGE 1 LOCK'S MACHINE CHECK. Un-skip when the manifest empties.
   it.skip(
     'the Zero-Defect Register is EMPTY — SKIPPED: 5 open defects ' +
-    '(item 4 R.5, item 5 R.5, item 7 R.11, item 10 R.10, item 11 R.10). ' +
+    '(item 7 R.11, item 10 R.10, item 11 R.10, ov3-abysmal-opinion R.11, ov3-226-four-scouts R.11). ' +
     'Stage 1 does not lock while this test is skipped. Un-skip it in the commit ' +
     'that closes the last entry.',
     () => {
       expect(
-        KNOWN_BAD.filter(k => k.status === 'open').map(k => `item ${k.item} (${k.owningRule}, ${k.corpus} ${k.tag})`),
+        KNOWN_BAD.filter(k => k.status === 'open').map(k => `${k.id} (${k.owningRule}, ${k.corpus} ${k.tag})`),
         'the Zero-Defect Register still has open entries',
       ).toEqual([]);
     },
@@ -361,36 +431,36 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
       `${REGISTER_HIGH_WATER}. A new defect is not forbidden — but it must be recorded deliberately: ` +
       `raise REGISTER_HIGH_WATER in the same commit, add the item to REGISTER_ROSTER, and record it in ` +
       `docs/work-in-progress.md §11's register table. Do NOT raise the constant to make this green ` +
-      `without doing the other two. Open items now: ${open.map(k => k.item).join(', ')}.`,
+      `without doing the other two. Open entries now: ${open.map(k => k.id).join(', ')}.`,
     ).toBeLessThanOrEqual(REGISTER_HIGH_WATER);
   });
 
   // (3) CONVERSION, NOT DELETION.
   it('every roster entry is either still open or CLOSED BY A POSITIVE ASSERTION', () => {
-    const open = new Set(KNOWN_BAD.filter(k => k.status === 'open').map(k => k.item));
-    const closed = new Set(CLOSED_BY_POSITIVE_ASSERTION.map(c => c.item));
-    for (const item of REGISTER_ROSTER) {
+    const open = new Set(KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id));
+    const closed = new Set(CLOSED_BY_POSITIVE_ASSERTION.map(c => c.id));
+    for (const id of REGISTER_ROSTER) {
       expect(
-        open.has(item) || closed.has(item),
-        `Register item ${item} has VANISHED: it is neither open in KNOWN_BAD nor present in ` +
+        open.has(id) || closed.has(id),
+        `Register entry ${id} has VANISHED: it is neither open in KNOWN_BAD nor present in ` +
         `CLOSED_BY_POSITIVE_ASSERTION. An entry may only be CONVERTED, never deleted — move it to ` +
         `CLOSED_BY_POSITIVE_ASSERTION with its ear-correct value and the commit that closed it.`,
       ).toBe(true);
       expect(
-        open.has(item) && closed.has(item),
-        `Register item ${item} is BOTH open and closed — one of the two lists is stale.`,
+        open.has(id) && closed.has(id),
+        `Register entry ${id} is BOTH open and closed — one of the two lists is stale.`,
       ).toBe(false);
     }
   });
 
   // (3b) ...and the positive assertions are real assertions against the fixture.
   for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
-    it(`item ${c.item} (${c.corpus} ${c.tag}) is pinned at its EAR-CORRECT ${c.earCorrect} — closed by ${c.closingCommit}`, () => {
+    it(`${c.id} (${c.corpus} ${c.tag}) is pinned at its EAR-CORRECT ${c.earCorrect} — closed by ${c.closingCommit}`, () => {
       const row = loadFaSecondBaseline(c.corpus).find(r => r.tag === c.tag);
       expect(row, `${c.corpus} ${c.tag} row`).toBeDefined();
       expect(
         Math.abs(row!.startTime - c.earCorrect),
-        `item ${c.item}: ear-correct ${c.earCorrect}, got ${row!.startTime}. This is a CLOSED register ` +
+        `${c.id}: ear-correct ${c.earCorrect}, got ${row!.startTime}. This is a CLOSED register ` +
         `entry with a positive assertion — red here means forced alignment REGRESSED on a boundary ` +
         `that was measured correct. Do not re-pin it to whatever the new run produces. ${c.why}`,
       ).toBeLessThan(0.005);
@@ -400,11 +470,17 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (4) BOOKKEEPING CONSISTENCY.
   it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
     for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
-      expect(['R.5', 'R.10', 'R.11'], `item ${kb.item}: owningRule`).toContain(kb.owningRule);
-      expect(kb.closingCommit, `item ${kb.item} is still open but already names a closing commit`).toBe('');
+      expect(['R.5', 'R.10', 'R.11'], `${kb.id}: owningRule`).toContain(kb.owningRule);
+      expect(kb.closingCommit, `${kb.id} is still open but already names a closing commit`).toBe('');
+      // WS1 Session D — the origin/item pairing must stay honest in both
+      // directions: an ear-pass entry carries its item number, and a triage
+      // entry must NOT have acquired one.
+      if (kb.origin === 'ear-12') expect(typeof kb.item, `${kb.id}: an ear-12 entry must carry its item number`).toBe('number');
+      else expect(kb.item, `${kb.id}: a triage entry must NOT invent an ear-pass item number`).toBeUndefined();
+      expect(REGISTER_ROSTER as readonly string[], `${kb.id} is open but missing from REGISTER_ROSTER`).toContain(kb.id);
     }
     for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
-      expect(c.closingCommit.length, `closed item ${c.item} must name the commit that closed it`).toBeGreaterThan(0);
+      expect(c.closingCommit.length, `closed entry ${c.id} must name the commit that closed it`).toBeGreaterThan(0);
     }
   });
 
@@ -412,13 +488,13 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   //     state of the programme without opening this file.
   it('register census (informational)', () => {
     const open = KNOWN_BAD.filter(k => k.status === 'open');
-    const byRule = new Map<string, number[]>();
-    for (const k of open) byRule.set(k.owningRule, [...(byRule.get(k.owningRule) ?? []), k.item]);
+    const byRule = new Map<string, string[]>();
+    for (const k of open) byRule.set(k.owningRule, [...(byRule.get(k.owningRule) ?? []), k.id]);
     // eslint-disable-next-line no-console
     console.log(
       `[fa-replay:register] OPEN ${open.length}/${REGISTER_HIGH_WATER} — ` +
-      [...byRule.entries()].map(([r, items]) => `${r}: items ${items.join('/')}`).join('; ') +
-      ` | CLOSED ${CLOSED_BY_POSITIVE_ASSERTION.length} (${CLOSED_BY_POSITIVE_ASSERTION.map(c => `item ${c.item}@${c.closingCommit}`).join(', ')})` +
+      [...byRule.entries()].map(([r, ids]) => `${r}: ${ids.join('/')}`).join('; ') +
+      ` | CLOSED ${CLOSED_BY_POSITIVE_ASSERTION.length} (${CLOSED_BY_POSITIVE_ASSERTION.map(c => `${c.id}@${c.closingCommit}`).join(', ')})` +
       ` | roster ${REGISTER_ROSTER.length}`,
     );
     expect(open.length + CLOSED_BY_POSITIVE_ASSERTION.length).toBe(REGISTER_ROSTER.length);
@@ -497,15 +573,18 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest itself covers items 4, 5, 7, 10, 11 exactly once each', () => {
+  it('the manifest itself covers item 7, 10, 11 + the two OV3 triage entries exactly once each', () => {
     // Item 6 left this table in WS1 Session B: it is FIXED and now carries a
     // POSITIVE assertion of its own (below), which is a stronger guard than a
     // known-bad pin — a regression there fails on the ear-correct value, not
     // on a wrong one. Item 9 left too: 616abb2 closed it, and this session's
     // fixture refresh means the Spanish baseline finally SHOWS 65.12, so
-    // there is no stale value left to warn a reader about.
-    const items = KNOWN_BAD.map(k => k.item).sort((a, b) => a - b);
-    expect(items).toEqual([4, 5, 7, 10, 11]);
+    // there is no stale value left to warn a reader about. WS1 Session D:
+    // items 4 and 5 left the same way (R.5 landed), and the two OV3 triage
+    // defects arrived.
+    expect([...KNOWN_BAD.map(k => k.id)].sort()).toEqual([
+      'item-10', 'item-11', 'item-7', 'ov3-226-four-scouts', 'ov3-abysmal-opinion',
+    ]);
   });
 
   it('ear-pass item 6 (R-U, fixed): 173 vessel_damage_clue is pinned at its EAR-CORRECT 174.74', () => {
@@ -639,8 +718,16 @@ interface AnchorPathSpec {
 const ANCHOR_PATH: AnchorPathSpec[] = [
   {
     key: 'v6', audioDuration: 1421.29,
-    runCount: 313, anchorCount: 312, chunkCount: 264,
-    anchorDigest: 'f3f469a68664596a', runDigest: '4d95968b519576da', chunkDigest: '14fbd829e54f0869',
+    // WS1 Session D (R.5): 264 -> 273 chunks. Each of V6's ten unscripted
+    // "Level N" recitations splits its containing chunk in two and is excised
+    // from both halves; the tenth sits at corpus start, so its "before" side
+    // has no text and its window is trimmed rather than split — nine splits,
+    // one trim, +9 chunks. `anchorDigest`/`runDigest` are UNCHANGED, which is
+    // the point: R.5 acts on chunk TEXT and WINDOWS only, never on the R.1
+    // anchor set or the R.0 run partition, so `faAnchors.ts` is provably not
+    // involved. 173 and spanish are bit-identical on all three digests.
+    runCount: 313, anchorCount: 312, chunkCount: 273,
+    anchorDigest: 'f3f469a68664596a', runDigest: '4d95968b519576da', chunkDigest: 'd5dc8d7924dc8402',
   },
   {
     key: '173', audioDuration: 709.01,
@@ -670,19 +757,19 @@ const NAMED_WINDOWS: Array<{
       'INDEX moved (22 -> 31), because the region reading restores 35 anchors earlier in the corpus.',
   },
   {
-    corpus: 'v6', chunkIndex: 76, startSec: 448.34, endSec: 451.7,
+    corpus: 'v6', chunkIndex: 79, startSec: 448.34, endSec: 451.7,
     why: 'item 7, UNCHANGED by R-U and by R-AA, and expected to stay so (owner ruling R-V). Its END anchor comes from ' +
       'silence [450.36, 451.70], which swallows THREE token seams (1222/1223/1224) — many seams, not zero, so the ' +
       'zero-seam veto never fires here under either reading. Item 7 is an FA word-timing defect (R.11), reachable ' +
-      'only from outside faAnchors.ts. Its chunk INDEX moved 80 -> 72 (R-U) -> 76 (R-AA) as earlier windows merged ' +
-      'and re-split; its BOUNDS have never moved.',
+      'only from outside faAnchors.ts. Its chunk INDEX moved 80 -> 72 (R-U) -> 76 (R-AA) -> 79 (R.5, WS1 Session D: ' +
+      'three unscripted-audio excisions earlier in V6 each add a chunk); its BOUNDS have never moved.',
   },
   {
-    corpus: 'v6', chunkIndex: 77, startSec: 451.7, endSec: 460.56,
+    corpus: 'v6', chunkIndex: 80, startSec: 451.7, endSec: 460.56,
     why: 'V6 seam 150/151 control (ear-pass item 8, both sources correct): the chunk containing the ' +
       '154_silent_night_birds / 155_predator_passing_under seam at 457.83. R-U predicted this does not move, and ' +
-      'it did not; R-AA does not move it either (stop-and-rule exit S2, cleared twice). Index moved 81 -> 73 -> 77; ' +
-      'bounds must not move.',
+      'it did not; R-AA does not move it either (stop-and-rule exit S2, cleared twice); nor does R.5 (S2 cleared a ' +
+      'third time). Index moved 81 -> 73 -> 77 -> 80; bounds must not move.',
   },
 ];
 

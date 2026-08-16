@@ -9,7 +9,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution, computeRuns } from './faChunkPlan';
+import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution, computeRuns, detectUnscriptedRuns } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
 import { vocabCharsFromRawVocab } from './faTextNormalize';
@@ -688,5 +688,165 @@ describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3c (q
       expect(chunks.length).toBeGreaterThan(0);
       expect(chunks.every(c => c.text.trim().length > 0)).toBe(true);
     }
+  });
+});
+
+// ===========================================================================
+// R.5 — UNSCRIPTED AUDIO (WS1 Session D).
+//
+// Both real configurations (ear-pass items 4 and 5) are exercised against the
+// committed corpus fixtures rather than synthetic text, because the whole
+// question R.5 answers — "is this audio a mis-tokenization of the script, or
+// is it not in the script at all?" — only has a meaningful answer on real
+// Whisper output. The synthetic cases below cover the shapes the corpora do
+// not contain (a clean scripted run, an empty corpus).
+// ===========================================================================
+describe('computeFaChunkPlan — R.5 unscripted-audio excision (WS1 Session D)', () => {
+  const FIX = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'scripts', 'fixtures');
+
+  function csv(name: string): Record<string, string>[] {
+    const text = readFileSync(resolve(FIX, name), 'utf-8');
+    const rows: string[][] = [];
+    let row: string[] = []; let field = ''; let q = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+      else if (c === '"') q = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\n') { row.push(field); field = ''; rows.push(row); row = []; }
+      else if (c !== '\r') field += c;
+    }
+    if (field.length > 0 || row.length > 0) { row.push(field); rows.push(row); }
+    const h = rows.shift() ?? [];
+    return rows.filter(r => r.length === h.length)
+      .map(r => Object.fromEntries(h.map((x, i) => [x, r[i] ?? ''])) as Record<string, string>);
+  }
+
+  function corpus(key: 'v6' | '173' | 'spanish') {
+    const tokens: TranscriptToken[] = csv(`phase4-baseline-${key}-words.csv`)
+      .map(r => ({ text: r.text!, startSec: Number(r.startSec), endSec: Number(r.endSec) }));
+    const silences: SilenceInterval[] = csv(`phase4-baseline-${key}-silences.csv`)
+      .map(r => ({ startSec: Number(r.startSec), endSec: Number(r.endSec) }));
+    const segments: VideoSegment[] = csv(`phase4-fa-second-baseline-${key}-segments.csv`).map(r => ({
+      id: r.tag!, text: r.text!, startTime: Number(r.startTime), duration: Number(r.duration),
+      transition: 'none', animation: 'none', order: Number(r.order),
+    }) as unknown as VideoSegment);
+    const audioDuration = { v6: 1421.29, '173': 709.01, spanish: 92.04 }[key];
+    return { tokens, silences, segments, audioDuration };
+  }
+
+  /** Spans present in the plan's windows at HEAD but absent under R.5. */
+  function excisedSpans(chunks: readonly { startSec: number; endSec: number }[]): Array<[number, number]> {
+    const out: Array<[number, number]> = [];
+    for (let i = 1; i < chunks.length; i++) {
+      const gap = chunks[i]!.startSec - chunks[i - 1]!.endSec;
+      if (gap > 1e-9) out.push([chunks[i - 1]!.endSec, chunks[i]!.startSec]);
+    }
+    return out;
+  }
+
+  const CORPUS_TIMEOUT_MS = 120_000;
+
+  it('item 5: the "Level two" recitation [125.54, 129.01] is excised, and "You are eleven." is no longer offered its frames', () => {
+    const { tokens, silences, segments, audioDuration } = corpus('v6');
+    const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+
+    const before = chunks.find(c => Math.abs(c.endSec - 125.54) < 0.005);
+    const after = chunks.find(c => Math.abs(c.startSec - 129.01) < 0.005);
+    expect(before, 'the chunk ENDING at the recitation onset').toBeDefined();
+    expect(after, 'the chunk RESUMING after the recitation').toBeDefined();
+    // The cut is in the SCRIPT, not just in time: "…what it means." closes the
+    // preceding segment and "You are eleven." opens the following one.
+    expect(before!.text.endsWith('means.')).toBe(true);
+    expect(after!.text.startsWith('You are eleven.')).toBe(true);
+    // ...and nothing is aligned against the recitation itself.
+    expect(chunks.some(c => c.startSec < 129.01 - 1e-9 && c.endSec > 125.54 + 1e-9)).toBe(false);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('item 4: the "Level 8" recitation [925.14, 928.93] is excised, and "You are forty-nine." is no longer offered its frames', () => {
+    const { tokens, silences, segments, audioDuration } = corpus('v6');
+    const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+
+    const before = chunks.find(c => Math.abs(c.endSec - 925.14) < 0.005);
+    const after = chunks.find(c => Math.abs(c.startSec - 928.93) < 0.005);
+    expect(before, 'the chunk ENDING at the recitation onset').toBeDefined();
+    expect(after, 'the chunk RESUMING after the recitation').toBeDefined();
+    expect(before!.text.endsWith('working.')).toBe(true);
+    expect(after!.text.startsWith('You are forty-nine.')).toBe(true);
+    expect(chunks.some(c => c.startSec < 928.93 - 1e-9 && c.endSec > 925.14 + 1e-9)).toBe(false);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('all ten V6 recitations are handled — nine splits plus one corpus-start trim — and nothing else is', () => {
+    const { tokens, silences, segments, audioDuration } = corpus('v6');
+    const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+
+    // The tenth recitation opens the file, so its "before" side carries no
+    // script at all: its window is TRIMMED rather than split, which is why
+    // there are nine gaps and not ten.
+    expect(chunks[0]!.startSec, 'the corpus-start recitation is trimmed off the first window').toBeCloseTo(3.40, 2);
+
+    expect(excisedSpans(chunks).map(([a, b]) => [Number(a.toFixed(2)), Number(b.toFixed(2))])).toEqual([
+      [125.54, 129.01], [251.56, 253.11], [371.54, 373.27], [522.00, 525.63], [663.91, 666.48],
+      [789.26, 791.69], [925.14, 928.93], [1044.72, 1050.00], [1189.76, 1192.17],
+    ]);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('SUBWORD-FRAGMENTATION NEAR-MISS: spanish 001_scylla_intro does NOT fire R.5, and neither does anything else in 173/spanish', () => {
+    // The false-positive R.5 must never make. Whisper tokenizes "Scylla" as
+    // `S` + `illa`, leaving an unclaimed token run that looks exactly like
+    // unscripted audio by LENGTH — Session C measured it as the case a
+    // fuzzy-containment threshold gets wrong. The zero-script-hole test
+    // rejects it structurally: the script word it fragments is itself
+    // unmatched, so the script side is NOT clean opposite that audio.
+    for (const key of ['spanish', '173'] as const) {
+      const { tokens, silences, segments, audioDuration } = corpus(key);
+      const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+      expect(excisedSpans(chunks), `${key}: R.5 must not fire anywhere in this corpus`).toEqual([]);
+      expect(chunks[0]!.startSec, `${key}: no corpus-start trim either`).toBe(0);
+    }
+  }, CORPUS_TIMEOUT_MS);
+
+  it('R.10 MUTUAL EXCLUSION: neither 173 segment R.10 claims sits opposite an R.5 run', () => {
+    // R.5 fires on audio with no script counterpart; R.10 on a segment with no
+    // audio counterpart. They are disjoint by construction, and measured
+    // disjoint: R.10's two firing segments (`perilous_realms`, `blue_monkey`)
+    // are both in 173, and 173 has zero R.5 runs — so the two rules cannot
+    // co-fire on any segment of any committed corpus.
+    const { tokens, silences, segments, audioDuration } = corpus('173');
+    const chunks = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    expect(excisedSpans(chunks)).toEqual([]);
+    for (const tag of ['perilous_realms', 'blue_monkey']) {
+      const seg = segments.find(s => String(s.id) === tag)!;
+      expect(seg, `${tag} must exist in the 173 fixture`).toBeDefined();
+      const covering = chunks.filter(c => c.endSec > seg.startTime && c.startSec < seg.startTime + seg.duration);
+      expect(covering.length, `${tag}: still covered by a contiguous plan, so R.5 took nothing from it`).toBeGreaterThan(0);
+    }
+  }, CORPUS_TIMEOUT_MS);
+
+  it('a fully scripted corpus is untouched — R.5 emits the identical plan', () => {
+    // The synthetic fixture every other block in this file uses: every token
+    // is some segment's own word, so there is no unclaimed run at all and R.5
+    // must be a byte-for-byte no-op.
+    const segments = [
+      seg('s0', 'Kittens like purple hats', 0, 2),
+      seg('s1', 'Dragons chase silver moons', 2, 2),
+      seg('s2', 'Wizards brew golden potions', 4, 2),
+      seg('s3', 'Falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+
+    const chunks = computeFaChunkPlan(segments, tokens, silences, 8);
+    expect(excisedSpans(chunks)).toEqual([]);
+    expect(chunks[0]!.startSec).toBe(0);
+    expect(chunks[chunks.length - 1]!.endSec).toBe(8);
+    // Every segment's text still reaches exactly one chunk.
+    const all = chunks.map(c => c.text).join(' ');
+    for (const s of segments) expect(all).toContain(s.text);
+  });
+
+  it('detectUnscriptedRuns is inert on an empty transcript', () => {
+    expect(detectUnscriptedRuns([], [], [], [])).toEqual([]);
   });
 });
