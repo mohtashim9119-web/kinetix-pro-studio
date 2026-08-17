@@ -7,10 +7,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isFaCapable,
   __resetFaCapabilityForTests,
-  isFaToggleOn,
-  setFaToggle,
-  isFaGateOpen,
+  isFaEnabledForProject,
+  isFaGateOpenForProject,
+  shouldPersistFaChoice,
+  FA_PROJECT_DEFAULT_ON,
+  LEGACY_GLOBAL_FA_TOGGLE_KEY,
 } from './faGate';
+import { saveProject, loadProject } from './projectStore';
+import type { Project, VideoSegment } from '../types';
 
 function installLocalStorage(): void {
   const store = new Map<string, string>();
@@ -60,33 +64,50 @@ describe('isFaCapable', () => {
   });
 });
 
-describe('isFaToggleOn / setFaToggle', () => {
-  beforeEach(() => {
-    installLocalStorage();
-  });
-  afterEach(() => {
-    vi.unstubAllGlobals();
+// ---------------------------------------------------------------------------
+// WS1 Session G — the PER-PROJECT switch (owner ruling R-AK).
+// ---------------------------------------------------------------------------
+
+const proj = (fa?: boolean): Pick<Project, 'faHighPrecisionSync'> =>
+  (fa === undefined ? {} : { faHighPrecisionSync: fa });
+
+describe('isFaEnabledForProject — the tri-state', () => {
+  it('DEFAULT ON: a project with no stored preference is enabled (owner ruling R-AK)', () => {
+    expect(FA_PROJECT_DEFAULT_ON).toBe(true);
+    expect(isFaEnabledForProject(proj(undefined))).toBe(true);
   });
 
-  it('defaults to OFF when nothing has been persisted (owner ruling D2)', () => {
-    expect(isFaToggleOn()).toBe(false);
+  it('EXPLICIT ON: a project that stored `true` is enabled', () => {
+    expect(isFaEnabledForProject(proj(true))).toBe(true);
   });
 
-  it('persists true/false through setFaToggle and reads it back', () => {
-    setFaToggle(true);
-    expect(isFaToggleOn()).toBe(true);
-    setFaToggle(false);
-    expect(isFaToggleOn()).toBe(false);
+  it('EXPLICIT OFF: a project that stored `false` is disabled — the default never overrides an explicit choice', () => {
+    expect(isFaEnabledForProject(proj(false))).toBe(false);
   });
 
-  it('returns false (not throw) when localStorage is unavailable', () => {
-    vi.unstubAllGlobals();
-    vi.stubGlobal('localStorage', undefined);
-    expect(isFaToggleOn()).toBe(false);
+  it('a null/undefined project resolves to the default rather than throwing', () => {
+    expect(isFaEnabledForProject(null)).toBe(true);
+    expect(isFaEnabledForProject(undefined)).toBe(true);
+  });
+
+  it('is per-project: two projects in the same session disagree independently', () => {
+    expect(isFaEnabledForProject(proj(false))).toBe(false);
+    expect(isFaEnabledForProject(proj(undefined))).toBe(true);
+    expect(isFaEnabledForProject(proj(true))).toBe(true);
+  });
+
+  it('is READ-ONLY — resolving a default never mutates the project object it was given', () => {
+    const p: Pick<Project, 'faHighPrecisionSync'> = {};
+    isFaEnabledForProject(p);
+    isFaGateOpenForProject(p);
+    // The absent key must stay absent: "no preference" is a durable state,
+    // not something a read silently upgrades to an explicit choice.
+    expect(Object.prototype.hasOwnProperty.call(p, 'faHighPrecisionSync')).toBe(false);
+    expect(Object.keys(p)).toEqual([]);
   });
 });
 
-describe('isFaGateOpen', () => {
+describe('isFaGateOpenForProject — capability AND the project switch', () => {
   beforeEach(() => {
     installLocalStorage();
     __resetFaCapabilityForTests();
@@ -96,26 +117,181 @@ describe('isFaGateOpen', () => {
     __resetFaCapabilityForTests();
   });
 
-  it('defaults closed on a fresh profile (both capability and toggle absent)', () => {
+  it('opens by default on a capable runtime for a project with no preference', () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    expect(isFaGateOpen()).toBe(false);
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
   });
 
-  it('stays closed when the toggle is on but the runtime is incapable', () => {
+  it('stays closed on an incapable runtime even when the project explicitly opted IN', () => {
     vi.stubGlobal('window', {});
-    setFaToggle(true);
-    expect(isFaGateOpen()).toBe(false);
+    expect(isFaGateOpenForProject(proj(true))).toBe(false);
   });
 
-  it('stays closed when the runtime is capable but the toggle is off', () => {
+  it('stays closed on a capable runtime when the project explicitly opted OUT', () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    setFaToggle(false);
-    expect(isFaGateOpen()).toBe(false);
+    expect(isFaGateOpenForProject(proj(false))).toBe(false);
   });
 
-  it('opens only when both capability and toggle are true', () => {
+  it('MODEL-PRESENT vs MODEL-ABSENT: the gate is deliberately model-independent', () => {
+    // Model presence is NOT a gate input — `runForcedAlignmentForSync` owns
+    // it, fail-clean (its own suite covers the ModelNotFound rejection at
+    // `forcedAlignmentRun.test.ts`'s "returns null when invoke rejects"
+    // case). This asserts the division of labour rather than restating it in
+    // prose: nothing about a model can change this function's answer,
+    // because a model is not one of its arguments.
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    setFaToggle(true);
-    expect(isFaGateOpen()).toBe(true);
+    expect(isFaGateOpenForProject.length).toBe(1); // the project — and only the project
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+    // ...and with the gate open but no model, the SYNC still has a defined
+    // outcome: FA returns null and the caller falls back to Whisper tokens.
+    // That fallback is `App.tsx`'s single `faTokens ?? transcriptTokens`
+    // branch, exercised end-to-end by forcedAlignmentRun.test.ts.
+  });
+});
+
+describe('shouldPersistFaChoice — Project Settings only writes on an actual change', () => {
+  it('does NOT write when the user leaves the control alone (default ON, saved unchanged)', () => {
+    // The exact scenario that made the retired global key meaningless: the
+    // user opens Settings to change their resolution tier and hits Save.
+    expect(shouldPersistFaChoice(true, true)).toBe(false);
+  });
+
+  it('does NOT write when an explicitly-OFF project is saved unchanged', () => {
+    expect(shouldPersistFaChoice(false, false)).toBe(false);
+  });
+
+  it('writes when the user turns it OFF on a default-ON project', () => {
+    expect(shouldPersistFaChoice(false, true)).toBe(true);
+  });
+
+  it('writes when the user turns it back ON', () => {
+    expect(shouldPersistFaChoice(true, false)).toBe(true);
+  });
+});
+
+describe('MIGRATION PATH — the retired per-machine global toggle', () => {
+  beforeEach(() => {
+    installLocalStorage();
+    __resetFaCapabilityForTests();
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetFaCapabilityForTests();
+  });
+
+  it('a legacy stored global `false` does NOT disable a project that never expressed a preference', () => {
+    // The pre-change `ProjectSettingsModal.handleSave` wrote this key
+    // UNCONDITIONALLY on every save, so a stored `false` is indistinguishable
+    // from "this user once changed their resolution tier". Honouring it would
+    // let an incidental Save silently veto the owner's chosen default.
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false }));
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+  });
+
+  it('a legacy stored global `true` also does not change the answer (it agreed with the new default anyway)', () => {
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true }));
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+  });
+
+  it('the legacy key is left in storage untouched — a read migration is not a destructive one', () => {
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false, other: 1 }));
+    isFaGateOpenForProject(proj(undefined));
+    isFaEnabledForProject(proj(false));
+    const after = JSON.parse(localStorage.getItem('kinetix:ui:v1')!);
+    expect(after).toEqual({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false, other: 1 });
+  });
+
+  it('an explicit per-project OFF still wins over everything, legacy key present or not', () => {
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true }));
+    expect(isFaGateOpenForProject(proj(false))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1 PROOF — a project persisted BEFORE this change loads without retiming
+// and without acquiring a stored preference. G1 ("any existing project would
+// retime without explicit user action") fires if either half fails.
+// ---------------------------------------------------------------------------
+
+/** A project as it was serialised before `faHighPrecisionSync` existed: no
+ *  such key anywhere, real segment timings, `anchorSource: 'whisper'`. */
+function preChangeProjectJson(): string {
+  const segments: VideoSegment[] = [
+    { id: 's1', text: 'You are seven years old.', startTime: 0, duration: 5.64, transition: 'none', animation: 'none', order: 0, anchorSource: 'whisper' },
+    { id: 's2', text: 'The night is not empty.', startTime: 5.64, duration: 4.11, transition: 'none', animation: 'none', order: 1, anchorSource: 'whisper' },
+    { id: 's3', text: 'You listen.', startTime: 9.75, duration: 3.02, transition: 'none', animation: 'none', order: 2, anchorSource: 'whisper' },
+  ] as unknown as VideoSegment[];
+  return JSON.stringify({
+    version: 2,
+    savedAt: 1_750_000_000_000,
+    project: {
+      id: 'pre-change-1', name: 'Pre-change project', script: '', sceneDetails: '',
+      segments, assets: [], language: 'en',
+      globalTransition: 'none', globalTransitionDuration: 0.5, globalAnimation: 'none',
+      globalOverlayConfig: { color: '#fff', backgroundColor: '#000', fontFamily: 'Inter' },
+      confirmed: true,
+    },
+  });
+}
+
+describe('G1 proof — loading a pre-change project neither retimes nor acquires a preference', () => {
+  beforeEach(() => {
+    installLocalStorage();
+    __resetFaCapabilityForTests();
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+    localStorage.setItem('kinetix:project:pre-change-1:v1', preChangeProjectJson());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    __resetFaCapabilityForTests();
+  });
+
+  it('loads every segment timing BYTE-IDENTICALLY to what was stored — loading is not a retime', () => {
+    const before = JSON.parse(preChangeProjectJson()).project.segments;
+    const loaded = loadProject('pre-change-1');
+    expect(loaded).not.toBeNull();
+    expect(loaded!.project.segments).toEqual(before);
+    // Spelled out, because this is the claim G1 actually makes: every
+    // startTime and duration survives the load unchanged.
+    expect(loaded!.project.segments.map(s => [s.startTime, s.duration]))
+      .toEqual([[0, 5.64], [5.64, 4.11], [9.75, 3.02]]);
+    expect(loaded!.project.segments.every(s => s.anchorSource === 'whisper')).toBe(true);
+  });
+
+  it('does not acquire a stored `faHighPrecisionSync` on load — "no preference" survives', () => {
+    const loaded = loadProject('pre-change-1')!;
+    expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
+    expect(loaded.project.faHighPrecisionSync).toBeUndefined();
+  });
+
+  it('resolves to the ON default WITHOUT writing it back — reading the gate is not a migration', () => {
+    const loaded = loadProject('pre-change-1')!;
+    expect(isFaGateOpenForProject(loaded.project)).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
+    // and nothing was persisted either
+    const reloaded = loadProject('pre-change-1')!;
+    expect(Object.prototype.hasOwnProperty.call(reloaded.project, 'faHighPrecisionSync')).toBe(false);
+  });
+
+  it('survives a save/load round-trip still preference-free and still un-retimed', () => {
+    const loaded = loadProject('pre-change-1')!;
+    isFaGateOpenForProject(loaded.project);
+    saveProject(loaded.project);
+    const again = loadProject('pre-change-1')!;
+    expect(Object.prototype.hasOwnProperty.call(again.project, 'faHighPrecisionSync')).toBe(false);
+    expect(again.project.segments.map(s => [s.startTime, s.duration]))
+      .toEqual([[0, 5.64], [5.64, 4.11], [9.75, 3.02]]);
+  });
+
+  it('an explicit OFF written by the user round-trips and is never overwritten by the default', () => {
+    const loaded = loadProject('pre-change-1')!;
+    saveProject({ ...loaded.project, faHighPrecisionSync: false } as Project);
+    const again = loadProject('pre-change-1')!;
+    expect(again.project.faHighPrecisionSync).toBe(false);
+    expect(isFaGateOpenForProject(again.project)).toBe(false);
+    // reading it again must not "repair" it towards the default
+    isFaEnabledForProject(again.project);
+    expect(loadProject('pre-change-1')!.project.faHighPrecisionSync).toBe(false);
   });
 });

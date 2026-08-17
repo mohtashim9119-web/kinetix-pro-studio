@@ -104,7 +104,7 @@ import {
 import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
 import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
-import { isFaGateOpen } from './services/faGate';
+import { isFaGateOpenForProject, isFaEnabledForProject } from './services/faGate';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
 import {
   detectUnspokenScriptSegmentsFromWhisper,
@@ -2864,16 +2864,22 @@ export default function App() {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
 
       // WS1 Task 5 — production forced-alignment wiring (docs/work-in-
-      // progress.md §11 item 1). Gate defaults OFF (`isFaGateOpen()` =
-      // `isFaCapable() && isFaToggleOn()`, faGate.ts) — when it's off,
-      // `faTokens` stays null and this whole branch is a no-op, so behavior
-      // is byte-identical to before this branch existed. When the gate is
-      // on, `runForcedAlignmentForSync` fails CLEAN on any error (no model
-      // present, hash mismatch, inference error, unsupported language,
+      // progress.md §11 item 1). The gate is PER PROJECT as of WS1 Session G
+      // (`isFaGateOpenForProject(project)` = `isCapable() &&
+      // isFaEnabledForProject(project)`, faGate.ts), and defaults ON for a
+      // project that has expressed no preference (owner ruling R-AK) — when
+      // it's off, `faTokens` stays null and this whole branch is a no-op, so
+      // behavior is byte-identical to before this branch existed. When the
+      // gate is on, `runForcedAlignmentForSync` fails CLEAN on any error (no
+      // model present, hash mismatch, inference error, unsupported language,
       // empty chunk plan) — it returns null rather than throwing, so a
       // failed FA attempt always falls through to the cached Whisper tokens
       // below, never aborts the sync and never half-applies timing.
-      const faTokens = isFaGateOpen()
+      //
+      // Read off `projectRef.current`, the same snapshot every other input in
+      // this branch comes from — never off the module-global it replaced, so
+      // two projects open in two windows can disagree.
+      const faTokens = isFaGateOpenForProject(projectRef.current)
         ? await runForcedAlignmentForSync(
             voiceoverAsset!,
             anchorTimed,
@@ -5222,6 +5228,8 @@ export default function App() {
           onSetAllOverlay={handleSetAllOverlay}
           language={project.language}
           onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
+          faEnabled={isFaEnabledForProject(project)}
+          onFaEnabledChange={(v) => setProject(p => ({ ...p, faHighPrecisionSync: v }))}
           onClose={() => setShowProjectSettingsModal(false)}
         />
       )}

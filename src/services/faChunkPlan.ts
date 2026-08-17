@@ -804,7 +804,7 @@ function attributeByIndex(
  * remains byte-identical to the pre-D23 `computeFaChunkPlan` body (still
  * `computeRunContext` + `runsToChunks`, untouched), so passing
  * `'segment-start-time'` explicitly is still the exact pre-D23 behavior; the
- * FA capability gate remains OFF regardless (`isFaGateOpen()`, D17), so this
+ * FA capability gate is per-project (`isFaGateOpenForProject()`, D17/R-AK), so this
  * whole module stays production-inert either way. `coalesceTargetSec` is
  * optional; omitting it runs the unmerged R.0 plan.
  *

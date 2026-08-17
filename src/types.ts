@@ -378,6 +378,30 @@ export interface Project {
    *  log entry + banner, since whitespace word-splitting and normalization
    *  are only verified for the supported five. */
   language?: string;
+  /** WS1 Session G (owner ruling R-AK) — PER-PROJECT high-precision sync
+   *  (forced alignment) switch, replacing the former per-MACHINE global
+   *  `uiStateStore` key. Three states, and the distinction matters:
+   *  `true` = the user explicitly turned FA ON for this project;
+   *  `false` = the user explicitly turned it OFF for this project;
+   *  `undefined` = the user has expressed no preference for this project.
+   *
+   *  UNDEFINED MEANS ON. The effective value is resolved at READ time by
+   *  `faGate.ts`'s `isFaEnabledForProject` (default `FA_PROJECT_DEFAULT_ON`
+   *  = true) — it is NEVER written back on load, on Apply Sync, or by any
+   *  migration, so "no preference" stays "no preference" for the life of the
+   *  project and a future default change still reaches it. The ONLY writer
+   *  is Project Settings' own Save, and only when the user actually moved
+   *  the control (ProjectSettingsModal.tsx) — an explicit choice can
+   *  therefore never be silently overwritten.
+   *
+   *  Undefined on every project persisted before this field existed; those
+   *  load byte-identically and are never rewritten (the G1 load-path proof
+   *  in faGate.test.ts). Note this is only ONE of the conditions FA needs:
+   *  the runtime must also be Tauri-capable (`isFaCapable`) and the
+   *  project's `language` must be one of the 5 FA-supported codes
+   *  (`forcedAlignmentRun.ts`'s FA_SUPPORTED_LANGUAGES), so a project that
+   *  never set a language never engages FA regardless of this field. */
+  faHighPrecisionSync?: boolean;
   /** WS-logs — persistent sync log, newest entries appended at the END. Capped
    *  at MAX_LOG_ENTRIES (services/syncConstants.ts); older entries are pruned
    *  from the front. Undefined on projects saved before WS-logs — treat as []. */

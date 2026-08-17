@@ -2557,6 +2557,99 @@ non-trivial overhead specifically in debug mode for the shorter 173 corpus.
 
 ---
 
+## WS1 SESSION G RULINGS (2026-08-17) — F6 resolved; the flip ships per-project; R-N closed
+
+**R-AJ ruling (2026-08-17, WS1 Session G) — the two measured corrections this session makes
+to previously-recorded figures.** Both were inherited as premises and both moved when
+re-derived through production rather than carried forward:
+
+**(a) The FA-recovery set is 5, not 6 and not 7.** Re-derived at HEAD from the frozen
+production outputs of both paths across four commits (`40a12cf` → `a0ff7c0` → `3faf0ea` →
+`f7fb9d0`): 7 before R.10, **5 after**, unchanged by R.11. R.10 dropped **two** members —
+`perilous_realms` and `blue_monkey` — not one, tied to the production function that did it
+(`detectUnspokenScriptSegmentsFromWhisper` fires on exactly those two in 173 at confidences
+1.7248e-5 and 6.4257e-6, and 0/447 in v6). Surviving membership: v6
+`027_internal_change_face`, `028_small_permanent_flake`, `029_night_understanding`; 173
+`shadow_loss`; spanish `001_scylla_intro`. **0 of the 5 has moved in value across all four
+commits.** This supersedes `docs/work-in-progress.md` §11's Session E entry (f) — "0 of 6
+moved … so six, not seven" — which was wrong.
+
+**(b) A HEALTHY model's verification tax is measured, not inferred.** R-AI(e) inferred that
+a healthy model pays roughly what the corrupted one does. It does: **76.51 s in debug,
+4.99 s in release, on EVERY Apply Sync**, measured through the real `verify_model_manifest`
+against the real 1.26 GiB `en` model. The corrupted-model figure was never the interesting
+one; the healthy-path per-call tax was, and it was invisible because only a corrupt case had
+ever been measured.
+
+---
+
+**R-AK ruling (2026-08-17, WS1 Session G, OWNER) — the FA toggle is PER-PROJECT and DEFAULTS
+ON. This resolves F6 and ships the flip R-AD deferred.**
+
+Owner's words: *"i wanna keep toggle default ON for all projects. in case i wanna turn it
+off, i'll go to specific project settings and turn it off myself. otherwise it'll remain
+default ON for all projects."*
+
+R-AI(d) named the blocker exactly right — the problem was the gate's SHAPE, not its value.
+This ruling adopts the per-project representation that entry called for, and the default
+flip becomes shippable as a consequence rather than as a separate act:
+
+- **Field:** `Project.faHighPrecisionSync?: boolean`, persisted inline through
+  `projectStore.ts`'s existing serialization. Tri-state and the states are not
+  interchangeable: `true` = explicitly on, `false` = explicitly off, **`undefined` = no
+  preference**.
+- **`undefined` resolves to ON at READ time and is NEVER written back.** This is the
+  invariant the whole design rests on: the default is a read-time fallback, so "no
+  preference" stays a durable state for the life of the project, and a future default change
+  still reaches it. Every function in `faGate.ts` is pure and cannot persist anything.
+- **An explicit choice can never be silently overwritten.** The only writer is Project
+  Settings' Save, and only when the control actually moved (`shouldPersistFaChoice`).
+- **G1 does not fire**, and is proved rather than argued: a pre-change project fixture loads
+  with every `startTime`/`duration` byte-identical, acquires no key on load, acquires none
+  after the gate is read, and acquires none across a save/load round-trip
+  (`faGate.test.ts`).
+- **The retired global key is not consulted and not deleted.** It carried no recoverable
+  intent: the pre-change `handleSave` wrote it UNCONDITIONALLY on every Settings save, so a
+  stored `false` cannot be distinguished from "this user once changed their resolution
+  tier", while its only unambiguous value (`true`) agrees with the new default anyway.
+- **What the default does NOT bypass:** FA still requires Tauri capability and a
+  `Project.language` among the 5 FA-supported codes, so a project that never set a language
+  never engages FA regardless of this field.
+- **Overrides:** R-AD (OV1)'s deferral of the flip to "the final act of Stage 1", to the
+  extent that the flip is now landed ahead of the ear pass — the register is EMPTY (R-AI(c)),
+  which was R-AD's own release condition, and the per-project shape removes the silent-retime
+  hazard that made ordering matter. The ear pass (`docs/ws1-sync-pipeline/stage1-lock-ear-list.md`)
+  and Stage 1 lock are unchanged and still ahead.
+
+---
+
+**R-AL ruling (2026-08-17, WS1 Session G) — R-N CLOSED: stay `load-dynamic` and bundle the
+onnxruntime dylib as a Tauri resource. Taken under delegation with measurements in hand, not
+in an owner sitting; reversible until a release build is cut (R-K).**
+
+**The measurements decide it by neutralising the criterion it was waiting on.** R-N was held
+open on the expectation that fail-clean behaviour would separate the options. After Session
+G's precheck it does not: a missing `ORT_DYLIB_PATH` (load-dynamic's only extra failure mode)
+already fails in µs with a typed `OrtInit` error, and the expensive path — model verification
+— is now bounded and is **identical under both options**, because it concerns the model file,
+not onnxruntime. With that tie broken elsewhere:
+
+1. FA's actual bulk is a 1.26 GiB per-language model fetched on demand (Step T). Statically
+   linking the runtime makes every user carry inference machinery for a payload they may
+   never download.
+2. `load-dynamic` is the status quo and the entire existing test-skip convention
+   (`ORT_DYLIB_PATH`, `ort_dylib_or_skip`, the 19 ignored tests) is built on it.
+   Static-linking invalidates that convention wholesale.
+3. A bundled dylib is an ordinary Tauri resource covered by the app bundle's signature.
+   Static-linking `ort =2.0.0-rc.13` under `default-features = false` means enabling its
+   download/compile-onnxruntime machinery — materially larger, and less reversible.
+
+**Work this decision creates, belonging to the release-build phase and not to Stage 1:**
+ship and sign the dylib as a bundled resource, and set `ORT_DYLIB_PATH` at runtime to that
+resource path. It is unset today, which is exactly why FA fails clean in dev.
+
+---
+
 **R.6 — Corpus start and end.**
 
   * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,
@@ -5070,10 +5163,29 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   not lock while that test is skipped or red. Entries may only ever be
   CONVERTED (deleted and replaced by a positive assertion at the ear-correct
   value, the pattern ear-pass item 6 follows at 174.74), never simply removed.
-- **FA default flip (`isFaGateOpen()` OFF → ON) is the FINAL act of Stage 1**,
+- ~~**FA default flip (`isFaGateOpen()` OFF → ON) is the FINAL act of Stage 1**,
   taken only once the register is empty — ruling R-AD, which defers the
-  owner's ear-pass decision RC2. Criterion R-S(iii) (runtime, ~231s on V6) and
-  R7 are undischarged and gate it alongside the register.
+  owner's ear-pass decision RC2.~~ **SUPERSEDED — LANDED 2026-08-17 (WS1 Session G,
+  ruling R-AK).** The flip shipped as a PER-PROJECT switch
+  (`Project.faHighPrecisionSync`, absent = ON, resolved at read time and never
+  written back), which is what dissolved the hazard R-AD's ordering existed to
+  contain: with a per-machine key, flipping the default silently retimed every
+  existing project on the next Apply Sync (F6, R-AI(d)); with a per-project field
+  it does not, and **G1 is proved rather than argued** (`faGate.test.ts`'s
+  load-path block). R-AD's own release condition — an EMPTY register — was met by
+  R-AI(c) before the flip landed. **Criterion R-S(iii) (runtime, ~231s on V6) and
+  R7 remain undischarged and still gate the LOCK**, though no longer the flip.
+  **R-N is CLOSED** by ruling R-AL (`load-dynamic` + bundled dylib); **Step T**
+  (model download) remains open.
+- **The 12/12 ear pass is DRAWN and ready to run:**
+  `docs/ws1-sync-pipeline/stage1-lock-ear-list.md` — fresh, stratified, 7 MOVED /
+  5 UNMOVED, uniform 4.00 s windows (blinding preserved by construction: max |Δ|
+  1.95 s < 2 s, so every row's window contains both candidates), sealed arm key,
+  R-AB satisfied by there being a single blinded tier. **The Contract 1→2
+  guarantee-by-guarantee pass is likewise a working document:**
+  `docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md` — 5 DIRECT / 4 PARTIAL /
+  3 ABSENT, with **P6** identified as the one row this gate cannot schedule away,
+  because the pass IS its enforcement.
 
 **SCOPE OF "ZERO DEFECTS" — en/es ONLY, stated here and not in a footnote.**
 Ruling R-T (above, next to Phase 3b) defers French, Portuguese and German out

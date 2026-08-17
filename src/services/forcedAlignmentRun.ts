@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 // Production forced-alignment attempt for one Apply Sync run
 // (docs/work-in-progress.md §11 item 1). The capability-gated
-// (`faGate.ts::isFaGateOpen()`) counterpart of `App.tsx`'s DEV-only
+// (`faGate.ts::isFaGateOpenForProject()`) counterpart of `App.tsx`'s DEV-only
 // `__faDevAlign` harness: same audio-fetch / chunk-plan / `Channel<FaEvent>`
 // steps, but calls the new production command (`fa_align_production`,
 // `src-tauri/src/fa_production.rs`) instead of `fa_align_dev`, and — unlike

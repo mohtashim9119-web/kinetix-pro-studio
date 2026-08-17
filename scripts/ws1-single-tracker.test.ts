@@ -40,6 +40,15 @@ const ALLOWLIST = new Set<string>([
   // Provenance manifest for the rescued-2026-08-07-model-p-park/ data subtree —
   // not a tracking/status file, a fixed record of where that data came from.
   'docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/PROVENANCE.md',
+  // The two Stage 1 lock PROCEDURES (WS1 Session G). Not tracking documents —
+  // they are worked THROUGH, like docs/wkwebview-drag-checklist.md, CLAUDE.md
+  // §7's own standing-procedure exception to the folder-deletion rule: a
+  // blinded ear pass with a sealed answer key, and a guarantee-by-guarantee
+  // contract checklist with a verdict column. Their RESULTS belong in
+  // docs/work-in-progress.md §11 and docs/history.md; the run sheets cannot,
+  // because a blinded pass whose key sits inline in the tracker is not blinded.
+  'docs/ws1-sync-pipeline/stage1-lock-ear-list.md',
+  'docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

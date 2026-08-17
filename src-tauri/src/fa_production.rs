@@ -5,12 +5,13 @@
 // Reachable from the real running app — unlike `fa_dev.rs`'s `fa_align_dev`
 // (devtools-console-only, `import.meta.env.DEV`-gated on the TS side), this
 // command is the one a real Apply Sync run invokes when
-// `faGate.ts::isFaGateOpen()` is true. It has no gate of its own: exactly
-// like `whisper_transcribe` has no server-side check that the frontend
-// "should" be calling it, gating is the frontend's job (`isFaGateOpen()`),
-// not this command's. Registering this command in `lib.rs` does not by
-// itself turn FA on — the gate defaults OFF (owner ruling D2,
-// `faGate.ts::isFaToggleOn`), and this command's own behavior with no model
+// `faGate.ts::isFaGateOpenForProject(project)` is true. It has no gate of its
+// own: exactly like `whisper_transcribe` has no server-side check that the
+// frontend "should" be calling it, gating is the frontend's job, not this
+// command's. Registering this command in `lib.rs` does not by itself turn FA
+// on — the switch is the per-project `Project.faHighPrecisionSync` (WS1
+// Session G, owner ruling R-AK; default ON, explicitly overridable per
+// project in Settings), and this command's own behavior with no model
 // present is identical to `fa_align`'s: a clean `Err`, never a panic.
 //
 // Body is `fa_dev.rs`'s `resolve_wav_and_align` — the exact same

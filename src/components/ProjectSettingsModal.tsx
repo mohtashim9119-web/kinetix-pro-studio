@@ -15,7 +15,7 @@ import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { AspectRatio, ResolutionTier, VideoSegment } from '../types';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
-import { isFaCapable, isFaToggleOn, setFaToggle } from '../services/faGate';
+import { isFaCapable, shouldPersistFaChoice } from '../services/faGate';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { SUPPORTED_LANGUAGES } from '../constants';
@@ -42,6 +42,13 @@ interface Props {
    *  always editable regardless of how the current value got here. */
   language: string | undefined;
   onLanguageChange: (v: string | undefined) => void;
+  /** WS1 Session G (owner ruling R-AK) — the project's EFFECTIVE
+   *  high-precision-sync setting, already resolved through
+   *  `faGate.ts`'s `isFaEnabledForProject` (so `undefined` has become the
+   *  default, `true`). This modal never sees the raw tri-state and so can
+   *  never accidentally render "no preference" as "off". */
+  faEnabled: boolean;
+  onFaEnabledChange: (v: boolean) => void;
   onClose: () => void;
 }
 
@@ -53,6 +60,8 @@ export function ProjectSettingsModal({
   onSetAllOverlay,
   language,
   onLanguageChange,
+  faEnabled,
+  onFaEnabledChange,
   onClose,
 }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -63,9 +72,10 @@ export function ProjectSettingsModal({
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
   const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
-  // WS1 Task 5 Slice D17 (owner ruling D2) — gate defaults OFF; nothing runs
-  // behind it yet (no fa_align call anywhere in Apply Sync this slice).
-  const [draftFaEnabled, setDraftFaEnabled] = useState<boolean>(() => isFaToggleOn());
+  // WS1 Session G (owner ruling R-AK) — PER-PROJECT, and defaults ON. The
+  // seed is the already-resolved effective value, so a project with no
+  // stored preference opens showing ON, which is what it will actually do.
+  const [draftFaEnabled, setDraftFaEnabled] = useState<boolean>(() => faEnabled);
 
   const webcodecsCapable = isWebCodecsExportCapable();
   const faCapable = isFaCapable();
@@ -83,7 +93,14 @@ export function ProjectSettingsModal({
   const handleSave = (): void => {
     onResolutionTierChange(draftNativeTier);
     setWebCodecsExportToggle(draftWebcodecsEnabled);
-    setFaToggle(draftFaEnabled);
+    // WS1 Session G — write ONLY on an actual change. The retired global
+    // toggle was written unconditionally by this very handler, which is
+    // exactly why its stored `false` carried no recoverable intent
+    // (faGate.ts's LEGACY_GLOBAL_FA_TOGGLE_KEY). Saving an unchanged control
+    // must leave `Project.faHighPrecisionSync` absent, so a project that has
+    // expressed no preference still has none after the user edits their
+    // resolution tier — and still follows the default.
+    if (shouldPersistFaChoice(draftFaEnabled, faEnabled)) onFaEnabledChange(draftFaEnabled);
     onSetAllOverlay(draftOverlayOn);
     onLanguageChange(draftLanguage === AUTO_DETECT_VALUE ? undefined : draftLanguage);
     onClose();
@@ -163,8 +180,11 @@ export function ProjectSettingsModal({
             </div>
           </div>
 
-          {/* Section: Sync (forced-alignment gate — WS1 Task 5 Slice D17).
-              Defaults OFF (owner ruling D2); nothing runs behind it yet — see
+          {/* Section: Sync (forced-alignment gate — WS1 Task 5 Slice D17,
+              made PER-PROJECT and default-ON by WS1 Session G, owner ruling
+              R-AK). This control now edits `Project.faHighPrecisionSync`
+              rather than a per-machine global key, and Save writes it only
+              when the user actually moved it (`shouldPersistFaChoice`) — see
               docs/work-in-progress.md §7 item 2 / §11 item 1 (original source
               docs/ws1-sync-pipeline/task5-integration-scope.md was deleted
               2026-08-14, `9cf5867`; retrieve: `git show

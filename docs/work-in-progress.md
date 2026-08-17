@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED, gate OFF — not yet turned on** | — | None; the FA-on measurement session (§11 item 6) is next | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. **2026-08-15 (this session): `fa_align_production` (`fa_production.rs`) is now a real, reachable, `isFaGateOpen()`-gated production caller** — see §11 item 1's own entry and the changelog below. Gate stays OFF by default (owner ruling D2); golden replay proven byte-identical gate-off (6/6, unchanged) |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate now PER-PROJECT and DEFAULT ON** (WS1 Session G, owner ruling R-AK) | — | None; H's ear pass (`docs/ws1-sync-pipeline/stage1-lock-ear-list.md`) is next | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. **2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync` and its default flipped OFF → ON** — resolving F6, which blocked the flip in Session F precisely because one global key could not turn FA on for new work without reaching backward into every existing project. Absent key = ON, resolved at read time and never written back (G1 proof: `faGate.test.ts`). Golden replay 6/6, unchanged |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -640,6 +640,23 @@ cross-referenced against `src/types.ts` live:
 open on process (owner guarantee-by-guarantee verification, item 12) even though the
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
+
+**2026-08-17 (WS1 Session G) — the twelve-row pass is now a WORKING DOCUMENT, and one row's
+SEVERITY changed.** The full guarantee-by-guarantee pass (P1–P8 + A1–A4, every row re-grepped
+live at HEAD rather than transcribed from the uncommitted `0d8420f` dossier) is committed at
+`docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md`. Tally: **5 DIRECT (P1, P5, A1, A2, A3)
+/ 4 PARTIAL (P2, P3, P6, P7) / 3 ABSENT (P4, P8, A4)** — consistent with this section's own
+"5 of 8" on the narrower P1–P8 table, and refining it: P2/P3 are *built but unreachable from
+the committed path*, while P6/P7 are *built and reachable but narrower than the contract's
+wording*. **The escalation:** `validate1to2` (wrapping P2/P3) is invoked only from
+`useWhisper.ts:290` and never from `alignFromCache`, the function Apply Sync actually commits
+through — already recorded 2026-08-16, but while the FA gate defaulted OFF it described a path
+almost nobody took. **With Session G's per-project default now ON, the unvalidated array is
+the DEFAULT array** on any Tauri-capable machine with a model and a supported language. The
+contract did not change; its exposure did. **Session G's own toggle change is otherwise a
+no-op on this contract** — it decides only WHETHER `runForcedAlignmentForSync` is called, and
+touches no file participating in token preparation, normalization, or silence detection. No
+row changes. Golden replay 6/6.
 
 **2026-08-17 (WS1 Session F) — R.11's effect on Contract 1→2: NONE. Measured, not assumed.**
 R.11 runs even later than R.10 — after the fully-committed, `headExtendFirstSegment`-ed
@@ -2786,9 +2803,9 @@ bit-identical; item 6's positive assertion at **174.74** surviving; **golden rep
 | **D** ✅ **DONE 2026-08-17** | **R.5** unscripted-audio EXCISION (the wildcard is unreachable — see R.5's final spec) | Session C spec (f), whose 0.65 threshold did NOT survive re-derivation; replaced by the threshold-free `qiHole == 0` test | items **4, 5** ✅ + absorbed the OV3 triage | red at 8 boundaries, all v6; 173/spanish chunk plans bit-identical | ✅ items 4/5 converted at 931.40 / 130.96, residual 0.000s; blast radius 8/649, inside the envelope |
 | **E** ✅ **DONE 2026-08-17** | **R.10** drop gate — shipped as a new pure service `faUnspokenGate.ts`, NOT `faChunkPlan.ts` (structurally impossible: the signal needs FA's per-word confidence, which the chunk planner runs before) | Session C respec (d), re-validated unchanged on the post-R.5 capture (2/2, 0 FP, 850×); the owner's `R10_MAX_WORD_CONF` directive; **R.5 landed** ✅ | items **10, 11** ✅ | red at 173's first two boundaries; segment count 175 → **173** (TWO drops — the pre-session "→ 174" was wrong) | ✅ item 10 converts at 0.00, residual 0.000s; item 11 converts to an ABSENCE assertion; R.5/R.10 measured disjoint, 0 overlap; blast radius 3/649 |
 | **F** ← NEXT | **R.11** item-7 fix — owns **3** register entries, and is now the WHOLE register | Session C diagnosis (e) + Session D's two triage diagnoses; **E landed** ✅ so X2 is discharged — `blue_monkey` has left the corpus and the sibling census MUST be re-derived from the FIT signal, not the seam signature | item **7**, `ov3-abysmal-opinion`, `ov3-226-four-scouts` | red at 449.20 → 451.03, 16.50 → 17.88, 670.24 → 671.18 | all three convert; the re-derived sibling class each classified EXPECTED/UNEXPECTED |
-| **G** | no code | D–F landed | — | green | D-1 regression checklist (9 items, never run) + Contract 1→2 human pass (dossier at `0d8420f`) |
-| **H** | no code | **register EMPTY** | — | green, `register is EMPTY` un-skipped | full-corpus ear pass, fresh blinded draw, **Tier 2 scored before any disclosing tier** (R-AB) |
-| **I** | FA default flip | H passed; R-N + Step T + runtime resolved | — | green | Stage 1 LOCK |
+| **G** ✅ **DONE 2026-08-17** | **PER-PROJECT FA toggle** (`Project.faHighPrecisionSync`, default ON — R-AK) + **fail-clean precheck** (`fa_dev.rs` size precheck + digest memo) — Session G was scoped "no code" and took code, because F6 was a design defect, not a documentation gap | D–F landed | **F6** ✅ (the blocker on the default flip); **R-N** ✅ decided | green at rest, RED under M5 (2) and M6 (6) | ✅ 5 of D-1's 9 automated for real (`d1RegressionChecklist.test.ts`); Contract 1→2 pass + fresh 12/12 ear list delivered as working documents |
+| **H** | no code | **register EMPTY**; G's ear list drawn ✅ | — | green, `register is EMPTY` un-skipped | run `docs/ws1-sync-pipeline/stage1-lock-ear-list.md` — fresh blinded draw, single blinded tier (R-AB satisfied by construction) |
+| **I** | FA default flip **already landed in G** — I is now Step T + runtime only | H passed; Step T + runtime resolved (**R-N resolved in G**) | — | green | Stage 1 LOCK |
 
 *Session G's 9 checklist items — automatable now vs. needs a human:* the numeric/structural
 ones (determinism, contiguity, coverage, qi consistency, chunk-plan equality) are
@@ -3376,6 +3393,213 @@ would be dead code exercising a decision not taken.
 
 ---
 
+**WS1 SESSION G (2026-08-17) — F6 RESOLVED; the FA default flip SHIPS as a per-project
+toggle; fail-clean brought under budget; R-N decided; 5 of D-1's 9 automated.** Ruling:
+**R-AK** (per-project toggle, default ON) and **R-AL** (R-N: load-dynamic + bundled dylib).
+Session G was boarded as "no code" — it took code, because F6 turned out to be a design
+defect in the gate's SHAPE, not a documentation gap, and the owner's ruling resolved it.
+
+**(a) STEP 1 — the register's last unverified row is SCORED. G2 does NOT fire.** The ear
+artifact for v6 `192_scout_listening` (570.18 → 571.07) was produced through the production
+detector `detectSeamFitDefects`, imported not reimplemented, over the PRE-correction arrays
+(`git show 3faf0ea:…-segments.csv`) with the real FA word capture — the three closed defects
+rendered in the identical shape as blind controls, plus the known false positive
+(`125_night_circle`) as a NEGATIVE control. **The discriminator, measured:** the committed
+570.18 is the exact midpoint of the FA word seam "still"(ends 570.14) → "you"(starts 570.22),
+a **0.080 s non-silence** — the same signature as the two ear-verified word-seam members
+(item 7: 0.040 s; `226_four_scouts`: 0.160 s), and its gap sits BETWEEN theirs. No real
+detected silence contains it. Its span confidence is **4.0732e-5 — 266× below
+`R11_MAX_SPAN_WORD_CONF`, the widest margin of all four findings** (item 7 7.3×,
+`226_four_scouts` 11.2×, `abysmal_opinion` 2.8×) and **740× below the known FP's 3.0145e-2**.
+Corroboration that needs no ears: the segment's text is "You listen.", and the only
+acoustically-confident words in the ±2 s window are "stop" (0.994) and **"listen" (0.989 at
+571.52)** — the corrected 571.07 sits in the silence immediately before "listen", while the
+committed 570.18 would start it **1.34 s before the word is acoustically present**.
+**Verdict: true positive on every measurable structural axis; the register's empty state
+survives.** Stated limitation: this is STRUCTURAL confirmation, not auditory — the row stays
+a change detector, not a positive assertion, and is row 2 of the Step 6 ear list. Full
+artifact: `docs/ws1-sync-pipeline/stage1-lock-ear-list.md` §4.
+
+**(b) STEP 2 — the inferred premise re-measured, and it MOVED AGAIN: the FA-recovery set is
+5, not 6 and not 7.** Re-derived at HEAD from the frozen production outputs of both paths
+(Whisper `phase4-baseline-*-{segments,skipped}.csv` vs FA `phase4-fa-second-baseline-*`),
+across four commits:
+
+| commit | recovery set | membership |
+|---|---|---|
+| 40a12cf (pre-R.5) | 7 | v6 ×3, 173 ×3, spanish ×1 |
+| a0ff7c0 (post-R.5) | 7 | unchanged |
+| 3faf0ea (post-R.10) | **5** | 173 loses `perilous_realms` + `blue_monkey` |
+| f7fb9d0 (post-R.11) | **5** | unchanged |
+
+Membership at HEAD: v6 `027_internal_change_face` (78.56), `028_small_permanent_flake`
+(80.74), `029_night_understanding` (83.53); 173 `shadow_loss` (443.57); spanish
+`001_scylla_intro` (0.00). **R.5 moved none and changed no membership. R.10 changed
+MEMBERSHIP by −2 — tied to the production function that caused it:
+`detectUnspokenScriptSegmentsFromWhisper` fires on exactly `perilous_realms`
+(conf 1.7248e-5) and `blue_monkey` (6.4257e-6) over the pre-R.10 173 array, and 0/447 on v6.
+R.11 moved none. 0 of the 5 survivors has moved in value across all four commits** —
+startTime AND endTime bit-identical throughout. **CORRECTION: this ledger's own Session E
+entry (f)'s "0 of 6 moved … so six, not seven" is WRONG; the correct figure is 5, because
+R.10 dropped TWO recovery-set members, not one.**
+
+**(c) STEP 3 — F6 RESOLVED. The toggle is now PER-PROJECT and defaults ON (R-AK).** Owner
+ruling: *"keep toggle default ON for all projects. in case i wanna turn it off, i'll go to
+specific project settings and turn it off myself."* Built:
+`Project.faHighPrecisionSync?: boolean` (`types.ts`), `isFaEnabledForProject` /
+`isFaGateOpenForProject` / `shouldPersistFaChoice` / `FA_PROJECT_DEFAULT_ON` (`faGate.ts`,
+replacing the retired global `isFaToggleOn`/`setFaToggle`), `App.tsx`'s Apply-Sync branch
+reading `projectRef.current`, and `ProjectSettingsModal` editing the project field.
+
+The four required answers:
+- *Where it persists:* inline on `Project`, through `projectStore.ts`'s existing
+  serialization. No schema change, no migration, no new storage mechanism.
+- *An existing project with no key on load:* resolves to **ON at READ time** and is **never
+  written back**. Loading is not a retime and does not create a preference.
+- *Apply Sync on a Whisper-synced project:* FA engages and re-times it — the owner's
+  explicit ruling. Two conditions still gate it independently: the runtime must be
+  Tauri-capable, and `Project.language` must be one of the 5 FA-supported codes, so a
+  project that never set a language never engages FA regardless of this field.
+- *Can an explicit choice be silently overwritten:* **No.** The only writer is Project
+  Settings' Save, and only when the control actually moved (`shouldPersistFaChoice`).
+  Every other function in `faGate.ts` is pure.
+
+**G1 does not fire, proved rather than argued** (`faGate.test.ts`, 27 tests): a pre-change
+project fixture loads with every `startTime`/`duration` byte-identical, does not acquire
+`faHighPrecisionSync`, still lacks it after the gate is read, and still lacks it after a
+save/load round-trip; an explicit `false` round-trips and is never repaired towards the
+default. Tests cover model-present/model-absent (the gate is model-INDEPENDENT by
+construction — model presence is `runForcedAlignmentForSync`'s fail-clean concern),
+explicit-on, explicit-off, and the migration path.
+
+**The migration finding that simplified the design, measured not assumed:** the retired
+global key carried **no recoverable intent**, because the pre-change `handleSave` wrote
+`setFaToggle(draftFaEnabled)` UNCONDITIONALLY on every Settings save. A stored `false` is
+therefore indistinguishable from "this user once changed their resolution tier", while the
+only unambiguous value (`true`) agrees with the new default anyway. Consulting it would let
+an incidental Save silently veto the owner's chosen default, so it is **not consulted, and
+not deleted** (`LEGACY_GLOBAL_FA_TOGGLE_KEY`).
+
+**(d) STEP 4 — fail-clean budget SET and MET; the healthy-path tax is the real finding.**
+Budget stated in three tiers; precheck = manifest **`byteSize`** size check (already
+recorded per language — exact, not a heuristic) + an in-process digest memo keyed on
+(path, size, mtime), the same identity technique `fa.rs::source_identity_key` already uses.
+The memo caches the **digest, never the verdict**, so the manifest comparison still runs
+every call and a cache hit can never accept a mismatched model. Measured through the real
+production `verify_model_manifest` against the real 1.26 GiB `en` model:
+
+| case | DEBUG before | DEBUG after | RELEASE before | RELEASE after | tier / budget |
+|---|---|---|---|---|---|
+| absent model | 266.7 µs | **0.201 ms** | — | **0.078 ms** | A, <50 ms ✅ |
+| corrupt: truncated / wrong size | full hash of whatever is present | **0.265 ms** | — | **0.092 ms** | A, <50 ms ✅ |
+| corrupt: same-size byte flip, 1st | 77.43 s | 77.98 s | 5.25 s | 5.06 s | B, one hash by design — NOT accelerated, and not claimed to be |
+| corrupt: same-size byte flip, repeat | 77.43 s **every call** | **0.236 ms** | 5.25 s **every call** | **0.077 ms** | B, <50 ms ✅ |
+| healthy model, 1st | ~77 s (inferred) | **76.51 s (MEASURED)** | ~5.25 s | **4.99 s** | C, once per process ✅ |
+| healthy model, repeat | ~77 s **every call** | **0.254 ms** | ~5.25 s **every call** | **0.099 ms** | C, <50 ms ✅ |
+
+**Session F's inference that a HEALTHY model pays the same tax is now MEASURED, not
+inferred: 76.51 s debug / 4.99 s release, per Apply Sync, every time.** That per-call tax is
+what the memo removes; it was the larger defect, and it was invisible because the only
+previously-measured case was a corrupt one. Verification of the good case is not weakened —
+a healthy model is still hashed in full and compared in full, once per file identity per
+process, and the memo is never persisted so every app start re-verifies. **Known limitation,
+stated:** a replacement preserving both size and mtime is not detected within a process.
+
+**(e) STEP 4b — R-N DECIDED (R-AL): stay `load-dynamic` + bundle the onnxruntime dylib as a
+Tauri resource.** The measurements are what decide it, and they decide it by **neutralising
+the criterion the decision was waiting on**: fail-clean behaviour no longer discriminates
+between the options. Missing `ORT_DYLIB_PATH` already fails in µs with a typed `OrtInit`
+error (load-dynamic's only extra failure mode, and it is cheap and clean); the expensive
+path was model verification, which is now bounded and is **identical under both options**
+because it concerns the model file, not onnxruntime. With that tie broken elsewhere:
+(1) FA's actual bulk — a 1.26 GiB per-language model — is downloaded on demand (Step T), so
+statically linking the runtime forces every user to carry inference machinery for a feature
+whose payload they may never fetch; (2) load-dynamic is the status quo, and the entire
+existing test-skip convention (`ORT_DYLIB_PATH`, `ort_dylib_or_skip`, the 19 ignored tests)
+is built on it — static-linking invalidates that convention wholesale; (3) a bundled dylib
+is an ordinary Tauri resource covered by the app bundle's signature, whereas static-linking
+`ort =2.0.0-rc.13` with `default-features = false` means enabling its
+download/compile-onnxruntime machinery, a materially larger and less reversible change.
+**Remaining work this decision creates** (release-build phase, R-K — not Stage 1): ship and
+sign the dylib as a resource, and set `ORT_DYLIB_PATH` at runtime to that resource path.
+Today it is unset, which is exactly why FA fails clean in dev. **Reversible until a release
+build is cut.** Recorded as a measured recommendation taken under delegation, not an owner
+sitting.
+
+**(f) STEP 5 — D-1: FIVE of nine automated FOR REAL, four stated honestly.**
+`src/services/d1RegressionChecklist.test.ts`, 23 tests. Built for real, through production
+functions against real corpus fixtures: **item 1 locks** (a locked segment survives
+`applyAnchorBasedTiming` with deliberately disturbed neighbours; a companion test proves an
+unlocked neighbour DOES move, so the item cannot pass vacuously), **item 2
+skipped-segment-adjacent boundaries** (real 173 skip sites, gapless partition across every
+one), **item 3 headings** (`clampHeadingsToDuration` keeps absolute times; a shrinking
+re-sync clamps and flags `needsReview` rather than dropping), **item 6 empty-token
+fallback**, **item 7 persistence/reload** (save→load bit-identical timeline,
+`lastTranscribedFileIdentity` intact, and `getFileIdentity` re-derived from a reloaded file
+MATCHES it — so no re-transcription triggers — with a negative case proving the check
+discriminates).
+
+*The remaining four, stated as they actually are (and asserted as executable documentation
+in the same file, so the split rots loudly):* **item 4 no-voiceover** — WEAK PROXY; half of
+it is untestable because the thing it names does not exist (`grep "estimated timeline"
+src/` → 0 hits). **item 5 silence-scan failure** — WEAK PROXY; the error SHAPE is a tested
+discriminated union, but the fallback lives in `useWhisper.ts`, a hook, inside CLAUDE.md
+§6's accepted manual-verification gap. **item 8 export/preview consumers** — WEAK PROXY;
+shape invariants are covered, "reads correctly" is a render claim needing the running app.
+**item 9 DEV harnesses — NO PROXY AT ALL**; the globals are attached by DEV-gated App.tsx
+effects and nothing short of mounting App exercises them.
+
+*A real finding fell out of building item 6:* **`applyAnchorBasedTiming` is NOT a standalone
+retile.** Handed segments with no `anchorStart` at all it resolves every anchor to 0 and
+collapses the array onto the 0.1 s duration floor. Production never reaches it in that state
+because `parseProjectData`'s character-weight bootstrap runs first — so the bootstrap is
+load-bearing, not decorative. Pinned as its own regression guard, and the reason item 4's
+proxy is weak rather than absent.
+
+**(g) STEP 6 — two working dossiers, committed as documents.**
+`docs/ws1-sync-pipeline/stage1-lock-ear-list.md` (fresh 12/12, 7 MOVED / 5 UNMOVED,
+v6 9 / 173 2 / spanish 1, uniform **4.00 s** windows) and
+`docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md` (the twelve-row pass, **5 DIRECT /
+4 PARTIAL / 3 ABSENT**, every row re-grepped live rather than transcribed from `0d8420f`).
+**Blinding is preserved by construction, not by instruction:** max |Δ| in the set is
+**1.95 s < 2 s**, so a ±2 s window centred on the proposed value always contains the old
+value too — which means every row can carry an IDENTICAL 4.00 s window and the owner hears
+both candidates without learning which rows moved. A varying window length is what leaked
+the arm in earlier draws. Row order is `sha256(tag)` ascending; the arm key is sealed in §3.
+Control draw excludes duration-only movers, ±2-index mover neighbours (this is what removed
+`151_scout_listening_void`, which sits immediately before item 7), Session C's tags, and
+anything within 5 s of a previously scored value (which removed `156_scout_deep_realization`
+at 459.87, too close to the scored 457.83 seam). R-T's non-English risk carried verbatim at
+the head of the ear list. **One severity escalation recorded in the Contract pass:**
+`validate1to2` (wrapping P2/P3) is invoked only from `useWhisper.ts:290` and never from the
+commit path — true before FA, but with the gate now defaulting ON, **the unvalidated array
+is the DEFAULT array**. Exposure changed, not the contract.
+
+**(h) STEP 7 — verification.** `npm test` **86 files / 2234 passed / 1 skipped** (the 1 skip
+is `dragSessionHarness.test.ts`'s pre-existing unrelated skip); `npm run lint` clean;
+`cargo check --features fa-inference` clean; `cargo test --features fa-inference`
+**209 passed / 20 ignored** (was 206/19 — +3 fail-clean tests, +1 env-gated `#[ignore]`
+benchmark); **golden replay 6/6**, `scripts/fixtures/phase4-baseline-*.csv` byte-identical;
+FA replay gate **29/29, 0 skipped**. `faAnchors.ts` sha256 **b61e94cb…** unchanged at rest
+(verified after the M5 mutation was reverted). **M5 verified RED (2 tests)** then reverted
+and reconfirmed green; **M6 verified RED (6 assertions across 2 independent files)** then
+reverted and reconfirmed green.
+
+**Deferred / Known items (WS1 Session G):**
+- `192_scout_listening` remains a CHANGE DETECTOR, not a positive correctness assertion,
+  until row 2 of the ear list is scored. Structural confirmation is not auditory
+  confirmation.
+- **R-N's implementation** (bundle + sign the dylib, set `ORT_DYLIB_PATH` at runtime) is
+  release-build-phase work created by this session's decision, not done in it.
+- The **~231 s v6 / ~76 s 173 FA runtime** is untouched and still open for the DEFAULT
+  specifically (R-S(iii), R7) — the memo removes the verification tax, not the inference
+  cost.
+- D-1 items 4, 5, 8, 9 remain unautomated; item 9 has no proxy at all.
+- Contract 1→2 **A4** and Contract IN **A3** still lack written acceptance; **P6** is the
+  one row this pass cannot schedule away, because the pass IS its enforcement.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -3433,6 +3657,35 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-17 — WS1 Session G: F6 RESOLVED — the FA default flip SHIPS as a PER-PROJECT
+  toggle (default ON); fail-clean brought under budget; R-N decided; 5 of D-1's 9
+  automated.** Rulings **R-AK** (per-project toggle, default ON — owner) and **R-AL**
+  (R-N: `load-dynamic` + bundled dylib — taken under delegation with measurements in hand).
+  Production code: `src/types.ts` (`Project.faHighPrecisionSync`), `src/services/faGate.ts`
+  (`isFaEnabledForProject`/`isFaGateOpenForProject`/`shouldPersistFaChoice`/
+  `FA_PROJECT_DEFAULT_ON`; retires the global `isFaToggleOn`/`setFaToggle`), `src/App.tsx`
+  (per-project gate read + modal wiring), `src/components/ProjectSettingsModal.tsx`
+  (edits the project field; writes only on an actual change),
+  `src-tauri/src/fa_dev.rs` (manifest `byteSize` size precheck + in-process digest memo
+  keyed on path/size/mtime), `src-tauri/src/fa_production.rs` (comment accuracy).
+  Tests: `faGate.test.ts` rewritten (27, incl. the **G1 load-path proof**),
+  `src/services/d1RegressionChecklist.test.ts` (new, 23 — D-1 items 1/2/3/6/7 for real,
+  items 4/5/8/9 recorded as executable documentation of what they actually have), 3 new
+  Rust fail-clean tests + 1 env-gated `#[ignore]` real-model benchmark.
+  Docs: `docs/ws1-sync-pipeline/stage1-lock-ear-list.md` and
+  `docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md` (both new, both runnable without
+  further setup). **Headline measurements:** the FA-recovery set is **5, not 6 or 7** (R.10
+  dropped two members — Session E's "six, not seven" corrected); `192_scout_listening` is a
+  **true positive** on structure (word-seam midpoint over 0.080 s of non-silence; span conf
+  4.0732e-5, 266× below threshold, 740× below the known FP) so **G2 does not fire**; and a
+  **healthy** model's per-Apply-Sync verification tax — Session F could only infer it — is
+  **measured at 76.51 s debug / 4.99 s release and now paid once per process** instead of
+  every call. `npm test` **86 files / 2234 passed / 1 skipped**; `npm run lint` clean;
+  `cargo check --features fa-inference` clean; `cargo test --features fa-inference`
+  **209/20** (was 206/19); golden replay **6/6**; FA replay gate **29/29**;
+  `faAnchors.ts` sha256 `b61e94cb…` unchanged; **M5 RED (2), M6 RED (6)**, both reverted
+  and reconfirmed green. Full write-up: §11's WS1 SESSION G entry.
 
 - **2026-08-17 — WS1 Session F: R.11 BUILT, the Zero-Defect Register reaches ZERO;
   F6 blocks the FA-default flip this session.** Production code:

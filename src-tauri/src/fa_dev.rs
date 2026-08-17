@@ -45,21 +45,123 @@ fn manifest_sha256_for(language: &str) -> Option<String> {
     v["models"][language]["sha256"].as_str().map(|s| s.to_string())
 }
 
+/// The manifest's own recorded `byteSize` for `language` — the input to the
+/// WS1 Session G size precheck below. Already present in every entry of
+/// `fa-onnx-manifest.json` (written by `scripts/export-fa-onnx.py` alongside
+/// the sha256), so this costs nothing new to record and is an EXACT expected
+/// value, not a heuristic bound.
+fn manifest_byte_size_for(language: &str) -> Option<u64> {
+    let v: serde_json::Value = serde_json::from_str(FA_ONNX_MANIFEST_JSON).ok()?;
+    v["models"][language]["byteSize"].as_u64()
+}
+
+/// Identity of a file as cheaply as the filesystem can state it: path, byte
+/// length, and mtime. The SAME technique `fa.rs::source_identity_key`
+/// already uses for the durable-WAV cache (`name|size|mtime`) and that
+/// `syncEngine.ts::getFileIdentity` uses on the TS side — reused rather than
+/// invented, and carrying the same known limitation (a replacement that
+/// preserves both size and mtime is not detected).
+type ModelIdentity = (std::path::PathBuf, u64, Option<std::time::SystemTime>);
+
+/// Memoized full-file digests, keyed on `ModelIdentity`.
+///
+/// IN-PROCESS ONLY, deliberately. It is never persisted, so every app start
+/// re-hashes the model in full and no stale or poisoned entry can outlive a
+/// restart. What it removes is the per-CALL tax: before this, every single
+/// Apply Sync re-hashed ~1.26 GiB (measured ~5.25s release / ~77.43s debug,
+/// WS1 Session F), model healthy or not.
+///
+/// It stores the COMPUTED DIGEST, not a boolean verdict — the equality
+/// check against the manifest still runs on every call, so a cache hit can
+/// never turn a mismatched model into an accepted one. It also memoizes a
+/// BAD digest, which is what brings the repeat same-size-corruption case
+/// under budget.
+fn verified_digest_cache() -> &'static std::sync::Mutex<std::collections::HashMap<ModelIdentity, String>> {
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<ModelIdentity, String>>,
+    > = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Test-only: empties the memo so a test can measure a cold call.
+#[cfg(test)]
+pub(crate) fn reset_verified_digest_cache_for_tests() {
+    if let Ok(mut m) = verified_digest_cache().lock() {
+        m.clear();
+    }
+}
+
 /// Hashes `path` and compares against the committed manifest's recorded
 /// SHA-256 for `language`. Never panics — a missing manifest entry, an I/O
 /// failure, and a genuine hash mismatch are all reported as a typed
 /// `FaError` (`ModelHashMismatch`), not a crash. The mismatch case is the
 /// real integrity check this function exists for: a `model.onnx` placed by
 /// hand could be truncated, corrupted, or simply the wrong file.
+///
+/// WS1 SESSION G — FAIL-CLEAN BUDGET. Two cheap steps run BEFORE the full
+/// ~1.26 GiB stream-hash, neither of which weakens the good case (a healthy
+/// model is still hashed in full, and still compared in full):
+///
+///   1. SIZE PRECHECK against the manifest's own `byteSize`. A truncated,
+///      empty, or simply wrong file is rejected from one `stat` — the
+///      common real corruption (an interrupted download, the wrong file
+///      placed by hand). Budget tier A: under 50 ms including the first
+///      call. It does NOT accelerate a same-size byte flip, and is not
+///      claimed to: that file still reaches the hash below.
+///   2. DIGEST MEMO keyed on (path, size, mtime), in-process only. The
+///      first call for a given file identity pays the full hash exactly
+///      once; every later call in the same process is a map lookup. This
+///      is what removes the per-Apply-Sync tax on the HEALTHY path (tier C)
+///      and brings the repeat same-size-corruption case (tier B) under
+///      budget. The comparison against the manifest still runs on every
+///      call — the memo caches the digest, never the verdict.
 fn verify_model_manifest(path: &Path, language: &str) -> Result<(), FaError> {
     let expected = manifest_sha256_for(language).ok_or_else(|| FaError {
         kind: FaErrorKind::ModelHashMismatch,
         message: format!("no manifest entry for language \"{language}\" in fa-onnx-manifest.json"),
     })?;
-    let actual = crate::sha256::hash_file(path).map_err(|e| FaError {
+
+    // One `stat`, reused by both the size precheck and the memo key.
+    let meta = std::fs::metadata(path).map_err(|e| FaError {
         kind: FaErrorKind::ModelHashMismatch,
-        message: format!("failed to hash model at {}: {e}", path.display()),
+        message: format!("failed to stat model at {}: {e}", path.display()),
     })?;
+    let actual_size = meta.len();
+
+    if let Some(expected_size) = manifest_byte_size_for(language) {
+        if actual_size != expected_size {
+            return Err(FaError {
+                kind: FaErrorKind::ModelHashMismatch,
+                message: format!(
+                    "model at {} is {actual_size} bytes but the committed manifest for \
+                     \"{language}\" records {expected_size} — wrong or truncated file. \
+                     Re-download/re-export the model; do not trust a mismatched file.",
+                    path.display()
+                ),
+            });
+        }
+    }
+
+    let identity: ModelIdentity = (path.to_path_buf(), actual_size, meta.modified().ok());
+    let cached = verified_digest_cache()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&identity).cloned());
+
+    let actual = match cached {
+        Some(digest) => digest,
+        None => {
+            let digest = crate::sha256::hash_file(path).map_err(|e| FaError {
+                kind: FaErrorKind::ModelHashMismatch,
+                message: format!("failed to hash model at {}: {e}", path.display()),
+            })?;
+            if let Ok(mut m) = verified_digest_cache().lock() {
+                m.insert(identity, digest.clone());
+            }
+            digest
+        }
+    };
+
     if actual != expected {
         return Err(FaError {
             kind: FaErrorKind::ModelHashMismatch,
@@ -220,6 +322,85 @@ mod tests {
         assert_eq!(hash.len(), 64, "sha256 hex digest must be 64 chars");
     }
 
+    /// WS1 Session G — the REAL fail-clean budget measurement, against a real
+    /// ~1.26 GiB `model.onnx`. Env-gated (`FA_FAILCLEAN_BENCH=1`) and
+    /// `#[ignore]`d for the same reason `tests/fa_durable_wav_live.rs` is: it
+    /// needs a real model on disk plus ~1.3 GiB of scratch space, and it is a
+    /// measurement, not a regression assertion. Run:
+    ///   FA_FAILCLEAN_BENCH=1 cargo test --features fa-inference \
+    ///     fail_clean_budget_real_model -- --ignored --nocapture
+    /// (and again with `--release` for the release column).
+    #[test]
+    #[ignore]
+    fn fail_clean_budget_real_model() {
+        if std::env::var("FA_FAILCLEAN_BENCH").ok().as_deref() != Some("1") {
+            eprintln!("SKIP fail_clean_budget_real_model: set FA_FAILCLEAN_BENCH=1");
+            return;
+        }
+        let profile = if cfg!(debug_assertions) { "DEBUG" } else { "RELEASE" };
+        let home = std::env::var("HOME").expect("HOME");
+        let real = std::path::PathBuf::from(&home)
+            .join("Library/Application Support/com.kinetix.pro-studio/fa-models/en/model.onnx");
+        assert!(real.exists(), "real en model not present at {}", real.display());
+
+        let dir = std::env::temp_dir().join(format!("fa-g-bench-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ms = |d: std::time::Duration| format!("{:.3} ms", d.as_secs_f64() * 1000.0);
+
+        println!("\n=== FAIL-CLEAN BUDGET — {profile} build, production fn verify_model_manifest ===");
+
+        // (1) ABSENT MODEL
+        reset_verified_digest_cache_for_tests();
+        let absent = dir.join("nope.onnx");
+        let t = std::time::Instant::now();
+        let e = verify_model_manifest(&absent, "en").unwrap_err();
+        println!("absent model                     : {} [{:?}]", ms(t.elapsed()), e.kind);
+
+        // (2) TRUNCATED / WRONG-SIZE MODEL (tier A — size precheck)
+        reset_verified_digest_cache_for_tests();
+        let trunc = dir.join("truncated.onnx");
+        std::fs::write(&trunc, vec![0u8; 64 * 1024 * 1024]).unwrap();
+        let t = std::time::Instant::now();
+        let e = verify_model_manifest(&trunc, "en").unwrap_err();
+        println!("corrupt: truncated (64 MiB)      : {} [{:?}]", ms(t.elapsed()), e.kind);
+        let t = std::time::Instant::now();
+        let _ = verify_model_manifest(&trunc, "en");
+        println!("corrupt: truncated, 2nd call     : {}", ms(t.elapsed()));
+        let _ = std::fs::remove_file(&trunc);
+
+        // (3) SAME-SIZE BYTE-FLIP (tier B — full size, one byte changed)
+        reset_verified_digest_cache_for_tests();
+        let flipped = dir.join("flipped.onnx");
+        std::fs::copy(&real, &flipped).unwrap();
+        {
+            use std::io::{Seek, SeekFrom, Write};
+            let mut f = std::fs::OpenOptions::new().write(true).open(&flipped).unwrap();
+            f.seek(SeekFrom::Start(600_000_000)).unwrap();
+            f.write_all(&[0xFF]).unwrap();
+        }
+        let t = std::time::Instant::now();
+        let e = verify_model_manifest(&flipped, "en").unwrap_err();
+        println!("corrupt: byte-flip, 1st (cold)   : {} [{:?}]", ms(t.elapsed()), e.kind);
+        let t = std::time::Instant::now();
+        let _ = verify_model_manifest(&flipped, "en");
+        println!("corrupt: byte-flip, 2nd (memo)   : {}", ms(t.elapsed()));
+        let _ = std::fs::remove_file(&flipped);
+
+        // (4) HEALTHY MODEL (tier C)
+        reset_verified_digest_cache_for_tests();
+        let t = std::time::Instant::now();
+        verify_model_manifest(&real, "en").expect("real model must verify");
+        println!("healthy model, 1st (cold)        : {}", ms(t.elapsed()));
+        let t = std::time::Instant::now();
+        verify_model_manifest(&real, "en").expect("real model must verify");
+        println!("healthy model, 2nd (memo)        : {}", ms(t.elapsed()));
+        let t = std::time::Instant::now();
+        verify_model_manifest(&real, "en").expect("real model must verify");
+        println!("healthy model, 3rd (memo)        : {}", ms(t.elapsed()));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn manifest_sha256_for_unknown_language_is_none() {
         assert!(manifest_sha256_for("zz").is_none());
@@ -235,7 +416,94 @@ mod tests {
         let err = verify_model_manifest(&path, "en").unwrap_err();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(err.kind, FaErrorKind::ModelHashMismatch);
-        assert!(err.message.contains("does not match"));
+        // WS1 Session G: an 18-byte file is now rejected by the SIZE
+        // precheck before any hashing, so the message names the size fault
+        // rather than the digest one. Still ModelHashMismatch, still
+        // fail-clean, still the same refusal — just reached ~4 orders of
+        // magnitude sooner.
+        assert!(
+            err.message.contains("truncated") && err.message.contains("18 bytes"),
+            "expected the size-precheck message, got: {}",
+            err.message
+        );
+    }
+
+    // -- WS1 Session G: fail-clean budget -----------------------------------
+
+    /// Tier A: a size-detectable fault must be refused without hashing. This
+    /// asserts the mechanism rather than a wall-clock number (which would be
+    /// machine-dependent and flaky in CI): the file is a size the real model
+    /// never is, and the error names the size fault, which is only reachable
+    /// on the pre-hash path.
+    #[test]
+    fn size_precheck_rejects_a_truncated_model_without_hashing() {
+        let dir = std::env::temp_dir().join(format!("fa-g-size-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        // Deliberately large enough that hashing it would be measurable, and
+        // still nowhere near the manifest's 1_262_512_711 for "en".
+        std::fs::write(&path, vec![0u8; 4 * 1024 * 1024]).unwrap();
+
+        let started = std::time::Instant::now();
+        let err = verify_model_manifest(&path, "en").unwrap_err();
+        let elapsed = started.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(err.kind, FaErrorKind::ModelHashMismatch);
+        assert!(err.message.contains("wrong or truncated file"), "got: {}", err.message);
+        assert!(err.message.contains("1262512711"), "must name the expected size; got: {}", err.message);
+        // Generous by 2+ orders of magnitude vs. the stated 50ms tier-A
+        // budget — this is a "did we skip the hash" assertion, not a
+        // benchmark, and must not flake on a loaded machine.
+        assert!(elapsed.as_millis() < 2_000, "size precheck took {elapsed:?}");
+    }
+
+    #[test]
+    fn manifest_byte_size_is_recorded_for_every_supported_language() {
+        // The precheck is only as good as the manifest data behind it: if a
+        // language had no byteSize, that language would silently lose tier A.
+        for lang in ["en", "es", "fr", "de", "pt"] {
+            assert!(
+                manifest_byte_size_for(lang).is_some_and(|n| n > 1_000_000_000),
+                "manifest byteSize missing/implausible for {lang}"
+            );
+        }
+        assert!(manifest_byte_size_for("zz").is_none());
+    }
+
+    /// Tier B/C: the full-file hash is paid at most ONCE per file identity
+    /// per process. Uses a language whose manifest byteSize is absent
+    /// ("zz" has no entry at all, so instead we verify the memo directly)
+    /// — here the memo is observed through its own public-in-crate reset.
+    #[test]
+    fn digest_memo_caches_by_identity_and_resets_cleanly() {
+        let dir = std::env::temp_dir().join(format!("fa-g-memo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        std::fs::write(&path, vec![7u8; 2 * 1024 * 1024]).unwrap();
+
+        reset_verified_digest_cache_for_tests();
+        let meta = std::fs::metadata(&path).unwrap();
+        let identity: ModelIdentity = (path.clone(), meta.len(), meta.modified().ok());
+
+        // Cold: nothing memoized yet.
+        assert!(verified_digest_cache().lock().unwrap().get(&identity).is_none());
+
+        // A verify against a language WITH a byteSize would stop at the size
+        // precheck and never populate the memo — which is itself the tier-A
+        // behaviour. Drive the hash path directly to populate it, exactly as
+        // a correctly-sized model would.
+        let digest = crate::sha256::hash_file(&path).unwrap();
+        verified_digest_cache().lock().unwrap().insert(identity.clone(), digest.clone());
+        assert_eq!(verified_digest_cache().lock().unwrap().get(&identity), Some(&digest));
+
+        // A changed size is a DIFFERENT identity — never a stale hit.
+        let other: ModelIdentity = (path.clone(), meta.len() + 1, meta.modified().ok());
+        assert!(verified_digest_cache().lock().unwrap().get(&other).is_none());
+
+        reset_verified_digest_cache_for_tests();
+        assert!(verified_digest_cache().lock().unwrap().get(&identity).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

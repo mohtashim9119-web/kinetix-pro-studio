@@ -4,20 +4,27 @@
  */
 
 /**
- * Forced-alignment production capability gate (WS1 Task 5 Slice D17, owner
- * ruling D2). Follows `useExport.ts:36-96`'s WebCodecs-export precedent
- * exactly: a memoized runtime capability probe AND a persisted user toggle,
- * combined into one accessor — either being false is byte-identical to
- * today (no FA call anywhere in the Apply-Sync path).
+ * Forced-alignment production capability gate (WS1 Task 5 Slice D17,
+ * originally owner ruling D2; RESHAPED by WS1 Session G under owner ruling
+ * R-AK). Two independent conditions, combined into one accessor: a memoized
+ * runtime capability probe AND the PROJECT's own switch — either being false
+ * means no FA call anywhere in the Apply-Sync path.
  *
- * NOTHING RUNS BEHIND THIS GATE YET. No `fa_align` invocation, no IPC, no
- * audio handling is wired to `isFaGateOpen()` this slice — it exists so a
- * later slice has a real off-by-default switch to check, per the
- * capability-gate ruling recorded in `docs/work-in-progress.md` §4's
- * capability-gate row ("Capability gate — dev-only is a phase, not the
- * endpoint" section of `task5-slice-ledger.md`, the original source,
- * was deleted 2026-08-14, `9cf5867`; retrieve: `git show
- * 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`).
+ * WHAT SESSION G CHANGED, AND WHY IT HAD TO. The switch used to be a
+ * per-MACHINE `uiStateStore` key read fresh on every Apply Sync. That shape
+ * is what made a default flip unshippable in Session F (finding F6): with
+ * one global key there is no way to turn FA on for new work without also
+ * reaching backward into every project already on the machine, and no way
+ * for two projects to disagree. Moving the switch onto `Project` fixes both,
+ * and is what let the default become ON (R-AK) without that default being a
+ * silent, unaskable global act.
+ *
+ * THE INVARIANT THIS MODULE EXISTS TO HOLD: an absent
+ * `Project.faHighPrecisionSync` means "no preference", resolves to the
+ * default at READ time, and is NEVER written back. Nothing here persists
+ * anything — every function below is pure. The only writer in the app is
+ * Project Settings' Save, and only on an actual user change
+ * (`shouldPersistFaChoice`).
  *
  * Capability probe: unlike WebCodecs export (a set of browser APIs), FA
  * runs through a Tauri backend command (`fa_align`) — the same reason
@@ -28,9 +35,39 @@
  */
 
 import { isTauri } from './tauriFfmpeg';
-import { readUiState, patchUiState } from './uiStateStore';
+import type { Project } from '../types';
 
-const FA_GATE_TOGGLE_KEY = 'faHighPrecisionSyncEnabled';
+/**
+ * The former per-MACHINE toggle key (`uiStateStore`). RETIRED as a gate
+ * input by WS1 Session G (owner ruling R-AK) in favour of the per-project
+ * `Project.faHighPrecisionSync` field below. Kept as a named constant, and
+ * deliberately NOT deleted from any user's stored ui-state, for two reasons:
+ *
+ *  1. It carried no recoverable intent. `ProjectSettingsModal`'s Save wrote
+ *     it UNCONDITIONALLY on every save, for any setting — so a stored
+ *     `false` was indistinguishable from "this user once changed their
+ *     resolution tier", while the only unambiguous value (`true`) agrees
+ *     with the new default anyway. Migrating it would therefore have let an
+ *     incidental Save silently disable the owner's chosen default; reading
+ *     it is strictly worse than ignoring it. (Measured, not assumed: the
+ *     unconditional `setFaToggle(draftFaEnabled)` call is visible in the
+ *     pre-change `handleSave`.)
+ *  2. Deleting a key is a destructive migration run against every profile to
+ *     buy nothing — a dead key costs one unread string.
+ */
+export const LEGACY_GLOBAL_FA_TOGGLE_KEY = 'faHighPrecisionSyncEnabled';
+
+/**
+ * What `Project.faHighPrecisionSync === undefined` means — owner ruling
+ * R-AK, WS1 Session G: "keep toggle default ON for all projects. in case i
+ * wanna turn it off, i'll go to specific project settings and turn it off
+ * myself."
+ *
+ * This is a READ-TIME fallback and must stay one. Persisting it on load
+ * would convert "no preference" into "explicit choice" behind the user's
+ * back, which is the one thing this design promises never to do.
+ */
+export const FA_PROJECT_DEFAULT_ON = true;
 
 let cachedFaCapability: boolean | null = null;
 
@@ -52,23 +89,52 @@ export function __resetFaCapabilityForTests(): void {
 }
 
 /**
- * Persisted user toggle — DEFAULTS OFF (owner ruling D2), unlike WebCodecs
- * export's default-on. An explicit prior choice (stored true or false) is
- * always respected. Persisted via the existing `uiStateStore` — no new
- * storage mechanism.
+ * The per-project switch, resolved. `true`/`false` are explicit user
+ * choices and are returned as-is; `undefined` (and a null/absent project)
+ * resolves to `FA_PROJECT_DEFAULT_ON`.
+ *
+ * PURE AND READ-ONLY BY CONSTRUCTION — it takes a project and returns a
+ * boolean. It cannot write, so no call site of it, however careless, can
+ * turn an absent key into a stored one. That property is what makes the G1
+ * load-path proof a proof rather than an audit of call sites.
  */
-export function isFaToggleOn(): boolean {
-  try {
-    const stored = readUiState()[FA_GATE_TOGGLE_KEY];
-    return typeof stored === 'boolean' ? stored : false;
-  } catch { return false; }
+export function isFaEnabledForProject(
+  project: Pick<Project, 'faHighPrecisionSync'> | null | undefined,
+): boolean {
+  const stored = project?.faHighPrecisionSync;
+  return typeof stored === 'boolean' ? stored : FA_PROJECT_DEFAULT_ON;
 }
 
-export function setFaToggle(enabled: boolean): void {
-  patchUiState({ [FA_GATE_TOGGLE_KEY]: enabled });
+/**
+ * Project Settings' Save decision, extracted from the JSX handler so it can
+ * be tested directly (CLAUDE.md §6 layering: decisions live in a service,
+ * not inline in a component handler).
+ *
+ * TRUE only when the user actually moved the control. Saving an UNCHANGED
+ * control must not write, because writing would convert "no preference"
+ * into an explicit choice as a side effect of editing some unrelated
+ * setting — precisely the defect that made the retired global key's stored
+ * `false` meaningless (see LEGACY_GLOBAL_FA_TOGGLE_KEY above). This is the
+ * load-bearing half of "an explicit user choice is never silently
+ * overwritten": the other half is that nothing else in the app writes the
+ * field at all.
+ */
+export function shouldPersistFaChoice(draft: boolean, effective: boolean): boolean {
+  return draft !== effective;
 }
 
-/** The gate itself — capability AND user toggle both required. */
-export function isFaGateOpen(): boolean {
-  return isFaCapable() && isFaToggleOn();
+/**
+ * The gate itself — runtime capability AND the project's own switch.
+ *
+ * Note what this deliberately does NOT decide: whether a usable model
+ * exists. `runForcedAlignmentForSync` owns that, and owns it fail-clean
+ * (returns null, never throws), so a machine with the gate open but no
+ * model simply syncs on Whisper tokens exactly as before. Duplicating a
+ * model-presence probe here would add a second, slower, cache-invalidating
+ * answer to a question that already has one.
+ */
+export function isFaGateOpenForProject(
+  project: Pick<Project, 'faHighPrecisionSync'> | null | undefined,
+): boolean {
+  return isFaCapable() && isFaEnabledForProject(project);
 }
