@@ -63,11 +63,32 @@ export const LEGACY_GLOBAL_FA_TOGGLE_KEY = 'faHighPrecisionSyncEnabled';
  * wanna turn it off, i'll go to specific project settings and turn it off
  * myself."
  *
+ * WS1 SESSION H — FLIPPED BACK TO false, a VALUE-ONLY change. R-AK's design
+ * is entirely unchanged: the per-project field, the absent-key-means-
+ * no-preference semantics, the G1 load-path proof, the migration handling,
+ * and `runForcedAlignmentForSync`'s fail-clean precheck all stay exactly as
+ * built. Only this literal moves. Session H's own 12-row listening pass (five
+ * wrong of twelve) found real defects — R.12's nine — that FA had been
+ * shipping to every new project by default, with no rule built yet to catch
+ * them when R-AK shipped this default ON. New projects default back to
+ * Whisper-only until the corpus is re-verified against R.12; a project whose
+ * owner already chose `true` explicitly is untouched (the absent-key
+ * semantics this constant only governs the fallback for).
+ *
+ * THE EXACT CONDITION THAT FLIPS THIS BACK TO true, recorded so it is
+ * checkable rather than remembered: (1) a FRESH blind 12-row listening pass
+ * scored 12/12 correct, on rows drawn clear of every boundary any rule has
+ * ever touched or sits adjacent to; (2) a SECOND clean draw on a disjoint set
+ * of rows, also 12/12, so one lucky sample cannot carry the decision alone;
+ * (3) the live acceptance run itself. None of the three has happened as of
+ * this session — Session H's own sealed, unscored Step 12 draw is the FIRST
+ * of the two required blind passes (`docs/work-in-progress.md` §9).
+ *
  * This is a READ-TIME fallback and must stay one. Persisting it on load
  * would convert "no preference" into "explicit choice" behind the user's
  * back, which is the one thing this design promises never to do.
  */
-export const FA_PROJECT_DEFAULT_ON = true;
+export const FA_PROJECT_DEFAULT_ON = false;
 
 let cachedFaCapability: boolean | null = null;
 

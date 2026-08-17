@@ -211,6 +211,16 @@ function computeRunContext(
 // Model P, which governs `project.segments`, not this array). Per ruling R-E
 // the excised seconds belong to the PRECEDING segment, which is what falls out
 // of leaving the boundary between the two split chunks unclaimed.
+//
+// AMENDED for the COMMITTED-BOUNDARY case (owner ruling 3, WS1 Session H).
+// This applies to the CHUNK-PLAN excision above and is unchanged and correct.
+// It does NOT extend to where `snapCoveredBoundaries` later snaps the
+// committed segment boundary — nine of V6's ten runs turned out to hold a
+// committed boundary on a silence strictly inside the run, and the
+// ear-correct destination for THAT boundary is the FOLLOWING segment, not the
+// preceding one. `faRunPlacementGate.ts` (R.12) owns the correction; see its
+// own header for the full amendment text and `sync-pipeline-v2-plan.md`'s R-E
+// entries for the ruling record.
 // ---------------------------------------------------------------------------
 
 /** R.5's length floor: a run must be at least this many Whisper tokens to be
@@ -368,6 +378,30 @@ export function computeRuns(
   audioDuration: number,
 ): FaRun[] {
   return computeRunContext(segments, tokens, silences, audioDuration).runs;
+}
+
+/**
+ * The unscripted-audio runs R.5 excises, surfaced from the SAME
+ * `computeRunContext` pass that produces them for the chunk plan — the
+ * sibling of `computeRuns` above, and additive: nothing about the chunk plan,
+ * the anchor set or the run partition changes by exporting this (verified by
+ * chunk-plan byte equality on all three corpora, the M4 discipline).
+ *
+ * Added by R.12 (WS1 Session H, `faRunPlacementGate.ts`), which needs the run
+ * SPANS in audio time to decide whether a committed boundary fell inside one.
+ * Deriving them a second time in the gate would mean re-running V6's
+ * Hirschberg pass and, worse, re-deriving a quantity production already
+ * computes — the exact "measure through production" discipline this
+ * workstream runs under. R.5's own deferred `unscripted-gap` sync-log entry
+ * (ruling R-E) has the same need and can use this too.
+ */
+export function computeUnscriptedRuns(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+): UnscriptedRun[] {
+  return computeRunContext(segments, tokens, silences, audioDuration).unscripted;
 }
 
 /**

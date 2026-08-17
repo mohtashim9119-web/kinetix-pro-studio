@@ -615,16 +615,25 @@ export const R11_MIN_FIT_DEVIATION = 1.3093;
 export const R11_MIN_CORRECTION_SEC = 0.05;
 
 // R.11's THIRD conjunct, added after `R11_MIN_FIT_DEVIATION` alone was
-// measured to false-fire on v6 `125_night_circle` — a boundary R.5 already
-// fixed correctly (372.35, itself sitting exactly on a real silence's own
-// midpoint), which R11_MIN_FIT_DEVIATION alone could not tell apart from a
-// genuine defect. The fix mirrors R.10's own shape: require every FA word
-// inside the [committed, corrected] span to carry NO real acoustic support.
-// A boundary the pipeline already got right sits in a span where FA is
-// genuinely confident (measured: 125_night_circle's span holds one word at
-// confidence 0.0301, and every OTHER false candidate measured in the same
-// pass sits above 0.99); a boundary crushed by a bad-fit chunk sits in a
-// span where nothing is.
+// measured to false-fire on v6 `125_night_circle`.
+//
+// WS1 SESSION H AMENDMENT — the ORIGINAL wording of this comment claimed
+// 125_night_circle was "a boundary R.5 already fixed correctly (372.35)".
+// THAT IS FALSE and is retired: 372.35 is the exact midpoint of a silence
+// lying strictly inside an unscripted run, a real defect owned by R.12
+// (`faRunPlacementGate.ts`), which moves it to 370.75. The threshold's own
+// derivation is untouched by the correction — it was always computed from
+// measured span confidences, never from a correctness claim about 372.35.
+//
+// The conjunct mirrors R.10's shape: require every FA word inside the
+// [committed, corrected] span to carry NO real acoustic support. A span R.11
+// has no business acting on holds a word FA is genuinely confident about
+// (measured: 125_night_circle's span holds one at confidence 0.0301, and
+// every OTHER candidate measured in the same pass sits above 0.99); a
+// boundary crushed by a bad-fit chunk sits in a span where nothing is. That
+// distinction is about EVIDENCE FOR R.11's OWN CORRECTION, not about whether
+// the committed value is right — a boundary can be wrong for a reason R.11
+// cannot see, which is exactly what 372.35 turned out to be.
 //
 // DERIVED, NOT FITTED. Measured over the WS1 Session F candidate set (every
 // boundary R11_MIN_FIT_DEVIATION alone flags, all three corpora, against the
@@ -640,6 +649,29 @@ export const R11_MIN_CORRECTION_SEC = 0.05;
 // THIS specific mis-corrected span acoustically empty) and is deliberately
 // its own constant for the same reason `R10_MAX_WORD_CONF` is not `CONF_MIN`.
 export const R11_MAX_SPAN_WORD_CONF = 1.0835e-2;
+
+// ---------------------------------------------------------------------------
+// R.12 — the atomic-run invariant (`faRunPlacementGate.ts`).
+//
+// R.12 HAS NO SIGNAL THRESHOLD, and that is the point. R.10's
+// `R10_MAX_WORD_CONF` and R.11's `R11_MIN_FIT_DEVIATION` both answer "how
+// suspicious is this?" with a number derived from a corpus; R.12 answers a
+// STRUCTURAL question with no free parameter — a committed boundary either
+// lies strictly inside an unscripted run (`faChunkPlan.ts`'s
+// `computeUnscriptedRuns`, R.5's own unit of work) or it does not. There is
+// nothing to tune, nothing to sit "just below the threshold", and no
+// suspicion-vs-guilt distinction to draw: an unscripted run is one continuous
+// thing the narrator says, and a segment boundary cannot be in the middle of
+// it under any reading of Model P.
+//
+// The one constant R.12 owns is therefore the same no-op epsilon R.11 has, and
+// for the same reason: a candidate whose corrected value already sits within
+// this of the committed one needs no correction, and rewriting a segment to
+// the value it already holds should be provably inert rather than merely
+// harmless. 50ms is float/rounding noise, not a semantic distance — it is NOT
+// derived from the corpus (the smallest real correction R.12 makes is 0.54s,
+// v6 `224_thirty_three`, an order of magnitude clear of it).
+export const R12_MIN_CORRECTION_SEC = 0.05;
 
 // ---------------------------------------------------------------------------
 // NUMBER_WORDS — the R1 hyphen carve-out set (doc §3.2, R1).

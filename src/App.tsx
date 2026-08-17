@@ -112,6 +112,7 @@ import {
   R10_SKIP_REASON,
 } from './services/faUnspokenGate';
 import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
+import { detectRunPlacementDefects, applyRunPlacementCorrections } from './services/faRunPlacementGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -2866,9 +2867,13 @@ export default function App() {
       // WS1 Task 5 — production forced-alignment wiring (docs/work-in-
       // progress.md §11 item 1). The gate is PER PROJECT as of WS1 Session G
       // (`isFaGateOpenForProject(project)` = `isCapable() &&
-      // isFaEnabledForProject(project)`, faGate.ts), and defaults ON for a
-      // project that has expressed no preference (owner ruling R-AK) — when
-      // it's off, `faTokens` stays null and this whole branch is a no-op, so
+      // isFaEnabledForProject(project)`, faGate.ts). Made PER PROJECT and
+      // defaulted ON by owner ruling R-AK (WS1 Session G); the resolved
+      // default for a project expressing no preference was flipped back to
+      // OFF by WS1 Session H, value-only (`faGate.ts`'s
+      // `FA_PROJECT_DEFAULT_ON` doc comment has the exact flip-back
+      // condition) — when the gate is off, `faTokens` stays null and this
+      // whole branch is a no-op, so
       // behavior is byte-identical to before this branch existed. When the
       // gate is on, `runForcedAlignmentForSync` fails CLEAN on any error (no
       // model present, hash mismatch, inference error, unsupported language,
@@ -3111,6 +3116,32 @@ export default function App() {
           );
         }
         finalTimedSegments = applySeamFitCorrections(finalTimedSegments, seamFitFindings);
+
+        // WS1 R.12 (faRunPlacementGate.ts) — THE ATOMIC-RUN INVARIANT. No
+        // committed boundary may lie strictly inside an unscripted run.
+        // Structural, no threshold. Runs LAST in the correction chain and on
+        // the fully-corrected array, so its `committedValue` is the value the
+        // project would actually have shipped; its findings are disjoint from
+        // R.10's and R.11's on every committed corpus (measured), so the order
+        // is a determinism choice, not a dependency.
+        //
+        // `anchorTimed` supplies the COMPLETE pre-skip script/order the run
+        // derivation needs (it never reads segment timing);
+        // `finalTimedSegments` supplies the committed boundaries under test.
+        const runPlacementFindings = detectRunPlacementDefects(
+          anchorTimed,
+          finalTimedSegments,
+          projectRef.current.transcriptTokens!,
+          aligned.silences,
+          audioDuration,
+        );
+        if (runPlacementFindings.length > 0) {
+          console.warn(
+            `[sync] R.12 — ${runPlacementFindings.length} atomic-run boundary correction(s):`,
+            runPlacementFindings,
+          );
+        }
+        finalTimedSegments = applyRunPlacementCorrections(finalTimedSegments, runPlacementFindings);
       }
     } else {
       // Defensive fallback only — under correct button gating this branch

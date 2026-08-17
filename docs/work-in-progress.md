@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate now PER-PROJECT and DEFAULT ON** (WS1 Session G, owner ruling R-AK) | — | None; H's ear pass (`docs/ws1-sync-pipeline/stage1-lock-ear-list.md`) is next | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. **2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync` and its default flipped OFF → ON** — resolving F6, which blocked the flip in Session F precisely because one global key could not turn FA on for new work without reaching backward into every existing project. Absent key = ON, resolved at read time and never written back (G1 proof: `faGate.test.ts`). Golden replay 6/6, unchanged |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | Two fresh blind 12/12 listening passes on disjoint rows, then the live acceptance run — see `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment for the exact condition | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -640,6 +640,18 @@ cross-referenced against `src/types.ts` live:
 open on process (owner guarantee-by-guarantee verification, item 12) even though the
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
+
+**2026-08-18 (WS1 Session H) — the exposure claim below is REVERTED.** Session G's own entry
+(next) says "with Session G's per-project default now ON, the unvalidated array is the DEFAULT
+array" — that is no longer true. R.12 (`faRunPlacementGate.ts`) landed and found nine real
+defects on v6 that no rule built before it could see, and `FA_PROJECT_DEFAULT_ON` was reverted
+ON → OFF, value-only (`faGate.ts`'s own doc comment carries the exact flip-back condition: two
+fresh blind 12/12 listening passes on disjoint rows, then the live acceptance run). A new
+project is Whisper-only again until that condition is met; an existing project that explicitly
+opted in stays in. This contract table's own rows are otherwise untouched by this session — R.12
+runs after `headExtendFirstSegment`, exactly where R.11 runs, for the identical reason, and its
+own mutual-exclusion measurement (`faRunPlacementGate.test.ts`) confirms chunk-plan byte
+equality on all three corpora. No row changes. Golden replay 6/6.
 
 **2026-08-17 (WS1 Session G) — the twelve-row pass is now a WORKING DOCUMENT, and one row's
 SEVERITY changed.** The full guarantee-by-guarantee pass (P1–P8 + A1–A4, every row re-grepped
@@ -3598,6 +3610,93 @@ reverted and reconfirmed green.
 - Contract 1→2 **A4** and Contract IN **A3** still lack written acceptance; **P6** is the
   one row this pass cannot schedule away, because the pass IS its enforcement.
 
+**WS1 SESSION H — R.12, THE ATOMIC-RUN INVARIANT (2026-08-18).** Full detail; the Changelog
+entry above is the summary. Standing constraints held throughout: `faAnchors.ts` sha256
+`b61e94cb…` unchanged; no edits to `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg
+aligner, `project-state.md`, `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv`
+(golden replay byte-identical 6/6 throughout); `DOCUMENTATION_AUDIT_REPORT.md` stays
+untracked; no new repo-root files.
+
+- **The spec (Step 4), proven not assumed.** No fitted threshold: a committed boundary either
+  lies strictly inside an unscripted run (`computeUnscriptedRuns`) or it does not. Surface
+  measured before building: blast radius exactly **9/649**; R0 (corpus-start run) structurally
+  excluded (no preceding token — the interval `[prevToken.endSec, run.startSec]` does not
+  exist); no adjacent-run collision possible (measured minimum inter-run gap 115.79s on v6,
+  the only corpus with runs); no proposed value lands inside any run (H7); the smallest
+  Model P absorption leaves 1.235s of predecessor duration (H8's non-positive-duration exit
+  never approached). Mutual-exclusion matrix built BEFORE the build, all four rows measured:
+  R.5 (chunk-plan byte equality under re-feed), R.10 (disjoint corpora), R.11 (disjoint
+  firing sets, conjunct 3 keeping R.11 off 372.35 — H6 closed by construction), R-U/R-AA
+  (173-only, no runs).
+- **RED before GREEN.** `src/services/faRunPlacementGate.test.ts` written and run against a
+  nonexistent module first (`Cannot find module './faRunPlacementGate'`), THEN
+  `faRunPlacementGate.ts` was written. 32 tests: 9 corpus rows named individually, the R1
+  fallback, a healthy adjacent boundary that must not move, R0 exclusion, adjacent-run
+  independence, mutual exclusion against R.5/R.10/R.11/R-U, Model P contiguity through the
+  real `applyRunPlacementCorrections` partition path, and H7 as a permanent assertion (not a
+  one-off check) that no corrected value lands inside any run.
+- **Step 6 measurements, through production, in full.** `detectRunPlacementDefects` +
+  `applyRunPlacementCorrections` (the exact pair `App.tsx` calls) run against the real
+  fixtures: 9 corrections on v6, 0 on 173/spanish. All nine land EXACTLY on their measured
+  values (bit-for-bit, not merely `toBeCloseTo`): 125.54, 250.69, 370.75, 521.71, 663.785,
+  788.65, 924.92, 1044.67, 1188.95 (`224_thirty_three`'s own value is not a round 2dp number —
+  the clamp's own signature). Direction: all nine earlier, max |Δ| 2.90s (`340_fifty_eight`),
+  min |Δ| 0.545s (`224_thirty_three`). Controls verified unmoved on the CORRECTED arrays: the
+  seven ear-verified-correct rows (173 507.01, v6 571.07/466.09/969.30/259.88, 173 256.33,
+  spanish 44.90), item 6 (174.74), item 7 (451.03), V6 seam 150/151 (committed 457.83 /
+  FA 457.81, distinct quantities, both pinned), items 4/5 (931.40/130.96), items 10/11
+  (0.00/absent). Model P verified through the real partition, not asserted: worst gap
+  2.27e-13s (float noise), Σduration conserved to 1e-6, last segment end matches
+  `audioDuration` exactly, on all three corpora. Chunk-plan digests bit-identical before/after
+  on all three corpora (`d5dc8d7924dc8402`/`b4c4611508f7b58e`/`c7e4be33cf7ab3c7`), proving R.12
+  cannot be a false alarm against `faAnchors.ts`/`faChunkPlan.ts` the same way the Session A.5
+  anchor-path replay proves it for every other rule. 173 (173 rows) and spanish (27 rows)
+  fixtures untouched, byte-identical.
+- **The R-E amendment.** Ruling R-E ("Model P outranks R.5," `sync-pipeline-v2-plan.md`)
+  assigned the excised run's seconds to the PRECEDING segment. Owner ruling 3 REVERSES this
+  for the COMMITTED BOUNDARY specifically: the run belongs to the FOLLOWING segment, matching
+  what the ear scored correct on all twelve Session H rows. Recorded as an amendment, not a
+  silent contradiction, at R-E's own site (`sync-pipeline-v2-plan.md`'s R.5 destination
+  entries — see that file's own Session H addendum) and at each of the three code citations
+  (`faChunkPlan.ts:211`'s R.5 header, `faRunPlacementGate.ts`'s own header, and this ledger's
+  §3/§7 R-E citations). R-E's ORIGINAL scope — where R.5 excises the run from the CHUNK
+  PLAN, before inference — is UNCHANGED and correct; the amendment is narrow, about where the
+  COMMITTED boundary lands after the fact, not about chunk-plan excision.
+- **The register, reopened and closed.** `REGISTER_HIGH_WATER` 0 → 9 → 0 in one commit — the
+  same RAISE-then-LOWER pattern Session D used, and for the identical reason: growth cost a
+  deliberate edit, nine roster appends, nine `KNOWN_BAD` entries (closed in the same commit
+  by R.12 landing), and this ledger's own table. Verification split explicitly: five rows
+  ear-scored wrong by Session H's 12-row pass (042, 125, 176, 266, 340); four structurally
+  derived, no ear pass (085, 224, 307, 383) — marked `verification: 'structural'` in the
+  fixture, never dressed up as ear-verified. `192_scout_listening` promoted from an
+  unverified change-detector pin to a positive assertion at 571.07 — G2 closes.
+- **FA default reversion.** `FA_PROJECT_DEFAULT_ON` `true → false`, value-only — see the
+  Changelog entry above for the full accounting and the exact flip-back condition, which now
+  also lives in `faGate.ts`'s own doc comment as the durable source.
+- **The fresh blind 12, drawn and sealed, not scored.** Window ≥ 5.80s (2× the measured max
+  |Δ| 2.90s, so no arm can leak by proximity to a known mover). Stratified: an unmoved-control
+  arm, drawn clear of every previously scored region (all twelve prior rows) and of
+  mover-adjacent boundaries (the ±2-index exclusion Session C's own draw used). At least two
+  of the four structurally-derived rows (085/224/307/383) included, so they get ear-verified
+  on the next pass. Sealed key — not scored this session, input to the next pass only.
+- **Register state, before and after.** Before: EMPTY (Session F's zero). After: EMPTY again,
+  with nine more roster members and nine more closed entries than before — 20 roster members
+  total, all accounted for.
+- **Verification, six numbers with status changes:** `npm test` 86 → **87 files**,
+  2234 → **2283 passed**, 1 skipped unchanged; `npm run lint` clean (unchanged); `cargo check
+  --features fa-inference` clean (unchanged); `cargo test --features fa-inference`
+  **209 passed / 20 ignored** (unchanged — zero Rust files touched this session); golden
+  replay **6/6** (unchanged); FA replay gate green at rest, **M7 verified RED** (new this
+  session — dropping the clamp reproduces `224_thirty_three`'s exact committed defect and
+  moves 176/307/340 back inside their runs), reverted and reconfirmed green; **M5/M6
+  re-verified RED** on the current codebase (mutating `R11_MIN_FIT_DEVIATION` and
+  `R12_MIN_CORRECTION_SEC` respectively), reverted and reconfirmed green.
+- **Readiness for the live acceptance run: NO.** The ordered remainder is exactly the three
+  conditions in `FA_PROJECT_DEFAULT_ON`'s own doc comment: (1) a fresh blind 12-row pass
+  scored 12/12 (this session sealed the draw, did not score it); (2) a second, disjoint clean
+  draw, also 12/12; (3) the live acceptance run, with the default staying OFF until both
+  passes land clean.
+
 ---
 
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
@@ -3657,6 +3756,74 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-18 — WS1 Session H: R.12 BUILT (the atomic-run invariant) — register reopens at
+  9 and closes again in the same commit; FA default reverted ON → OFF, value-only; two
+  falsified R.11 justifications retired.** Ruling: owner ruling 3 (a deliberate REVERSAL of
+  R-E — the excised run belongs to the FOLLOWING segment, not the preceding one, for the
+  committed-boundary correction; recorded as an amendment at R-E's own site and all three
+  citations). Production code: `src/services/faRunPlacementGate.ts` (new, pure —
+  `detectRunPlacementDefects`/`applyRunPlacementCorrections`), `src/services/faChunkPlan.ts`
+  (additive-only: exports `computeUnscriptedRuns`, proven a no-op — chunk-plan byte equality,
+  all three corpora), `syncConstants.ts` (`R12_MIN_CORRECTION_SEC`), `App.tsx` (wiring, LAST
+  in the correction chain, after R.11, gated on `faTokens` truthy). `faAnchors.ts` byte-
+  identical (sha256 `b61e94cb…`, untouched); `snapBoundaries.ts`, `silenceDetector.ts`, the
+  Hirschberg aligner and all Rust untouched.
+  - **The mechanism**: `snapCoveredBoundaries` snaps a seam onto the nearest detected
+    silence, and a recitation's own internal breath pauses are real detected silences — so on
+    nine of V6's ten unscripted "Level N" recitations, the nearest one to the seam is INSIDE
+    the recitation. All nine committed values are exact midpoints of real silences strictly
+    inside a run; eight of nine are bit-identical to Whisper's own value (both engines share
+    the defect) — v6 `085_the_spear_bearer` is the one exception, where Whisper alone is
+    correct at 250.81 and FA alone is wrong at 252.74.
+  - **Clamped-midpoint placement, forced by measurement, not taste**: the corrected value is
+    the midpoint of (the leading silence ∩ `[prevToken.endSec, run.startSec]`), falling back
+    to `run.startSec` when no silence overlaps the gap. Unclamped placement lands back inside
+    the run on four of the nine rows (176/307/340/224) and, on 224 (`224_thirty_three`),
+    reproduces the exact committed defect value — the clamp's own proof.
+  - **Blast radius exactly 9/649, proven not assumed** — 173 and spanish have zero unscripted
+    runs and zero effect; R0 (the tenth recitation, corpus start) structurally cannot fire
+    (no preceding token, no legal interval).
+  - **Mutual exclusion measured, not argued**: R.5 (chunk-plan byte equality after re-feeding
+    R.12's output); R.10 (disjoint corpora — 173 only, zero runs); R.11 (disjoint firing sets;
+    v6 `125_night_circle` is the one boundary both rules' fit signal would touch, and R.11's
+    third conjunct declining it on real 0.0301 span confidence is what keeps them exclusive —
+    now load-bearing for exclusion, not merely precision).
+  - **Two falsified R.11 justifications retired, all four citation sites corrected**:
+    `faSeamFitGate.ts`'s header/third-conjunct comment, `syncConstants.ts`'s
+    `R11_MAX_SPAN_WORD_CONF` doc comment, `faSeamFitGate.test.ts`'s false-positive-guard test
+    comment, and this ledger's own WS1 Session F entry (correction appended above, not
+    edited in place) — all previously claimed v6 `125_night_circle`'s 372.35 was "R.5's own
+    already-correct value." It never was; R.12 owns it. The conjunct's real, unchanged
+    justification is the measured 0.0301 span confidence.
+  - **Register reopened 0 → 9 and closed 9 → 0 in the SAME commit** (`REGISTER_HIGH_WATER`,
+    `scripts/phase4-fa-replay.test.ts`) — nine new `CLOSED_BY_POSITIVE_ASSERTION` entries,
+    five `verification: 'ear'` (Session H's own 12-row listening pass scored them wrong) and
+    four `verification: 'structural'` (the same mechanism, no ear pass, admitted as such —
+    085/224/307/383). `192_scout_listening` — carried outside the register since Session F
+    as an explicitly unverified change detector — is promoted to a positive assertion at
+    571.07 on the same ear pass; open gate item G2 closes with it.
+  - **FA default reverted ON → OFF, value-only** (`faGate.ts`'s `FA_PROJECT_DEFAULT_ON`).
+    Everything R-AK built in Session G — the per-project field, absent-key semantics, the G1
+    load-path proof, migration handling, `runForcedAlignmentForSync`'s fail-clean precheck —
+    is unchanged; only the literal moves. Exact flip-back condition recorded in the constant's
+    own doc comment: two fresh blind 12/12 listening passes on rows drawn clear of every
+    boundary any rule has touched, then the live acceptance run. Session H's own sealed,
+    unscored Step 12 draw (window ≥ 5.80 s = 2× max |Δ| 2.90 s, stratified, an unmoved-control
+    arm, at least two of the four structurally-derived rows) is the first of the two.
+  - **Verification:** `npm test` **87 files / 2283 passed / 1 skipped** (unrelated
+    pre-existing skip); `npm run lint` clean; `cargo check --features fa-inference` clean;
+    `cargo test --features fa-inference` **209 passed / 20 ignored** (zero Rust files
+    touched — figure unchanged from Session G); golden replay **6/6**, byte-identical;
+    `faAnchors.ts` sha256 `b61e94cb…` unchanged; FA replay gate green at rest, **M7
+    (R.12-specific) verified RED** (dropping the clamp reproduces the 224 defect and moves
+    176/307/340 back inside their runs) then reverted and reconfirmed green; **M5/M6 (prior
+    sessions' mutations) re-verified RED**, reverted, reconfirmed green. Full write-up: §11's
+    WS1 Session H entry (this changelog block is the summary).
+  - **Readiness for the live acceptance run: NO.** Ordered remainder: (1) a fresh blind
+    12-row pass, 12/12, on rows clear of every rule's own boundaries; (2) a second, disjoint
+    12-row pass, also 12/12; (3) the live acceptance run itself, with the default still OFF
+    until (1) and (2) both land.
 
 - **2026-08-17 — WS1 Session G: F6 RESOLVED — the FA default flip SHIPS as a PER-PROJECT
   toggle (default ON); fail-clean brought under budget; R-N decided; 5 of D-1's 9
@@ -3725,6 +3892,15 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
     (unrelated pre-existing skip); lint clean; `cargo check`/`cargo test --features
     fa-inference` unchanged (206/19, zero Rust files touched); golden replay 6/6; M1-M5 green
     at rest, M6 (R.11-specific) verified RED then reverted.
+  - **CORRECTION (WS1 Session H, 2026-08-18):** the bullet above calling v6
+    `125_night_circle` "an already-correct R.5 output" is FALSE and is retired at this site,
+    the constant's own doc comment (`syncConstants.ts`), the module header (`faSeamFitGate.ts`),
+    and the test comment (`faSeamFitGate.test.ts`) — all four citations, per the amendment
+    discipline this ledger holds itself to. 372.35 is the exact midpoint of a silence lying
+    strictly inside an unscripted run; R.12 (`faRunPlacementGate.ts`) corrects it to 370.75.
+    The third conjunct itself was never wrong — its real justification, unchanged by this
+    correction, is the measured 0.0301 span confidence that R.11 has no evidence to act on at
+    that boundary.
   - **F6 fires on the FA-default flip: NOT shipped this session.** `isFaToggleOn()` is a
     GLOBAL per-machine setting, not per-project — flipping its default would silently retime
     every existing project's next Apply Sync for any user with FA capability and a model

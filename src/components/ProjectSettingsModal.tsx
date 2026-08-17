@@ -72,9 +72,13 @@ export function ProjectSettingsModal({
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
   const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
-  // WS1 Session G (owner ruling R-AK) — PER-PROJECT, and defaults ON. The
-  // seed is the already-resolved effective value, so a project with no
-  // stored preference opens showing ON, which is what it will actually do.
+  // WS1 Session G (owner ruling R-AK) made this PER-PROJECT; WS1 Session H
+  // flipped the resolved DEFAULT back to OFF (`faGate.ts`'s
+  // `FA_PROJECT_DEFAULT_ON`, value-only — see its own doc comment for the
+  // exact flip-back condition). The seed here is the already-resolved
+  // effective value regardless of which way the default currently points, so
+  // a project with no stored preference opens showing whatever it will
+  // actually do.
   const [draftFaEnabled, setDraftFaEnabled] = useState<boolean>(() => faEnabled);
 
   const webcodecsCapable = isWebCodecsExportCapable();
@@ -181,8 +185,10 @@ export function ProjectSettingsModal({
           </div>
 
           {/* Section: Sync (forced-alignment gate — WS1 Task 5 Slice D17,
-              made PER-PROJECT and default-ON by WS1 Session G, owner ruling
-              R-AK). This control now edits `Project.faHighPrecisionSync`
+              made PER-PROJECT by WS1 Session G, owner ruling R-AK; resolved
+              default flipped back to OFF by WS1 Session H, value-only —
+              `faGate.ts`'s `FA_PROJECT_DEFAULT_ON`). This control now edits
+              `Project.faHighPrecisionSync`
               rather than a per-machine global key, and Save writes it only
               when the user actually moved it (`shouldPersistFaChoice`) — see
               docs/work-in-progress.md §7 item 2 / §11 item 1 (original source

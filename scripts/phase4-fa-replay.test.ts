@@ -142,7 +142,7 @@ import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
-import { R11_MIN_FIT_DEVIATION } from '../src/services/syncConstants';
+import { R11_MIN_FIT_DEVIATION, R12_MIN_CORRECTION_SEC } from '../src/services/syncConstants';
 import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
@@ -258,9 +258,15 @@ interface KnownBadRow {
   id: string;
   /** WHERE this entry came from. `'ear-12'` = the original 12-item ear pass
    *  (`item` is then set); `'ov3-triage'` = ruling R-AF's blinded triage of the
-   *  three R-AA candidates (`item` is undefined). A future origin adds a
-   *  member here rather than being forced into one of these. */
-  origin: 'ear-12' | 'ov3-triage';
+   *  three R-AA candidates (`item` is undefined); `'ear-12-h'` = WS1 Session
+   *  H's second blinded 12-row listening pass (`item` is undefined — its rows
+   *  are identified by corpus + tag, not by a number in the ORIGINAL 12-item
+   *  list, and reusing those numbers would make the register lie about which
+   *  sitting produced the row); `'r12-structural'` = a row R.12's structural
+   *  invariant identifies that NO ear pass has scored — admitted deliberately
+   *  and marked as such, never dressed up as ear-verified. A future origin
+   *  adds a member here rather than being forced into one of these. */
+  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural';
   /** The ear-pass item number — ONLY for `origin: 'ear-12'`. */
   item?: number;
   corpus: Corpus;
@@ -269,7 +275,7 @@ interface KnownBadRow {
    *  before this row can be converted. WS1 Session C: made an explicit field
    *  rather than prose inside `mechanism`, so the register can be grouped by
    *  owning rule without parsing English. */
-  owningRule: 'R.5' | 'R.10' | 'R.11';
+  owningRule: 'R.5' | 'R.10' | 'R.11' | 'R.12';
   /** The commit that closed this entry. EMPTY until closed — filled in by the
    *  same commit that converts the row into a positive assertion below. */
   closingCommit: string;
@@ -338,6 +344,19 @@ const KNOWN_BAD: KnownBadRow[] = [];
 const REGISTER_ROSTER = [
   'item-4', 'item-5', 'item-6', 'item-7', 'item-9', 'item-10', 'item-11',
   'ov3-abysmal-opinion', 'ov3-226-four-scouts',
+  // WS1 Session H — the register REOPENED at 9 and closed again in the same
+  // commit (R.12, the atomic-run invariant). Five of the nine were scored by
+  // ear in Session H's own 12-row listening pass; four were not, and carry
+  // `verification: 'structural'` below so that distinction survives in the
+  // data rather than in a paragraph somebody has to remember.
+  'r12-042-eleven-years', 'r12-085-the-spear-bearer', 'r12-125-night-circle',
+  'r12-176-twenty-six-scout', 'r12-224-thirty-three', 'r12-266-forty-one-burden',
+  'r12-307-forty-nine-years', 'r12-340-fifty-eight', 'r12-383-sixty-four',
+  // ...plus the R.11 candidate that had been carried OUTSIDE the register as
+  // explicitly unverified since Session F. Session H's ear pass scored it
+  // correct, so it is promoted to a positive assertion and enters the roster
+  // as a closed-on-arrival member. Open gate item G2 closes with it.
+  'h-192-scout-listening',
 ] as const;
 
 /** High-water mark for the OPEN manifest.
@@ -369,6 +388,33 @@ const REGISTER_ROSTER = [
  *  second-baseline fixture (the rule fired for real) and is carried forward
  *  as an explicit open triage item — see `docs/work-in-progress.md` §11.
  *
+ *  WS1 Session H RAISED it 0 -> 9 and LOWERED it back to 0 in the same
+ *  commit, and — exactly as in Session D — both halves matter.
+ *
+ *  It was RAISED because R.12's structural invariant (`src/services/
+ *  faRunPlacementGate.ts`: no committed boundary may lie strictly inside an
+ *  unscripted run) identified NINE real defects on v6 that no rule had ever
+ *  owned. The guard did its job: growth cost a deliberate edit to this
+ *  constant, nine appends to the roster above, nine KNOWN_BAD entries, and
+ *  nine rows in `docs/work-in-progress.md` §11's register table. Five of the
+ *  nine were scored WRONG by the owner's ear in Session H's own 12-row
+ *  listening pass; the remaining four are STRUCTURALLY DERIVED — the same
+ *  mechanism, the same evidence, no ear pass — and are marked as such in
+ *  `CLOSED_BY_POSITIVE_ASSERTION.verification` rather than being quietly
+ *  folded in with the ear-verified ones. That is the same distinction
+ *  `192_scout_listening` was held to from Session F until this session, and
+ *  it is the register's whole reason for existing.
+ *
+ *  It was then LOWERED because R.12 landed in the SAME commit and closed all
+ *  nine into positive assertions, taking the open count 9 -> 0.
+ *
+ *  A NOTE ON WHAT "EMPTY" MEANS AFTER THIS SESSION. The register reaching
+ *  zero in Session F was taken to mean Stage 1 had no known defects. Session
+ *  H found nine, all of them present and committed the whole time, none
+ *  visible to any rule then built. Empty means "nothing currently known", not
+ *  "nothing there" — the same reading the Stage 1 lock gate has always had to
+ *  carry, now with a measured instance behind it.
+ *
  *  This may be lowered when entries close. Raising it is allowed only with
  *  the full ceremony above — see the failure message on the shrink-only
  *  test. */
@@ -388,18 +434,32 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
    *  `number` when R.10 gave the register its first non-numeric closure.
    *  `KNOWN_BAD.earCorrect` has carried the same convention since Session A. */
   earCorrect: number | null;
+  /** WS1 Session H — HOW the target value was established. `'ear'` = an owner
+   *  listening pass scored this exact boundary. `'structural'` = the value
+   *  comes from a rule's structural invariant and NO ear pass has scored this
+   *  row; it is admitted on the strength of the mechanism, and says so.
+   *  Making this a field rather than prose is the point: the register's job is
+   *  to stop suspicion from quietly becoming guilt, and four of R.12's nine
+   *  rows are exactly the case where that could happen. */
+  verification: 'ear' | 'structural';
   closingCommit: string; why: string;
 }> = [
   {
     id: 'item-4', item: 4, corpus: 'v6', tag: '308_scouts_leading', earCorrect: 931.40,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-D',
     why: 'R.5 (unscripted-audio excision). The spoken "Level 8. The one who teaches what cannot be taught ' +
       'easily." [925.14, 928.93] is excised from the chunk window, so `307_forty_nine_years` is no longer ' +
-      'offered heading frames for "You are forty-nine." Residual 0.000s against the ear-correct 931.40, and it ' +
-      'lands exactly on the Whisper-committed value too.',
+      'offered heading frames for "You are forty-nine." Residual 0.000s against the ear-correct 931.40. ' +
+      'WS1 SESSION H — the original entry also cited "it lands exactly on the Whisper-committed value" as ' +
+      'corroboration. THAT SUCCESS METRIC IS RETIRED: Session H measured eight of nine R.12 defects to be ' +
+      'bit-identical to Whisper\'s own value, so agreement between the two engines is not evidence of ' +
+      'correctness — both share the snap-into-an-unscripted-run defect. The ear-correct residual above is ' +
+      'the whole of this entry\'s evidence, and always was the load-bearing half.',
   },
   {
     id: 'item-5', item: 5, corpus: 'v6', tag: '043_night_migration', earCorrect: 130.96,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-D',
     why: 'R.5 (unscripted-audio excision). Same mechanism as item 4, on "Level two. The boy who carries fire." ' +
       '[125.54, 129.01]. The confidence recovery is the proof the fix is real rather than coincidental: ' +
@@ -407,12 +467,14 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'item-6', item: 6, corpus: '173', tag: 'vessel_damage_clue', earCorrect: 174.74,
+    verification: 'ear',
     closingCommit: '92746cf',
     why: 'R-U zero-seam rejection (and still resolved under R-AA seam-region). Residual 0.000s. ' +
       'Survived both re-pins unchanged, which is the point of pinning the ear-correct value.',
   },
   {
     id: 'item-10', item: 10, corpus: '173', tag: 'hostile_landscape', earCorrect: 0.00,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-E',
     why: 'R.10 (scripted text never spoken, `src/services/faUnspokenGate.ts`). The on-screen-only title ' +
       '`perilous_realms` ("The Hardest Warhammer 40K Environments to Fight In") is never voiced, but a CTC ' +
@@ -422,6 +484,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'item-11', item: 11, corpus: '173', tag: 'blue_monkey', earCorrect: null,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-E',
     why: 'R.10. The planted "blue monkey jumped over the moon" test string is never voiced; Whisper drops the ' +
       'scene entirely and the ear agreed that is correct, so there was never a numeric target to converge on — ' +
@@ -432,6 +495,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'item-9', item: 9, corpus: 'spanish', tag: '023_scylla_six_sailors', earCorrect: 65.12,
+    verification: 'ear',
     closingCommit: '616abb2',
     why: 'Forced-split chunk-plan attribution bug. The fixture refresh in WS1 Session B means the ' +
       'Spanish baseline finally SHOWS the live 65.12 instead of the stale 66.73, so this can now ' +
@@ -439,6 +503,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'item-7', item: 7, corpus: 'v6', tag: '152_frozen_brush_mice', earCorrect: 451.03,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-F',
     why: 'R.11 (chunk-fit boundary correction, `src/services/faSeamFitGate.ts`). Chunk [448.34, 451.70] ' +
       'carries 10 script words against 7 Whisper token onsets (fit 1.4286) — FA crushes "when the brush mice ' +
@@ -448,6 +513,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'ov3-abysmal-opinion', item: undefined, corpus: '173', tag: 'abysmal_opinion', earCorrect: 17.88,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-F',
     why: 'R.11 — item 7\'s own root cause, found through a different symptom (WS1 Session D diagnosis). ' +
       'Chunk [16.64, 18.08] carries "the numbers. They\'re" (fit 1.5, text surplus); FA crushes it to near-zero ' +
@@ -456,6 +522,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'ov3-226-four-scouts', item: undefined, corpus: 'v6', tag: '226_four_scouts', earCorrect: 671.18,
+    verification: 'ear',
     closingCommit: 'WS1-SESSION-F',
     why: 'R.11, same root cause. Chunk [669.40, 671.50] carries "night scouts now. Four of them" (fit 0.75, ' +
       'audio surplus); FA crushes "four of them" to near-zero confidence (max 9.693e-4 in the correction span) ' +
@@ -464,36 +531,150 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'segments earlier (the owner\'s pre-registered, refuted Level-N hypothesis, WS1 Session D) was a red ' +
       'herring — R.11 fires here for the same chunk-fit reason as item 7 and `abysmal_opinion`, unrelated to R.5.',
   },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION H — R.12, THE ATOMIC-RUN INVARIANT.
+  //
+  // Nine boundaries, all v6, all committed at the exact midpoint of a real
+  // detected silence lying strictly INSIDE one of V6's ten unscripted "Level
+  // N" recitations. Each entry names the recitation it was buried in, because
+  // that run — not a chunk, not a confidence — is the evidence. Corrections
+  // land in `[prevToken.endSec, run.startSec]`, at the midpoint of (leading
+  // silence ∩ that gap), or at `run.startSec` when no silence overlaps.
+  //
+  // The tenth recitation (R0, corpus start, [0.08, 3.40]) holds NO committed
+  // boundary and has no preceding token, so R.12 structurally cannot fire on
+  // it — nine of ten, not ten of ten, and that asymmetry is a property of the
+  // corpus rather than an exception in the rule.
+  // -------------------------------------------------------------------------
+  {
+    id: 'r12-042-eleven-years', item: undefined, corpus: 'v6', tag: '042_eleven_years', earCorrect: 125.54,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 127.17 — the exact midpoint of silence [126.52, 127.82], which lies strictly inside ' +
+      'the recitation "Level two. The boy who carries fire." [125.54, 129.01]. THE ONE FALLBACK ROW of the nine: ' +
+      'no detected silence overlaps the pre-run gap [125.25, 125.54] at all, so the boundary goes to the run\'s ' +
+      'own onset. Ear-scored WRONG at 127.17 in Session H\'s 12-row listening pass. Provenance: an R.5 mover.',
+  },
+  {
+    id: 'r12-085-the-spear-bearer', item: undefined, corpus: 'v6', tag: '085_the_spear_bearer', earCorrect: 250.69,
+    verification: 'structural', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 252.74 — midpoint of silence [252.50, 252.98] inside "Level three. The scout." ' +
+      '[251.56, 253.11]. Corrected to the midpoint of [249.82, 251.80] ∩ [249.50, 251.56]. STRUCTURALLY ' +
+      'DERIVED — not in Session H\'s ear list. The ONE row of the nine where FA and Whisper DISAGREE: Whisper ' +
+      'commits 250.81, correctly outside the run, and FA alone is wrong here. Provenance: an unmoved control ' +
+      'predating all Stage 1 work.',
+  },
+  {
+    id: 'r12-125-night-circle', item: undefined, corpus: 'v6', tag: '125_night_circle', earCorrect: 370.75,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 372.35 — midpoint of silence [371.94, 372.76] inside "Level four. The night guard." ' +
+      '[371.54, 373.27]. Corrected to the midpoint of [370.14, 371.36], which lies wholly inside the pre-run ' +
+      'gap. THIS ROW RETIRES A FALSIFIED JUSTIFICATION: R.11\'s third conjunct was documented as existing ' +
+      'because 372.35 was "R.5\'s own already-correct value". It was never correct. The conjunct stands on its ' +
+      'measured 0.0301 span confidence instead, and now also carries rule exclusion — R.11 declining 372.35 is ' +
+      'what keeps it out of R.12\'s way. Ear-scored WRONG. Provenance: an R.5 mover.',
+  },
+  {
+    id: 'r12-176-twenty-six-scout', item: undefined, corpus: 'v6', tag: '176_twenty_six_scout', earCorrect: 521.71,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 524.39 — midpoint of silence [524.14, 524.64] inside "Level 5. The hunter who fights ' +
+      'at night." [522.00, 525.63]. Corrected to the midpoint of [521.42, 523.50] ∩ [521.25, 522.00]. A CLAMP ' +
+      'CASE: unclamped, that silence\'s own midpoint is 522.46 — back inside the run. Ear-scored WRONG. ' +
+      'Provenance: an R.5 mover.',
+  },
+  {
+    id: 'r12-224-thirty-three', item: undefined, corpus: 'v6', tag: '224_thirty_three', earCorrect: 663.785,
+    verification: 'structural', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 664.33 — midpoint of silence [663.66, 665.00] inside "Level 6. The one they follow." ' +
+      '[663.91, 666.48]. THE CLAMP\'S OWN PROOF: unclamped, that silence\'s midpoint IS 664.33, reproducing the ' +
+      'defect exactly; clamped to [663.66, 663.91] it gives 663.785. The smallest correction of the nine ' +
+      '(0.545s) and the only one whose value is not a 2dp number. STRUCTURALLY DERIVED — not in Session H\'s ' +
+      'ear list. Provenance: net-unmoved (out under R-U, back under R-AA).',
+  },
+  {
+    id: 'r12-266-forty-one-burden', item: undefined, corpus: 'v6', tag: '266_forty_one_burden', earCorrect: 788.65,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 790.33 — midpoint of silence [790.06, 790.60] inside "Level 7. The one the band ' +
+      'depends on." [789.26, 791.69]. Corrected to the midpoint of [788.04, 789.46] ∩ [787.85, 789.26]. ' +
+      'Ear-scored WRONG. Provenance: an R.5 mover.',
+  },
+  {
+    id: 'r12-307-forty-nine-years', item: undefined, corpus: 'v6', tag: '307_forty_nine_years', earCorrect: 924.92,
+    verification: 'structural', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 926.97 — midpoint of silence [926.76, 927.18] inside "Level 8. The one who teaches ' +
+      'what cannot be taught easily." [925.14, 928.93]. Corrected to the midpoint of [924.70, 926.16] ∩ ' +
+      '[924.50, 925.14] — a clamp case. STRUCTURALLY DERIVED — not in Session H\'s ear list. Note this segment ' +
+      'sits in the SAME recitation as ear-pass item 4, whose own ear-correct 931.40 (`308_scouts_leading`, R.5) ' +
+      'is unmoved: the run\'s trailing boundary was always right, its leading one never was. Provenance: an ' +
+      'unmoved control predating all Stage 1 work.',
+  },
+  {
+    id: 'r12-340-fifty-eight', item: undefined, corpus: 'v6', tag: '340_fifty_eight', earCorrect: 1044.67,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 1047.57 — midpoint of silence [1047.18, 1047.96] inside "Level 9. The one whose name ' +
+      'the stories use." [1044.72, 1050.00]. Corrected to the midpoint of [1044.62, 1046.62] ∩ [1044.47, ' +
+      '1044.72] — a clamp case, and the LARGEST correction of the nine at 2.90s. Ear-scored WRONG. Provenance: ' +
+      'an R.5 mover.',
+  },
+  {
+    id: 'r12-383-sixty-four', item: undefined, corpus: 'v6', tag: '383_sixty_four', earCorrect: 1188.95,
+    verification: 'structural', closingCommit: 'WS1-SESSION-H',
+    why: 'R.12. Committed 1190.81 — midpoint of silence [1190.56, 1191.06] inside "Level 10. The one the fire ' +
+      'remembers." [1189.76, 1192.17]. Corrected to the midpoint of [1188.14, 1189.96] ∩ [1188.05, 1189.76]. ' +
+      'STRUCTURALLY DERIVED — not in Session H\'s ear list. Provenance: an unmoved control predating all Stage ' +
+      '1 work.',
+  },
+  {
+    id: 'h-192-scout-listening', item: undefined, corpus: 'v6', tag: '192_scout_listening', earCorrect: 571.07,
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    why: 'R.11 — CLOSED-ON-ARRIVAL. Session F\'s detector surfaced this as a new candidate with the same ' +
+      'evidentiary shape as the three register members (chunk [569.80, 571.36], "you both go still. you ' +
+      'listen.", fit 1.5, span max FA confidence 4.073e-5) and it was deliberately held OUTSIDE the register ' +
+      'as an unverified change-detector pin, because suspicion is not guilt. Session H\'s listening pass scored ' +
+      '571.07 CORRECT, so it is promoted to a positive assertion and enters the roster. Open gate item G2 ' +
+      'closes here, permanently: the value is measured now, not suspected.',
+  },
 ];
 
-/** WS1 Session F — R.11's own detector surfaced ONE new, structurally
- *  identical, UNVERIFIED candidate beyond the three register members. It is
- *  reflected for real in the committed FA second-baseline fixture (the rule
- *  fired, corrected 570.18 -> 571.07, exactly as `detectSeamFitDefects`
- *  computes) but is deliberately NOT in `REGISTER_ROSTER` or
- *  `CLOSED_BY_POSITIVE_ASSERTION` — it came from neither the 12-item ear
- *  pass nor an owner triage sitting, so entering it as a positive assertion
- *  would misrepresent suspicion as guilt. Pinned here as its own change
- *  detector (not a correctness assertion) so a regression in the fixture is
- *  still caught, without claiming an ear pass that never happened. */
-const UNVERIFIED_R11_CANDIDATE = {
-  corpus: 'v6' as const, tag: '192_scout_listening', pinnedValue: 571.07,
-  why: 'Same evidentiary shape as the three register members: chunk [569.80, 571.36] carries "you both go ' +
-    'still. you listen." — fit 1.5 — and the correction span holds near-zero FA confidence throughout ' +
-    '(max 4.073e-5). Flagged for an owner ear pass (docs/work-in-progress.md §11); NOT ear-verified.',
-};
-
 describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
-  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. UN-SKIPPED — WS1 Session F closed
-  // the last three entries (item 7, ov3-abysmal-opinion, ov3-226-four-scouts)
-  // via R.11. The register is EMPTY. Red here means a NEW defect entered
-  // KNOWN_BAD without the shrink-only guard below catching it first, which
-  // should not be possible — treat a failure here as a bug in the guard.
+  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. UN-SKIPPED since WS1 Session F.
+  //
+  // WS1 SESSION H re-opened the register at 9 (R.12) and closed it again in
+  // the same commit, so this is empty for the SECOND time — and the second
+  // time means something different from the first. Session F's zero meant
+  // "every defect any built rule can see is fixed"; Session H found nine that
+  // had been committed the whole time and that no built rule could see. Read
+  // this test as "nothing currently known", never as "nothing there".
+  //
+  // Red here means a NEW defect entered KNOWN_BAD without the shrink-only
+  // guard below catching it first, which should not be possible — treat a
+  // failure here as a bug in the guard.
   it('the Zero-Defect Register is EMPTY', () => {
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => `${k.id} (${k.owningRule}, ${k.corpus} ${k.tag})`),
       'the Zero-Defect Register still has open entries',
     ).toEqual([]);
+  });
+
+  // (1b) ...and EMPTY is asserted in its OWN right, not only as a by-product
+  // of the shrink-only guard. Session H's reopening showed the two can drift:
+  // the roster and the closed list both grew by ten while the open count
+  // never left zero, so an assertion that only watches the open count says
+  // nothing about whether the register is still telling the truth.
+  it('the empty state is coherent: every roster member is closed, and every closure names its verification', () => {
+    expect(KNOWN_BAD).toHaveLength(0);
+    expect(CLOSED_BY_POSITIVE_ASSERTION).toHaveLength(REGISTER_ROSTER.length);
+    for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
+      expect(REGISTER_ROSTER as readonly string[], `${c.id} is closed but missing from REGISTER_ROSTER`).toContain(c.id);
+      expect(['ear', 'structural'], `${c.id}: verification`).toContain(c.verification);
+    }
+    const structural = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.verification === 'structural');
+    // eslint-disable-next-line no-console
+    console.log(
+      `[fa-replay:register] EMPTY — ${CLOSED_BY_POSITIVE_ASSERTION.length} closed ` +
+      `(${CLOSED_BY_POSITIVE_ASSERTION.length - structural.length} ear-verified, ${structural.length} structurally derived: ` +
+      `${structural.map(c => `${c.corpus} ${c.tag}`).join(', ')})`,
+    );
   });
 
   // (2) SHRINK-ONLY.
@@ -566,7 +747,7 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (4) BOOKKEEPING CONSISTENCY.
   it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
     for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
-      expect(['R.5', 'R.10', 'R.11'], `${kb.id}: owningRule`).toContain(kb.owningRule);
+      expect(['R.5', 'R.10', 'R.11', 'R.12'], `${kb.id}: owningRule`).toContain(kb.owningRule);
       expect(kb.closingCommit, `${kb.id} is still open but already names a closing commit`).toBe('');
       // WS1 Session D — the origin/item pairing must stay honest in both
       // directions: an ear-pass entry carries its item number, and a triage
@@ -716,16 +897,21 @@ describe('WS1 Session F — R.11: chunk-fit boundary correction', () => {
     expect(Math.abs(opinion!.startTime - 17.88), `abysmal_opinion: ear-correct 17.88, got ${opinion!.startTime}`).toBeLessThan(0.005);
   });
 
-  it('the new UNVERIFIED candidate (192_scout_listening) is reflected in the fixture — pinned as a change detector, not a correctness claim', () => {
-    const v6 = loadFaSecondBaseline('v6');
-    const row = v6.find(r => r.tag === UNVERIFIED_R11_CANDIDATE.tag);
+  it('192_scout_listening is now an EAR-VERIFIED positive assertion (WS1 Session H — G2 closed)', () => {
+    // Was `UNVERIFIED_R11_CANDIDATE`, a bare change-detector pin held outside
+    // the register from Session F because no ear pass had scored it. Session
+    // H's listening pass scored 571.07 CORRECT, so it became register entry
+    // `h-192-scout-listening` and is asserted by the generated block above
+    // like every other closed entry. This test is kept as the named,
+    // greppable statement that the promotion happened — red here means the
+    // roster entry was lost, not merely that a value drifted.
+    const closed = CLOSED_BY_POSITIVE_ASSERTION.find(c => c.id === 'h-192-scout-listening');
+    expect(closed, 'the G2 promotion must survive in the register').toBeDefined();
+    expect(closed!.verification, 'promoted on an EAR pass, not structurally').toBe('ear');
+    expect(closed!.earCorrect).toBe(571.07);
+    const row = loadFaSecondBaseline('v6').find(r => r.tag === '192_scout_listening');
     expect(row, '192_scout_listening row').toBeDefined();
-    expect(
-      Math.abs(row!.startTime - UNVERIFIED_R11_CANDIDATE.pinnedValue),
-      `192_scout_listening moved from its pinned (unverified) ${UNVERIFIED_R11_CANDIDATE.pinnedValue} to ` +
-      `${row!.startTime}. This is NOT an ear-verified correctness assertion — if this is an intentional R.11 ` +
-      `change, re-pin the value; if unexpected, it is a real regression in the detector or the fixture.`,
-    ).toBeLessThan(0.005);
+    expect(Math.abs(row!.startTime - 571.07), `ear-correct 571.07, got ${row!.startTime}`).toBeLessThan(0.005);
   });
 
   it('controls unmoved by R.11: item 6 (174.74), V6 seam 150/151 (457.81), items 4/5 (931.40/130.96), items 10/11 (0.00/dropped)', () => {
@@ -753,6 +939,135 @@ describe('WS1 Session F — R.11: chunk-fit boundary correction', () => {
     // and confirms the CURRENT (unmutated) state stays green, which is what
     // licenses trusting the mutation result reported in the ledger.
     expect(R11_MIN_FIT_DEVIATION).toBeLessThan(4 / 3); // 226_four_scouts's own fitDeviation — must stay reachable.
+  });
+});
+
+// ===========================================================================
+// WS1 SESSION H — R.12, THE ATOMIC-RUN INVARIANT.
+//
+// The nine corrections are asserted row-for-row by the generated
+// CLOSED_BY_POSITIVE_ASSERTION block above. What this block adds is the part
+// that block cannot express: the TWELVE EAR-SCORED ROWS of Session H's
+// listening pass pinned together, correct and incorrect alike, so that the
+// five "wrong" verdicts and the seven "right" verdicts are one table a reader
+// can check against — and M7, R.12's own mutation-matrix entry.
+//
+// WHY PIN THE CORRECT ONES TOO. A rule that fixes what the ear called wrong
+// and silently moves something the ear called right has not improved the
+// pipeline; it has traded one defect for another that nobody is looking for.
+// The seven correct rows are the only guard against that, and they are worth
+// more than the five wrong ones — stop-and-rule exit H4 named them for
+// exactly this reason.
+// ===========================================================================
+
+/** Session H's 12-row blinded listening pass, verbatim. `verdict` is the
+ *  owner's ear, not a rule's opinion; `value` is what the committed fixture
+ *  must hold TODAY (post-R.12), which for a 'wrong' row is the corrected
+ *  value and for a 'right' row is the value that was already there. */
+const SESSION_H_EAR_12: Array<{ corpus: Corpus; tag: string; value: number; verdict: 'wrong' | 'right'; was?: number }> = [
+  { corpus: 'v6', tag: '042_eleven_years', value: 125.54, verdict: 'wrong', was: 127.17 },
+  { corpus: 'v6', tag: '125_night_circle', value: 370.75, verdict: 'wrong', was: 372.35 },
+  { corpus: 'v6', tag: '176_twenty_six_scout', value: 521.71, verdict: 'wrong', was: 524.39 },
+  { corpus: 'v6', tag: '266_forty_one_burden', value: 788.65, verdict: 'wrong', was: 790.33 },
+  { corpus: 'v6', tag: '340_fifty_eight', value: 1044.67, verdict: 'wrong', was: 1047.57 },
+  { corpus: '173', tag: 'fallen_regiment_site', value: 507.01, verdict: 'right' },
+  { corpus: 'v6', tag: '192_scout_listening', value: 571.07, verdict: 'right' },
+  { corpus: 'v6', tag: '158_scout_false_alert', value: 466.09, verdict: 'right' },
+  { corpus: '173', tag: 'earthwork_corridor', value: 256.33, verdict: 'right' },
+  { corpus: 'spanish', tag: '016_prepares_weapons', value: 44.90, verdict: 'right' },
+  { corpus: 'v6', tag: '318_scout_on_ridge', value: 969.30, verdict: 'right' },
+  { corpus: 'v6', tag: '087_throwing_spear_poise', value: 259.88, verdict: 'right' },
+];
+
+describe('WS1 Session H — R.12: the atomic-run invariant', () => {
+  it('all TWELVE ear-scored rows are pinned at the value the ear licenses', () => {
+    expect(SESSION_H_EAR_12).toHaveLength(12);
+    expect(SESSION_H_EAR_12.filter(r => r.verdict === 'wrong')).toHaveLength(5);
+    expect(SESSION_H_EAR_12.filter(r => r.verdict === 'right')).toHaveLength(7);
+
+    const cache = new Map<Corpus, FaSegRow[]>();
+    for (const r of SESSION_H_EAR_12) {
+      if (!cache.has(r.corpus)) cache.set(r.corpus, loadFaSecondBaseline(r.corpus));
+      const row = cache.get(r.corpus)!.find(x => x.tag === r.tag);
+      expect(row, `${r.corpus} ${r.tag} row`).toBeDefined();
+      expect(
+        Math.abs(row!.startTime - r.value),
+        r.verdict === 'wrong'
+          ? `${r.corpus} ${r.tag}: ear scored ${r.was} WRONG; R.12's corrected ${r.value} is the pin, got ` +
+            `${row!.startTime}. Red means R.12 regressed or the fixture drifted — do not re-pin to whatever ` +
+            `the new run produces.`
+          : `${r.corpus} ${r.tag}: ear scored ${r.value} CORRECT. Red means some rule MOVED a boundary the ` +
+            `owner verified — stop-and-rule exit H4. This is the assertion that matters most in this file.`,
+      ).toBeLessThan(0.005);
+    }
+  });
+
+  it('the nine R.12 rows are all in the register, five ear-verified and four structurally derived', () => {
+    const nine = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'));
+    expect(nine).toHaveLength(9);
+    expect(nine.filter(c => c.verification === 'ear').map(c => c.tag).sort()).toEqual([
+      '042_eleven_years', '125_night_circle', '176_twenty_six_scout', '266_forty_one_burden', '340_fifty_eight',
+    ]);
+    expect(nine.filter(c => c.verification === 'structural').map(c => c.tag).sort()).toEqual([
+      '085_the_spear_bearer', '224_thirty_three', '307_forty_nine_years', '383_sixty_four',
+    ]);
+    // Every ear-verified R.12 row must also appear in the ear-12 table above —
+    // the two lists cannot drift apart without this going red.
+    const earScoredWrong = new Set(SESSION_H_EAR_12.filter(r => r.verdict === 'wrong').map(r => r.tag));
+    for (const c of nine.filter(c => c.verification === 'ear')) {
+      expect(earScoredWrong.has(c.tag), `${c.tag} claims ear verification but is not in SESSION_H_EAR_12`).toBe(true);
+    }
+  });
+
+  it('every R.12 correction moved the boundary EARLIER, and none by more than 2.90s', () => {
+    // The direction is not asserted by the rule (the rule says "outside the
+    // run"), so it is asserted here as a measured property of the corpus. It
+    // is also what sets the blind-draw window for the next listening pass:
+    // 2 x max |Δ| = 5.80s.
+    const v6 = loadFaSecondBaseline('v6');
+    const WAS: Record<string, number> = {
+      '042_eleven_years': 127.17, '085_the_spear_bearer': 252.74, '125_night_circle': 372.35,
+      '176_twenty_six_scout': 524.39, '224_thirty_three': 664.33, '266_forty_one_burden': 790.33,
+      '307_forty_nine_years': 926.97, '340_fifty_eight': 1047.57, '383_sixty_four': 1190.81,
+    };
+    let maxDelta = 0;
+    for (const c of CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'))) {
+      const row = v6.find(r => r.tag === c.tag)!;
+      const delta = row.startTime - WAS[c.tag]!;
+      expect(delta, `${c.tag}: R.12 must move the boundary earlier`).toBeLessThan(0);
+      maxDelta = Math.max(maxDelta, Math.abs(delta));
+    }
+    expect(maxDelta).toBeCloseTo(2.90, 2);
+  });
+
+  it('173 and spanish are BYTE-IDENTICAL through R.12 — zero unscripted runs means zero effect', () => {
+    // Asserted as a shape claim here (the live proof is
+    // `src/services/faRunPlacementGate.test.ts`, which runs the real detector
+    // on both corpora and gets an empty array). What this pins is that the
+    // Session H re-pin touched v6 and nothing else.
+    expect(loadFaSecondBaseline('173')).toHaveLength(173);
+    expect(loadFaSecondBaseline('spanish')).toHaveLength(27);
+    expect(loadFaSecondBaseline('173').find(r => r.tag === 'vessel_damage_clue')!.startTime).toBeCloseTo(174.74, 2);
+    expect(loadFaSecondBaseline('spanish').find(r => r.tag === '023_scylla_six_sailors')!.startTime).toBeCloseTo(65.12, 2);
+  });
+
+  it('M7 — a mutation specific to R.12 must turn this gate RED (mutation-matrix entry, verified this session)', () => {
+    // The mutation actually run this session, documented in the same style as
+    // M1-M6 (a manually-verified-per-session matrix, not a committed mutant):
+    // DROPPING THE CLAMP in `faRunPlacementGate.ts` — using the backing
+    // silence's own whole midpoint instead of the midpoint of (silence ∩ gap).
+    // That is the single most plausible way somebody would "simplify" this
+    // rule, and it is exactly wrong: on 224_thirty_three the unclamped
+    // midpoint is 664.33, reproducing the committed defect bit for bit, and on
+    // 176/307/340 it lands back inside the run. Verified directly against the
+    // real production detector this session — see the WS1 Session H ledger
+    // entry (docs/work-in-progress.md §11) for the exact run.
+    //
+    // The standing half of M7 lives in `faRunPlacementGate.test.ts`'s CLAMPS
+    // test and its H7 assertion, which are permanent. This test documents that
+    // the mutation was run and confirms the current state is green, which is
+    // what licenses trusting the reported result.
+    expect(R12_MIN_CORRECTION_SEC).toBeLessThan(0.545); // 224_thirty_three's own Δ — the smallest of the nine must stay reachable.
   });
 });
 

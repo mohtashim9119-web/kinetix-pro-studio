@@ -2069,6 +2069,21 @@ between windows. The chunk plan has never been required to partition
 is untouched. Per **R-E** the excised seconds belong to the PRECEDING segment,
 which is exactly what leaving the inter-chunk span unclaimed produces.
 
+> **AMENDMENT (owner ruling 3, WS1 Session H, 2026-08-18).** R-E's assignment
+> above governs the CHUNK PLAN excision — where the run's seconds go BEFORE
+> inference — and is unchanged and correct. It does NOT extend to where the
+> COMMITTED BOUNDARY should land after `snapCoveredBoundaries` snaps a seam
+> onto the nearest real silence, which is a separate question R-E never
+> answered: nine of V6's ten unscripted runs turned out to hold a committed
+> boundary landing on a real silence STRICTLY INSIDE the run (measured, not
+> assumed — `docs/work-in-progress.md` §11's Session H entry). Owner ruling 3
+> REVERSES the destination for that committed boundary specifically: it
+> belongs to the FOLLOWING segment, in `[prevToken.endSec, run.startSec]`,
+> matching what the ear scored correct on all twelve Session H listening-pass
+> rows. R.12 (`src/services/faRunPlacementGate.ts`) is the rule that owns and
+> corrects this. This is a recorded reversal, not a silent contradiction — see
+> the same amendment at this document's second R-E citation below.
+
 *Contract effects, as built.* `normalizeSceneDoc` word counts unchanged;
 `computeRunContext` offsets unchanged; `assertQiMapConsistent` untouched and
 still passing (R.5 adds no script words and consumes no `qi` index — it only
@@ -5925,7 +5940,13 @@ genuinely new mechanism. Full record: `docs/work-in-progress.md` §4/§6, commit
 specifies R.5 as a CTC wildcard absorbing unscripted audio inside a run, with its
 destination flagged there as needing an owner ruling. That destination question is now
 closed: ruling R-E ("Model P outranks R.5," the wildcard span is assigned to the preceding
-segment), recorded 2026-08-11, a day before Task 5's first commit. What R.5's own
+segment), recorded 2026-08-11, a day before Task 5's first commit — **AMENDED by owner
+ruling 3 (WS1 Session H, 2026-08-18) for the COMMITTED-BOUNDARY case specifically: nine of
+V6's ten unscripted runs held a committed boundary snapped onto a silence strictly inside
+the run, and the ear-correct destination for THAT boundary is the FOLLOWING segment, not
+the preceding one — R.12 (`src/services/faRunPlacementGate.ts`) owns the fix. R-E's chunk-
+plan excision itself is untouched; see this document's first R-E citation above for the
+full amendment text.** What R.5's own
 reachability scoping (Slice D25 B1) found: the condition R.5 exists to handle — real
 unscripted audio between two segments sharing a chunk — is **still fully reachable today**
 under the shipped index-attribution chunked path (118 real chunks from 172 segments means

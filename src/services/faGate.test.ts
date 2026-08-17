@@ -72,27 +72,30 @@ const proj = (fa?: boolean): Pick<Project, 'faHighPrecisionSync'> =>
   (fa === undefined ? {} : { faHighPrecisionSync: fa });
 
 describe('isFaEnabledForProject — the tri-state', () => {
-  it('DEFAULT ON: a project with no stored preference is enabled (owner ruling R-AK)', () => {
-    expect(FA_PROJECT_DEFAULT_ON).toBe(true);
-    expect(isFaEnabledForProject(proj(undefined))).toBe(true);
+  it('DEFAULT OFF: a project with no stored preference is disabled (WS1 Session H value-only revert)', () => {
+    // Was DEFAULT ON under owner ruling R-AK (WS1 Session G). WS1 Session H
+    // flipped the VALUE only — see `FA_PROJECT_DEFAULT_ON`'s own doc comment
+    // for the exact condition that flips it back.
+    expect(FA_PROJECT_DEFAULT_ON).toBe(false);
+    expect(isFaEnabledForProject(proj(undefined))).toBe(false);
   });
 
-  it('EXPLICIT ON: a project that stored `true` is enabled', () => {
+  it('EXPLICIT ON: a project that stored `true` is enabled — the default never overrides an explicit choice', () => {
     expect(isFaEnabledForProject(proj(true))).toBe(true);
   });
 
-  it('EXPLICIT OFF: a project that stored `false` is disabled — the default never overrides an explicit choice', () => {
+  it('EXPLICIT OFF: a project that stored `false` is disabled', () => {
     expect(isFaEnabledForProject(proj(false))).toBe(false);
   });
 
   it('a null/undefined project resolves to the default rather than throwing', () => {
-    expect(isFaEnabledForProject(null)).toBe(true);
-    expect(isFaEnabledForProject(undefined)).toBe(true);
+    expect(isFaEnabledForProject(null)).toBe(false);
+    expect(isFaEnabledForProject(undefined)).toBe(false);
   });
 
   it('is per-project: two projects in the same session disagree independently', () => {
     expect(isFaEnabledForProject(proj(false))).toBe(false);
-    expect(isFaEnabledForProject(proj(undefined))).toBe(true);
+    expect(isFaEnabledForProject(proj(undefined))).toBe(false);
     expect(isFaEnabledForProject(proj(true))).toBe(true);
   });
 
@@ -117,9 +120,14 @@ describe('isFaGateOpenForProject — capability AND the project switch', () => {
     __resetFaCapabilityForTests();
   });
 
-  it('opens by default on a capable runtime for a project with no preference', () => {
+  it('stays closed by default on a capable runtime for a project with no preference', () => {
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(false);
+  });
+
+  it('opens on a capable runtime when the project explicitly opted IN', () => {
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+    expect(isFaGateOpenForProject(proj(true))).toBe(true);
   });
 
   it('stays closed on an incapable runtime even when the project explicitly opted IN', () => {
@@ -141,7 +149,7 @@ describe('isFaGateOpenForProject — capability AND the project switch', () => {
     // because a model is not one of its arguments.
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
     expect(isFaGateOpenForProject.length).toBe(1); // the project — and only the project
-    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+    expect(isFaGateOpenForProject(proj(true))).toBe(true);
     // ...and with the gate open but no model, the SYNC still has a defined
     // outcome: FA returns null and the caller falls back to Whisper tokens.
     // That fallback is `App.tsx`'s single `faTokens ?? transcriptTokens`
@@ -150,9 +158,11 @@ describe('isFaGateOpenForProject — capability AND the project switch', () => {
 });
 
 describe('shouldPersistFaChoice — Project Settings only writes on an actual change', () => {
-  it('does NOT write when the user leaves the control alone (default ON, saved unchanged)', () => {
+  it('does NOT write when the user leaves the control alone, at either resolved value', () => {
     // The exact scenario that made the retired global key meaningless: the
-    // user opens Settings to change their resolution tier and hits Save.
+    // user opens Settings to change their resolution tier and hits Save. Not
+    // default-value-dependent — this is `shouldPersistFaChoice`'s own
+    // draft-equals-effective rule, exercised at both booleans.
     expect(shouldPersistFaChoice(true, true)).toBe(false);
   });
 
@@ -180,26 +190,26 @@ describe('MIGRATION PATH — the retired per-machine global toggle', () => {
     __resetFaCapabilityForTests();
   });
 
-  it('a legacy stored global `false` does NOT disable a project that never expressed a preference', () => {
+  it('a legacy stored global `true` does NOT enable a project that never expressed a preference', () => {
     // The pre-change `ProjectSettingsModal.handleSave` wrote this key
-    // UNCONDITIONALLY on every save, so a stored `false` is indistinguishable
+    // UNCONDITIONALLY on every save, so a stored value is indistinguishable
     // from "this user once changed their resolution tier". Honouring it would
-    // let an incidental Save silently veto the owner's chosen default.
-    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false }));
-    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+    // let an incidental Save silently override the current default.
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true }));
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(false);
   });
 
-  it('a legacy stored global `true` also does not change the answer (it agreed with the new default anyway)', () => {
-    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true }));
-    expect(isFaGateOpenForProject(proj(undefined))).toBe(true);
+  it('a legacy stored global `false` also does not change the answer (it agrees with the current default anyway)', () => {
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false }));
+    expect(isFaGateOpenForProject(proj(undefined))).toBe(false);
   });
 
   it('the legacy key is left in storage untouched — a read migration is not a destructive one', () => {
-    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false, other: 1 }));
+    localStorage.setItem('kinetix:ui:v1', JSON.stringify({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true, other: 1 }));
     isFaGateOpenForProject(proj(undefined));
     isFaEnabledForProject(proj(false));
     const after = JSON.parse(localStorage.getItem('kinetix:ui:v1')!);
-    expect(after).toEqual({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: false, other: 1 });
+    expect(after).toEqual({ [LEGACY_GLOBAL_FA_TOGGLE_KEY]: true, other: 1 });
   });
 
   it('an explicit per-project OFF still wins over everything, legacy key present or not', () => {
@@ -265,9 +275,9 @@ describe('G1 proof — loading a pre-change project neither retimes nor acquires
     expect(loaded.project.faHighPrecisionSync).toBeUndefined();
   });
 
-  it('resolves to the ON default WITHOUT writing it back — reading the gate is not a migration', () => {
+  it('resolves to the (OFF) default WITHOUT writing it back — reading the gate is not a migration', () => {
     const loaded = loadProject('pre-change-1')!;
-    expect(isFaGateOpenForProject(loaded.project)).toBe(true);
+    expect(isFaGateOpenForProject(loaded.project)).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
     // and nothing was persisted either
     const reloaded = loadProject('pre-change-1')!;

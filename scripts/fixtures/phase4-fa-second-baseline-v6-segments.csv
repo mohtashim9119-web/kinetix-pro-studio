@@ -39,8 +39,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 37,038_spear_glint,The arrangement is not accidental.,111.91,2.34,114.25,forced-alignment
 38,039_river_trap,It is as deliberate as any trap your father sets in the river shallows.,114.25,4.96,119.21,forced-alignment
 39,040_outside_circle,You are not old enough to hold a position in that shape.,119.21,3.43,122.64,forced-alignment
-40,041_elder_lesson,But you are old enough to start learning what it means.,122.64,4.53,127.17,forced-alignment
-41,042_eleven_years,You are eleven.,127.17,3.79,130.96,forced-alignment
+40,041_elder_lesson,But you are old enough to start learning what it means.,122.64,2.9,125.54,forced-alignment
+41,042_eleven_years,You are eleven.,125.54,5.42,130.96,forced-alignment
 42,043_night_migration,On nights when the band moves between camps,130.96,3.04,134,forced-alignment
 43,044_carrying_torch,your job is to carry one of the torches.,134,2.54,136.54,forced-alignment
 44,045_torch_materials,Birch bark and fat-soaked moss,136.54,2.37,138.91,forced-alignment
@@ -82,8 +82,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 80,081_hearth_shift,The shift moves back through the group the way cold moves through water.,237.76,4.63,242.39,forced-alignment
 81,082_sleepless_vigil,You sleep lightly now even at camp.,242.39,2.42,244.81,forced-alignment
 82,083_unbidden_alertness,You did not decide to.,244.81,2.45,247.26,forced-alignment
-83,084_instinctive_grip,Your body made that choice without asking.,247.26,5.48,252.74,forced-alignment
-84,085_the_spear_bearer,You are sixteen and you carry your own spear.,252.74,4,256.74,forced-alignment
+83,084_instinctive_grip,Your body made that choice without asking.,247.26,3.43,250.69,forced-alignment
+84,085_the_spear_bearer,You are sixteen and you carry your own spear.,250.69,6.05,256.74,forced-alignment
 85,086_spear_contrast,Not the heavy thrusting spear of the senior hunters.,256.74,3.14,259.88,forced-alignment
 86,087_throwing_spear_poise,A throwing spear,259.88,1.57,261.45,forced-alignment
 87,088_spear_craftsmanship,its flint point knapped by hand and bound to the shaft with pine pitch and wet sinew that dried hard as rock.,261.45,7.24,268.69,forced-alignment
@@ -122,8 +122,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 120,121_still_hands,but your hands do not.,362.19,1.84,364.03,forced-alignment
 121,122_daret_watching,Daret watches your hands when you speak.,364.03,2.8,366.83,forced-alignment
 122,123_catching_gaze,You see him doing it.,366.83,1.62,368.45,forced-alignment
-123,124_working_hands,You start working on the hands.,368.45,3.9,372.35,forced-alignment
-124,125_night_circle,You are twenty and you have your first real position in the night circle.,372.35,6.55,378.9,forced-alignment
+123,124_working_hands,You start working on the hands.,368.45,2.3,370.75,forced-alignment
+124,125_night_circle,You are twenty and you have your first real position in the night circle.,370.75,8.15,378.9,forced-alignment
 125,126_eastern_post,The eastern post,378.9,1.7,380.6,forced-alignment
 126,127_river_treeline,facing the tree line where the river bends out of sight.,380.6,3.14,383.74,forced-alignment
 127,128_back_to_fire,You sit with your back to the fire so your eyes can adjust fully to the dark beyond the camp’s edge.,383.74,5.65,389.39,forced-alignment
@@ -173,8 +173,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 171,172_body_instinct_grip,The body knows before the mind agrees.,510.45,3.01,513.46,forced-alignment
 172,173_broken_track_pattern,When something in you says a pattern has broken,513.46,3.3,516.76,forced-alignment
 173,174_enough_standing_tall,that is enough.,516.76,1.61,518.37,forced-alignment
-174,175_stepping_into_void,Stop waiting for your mind to finish arguing.,518.37,6.02,524.39,forced-alignment
-175,176_twenty_six_scout,You are twenty-six.,524.39,3.7,528.09,forced-alignment
+174,175_stepping_into_void,Stop waiting for your mind to finish arguing.,518.37,3.34,521.71,forced-alignment
+175,176_twenty_six_scout,You are twenty-six.,521.71,6.38,528.09,forced-alignment
 176,177_leading_in_darkness,Fear no longer leads when you move in darkness.,528.09,3.39,531.48,forced-alignment
 177,178_fear_running_alongside,It runs alongside you now,531.48,1.89,533.37,forced-alignment
 178,179_not_in_charge,present but not in charge.,533.37,2.29,535.66,forced-alignment
@@ -221,8 +221,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 219,220_lethal_gap,There is a space between your action and something else’s action,650.62,3.61,654.23,forced-alignment
 220,221_skill_removes,and in that space lives an element that no amount of skill removes entirely.,654.23,4.71,658.94,forced-alignment
 221,222_long_silence,You do not say this to anyone for a long time.,658.94,3.61,662.55,forced-alignment
-222,223_carrying_weight,You carry it.,662.55,1.78,664.33,forced-alignment
-223,224_thirty_three,You are thirty-three.,664.33,3.14,667.47,forced-alignment
+222,223_carrying_weight,You carry it.,662.55,1.235,663.785,forced-alignment
+223,224_thirty_three,You are thirty-three.,663.785,3.685,667.47,forced-alignment
 224,225_night_scouts,You lead the night scouts now.,667.47,3.71,671.18,forced-alignment
 225,226_four_scouts,Four of them besides yourself,671.18,1.62,672.8,forced-alignment
 226,227_scout_ages,ranging from seventeen to twenty-four.,672.8,2.75,675.55,forced-alignment
@@ -263,8 +263,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 261,262_stern_warning,Some nights the danger is too close and you have to be hard with them in ways you regret by the time you are sitting at the fire watching their faces.,770.6,8.62,779.22,forced-alignment
 262,263_temporary_dawn,Every dawn is temporary.,779.22,2.76,781.98,forced-alignment
 263,264_feeding_fire,The dark comes back the same way your mother fed the fire,781.98,3.6,785.58,forced-alignment
-264,265_unending_dark,"without announcement, without end.",785.58,4.75,790.33,forced-alignment
-265,266_forty_one_burden,You are forty-one.,790.33,3.86,794.19,forced-alignment
+264,265_unending_dark,"without announcement, without end.",785.58,3.07,788.65,forced-alignment
+265,266_forty_one_burden,You are forty-one.,788.65,5.54,794.19,forced-alignment
 266,267_leader_of_children,There are children here who have never known a night where someone other than you was the person the adults looked to when something moved at the perimeter.,794.19,9.19,803.38,forced-alignment
 267,268_morning_visitor,That reaches you one morning when a girl of about nine walks to you at the fire’s edge,803.38,5.15,808.53,forced-alignment
 268,269_gift_of_meat,puts a piece of dried meat in your hand,808.53,1.98,810.51,forced-alignment
@@ -304,8 +304,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 302,303_rebuilding_shelter,You rebuild.,914.51,1.56,916.07,forced-alignment
 303,304_closing_gap,You add a post that covers the gap the night found.,916.07,3.11,919.18,forced-alignment
 304,305_carrying_grief,You do not put down the grief.,919.18,2.13,921.31,forced-alignment
-305,306_flint_knapping,You carry it alongside everything else and you keep working.,921.31,5.66,926.97,forced-alignment
-306,307_forty_nine_years,You are forty-nine.,926.97,4.43,931.4,forced-alignment
+305,306_flint_knapping,You carry it alongside everything else and you keep working.,921.31,3.61,924.92,forced-alignment
+306,307_forty_nine_years,You are forty-nine.,924.92,6.48,931.4,forced-alignment
 307,308_scouts_leading,Three of your old scouts lead their own groups now in different parts of the territory.,931.4,4.85,936.25,forced-alignment
 308,309_wide_river_meeting,When the bands come together at the seasonal meeting place by the wide river,936.25,3.84,940.09,forced-alignment
 309,310_scouts_at_fire,those men find you at the fire,940.09,1.89,941.98,forced-alignment
@@ -337,8 +337,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 335,336_uncertain_mentorship,You are not certain you gave either of them what they needed.,1031.57,3.74,1035.31,forced-alignment
 336,337_mutual_exchange,You were not certain Daret and Korik gave you everything you needed.,1035.31,4.17,1039.48,forced-alignment
 337,338_final_gift,You gave what you had.,1039.48,2.08,1041.56,forced-alignment
-338,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,6.01,1047.57,forced-alignment
-339,340_fifty_eight,You are fifty-eight.,1047.57,4.08,1051.65,forced-alignment
+338,339_night_voyage,The rest belongs to the nights they will face without you.,1041.56,3.11,1044.67,forced-alignment
+339,340_fifty_eight,You are fifty-eight.,1044.67,6.98,1051.65,forced-alignment
 340,341_aging_temples,Your hair has gone pale at the edges.,1051.65,2.72,1054.37,forced-alignment
 341,342_steady_grip,Your hands are steady now,1054.37,2.05,1056.42,forced-alignment
 342,343_shaking_scout,the same hands that could not hold still over your first real guarding post.,1056.42,4.58,1061,forced-alignment
@@ -380,8 +380,8 @@ order,tag,text,startTime,duration,endTime,anchorSource
 378,379_partial_understanding,being told the whole truth and only catching part of it.,1170.81,3.92,1174.73,forced-alignment
 379,380_scarred_hands_experience,The knowledge that comes from actual experience cannot be handed over by talking.,1174.73,5.57,1180.3,forced-alignment
 380,381_growth_lesson,It has to grow inside the living of it.,1180.3,2.51,1182.81,forced-alignment
-381,382_honesty_transfer,All you can do is be honest and let them take what they are able to carry right now.,1182.81,8,1190.81,forced-alignment
-382,383_sixty_four,You are sixty-four.,1190.81,2.96,1193.77,forced-alignment
+381,382_honesty_transfer,All you can do is be honest and let them take what they are able to carry right now.,1182.81,6.14,1188.95,forced-alignment
+382,383_sixty_four,You are sixty-four.,1188.95,4.82,1193.77,forced-alignment
 383,384_night_scouts,The night runs belong to someone else now.,1193.77,2.54,1196.31,forced-alignment
 384,385_lost_precision,Your legs still work but your eyes have lost the edge-of-darkness precision that forward scouting demands.,1196.31,6.15,1202.46,forced-alignment
 385,386_quiet_knowing,You know this without needing anyone to tell you.,1202.46,3.05,1205.51,forced-alignment

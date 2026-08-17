@@ -18,10 +18,14 @@
 // chunk's edge then lands on one of two garbage values: FA's own
 // back-to-back word-seam midpoint spanning no real silence at all (item 7),
 // or the midpoint of the WRONG nearby real silence (`abysmal_opinion`) —
-// while the chunk's OWN edge sits at an already-correct location the whole
-// time: an R.1 three-source-agreement anchor (`faAnchors.ts`, UNCHANGED,
-// I6's own invariant that an agreed anchor's time is always a detected
-// silence's `endSec`).
+// while the chunk's OWN edge sits, the whole time, at a location the owner's
+// ear later scored CORRECT for all three register members: an R.1
+// three-source-agreement anchor (`faAnchors.ts`, UNCHANGED, I6's own
+// invariant that an agreed anchor's time is always a detected silence's
+// `endSec`). "Correct" here is that ear verdict on those three rows, not a
+// property claimed for chunk edges in general — WS1 Session H's finding that
+// FA and Whisper share a defect on nine other boundaries is the standing
+// reminder that agreement between mechanisms is not evidence of correctness.
 //
 // WHY THIS RUNS HERE, NOT IN `faChunkPlan.ts`/`faAnchors.ts`. Both are
 // available BEFORE inference (the chunk plan; the run/anchor structure with
@@ -58,18 +62,32 @@
 // R.11 corrections compose correctly (the second reads the first's already-
 // adjusted duration, never the stale pre-correction one).
 //
-// THE THIRD CONJUNCT (added after fit-deviation alone was measured to
-// false-fire on v6 `125_night_circle`, a boundary R.5 already fixed
-// correctly). Fit-deviation says a chunk's TEXT does not fit its AUDIO; it
-// says nothing about whether the SPECIFIC span between the wrongly-
-// committed value and the proposed correction is itself acoustically
-// empty. `125_night_circle`'s committed value already sat on a genuine,
-// separate, high-confidence silence — extreme chunk fit elsewhere in the
-// same chunk did not make THAT boundary wrong. Requiring every FA word
+// THE THIRD CONJUNCT — AND WHY, AMENDED (WS1 Session H). It was added after
+// fit-deviation alone was measured to false-fire on v6 `125_night_circle`, and
+// the ORIGINAL justification written here — "that boundary was already right,
+// R.5 had fixed it correctly" — IS FALSE and has been retired. WS1 Session H
+// measured 372.35 to be a real defect: it is the exact midpoint of a silence
+// lying strictly INSIDE an unscripted run, and it belongs to R.12
+// (`faRunPlacementGate.ts`, the atomic-run invariant), which moves it to
+// 370.75.
+//
+// The conjunct is nonetheless correct, and stands on its own measurement.
+// Fit-deviation says a chunk's TEXT does not fit its AUDIO; it says nothing
+// about whether the SPECIFIC span between the committed value and R.11's
+// proposed correction is itself acoustically empty. On `125_night_circle` that
+// span holds an FA word at REAL confidence — 0.0301, ~2.8x above
+// `R11_MAX_SPAN_WORD_CONF` — so the evidence R.11 requires is genuinely
+// absent, whatever else is wrong with the boundary. Requiring every FA word
 // inside `[min(committed,corrected), max(committed,corrected)]` to carry no
-// real acoustic support (`R11_MAX_SPAN_WORD_CONF`, `syncConstants.ts`)
-// mirrors R.10's own evidentiary shape and is what actually separates the
-// three known defects from R.5's already-correct output.
+// real acoustic support (`R11_MAX_SPAN_WORD_CONF`, `syncConstants.ts`) mirrors
+// R.10's own evidentiary shape, and what it actually separates is R.11's three
+// known defects from a boundary R.11 has no evidence about — not, as first
+// written, from correct output.
+//
+// This conjunct is now LOAD-BEARING FOR RULE EXCLUSION, not merely for
+// precision: 372.35 is R.12's row, and R.11 declining it is what keeps the two
+// rules disjoint on every committed corpus. See `faRunPlacementGate.ts`'s
+// MUTUAL EXCLUSION section.
 // ---------------------------------------------------------------------------
 
 import { computeFaChunkPlan, computeRuns } from './faChunkPlan';
@@ -228,7 +246,9 @@ export function detectSeamFitDefects(
       const correctedValue = (backingSilence.startSec + backingSilence.endSec) / 2;
       const committedValue = segments[segIdx]!.startTime;
       const delta = correctedValue - committedValue;
-      if (Math.abs(delta) <= R11_MIN_CORRECTION_SEC) continue; // already correct — no-op.
+      // The proposed value is where the boundary already is: nothing to do.
+      // A no-op guard, NOT a correctness claim about the committed value.
+      if (Math.abs(delta) <= R11_MIN_CORRECTION_SEC) continue;
 
       // Third conjunct: every FA word inside the correction span must carry
       // no real acoustic support. A token without a numeric confidence is

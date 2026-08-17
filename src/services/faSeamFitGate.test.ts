@@ -101,11 +101,21 @@ const V6_FA_WORDS: TranscriptToken[] = [
   { text: 'of', startSec: 670.56, endSec: 670.60, confidence: 2e-6 },
   { text: 'them', startSec: 670.64, endSec: 671.48, confidence: 0.0 },
   // 125_night_circle — the FALSE-POSITIVE GUARD. Its containing chunk has
-  // extreme fit deviation, and 372.35 -> 373.70 would satisfy conjuncts 1+2,
-  // but 372.35 is R.5's OWN already-correct value (sits exactly on a real
-  // silence's midpoint) and the span to the wrongly-proposed 373.70 holds a
-  // word at REAL confidence (0.0301 — ~2.8x above R11_MAX_SPAN_WORD_CONF),
-  // not garbage. This is the case that forced the third conjunct to exist.
+  // extreme fit deviation, and 372.35 -> 373.70 would satisfy conjuncts 1+2.
+  //
+  // WS1 SESSION H — THIS COMMENT'S ORIGINAL REASON WAS FALSE AND IS RETIRED.
+  // It used to say the conjunct exists because "372.35 is R.5's OWN
+  // already-correct value". It is not correct: 372.35 is the exact midpoint
+  // of a silence lying strictly INSIDE an unscripted run, and R.12
+  // (`faRunPlacementGate.ts`) moves it to 370.75. The conjunct's REAL reason,
+  // measured then and still measured now, is the acoustic evidence: the span
+  // from 372.35 to R.11's proposed 373.70 holds a word at REAL confidence
+  // (0.0301 — ~2.8x above R11_MAX_SPAN_WORD_CONF), not garbage, so R.11 has
+  // no evidence to act on here whatever else is wrong with the boundary.
+  //
+  // The conjunct is now also load-bearing for RULE EXCLUSION: 372.35 is
+  // R.12's row, and R.11 must keep declining it for the two rules to stay
+  // disjoint. See `faRunPlacementGate.test.ts`'s mutual-exclusion block.
   { text: 'are', startSec: 373.22, endSec: 373.36, confidence: 0.0301 },
   // 192_scout_listening — the NEW, unverified R.11 candidate this session's
   // improved detector surfaces. Same evidentiary shape as the three known
@@ -212,9 +222,12 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     expect(f!.fitDeviation).toBeCloseTo(4 / 3, 4);
   }, V6_TIMEOUT_MS);
 
-  it('v6: does NOT fire on 125_night_circle — R.5\'s own already-correct output (the false-positive guard)', () => {
+  it('v6: does NOT fire on 125_night_circle — R.12 owns that boundary (the false-positive guard)', () => {
     // Not reset to pre-R11 — 125_night_circle was never touched by R.11, so
-    // its committed value is unchanged in the fixture either way.
+    // its committed value is unchanged by R.11 either way. WS1 Session H
+    // re-pinned it 372.35 -> 370.75 (R.12); R.11 declines it at BOTH values
+    // for the same reason, the real 0.0301 word in the span, which is what
+    // keeps the two rules exclusive.
     const { segments, tokens, silences } = loadCorpus('v6');
     const findings = detectSeamFitDefects(segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
     expect(findings.find(f => f.segmentTag === '125_night_circle')).toBeUndefined();
