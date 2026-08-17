@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | Two fresh blind 12/12 listening passes on disjoint rows, then the live acceptance run — see `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment for the exact condition | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | **SUPERSEDED 2026-08-18 (WS1 Session I, owner rulings 2 and 4): the two blind 12/12 passes are replaced by ONE exhaustive mover audit (`stage1-mover-audit.md`, 24 rows — every never-scored and structurally-derived mover plus a 10-row blinded control arm), with the owner's live walkthrough serving as the second independent pass.** `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment still carries the pre-Session-I wording and should be re-worded when the flip is next attempted | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -640,6 +640,17 @@ cross-referenced against `src/types.ts` live:
 open on process (owner guarantee-by-guarantee verification, item 12) even though the
 phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
 unlocked (§2).
+
+**2026-08-18 (WS1 Session I) — P6, A4 and Contract IN A3 are now ANSWERABLE, and no row
+changes.** All three of this contract's remaining open items are assembled into one
+owner-answerable dossier, `docs/ws1-sync-pipeline/stage1-non-ear-remainder.md`, each with a
+recommended answer: **P6** gets the exact measurement that would move it DIRECT (push both the
+script side and the transcript side through `textNormalize.ts`'s `canonicalize` at the project
+language, over the existing committed fixtures, and report every asymmetry outside the accepted
+Phase 3c hyphen class — one test file, ~120 lines, 1–2 h, recommended BUILD); **A4** and
+**Contract IN A3** get verbatim acceptance text to sign or reject (both recommended ACCEPT,
+A4 scoped to Stage 1 only, A3 with an explicit fr/de/pt carve-out). Nothing was built and no
+row's Met? value changes this session — the dossier is a decision sheet, not a fix.
 
 **2026-08-18 (WS1 Session H) — the exposure claim below is REVERTED.** Session G's own entry
 (next) says "with Session G's per-project default now ON, the unvalidated array is the DEFAULT
@@ -3699,6 +3710,114 @@ untracked; no new repo-root files.
 
 ---
 
+**WS1 SESSION I — THE EXHAUSTIVE MOVER AUDIT, AND R-AM (2026-08-18).** Documentation-only
+session by design: **zero production-code change**. The whole `src/` + `src-tauri/` diff is
+empty; the only non-`docs/` edit is three allowlist entries in
+`scripts/ws1-single-tracker.test.ts`, which that test's own failure message asks for by name.
+Standing constraints held: `faAnchors.ts` sha256 `b61e94cb…` unchanged; no edits to
+`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`,
+`docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv` (golden replay 6/6
+byte-identical); `DOCUMENTATION_AUDIT_REPORT.md` untracked; no new repo-root files.
+
+- **Ruling R-AM recorded** (`sync-pipeline-v2-plan.md`, the new "WS1 SESSION I RULINGS"
+  block): no register entry may be closed until that rule's own movers have been ear-scored.
+  Stated as an invariant on the register *mechanism*, not on any one rule. **The motivating
+  evidence was measured this session, not recalled:** R.5 moved 8 boundaries on v6, closed
+  items 4 and 5 on a 0.000 s residual, and **worsened exactly three of its other six** against
+  the values R.12 later established — `042_eleven_years` (error 0.220 → 1.630 s),
+  `125_night_circle` (**0.000 → 1.600 s**, i.e. moved off an exactly correct value) and
+  `340_fifty_eight` (0.950 → 2.900 s). `125_night_circle`'s wrong value was then cited for two
+  sessions as R.11's third-conjunct justification before Session H retired the claim.
+  R-AM(c) makes the four structurally-derived R.12 closures (`085`, `224`, `307`, `383`)
+  **PROVISIONAL** until scored — open count stays 0, `REGISTER_HIGH_WATER` unchanged.
+- **The mover population is exhaustively enumerated, and it closes.** The committed value of
+  every boundary is `scripts/fixtures/phase4-fa-second-baseline-{corpus}-segments.csv`, and
+  that file's git history *is* the rule history. Diffing all eight commits pairwise by tag
+  yields **31 unique movers — 16 ear-verified, 4 structurally-derived, 11 never scored** —
+  across 53 transition events. Exit **I1 does not fire**. Session G's commit (`5959430`) was
+  included as a control and is confirmed to move nothing. Nine of the 31 are **net-unmoved**
+  (R-U moved them, R-AA reverted them); two are dropped (`perilous_realms`, `blue_monkey`).
+- **Reconciliation, including one discrepancy resolved rather than absorbed.** R.5 (8, v6),
+  R.10 (1 moved + 2 dropped, 173), R.11 (4 = 3 v6 + 1 173) and R.12 (9, v6) match their
+  documented counts exactly. R-U measures 17 against a documented 16, and R-AA 5 against a
+  documented 4 — **the same single row in both cases**, spanish `023_scylla_six_sailors`
+  (66.73 → 65.12 at `92746cf`). That is not a rule move: `92746cf`'s own commit message says
+  "0 spanish" and separately records clearing A.5's KNOWN-STALE marker on the Spanish fixture.
+  The row is the stale-fixture clearance, and it is register member `item-9`, ear-verified,
+  closed at `616abb2`. Every one of the 31 has a named owner, so exit **I2 does not fire** —
+  reported explicitly rather than passed over, since `item-9`'s owner is a documented cause
+  and not one of the five named rules.
+- **The audit document** (`stage1-mover-audit.md`): **24 rows — 14 audit + 10 blinded controls
+  (41.7%)**, uniform **5.80 s** window on every row, order `sha256(tag)` ascending, sealed key
+  in §4. Estimated **~20 minutes** including scoring and one re-listen. **Exit I3 does not
+  fire** (24 < 40). Controls drawn by evenly-spaced deterministic pick over clean pools of
+  342 / 136 / 15, excluding every start-or-duration mover, ±2-index neighbours, anything within
+  5 s of a previously scored value *or* of this audit's own audit arm, sub-3.00 s starts,
+  sub-1.2 s segments, and any row whose window would fall outside its corpus.
+  `perilous_realms` is excluded with its reason recorded: it is an absence assertion whose ear
+  verification already exists as `item-10` (`hostile_landscape` 0.00).
+- **Exit I4 FIRES, and is reported rather than worked around.** The brief requires the uniform
+  window to contain both candidate values; at 5.80 s that holds on 9 of 14 audit rows and fails
+  on 5 — the 173 index-141–146 cascade, where R-U shifted a contiguous run forward by up to
+  **20.23 s** and R-AA reverted all of it. Containing those would need a ≈40.5 s uniform
+  window. Proposed resolution, **not self-approved**: keep 5.80 s and score those five as
+  stated, because their competing value is a *reverted transient* no rule proposes at HEAD, and
+  blinding is unaffected either way since the window is uniform. The document is built under
+  that assumption and says so at the top.
+- **The twelve previously scored rows re-verified at HEAD: 12/12 consistent, no drift, exit
+  I5 does not fire.** The seven Session H scored YES still hold their exact values (507.01,
+  571.07, 466.09, 256.33, 44.90, 969.30, 259.88); the five scored NO were all corrected away by
+  R.12 exactly as designed (1047.57→1044.67, 524.39→521.71, 790.33→788.65, 127.17→125.54,
+  372.35→370.75). A NO row still holding its scored value would have been the worse failure and
+  was checked for explicitly.
+- **The non-ear remainder dossier** (`stage1-non-ear-remainder.md`): nine items, one sitting,
+  a recommended answer each — **eight accepts and one build**. Build: P6's normalizer-symmetry
+  measurement. Accepts: Contract 1→2 A4 and Contract IN A3 (verbatim text supplied),
+  R-S(iii)/R7 (accept-for-toggle, defer for default, with the uncached per-call
+  `verify_model_manifest` digest named as the flip's precondition — ~77 s/call debug, ~5.25 s
+  release, on top of ~231 s v6 / ~76 s 173 inference), Step T (confirm out of Stage 1;
+  **≈10.5 engineer-days** + ~1 day for R-AL's dylib work), and D-1 items 4/5/8/9 — item 4
+  re-worded (it names a surface the app does not implement), item 5 inside CLAUDE.md §6's
+  accepted hooks gap, item 8 discharged by the live run's preview walkthrough, **item 9
+  accepted as PERMANENTLY UNAUTOMATED** rather than left open every session.
+- **Live acceptance run prepared, not executed** (`stage1-live-run-prep.md`). `npm run
+  tauri:dev:fa` builds clean at this HEAD. All three source projects verified present and
+  complete at `/Users/mohtashim/Downloads/All Projects Test Data`, with **no fixture, capture
+  or harness anywhere in the in-app path**. The real user path is recorded (default is OFF, so
+  FA must be enabled per project in Project Settings; `shouldPersistFaChoice` means the first
+  Whisper-only run does not silently opt the project in), and **enabling it triggers real
+  inference — verified by reading `forcedAlignmentRun.ts`, which has no result memo, no cache
+  read and no stored-artifact branch on any path**. Walkthrough index produced: V6's ten
+  "Level N" recitations with the boundary R.12 corrected in each, plus every mover, audit row
+  and previously scored row by segment index, per project.
+- **ONE LOGGING GAP FOUND — described, NOT written, stopped for approval.** The requirement is
+  every warning, fallback, skip and rule firing with timestamp, segment index and owning rule.
+  Skips, warnings and the character-timing fallback are fully covered by `SyncLogEntry`.
+  **Rule firings are not logged at all** — R.10/R.11/R.12 emit `console.warn` only
+  (`App.tsx:2957`, `:3113`, `:3140`), R.5 fires inside `computeFaChunkPlan` and logs nothing —
+  and **`SyncLogEntry` has no field that can name an owning rule**. The FA fallback is equally
+  invisible: a run where FA silently failed is indistinguishable in the log from one where it
+  succeeded. The additive change is specified in five numbered parts in
+  `stage1-live-run-prep.md` §4.4 (two new `SyncLogEntryType` members, `owningRule`/`ruleDetail`
+  optional fields, widening `segmentIndex`'s contract, three call-site emissions that need no
+  detector change, plus R.5's excision list and a discriminated FA result). Items 1–3 ≈ 2 h and
+  are recommended before the run; items 4–5 are a separate decision. **Nothing written.**
+- **Verification, six numbers — no status changes, as expected for a zero-code session:**
+  `npm test` **87 files / 2283 passed / 1 skipped**; `npm run lint` clean; `cargo check
+  --features fa-inference` clean; `cargo test --features fa-inference` **209 passed /
+  20 ignored**; **golden replay 6/6**; FA replay gate **45/45 green at rest**. **M5/M6/M7 were
+  NOT re-run this session** — stated rather than inherited silently: zero production files
+  changed, `faAnchors.ts`'s sha256 and every fixture are byte-identical, so their Session H
+  RED results cannot have moved. If the next session touches production code, re-run them.
+- **One documentation defect found in passing.** Session H's own §11 entry says "20 roster
+  members total"; the register actually has **19** (`REGISTER_ROSTER` 19, matching
+  `CLOSED_BY_POSITIVE_ASSERTION` 19 — **15 ear-verified + 4 structurally-derived**). Session H
+  added ten, not nine (R.12's nine plus `h-192-scout-listening`). The gate is unaffected —
+  the test asserts the two lists are equal length, and they are — so this is an arithmetic slip
+  in prose, corrected here rather than propagated.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -3756,6 +3875,47 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-18 — WS1 Session I: R-AM RULED (no register closure without an ear pass on that
+  rule's own movers); the mover population enumerated EXHAUSTIVELY at 31 and reconciled; the
+  blind-12 sample superseded by a 24-row audit; the non-ear remainder reduced to nine
+  answerable decisions; the live run prepared with one logging gap reported.**
+  Documentation-only — **zero production-code change**, the `src/` + `src-tauri/` diff is
+  empty. Ruling **R-AM** (`sync-pipeline-v2-plan.md`) attaches to the register *mechanism*:
+  no entry closes until every boundary its owning rule moves has been ear-scored. Motivating
+  evidence measured this session — R.5 closed items 4/5 on a 0.000 s residual while
+  **worsening three of its other six movers**, including `125_night_circle`, which it moved
+  **off an exactly correct value** (error 0.000 → 1.600 s) and whose wrong value was then
+  cited for two sessions as R.11's third-conjunct justification. R-AM(c) makes the four
+  structurally-derived R.12 closures PROVISIONAL; open count stays 0 and `REGISTER_HIGH_WATER`
+  is unchanged. **Population:** the committed-value fixture's git history is the rule history;
+  eight commits diffed pairwise give **31 unique movers / 53 transitions — 16 ear-verified,
+  4 structural, 11 never scored** (exit I1 clear). Per-rule counts reconcile exactly for
+  R.5/R.10/R.11/R.12; R-U and R-AA are each one high against their documented figures, and it
+  is **the same row both times** — spanish `023_scylla_six_sailors`, the stale-fixture
+  clearance `92746cf` carried alongside R-U ("0 spanish" in its own commit message), already
+  closed as register `item-9`. Every mover has a named owner, so exit I2 is clear.
+  **Audit** (`stage1-mover-audit.md`): 24 rows, 14 audit + 10 blinded controls, uniform 5.80 s
+  windows, `sha256(tag)` order, sealed key, ~20 min (exit I3 clear). **Exit I4 FIRES** — five
+  173 cascade rows carry a reverted-transient competing value up to 20.23 s away, which no
+  uniform window under ~40.5 s can contain; resolution proposed, not self-approved.
+  **Twelve prior rows re-verified 12/12 with no drift** (exit I5 clear): seven YES rows hold
+  exactly, five NO rows corrected away by R.12 exactly as designed. **Remainder dossier**
+  (`stage1-non-ear-remainder.md`): nine items, eight accepts and one build (P6's
+  normalizer-symmetry measurement, ~1–2 h), with verbatim acceptance text for A4 and Contract
+  IN A3, Step T scoped at ≈10.5 engineer-days, and D-1 item 9 recommended PERMANENTLY
+  UNAUTOMATED. **Live run prepared, not executed** (`stage1-live-run-prep.md`):
+  `tauri:dev:fa` builds clean, all three source projects present with no fixture/capture/
+  harness in the in-app path, the real per-project toggle path recorded, and real inference
+  confirmed by reading `forcedAlignmentRun.ts` (no memo, no cache read, no stored-artifact
+  branch). **One logging gap reported and deliberately NOT fixed:** rule firings are
+  `console.warn`-only and `SyncLogEntry` cannot name an owning rule, so a run where FA silently
+  fell back is indistinguishable from one where it succeeded — the additive change is specified
+  in five parts and stopped for approval. Verification unchanged: 87 files / 2283 passed /
+  1 skipped; lint clean; `cargo check --features fa-inference` clean; `cargo test --features
+  fa-inference` 209/20; golden replay 6/6; FA gate 45/45 green at rest (M5/M6/M7 not re-run,
+  and said so — no production file changed). Also corrected: Session H's "20 roster members"
+  is **19** (15 ear + 4 structural).
 
 - **2026-08-18 — WS1 Session H: R.12 BUILT (the atomic-run invariant) — register reopens at
   9 and closes again in the same commit; FA default reverted ON → OFF, value-only; two

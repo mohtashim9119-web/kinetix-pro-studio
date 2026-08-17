@@ -49,6 +49,18 @@ const ALLOWLIST = new Set<string>([
   // because a blinded pass whose key sits inline in the tracker is not blinded.
   'docs/ws1-sync-pipeline/stage1-lock-ear-list.md',
   'docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md',
+  // The two Stage 1 lock procedures added by WS1 Session I, same class as the
+  // pair above and admitted for the same reason: both are worked THROUGH, not
+  // read. The mover audit is a blinded listening pass with a sealed key (which
+  // cannot live in the tracker without un-blinding it); the remainder dossier
+  // is a decision sheet with a recommended answer per row awaiting owner
+  // sign-off. Their RESULTS go to docs/work-in-progress.md §11.
+  'docs/ws1-sync-pipeline/stage1-mover-audit.md',
+  'docs/ws1-sync-pipeline/stage1-non-ear-remainder.md',
+  // The live acceptance run's own run sheet (WS1 Session I) — a walkthrough
+  // index worked through against the running app, not a status file. Its
+  // RESULTS go to docs/work-in-progress.md §11.
+  'docs/ws1-sync-pipeline/stage1-live-run-prep.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

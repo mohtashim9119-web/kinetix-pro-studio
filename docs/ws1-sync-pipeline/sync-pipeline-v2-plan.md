@@ -2665,6 +2665,65 @@ resource path. It is unset today, which is exactly why FA fails clean in dev.
 
 ---
 
+## WS1 SESSION I RULINGS (2026-08-18) — the register's closure mechanism gets an ear precondition
+
+**R-AM ruling (2026-08-18, WS1 Session I, OWNER) — NO REGISTER ENTRY MAY BE CLOSED UNTIL
+THAT RULE'S OWN MOVERS HAVE BEEN EAR-SCORED. An invariant on the register mechanism itself,
+not on any one rule.**
+
+**(a) The rule, stated as an invariant.** A Zero-Defect Register entry may leave `KNOWN_BAD`
+for `CLOSED_BY_POSITIVE_ASSERTION` **only after every boundary the owning rule moves has been
+scored by ear** — not only the boundary the entry names. Structural derivation, mechanism
+agreement, residual-0.000s convergence and cross-engine agreement are all admissible
+*evidence*, and none of them is admissible as *closure*. A rule that moves N boundaries owes N
+ear scores before any of its entries close. Until those scores exist the entry stays open, or
+closes **provisionally** and says so in the data.
+
+**(b) The motivating evidence — R.5's three worsened boundaries, measured this session, not
+recalled.** R.5 (unscripted-audio excision) moved 8 committed boundaries on v6. Its two
+register entries — items 4 and 5 (`308_scouts_leading` 931.40, `043_night_migration` 130.96) —
+both closed on a residual of 0.000s against an ear-correct value, and both are genuinely
+correct. But the other six movers were never scored, and when Session H finally listened to
+some of them, **three of R.5's eight movers had been made WORSE by the very commit that closed
+items 4 and 5**, measured against the values R.12 later established and the ear confirmed:
+
+| segment | pre-R.5 | post-R.5 | ear-correct | error before | error after |
+|---|---|---|---|---|---|
+| v6 `042_eleven_years` | 125.76 | 127.17 | 125.54 | 0.220 s | **1.630 s** |
+| v6 `125_night_circle` | 370.75 | 372.35 | 370.75 | **0.000 s** | **1.600 s** |
+| v6 `340_fifty_eight` | 1045.62 | 1047.57 | 1044.67 | 0.950 s | **2.900 s** |
+
+`125_night_circle` is the sharpest case: R.5 moved it **off an exactly correct value**, and
+that wrong value was then cited for two sessions as R.11's third-conjunct justification
+("R.5's own already-correct value") until Session H measured it and retired the claim. A
+register that scores only the boundary an entry names cannot see any of this. That is the
+defect this ruling closes, and it is a defect in the *mechanism*, which is why the ruling
+attaches to the register rather than to R.5.
+
+**(c) It applies retroactively, and the four structurally-derived R.12 closures are
+PROVISIONAL until scored.** `r12-085-the-spear-bearer` (250.69), `r12-224-thirty-three`
+(663.785), `r12-307-forty-nine-years` (924.92) and `r12-383-sixty-four` (1188.95) carry
+`verification: 'structural'` in `scripts/phase4-fa-replay.test.ts` and were admitted on R.12's
+invariant with no ear pass. Under this ruling they are **provisionally closed**: the register's
+open count stays 0 and `REGISTER_HIGH_WATER` is unchanged, but the register may not be
+described as fully verified while they stand. Session I's mover audit
+(`stage1-mover-audit.md`) scores all four. The distinction Session H already encoded in the
+`verification` field is what makes this ruling checkable rather than aspirational — the data
+already says which closures are which.
+
+**(d) What it does NOT do.** It does not reopen any entry, does not raise the high-water mark,
+does not invalidate the fifteen ear-verified closures, and does not make structural evidence
+worthless — R.12's invariant is still what *found* the nine defects. It changes only the point
+at which a closure may be called final.
+
+**(e) Scope note, recorded rather than assumed.** The audit this ruling requires is drawn over
+the *committed-fixture* mover population — every boundary whose committed value any rule has
+ever changed — because that population is exhaustively enumerable from git history and the
+per-rule counts reconcile against it. It is not drawn over the (unbounded) set of boundaries a
+rule could hypothetically reach.
+
+---
+
 **R.6 — Corpus start and end.**
 
   * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,
