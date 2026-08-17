@@ -146,6 +146,13 @@ import {
   buildLockFindingLogEntries,
   buildLockRefusedLogEntry,
   mintSyncLogId,
+  // WS1 Session J — rule-firing / engine / FA-fallback log builders.
+  buildSyncEngineEntry,
+  buildFaFallbackEntry,
+  buildUnscriptedRunLogEntries,
+  buildUnspokenScriptLogEntries,
+  buildSeamFitLogEntries,
+  buildRunPlacementLogEntries,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -2861,6 +2868,16 @@ export default function App() {
     // committed run always leaves exactly one summary behind.
     let pendingLogEntries: SyncLogEntry[] = [];
     let pendingLogSummary: SyncRunSummary | undefined;
+    // WS1 Session J — rule-firing / engine / FA-fallback entries, staged
+    // SEPARATELY from `pendingLogEntries` for one structural reason: the
+    // audio-timed branch below ASSIGNS `pendingLogEntries` wholesale partway
+    // through (after the skip filter), while rules fire both before that point
+    // (FA fallback, R.5, R.10) and after it (R.11, R.12). Pushing into
+    // `pendingLogEntries` at the earlier sites would have them silently
+    // overwritten by that assignment — a bug that would have shown up as
+    // "R.10 never logs", i.e. exactly the kind of quiet hole this work exists
+    // to close. Spliced in as a block once every rule has run.
+    const ruleLogEntries: SyncLogEntry[] = [];
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
 
@@ -2884,7 +2901,7 @@ export default function App() {
       // Read off `projectRef.current`, the same snapshot every other input in
       // this branch comes from — never off the module-global it replaced, so
       // two projects open in two windows can disagree.
-      const faTokens = isFaGateOpenForProject(projectRef.current)
+      const faRun = isFaGateOpenForProject(projectRef.current)
         ? await runForcedAlignmentForSync(
             voiceoverAsset!,
             anchorTimed,
@@ -2893,11 +2910,43 @@ export default function App() {
             projectRef.current.language,
           )
         : null;
+      const faTokens = faRun?.status === 'ok' ? faRun.tokens : null;
+      // WS1 Session J — the FA fallback, made durable. `runForcedAlignment
+      // ForSync` is fail-clean by contract and stays so; this only records
+      // WHICH failure path fired, and only when the gate was open (a
+      // gate-closed run never attempted FA and owes no fallback entry — the
+      // engine entry below already says it ran on Whisper).
+      if (faRun?.status === 'fallback') {
+        ruleLogEntries.push(buildFaFallbackEntry(syncRunId, faRun.reason, faRun.detail, syncRunAt));
+      }
+      // A silence-detection failure INSIDE the FA pass is distinct from
+      // `aligned.silenceError` below: it degraded the CHUNK PLAN (built
+      // against zero silences) rather than the boundary snap, and was
+      // console-only until now.
+      if (faRun?.status === 'ok' && faRun.silenceError !== undefined) {
+        ruleLogEntries.push(buildSilenceErrorEntry(syncRunId, faRun.silenceError, syncRunAt));
+      }
       // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
       // stated explicitly by this branch (the code path that actually
       // produced `faTokens`), never inferred downstream.
       const anchorSourceForRun: 'whisper' | 'forced-alignment' = faTokens ? 'forced-alignment' : 'whisper';
       if (faTokens) faWordTimingsResult = faTokens;
+      // WHICH ENGINE RAN — unconditional, so its absence is never ambiguous.
+      ruleLogEntries.push(buildSyncEngineEntry(
+        syncRunId,
+        anchorSourceForRun,
+        faTokens ? faTokens.length : projectRef.current.transcriptTokens!.length,
+        syncRunAt,
+      ));
+      // R.5 — the excisions this run's chunk plan actually made, surfaced by
+      // `runForcedAlignmentForSync` from the same `computeRunContext` pass
+      // that built the plan. R.5 fires before inference, so this is the only
+      // point at which its work is observable at all.
+      if (faRun?.status === 'ok' && faRun.unscriptedRuns.length > 0) {
+        ruleLogEntries.push(
+          ...buildUnscriptedRunLogEntries(syncRunId, faRun.unscriptedRuns, anchorTimed, syncRunAt),
+        );
+      }
 
       const aligned = await alignFromCache(
         voiceoverAsset!,
@@ -2957,6 +3006,7 @@ export default function App() {
           `[sync] R.10 — ${unspokenScript.length} scripted segment(s) never spoken, dropped:`,
           unspokenScript,
         );
+        ruleLogEntries.push(...buildUnspokenScriptLogEntries(syncRunId, unspokenScript, syncRunAt));
       }
 
       // R4-1/R4-2 — skip unmatched. Only audio-covered segments reach the
@@ -3114,6 +3164,7 @@ export default function App() {
             `[sync] R.11 — ${seamFitFindings.length} chunk-fit boundary correction(s):`,
             seamFitFindings,
           );
+          ruleLogEntries.push(...buildSeamFitLogEntries(syncRunId, seamFitFindings, syncRunAt));
         }
         finalTimedSegments = applySeamFitCorrections(finalTimedSegments, seamFitFindings);
 
@@ -3140,9 +3191,19 @@ export default function App() {
             `[sync] R.12 — ${runPlacementFindings.length} atomic-run boundary correction(s):`,
             runPlacementFindings,
           );
+          ruleLogEntries.push(...buildRunPlacementLogEntries(syncRunId, runPlacementFindings, syncRunAt));
         }
         finalTimedSegments = applyRunPlacementCorrections(finalTimedSegments, runPlacementFindings);
       }
+
+      // WS1 Session J — splice the staged rule/engine/fallback entries in
+      // FRONT of this branch's own entries, now that every rule has fired.
+      // Order is deliberate: engine first, then the corrections in the order
+      // the pipeline applied them (R.5 -> R.10 -> R.11 -> R.12), then the
+      // per-scene skips and the run summary. A reader gets "what ran and what
+      // it changed" before "what the outcome was", which is the order the
+      // acceptance run reads them in.
+      pendingLogEntries = [...ruleLogEntries, ...pendingLogEntries];
     } else {
       // Defensive fallback only — under correct button gating this branch
       // should be unreachable whenever a voiceover exists in Tauri. Surface

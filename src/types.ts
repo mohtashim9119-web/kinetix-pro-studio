@@ -385,13 +385,23 @@ export interface Project {
    *  `false` = the user explicitly turned it OFF for this project;
    *  `undefined` = the user has expressed no preference for this project.
    *
-   *  UNDEFINED MEANS ON. The effective value is resolved at READ time by
-   *  `faGate.ts`'s `isFaEnabledForProject` (default `FA_PROJECT_DEFAULT_ON`
-   *  = true) — it is NEVER written back on load, on Apply Sync, or by any
-   *  migration, so "no preference" stays "no preference" for the life of the
-   *  project and a future default change still reaches it. The ONLY writer
-   *  is Project Settings' own Save, and only when the user actually moved
-   *  the control (ProjectSettingsModal.tsx) — an explicit choice can
+   *  UNDEFINED MEANS "resolve the default at READ time" — and this comment
+   *  deliberately does NOT say what that default currently is. The single
+   *  source of truth is `faGate.ts`'s `FA_PROJECT_DEFAULT_ON`, read through
+   *  `isFaEnabledForProject`. This wording is itself a fix (WS1 Session J):
+   *  the comment used to assert that an absent field meant enabled, and it
+   *  went stale the moment Session H flipped the constant back, so for two
+   *  sessions the type file and the gate disagreed in prose. Restating a
+   *  value in a second place is what created that drift; naming the owner
+   *  instead is what removes it. `faDefaultDrift.test.ts` now fails the build
+   *  if any comment anywhere in `src/` asserts a literal value for this
+   *  default that disagrees with the constant.
+   *
+   *  The resolved default is NEVER written back on load, on Apply Sync, or by
+   *  any migration, so "no preference" stays "no preference" for the life of
+   *  the project and a future default change still reaches it. The ONLY
+   *  writer is Project Settings' own Save, and only when the user actually
+   *  moved the control (ProjectSettingsModal.tsx) — an explicit choice can
    *  therefore never be silently overwritten.
    *
    *  Undefined on every project persisted before this field existed; those
@@ -499,7 +509,44 @@ export type SyncLogEntryType =
    *  re-lock the scene. A locked scene the user simply deleted is NOT
    *  reported here — that drop is silent by design. See App.tsx's
    *  `preserveSegmentLocks`. */
-  | 'lock-not-restored';
+  | 'lock-not-restored'
+  /** 'rule-correction' — WS1 Session J. ONE post-inference rule fired on ONE
+   *  scene: R.5 (unscripted-audio excision), R.10 (scripted text never
+   *  spoken), R.11 (chunk-fit boundary correction) or R.12 (the atomic-run
+   *  invariant). Always carries `owningRule`; always carries `segmentIndex`
+   *  (R.5's is derived from the excised span's containing segment — see
+   *  `buildUnscriptedRunLogEntries`); carries `ruleDetail` with the value the
+   *  run would have committed WITHOUT the rule and the value it committed
+   *  instead, so a reader can check the correction rather than trust it.
+   *
+   *  Before this existed, a rule firing was a `console.warn` in a dev build
+   *  and nothing else: not in `project.syncLog`, not in the Sync Log panel,
+   *  not in the Copy export, and gone when the window closed. The live
+   *  acceptance run's whole purpose is recording what the rules did, so a run
+   *  that leaves no durable evidence of it cannot be the run that accepts it.
+   *
+   *  severity:'info', deliberately. A rule firing is the pipeline WORKING —
+   *  a correction that landed, not a degradation the user should act on. The
+   *  severity taxonomy reserves 'warning' for "the user should do something",
+   *  and there is nothing for them to do here. */
+  | 'rule-correction'
+  /** 'fa-fallback' — WS1 Session J. The FA gate was OPEN for this project and
+   *  forced alignment did NOT produce the timing: the run committed on Whisper
+   *  tokens instead. Carries `reason` (which of the failure paths fired) and,
+   *  where the failure came back from the IPC layer, `errorMessage`.
+   *
+   *  THIS IS THE SPECIFIC HOLE IT CLOSES. `runForcedAlignmentForSync` is
+   *  fail-clean by contract — every failure returns rather than throwing, and
+   *  the sync proceeds. That is correct behaviour and stays. But it made a run
+   *  where FA silently failed INDISTINGUISHABLE, in the log, from a run where
+   *  FA succeeded: the user got Whisper timing while believing they had
+   *  forced-alignment timing, and no persisted artifact disagreed. Fail-clean
+   *  must not mean fail-silent.
+   *
+   *  severity:'warning', unlike 'rule-correction': the user asked for
+   *  high-precision sync in Project Settings and did not get it, and the
+   *  fixHint names what to check. */
+  | 'fa-fallback';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
@@ -511,8 +558,15 @@ export interface SyncLogEntry {
   syncRunId: string;
   type: SyncLogEntryType;
   message: string;
-  /** Skip entries only: 0-based index into the PRE-filter (aligned) segments
-   *  array, so it still points at the scene the user wrote. */
+  /** Skip AND 'rule-correction' entries: 0-based index into the PRE-filter
+   *  (aligned) segments array, so it still points at the scene the user wrote.
+   *
+   *  WS1 Session J widened this from "Skip entries only". The field itself is
+   *  unchanged — every rule detector (`UnspokenScriptFinding`,
+   *  `SeamFitFinding`, `RunPlacementFinding`) already returns a
+   *  `segmentIndex` on this same PRE-filter convention, which is exactly why
+   *  rule logging needed no new measurement: the value was already at the
+   *  call site, being discarded. */
   segmentIndex?: number;
   /** Skip entries only: the segment's text, truncated for display. */
   segmentText?: string;
@@ -570,6 +624,47 @@ export interface SyncLogEntry {
    *  `syncContracts.ts`, which would create a type-level import cycle with
    *  this file. */
   groupedItems?: GroupedLogItem[];
+  /** WS1 Session J — WHICH RULE OWNS THIS ENTRY. `'R.5' | 'R.10' | 'R.11' |
+   *  'R.12'` today; also set on 'fa-fallback' entries, where it names the FA
+   *  entry point (`'FA'`) rather than a post-inference rule.
+   *
+   *  Deliberately a WIDENED `string`, not a union, and the reason is concrete:
+   *  this workstream has added four rules in five sessions, and a union would
+   *  make each new rule a type edit in a file that has nothing to do with the
+   *  rule. The values are documented here and asserted in `syncLog.test.ts`;
+   *  a typo produces a wrong log line, never a wrong boundary.
+   *
+   *  It is a FIELD and not a prefix baked into `message` on purpose. A rule
+   *  name inside a message string cannot be filtered, grouped, or counted
+   *  without parsing prose back out of it, and the one question the live
+   *  acceptance run must answer is "which rules fired, on which segments" —
+   *  which is a query, not a sentence. Undefined on every entry that no rule
+   *  owns, which is all of them before this session. */
+  owningRule?: string;
+  /** WS1 Session J — the numbers behind a 'rule-correction' entry, so a log
+   *  reader can CHECK the correction instead of trusting it.
+   *
+   *  Every field is transcribed from the detector's own finding at the call
+   *  site; nothing here is re-measured or re-derived (see `syncLog.ts`'s
+   *  builders). Undefined on non-rule entries. */
+  ruleDetail?: {
+    /** Point-valued corrections (R.11, R.12): the boundary the run would have
+     *  committed WITHOUT this rule. Absent on R.5 (which acts on a span before
+     *  inference, not on a committed point) and on R.10 (which drops a scene
+     *  rather than moving a boundary). */
+    committedValue?: number;
+    /** Point-valued corrections: the boundary it committed instead. */
+    correctedValue?: number;
+    /** Span-valued findings (R.5's excised unscripted runs): the audio span
+     *  the finding concerns. Kept separate from committed/corrected rather
+     *  than overloaded onto them — an excised span is not a "value that
+     *  moved", and naming it as one would misreport what R.5 does. */
+    spanStartSec?: number;
+    spanEndSec?: number;
+    /** Always present: why this rule fired on this scene, in the detector's
+     *  own terms (the fit deviation, the confidence, the run index). */
+    reason: string;
+  };
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

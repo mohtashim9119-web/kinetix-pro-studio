@@ -9,6 +9,70 @@
 > genuinely required (P6 only), the exact measurement is specified and scoped.
 >
 > **Verified at HEAD `726112b`.** Nine items, in four groups.
+>
+> ---
+>
+> ## OWNER SIGN-OFF — all nine answered, 2026-08-18 (WS1 Session J)
+>
+> **Every one of the nine was answered AS RECOMMENDED.** Recorded here at the head of the
+> file so the dossier is self-contained: a reader no longer has to hold "recommended" and
+> "decided" apart in their head, and nothing below needs re-deciding.
+>
+> | # | item | recommended | **owner's answer** | where it landed |
+> |---|---|---|---|---|
+> | A1 | Contract 1→2 **P6** normalizer symmetry | BUILD the measurement | ✅ **BUILT** | `src/services/normalizerSymmetry.test.ts` — 7 tests. **Zero asymmetries found.** See the P6 result block below |
+> | B1 | Contract 1→2 **A4** | ACCEPT as written | ✅ **ACCEPTED AS WRITTEN**, scoped to Stage 1 only; returns as close-or-accept at the Stage 2 lock | text in §B1, unedited |
+> | B2 | Contract IN **A3** | ACCEPT as written | ✅ **ACCEPTED AS WRITTEN**, with the fr/de/pt carve-out intact | text in §B2, unedited |
+> | C1 | **R-S(iii) / R7** runtime | ACCEPT-for-toggle, DEFER for default | ✅ **ACCEPTED FOR THE TOGGLE; DEFERRED FOR THE DEFAULT.** The digest memo is recorded as the precondition that must land before the default flip is re-attempted | §C1 |
+> | D1 | **Step T** | CONFIRM out of Stage 1 | ✅ **CONFIRMED OUT OF STAGE 1** — release-build-phase work, ≈10.5 engineer-days + ≈1 day for R-N's implementation | §D1 |
+> | D2 | D-1 item 4 (no-voiceover) | ACCEPT subset + re-word | ✅ **ACCEPTED**; the item is re-worded to drop the reference to an "estimated timeline" surface the app does not implement | §D2–D5 acceptance text |
+> | D3 | D-1 item 5 (silence-scan failure) | ACCEPT subset | ✅ **ACCEPTED** — the fallback sits inside CLAUDE.md §6's standing, documented manual-verification gap for hooks | same |
+> | D4 | D-1 item 8 (export/preview) | ACCEPT subset, discharge in the live run | ✅ **ACCEPTED**, to be discharged by the live acceptance run's preview walkthrough | same |
+> | D5 | D-1 item 9 (DEV harnesses) | ACCEPT as permanently unautomated | ✅ **ACCEPTED AS PERMANENTLY UNAUTOMATED** — a deliberate permanent exclusion, not a deferral, so it stops reappearing as an open item every session | same |
+>
+> **D-1's automated count therefore stands at 5 of 9, with the remaining four ACCEPTED rather
+> than pending — and item 9 closed for good rather than deferred.**
+>
+> ---
+>
+> ## A1 / P6 — THE RESULT, since this was the one item that was built rather than accepted
+>
+> **PASS. Zero asymmetries. P6 moves PARTIAL → DIRECT, and Stage 1 does not reopen.**
+>
+> Built as `src/services/normalizerSymmetry.test.ts` (a standing test in the `npm test` pass,
+> not a one-off harness), importing the production functions `canonicalize` /
+> `stripStageDirections` / `normalize` / `normalizeSceneDoc` and reading the same committed
+> fixtures the golden replay already reads. Four things were measured:
+>
+> 1. **Cross-side lexical agreement** — every raw word appearing on either side mapped to a
+>    normalized form, both sides pooled. **Zero words reach two different forms.** This is
+>    P6's own question answered directly.
+> 2. **Compositionality** — the transcript side normalizes ONE TOKEN AT A TIME while the
+>    script side normalizes a WHOLE SEGMENT. This was the real risk and had never been
+>    checked: `canonicalize` performs genuinely multi-word rewrites (`1985` → nineteen eighty
+>    five, `26` → twenty six, `don't` → do not), which is exactly the shape that breaks
+>    compositionality if it reaches across a whitespace boundary. **It does not.** Per-token
+>    and whole-text normalization produce byte-identical word streams on all three corpora
+>    (v6 3998 = 3998, 173 1837 = 1837, spanish 363 = 363).
+> 3. **Language keying** — both wrappers thread `languageCode` into the same `canonicalize`,
+>    verified on the Spanish corpus where the key does real work.
+> 4. **The one deliberate asymmetry**, `stripStageDirections` (script-side only, by design).
+>
+> **TWO COVERAGE LIMITS, REPORTED RATHER THAN ABSORBED — neither is an asymmetry, both bound
+> what this discharge is entitled to claim:**
+>
+> - **The Spanish corpus exercises the compositionality property not at all.** 363 tokens, and
+>   **zero** of them expand: no digit, no contraction, no hyphen. Its pass is *vacuously*
+>   true. P6's English half is verified for real; its Spanish half rests on a corpus
+>   containing no construct capable of falsifying it. Asserted in the test (pinned at 0) so
+>   the note fails loudly if Spanish material with digits is ever added.
+> - **`stripStageDirections` never fires on any corpus in scope** — measured at 0 of 444 v6,
+>   0 of 172 in 173, 0 of 26 in Spanish. So the one deliberate script-side-exclusive step
+>   contributes no asymmetry *because it never runs on this material*, not because it was
+>   shown benign. The "it only ever removes words" assertion is kept as the guard for a
+>   future corpus that does contain directions, and earns no credit for P6 today.
+>
+> Both limits are pinned as assertions rather than prose, so neither can outlive its truth.
 
 ---
 

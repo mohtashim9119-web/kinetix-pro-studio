@@ -11,10 +11,19 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment } from '../types';
 import type { TokenDrop } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
+// WS1 Session J — rule-firing log builders. All four are TYPE-only imports, so
+// nothing here pulls a detector (or `@tauri-apps/api`, via forcedAlignmentRun)
+// into this module's runtime graph; `syncLog.ts` stays the dependency-light
+// service `useWhisper.ts` can import without a cycle.
+import type { UnscriptedRun } from './faChunkPlan';
+import type { UnspokenScriptFinding } from './faUnspokenGate';
+import type { SeamFitFinding } from './faSeamFitGate';
+import type { RunPlacementFinding } from './faRunPlacementGate';
+import type { FaFallbackReason } from './forcedAlignmentRun';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
@@ -40,7 +49,7 @@ export function makeSyncLogEntry(
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
-    | 'groupedItems'
+    | 'groupedItems' | 'owningRule' | 'ruleDetail'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -322,6 +331,282 @@ export function buildGroupedViolationEntry(
     summarizeGroupedRule(violations[0]!.rule, violations.length),
     { severity, fixHint, groupedItems },
     timestamp,
+  );
+}
+
+// ===========================================================================
+// WS1 Session J — RULE-FIRING AND ENGINE LOGGING.
+//
+// THE HOLE THESE CLOSE, stated as what the log could not answer before. A
+// completed Apply Sync left no durable record of: which timing engine actually
+// produced the boundaries; whether forced alignment ran or silently fell back;
+// which rules fired; or on which scenes. All four were `console.warn`s in a dev
+// build — absent from `project.syncLog`, from the Sync Log panel, from the Copy
+// export, and gone when the window closed. The live acceptance run exists to
+// record what the rules did, so it could not have been run against the previous
+// logging without producing an unverifiable result.
+//
+// NO NEW MEASUREMENT HAPPENS HERE, and that is the point. Every number below is
+// transcribed from a detector's own finding (`UnspokenScriptFinding`,
+// `SeamFitFinding`, `RunPlacementFinding`) or from `computeUnscriptedRuns`'s own
+// output, all of which already existed at the call site and were being
+// discarded. These builders reformat data; they never derive it. The single
+// exception is `buildUnscriptedRunLogEntries`'s segment lookup, which is a
+// containment scan over the Model P partition and is documented as such at its
+// own site.
+//
+// ADDITIVE BY CONSTRUCTION: with no rule firing and no FA fallback, every
+// function here returns `[]` or is not called, so a run that corrects nothing
+// logs exactly what it logged before.
+// ===========================================================================
+
+/** Boundary values print to 3 decimals — the precision the committed fixtures
+ *  and every audit document use (`663.785` is a real committed value), with
+ *  trailing zeros trimmed so a whole-second boundary does not read as
+ *  spuriously precise. */
+function fmtSec(v: number): string {
+  return `${Number(v.toFixed(3))}`;
+}
+
+/**
+ * WHICH ENGINE RAN — one entry on every audio-timed run, unconditionally.
+ *
+ * Unconditional on purpose. An entry emitted only when something is wrong
+ * cannot answer "did FA run?", because its ABSENCE is ambiguous between "FA
+ * ran cleanly" and "this build predates the logging". A line that is always
+ * present makes the question answerable from the artifact alone, which is the
+ * property the acceptance run needs.
+ */
+export function buildSyncEngineEntry(
+  syncRunId: string,
+  engine: 'forced-alignment' | 'whisper',
+  tokenCount: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'info',
+    engine === 'forced-alignment'
+      ? `Timing engine: forced alignment (${tokenCount} aligned word(s)).`
+      : `Timing engine: Whisper transcript (${tokenCount} token(s)).`,
+    { severity: 'info' },
+    timestamp,
+  );
+}
+
+/** Plain-language cause per failure path, for the log line a user reads. */
+const FA_FALLBACK_TEXT: Record<FaFallbackReason, { what: string; fix: string }> = {
+  'unsupported-language': {
+    what: 'the project language has no forced-alignment model',
+    fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or leave high-precision sync off for this project.',
+  },
+  'empty-chunk-plan': {
+    what: 'the chunk plan came out empty (no scene carried any text to align)',
+    fix: 'Check that the scene document has text for at least one scene, then run Apply Sync again.',
+  },
+  'zero-words': {
+    what: 'alignment returned no words',
+    fix: 'Re-run Apply Sync. If it keeps happening, the voiceover may be silent or unreadable for this language.',
+  },
+  'inference-error': {
+    what: 'the alignment engine reported an error',
+    fix: 'Check that the alignment model is installed for this language, then run Apply Sync again.',
+  },
+};
+
+/**
+ * THE FA FALLBACK — the entry that makes fail-clean stop meaning fail-silent.
+ *
+ * severity 'warning', not 'info': the user turned high-precision sync ON for
+ * this project and did not get it. That is a degradation with something they
+ * can act on, which is exactly what the severity taxonomy reserves 'warning'
+ * for.
+ */
+export function buildFaFallbackEntry(
+  syncRunId: string,
+  reason: FaFallbackReason,
+  detail: string | undefined,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { what, fix } = FA_FALLBACK_TEXT[reason];
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-fallback',
+    `High-precision sync was ON but did not run — ${what}. This run used Whisper timing instead.`,
+    {
+      owningRule: 'FA',
+      reason,
+      severity: 'warning',
+      fixHint: fix,
+      ...(detail !== undefined ? { errorMessage: detail } : {}),
+    },
+    timestamp,
+  );
+}
+
+/**
+ * R.5 — UNSCRIPTED-AUDIO EXCISION, one entry per excised run.
+ *
+ * R.5 is the one rule that fires BEFORE inference (inside the chunk plan), so
+ * it has no committed-value/corrected-value pair to report; what it has is an
+ * audio SPAN it removed from the windows the model was asked to align against.
+ * `ruleDetail.spanStartSec`/`spanEndSec` carry that, rather than being crammed
+ * into committed/corrected fields that would misdescribe the operation.
+ *
+ * THE ONE DERIVED NUMBER IN THIS FILE, flagged rather than buried:
+ * `UnscriptedRun` carries token indices and an audio span but no segment index,
+ * so the owning scene is found by a containment scan over `segments` — which is
+ * a gapless partition (Model P), so exactly one segment contains any given
+ * time, and the scan cannot be ambiguous. This is an index lookup on data that
+ * already exists, not a measurement; it asserts nothing about the boundary.
+ * A span that precedes every segment (V6's corpus-start recitation is the real
+ * case) resolves to no segment and the entry is logged without a
+ * `segmentIndex`, never with a guessed one.
+ */
+export function buildUnscriptedRunLogEntries(
+  syncRunId: string,
+  runs: readonly UnscriptedRun[],
+  segments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return runs.map(run => {
+    const idx = segments.findIndex(
+      s => run.startSec >= s.startTime && run.startSec < s.startTime + s.duration,
+    );
+    const owner = idx >= 0 ? segments[idx] : undefined;
+    return makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `R.5 excised ${fmtSec(run.endSec - run.startSec)}s of unscripted audio at ` +
+        `[${fmtSec(run.startSec)}, ${fmtSec(run.endSec)}] from the alignment window.`,
+      {
+        owningRule: 'R.5',
+        ...(idx >= 0 ? { segmentIndex: idx } : {}),
+        ...(owner?.text ? { segmentText: owner.text.slice(0, 120) } : {}),
+        severity: 'info',
+        ruleDetail: {
+          spanStartSec: run.startSec,
+          spanEndSec: run.endSec,
+          reason:
+            `Whisper tokens ${run.tokenLo}-${run.tokenHi} are transcribed audio that no scene's ` +
+            `script accounts for; the script resumes at word index ${run.qiSplit}.`,
+        },
+      },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * R.10 — SCRIPTED TEXT NEVER SPOKEN, one entry per refused scene.
+ *
+ * These scenes are ALSO logged by the skip path (they are handed to it), so
+ * this entry is not what tells the user the scene is missing — it is what tells
+ * them WHICH RULE decided that, and on what evidence. The two entries answer
+ * different questions and both are wanted.
+ */
+export function buildUnspokenScriptLogEntries(
+  syncRunId: string,
+  findings: readonly UnspokenScriptFinding[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f =>
+    makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `R.10 refused scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} — ` +
+        'its script text is never spoken in the audio.',
+      {
+        owningRule: 'R.10',
+        segmentIndex: f.segmentIndex,
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          reason:
+            `Loudest forced-alignment word confidence across the scene's ${f.faWordCount} word(s) ` +
+            `was ${f.maxWordConfidence.toExponential(3)} — no acoustic evidence the text was voiced.`,
+        },
+      },
+      timestamp,
+    ),
+  );
+}
+
+/**
+ * R.11 — CHUNK-FIT BOUNDARY CORRECTION, one entry per corrected boundary.
+ */
+export function buildSeamFitLogEntries(
+  syncRunId: string,
+  findings: readonly SeamFitFinding[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f =>
+    makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `R.11 moved scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+        `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
+        `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s).`,
+      {
+        owningRule: 'R.11',
+        segmentIndex: f.segmentIndex,
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          committedValue: f.committedValue,
+          correctedValue: f.correctedValue,
+          reason:
+            `Chunk ${f.chunkIndex} [${fmtSec(f.chunkStartSec)}, ${fmtSec(f.chunkEndSec)}] fits its script ` +
+            `${fmtSec(f.fitDeviation)}x off; the committed boundary sat on a word seam carrying only ` +
+            `${f.spanMaxConfidence.toExponential(3)} confidence, so it was re-anchored to the chunk's ` +
+            `${f.edge} edge.`,
+        },
+      },
+      timestamp,
+    ),
+  );
+}
+
+/**
+ * R.12 — THE ATOMIC-RUN INVARIANT, one entry per corrected boundary.
+ *
+ * The rule with the largest measured effect on the corpus (nine defects on v6,
+ * five of them independently scored wrong by ear before it existed), so its
+ * entry carries the full placement evidence: which run the boundary had fallen
+ * inside, the only legal interval it could move to, and whether it landed on a
+ * real silence's midpoint or on the fallback.
+ */
+export function buildRunPlacementLogEntries(
+  syncRunId: string,
+  findings: readonly RunPlacementFinding[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f =>
+    makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `R.12 moved scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+        `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
+        `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s) — it had landed inside unscripted audio.`,
+      {
+        owningRule: 'R.12',
+        segmentIndex: f.segmentIndex,
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          committedValue: f.committedValue,
+          correctedValue: f.correctedValue,
+          reason:
+            `The boundary lay strictly inside unscripted run ${f.runIndex} ` +
+            `[${fmtSec(f.runStartSec)}, ${fmtSec(f.runEndSec)}]. The only legal interval is ` +
+            `[${fmtSec(f.gapStartSec)}, ${fmtSec(f.gapEndSec)}]; placed by ${f.placement}` +
+            (f.backingSilence
+              ? ` on silence [${fmtSec(f.backingSilence.startSec)}, ${fmtSec(f.backingSilence.endSec)}].`
+              : '.'),
+        },
+      },
+      timestamp,
+    ),
   );
 }
 

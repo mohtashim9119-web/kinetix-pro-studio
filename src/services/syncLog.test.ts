@@ -24,6 +24,12 @@ import {
   buildGroupedViolationEntry,
   buildLockRefusedLogEntry,
   makeSyncLogEntry,
+  buildSyncEngineEntry,
+  buildFaFallbackEntry,
+  buildUnscriptedRunLogEntries,
+  buildUnspokenScriptLogEntries,
+  buildSeamFitLogEntries,
+  buildRunPlacementLogEntries,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
@@ -777,5 +783,210 @@ describe('buildLockRefusedLogEntry', () => {
     // The distinction matters: nothing failed, an action was declined. An
     // 'error' severity here would misreport a healthy project as broken.
     expect(buildLockRefusedLogEntry(RUN_ID, 1, 0, 0.75, AT).severity).toBe('warning');
+  });
+});
+
+// ===========================================================================
+// WS1 Session J — rule-firing, engine and FA-fallback entries.
+//
+// What these pin is not prose but the two properties the live acceptance run
+// depends on: (1) every rule firing produces an entry that NAMES its rule in a
+// field, and (2) a run where forced alignment silently fell back is
+// distinguishable, from the persisted log alone, from a run where it did not.
+// Both were unfalsifiable before this session — the information existed only in
+// a dev-build console.
+// ===========================================================================
+
+describe('buildSyncEngineEntry — which engine ran', () => {
+  it('names forced alignment and its aligned-word count', () => {
+    const entry = buildSyncEngineEntry(RUN_ID, 'forced-alignment', 3998, AT);
+    expect(entry.type).toBe('info');
+    expect(entry.message).toContain('forced alignment');
+    expect(entry.message).toContain('3998');
+    expect(entry.timestamp).toBe(AT);
+    expect(entry.syncRunId).toBe(RUN_ID);
+  });
+
+  it('names Whisper on a run that used transcript timing', () => {
+    const entry = buildSyncEngineEntry(RUN_ID, 'whisper', 3900, AT);
+    expect(entry.message).toContain('Whisper');
+    expect(entry.message).not.toContain('forced alignment');
+  });
+
+  it('produces DIFFERENT text for the two engines — the property that makes the run readable', () => {
+    // If these ever collapsed to the same string the entry would be decorative:
+    // the acceptance run reads this line to decide whether FA engaged at all.
+    const fa = buildSyncEngineEntry(RUN_ID, 'forced-alignment', 10, AT).message;
+    const whisper = buildSyncEngineEntry(RUN_ID, 'whisper', 10, AT).message;
+    expect(fa).not.toBe(whisper);
+  });
+});
+
+describe('buildFaFallbackEntry — fail-clean stops meaning fail-silent', () => {
+  it('records the reason as a queryable field, not only inside the message', () => {
+    const entry = buildFaFallbackEntry(RUN_ID, 'inference-error', 'model hash mismatch', AT);
+    expect(entry.type).toBe('fa-fallback');
+    expect(entry.reason).toBe('inference-error');
+    expect(entry.owningRule).toBe('FA');
+    expect(entry.errorMessage).toBe('model hash mismatch');
+  });
+
+  it('is a WARNING with a fix hint — the user asked for FA and did not get it', () => {
+    const entry = buildFaFallbackEntry(RUN_ID, 'unsupported-language', 'zz', AT);
+    expect(entry.severity).toBe('warning');
+    expect(entry.fixHint).toBeTruthy();
+  });
+
+  it('gives every failure path its own distinguishable text', () => {
+    const reasons = ['unsupported-language', 'empty-chunk-plan', 'zero-words', 'inference-error'] as const;
+    const messages = reasons.map(r => buildFaFallbackEntry(RUN_ID, r, undefined, AT).message);
+    expect(new Set(messages).size).toBe(reasons.length);
+  });
+
+  it('omits errorMessage entirely when there is no backend detail to carry', () => {
+    expect(buildFaFallbackEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+  });
+});
+
+describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
+  const segs = [
+    { id: 'a', text: 'first scene', startTime: 0, duration: 10, transition: TransitionType.NONE, animation: AnimationType.NONE, order: 0 },
+    { id: 'b', text: 'second scene', startTime: 10, duration: 10, transition: TransitionType.NONE, animation: AnimationType.NONE, order: 1 },
+  ];
+
+  it('R.5 reports an excised SPAN, and does not pretend a boundary moved', () => {
+    const [entry] = buildUnscriptedRunLogEntries(
+      RUN_ID,
+      [{ tokenLo: 3, tokenHi: 9, startSec: 12.5, endSec: 15.75, qiSplit: 40 }],
+      segs,
+      AT,
+    );
+    expect(entry!.type).toBe('rule-correction');
+    expect(entry!.owningRule).toBe('R.5');
+    expect(entry!.ruleDetail?.spanStartSec).toBe(12.5);
+    expect(entry!.ruleDetail?.spanEndSec).toBe(15.75);
+    // R.5 acts before inference: there is no committed/corrected pair, and
+    // inventing one would misdescribe what the rule does.
+    expect(entry!.ruleDetail?.committedValue).toBeUndefined();
+    expect(entry!.ruleDetail?.correctedValue).toBeUndefined();
+    // Containment over the Model P partition: 12.5 falls in segment index 1.
+    expect(entry!.segmentIndex).toBe(1);
+  });
+
+  it('R.5 logs a corpus-start span with NO segmentIndex rather than a guessed one', () => {
+    // V6's first "Level one..." recitation is the real case: it precedes every
+    // committed segment, so no segment contains it. Reporting index 0 would be
+    // a fabricated attribution.
+    const [entry] = buildUnscriptedRunLogEntries(
+      RUN_ID,
+      [{ tokenLo: 0, tokenHi: 2, startSec: 100, endSec: 103, qiSplit: 0 }],
+      segs,
+      AT,
+    );
+    expect(entry!.segmentIndex).toBeUndefined();
+  });
+
+  it('R.10 names the rule and the refused scene, carrying its confidence evidence', () => {
+    const [entry] = buildUnspokenScriptLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 12, segmentId: 'x', segmentTag: 'blue_monkey', maxWordConfidence: 4.07e-5, faWordCount: 3 }],
+      AT,
+    );
+    expect(entry!.owningRule).toBe('R.10');
+    expect(entry!.segmentIndex).toBe(12);
+    expect(entry!.segmentTag).toBe('blue_monkey');
+    expect(entry!.ruleDetail?.reason).toContain('4.070e-5');
+  });
+
+  it('R.11 carries both values, so a reader can check the correction', () => {
+    const [entry] = buildSeamFitLogEntries(
+      RUN_ID,
+      [{
+        segmentIndex: 191, segmentId: 'y', segmentTag: '192_scout_listening',
+        chunkIndex: 100, chunkStartSec: 568.5, chunkEndSec: 571.36,
+        fit: 1.5, fitDeviation: 1.5, edge: 'end',
+        committedValue: 570.18, correctedValue: 571.07, delta: 0.89,
+        spanMaxConfidence: 4.0732e-5,
+      }],
+      AT,
+    );
+    expect(entry!.owningRule).toBe('R.11');
+    expect(entry!.ruleDetail?.committedValue).toBe(570.18);
+    expect(entry!.ruleDetail?.correctedValue).toBe(571.07);
+    expect(entry!.message).toContain('570.18');
+    expect(entry!.message).toContain('571.07');
+  });
+
+  it('R.12 carries the run it escaped and the interval it was allowed to land in', () => {
+    const [entry] = buildRunPlacementLogEntries(
+      RUN_ID,
+      [{
+        segmentIndex: 223, segmentId: 'z', segmentTag: '224_thirty_three',
+        runIndex: 7, runStartSec: 663.9, runEndSec: 666.48,
+        runTokenLo: 100, runTokenHi: 110,
+        gapStartSec: 663.5, gapEndSec: 663.9,
+        backingSilence: { startSec: 663.6, endSec: 663.97 },
+        placement: 'silence-midpoint',
+        committedValue: 664.33, correctedValue: 663.785, delta: -0.545,
+      }],
+      AT,
+    );
+    expect(entry!.owningRule).toBe('R.12');
+    expect(entry!.ruleDetail?.correctedValue).toBe(663.785);
+    // 3 decimals preserved: 663.785 is a real committed value and rounding it
+    // to 663.79 would make the log disagree with the fixture.
+    expect(entry!.message).toContain('663.785');
+    expect(entry!.ruleDetail?.reason).toContain('silence-midpoint');
+  });
+
+  it('every builder returns [] for no findings — a clean run logs nothing extra', () => {
+    // The additive property, asserted rather than asserted-in-prose: this is
+    // what makes the change observationally inert on a corpus where no rule
+    // fires.
+    expect(buildUnscriptedRunLogEntries(RUN_ID, [], segs, AT)).toEqual([]);
+    expect(buildUnspokenScriptLogEntries(RUN_ID, [], AT)).toEqual([]);
+    expect(buildSeamFitLogEntries(RUN_ID, [], AT)).toEqual([]);
+    expect(buildRunPlacementLogEntries(RUN_ID, [], AT)).toEqual([]);
+  });
+
+  it('every rule entry is INFO severity — a correction is the pipeline working', () => {
+    const all = [
+      ...buildUnscriptedRunLogEntries(RUN_ID, [{ tokenLo: 0, tokenHi: 1, startSec: 1, endSec: 2, qiSplit: 3 }], segs, AT),
+      ...buildUnspokenScriptLogEntries(RUN_ID, [{ segmentIndex: 0, segmentId: 'x', maxWordConfidence: 1e-6, faWordCount: 1 }], AT),
+      ...buildSeamFitLogEntries(RUN_ID, [{
+        segmentIndex: 0, segmentId: 'y', chunkIndex: 1, chunkStartSec: 0, chunkEndSec: 1,
+        fit: 1, fitDeviation: 1.5, edge: 'start', committedValue: 1, correctedValue: 2, delta: 1, spanMaxConfidence: 1e-6,
+      }], AT),
+      ...buildRunPlacementLogEntries(RUN_ID, [{
+        segmentIndex: 0, segmentId: 'z', runIndex: 0, runStartSec: 0, runEndSec: 1,
+        runTokenLo: 0, runTokenHi: 1, gapStartSec: 0, gapEndSec: 1,
+        placement: 'run-start-fallback', committedValue: 1, correctedValue: 0.5, delta: -0.5,
+      }], AT),
+    ];
+    expect(all).toHaveLength(4);
+    for (const e of all) {
+      expect(e.type).toBe('rule-correction');
+      expect(e.severity).toBe('info');
+      expect(e.owningRule).toBeTruthy();
+    }
+  });
+
+  it('the four rules are distinguishable by owningRule alone, with no message parsing', () => {
+    // The reason owningRule is a field and not a message prefix: counting what
+    // fired must be a filter, not a regex over prose.
+    const names = [
+      buildUnscriptedRunLogEntries(RUN_ID, [{ tokenLo: 0, tokenHi: 1, startSec: 1, endSec: 2, qiSplit: 3 }], segs, AT)[0]!.owningRule,
+      buildUnspokenScriptLogEntries(RUN_ID, [{ segmentIndex: 0, segmentId: 'x', maxWordConfidence: 1e-6, faWordCount: 1 }], AT)[0]!.owningRule,
+      buildSeamFitLogEntries(RUN_ID, [{
+        segmentIndex: 0, segmentId: 'y', chunkIndex: 1, chunkStartSec: 0, chunkEndSec: 1,
+        fit: 1, fitDeviation: 1.5, edge: 'start', committedValue: 1, correctedValue: 2, delta: 1, spanMaxConfidence: 1e-6,
+      }], AT)[0]!.owningRule,
+      buildRunPlacementLogEntries(RUN_ID, [{
+        segmentIndex: 0, segmentId: 'z', runIndex: 0, runStartSec: 0, runEndSec: 1,
+        runTokenLo: 0, runTokenHi: 1, gapStartSec: 0, gapEndSec: 1,
+        placement: 'run-start-fallback', committedValue: 1, correctedValue: 0.5, delta: -0.5,
+      }], AT)[0]!.owningRule,
+    ];
+    expect(names).toEqual(['R.5', 'R.10', 'R.11', 'R.12']);
   });
 });

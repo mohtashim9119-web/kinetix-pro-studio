@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | **SUPERSEDED 2026-08-18 (WS1 Session I, owner rulings 2 and 4): the two blind 12/12 passes are replaced by ONE exhaustive mover audit (`stage1-mover-audit.md`, 24 rows — every never-scored and structurally-derived mover plus a 10-row blinded control arm), with the owner's live walkthrough serving as the second independent pass.** `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment still carries the pre-Session-I wording and should be re-worded when the flip is next attempted | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | **SUPERSEDED 2026-08-18 (WS1 Session I, owner rulings 2 and 4): the two blind 12/12 passes are replaced by ONE exhaustive mover audit (`stage1-mover-audit.md`, 24 rows — every never-scored and structurally-derived mover plus a 10-row blinded control arm), with the owner's live walkthrough serving as the second independent pass.** **2026-08-18 (WS1 Session J): the logging blocker is CLOSED** — rule-firing / engine / FA-fallback entries ship, so the acceptance run can produce durable evidence of what the rules did; the audit's I4 exit is ratified and the 24-row list is drawn, verified against HEAD and ready to score. **Remaining gate to the run: the owner scoring those 24 rows.** `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment still carries the pre-Session-I wording and should be re-worded when the flip is next attempted — note that the STALE COPY of its value in `types.ts` is fixed and can no longer drift (`faDefaultDrift.test.ts` fails the build on any disagreeing restatement in `src/`) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -632,14 +632,49 @@ cross-referenced against `src/types.ts` live:
 | P3 | Drop-distribution reporting | ✅ | `syncContracts.ts:102` `analyzeDropDistribution` |
 | P4 | Silence ascending/disjoint runtime assertion | ❌ | grepped `silence-scan-anomaly` across `src/` — zero hits; Phase 4, REQUIRED ADDITION, not built |
 | P5 | Silence-scan-failed vs. no-silence-found, type-level | ✅ | `silenceDetector.ts:21-22` — `{status:'ok', silences}` \| `{status:'error', errorMessage}` |
-| P6 | Same language-keyed normalizer, byte-identical English path | ❌ | Phase 3b DONE, Phase 3c CLOSED (2026-08-15, by written acceptance — the hyphen-asymmetry manifestation of this requirement is accepted, not fixed); not yet owner-verified guarantee-by-guarantee as P6 itself requires — see §3, §10 |
+| P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J)** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (7 tests, in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Two coverage limits recorded, both pinned as assertions:** the Spanish corpus has ZERO expanding tokens so its result is vacuous, and `stripStageDirections` fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
-**5 of 8 met** (P1, P2, P3, P5, P7-partial); P4/P8 tied to Phase 4 (not started); P6 is
-open on process (owner guarantee-by-guarantee verification, item 12) even though the
-phases it names (3b, 3c) have both now landed — consistent with Stage 1/2 both being
-unlocked (§2).
+**6 of 8 met as of 2026-08-18 (WS1 Session J)** — P1, P2, P3, P5, **P6**, P7-partial. P6 moved
+❌ → ✅ by measurement, not by acceptance: it was the one row that could not be scheduled away,
+because the plan's own enforcement text for it is "symmetry property manually-verified", i.e.
+the verification IS the enforcement. There is now an automated gate to point at. P4/P8 remain
+tied to Phase 4 (not started).
+
+On the wider twelve-row table (`stage1-lock-contract-1to2.md`), Session J's result moves the
+tally from **5 DIRECT / 4 PARTIAL / 3 ABSENT** to **6 DIRECT / 3 PARTIAL / 3 ABSENT**: P6
+leaves the PARTIAL set. A4 and Contract IN A3 are now ACCEPTED IN WRITING (see the Session J
+entry below), so this contract's *blocking* set for the Stage 1 lock is empty — P2/P3's
+reachability defect and P7's narrower-than-worded scope are recorded, scheduled, and not
+Stage 1 regressions.
+
+**2026-08-18 (WS1 Session J) — P6 is BUILT AND PASSES; A4 and Contract IN A3 are ACCEPTED IN
+WRITING. This contract's blocking set for the Stage 1 lock is now EMPTY.**
+
+- **P6 — measured, not accepted.** `src/services/normalizerSymmetry.test.ts`. **Zero
+  asymmetries** across all three corpora. Full result in the P6 row above and in
+  `stage1-non-ear-remainder.md`'s sign-off block. Stage 1 does NOT reopen on this item.
+- **The substantive thing it checked, which nothing had:** the two sides normalize at
+  different GRANULARITY — transcript per token, script per whole segment — and `canonicalize`
+  performs real multi-word rewrites (digit-as-words, contraction expansion, hyphen splitting).
+  Had any of those reached across a whitespace boundary, the Hirschberg aligner would have been
+  matching two streams that disagreed about their own vocabulary, invisibly, since each side is
+  individually self-consistent. They do not; every rewrite is intra-token.
+- **Two coverage limits reported rather than absorbed** (neither is an asymmetry; both bound
+  the claim): the **Spanish corpus exercises the property not at all** — 363 tokens, zero
+  expanding, so its pass is vacuously true and P6's es half rests on material that cannot
+  falsify it; and **`stripStageDirections` never fires** on any corpus in scope (0/444, 0/172,
+  0/26), so the one deliberate script-side-exclusive step contributes no asymmetry because it
+  never runs, not because it was shown benign. Both are pinned as assertions so they fail
+  loudly rather than outliving their truth.
+- **A4 ACCEPTED as written**, scoped to Stage 1 only — it returns as a close-or-accept decision
+  at the Stage 2 lock, where alignment is the stage under test rather than a dependency of it.
+- **Contract IN A3 ACCEPTED as written**, with the fr/de/pt carve-out intact: R-T's deferred
+  non-English work must state whether a script-language check becomes a requirement there.
+- **`validate1to2`'s reachability defect (P2/P3) is UNCHANGED and still recorded.** Session G's
+  severity escalation stays reverted — the default is OFF, so the unvalidated array is not the
+  default array.
 
 **2026-08-18 (WS1 Session I) — P6, A4 and Contract IN A3 are now ANSWERABLE, and no row
 changes.** All three of this contract's remaining open items are assembled into one
@@ -3675,7 +3710,9 @@ untracked; no new repo-root files.
   COMMITTED boundary lands after the fact, not about chunk-plan excision.
 - **The register, reopened and closed.** `REGISTER_HIGH_WATER` 0 → 9 → 0 in one commit — the
   same RAISE-then-LOWER pattern Session D used, and for the identical reason: growth cost a
-  deliberate edit, nine roster appends, nine `KNOWN_BAD` entries (closed in the same commit
+  deliberate edit, **ten** roster appends (R.12's nine, plus `h-192-scout-listening`
+  closed-on-arrival — corrected from "nine" 2026-08-18, WS1 Session J), nine `KNOWN_BAD`
+  entries (closed in the same commit
   by R.12 landing), and this ledger's own table. Verification split explicitly: five rows
   ear-scored wrong by Session H's 12-row pass (042, 125, 176, 266, 340); four structurally
   derived, no ear pass (085, 224, 307, 383) — marked `verification: 'structural'` in the
@@ -3691,8 +3728,16 @@ untracked; no new repo-root files.
   of the four structurally-derived rows (085/224/307/383) included, so they get ear-verified
   on the next pass. Sealed key — not scored this session, input to the next pass only.
 - **Register state, before and after.** Before: EMPTY (Session F's zero). After: EMPTY again,
-  with nine more roster members and nine more closed entries than before — 20 roster members
-  total, all accounted for.
+  with **ten** more roster members and **ten** more closed entries than before — **19 roster
+  members total**, all accounted for. *(Corrected 2026-08-18, WS1 Session J: this line
+  originally read "nine more … 20 roster members total". Both halves were wrong in the same
+  direction. Session H appended TEN roster members — R.12's nine plus `h-192-scout-listening`,
+  which entered closed-on-arrival — onto a pre-existing nine, giving **19**, which is what
+  `REGISTER_ROSTER` and `CLOSED_BY_POSITIVE_ASSERTION` have both actually held since that
+  commit. Session I found the slip and recorded the right number at the foot of its own entry
+  without editing this line; Session J edits it here so the wrong number is not carried by the
+  paragraph a future session reads first. The gate was never affected — it asserts the two
+  lists are equal length, and they always were.)*
 - **Verification, six numbers with status changes:** `npm test` 86 → **87 files**,
   2234 → **2283 passed**, 1 skipped unchanged; `npm run lint` clean (unchanged); `cargo check
   --features fa-inference` clean (unchanged); `cargo test --features fa-inference`
@@ -3814,7 +3859,56 @@ byte-identical); `DOCUMENTATION_AUDIT_REPORT.md` untracked; no new repo-root fil
   `CLOSED_BY_POSITIVE_ASSERTION` 19 — **15 ear-verified + 4 structurally-derived**). Session H
   added ten, not nine (R.12's nine plus `h-192-scout-listening`). The gate is unaffected —
   the test asserts the two lists are equal length, and they are — so this is an arithmetic slip
-  in prose, corrected here rather than propagated.
+  in prose, corrected here rather than propagated. **CLOSED by WS1 Session J**, which edited
+  Session H's own two lines in place so the wrong number is not carried by the paragraph a
+  future session reads first.
+
+---
+
+**WS1 SESSION J — THE LOGGING HOLE CLOSED, P6 MEASURED, THE REMAINDER ANSWERED (2026-08-18).**
+Full detail in the Changelog entry; §11-relevant items only here.
+
+**(a) R-AN — the standing autonomy directive.** Technical and architectural calls are
+delegated; the single boundary is that autonomy covers **how**, not **what is true**. Recorded
+at `sync-pipeline-v2-plan.md`'s R-AN — the next free identifier, verified against the plan's
+full ruling set rather than assumed. It is standing, and governs every session from J forward.
+
+**(b) The acceptance run's evidence hole is closed.** This was the one blocker Session I
+reported and deliberately did not fix. `SyncLogEntry` now carries `owningRule` and
+`ruleDetail`; `'rule-correction'` and `'fa-fallback'` are real entry types; every audio-timed
+run records **which engine produced its timing**, unconditionally. Before this, a run where FA
+silently fell back was byte-indistinguishable in `project.syncLog` from a clean FA run — the
+user got Whisper timing under an explicit high-precision-sync choice and nothing persisted
+disagreed. Fail-clean stays; fail-*silent* is gone.
+
+**(c) The FA entry point's signature changed, and the fail-clean contract did not.**
+`runForcedAlignmentForSync` returns a discriminated `FaRunResult` instead of
+`TranscriptToken[] | null`. It still never throws and the caller still has exactly one branch.
+What changed is that `null` no longer has to mean five different things. A silence-detection
+failure *inside* the FA pass now rides on the SUCCESS result — it degrades the chunk plan
+without preventing alignment, and a run degraded that way used to record as clean.
+
+**(d) Contract 1→2 P6: MEASURED, PASSES, moves ❌ → ✅.** See §9. The contract's blocking set
+for the Stage 1 lock is now empty. Two coverage limits recorded rather than absorbed, both
+pinned as assertions: the Spanish corpus cannot falsify the property (zero expanding tokens),
+and `stripStageDirections` never fires on any corpus in scope.
+
+**(e) The mutation matrix, re-run because production code was touched.** M1/M2/M3 RED, M4 a
+true no-op **proven by chunk-plan byte equality rather than by a green gate**, M5/M6/M7 each
+RED then reverted and reconfirmed green. **M5 had to be re-derived:** its historical target
+(v6 anchor 460.56) carries no R-U-vetoed candidate at this HEAD — R-U vetoes exactly 17
+candidates within tolerance on v6 and the nearest to 460.56 is 504.08, with no vetoed site
+between ~184 s and ~504 s. Consequence recorded: no v6 vetoed site now falls inside any
+NAMED_WINDOWS row, so this mutation class is caught by the whole-corpus digest alone.
+
+**(f) The register is UNCHANGED and the four R.12 closures stay PROVISIONAL.** 19 roster, 19
+closed, 0 open, high-water 0. `085`/`224`/`307`/`383` remain provisional under R-AM(c) until
+the 24 rows are scored. Nothing this session closed them.
+
+**(g) What now gates the live acceptance run.** Only the owner scoring the 24 audit rows. The
+code side is ready: logging lands durable evidence, the audit is ratified and re-verified
+24/24 against HEAD, every previously scored row holds in both directions, and the walkthrough
+index is complete and correctly indexed.
 
 ---
 
@@ -3875,6 +3969,110 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-18 — WS1 Session J: the STANDING AUTONOMY DIRECTIVE is recorded as R-AN; the
+  RULE-FIRING LOGGING ships and closes the acceptance run's evidence hole; Contract 1→2 **P6**
+  is MEASURED and PASSES; the nine non-ear remainder items are all ANSWERED; the 24-row mover
+  audit is ratified, re-verified and ready to score.** Ruling: **R-AN** (owner) — technical and
+  architectural calls are delegated (implementation shape, naming, test structure, file layout,
+  refactor scope), with one boundary: **autonomy covers HOW, never WHAT IS TRUE** — a new
+  defect, a shipped rule proven wrong, a control moving, or a measurement contradicting the
+  record is still reported the moment it is found. Recorded at
+  `sync-pipeline-v2-plan.md`'s R-AN, the next free identifier (verified against the plan's
+  full ruling set, which ended at R-AM).
+  - **Production code:** `src/types.ts` (two `SyncLogEntryType` members `'rule-correction'` /
+    `'fa-fallback'`; `owningRule?: string` + `ruleDetail?`; `segmentIndex`'s contract widened;
+    the stale `FA_PROJECT_DEFAULT_ON` prose removed), `src/services/syncLog.ts` (six builders),
+    `src/services/forcedAlignmentRun.ts` (discriminated `FaRunResult`),
+    `src/App.tsx` (five wiring sites), `src/components/SyncLogPanel.tsx` (two badges).
+    New tests: `faDefaultDrift.test.ts`, `normalizerSymmetry.test.ts`.
+  - **The hole the logging closes, stated as what was previously unanswerable:** a run where FA
+    silently fell back to Whisper timing was **indistinguishable in `project.syncLog`** from a
+    clean FA run. Rule firings were `console.warn`-only — absent from the log, the panel and
+    the Copy export, and gone when the window closed. All five specified items were taken.
+    Item 4 (R.5) did NOT need the proposed `computeFaChunkPlan` signature change:
+    `computeUnscriptedRuns` was already exported (Session H added it for R.12, and its own doc
+    comment names R.5 as a future caller), so `runForcedAlignmentForSync` calls it with the
+    **identical four arguments** it gave the chunk planner — which matters, because `App.tsx`'s
+    `aligned.silences` is a *separate detection pass* and logging R.5 against those would have
+    reported spans R.5 never acted on. That provenance requirement is asserted, not commented.
+  - **Inertness of the logging change, proven not asserted:** all 31 `scripts/fixtures/*.csv`
+    byte-identical before and after; all nine anchor/run/chunk digests byte-identical on all
+    three corpora (v6 `f3f469a68664596a`/`4d95968b519576da`/`d5dc8d7924dc8402`, 173
+    `d2e3f269cd884a26`/`4e9af8b426d90c3d`/`b4c4611508f7b58e`, spanish
+    `ac2408783c30f62f`/`41a72024d26d3389`/`c7e4be33cf7ab3c7`); FA replay gate 45/45; golden
+    replay 6/6; `faAnchors.ts` sha256 `b61e94cb…` unchanged. **Exit J1 does not fire.**
+  - **P6 BUILT AND PASSING — zero asymmetries.** See §9. The substantive check was
+    compositionality (transcript side normalizes per TOKEN, script side per SEGMENT, and
+    `canonicalize` does real multi-word rewrites); every rewrite is intra-token, so the streams
+    agree byte-for-byte. **Exit J2 does not fire.** Two coverage limits reported rather than
+    absorbed: the Spanish corpus has zero expanding tokens (vacuous pass) and
+    `stripStageDirections` fires on zero segments corpus-wide. Both pinned as assertions.
+  - **The two ledger debts closed, and the drift made impossible.** The roster count is
+    corrected to **19** where Session H wrote 20 (and "nine roster appends" to **ten** — R.12's
+    nine plus `h-192-scout-listening`); `types.ts`'s `faHighPrecisionSync` doc comment no longer
+    asserts a value for the FA default at all, naming `faGate.ts` as the sole owner. **The
+    permanent fix is `faDefaultDrift.test.ts`**, which scans `src/` for every prose restatement
+    of the default and fails the build on any that disagrees with the runtime constant — the
+    value has moved twice and a prose copy was left behind both times. It earned its keep
+    immediately: it caught a live instance in this session's own first edit.
+  - **Mutation matrix re-run in full** (production code was touched, which is the condition
+    Session I named). **M1/M2/M3 RED** (4 gate tests each); **M4 a true no-op, proven by
+    chunk-plan byte equality** — all nine digests identical under mutation, not merely a green
+    gate; **M5 RED** (1), **M6 RED** (6 across 2 independent files), **M7 RED** (6 across 2),
+    each reverted and reconfirmed green. `faAnchors.ts` sha256 verified `b61e94cb…` after every
+    revert, and both mutation targets are byte-identical to their pre-session state.
+  - **M5 had to be RE-DERIVED, and this is a finding about the matrix rather than the code.**
+    Its historical target (v6 anchor 460.56) carries **no R-U-vetoed candidate at this HEAD**.
+    Measured through production: R-U vetoes exactly **17** candidate silences within tolerance
+    on v6, and the nearest to 460.56 is **504.08** — there is no vetoed site anywhere between
+    ~184 s and ~504 s. M5 was re-derived against 504.08 and goes RED there. Consequence worth
+    recording: **no v6 vetoed site now falls inside any of the gate's NAMED_WINDOWS rows**, so
+    this mutation class is caught by the whole-corpus digest alone rather than also by a
+    named-row assertion. Not a defect — the gate's own argument is that the chunk plan is the
+    complete cut — but the named rows no longer corroborate this class independently.
+  - **Also corrected in passing:** Session I's verification line attributes M5/M6 to
+    `R11_MIN_FIT_DEVIATION` and `R12_MIN_CORRECTION_SEC` "respectively". Those are **M6 and
+    M7**; M5 is the items-6/7 anchor-class mutation. The earlier, more specific entries
+    (Session F defining M6 as R.11-specific, Session H introducing M7 as R.12-specific) are the
+    consistent record and are what this session used.
+  - **All nine non-ear remainder items ANSWERED as recommended** and signed off at the head of
+    `stage1-non-ear-remainder.md`: P6 built; A4 and Contract IN A3 accepted as written;
+    R-S(iii) accepted-for-toggle and deferred-for-default with the digest memo as the flip's
+    precondition; Step T confirmed out of Stage 1 (release-phase, ≈10.5 days + ≈1 day R-N);
+    D-1 items 4/5/8 accepted at their automated subset; **D-1 item 9 accepted as PERMANENTLY
+    UNAUTOMATED** — a deliberate permanent exclusion, not a deferral. D-1 stands at 5 of 9
+    automated, remaining four accepted rather than pending.
+  - **Audit I4 RATIFIED and the 24 rows re-verified.** The five 173 cascade rows (committed
+    indices 141–146) are scored with the uniform 5.80 s window; the exit is closed. All 24
+    boundary values re-read from the committed fixtures at this HEAD: **24/24 match, 0
+    mismatches.** Every previously ear-scored row re-verified **in both directions** — 7 YES
+    rows still hold their scored value, all 5 NO rows have been corrected away and **none still
+    holds its wrong value**, the 8 earlier-sitting ear-verified movers hold, and both dropped
+    rows (`perilous_realms`, `blue_monkey`) are still absent from the committed array.
+    **Exit J3 does not fire. Exit J4 does not fire** — the mover population is unchanged at 31
+    and every one is accounted for in the refreshed walkthrough index.
+  - **`stage1-live-run-prep.md` refreshed:** §4's logging gap closed and rewritten as what
+    ships; real inference re-confirmed by reading `forcedAlignmentRun.ts` (no memo, no cache
+    read, no stored-artifact branch — the Session J signature change added neither); §5 now
+    complete rather than representative. **One real defect fixed there:** the 173 table mixed
+    *committed* indices with *parse* indices, which differ by 2 after R.10's two drops, so half
+    that table pointed at the wrong row. Both columns are now given explicitly, per project,
+    with the convention stated. `computeUnscriptedRuns` measured at 10 / 0 / 0 runs across the
+    three corpora, v6's ten spans exactly matching the ten recitation intervals.
+  - **Verification, six numbers with status changes:** `npm test` 87 → **89 files**,
+    2283 → **2314 passed**, 1 skipped unchanged; `npm run lint` clean (unchanged);
+    `cargo check --features fa-inference` clean (unchanged); `cargo test --features
+    fa-inference` **209 passed / 20 ignored** (unchanged — zero Rust files touched); golden
+    replay **6/6** (unchanged, fixtures byte-identical); FA replay gate **45/45 green at rest**,
+    RED under M5/M6/M7.
+  - **Register state: unchanged.** 19 roster members, 19 closed, 0 open, `REGISTER_HIGH_WATER`
+    0. **The four R.12 structurally-derived closures (`085`, `224`, `307`, `383`) remain
+    PROVISIONAL** under R-AM(c) and stay provisional until the 24 rows are scored. Nothing this
+    session closed them or was entitled to.
+  - **Readiness for the live acceptance run: the code side is READY; the gate is the owner's
+    ear.** The logging blocker Session I reported is closed, so the run can now produce durable
+    evidence. What remains before it: the owner scores the 24 rows clean.
 
 - **2026-08-18 — WS1 Session I: R-AM RULED (no register closure without an ear pass on that
   rule's own movers); the mover population enumerated EXHAUSTIVELY at 31 and reconciled; the

@@ -2724,6 +2724,47 @@ rule could hypothetically reach.
 
 ---
 
+**R-AN ruling (2026-08-18, WS1 Session J, OWNER) — STANDING ENGINEERING AUTONOMY. Technical
+and architectural calls are delegated; the boundary is that autonomy covers HOW, never WHAT IS
+TRUE.**
+
+**(a) The delegation.** The implementing session is authorised to make technical and
+architectural decisions autonomously and to choose the most robust, permanent solution without
+pausing for routine confirmation. This explicitly covers **implementation shape, naming, test
+structure, file layout, refactor scope**, and anything else where a competent engineer would
+simply decide. Stopping to ask on any of these is now the wrong behaviour, not the safe one:
+the previous sessions' stop-and-rule exits had grown to cover choices with an obvious right
+answer, which costs a round trip and buys nothing.
+
+**(b) The one boundary, stated so it cannot be read away.** Autonomy covers **how**, not
+**what is true**. A **material discovery** is still reported the moment it is found, and is
+never absorbed into the work silently. Material means, non-exhaustively:
+
+  * a new defect;
+  * a shipped rule proven wrong;
+  * a control moving;
+  * a measurement contradicting the record.
+
+The point of moving fast is to not miss anything — a session that decides quickly and reports
+a contradiction immediately is behaving correctly; a session that decides quickly and folds a
+contradiction into its own patch is not.
+
+**(c) What this does to the stop-and-rule exits.** They narrow to the genuinely material.
+Routine implementation questions are the session's to call and are recorded in the ledger
+rather than raised as exits. An exit still fires for anything in (b).
+
+**(d) What it does NOT do.** It does not delegate the ear scoring (that is the owner's, by
+construction — R-AM), does not delegate acceptance of a contract guarantee, does not license
+re-baselining a failing golden replay or a failing gate, and does not weaken the provenance
+discipline: every number still comes from a production function, and every measurement block
+still names the function that produced it. Autonomy over *how to measure* is not autonomy over
+*what the measurement said*.
+
+**(e) Recorded scope.** Standing — it governs every session from Session J forward until
+explicitly revoked, and is not re-litigated per session.
+
+---
+
 **R.6 — Corpus start and end.**
 
   * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,

@@ -1,11 +1,24 @@
-# Stage 1 Lock — Live Acceptance Run Preparation (WS1 Session I, 2026-08-18)
+# Stage 1 Lock — Live Acceptance Run Preparation (WS1 Sessions I–J, 2026-08-18)
 
 > **What this is:** everything the live acceptance run needs, **prepared and not executed**.
 > Nothing in this file was run against the app; every claim below is a verification of
-> readiness, and the one gap found is reported rather than fixed.
+> readiness.
 >
-> **Prepared at HEAD `726112b`.** Run this only after `stage1-mover-audit.md` scores clean —
-> the audit is pass one, this walkthrough is pass two.
+> **Prepared at HEAD `726112b` (Session I); REFRESHED at Session J's HEAD.** Run this only
+> after `stage1-mover-audit.md` scores clean — the audit is pass one, this walkthrough is
+> pass two.
+>
+> **WHAT SESSION J CHANGED, so a reader knows which parts are new:**
+>
+> - **§4's logging gap is CLOSED.** It was the one blocker this file reported and did not
+>   fix. The rule-firing / engine / FA-fallback logging is built, and §4 now describes what
+>   ships rather than what is missing.
+> - **§5's index convention is CORRECTED.** The 173 table previously mixed *committed*
+>   indices (what the app's Segments tab shows) with *parse* indices (what the detectors
+>   use) — they differ by 2 after R.10's two drops, so half that table pointed at the wrong
+>   row. Both are now given explicitly, per project.
+> - **§5 is now COMPLETE rather than representative:** all ten recitations, all 31 movers,
+>   all 24 audit rows and every previously ear-scored row, each listed by index.
 
 ---
 
@@ -15,14 +28,16 @@
 npm run tauri:dev:fa
 ```
 
-Resolves to `tauri dev -f fa-inference` (`package.json`). Verified at this HEAD:
+Resolves to `tauri dev -f fa-inference` (`package.json`). Verified at Session J's HEAD:
 
 | check | result |
 |---|---|
 | `cargo check --features fa-inference` | **clean** |
 | `cargo test --features fa-inference` | **209 passed / 20 ignored** |
 | `npm run lint` (`tsc --noEmit`) | **clean** |
-| `npm test` | **87 files / 2283 passed / 1 skipped** |
+| `npm test` | **89 files / 2314 passed / 1 skipped** |
+| golden replay | **6/6**, `scripts/fixtures/phase4-baseline-*.csv` byte-identical |
+| FA replay gate | **45/45 green at rest**; RED under M5/M6/M7 |
 
 `ort` uses `load-dynamic`, so this compiles without an onnxruntime dylib present. **This is a
 DEBUG build** — the only mode FA can currently run in (release packaging and Step T are
@@ -80,95 +95,114 @@ and no stored-artifact branch anywhere in the function** — every Apply Sync re
 inference end to end. (The only caching in the vicinity is Whisper's *transcript* cache, keyed
 by file identity, which is an FA *input*, not an FA result.)
 
-**Fail-clean, so a silent fallback is possible and must be watched for:** any failure —
-unsupported language, absent model, hash mismatch, inference error, empty chunk plan — returns
-`null` and the run proceeds on Whisper tokens. It never throws and never aborts. Which is
-exactly why §4 matters.
+**Fail-clean, and as of Session J no longer fail-SILENT.** Any failure — unsupported language,
+absent model, hash mismatch, inference error, empty chunk plan, zero words — returns a
+`{status:'fallback', reason}` result and the run proceeds on Whisper tokens. It never throws
+and never aborts. What changed is that the reason is now **named in the persisted log**
+(`type: 'fa-fallback'`), and every audio-timed run additionally records **which engine
+produced its timing**. The operator therefore no longer has to infer FA engagement from
+`anchorSource` alone or from a devtools console that dies with the window — see §4.
+
+**Re-confirmed at Session J's HEAD, by reading the function rather than recalling it:**
+`runForcedAlignmentForSync` still contains **no result memo, no cache read, and no
+stored-artifact branch**. The Session J signature change added a `computeUnscriptedRuns` call
+and a discriminated return; it introduced no caching, so "every Apply Sync re-runs ONNX
+inference end to end" remains true at this HEAD.
 
 ---
 
-## 4. What the sync logs must capture — and the gap, reported not fixed
+## 4. What the sync logs capture — the gap is CLOSED
 
 ### 4.1 The requirement
 
 Every **warning**, **fallback**, **skip**, and **rule firing**, each carrying **timestamp**,
 **segment index**, and **owning rule**.
 
-### 4.2 What the current logging already emits
+### 4.2 Status at Session J's HEAD: SATISFIED
 
-`SyncLogEntry` (`src/types.ts:506`) is persisted to `project.syncLog`, grouped per run by
+`SyncLogEntry` (`src/types.ts`) is persisted to `project.syncLog`, grouped per run by
 `syncRunId`, rendered in the Sync Log panel and exportable via its Copy button.
 
 | requirement | status | evidence |
 |---|---|---|
-| timestamp | ✅ | `SyncLogEntry.timestamp` (`Date.now()`), on every entry |
+| timestamp | ✅ | `SyncLogEntry.timestamp`, on every entry |
 | run grouping | ✅ | `syncRunId`, on every entry |
-| **skips** | ✅ **fully** | `type: 'skip'` with `segmentIndex`, `segmentText`, `segmentTag`, `reason`, `matchedWords`, `totalWords`, `confidence`, `longestRun` |
+| **skips** | ✅ | `type: 'skip'` with `segmentIndex`, `segmentText`, `segmentTag`, `reason`, `matchedWords`, `totalWords`, `confidence`, `longestRun` |
 | **warnings** | ✅ | `type: 'warning'` + the `severity`/`fixHint` axis; `silence-error`, `malformed-token`, `unsupported-language`, `lock-*` all have their own types |
 | character-timing **fallback** | ✅ | the `unexpectedFallback` branch emits a real `'warning'` entry |
-| **segment index** | ⚠️ **partial** | the field exists but is documented and used as *"Skip entries only"* |
-| **FA fallback** (gate open, FA returned `null`) | ❌ **absent** | `console.warn` only, inside `runForcedAlignmentForSync`; no `SyncLogEntry` is created on any of its five failure paths |
-| **rule firings** (R.5 / R.10 / R.11 / R.12) | ❌ **absent** | `console.warn` only — `App.tsx:2957` (R.10), `:3113` (R.11), `:3140` (R.12); R.5 fires inside `computeFaChunkPlan` before inference and logs nothing at all |
-| **owning rule** | ❌ **absent** | `SyncLogEntry` has no rule field, and `SyncLogEntryType` has no rule-firing member |
+| **segment index** | ✅ | contract widened to "skip **and rule-correction** entries"; every detector already returned one |
+| **FA fallback** (gate open, FA did not produce the timing) | ✅ **NEW** | `type: 'fa-fallback'`, one per run, naming which of the four failure paths fired |
+| **which engine ran** | ✅ **NEW** | an unconditional `'info'` entry per audio-timed run: forced alignment (with aligned-word count) or Whisper |
+| **rule firings** (R.5 / R.10 / R.11 / R.12) | ✅ **NEW** | `type: 'rule-correction'`, one entry per finding, all four rules |
+| **owning rule** | ✅ **NEW** | `SyncLogEntry.owningRule` — a field, not a message prefix |
 
-### 4.3 The gap, stated plainly
+### 4.3 What shipped, by the five items this file specified
 
-**The current logging does NOT satisfy the requirement.** Three of the four categories are
-covered; **rule firings are not logged at all**, and **no log entry can name an owning rule**.
-Today a rule correction is visible only in the devtools console of a dev build — it is not in
-`project.syncLog`, not in the Sync Log panel, not in the Copy export, and gone the moment the
-window closes. The FA fallback is equally invisible: a run where FA silently failed and
-committed Whisper timing is **indistinguishable in the log from a run where FA succeeded**.
+1. **`src/types.ts`** — two `SyncLogEntryType` members (`'rule-correction'`, `'fa-fallback'`)
+   and two optional fields (`owningRule?: string`, `ruleDetail?`). `owningRule` is a widened
+   `string` as recommended, so a fifth rule needs no type edit.
+2. **`segmentIndex`'s contract widened** to skip + rule-correction entries. No code change —
+   the field already existed and every detector already returned one on the same PRE-filter
+   convention.
+3. **`App.tsx`** — the three existing `console.warn` sites (R.10, R.11, R.12) now also push
+   log entries. The `console.warn`s are KEPT: they are the live debugging surface, and
+   removing them would have been an unrequested behaviour change.
+4. **R.5** — taken, and NOT by the recommended route. This file proposed returning the
+   excision list out of `computeFaChunkPlan`. That turned out to be unnecessary:
+   `computeUnscriptedRuns` is **already exported** from `faChunkPlan.ts` (R.12 added it in
+   Session H for exactly this kind of need, and its own doc comment names R.5's deferred
+   `unscripted-gap` entry as a future caller). So `runForcedAlignmentForSync` calls it with
+   the *identical four arguments* it gave `computeFaChunkPlan`, and returns the result. No
+   signature change to the chunk planner, and — the reason it is done there rather than in
+   `App.tsx` — it is the only place holding the exact silence array the plan was built
+   against. `App.tsx`'s `aligned.silences` is a **separate detection pass**; logging R.5's
+   excisions against those would have reported spans R.5 never acted on. That provenance
+   requirement is asserted in `forcedAlignmentRun.test.ts`, not just commented.
+5. **`forcedAlignmentRun.ts`** — taken. The return type moved from
+   `TranscriptToken[] | null` to a discriminated `FaRunResult`
+   (`{status:'ok', tokens, unscriptedRuns, silenceError?} | {status:'fallback', reason, detail?}`).
+   The **fail-clean contract is unchanged** — it still never throws, and the caller still has
+   exactly one branch. What changed is that `null` no longer has to mean five different
+   things. A silence-detection failure *inside* the FA pass is reported on the **success**
+   result, because it degrades the chunk plan without preventing alignment — previously that
+   was `console.warn`-only and a run degraded that way would have recorded as clean.
 
-For a live acceptance run whose entire purpose is to record what the rules did, that is
-disqualifying — the run would produce no durable evidence of the thing being accepted.
+### 4.4 Why this mattered for the acceptance run
 
-### 4.4 The additive change this needs — **DESCRIBED, NOT WRITTEN. Stopping for approval.**
+Before this change, a run where FA silently fell back to Whisper timing was
+**indistinguishable in `project.syncLog`** from a run where FA succeeded: same entries, same
+summary, same committed shape. The user got Whisper timing under an explicit "high-precision
+sync" choice and no persisted artifact disagreed. A run whose purpose is to record what the
+rules did could not have produced that record.
 
-Per the session brief, this is described and left unbuilt. It is genuinely additive: no
-existing entry changes shape, no existing behaviour changes, and with no rule firing the log is
-byte-identical to today's.
-
-1. **`src/types.ts`** — add two `SyncLogEntryType` members, `'rule-correction'` and
-   `'fa-fallback'`. Add two optional fields to `SyncLogEntry`:
-   - `owningRule?: string` — `'R.5' | 'R.10' | 'R.11' | 'R.12' | 'R-U' | 'R-AA'`, kept a
-     widened `string` so a future rule needs no type edit.
-   - `ruleDetail?: { committedValue: number; correctedValue: number; reason: string }`.
-   Both optional, matching the file's own stated convention for later-added fields.
-2. **Widen `segmentIndex`'s contract** from "Skip entries only" to "skip and rule-correction
-   entries", and say so in its doc comment. No code change — the field already exists.
-3. **`App.tsx`** — at the three existing `console.warn` sites (R.10 `:2957`, R.11 `:3113`,
-   R.12 `:3140`), push one `makeSyncLogEntry` per finding into `pendingLogEntries` alongside
-   the existing warn. Each detector already returns `segmentIndex`, the committed value and
-   the corrected value, so **no detector changes and no new measurement is required** — this
-   is transcription of data that already exists at the call site.
-4. **R.5** needs one extra step, and it is the only non-trivial part: it fires inside
-   `computeFaChunkPlan` *before* inference, so its excisions must be returned out to the
-   caller to be logged. Recommended scope: return the excision list alongside the chunk plan
-   rather than logging from inside the service (services stay React-free, CLAUDE.md §6).
-5. **`forcedAlignmentRun.ts`** — the fail-clean contract says it never throws; extend it to
-   also never fail *silently*. Return a discriminated result (`{tokens} | {failed, reason}`)
-   so `App.tsx` can emit one `'fa-fallback'` warning entry naming which of the five failure
-   paths fired. This is the change with real blast radius — it touches the FA entry point's
-   signature — and is the one most worth ruling on separately.
-
-**Estimated cost:** items 1–3 ≈ 2 hours; item 4 ≈ 2 hours; item 5 ≈ 2–3 hours including tests.
-
-**Recommendation:** approve items 1–3 before the live run (they are what make the run's
-evidence durable, and they are near-zero risk), and treat items 4 and 5 as a separate decision
-— the run can proceed without them provided the operator captures the devtools console for
-the whole session, which covers R.5 and the FA fallback in a non-durable but sufficient form.
-
-**Nothing above has been written. Awaiting approval.**
+**Inertness, measured not asserted.** The change is additive: with no rule firing and no
+fallback, every builder returns `[]`. Proven at Session J's HEAD — all 31
+`scripts/fixtures/*.csv` byte-identical before and after; all nine anchor/run/chunk digests
+byte-identical on all three corpora; FA replay gate 45/45; golden replay 6/6;
+`faAnchors.ts` sha256 `b61e94cb…` unchanged.
 
 ---
 
-## 5. The walkthrough index
+## 5. The walkthrough index — complete, and indexed correctly
 
-Everything the walkthrough must visit, by segment index, so no searching is needed. Roles:
-**mover** = a rule changed its committed value at some point; **audit row** = scored in
-`stage1-mover-audit.md`; **previously scored** = Session H's 12-row pass; **ear-verified
-(earlier sitting)** = a register closure scored before Session H.
+**READ THIS BEFORE USING THE TABLES.** There are two different indices in play and Session I's
+version of this file mixed them, which would have sent the operator to the wrong row.
+
+- **committed idx** — position in the app's committed segment array. **This is what the
+  Segments tab shows and what you navigate by.** Use this column.
+- **parse idx** — position in the complete PRE-skip parse. This is what every detector
+  (`UnspokenScriptFinding`, `SeamFitFinding`, `RunPlacementFinding`) and every
+  `'rule-correction'` log entry reports, because those run before the skip filter.
+
+On **v6** and **spanish** the two are identical (nothing is dropped). On **173** they diverge:
+R.10 drops `perilous_realms` (parse 0) and `blue_monkey` (parse 12), so committed = parse − 1
+for parse 1–11 and committed = parse − 2 from parse 13 on. **A dropped row has a parse index
+and no committed index at all.** Both columns below are read from the committed fixtures at
+Session J's HEAD, not transcribed.
+
+Roles: **mover** = a rule changed its committed value at some point (all 31 are listed);
+**audit row** = scored in `stage1-mover-audit.md`'s 24; **control** = blinded unmoved control
+in that same 24; **scored** = ear-verified in Session H's 12-row pass or an earlier sitting.
 
 ### 5.1 V6's ten unscripted "Level N" recitations — R.12's evidence
 
@@ -188,79 +222,115 @@ confirm no scene change lands *inside* it:
 | R8 | "Level 9. The one whose name the stories use." | [1044.72, 1050.00] | `340_fifty_eight` → 1044.67 |
 | R9 | "Level 10. The one the fire remembers." | [1189.76, 1192.17] | `383_sixty_four` → 1188.95 |
 
-### 5.2 Per-project index — every mover, audit row and previously scored row
+**With Session J's logging, these are now checkable from the log as well as by ear:** each of
+the nine produces a `'rule-correction'` entry with `owningRule: 'R.12'` naming the run it
+moved the boundary out of and the interval it was allowed to land in.
 
-### V6 Natural Long Pause Segs (447 segments)
+### 5.2 V6 Natural Long Pause Segs — 447 segments, 447 committed, 0 dropped
 
-| seg idx | segment | value at HEAD | rule(s) | role in the walkthrough |
+`committed idx` = `parse idx` throughout.
+
+| idx | segment | value at HEAD | rule(s) | role |
 |---|---|---|---|---|
-| 35 | `036_outward_sentry` | 105.55 | — | **audit control row** |
-| 41 | `042_eleven_years` | 125.54 | R.5, R.12 | **mover**; previously scored (Session H) |
-| 42 | `043_night_migration` | 130.96 | R.5 | **mover**; ear-verified (earlier sitting) |
-| 59 | `060_reassuring_hand` | 184.02 | R-U | **mover**; **audit row** |
-| 84 | `085_the_spear_bearer` | 250.69 | R.12 | **mover**; **STRUCTURAL — audit row** |
-| 86 | `087_throwing_spear_poise` | 259.88 | R.5 | **mover**; previously scored (Session H) |
-| 124 | `125_night_circle` | 370.75 | R.5, R.12 | **mover**; previously scored (Session H) |
-| 132 | `133_wake_man` | 399.79 | — | **audit control row** |
-| 151 | `152_frozen_brush_mice` | 451.03 | R.11 | **mover**; ear-verified (earlier sitting) |
-| 157 | `158_scout_false_alert` | 466.09 | — | previously scored (Session H) — unmoved control |
-| 175 | `176_twenty_six_scout` | 521.71 | R.5, R.12 | **mover**; previously scored (Session H) |
-| 191 | `192_scout_listening` | 571.07 | R.11 | **mover**; previously scored (Session H) |
-| 223 | `224_thirty_three` | 663.785 | R-U, R-AA, R.12 | **mover**; **STRUCTURAL — audit row** |
-| 224 | `225_night_scouts` | 667.47 | R-U, R-AA | **mover**; **audit row** |
-| 225 | `226_four_scouts` | 671.18 | R-U, R-AA, R.11 | **mover**; ear-verified (earlier sitting) |
-| 241 | `242_fen_excited_run` | 710.11 | R-U | **mover**; **audit row** |
-| 244 | `245_seasonal_contrast` | 719.91 | — | **audit control row** |
-| 265 | `266_forty_one_burden` | 788.65 | R.5, R.12 | **mover**; previously scored (Session H) |
-| 306 | `307_forty_nine_years` | 924.92 | R.12 | **mover**; **STRUCTURAL — audit row** |
-| 307 | `308_scouts_leading` | 931.4 | R.5 | **mover**; ear-verified (earlier sitting) |
-| 317 | `318_scout_on_ridge` | 969.3 | — | previously scored (Session H) — unmoved control |
-| 331 | `332_fading_sound` | 1020.65 | — | **audit control row** |
-| 339 | `340_fifty_eight` | 1044.67 | R-U, R.5, R.12 | **mover**; previously scored (Session H) |
-| 382 | `383_sixty_four` | 1188.95 | R.12 | **mover**; **STRUCTURAL — audit row** |
-| 411 | `412_youngest_scout` | 1312.15 | — | **audit control row** |
+| 35 | `036_outward_sentry` | 105.55 | — | **audit #9 — control** |
+| 41 | `042_eleven_years` | 125.54 | R.5, R.12 | **mover**; scored (Session H, NO at 127.17 → corrected) |
+| 42 | `043_night_migration` | 130.96 | R.5 | **mover**; scored (earlier sitting) |
+| 59 | `060_reassuring_hand` | 184.02 | R-U | **mover**; **audit #11** |
+| 84 | `085_the_spear_bearer` | 250.69 | R.12 | **mover**; **audit #23 — structurally-derived** |
+| 86 | `087_throwing_spear_poise` | 259.88 | R.5 | **mover**; scored (Session H, YES) |
+| 124 | `125_night_circle` | 370.75 | R.5, R.12 | **mover**; scored (Session H, NO at 372.35 → corrected) |
+| 132 | `133_wake_man` | 399.79 | — | **audit #20 — control** |
+| 151 | `152_frozen_brush_mice` | 451.03 | R.11 | **mover**; scored (earlier sitting) |
+| 157 | `158_scout_false_alert` | 466.09 | — | scored (Session H, YES) — unmoved control |
+| 175 | `176_twenty_six_scout` | 521.71 | R.5, R.12 | **mover**; scored (Session H, NO at 524.39 → corrected) |
+| 191 | `192_scout_listening` | 571.07 | R.11 | **mover**; scored (Session H, YES) |
+| 223 | `224_thirty_three` | 663.785 | R-U, R-AA, R.12 | **mover**; **audit #24 — structurally-derived** |
+| 224 | `225_night_scouts` | 667.47 | R-U, R-AA | **mover** (net-unmoved); **audit #12** |
+| 225 | `226_four_scouts` | 671.18 | R-U, R-AA, R.11 | **mover**; scored (earlier sitting) |
+| 241 | `242_fen_excited_run` | 710.11 | R-U | **mover**; **audit #4** |
+| 244 | `245_seasonal_contrast` | 719.91 | — | **audit #21 — control** |
+| 265 | `266_forty_one_burden` | 788.65 | R.5, R.12 | **mover**; scored (Session H, NO at 790.33 → corrected) |
+| 306 | `307_forty_nine_years` | 924.92 | R.12 | **mover**; **audit #13 — structurally-derived** |
+| 307 | `308_scouts_leading` | 931.4 | R.5 | **mover**; scored (earlier sitting) |
+| 317 | `318_scout_on_ridge` | 969.3 | — | scored (Session H, YES) — unmoved control |
+| 331 | `332_fading_sound` | 1020.65 | — | **audit #6 — control** |
+| 339 | `340_fifty_eight` | 1044.67 | R-U, R.5, R.12 | **mover**; scored (Session H, NO at 1047.57 → corrected) |
+| 382 | `383_sixty_four` | 1188.95 | R.12 | **mover**; **audit #14 — structurally-derived** |
+| 411 | `412_youngest_scout` | 1312.15 | — | **audit #10 — control** |
 
-### 173 Segs Project (173 segments)
+### 5.3 173 Segs Project — 175 parsed, 173 committed, 2 dropped
 
-| seg idx | segment | value at HEAD | rule(s) | role in the walkthrough |
+**This is the table Session I got wrong.** Both indices given; navigate by `committed`.
+
+| committed idx | parse idx | segment | value at HEAD | rule(s) | role |
+|---|---|---|---|---|---|
+| — | 0 | `perilous_realms` | *dropped* | R.10 | **mover**; **must NOT reappear** |
+| 0 | 1 | `hostile_landscape` | 0 | R.10 | **mover**; scored (earlier sitting) |
+| 4 | 5 | `abysmal_opinion` | 17.88 | R-U, R-AA, R.11 | **mover**; scored (earlier sitting) |
+| 11 | 13 | `eternal_focus` | 37.73 | R-U, R-AA | **mover** (net-unmoved); **audit #22** |
+| — | 12 | `blue_monkey` | *dropped* | R-U, R-AA, R.10 | **mover**; scored (earlier sitting); **must NOT reappear** |
+| 35 | 37 | `vessel_access` | 138.54 | — | **audit #7 — control** |
+| 45 | 47 | `vessel_damage_clue` | 174.74 | R-U | **mover**; scored (earlier sitting) |
+| 67 | 69 | `earthwork_corridor` | 256.33 | — | scored (Session H, YES) — unmoved control |
+| 91 | 93 | `safety_passage` | 361.37 | — | **audit #19 — control** |
+| 123 | 125 | `fallen_regiment_site` | 507.01 | — | scored (Session H, YES) — unmoved control |
+| 141 | 143 | `unstable_spirit_journey` | 586.28 | R-U, R-AA | **mover** (net-unmoved); **audit #8** |
+| 142 | 144 | `broken_link` | 593.88 | R-U, R-AA | **mover** (net-unmoved); **audit #16** |
+| 143 | 145 | `battle_network` | 597.83 | R-U, R-AA | **mover** (net-unmoved); **audit #3** |
+| 144 | 146 | `protection_failure` | 603.69 | R-U, R-AA | **mover** (net-unmoved); **audit #1** |
+| 145 | 147 | `entry_clash` | 609.24 | R-U, R-AA | **mover** (net-unmoved); **audit #18** |
+| 146 | 148 | `unstable_energy_consequence` | 612.51 | R-U, R-AA | **mover** (net-unmoved); **audit #15** |
+| 149 | 151 | `team_disperse` | 624.68 | — | **audit #2 — control** |
+
+### 5.4 Spanish Project — 27 segments, 27 committed, 0 dropped
+
+`committed idx` = `parse idx` throughout.
+
+| idx | segment | value at HEAD | rule(s) | role |
 |---|---|---|---|---|
-| 0 | `hostile_landscape` | 0 | R.10 | **mover**; ear-verified (earlier sitting) |
-| 0 | `perilous_realms` | — | R.10 | **mover**; **dropped — must NOT reappear** |
-| 4 | `abysmal_opinion` | 17.88 | R-U, R-AA, R.11 | **mover**; ear-verified (earlier sitting) |
-| 11 | `eternal_focus` | 37.73 | R-U, R-AA | **mover**; **audit row** |
-| 12 | `blue_monkey` | — | R-U, R-AA, R.10 | **mover**; ear-verified (earlier sitting); **dropped — must NOT reappear** |
-| 35 | `vessel_access` | 138.54 | — | **audit control row** |
-| 45 | `vessel_damage_clue` | 174.74 | R-U | **mover**; ear-verified (earlier sitting) |
-| 67 | `earthwork_corridor` | 256.33 | — | previously scored (Session H) — unmoved control |
-| 91 | `safety_passage` | 361.37 | — | **audit control row** |
-| 123 | `fallen_regiment_site` | 507.01 | — | previously scored (Session H) — unmoved control |
-| 141 | `unstable_spirit_journey` | 586.28 | R-U, R-AA | **mover**; **audit row** |
-| 142 | `broken_link` | 593.88 | R-U, R-AA | **mover**; **audit row** |
-| 143 | `battle_network` | 597.83 | R-U, R-AA | **mover**; **audit row** |
-| 144 | `protection_failure` | 603.69 | R-U, R-AA | **mover**; **audit row** |
-| 145 | `entry_clash` | 609.24 | R-U, R-AA | **mover**; **audit row** |
-| 146 | `unstable_energy_consequence` | 612.51 | R-U, R-AA | **mover**; **audit row** |
-| 149 | `team_disperse` | 624.68 | — | **audit control row** |
+| 5 | `006_attack_setup` | 12.87 | — | **audit #5 — control** |
+| 13 | `014_keep_moving` | 37.98 | — | **audit #17 — control** |
+| 15 | `016_prepares_weapons` | 44.9 | — | scored (Session H, YES) — unmoved control |
+| 22 | `023_scylla_six_sailors` | 65.12 | R-U | **mover**; scored (earlier sitting) |
 
-### Spanish Project (27 segments)
+### 5.5 Mover roll-call — all 31 accounted for
 
-| seg idx | segment | value at HEAD | rule(s) | role in the walkthrough |
-|---|---|---|---|---|
-| 5 | `006_attack_setup` | 12.87 | — | **audit control row** |
-| 13 | `014_keep_moving` | 37.98 | — | **audit control row** |
-| 15 | `016_prepares_weapons` | 44.9 | — | previously scored (Session H) — unmoved control |
-| 22 | `023_scylla_six_sailors` | 65.12 | R-U | **mover**; ear-verified (earlier sitting) |
-
----
+Every one of `stage1-mover-audit.md` §2.1's 31 movers appears above: **18 v6** (rows 1–18 of
+that table), **12 in 173** (rows 19–30, two of them dropped), **1 spanish** (row 31).
+Cross-checked against the committed fixtures at Session J's HEAD — every value in the "value
+at HEAD" columns above was read from
+`scripts/fixtures/phase4-fa-second-baseline-{corpus}-segments.csv`, not copied forward.
 
 ## 6. What a clean run looks like
 
-- Every one of the three projects syncs to completion with FA engaged (`anchorSource:
-  'forced-alignment'` on the committed segments — the one durable in-app signal that FA
-  actually ran rather than falling back).
-- Every value in §5.2 matches the "value at HEAD" column. A mismatch means the live path and
-  the committed fixture disagree, which is a bigger finding than any single boundary.
-- `perilous_realms` and `blue_monkey` do **not** appear as timed segments in 173.
-- No committed boundary in V6 falls inside any interval in §5.1.
+- Every one of the three projects syncs to completion with FA engaged. **Two independent
+  signals now, where Session I had one:** `anchorSource: 'forced-alignment'` on the committed
+  segments, AND the run's own `'info'` engine entry in the Sync Log naming forced alignment
+  with its aligned-word count. If those two ever disagree, that is a finding in itself.
+- **No `'fa-fallback'` entry in any of the three runs' logs.** This is the check that could
+  not be made before Session J: a run that fell back silently used to look identical to a
+  clean one.
+- Every value in §5.2–5.4 matches its "value at HEAD" column. A mismatch means the live path
+  and the committed fixture disagree, which is a bigger finding than any single boundary.
+- `perilous_realms` and `blue_monkey` do **not** appear as timed segments in 173. Each should
+  additionally leave an `owningRule: 'R.10'` rule-correction entry naming it.
+- No committed boundary in V6 falls inside any interval in §5.1. Expect **nine**
+  `owningRule: 'R.12'` entries on v6 — one per recitation except R0 — and check their
+  `correctedValue`s against §5.1.
+- Expect **ten** `owningRule: 'R.5'` entries on v6 and **zero** on 173 and Spanish.
+  **Measured, not estimated:** `computeUnscriptedRuns` run over the committed fixtures at
+  Session J's HEAD returns 10 / 0 / 0, and v6's ten spans are *exactly* the ten recitation
+  intervals in §5.1 — `[0.08, 3.40]`, `[125.54, 129.01]`, `[251.56, 253.11]`,
+  `[371.54, 373.27]`, `[522.00, 525.63]`, `[663.91, 666.48]`, `[789.26, 791.69]`,
+  `[925.14, 928.93]`, `[1044.72, 1050.00]`, `[1189.76, 1192.17]`. Note this is **ten**, not
+  R.5's eight *movers*: a run is excised whether or not excising it ends up relocating a
+  committed boundary, so the log count and the mover count are different quantities and
+  should not be reconciled against each other.
+- Expect **four** `owningRule: 'R.11'` entries (3 v6, 1 in 173) and **zero** rule entries of
+  any kind on Spanish.
 - Preview plays correctly on all three — this is also what discharges **D-1 item 8**
   (see `stage1-non-ear-remainder.md`, D4).
+
+**Capture the Sync Log's Copy export for each of the three runs.** That export is now the
+run's durable evidence; with the logging in place there is no longer any reason for the
+acceptance run to depend on a devtools console that dies with the window.

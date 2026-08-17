@@ -53,6 +53,17 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // longer fits). Amber matches lock-refused: the user's project is in a
   // valid state, their earlier lock just wasn't honoured this time.
   'lock-not-restored': { label: 'LOCK NOT RESTORED', className: 'bg-amber-500/10 text-amber-400 border-amber-500/30' },
+  // WS1 Session J — a post-inference rule (R.5/R.10/R.11/R.12) corrected this
+  // run. Blue/info, matching 'malformed-token': the pipeline caught something
+  // and fixed it, which is the system working rather than degrading. The badge
+  // is intentionally generic; the entry's own `owningRule` names which rule,
+  // and the message leads with it.
+  'rule-correction': { label: 'RULE', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' },
+  // WS1 Session J — high-precision sync was ON and did not run. Orange/warn,
+  // NOT red: the sync succeeded and the timeline is usable, but the user asked
+  // for forced alignment and got Whisper timing, which they would otherwise
+  // have no way to find out.
+  'fa-fallback': { label: 'FA FALLBACK', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

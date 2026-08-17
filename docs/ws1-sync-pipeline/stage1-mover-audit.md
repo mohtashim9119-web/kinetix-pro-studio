@@ -242,7 +242,7 @@ values on every row. At 5.80 s (half-window 2.90 s) that holds on 9 of the 14 au
 Containing all of them would need a uniform window of **≈40.5 s** — which breaks the
 listening budget outright and would itself be the larger defect.
 
-**The resolution, proposed for ratification, under which this document is built.** All five
+**The resolution — RATIFIED BY THE OWNER, 2026-08-18 (WS1 Session J). I4 is CLOSED.** All five
 are the same structure: a contiguous 173 cascade (indices 141–146) where R-U's instant
 reading shifted a run of consecutive segments forward by up to 20 s and **R-AA reverted every
 one of them**. Their competing value is a *reverted transient* — a value no rule proposes at
@@ -250,8 +250,19 @@ HEAD, already ruled wrong, and not a live alternative. The "hear both candidates
 exists so a genuinely moved row can be scored against its real alternative; where the only
 alternative is a discarded historical artifact, a single-value judgement at the committed
 boundary is the correct test, and it is exactly the test the control arm takes. **Blinding is
-unaffected either way, because the window is uniform.** Proposed: keep the uniform 5.80 s
-window and score these five as stated. **Not self-approved — flagged for the owner.**
+unaffected either way, because the window is uniform.**
+
+> **OWNER RULING, 2026-08-18:** *the five 173 cascade rows (committed indices 141–146) are
+> scored with the **uniform 5.80 s window**, exactly as every other row. I4 is resolved as
+> proposed and the exit is closed.*
+
+Consequently **every one of the 24 rows in §1 carries a 5.80 s window with no exception**, and
+the five cascade rows are scored as single-value judgements at their committed boundary. The
+audit is drawn, ratified and ready to score.
+
+**Re-verified at WS1 Session J's HEAD:** all 24 boundary values in §1 were re-read from
+`scripts/fixtures/phase4-fa-second-baseline-{corpus}-segments.csv` and **all 24 match** —
+0 mismatches. The list below is current, not inherited.
 
 ---
 ## 4. SEALED KEY — do not read until §1 is fully scored
