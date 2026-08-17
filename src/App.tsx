@@ -4006,6 +4006,31 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, project.segments, resizeSettleTick]);
 
+  // LIVE AUTO-FOLLOW — while playback is running and the segment drawer is
+  // already open, the drawer retargets to whichever segment the playhead is in,
+  // so its text/timing/rule indicators track the video across boundaries.
+  //
+  // Three deliberate properties:
+  //  - It only ever RETARGETS an open drawer; it never opens or closes one.
+  //    `selectedSegmentId === null` covers both "drawer closed" and "the
+  //    heading editor is open" (the two ids are mutually exclusive), so a
+  //    heading being edited is never yanked away mid-playback.
+  //  - It does NOT seek. `handleSegmentClick` pairs selection with a
+  //    setCurrentTime/audio resync because a click is a navigation; this is the
+  //    inverse direction (time drives selection), and seeking here would fight
+  //    the playback loop.
+  //  - It fires once per BOUNDARY CROSSING, not once per frame: `currentSegment`
+  //    re-resolves on every `currentTime` tick, but the id guard means
+  //    `setSelectedSegmentId` is only called when the resolved segment actually
+  //    changes. A null `currentSegment` (playhead in a skipped-segment gap, or
+  //    past the last segment) holds the current target rather than blanking it.
+  useEffect(() => {
+    if (!isPlaying || selectedSegmentId === null) return;
+    const playingId = currentSegment?.id;
+    if (!playingId || playingId === selectedSegmentId) return;
+    setSelectedSegmentId(playingId);
+  }, [isPlaying, currentSegment, selectedSegmentId]);
+
   // Project Settings Step 2 — the preview's native backing-buffer dimensions,
   // derived from (project.aspectRatio, project.resolutionTier) via
   // resolutionConfig.ts's lookup table. Threaded into PreviewStage, which
