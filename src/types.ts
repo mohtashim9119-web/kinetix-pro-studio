@@ -512,10 +512,13 @@ export type SyncLogEntryType =
   | 'lock-not-restored'
   /** 'rule-correction' — WS1 Session J. ONE post-inference rule fired on ONE
    *  scene: R.5 (unscripted-audio excision), R.10 (scripted text never
-   *  spoken), R.11 (chunk-fit boundary correction) or R.12 (the atomic-run
-   *  invariant). Always carries `owningRule`; always carries `segmentIndex`
-   *  (R.5's is derived from the excised span's containing segment — see
-   *  `buildUnscriptedRunLogEntries`); carries `ruleDetail` with the value the
+   *  spoken), R.11 (chunk-fit boundary correction), R.12 (the atomic-run
+   *  invariant, opening edge) or R.13 (the atomic-utterance invariant, its
+   *  closing edge). Always carries `owningRule`; carries `segmentIndex` as a
+   *  COMMITTED index whenever the scene is on the timeline (R.5's is derived
+   *  from the excised span's containing segment — see
+   *  `buildUnscriptedRunLogEntries`) and omits it when the scene is not
+   *  (R.10); carries `ruleDetail` with the value the
    *  run would have committed WITHOUT the rule and the value it committed
    *  instead, so a reader can check the correction rather than trust it.
    *
@@ -558,15 +561,32 @@ export interface SyncLogEntry {
   syncRunId: string;
   type: SyncLogEntryType;
   message: string;
-  /** Skip AND 'rule-correction' entries: 0-based index into the PRE-filter
-   *  (aligned) segments array, so it still points at the scene the user wrote.
+  /** TWO conventions, one per entry kind, both stated here because assuming
+   *  they were the same is what produced the WS1 Session K defect.
    *
-   *  WS1 Session J widened this from "Skip entries only". The field itself is
-   *  unchanged — every rule detector (`UnspokenScriptFinding`,
-   *  `SeamFitFinding`, `RunPlacementFinding`) already returns a
-   *  `segmentIndex` on this same PRE-filter convention, which is exactly why
-   *  rule logging needed no new measurement: the value was already at the
-   *  call site, being discarded. */
+   *   - 'skip' entries: 0-based index into the PRE-filter (parse) segments
+   *     array — the scene the user wrote. A skipped scene has no committed
+   *     index by definition, so this is the only index it can carry, and
+   *     `SyncLogPanel` renders it as "Segment N skipped", never as "Scene N".
+   *
+   *   - 'rule-correction' entries: 0-based index into the COMMITTED array —
+   *     the scene number the timeline shows and the user can navigate to.
+   *     ABSENT when the rule's subject is not on the timeline (R.10 drops its
+   *     scenes); the message names the scene by tag in that case.
+   *
+   *  WS1 Session J widened this field from "skip entries only" and recorded
+   *  that "every rule detector already returns a `segmentIndex` on this same
+   *  PRE-filter convention". THAT CLAIM WAS FALSE and was never checked
+   *  against the code: `UnspokenScriptFinding` and `SeamFitFinding` are
+   *  parse-indexed, `RunPlacementFinding` and `UtterancePlacementFinding` are
+   *  committed-indexed. Both were rendered as "Scene N + 1", so on 173 —
+   *  the only corpus where a scene is dropped — R.11 named `abysmal_opinion`
+   *  "scene 6" for a scene the timeline shows as scene 5.
+   *
+   *  The conversion now happens in exactly one place, `syncLog.ts`'s
+   *  `committedIndexOf`, resolving by segment id; no builder may copy a
+   *  detector's own `segmentIndex` onto an entry. `syncLog.indexConvention.test.ts`
+   *  fails the build if one does. */
   segmentIndex?: number;
   /** Skip entries only: the segment's text, truncated for display. */
   segmentText?: string;

@@ -56,6 +56,14 @@ const ALLOWLIST = new Set<string>([
   // is a decision sheet with a recommended answer per row awaiting owner
   // sign-off. Their RESULTS go to docs/work-in-progress.md §11.
   'docs/ws1-sync-pipeline/stage1-mover-audit.md',
+  // WS1 Session K's root-cause record for the two mover-audit failures, and the
+  // annotated ear list drawn from it. Same class as the procedures above: the
+  // ear list is a blinded pass with a sealed key and is worked THROUGH, and the
+  // root-cause file is the evidence the owner rules from. CLAUDE.md's rule that
+  // an audit report must be persisted into docs/ rather than left in a chat
+  // transcript is what requires the first one to exist at all.
+  'docs/ws1-sync-pipeline/stage1-session-k-rootcause.md',
+  'docs/ws1-sync-pipeline/stage1-session-k-ear-list.md',
   'docs/ws1-sync-pipeline/stage1-non-ear-remainder.md',
   // The live acceptance run's own run sheet (WS1 Session I) — a walkthrough
   // index worked through against the running app, not a status file. Its

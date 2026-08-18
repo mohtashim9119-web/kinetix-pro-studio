@@ -4,6 +4,13 @@
  */
 
 // ---------------------------------------------------------------------------
+// BOTH SIDES (ruling R-AO): the corrected boundary may be re-anchored to
+// EITHER edge of the mis-fitting chunk — `SeamFitFinding.edge` is
+// `'start' | 'end'` and the choice is made per finding, never fixed. Both
+// branches are exercised by `faSeamFitGate.test.ts`. A rule that could only
+// move a boundary to a chunk's start would be exactly the half-built shape
+// R-AO exists to prevent.
+//
 // R.11 — CHUNK-FIT BOUNDARY CORRECTION.
 //
 // THE MECHANISM (WS1 Session F root cause, ear-pass item 7 + the two OV3

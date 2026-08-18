@@ -6,6 +6,14 @@
 // ---------------------------------------------------------------------------
 // R.10 — SCRIPTED TEXT NEVER SPOKEN.
 //
+// BOTH SIDES (ruling R-AO): SINGLE-SIDED, BECAUSE the outcome is a DROP, not a
+// boundary move — an absence has no two edges to constrain. What would be the
+// "other side" is the surviving neighbour's boundary, and that is deliberately
+// NOT this rule's: `snapCoveredBoundaries` re-derives it from the survivor's
+// own spoken edges after the drop, which is the whole reason the drop is safe.
+// Both halves of that claim are tested — the drop itself and the survivor's
+// re-derived boundary — in `faUnspokenGate.test.ts`.
+//
 // The mirror image of R.5. R.5 covers real audio the script does not account
 // for (absorbed by excising it from the chunk window). This covers the
 // opposite: script words with no matching audio at all — an on-screen-only

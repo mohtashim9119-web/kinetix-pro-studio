@@ -164,6 +164,20 @@ function computeRunContext(
 // ---------------------------------------------------------------------------
 // R.5 — UNSCRIPTED AUDIO (WS1 Session D).
 //
+// BOTH SIDES (ruling R-AO — every rule states and tests both sides of what it
+// constrains, and the statement is enforced by `ruleBothSides.test.ts`):
+//   START of the excision — the run's own `startSec`, the first transcribed
+//     token no scene's script accounts for.
+//   END of the excision — the run's own `endSec` together with `qiSplit`, the
+//     script word index at which the script resumes. Both edges are carried on
+//     `UnscriptedRun` and both are exercised by `faChunkPlan.test.ts`'s R.5
+//     block; neither edge is inferred from the other.
+//   NOT COVERED BY THIS RULE, stated so the gap is deliberate rather than
+//     assumed: where the COMMITTED BOUNDARY lands relative to the excised run.
+//     That is R.12 (opening edge) and R.13 (closing edge) in
+//     `faRunPlacementGate.ts`, and it is a separate rule because the boundary
+//     does not exist yet when R.5 runs.
+//
 // THE DEFECT. Between two committed segments the narrator can say something
 // that appears in NO segment's script — V6's ten spoken "Level N ..." chapter
 // recitations are the measured instance (2.79-5.58s each). Forced alignment

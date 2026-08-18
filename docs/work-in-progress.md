@@ -101,7 +101,7 @@ lock-gate text, not copied from the deleted file uncritically).
 | 1b | 1 | **DONE** | — | — | Transcript Inspector, both corpus projects, 2026-08-04 |
 | 2a | 1 | **DONE** | — | — | Multilingual model swap, 38/44 verified |
 | 2b | 1 | **DONE** | — | — | DTW measured zero effect, permanently abandoned |
-| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | **SUPERSEDED 2026-08-18 (WS1 Session I, owner rulings 2 and 4): the two blind 12/12 passes are replaced by ONE exhaustive mover audit (`stage1-mover-audit.md`, 24 rows — every never-scored and structurally-derived mover plus a 10-row blinded control arm), with the owner's live walkthrough serving as the second independent pass.** **2026-08-18 (WS1 Session J): the logging blocker is CLOSED** — rule-firing / engine / FA-fallback entries ship, so the acceptance run can produce durable evidence of what the rules did; the audit's I4 exit is ratified and the 24-row list is drawn, verified against HEAD and ready to score. **Remaining gate to the run: the owner scoring those 24 rows.** `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment still carries the pre-Session-I wording and should be re-worded when the flip is next attempted — note that the STALE COPY of its value in `types.ts` is fixed and can no longer drift (`faDefaultDrift.test.ts` fails the build on any disagreeing restatement in `src/`) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
+| **3 (= Task 5)** | 1 | **PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF** (WS1 Session H, value-only revert of R-AK's ON) | — | **SUPERSEDED 2026-08-18 (WS1 Session I, owner rulings 2 and 4): the two blind 12/12 passes are replaced by ONE exhaustive mover audit (`stage1-mover-audit.md`, 24 rows — every never-scored and structurally-derived mover plus a 10-row blinded control arm), with the owner's live walkthrough serving as the second independent pass.** **2026-08-18 (WS1 Session J): the logging blocker is CLOSED** — rule-firing / engine / FA-fallback entries ship, so the acceptance run can produce durable evidence of what the rules did; the audit's I4 exit is ratified and the 24-row list is drawn, verified against HEAD and ready to score. **2026-08-18 (WS1 Session K): the 24 rows WERE scored — 22/24.** Both failures were root-caused. Clip 1 (173 `protection_failure` 603.69) is **NOT a defect** — it is the exact midpoint of the FA gap between two confidence-1.000 words at a scripted mid-sentence split with no detected silence in [598.04, 604.82]; the owner verified it CORRECT in the app and ruled such rows STAY in future ear draws. Clip 12 (v6 `225_night_scouts` 667.47) IS a defect and is fixed by **R.13**, the closing half of R.12 — blast radius 1 of 649. A THIRD, independent defect was found while tracing the index convention: R.11's log entries carried a PARSE index while R.12's carried a COMMITTED one, both rendered as "Scene N", so on 173 the Sync Log named `abysmal_opinion` scene 6 for a scene the timeline shows as scene 5 — display-only, no committed value affected, now fixed and machine-checked (ruling **R-AO**). **Remaining gate to the run: the owner scoring `stage1-session-k-ear-list.md`'s 28 rows.** `faGate.ts`'s `FA_PROJECT_DEFAULT_ON` doc comment still carries the pre-Session-I wording and should be re-worded when the flip is next attempted — note that the STALE COPY of its value in `types.ts` is fixed and can no longer drift (`faDefaultDrift.test.ts` fails the build on any disagreeing restatement in `src/`) | D1–D25 shipped (D7 cancelled), `fa-inference` feature OFF by default. `fa_align_production` (`fa_production.rs`) is a real, reachable, gated production caller. 2026-08-17 (WS1 Session G): the gate moved from a per-MACHINE `uiStateStore` key to the per-PROJECT `Project.faHighPrecisionSync`, default OFF → ON (owner ruling R-AK, resolving F6). **2026-08-18 (WS1 Session H): R.12 (the atomic-run invariant, `faRunPlacementGate.ts`) landed and closed nine defects it found on v6 — none visible to any rule built before it — and the default was reverted ON → OFF, value-only.** Everything R-AK built (per-project field, absent-key semantics, G1 proof, migration handling, fail-clean precheck) is unchanged; see `faGate.test.ts` for the re-pinned assertions. Golden replay 6/6, unchanged |
 | 3b | 1 | **DONE, 2026-08-15 — PHASE CLOSED** (Rules 1-5 done — French elision, Spanish cardinals 0-30, German cardinals 0-30, Portuguese cardinals 0-20/30 PT-BR, French cardinals 0-30 minus 21; currency/thousands-separator expansion, Portuguese 21-29, and French 21 PERMANENTLY out of scope, decision (b)) | project owner (assigned 2026-08-15) | — | Language-keyed normalization (fr/de/pt contractions, numbers, currency) — see `sync-pipeline-v2-plan.md`'s H.5 decision block for the full per-rule classification |
 | 3c | 1 | **CLOSED, 2026-08-15 — PHASE FULLY CLOSED.** The two reassigned qi-bookkeeping sub-items (diacritic-preserving fold, thousands/decimal separator inversion) are DONE (prior pass). The phase's original scope, hyphen-asymmetry, is CLOSED BY WRITTEN ACCEPTANCE, no code change — owner ear-test confirmed the only measured effect of fixing it (V6 seg 150, 457.83→458.12) is a regression, so it is accepted as a documented Stage 1 defect under D.-1 criterion 3 rather than fixed | project owner (assigned 2026-08-15) | — | Written acceptance ruling: `sync-pipeline-v2-plan.md`'s Phase 3c entry (measured scope 19 compounds/8 clean-fixable/1 boundary-affecting; mechanism — anchored-only midpoint, no silence snap; ear-test result; revisit trigger = Phase 5 fence changing this seam's anchor derivation). qi-bookkeeping fixes: `canonicalize()`'s language-gated `languageCode` parameter, prior changelog entry |
 | 3d | 1 | **SKIPPED** | — | Reopens only if Phase 3's post-FA measurement shows a silence-side cost | Phase 2b's own finding: fixed −45dB threshold isn't the binding constraint (spot-verified against a waveform; failure is entirely token-side) |
@@ -649,6 +649,21 @@ entry below), so this contract's *blocking* set for the Stage 1 lock is empty �
 reachability defect and P7's narrower-than-worded scope are recorded, scheduled, and not
 Stage 1 regressions.
 
+**2026-08-18 (WS1 Session K) — NO P-ITEM MOVED, and that is the reported result rather than
+an omission.** P1/P2/P3/P5/P6 stay ✅, P4/P8 stay ❌ (Phase 4, not started), P7 stays partial.
+R.13 adds a boundary correction and changes no Stage-1→Stage-2 handoff type.
+
+**One finding of this contract's CLASS was found and closed, outside P1–P8.** The
+index-convention defect (see §11's Session K entry) is the same failure mode P7 and P8
+describe — an identity carried on an output with no type enforcement, kept correct by
+discipline alone. `SyncLogEntry.segmentIndex` had **two live conventions and a `types.ts`
+comment asserting there was one**. It is not a P-row because it is a LOG output, not the
+Stage-1→Stage-2 bundle, and adding it to the table would misrepresent the contract's scope.
+It is recorded here because the next session to work P7/P8 should know the class has already
+produced one shipped defect: "documented as uniform, never checked" is the exact shape P8 warns
+about, and `syncLog.indexConvention.test.ts` is the pattern P8's own fix should follow — a test
+that makes the convention unfalsifiable rather than a comment that asserts it.
+
 **2026-08-18 (WS1 Session J) — P6 is BUILT AND PASSES; A4 and Contract IN A3 are ACCEPTED IN
 WRITING. This contract's blocking set for the Stage 1 lock is now EMPTY.**
 
@@ -953,6 +968,144 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-18 (WS1 SESSION K) — THE 24-ROW MOVER AUDIT SCORED 22/24; BOTH FAILURES
+ROOT-CAUSED; R.13 SHIPPED; A THIRD DEFECT FOUND IN THE DISPLAY PATH; RULING R-AO RECORDED.**
+
+**(a) Clip 1 — 173 `protection_failure` @ 603.69 — NOT A DEFECT, and the contradiction with the
+earlier pass is resolved.** The committed value is the exact millisecond midpoint of the
+forced-alignment gap between `on` [603.600, 603.660] and `for` [603.720, 603.800], **both at
+confidence 1.000** (`.work-phase4/replay/173/fa_production_words.json`, the
+`fa_align_production` capture). The two scenes split ONE sentence mid-way ("…everything a
+military force depends on" ‖ "for sustained operation, ceases to function…") and there is **no
+detected silence anywhere in [598.04, 604.82]** — one continuous 6.8 s utterance. The ear
+question therefore has no answer at 603.69 or at any other value in that span.
+
+*The contradiction, settled by git and by neither of the two proposed branches.* `git show`
+across `580ba0f → 55301be` on `phase4-fa-second-baseline-173-segments.csv`: the value is
+**603.69 at every commit** (R-U moved it to 612.51, R-AA reverted it in `52140e5`, before the
+OV3 triage scored it). The text never changed either. What changed at `3faf0ea` is the `order`
+field, **146 → 144**, R.10's two-drop reindex — and, decisively, **the presentation**: the OV3
+triage (§11(i), Session D) showed *window + boundary only, no text at all* and was scored
+Correct; the mover audit quotes both sides and was scored NO. Without text, the nearest audible
+pause is 605.06, 1.37 s away, and reads as "the boundary". Both verdicts are honest; the earlier
+one answered a weaker question. **Owner ruling: verified CORRECT in the app, and mid-sentence /
+no-silence splits STAY in future ear draws** — no exclusion rule — so that FA's handling of
+boundary edge cases keeps being checked. Pinned as a control in `phase4-fa-replay.test.ts`.
+
+**(b) Clip 12 — v6 `225_night_scouts` @ 667.47 — A REAL DEFECT. Exit K2 does NOT fire.** All
+ten v6 recitations were measured on **both** edges through production `computeUnscriptedRuns` +
+`alignScenestoTranscript` — a measurement no session had taken. **Ten of ten opening edges are
+clean** (R.12's half holds, including the four provisional closures the owner has now
+ear-verified — rows 13/14/23/24 of the audit, so the provisional label is dropped). **One of
+ten closing edges is wrong.** R.12 is not broadly half-built.
+
+| run | recitation | carrier | opening | closing | carrier's own line ends | closing defective? |
+|---|---|---|---|---|---|---|
+| 0 | Level one… | `001_child_seven` | 0.000 | 5.640 | 5.050 | no |
+| 1 | Level two… | `042_eleven_years` | 125.540 | 130.960 | 130.140 | no |
+| 2 | Level three… | `085_the_spear_bearer` | 250.690 | 256.740 | 256.200 | no |
+| 3 | Level four… | `125_night_circle` | 370.750 | 378.900 | 377.990 | no |
+| 4 | Level 5… | `176_twenty_six_scout` | 521.710 | 528.090 | 527.110 | no |
+| **5** | **Level 6…** | **`224_thirty_three`** | **663.785** | **667.470** | **667.730** | **YES** |
+| 6 | Level 7… | `266_forty_one_burden` | 788.650 | 794.190 | 793.030 | no |
+| 7 | Level 8… | `307_forty_nine_years` | 924.920 | 931.400 | 930.310 | no |
+| 8 | Level 9… | `340_fifty_eight` | 1044.670 | 1051.650 | 1051.020 | no |
+| 9 | Level 10… | `383_sixty_four` | 1188.950 | 1193.770 | 1193.220 | no |
+
+**(c) THE MATERIAL FINDING — the root cause is NOT "R.12's missing half".** The exact mirror of
+R.12 is buildable and threshold-free, and **it does not fix the defect**: its legal interval is
+`[667.730, 668.010]`, no detected silence intersects it, and the fallback lands at **667.73 —
+a +0.26 s move that is still audibly wrong**. The reason is that **both token streams are
+unreliable in the region immediately after an unscripted run**, while the detected-silence
+stream is accurate:
+
+* Whisper gives token 1832 `"the"` the span **[668.650, 669.400]** — it **swallows the entire
+  silence the boundary belongs in**, so no token-index construction can locate that seam.
+* FA's confidences there collapse to **1e-5 … 1e-4 against a corpus median of 0.9985**
+  (`you` 9.95e-06, `are` 3.58e-04, `thirty-three` 2.46e-05, `night` 9.96e-07), because R.5
+  excised the run using Whisper's own smeared span — computed **[663.910, 666.480]** vs the
+  owner's ear **[664.99, 667.31]**, ~1.0 s off — so FA was never offered the right frames.
+* Confidences are **continuous, not zero** (0 occurs 0 times in 3874 words; <1e-6 occurs 337),
+  so no threshold-free `== 0` test exists the way R.5's `qiHole == 0` did.
+
+R.12's opening edge works precisely because it anchors on `prevToken.endSec`, a token **before**
+the run, outside the unreliable region.
+
+**(d) R.13 — THE ATOMIC-UTTERANCE INVARIANT, built.** In `faRunPlacementGate.ts`, deliberately
+the same file as R.12 (R-AO). Detection: the closing boundary of a run-carrying scene may not
+lie before that scene's own utterance ends. Placement: the midpoint of the **first detected
+silence starting at or after the carrier's own last matched token ends**. No threshold anywhere;
+`R12_MIN_CORRECTION_SEC` is reused only as the shared don't-churn epsilon.
+**Predicted blast radius 1 of 649, before implementation. Actual 1 of 649** — v6
+`225_night_scouts` **667.47 → 669.05 (+1.580 s)**, the midpoint of detected silence
+[668.700, 669.400], which brackets the owner's ear ("…till 668.85s, then at 669.37s started
+'You lead the night scouts'"). The fixture diff is **2 insertions, 2 deletions**. 173 and
+spanish have zero unscripted runs and are untouched.
+
+*A rejected design, recorded because it was measured and is wrong:* a silence-ORDINAL rule
+("skip the first silence after the run") fires on **6 of 10** recitations, five of them
+boundaries the owner has already verified — stop-and-rule exit K3 by construction. The
+discriminator is the carrier's own-utterance END, not a count.
+
+**(e) THE THIRD DEFECT — the index convention, in shipped code, not in a document.** Found
+while tracing parse → drop → commit → display as Step 1 required. **R.10's and R.11's findings
+are PARSE-indexed; R.12's and R.13's are COMMITTED-indexed; `syncLog.ts` rendered both as
+"Scene N + 1".** Measured through the production detectors and the shipped log builders against
+the pre-correction fixtures: on 173, R.11 emits *"R.11 moved scene **6** (abysmal_opinion)"* for
+a scene the timeline shows as **scene 5** (+1 before `blue_monkey`, +2 after it). Invisible on
+v6 and spanish, which have zero drops — which is why no earlier session saw it.
+
+**Committed timings are unaffected**: `applySeamFitCorrections` and
+`applyRunPlacementCorrections` both match by `segmentId`, never by index. This is display-only —
+and it is the WORSE class the brief named, because `types.ts` had *recorded the claim* that the
+conventions were uniform and that claim had never been executed. Session J fixed the identical
+off-by-two in `stage1-live-run-prep.md` §5.3 and did not check the code.
+
+*Fixed:* one resolver, `syncLog.ts`'s `committedIndexOf`, by segment id; every rule-correction
+entry now carries a COMMITTED index or **none at all** (R.10's scenes are dropped and have no
+committed index — the script position moves into the message). R.5's owning-scene containment
+scan moved from `anchorTimed` (pre-snap estimates, parse indices) to the final committed array,
+with its log entries staged and spliced so the documented R.5→R.10→R.11→R.12→R.13 order is
+unchanged. `types.ts`'s false claim is replaced by the two real conventions.
+*Verified NOT a defect, rather than assumed:* `buildLockFindingLogEntries` also assigns
+`segmentIndex: f.segmentIndex`, and its `LockFinding` comes from
+`applyAnchorBasedTiming(prev.segments, …)` in `handleToggleLock` — already committed. Recorded
+so it is not re-audited blind.
+
+**(f) Ruling R-AO — the both-sides rule, with a machine check.** Full text in
+`sync-pipeline-v2-plan.md`. Enforced by `ruleBothSides.test.ts` (every rule module must declare
+BOTH SIDES with real content, or SINGLE-SIDED plus why and who owns the other side) and
+`syncLog.indexConvention.test.ts` (no rule-correction builder may copy a detector index).
+
+**(g) Register.** REOPENED at 1 and closed in the same commit: `r13-225-night-scouts`,
+`earCorrect: 669.05`, **`verification: 'structural'`** — the owner scored the OLD value wrong,
+which is not the same as scoring the NEW one right. It is row 4 of
+`stage1-session-k-ear-list.md`. `REGISTER_HIGH_WATER` 0 → 1 → 0. Clip 1 is **not** a register
+entry (it is not a defect); the display defect is **not** a register entry (the register is for
+committed boundary defects, and no committed value moved) — both stated so the omissions are
+deliberate rather than overlooked.
+
+**(h) Mutation matrix, run this session, reported including the green one.**
+M5 (drop R-U's structural veto in `faAnchors.findAgreeingSilence`) **RED, 3 failures** —
+fifth consecutive re-pin; `faAnchors.ts` sha256 `b61e94cb…` unchanged, verified after restore.
+M6 (drop R.11's conjunct 3) **RED, 1 failure**. M7 (drop R.12's clamp) **RED, 9 failures**.
+M8-A (replace R.13's anchor with the next scene's first-token onset — the naive R.12 mirror)
+**RED, 5 failures**. **M8-B (drop R.13's after-the-run guard) GREEN — reported as green.** That
+guard is provably unreachable once R.12 has run (proof in its own comment); it is kept as a
+defensive restatement of R.12's precedence for callers passing an uncorrected array, and is
+**not claimed to be covered**. M9 (reintroduce the index-convention defect) **RED, 4 failures**.
+M10 (delete a BOTH SIDES declaration) **RED, 1 failure**.
+
+**(i) One process defect this session produced and fixed in itself.** The first R.13 prediction
+harness mapped committed segments into the aligner by their `order` column — the committed
+index — and so reproduced the very off-by-two under investigation, reporting 170 of 172 173
+boundaries as defective. Caught by the result being implausible, not by a test. Recorded because
+it is direct evidence for R-AO: the two index spaces are easy to confuse even while actively
+looking for confusions between them. Separately, the fixture re-pin turned five tests red until
+`V6_PRE_R12` was extended with `225_night_scouts` — the reset table listed only R.12's movers,
+and R.13 added one. Both are now covered by comments at the sites.
+
 
 Ordered by real dependency, not convenience. Owner rulings D1/D2 (§7) already fixed the
 first sequencing question (`task5-integration-scope.md` §4's own recommended order):
@@ -3969,6 +4122,39 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-18 — WS1 Session K: the 24-row mover audit scored 22/24; both failures root-caused;
+  R.13 (the atomic-utterance invariant) ships and closes the one real defect; a THIRD defect
+  found in the shipped display path; ruling R-AO recorded with two machine checks.**
+  Rulings: **R-AO** (the both-sides rule) and the owner's disposition of clip 1 (verified
+  CORRECT in the app; mid-sentence / no-silence splits STAY in future ear draws, no exclusion
+  rule). Full detail in §11's Session K entry.
+  - **Clip 1 is NOT a defect.** 603.69 is the exact midpoint of the FA gap between two
+    confidence-1.000 words at a scripted mid-sentence split with no detected silence in
+    [598.04, 604.82]. Git shows the committed value never moved (603.69 at every commit) and
+    the text never changed — what changed was the `order` field (146→144 at R.10) and, decisively,
+    the PRESENTATION: the earlier pass showed no text at all.
+  - **Clip 12 IS a defect, and the exact mirror of R.12 does not fix it.** Both token streams
+    are unreliable right after an unscripted run (Whisper's token "the" spans [668.650, 669.400]
+    and swallows the correct silence; FA's confidence collapses to 1e-5..1e-4 vs a 0.9985 median).
+    R.13 anchors on the carrier's own-utterance END and places on the first detected silence at
+    or after it. **Predicted blast radius 1 of 649 before building; actual 1 of 649.**
+  - **Production code:** `src/services/faRunPlacementGate.ts` (R.13 + a shared Model-P
+    `applyBoundaryMoves` both halves use), `src/services/syncLog.ts` (`committedIndexOf`; R.5
+    scans the committed array; R.10 emits no committed index; R.11/R.12/R.13 resolve by id),
+    `src/App.tsx` (R.13 wiring; R.5's entries staged and spliced), `src/types.ts` (the false
+    uniform-convention claim replaced by the two real conventions).
+    New tests: `ruleBothSides.test.ts`, `syncLog.indexConvention.test.ts`.
+  - **Fixture:** `phase4-fa-second-baseline-v6-segments.csv`, 2 insertions / 2 deletions —
+    `225_night_scouts` 667.47 → 669.05, `224_thirty_three` duration 3.685 → 5.265. Golden replay
+    fixtures byte-identical.
+  - **Numbers:** 91 files / 2354 passed / 1 skipped; lint clean; `cargo check --features
+    fa-inference` clean; `cargo test --features fa-inference` 209 passed / 20 ignored; golden
+    replay 6/6; FA replay gate 50/50 green at rest, RED under M5/M6/M7/M8-A/M9/M10 (M8-B green
+    and reported as green).
+  - **Deliverable:** `docs/ws1-sync-pipeline/stage1-session-k-ear-list.md` — 28 fully annotated
+    blinded rows (1 moved, 9 recitation opening edges, 9 recitation closing edges, 9 controls),
+    uniform 5.80 s window (3.67x the largest delta), sealed key, ~25 minutes.
 
 - **2026-08-18 — WS1 Session J: the STANDING AUTONOMY DIRECTIVE is recorded as R-AN; the
   RULE-FIRING LOGGING ships and closes the acceptance run's evidence hole; Contract 1→2 **P6**

@@ -357,6 +357,13 @@ const REGISTER_ROSTER = [
   // correct, so it is promoted to a positive assertion and enters the roster
   // as a closed-on-arrival member. Open gate item G2 closes with it.
   'h-192-scout-listening',
+  // WS1 Session K — the register REOPENED at 1 and closed again in the same
+  // commit (R.13, the atomic-utterance invariant: the CLOSING half of R.12).
+  // Found by the owner's 24-row mover audit, clip 12. Closed STRUCTURALLY, not
+  // by ear: the owner scored the OLD value wrong, which is not the same as
+  // scoring the NEW one right, and R-AM's distinction between suspicion and
+  // guilt cuts both ways. It is row 1 of `stage1-session-k-ear-list.md`.
+  'r13-225-night-scouts',
 ] as const;
 
 /** High-water mark for the OPEN manifest.
@@ -414,6 +421,27 @@ const REGISTER_ROSTER = [
  *  visible to any rule then built. Empty means "nothing currently known", not
  *  "nothing there" — the same reading the Stage 1 lock gate has always had to
  *  carry, now with a measured instance behind it.
+ *
+ *  WS1 Session K RAISED it 0 -> 1 and LOWERED it back to 0 in the same commit,
+ *  the same shape as Sessions D and H. It was RAISED because the owner's
+ *  24-row mover audit scored v6 `225_night_scouts` (667.47) WRONG, and the
+ *  measurement that followed found a defect no rule had ever owned: R.12
+ *  constrains where a run-carrying scene BEGINS and nothing constrained where
+ *  it ENDS, so its closing boundary sat on the pause BETWEEN the recitation
+ *  and the scene's own line. It was LOWERED because R.13 landed in the same
+ *  commit and closed it at 669.05.
+ *
+ *  THE OTHER AUDIT FAILURE IS NOT HERE, DELIBERATELY. Clip 1 (173
+ *  `protection_failure`, 603.69) also scored NO, and it is NOT a register
+ *  entry: 603.69 is the exact midpoint of the forced-alignment gap between
+ *  "on" [603.600, 603.660] and "for" [603.720, 603.800], both at confidence
+ *  1.000 — the seam between the two scenes' own words, and the best value that
+ *  exists. The scenes split a single sentence mid-way with no detected silence
+ *  anywhere in [598.04, 604.82], so "does the scene change belong here?" has no
+ *  audible answer at ANY value. The owner verified the boundary CORRECT in the
+ *  app and ruled that such rows STAY in future ear draws rather than being
+ *  excluded, so that FA's handling of boundary edge cases keeps being checked.
+ *  It is pinned below as an owner-verified control.
  *
  *  This may be lowered when entries close. Raising it is allowed only with
  *  the full ceremony above — see the failure message on the shrink-only
@@ -633,6 +661,31 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'as an unverified change-detector pin, because suspicion is not guilt. Session H\'s listening pass scored ' +
       '571.07 CORRECT, so it is promoted to a positive assertion and enters the roster. Open gate item G2 ' +
       'closes here, permanently: the value is measured now, not suspected.',
+  },
+  {
+    id: 'r13-225-night-scouts', corpus: 'v6', tag: '225_night_scouts', earCorrect: 669.05,
+    verification: 'structural',
+    closingCommit: 'WS1-SESSION-K',
+    why: 'R.13 (the atomic-utterance invariant — the CLOSING half of R.12). R.12 pulled ' +
+      '`224_thirty_three` back to 663.785 so it carries the whole "Level 6, the one they follow" ' +
+      'recitation [663.910, 666.480]; its own line "You are thirty-three." is spoken AFTER the ' +
+      'recitation, ending at 667.730. The committed 667.47 is the midpoint of silence ' +
+      '[667.300, 667.640] — the pause BETWEEN the recitation and that line — so the carrier was ' +
+      'left holding a recitation it has no words for while its own line opened the NEXT scene. ' +
+      'R.13 places the boundary at the midpoint of the first detected silence starting at or ' +
+      'after the carrier\'s own utterance ends: [668.700, 669.400], midpoint 669.05. ' +
+      'STRUCTURAL, NOT EAR: the owner scored 667.47 WRONG in the 24-row mover audit and their ' +
+      'note places the line at "667.47 ... till 668.85s, then at 669.37s started You lead the ' +
+      'night scouts" — which brackets 669.05 — but no ear pass has scored 669.05 ITSELF. It is ' +
+      'row 1 of `docs/ws1-sync-pipeline/stage1-session-k-ear-list.md` and is admitted here on ' +
+      'the mechanism, exactly as R.12\'s four structurally-derived rows were. ' +
+      'NOTE ON WHY NO TOKEN-BASED RULE COULD HAVE FOUND THIS VALUE: the exact mirror of R.12 ' +
+      '(clamping into [own last token end, next scene\'s first token onset]) lands at 667.73, ' +
+      'still audibly wrong, because both token streams are unreliable immediately after a run — ' +
+      'Whisper gives the token "the" the span [668.650, 669.400], swallowing the very silence ' +
+      'the boundary belongs in, and FA\'s confidence there collapses to 1e-5..1e-4 against a ' +
+      'corpus median of 0.9985. The detected-silence stream is measured from the waveform and ' +
+      'is the only reliable signal in that neighbourhood.',
   },
 ];
 
@@ -1068,6 +1121,107 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     // the mutation was run and confirms the current state is green, which is
     // what licenses trusting the reported result.
     expect(R12_MIN_CORRECTION_SEC).toBeLessThan(0.545); // 224_thirty_three's own Δ — the smallest of the nine must stay reachable.
+  });
+});
+
+// ===========================================================================
+// WS1 SESSION K — R.13, THE ATOMIC-UTTERANCE INVARIANT (R.12's closing half),
+// plus the two rows the owner's 24-row mover audit scored NO.
+//
+// Both edges of the SAME run are pinned here on purpose. Keeping them apart is
+// how the closing edge went unexamined for two sessions — see ruling R-AO and
+// `src/services/ruleBothSides.test.ts`.
+// ===========================================================================
+
+describe('WS1 Session K — R.13: the atomic-utterance invariant', () => {
+  it('BOTH edges of v6 run 5 are pinned together — R.12 opens it, R.13 closes it', () => {
+    const v6 = loadFaSecondBaseline('v6');
+    const carrier = v6.find(r => r.tag === '224_thirty_three')!;
+    const successor = v6.find(r => r.tag === '225_night_scouts')!;
+
+    // OPENING (R.12, Session H): before the recitation [663.910, 666.480].
+    expect(
+      Math.abs(carrier.startTime - 663.785),
+      "R.12's opening edge moved. The owner ear-verified 663.785 (mover audit clip 24: " +
+        "'You carry it ended on 663.79s, then unscripted text Level Six ... started at 664.99s'). " +
+        'Red here is a regression on a boundary the owner confirmed.',
+    ).toBeLessThan(0.005);
+
+    // CLOSING (R.13, Session K): after the carrier's own line.
+    expect(
+      Math.abs(successor.startTime - 669.05),
+      "R.13's closing edge moved. 669.05 is the midpoint of detected silence " +
+        '[668.700, 669.400]; the previous value 667.47 sat on the pause BEFORE the carrier said ' +
+        'its own line. Do not re-pin to whatever a new run produces.',
+    ).toBeLessThan(0.005);
+
+    // Model P across the pair: the carrier absorbed the whole delta and the
+    // successor's own END did not move.
+    expect(carrier.startTime + carrier.duration).toBeCloseTo(successor.startTime, 6);
+    expect(successor.startTime + successor.duration).toBeCloseTo(671.18, 2);
+  });
+
+  it('R.13 moved exactly ONE boundary in the whole corpus — 1 of 649', () => {
+    // The live proof is `src/services/faRunPlacementGate.test.ts`, which runs
+    // the real detector on all three corpora. What this pins is that the
+    // Session K re-pin touched v6 and nothing else: 173 and spanish have zero
+    // unscripted runs, so R.13 cannot reach them.
+    expect(loadFaSecondBaseline('173')).toHaveLength(173);
+    expect(loadFaSecondBaseline('spanish')).toHaveLength(27);
+    expect(loadFaSecondBaseline('v6')).toHaveLength(447);
+    expect(loadFaSecondBaseline('173').find(r => r.tag === 'vessel_damage_clue')!.startTime).toBeCloseTo(174.74, 2);
+    expect(loadFaSecondBaseline('spanish').find(r => r.tag === '023_scylla_six_sailors')!.startTime).toBeCloseTo(65.12, 2);
+  });
+
+  it('the OTHER mover-audit failure is a CONTROL, not a defect — 173 603.69 is owner-verified', () => {
+    // Mover audit clip 1 scored NO, and the measurement showed the value is
+    // correct: 603.69 is the exact midpoint of the FA gap between "on"
+    // [603.600, 603.660] and "for" [603.720, 603.800], both confidence 1.000.
+    // The two scenes split one sentence mid-way and no detected silence exists
+    // in [598.04, 604.82], so the ear question has no answer at any value. The
+    // owner verified it CORRECT in the app and ruled that mid-sentence /
+    // no-silence splits STAY in future ear draws rather than being excluded,
+    // so FA's handling of them keeps being checked. Pinned as a control:
+    // red here means a rule moved a boundary the owner confirmed.
+    const r = loadFaSecondBaseline('173').find(x => x.tag === 'protection_failure')!;
+    expect(Math.abs(r.startTime - 603.69), '173 protection_failure: owner-verified CORRECT').toBeLessThan(0.005);
+    const prev = loadFaSecondBaseline('173').find(x => x.tag === 'battle_network')!;
+    expect(prev.startTime + prev.duration).toBeCloseTo(603.69, 6);
+  });
+
+  it('M8 — a mutation specific to R.13 must turn this gate RED (mutation-matrix entry, verified this session)', () => {
+    // The mutation actually run this session, in the same style as M1-M7 (a
+    // manually-verified-per-session matrix, not a committed mutant): REPLACING
+    // R.13's anchor — the END of the carrier's own last matched token — with
+    // the NEXT scene's own first token ONSET, i.e. building the naive mirror of
+    // R.12's clamped interval. That is the single most plausible way somebody
+    // would "make R.13 symmetric with R.12", and it is exactly wrong: the
+    // interval becomes [667.730, 668.010], no detected silence intersects it,
+    // and the fallback lands at 667.73 — a 0.26s move that leaves the defect
+    // audible. Measured this session; see the WS1 Session K ledger entry
+    // (docs/work-in-progress.md §11).
+    //
+    // M8-A is RED: 5 failures across `faRunPlacementGate.test.ts` (the corpus
+    // row, the blast radius, the no-op nine, the apply-scope test, and the
+    // R.12 disjointness test).
+    //
+    // A SECOND MUTATION WAS RUN AND IS GREEN, REPORTED AS SUCH RATHER THAN
+    // QUIETLY DROPPED. M8-B: dropping R.13's "the carrier's own line must come
+    // after the run" guard leaves the whole suite passing. That is a true
+    // result about a real property — the guard is provably unreachable once
+    // R.12 has run (see its own comment in `faRunPlacementGate.ts` for the
+    // two-line proof), so no corpus or synthetic input can distinguish its
+    // presence. It is kept as a defensive restatement of R.12's precedence for
+    // callers that pass an uncorrected array, and it is NOT claimed to be
+    // covered. A mutation matrix that only ever reports red is not a matrix.
+    //
+    // The standing half of M8 lives in `faRunPlacementGate.test.ts`'s
+    // "declines a correction that would reach or pass the NEXT boundary",
+    // "falls back to the utterance end itself", and the both-edges corpus
+    // assertion, which are permanent. This test documents that the mutations
+    // were run and confirms the current state is green, which is what licenses
+    // trusting the reported result.
+    expect(R12_MIN_CORRECTION_SEC).toBeLessThan(1.58); // R.13's own Δ must stay reachable.
   });
 });
 

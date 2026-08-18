@@ -30,10 +30,11 @@ import {
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
   buildRunPlacementLogEntries,
+  buildUtterancePlacementLogEntries,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
-import type { Project, SyncLogEntry, SyncRunSummary } from '../types';
+import type { Project, SyncLogEntry, SyncRunSummary, VideoSegment } from '../types';
 import type { ContractViolation } from './syncContracts';
 
 const RUN_ID = 'run-1';
@@ -893,7 +894,10 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
       AT,
     );
     expect(entry!.owningRule).toBe('R.10');
-    expect(entry!.segmentIndex).toBe(12);
+    // WS1 Session K: a REFUSED scene is not on the timeline, so it carries no
+    // committed index at all — the script position moves into the message.
+    expect(entry!.segmentIndex).toBeUndefined();
+    expect(entry!.message).toContain('script position 13');
     expect(entry!.segmentTag).toBe('blue_monkey');
     expect(entry!.ruleDetail?.reason).toContain('4.070e-5');
   });
@@ -908,9 +912,14 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
         committedValue: 570.18, correctedValue: 571.07, delta: 0.89,
         spanMaxConfidence: 4.0732e-5,
       }],
+      [{ id: 'y', tag: '192_scout_listening' } as unknown as VideoSegment],
       AT,
     );
     expect(entry!.owningRule).toBe('R.11');
+    // The number comes from the COMMITTED array (index 0 -> "scene 1"), NOT
+    // from the finding's own parse index 191. Ruling R-AO.
+    expect(entry!.segmentIndex).toBe(0);
+    expect(entry!.message).toContain('scene 1');
     expect(entry!.ruleDetail?.committedValue).toBe(570.18);
     expect(entry!.ruleDetail?.correctedValue).toBe(571.07);
     expect(entry!.message).toContain('570.18');
@@ -929,6 +938,7 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
         placement: 'silence-midpoint',
         committedValue: 664.33, correctedValue: 663.785, delta: -0.545,
       }],
+      [{ id: 'z', tag: '224_thirty_three' } as unknown as VideoSegment],
       AT,
     );
     expect(entry!.owningRule).toBe('R.12');
@@ -945,8 +955,9 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
     // fires.
     expect(buildUnscriptedRunLogEntries(RUN_ID, [], segs, AT)).toEqual([]);
     expect(buildUnspokenScriptLogEntries(RUN_ID, [], AT)).toEqual([]);
-    expect(buildSeamFitLogEntries(RUN_ID, [], AT)).toEqual([]);
-    expect(buildRunPlacementLogEntries(RUN_ID, [], AT)).toEqual([]);
+    expect(buildSeamFitLogEntries(RUN_ID, [], segs, AT)).toEqual([]);
+    expect(buildRunPlacementLogEntries(RUN_ID, [], segs, AT)).toEqual([]);
+    expect(buildUtterancePlacementLogEntries(RUN_ID, [], segs, AT)).toEqual([]);
   });
 
   it('every rule entry is INFO severity — a correction is the pipeline working', () => {
@@ -956,14 +967,19 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
       ...buildSeamFitLogEntries(RUN_ID, [{
         segmentIndex: 0, segmentId: 'y', chunkIndex: 1, chunkStartSec: 0, chunkEndSec: 1,
         fit: 1, fitDeviation: 1.5, edge: 'start', committedValue: 1, correctedValue: 2, delta: 1, spanMaxConfidence: 1e-6,
-      }], AT),
+      }], segs, AT),
       ...buildRunPlacementLogEntries(RUN_ID, [{
         segmentIndex: 0, segmentId: 'z', runIndex: 0, runStartSec: 0, runEndSec: 1,
         runTokenLo: 0, runTokenHi: 1, gapStartSec: 0, gapEndSec: 1,
         placement: 'run-start-fallback', committedValue: 1, correctedValue: 0.5, delta: -0.5,
-      }], AT),
+      }], segs, AT),
+      ...buildUtterancePlacementLogEntries(RUN_ID, [{
+        segmentIndex: 1, segmentId: 'w', carrierIndex: 0, carrierId: 'v',
+        runIndex: 0, runStartSec: 0, runEndSec: 1, utteranceEndSec: 2,
+        placement: 'utterance-end-fallback', committedValue: 1.5, correctedValue: 2, delta: 0.5,
+      }], segs, AT),
     ];
-    expect(all).toHaveLength(4);
+    expect(all).toHaveLength(5);
     for (const e of all) {
       expect(e.type).toBe('rule-correction');
       expect(e.severity).toBe('info');
@@ -971,7 +987,7 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
     }
   });
 
-  it('the four rules are distinguishable by owningRule alone, with no message parsing', () => {
+  it('the five rules are distinguishable by owningRule alone, with no message parsing', () => {
     // The reason owningRule is a field and not a message prefix: counting what
     // fired must be a filter, not a regex over prose.
     const names = [
@@ -980,13 +996,18 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
       buildSeamFitLogEntries(RUN_ID, [{
         segmentIndex: 0, segmentId: 'y', chunkIndex: 1, chunkStartSec: 0, chunkEndSec: 1,
         fit: 1, fitDeviation: 1.5, edge: 'start', committedValue: 1, correctedValue: 2, delta: 1, spanMaxConfidence: 1e-6,
-      }], AT)[0]!.owningRule,
+      }], segs, AT)[0]!.owningRule,
       buildRunPlacementLogEntries(RUN_ID, [{
         segmentIndex: 0, segmentId: 'z', runIndex: 0, runStartSec: 0, runEndSec: 1,
         runTokenLo: 0, runTokenHi: 1, gapStartSec: 0, gapEndSec: 1,
         placement: 'run-start-fallback', committedValue: 1, correctedValue: 0.5, delta: -0.5,
-      }], AT)[0]!.owningRule,
+      }], segs, AT)[0]!.owningRule,
+      buildUtterancePlacementLogEntries(RUN_ID, [{
+        segmentIndex: 1, segmentId: 'w', carrierIndex: 0, carrierId: 'v',
+        runIndex: 0, runStartSec: 0, runEndSec: 1, utteranceEndSec: 2,
+        placement: 'utterance-end-fallback', committedValue: 1.5, correctedValue: 2, delta: 0.5,
+      }], segs, AT)[0]!.owningRule,
     ];
-    expect(names).toEqual(['R.5', 'R.10', 'R.11', 'R.12']);
+    expect(names).toEqual(['R.5', 'R.10', 'R.11', 'R.12', 'R.13']);
   });
 });

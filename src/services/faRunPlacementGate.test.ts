@@ -22,6 +22,8 @@ import { fileURLToPath } from 'url';
 import {
   detectRunPlacementDefects,
   applyRunPlacementCorrections,
+  detectUtterancePlacementDefects,
+  applyUtterancePlacementCorrections,
 } from './faRunPlacementGate';
 import { computeUnscriptedRuns, computeFaChunkPlan } from './faChunkPlan';
 import { R11_MAX_SPAN_WORD_CONF, R12_MIN_CORRECTION_SEC } from './syncConstants';
@@ -409,9 +411,14 @@ function resetToPreR12(segments: VideoSegment[], overrides: Record<string, { sta
   });
 }
 
-/** The nine defective boundaries AND their two predecessors' pre-correction
- *  durations, as measured by WS1 Session H's own Step 6 run of the real
- *  production detector before the fixture was re-pinned. */
+/** The nine R.12 boundaries and the one R.13 boundary, AND their predecessors'
+ *  pre-correction durations, as measured by the real production detectors
+ *  before each fixture re-pin (WS1 Session H's Step 6, then Session K's).
+ *
+ *  THIS TABLE MUST LIST EVERY ROW EITHER RULE MOVES. Session K's re-pin proved
+ *  why: adding R.13 moved `225_night_scouts` in the fixture, and until it was
+ *  added here the reconstruction was no longer gapless and five tests went red
+ *  for a reason that had nothing to do with the rules. */
 const V6_PRE_R12: Record<string, { startTime: number; duration: number }> = {
   '041_elder_lesson': { startTime: 122.64, duration: 4.53 },
   '042_eleven_years': { startTime: 127.17, duration: 3.79 },
@@ -423,6 +430,12 @@ const V6_PRE_R12: Record<string, { startTime: number; duration: number }> = {
   '176_twenty_six_scout': { startTime: 524.39, duration: 3.70 },
   '223_carrying_weight': { startTime: 662.55, duration: 1.78 },
   '224_thirty_three': { startTime: 664.33, duration: 3.14 },
+  // WS1 Session K: R.13 moved this row's OWN start (667.47 -> 669.05), which
+  // also re-cut `224_thirty_three`'s duration. It has to be restored here or
+  // the reconstruction is not a gapless partition and both rules see a state
+  // the pipeline never produced. Every row ANY rule in this file moves must
+  // appear in this table — that is what the entry below is guarding.
+  '225_night_scouts': { startTime: 667.47, duration: 3.71 },
   '265_unending_dark': { startTime: 785.58, duration: 4.75 },
   '266_forty_one_burden': { startTime: 790.33, duration: 3.86 },
   '306_flint_knapping': { startTime: 921.31, duration: 5.66 },
@@ -666,5 +679,311 @@ describe('R.12 — mutual exclusion against R.5, R.10, R.11 and R-U', () => {
   it('R-U / R-AA: item 6 lives in 173, which has no runs — no overlap possible', () => {
     const { parsed, committed, tokens, silences, audioDuration } = corpus('173');
     expect(detectRunPlacementDefects(parsed, committed, tokens, silences, audioDuration)).toEqual([]);
+  }, CORPUS_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------
+// R.13 — THE ATOMIC-UTTERANCE INVARIANT (WS1 Session K), the closing half.
+//
+// R.13 runs AFTER R.12 in production, so every corpus case below applies R.12's
+// own corrections first and tests R.13 against the array R.12 actually hands
+// it. Doing otherwise would test a state the app never reaches.
+// ---------------------------------------------------------------------------
+
+/** The post-R.12 committed array — exactly what `App.tsx` hands R.13. */
+function postR12(key: Corpus): {
+  parsed: VideoSegment[]; committed: VideoSegment[];
+  tokens: TranscriptToken[]; silences: SilenceInterval[]; audioDuration: number;
+} {
+  const c = corpus(key);
+  const committed = applyRunPlacementCorrections(
+    c.committed,
+    detectRunPlacementDefects(c.parsed, c.committed, c.tokens, c.silences, c.audioDuration),
+  );
+  return { ...c, committed };
+}
+
+describe('R.13 — the atomic-utterance invariant: detection (synthetic)', () => {
+  /** s0 carries a run at [3.00, 4.60]; s0's own words run to 6.90. A silence
+   *  sits at [4.70, 4.95] — BETWEEN the run and s0's own line — and another at
+   *  [7.05, 7.35], after it. A closing boundary on the first is the defect. */
+  function closingFixture() {
+    const f = baseFixture();
+    return {
+      ...f,
+      silences: [...f.silences, { startSec: 7.05, endSec: 7.35 }],
+    };
+  }
+
+  it('fires when the closing boundary sits before the carrier finished its own line', () => {
+    const { parsed, tokens, silences, audioDuration } = closingFixture();
+    // The run [3.00, 4.60] sits between seg0's words (end 2.00) and seg1's
+    // (5.00-6.90), so seg1 is the CARRIER once R.12 has pulled its start back
+    // to 2.50. seg1's own line ends at 6.90; seg2 opens at 4.825 — inside it.
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 2.325),
+      seg('seg2', 'india juliett kilo lima', 4.825, 5.175),
+    ];
+    const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.segmentId).toBe('seg2');
+    expect(findings[0]!.carrierId).toBe('seg1');
+    expect(findings[0]!.utteranceEndSec).toBeCloseTo(6.90, 6);
+    expect(findings[0]!.placement).toBe('silence-midpoint');
+    expect(findings[0]!.correctedValue).toBeCloseTo(7.20, 6); // midpoint of [7.05, 7.35]
+    expect(findings[0]!.delta).toBeGreaterThan(0);
+  });
+
+  it('only the segment CONTAINING the run onset is a carrier — a neighbour is never one', () => {
+    // seg0's words end at 2.00, before the run starts at 3.00, and its span
+    // stops at 2.50 so it does not contain the run onset either. The
+    // containment scan — not the after-the-run guard — is what excludes it;
+    // the guard is a defensive restatement of R.12's precedence and is
+    // unreachable in the shipped order (see its own comment, and M8-B).
+    const { parsed, tokens, silences, audioDuration } = closingFixture();
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 2.325),
+      seg('seg2', 'india juliett kilo lima', 4.825, 5.175),
+    ];
+    const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+    expect(findings.some(f => f.carrierId === 'seg0')).toBe(false);
+  });
+
+  it('is a NO-OP when the closing boundary already sits after the carrier own line', () => {
+    const { parsed, tokens, silences, audioDuration } = closingFixture();
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 4.70),
+      seg('seg2', 'india juliett kilo lima', 7.20, 2.80),
+    ];
+    expect(detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration)).toEqual([]);
+  });
+
+  it('falls back to the utterance end itself when no silence starts at or after it', () => {
+    const f = closingFixture();
+    const silences = f.silences.filter(s => s.startSec < 6.90); // strip the post-utterance silence
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 2.325),
+      seg('seg2', 'india juliett kilo lima', 4.825, 5.175),
+    ];
+    const findings = detectUtterancePlacementDefects(f.parsed, committed, f.tokens, silences, f.audioDuration);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.placement).toBe('utterance-end-fallback');
+    expect(findings[0]!.correctedValue).toBeCloseTo(6.90, 6);
+  });
+
+  it('declines a correction that would reach or pass the NEXT boundary', () => {
+    const f = closingFixture();
+    // A fourth committed scene opens at 7.10, before the [7.05, 7.35] midpoint
+    // 7.20 — correcting seg2 to 7.20 would invert the partition, so R.13 must
+    // decline entirely rather than relocate the defect.
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 2.325),
+      seg('seg2', 'india juliett kilo lima', 4.825, 2.275),
+      seg('seg3', 'mike november oscar papa', 7.10, 2.90),
+    ];
+    expect(detectUtterancePlacementDefects(f.parsed, committed, f.tokens, f.silences, f.audioDuration)).toEqual([]);
+  });
+
+  it('declines a sub-epsilon correction, reusing the opening half own do-not-churn bound', () => {
+    const f = closingFixture();
+    const silences = f.silences.filter(s => s.startSec < 6.90); // force the fallback, corrected = 6.90
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 4.38),
+      seg('seg2', 'india juliett kilo lima', 6.88, 3.12),
+    ];
+    // 6.88 -> 6.90 is 0.02s, inside the bound, so R.13 must decline.
+    expect(0.02).toBeLessThan(R12_MIN_CORRECTION_SEC);
+    expect(detectUtterancePlacementDefects(f.parsed, committed, f.tokens, silences, f.audioDuration)).toEqual([]);
+  });
+
+  it('never proposes a value inside ANY unscripted run (H7, mirrored)', () => {
+    const { parsed, tokens, silences, audioDuration } = closingFixture();
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo foxtrot golf hotel', 2.50, 2.325),
+      seg('seg2', 'india juliett kilo lima', 4.825, 5.175),
+    ];
+    const runs = computeUnscriptedRuns(parsed, tokens, silences, audioDuration);
+    for (const f of detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration)) {
+      for (const u of runs) {
+        expect(f.correctedValue > u.startSec + 1e-9 && f.correctedValue < u.endSec - 1e-9).toBe(false);
+      }
+    }
+  });
+
+  it('is empty when there are no unscripted runs at all', () => {
+    const f = baseFixture();
+    const noRunTokens = f.tokens.filter(t => !['level', 'nine', 'recitation', 'here'].includes(t.text));
+    expect(detectUtterancePlacementDefects(f.parsed, f.parsed, noRunTokens, f.silences, f.audioDuration)).toEqual([]);
+  });
+});
+
+describe('R.13 — application (Model P) and the corpus', () => {
+  it('v6: fires on exactly ONE boundary, 225_night_scouts 667.47 -> 669.05', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('v6');
+    const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+    expect(findings.map(f => f.segmentId)).toEqual(['225_night_scouts']);
+    const f = findings[0]!;
+    expect(f.carrierId).toBe('224_thirty_three');
+    expect(Math.abs(f.committedValue - 667.47)).toBeLessThan(0.005);
+    expect(Math.abs(f.correctedValue - 669.05)).toBeLessThan(0.005);
+    expect(Math.abs(f.utteranceEndSec - 667.73)).toBeLessThan(0.005);
+    expect(f.placement).toBe('silence-midpoint');
+    expect(f.backingSilence).toEqual({ startSec: 668.70, endSec: 669.40 });
+    expect(f.delta).toBeGreaterThan(0);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('the other NINE recitations are exact no-ops — R.12 already left them clean', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('v6');
+    const runs = computeUnscriptedRuns(parsed, tokens, silences, audioDuration);
+    expect(runs).toHaveLength(10);
+    const fired = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+    expect(fired).toHaveLength(1);
+    expect(runs.length - fired.length).toBe(9);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('173 and spanish are UNTOUCHED — zero runs means zero effect', () => {
+    for (const key of ['173', 'spanish'] as const) {
+      const { parsed, committed, tokens, silences, audioDuration } = postR12(key);
+      expect(detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration), `${key}`).toEqual([]);
+    }
+  }, CORPUS_TIMEOUT_MS);
+
+  it('blast radius is exactly 1 of 649 parsed rows across all three corpora', () => {
+    let fired = 0; let rows = 0;
+    for (const key of ['v6', '173', 'spanish'] as const) {
+      const { parsed, committed, tokens, silences, audioDuration } = postR12(key);
+      rows += parsed.length;
+      fired += detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration).length;
+    }
+    expect(rows).toBe(649);
+    expect(fired).toBe(1);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('the corrected v6 partition is still Model P: gapless, monotonic, sum conserved', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('v6');
+    const before = committed.reduce((a, s) => a + s.duration, 0);
+    const out = applyUtterancePlacementCorrections(
+      committed,
+      detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration),
+    );
+    expect(out).toHaveLength(447);
+    for (let i = 1; i < out.length; i++) {
+      expect(
+        Math.abs(out[i - 1]!.startTime + out[i - 1]!.duration - out[i]!.startTime),
+        `gap or overlap at boundary ${i} (${out[i]!.id})`,
+      ).toBeLessThan(1e-6);
+      expect(out[i]!.duration, `${out[i]!.id}: non-positive duration`).toBeGreaterThan(0);
+    }
+    expect(out.reduce((a, s) => a + s.duration, 0)).toBeCloseTo(before, 6);
+    expect(out[out.length - 1]!.startTime + out[out.length - 1]!.duration).toBeCloseTo(audioDuration, 2);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('applying R.13 moves ONLY 225_night_scouts start and 224_thirty_three duration', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('v6');
+    const out = applyUtterancePlacementCorrections(
+      committed,
+      detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration),
+    );
+    const moved = out.filter((s, i) =>
+      Math.abs(s.startTime - committed[i]!.startTime) > 1e-9 || Math.abs(s.duration - committed[i]!.duration) > 1e-9,
+    ).map(s => s.id);
+    expect(moved.sort()).toEqual(['224_thirty_three', '225_night_scouts']);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('R.13 is IDEMPOTENT — re-running it on its own output finds nothing', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('v6');
+    const out = applyUtterancePlacementCorrections(
+      committed,
+      detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration),
+    );
+    expect(detectUtterancePlacementDefects(parsed, out, tokens, silences, audioDuration)).toEqual([]);
+  }, CORPUS_TIMEOUT_MS);
+});
+
+describe('R.13 — mutual exclusion against R.5, R.10, R.11, R.12 and R-U', () => {
+  it('R.12: the two firing sets are disjoint — different boundaries of the same carrier', () => {
+    const { parsed, committed: pre, tokens, silences, audioDuration } = corpus('v6');
+    const r12 = detectRunPlacementDefects(parsed, pre, tokens, silences, audioDuration).map(f => f.segmentId);
+    const { committed: post } = postR12('v6');
+    const r13 = detectUtterancePlacementDefects(parsed, post, tokens, silences, audioDuration).map(f => f.segmentId);
+    expect(r12).toHaveLength(9);
+    expect(r13).toEqual(['225_night_scouts']);
+    for (const tag of r13) expect(r12, `R.12 and R.13 both claim ${tag}`).not.toContain(tag);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('R.11: its four rows are untouched by R.13, including the adjacent 226_four_scouts', () => {
+    const R11_FIRING_SET = ['152_frozen_brush_mice', '226_four_scouts', '192_scout_listening', 'abysmal_opinion'];
+    const fired: string[] = [];
+    for (const key of ['v6', '173', 'spanish'] as const) {
+      const { parsed, committed, tokens, silences, audioDuration } = postR12(key);
+      fired.push(...detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration).map(f => f.segmentId));
+    }
+    for (const tag of R11_FIRING_SET) expect(fired, `R.13 and R.11 both claim ${tag}`).not.toContain(tag);
+  }, CORPUS_TIMEOUT_MS);
+
+  it('R.5: applying R.13 leaves the chunk plan BYTE-IDENTICAL on all three corpora', () => {
+    for (const key of ['v6', '173', 'spanish'] as const) {
+      const { parsed, committed, tokens, silences, audioDuration } = postR12(key);
+      const ser = (cs: readonly { startSec: number; endSec: number; text: string }[]): string =>
+        cs.map(c => `${c.startSec.toFixed(3)},${c.endSec.toFixed(3)},${c.text}`).join('|');
+      const before = ser(computeFaChunkPlan(parsed, tokens, silences, audioDuration));
+      const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+      const byId = new Map(findings.map(f => [f.segmentId, f.correctedValue]));
+      const moved = parsed.map(s => ({ ...s }));
+      for (let i = 0; i < moved.length; i++) {
+        const want = byId.get(moved[i]!.id);
+        if (want === undefined) continue;
+        const delta = want - moved[i]!.startTime;
+        moved[i] = { ...moved[i]!, startTime: want, duration: moved[i]!.duration - delta };
+        if (i > 0) moved[i - 1] = { ...moved[i - 1]!, duration: moved[i - 1]!.duration + delta };
+      }
+      expect(ser(computeFaChunkPlan(moved, tokens, silences, audioDuration)), `${key}: chunk plan`).toBe(before);
+    }
+  }, CORPUS_TIMEOUT_MS);
+
+  it('R.10 and R-U/R-AA: both live in 173, which has zero runs', () => {
+    const { parsed, committed, tokens, silences, audioDuration } = postR12('173');
+    expect(detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration)).toEqual([]);
+  }, CORPUS_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------
+// BOTH SIDES, as a standing corpus assertion (ruling R-AO).
+// ---------------------------------------------------------------------------
+describe('R.12 + R.13 — the run invariant holds on BOTH edges of every run', () => {
+  it('v6: after both halves, no boundary is inside a run and no carrier loses its own line', () => {
+    const c = corpus('v6');
+    let committed = applyRunPlacementCorrections(
+      c.committed,
+      detectRunPlacementDefects(c.parsed, c.committed, c.tokens, c.silences, c.audioDuration),
+    );
+    committed = applyUtterancePlacementCorrections(
+      committed,
+      detectUtterancePlacementDefects(c.parsed, committed, c.tokens, c.silences, c.audioDuration),
+    );
+    const runs = computeUnscriptedRuns(c.parsed, c.tokens, c.silences, c.audioDuration);
+    expect(runs).toHaveLength(10);
+
+    // OPENING: no committed boundary strictly inside any run.
+    for (let i = 1; i < committed.length; i++) {
+      for (const u of runs) {
+        expect(
+          committed[i]!.startTime > u.startSec + 1e-9 && committed[i]!.startTime < u.endSec - 1e-9,
+          `${committed[i]!.id} at ${committed[i]!.startTime} is inside run [${u.startSec}, ${u.endSec}]`,
+        ).toBe(false);
+      }
+    }
+    // CLOSING: nothing left for R.13 to find.
+    expect(
+      detectUtterancePlacementDefects(c.parsed, committed, c.tokens, c.silences, c.audioDuration),
+      'a closing-edge defect survived both halves',
+    ).toEqual([]);
   }, CORPUS_TIMEOUT_MS);
 });

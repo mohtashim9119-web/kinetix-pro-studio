@@ -22,7 +22,7 @@ import type { LockFinding } from './syncEngine';
 import type { UnscriptedRun } from './faChunkPlan';
 import type { UnspokenScriptFinding } from './faUnspokenGate';
 import type { SeamFitFinding } from './faSeamFitGate';
-import type { RunPlacementFinding } from './faRunPlacementGate';
+import type { RunPlacementFinding, UtterancePlacementFinding } from './faRunPlacementGate';
 import type { FaFallbackReason } from './forcedAlignmentRun';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
@@ -444,6 +444,38 @@ export function buildFaFallbackEntry(
   );
 }
 
+// ---------------------------------------------------------------------------
+// THE ONE INDEX CONVENTION FOR RULE-CORRECTION ENTRIES (WS1 Session K, ruling
+// R-AO).
+//
+// `SyncLogEntry.segmentIndex` on a 'rule-correction' entry is ALWAYS an index
+// into the COMMITTED array — the scene number the timeline shows and the user
+// can navigate to. It is resolved here, in ONE place, by segment id, and never
+// copied from a detector's own `segmentIndex`.
+//
+// WHY THIS EXISTS. The detectors do not agree on an index space and cannot be
+// made to: R.10's and R.11's findings are indexed into the COMPLETE pre-skip
+// parse (that is the array their detection needs), while R.12's and R.13's are
+// indexed into the committed array. Before this function, both were rendered
+// by `SyncLogPanel` as "Scene N + 1", so on any corpus where a scene was
+// dropped the same displayed number meant two different scenes — measured on
+// 173, where R.11 reported `abysmal_opinion` as "scene 6" for a scene the
+// timeline shows as scene 5. `types.ts` asserted the conventions were uniform;
+// they were not, and the assertion had never been checked against the code.
+//
+// A scene that is NOT on the committed timeline (R.10 drops two on 173) has no
+// committed index, so it gets NO `segmentIndex` at all and its message names
+// the scene by tag instead. An absent index is honest; a parse index rendered
+// as a timeline scene number is not.
+// ---------------------------------------------------------------------------
+function committedIndexOf(
+  committedSegments: readonly VideoSegment[],
+  segmentId: string,
+): number | undefined {
+  const i = committedSegments.findIndex(s => s.id === segmentId);
+  return i >= 0 ? i : undefined;
+}
+
 /**
  * R.5 — UNSCRIPTED-AUDIO EXCISION, one entry per excised run.
  *
@@ -455,25 +487,32 @@ export function buildFaFallbackEntry(
  *
  * THE ONE DERIVED NUMBER IN THIS FILE, flagged rather than buried:
  * `UnscriptedRun` carries token indices and an audio span but no segment index,
- * so the owning scene is found by a containment scan over `segments` — which is
- * a gapless partition (Model P), so exactly one segment contains any given
- * time, and the scan cannot be ambiguous. This is an index lookup on data that
- * already exists, not a measurement; it asserts nothing about the boundary.
+ * so the owning scene is found by a containment scan over `committedSegments` —
+ * which is a gapless partition (Model P), so exactly one segment contains any
+ * given time, and the scan cannot be ambiguous. This is an index lookup on data
+ * that already exists, not a measurement; it asserts nothing about the boundary.
  * A span that precedes every segment (V6's corpus-start recitation is the real
  * case) resolves to no segment and the entry is logged without a
  * `segmentIndex`, never with a guessed one.
+ *
+ * WS1 Session K: the scan now runs over the FINAL COMMITTED array, not over
+ * `anchorTimed`. The pre-commit array's `startTime`/`duration` are alignment
+ * estimates that `snapCoveredBoundaries`, R.11 and R.12 all move afterwards,
+ * so scanning it could name a different scene — and its indices are the parse
+ * space, which is not what "Scene N" means to a reader. Gaplessness of the
+ * wrong array does not make the lookup right.
  */
 export function buildUnscriptedRunLogEntries(
   syncRunId: string,
   runs: readonly UnscriptedRun[],
-  segments: readonly VideoSegment[],
+  committedSegments: readonly VideoSegment[],
   timestamp: number = Date.now(),
 ): SyncLogEntry[] {
   return runs.map(run => {
-    const idx = segments.findIndex(
+    const idx = committedSegments.findIndex(
       s => run.startSec >= s.startTime && run.startSec < s.startTime + s.duration,
     );
-    const owner = idx >= 0 ? segments[idx] : undefined;
+    const owner = idx >= 0 ? committedSegments[idx] : undefined;
     return makeSyncLogEntry(
       syncRunId,
       'rule-correction',
@@ -514,11 +553,14 @@ export function buildUnspokenScriptLogEntries(
     makeSyncLogEntry(
       syncRunId,
       'rule-correction',
-      `R.10 refused scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} — ` +
+      `R.10 refused the scene ${f.segmentTag ? `tagged ${f.segmentTag}` : `at script position ${f.segmentIndex + 1}`} ` +
+        `(script position ${f.segmentIndex + 1}, not on the timeline) — ` +
         'its script text is never spoken in the audio.',
       {
+        // NO `segmentIndex`: R.10's scenes are DROPPED, so they have no
+        // committed index, and the panel renders this field as a timeline
+        // scene number. The script position is stated in the message instead.
         owningRule: 'R.10',
-        segmentIndex: f.segmentIndex,
         ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
         severity: 'info',
         ruleDetail: {
@@ -538,18 +580,22 @@ export function buildUnspokenScriptLogEntries(
 export function buildSeamFitLogEntries(
   syncRunId: string,
   findings: readonly SeamFitFinding[],
+  committedSegments: readonly VideoSegment[],
   timestamp: number = Date.now(),
 ): SyncLogEntry[] {
-  return findings.map(f =>
-    makeSyncLogEntry(
+  return findings.map(f => {
+    // `SeamFitFinding.segmentIndex` is a PRE-SKIP parse index; the log's is a
+    // committed one. Resolved by id — never copied. See `committedIndexOf`.
+    const ci = committedIndexOf(committedSegments, f.segmentId);
+    return makeSyncLogEntry(
       syncRunId,
       'rule-correction',
-      `R.11 moved scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+      `R.11 moved ${ci !== undefined ? `scene ${ci + 1}` : 'a scene'}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
         `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
         `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s).`,
       {
         owningRule: 'R.11',
-        segmentIndex: f.segmentIndex,
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
         ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
         severity: 'info',
         ruleDetail: {
@@ -563,8 +609,8 @@ export function buildSeamFitLogEntries(
         },
       },
       timestamp,
-    ),
-  );
+    );
+  });
 }
 
 /**
@@ -579,18 +625,24 @@ export function buildSeamFitLogEntries(
 export function buildRunPlacementLogEntries(
   syncRunId: string,
   findings: readonly RunPlacementFinding[],
+  committedSegments: readonly VideoSegment[],
   timestamp: number = Date.now(),
 ): SyncLogEntry[] {
-  return findings.map(f =>
-    makeSyncLogEntry(
+  return findings.map(f => {
+    // `RunPlacementFinding.segmentIndex` is already a committed index, but it
+    // is re-resolved by id anyway so that EVERY rule-correction entry gets its
+    // number from the same place and no future detector can quietly reintroduce
+    // a second convention.
+    const ci = committedIndexOf(committedSegments, f.segmentId);
+    return makeSyncLogEntry(
       syncRunId,
       'rule-correction',
-      `R.12 moved scene ${f.segmentIndex + 1}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+      `R.12 moved ${ci !== undefined ? `scene ${ci + 1}` : 'a scene'}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
         `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
         `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s) — it had landed inside unscripted audio.`,
       {
         owningRule: 'R.12',
-        segmentIndex: f.segmentIndex,
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
         ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
         severity: 'info',
         ruleDetail: {
@@ -606,8 +658,54 @@ export function buildRunPlacementLogEntries(
         },
       },
       timestamp,
-    ),
-  );
+    );
+  });
+}
+
+/**
+ * R.13 — THE ATOMIC-UTTERANCE INVARIANT (the closing half of R.12), one entry
+ * per corrected boundary.
+ *
+ * Carries the same evidence shape as R.12's entry so the pair reads as a pair:
+ * which run the carrier holds, where the carrier's own line actually ends
+ * (the anchor the correction is derived from), and which detected silence
+ * backed the placement.
+ */
+export function buildUtterancePlacementLogEntries(
+  syncRunId: string,
+  findings: readonly UtterancePlacementFinding[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f => {
+    const ci = committedIndexOf(committedSegments, f.segmentId);
+    return makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `R.13 moved ${ci !== undefined ? `scene ${ci + 1}` : 'a scene'}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+        `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
+        `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s) — it had cut into the previous scene's own line.`,
+      {
+        owningRule: 'R.13',
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          committedValue: f.committedValue,
+          correctedValue: f.correctedValue,
+          reason:
+            `Scene ${f.carrierTag ?? f.carrierId} carries unscripted run ${f.runIndex} ` +
+            `[${fmtSec(f.runStartSec)}, ${fmtSec(f.runEndSec)}] and speaks its own line after it, ` +
+            `ending at ${fmtSec(f.utteranceEndSec)}s — the earliest legal value for this boundary. ` +
+            `Placed by ${f.placement}` +
+            (f.backingSilence
+              ? ` on silence [${fmtSec(f.backingSilence.startSec)}, ${fmtSec(f.backingSilence.endSec)}].`
+              : '.'),
+        },
+      },
+      timestamp,
+    );
+  });
 }
 
 /**

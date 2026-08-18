@@ -103,6 +103,7 @@ import {
 } from './services/whisperService';
 import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
 import { computeFaChunkPlan } from './services/faChunkPlan';
+import type { UnscriptedRun } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import { isFaGateOpenForProject, isFaEnabledForProject } from './services/faGate';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
@@ -112,7 +113,12 @@ import {
   R10_SKIP_REASON,
 } from './services/faUnspokenGate';
 import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
-import { detectRunPlacementDefects, applyRunPlacementCorrections } from './services/faRunPlacementGate';
+import {
+  detectRunPlacementDefects,
+  applyRunPlacementCorrections,
+  detectUtterancePlacementDefects,
+  applyUtterancePlacementCorrections,
+} from './services/faRunPlacementGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -153,6 +159,7 @@ import {
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
   buildRunPlacementLogEntries,
+  buildUtterancePlacementLogEntries,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -2878,6 +2885,10 @@ export default function App() {
     // "R.10 never logs", i.e. exactly the kind of quiet hole this work exists
     // to close. Spliced in as a block once every rule has run.
     const ruleLogEntries: SyncLogEntry[] = [];
+    // R.5's log entries are built late (they need the committed array) but must
+    // appear at their pipeline-order position — see the R.5 block below.
+    let stagedUnscriptedRuns: readonly UnscriptedRun[] = [];
+    let unscriptedRunLogInsertAt = 0;
     if (cachedTokensReady) {
       const anchorTimed = applyAnchorBasedTiming(newSegmentsRaw, audioDuration);
 
@@ -2942,10 +2953,16 @@ export default function App() {
       // `runForcedAlignmentForSync` from the same `computeRunContext` pass
       // that built the plan. R.5 fires before inference, so this is the only
       // point at which its work is observable at all.
+      //
+      // WS1 Session K: the ENTRIES are built at the end of the branch, not
+      // here, because their owning-scene lookup must run over the FINAL
+      // COMMITTED array (`anchorTimed`'s timings are pre-snap estimates and its
+      // indices are the parse space). The runs are staged now and spliced back
+      // into this exact position below, so the documented R.5 -> R.10 -> R.11
+      // -> R.12 -> R.13 log order is unchanged.
       if (faRun?.status === 'ok' && faRun.unscriptedRuns.length > 0) {
-        ruleLogEntries.push(
-          ...buildUnscriptedRunLogEntries(syncRunId, faRun.unscriptedRuns, anchorTimed, syncRunAt),
-        );
+        stagedUnscriptedRuns = faRun.unscriptedRuns;
+        unscriptedRunLogInsertAt = ruleLogEntries.length;
       }
 
       const aligned = await alignFromCache(
@@ -3164,7 +3181,7 @@ export default function App() {
             `[sync] R.11 — ${seamFitFindings.length} chunk-fit boundary correction(s):`,
             seamFitFindings,
           );
-          ruleLogEntries.push(...buildSeamFitLogEntries(syncRunId, seamFitFindings, syncRunAt));
+          ruleLogEntries.push(...buildSeamFitLogEntries(syncRunId, seamFitFindings, finalTimedSegments, syncRunAt));
         }
         finalTimedSegments = applySeamFitCorrections(finalTimedSegments, seamFitFindings);
 
@@ -3191,15 +3208,53 @@ export default function App() {
             `[sync] R.12 — ${runPlacementFindings.length} atomic-run boundary correction(s):`,
             runPlacementFindings,
           );
-          ruleLogEntries.push(...buildRunPlacementLogEntries(syncRunId, runPlacementFindings, syncRunAt));
+          ruleLogEntries.push(...buildRunPlacementLogEntries(syncRunId, runPlacementFindings, finalTimedSegments, syncRunAt));
         }
         finalTimedSegments = applyRunPlacementCorrections(finalTimedSegments, runPlacementFindings);
+
+        // WS1 R.13 (faRunPlacementGate.ts) — THE ATOMIC-UTTERANCE INVARIANT,
+        // the CLOSING half of R.12. R.12 pulls a run-carrying scene's START
+        // back to before the recitation; nothing before this looked at where
+        // that scene ENDS, so its closing boundary could still sit on the pause
+        // between the recitation and the scene's own line — leaving the carrier
+        // holding a recitation it has no words for and handing its own line to
+        // the next scene. Runs immediately after R.12 and on R.12's own output,
+        // because the defect is only well-defined once the opening edge is
+        // correct. Structural, no threshold. Blast radius on the committed
+        // corpora: 1 of 649.
+        const utteranceFindings = detectUtterancePlacementDefects(
+          anchorTimed,
+          finalTimedSegments,
+          projectRef.current.transcriptTokens!,
+          aligned.silences,
+          audioDuration,
+        );
+        if (utteranceFindings.length > 0) {
+          console.warn(
+            `[sync] R.13 — ${utteranceFindings.length} atomic-utterance boundary correction(s):`,
+            utteranceFindings,
+          );
+          ruleLogEntries.push(
+            ...buildUtterancePlacementLogEntries(syncRunId, utteranceFindings, finalTimedSegments, syncRunAt),
+          );
+        }
+        finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, utteranceFindings);
+      }
+
+      // R.5's staged entries, built now that `finalTimedSegments` is final and
+      // spliced back to their pipeline-order position (see the R.5 block).
+      if (stagedUnscriptedRuns.length > 0) {
+        ruleLogEntries.splice(
+          unscriptedRunLogInsertAt,
+          0,
+          ...buildUnscriptedRunLogEntries(syncRunId, stagedUnscriptedRuns, finalTimedSegments, syncRunAt),
+        );
       }
 
       // WS1 Session J — splice the staged rule/engine/fallback entries in
       // FRONT of this branch's own entries, now that every rule has fired.
       // Order is deliberate: engine first, then the corrections in the order
-      // the pipeline applied them (R.5 -> R.10 -> R.11 -> R.12), then the
+      // the pipeline applied them (R.5 -> R.10 -> R.11 -> R.12 -> R.13), then the
       // per-scene skips and the run summary. A reader gets "what ran and what
       // it changed" before "what the outcome was", which is the order the
       // acceptance run reads them in.

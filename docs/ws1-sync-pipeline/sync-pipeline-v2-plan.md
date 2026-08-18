@@ -2765,6 +2765,56 @@ explicitly revoked, and is not re-litigated per session.
 
 ---
 
+**R-AO ruling (2026-08-18, WS1 Session K, OWNER + implementing session) — THE BOTH-SIDES RULE.
+Every rule must state and test BOTH sides of whatever it constrains, and a fix applied to
+documentation must be checked in code.**
+
+**(a) Why this exists — three measured instances, not a principle invented in the abstract.**
+
+  1. **R.5 constrained which audio is EXCISED but not where the committed boundary lands
+     relative to it.** Closed by R.12 one session later, after the boundary defect was found
+     independently.
+  2. **R.12 constrained a run-carrying scene's OPENING edge but not its CLOSING edge.** Closed
+     by R.13 two sessions later, after the owner's 24-row mover audit scored clip 12 NO. Nine
+     of ten closing edges happened to be legal already, which is exactly why nothing noticed.
+  3. **The 173 index convention was corrected in a DOCUMENTATION table**
+     (`stage1-live-run-prep.md` §5.3, WS1 Session J) **while the identical off-by-N sat
+     untouched in `syncLog.ts`**, where users could see it. Worse, `types.ts` recorded the
+     claim that "every rule detector already returns a `segmentIndex` on this same PRE-filter
+     convention" — a claim that was FALSE and had never been run against the code.
+
+**(b) The rule, in two halves.**
+
+  * **STATE BOTH SIDES.** A rule's header must name what it constrains on each side of the
+    thing it acts on, or state `SINGLE-SIDED, BECAUSE:` and say what the other side would have
+    been and who owns it. "We only thought about one edge" must become impossible to ship
+    silently.
+  * **A DOC FIX IS NOT A FIX.** When a correction is made to a table, a comment or a ledger,
+    the same correction must be checked in the code that the document describes, in the same
+    commit. A documented claim about code is a hypothesis until it is executed.
+
+**(c) The machine-checkable form.** Both halves are enforced by tests, in the same spirit as
+`faDefaultDrift.test.ts` making a class of drift impossible rather than merely discouraged:
+
+  * `src/services/ruleBothSides.test.ts` — fails the build if any shipped rule module
+    (`faChunkPlan.ts` R.5, `faUnspokenGate.ts` R.10, `faSeamFitGate.ts` R.11,
+    `faRunPlacementGate.ts` R.12/R.13) lacks a `BOTH SIDES` declaration with real content, if a
+    single-sided rule does not say why, or if the R.12/R.13 both-edges corpus assertion is
+    removed. Verified RED by mutation M10.
+  * `src/services/syncLog.indexConvention.test.ts` — fails the build if any rule-correction log
+    builder copies a detector's own `segmentIndex` onto a user-facing entry, and asserts the
+    committed-index convention against the builders themselves. Verified RED by mutation M9.
+
+**(d) What it does NOT claim.** A declaration check cannot know whether a rule's second side is
+CORRECT. It can only make it impossible to ship a rule that never says what its second side is.
+That is precisely the failure mode in (a): in all three cases the missing side was never
+written down anywhere, so nobody could have reviewed it.
+
+**(e) Recorded scope.** Standing, from Session K forward. It binds new rules and any rule
+touched by a later session.
+
+---
+
 **R.6 — Corpus start and end.**
 
   * **Start:** there is no previous run, so `padBefore = min(PAD_BASE,
