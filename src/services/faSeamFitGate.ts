@@ -138,12 +138,29 @@ function scriptWordCount(text: string): number {
 /**
  * R.11's detector. Pure — no React, no DOM, no IPC.
  *
- * `segments` must be the COMPLETE, pre-skip-filter array in the exact order
- * `computeFaChunkPlan`/`computeRuns` were originally given (mirrors
- * `App.tsx`'s `anchorTimed` — the same array `runForcedAlignmentForSync`
- * receives) — index-based word attribution requires it, the same
- * requirement `scripts/phase4-fa-replay.test.ts`'s `loadAnchorPathInputs`
- * documents for the identical reason. `tokens` are Whisper tokens (fit's
+ * TWO segment arrays, deliberately — the same split `faRunPlacementGate.ts`
+ * (R.12/R.13) uses, and for the same reason:
+ *
+ *  - `segments` must be the COMPLETE, pre-skip-filter array in the exact order
+ *    `computeFaChunkPlan`/`computeRuns` were originally given (mirrors
+ *    `App.tsx`'s `anchorTimed` — the same array `runForcedAlignmentForSync`
+ *    receives) — index-based word attribution requires it, the same
+ *    requirement `scripts/phase4-fa-replay.test.ts`'s `loadAnchorPathInputs`
+ *    documents for the identical reason. Its own `startTime`s are
+ *    character-weight PRE-ALIGNMENT ESTIMATES and are never read here.
+ *  - `committedSegments` is the FINAL, fully-timed array (post
+ *    `snapCoveredBoundaries` + `headExtendFirstSegment`) that `committedValue`
+ *    is read from, BY ID.
+ *
+ * WS1 Session N — before this split, `committedValue` was read by index out of
+ * `segments`, i.e. out of the pre-alignment estimate. Measured on the live v6
+ * FA-ON corpus, that estimate sits 15.59s/20.49s/22.38s away from the real
+ * committed boundary for the three known R.11 candidates, which widened the
+ * third conjunct's correction span from ~1-2s to 17-23s. Those widened spans
+ * swallow 48-58 real FA words including full-confidence (1.000) ones, so
+ * `spanMaxConf >= R11_MAX_SPAN_WORD_CONF` declined EVERY candidate: R.11 was
+ * structurally reachable but could never fire in production, while its unit
+ * tests stayed green because they pass the committed array for both roles. `tokens` are Whisper tokens (fit's
  * own denominator is Whisper token onsets, not FA's); `silences` are the
  * real detected silences a chunk edge's agreed anchor was chosen from.
  * `faTokens` are the FORCED-ALIGNMENT word tokens (`faWordSpansToTranscript
@@ -155,12 +172,20 @@ function scriptWordCount(text: string): number {
  */
 export function detectSeamFitDefects(
   segments: readonly VideoSegment[],
+  committedSegments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
   faTokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
 ): SeamFitFinding[] {
-  if (segments.length === 0 || tokens.length === 0) return [];
+  if (segments.length === 0 || committedSegments.length === 0 || tokens.length === 0) return [];
+
+  // WS1 Session N — the COMMITTED boundary, resolved by ID. See this
+  // function's own doc comment for why an index lookup into `segments` is
+  // wrong: `segments` is the pre-alignment parse, whose `startTime`s are
+  // character-weight estimates (measured on v6: 15.6-22.4s from the real
+  // committed value), not boundaries anything committed.
+  const committedById = new Map(committedSegments.map(s => [s.id, s.startTime]));
 
   const chunks: FaChunk[] = computeFaChunkPlan(segments, tokens, silences, audioDuration);
   const runs: FaRun[] = computeRuns(segments, tokens, silences, audioDuration);
@@ -251,7 +276,12 @@ export function detectSeamFitDefects(
       if (!backingSilence) continue; // defensive — see I6 above; never expected to fire.
 
       const correctedValue = (backingSilence.startSec + backingSilence.endSec) / 2;
-      const committedValue = segments[segIdx]!.startTime;
+      // Resolved by ID against the FINAL committed array, never by index into
+      // `segments` — a segment dropped upstream (R.10, the coverage skip
+      // filter) has no committed boundary to correct, and declining is the
+      // same tolerant-by-id behaviour `applySeamFitCorrections` already has.
+      const committedValue = committedById.get(segments[segIdx]!.id);
+      if (committedValue === undefined) continue;
       const delta = correctedValue - committedValue;
       // The proposed value is where the boundary already is: nothing to do.
       // A no-op guard, NOT a correctness claim about the committed value.

@@ -6222,3 +6222,72 @@ exists to handle remains reachable and silently-absorbed under the shipped
 path — still holds and is why neither rule needed to ship before this
 reversal was ruled; it means the reversal was safe to make late, not that it
 should have stayed deferred indefinitely.
+
+---
+
+## WS1 SESSION N (2026-08-19) — R.11 WAS REACHABLE AND STILL COULD NEVER FIRE; R-AO OPENS THE PRODUCTION-PATH CLASS
+
+**THE FINDING (measured, not inferred).** A reachability audit over the live entry point
+(`App.tsx`'s `handleApplySyncFromFiles`) found **zero unreachable rules** — R.5, R.10, R.11,
+R.12, R.13, R-U and R-E are all invoked on the shipped path. The live-run evidence
+nevertheless showed R.11 logging nothing and the register's pre-fix values (449.20 / 570.18 /
+670.24) committed verbatim. Reachability was never the defect.
+
+`detectSeamFitDefects` took ONE segment array where it needed two. `App.tsx` passed
+`anchorTimed` — the character-weight PRE-ALIGNMENT ESTIMATE — and the detector read
+`committedValue` out of it by index. Measured on the real v6 FA-ON capture, that estimate sits
+**15.59s / 20.49s / 22.38s** away from the real committed boundary for the three known
+candidates. Because the third conjunct's correction span is `[min, max]` of `committedValue`
+and `correctedValue`, those drifts widened the span from ~1-2s to **17.42s / 21.38s / 23.32s**,
+which swallowed **48 / 56 / 58** real FA words including full-confidence (1.000) ones. Every
+candidate then failed `spanMaxConf < R11_MAX_SPAN_WORD_CONF` and declined. Each candidate
+passed every OTHER conjunct — fit deviation 1.4286 / 1.5000 / 1.3333 (threshold 1.3093),
+end-word-aligned, `agreed-anchor` provenance, backing silences whose midpoints are exactly the
+ear-correct 451.03 / 571.07 / 671.18.
+
+`faRunPlacementGate.ts` (R.12/R.13) already had the two-array split, and its own doc comment
+already named the reason: *"Splitting the two is what lets the detector read a real committed
+value rather than a pre-alignment estimate."* R.11 simply never received it. **Fix:**
+`detectSeamFitDefects(parsedSegments, committedSegments, tokens, faTokens, silences,
+audioDuration)`, with `committedValue` resolved **by ID** (not index) against the committed
+array, matching `applySeamFitCorrections`'s existing tolerant-by-id behaviour.
+
+**WHY BOTH EXISTING GATES WERE BLIND.**
+
+- `scripts/phase4-handoff-replay-sync.test.ts` (the golden replay) is an **FA-OFF** replay. It
+  reproduces Apply Sync steps 1-7 and stops exactly where the rule block begins; it invokes
+  **none** of R.5/R.10/R.11/R.12/R.13. Its v6 output already carries 451.03 / 671.18 — not
+  because R.11 ran, but because the plain Whisper snap lands there. Turning FA ON is what
+  moves those boundaries to 449.20 / 670.24.
+- `src/services/faSeamFitGate.test.ts` calls the detector directly and passes its **committed**
+  array in the argument production fills with `anchorTimed`. The suite therefore could not
+  observe the wiring defect, and stayed green throughout.
+
+**R-AO ruling (2026-08-19, WS1 Session N) — A RULE IS NOT CLOSED UNTIL OBSERVED FIRING BY NAME
+IN A LIVE APP SYNC LOG. FIXTURE-GREEN IS NECESSARY, NOT SUFFICIENT.**
+
+**(a) The rule.** No WS1 rule may be recorded as closed on fixture evidence alone. Closure
+requires the rule to have been observed firing, **by name**, either in a live in-app sync log
+or on a harness that drives the real production rule stage with the real captured inputs. A
+detector that is reachable, unit-tested and green may still be functionally dead in production
+— R.11 was, for the whole of Sessions F through M.
+
+**(b) Machine-checkable form.** Every rule in the registry must carry a **production-path
+assertion**. `scripts/ws1-production-path.test.ts` is that gate: it drives App.tsx's own rule
+stage, in App.tsx's own order, with App.tsx's own arguments, over the real v6 capture, and
+asserts **final committed boundary values** plus a per-rule firing count. Its
+`R-AO: every registry rule has an observable firing count on the production path` case fails
+if any registry rule cannot fire. Adding a rule without adding it there is a gate failure, not
+an oversight.
+
+**(c) Scope of what this invalidates.** Consistent with Session M's own caveat, any FA claim
+resting only on a fixture call to a detector — as opposed to a production-path run — is
+provisional until it appears in this gate.
+
+**STILL OPEN (not closed by this session, no data in-repo to close them).** The live-run
+evidence also reported five boundaries early by 0.32-0.67s (direction 100% early), a
+still-playing detector that caught only 2 of those 5, and segments 230-233 shifted across
+680.99-689.39. None of the three is reproduced by the v6 production-path harness as it stands,
+and the live run's own artifacts (its sync log, its in-app FA token stream) are not in the
+repository. They are NOT recorded as register rows here: a register row pinned to a number
+nobody in-repo can reproduce is exactly the failure R-AO exists to stop.

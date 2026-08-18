@@ -202,7 +202,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
   it('v6: fires on item 7 (152_frozen_brush_mice) at its exact ear-correct value', () => {
     const { segments: raw, tokens, silences } = loadCorpus('v6');
     const segments = resetToPreR11(raw, V6_PRE_R11);
-    const findings = detectSeamFitDefects(segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
+    const findings = detectSeamFitDefects(segments, segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
     const f = findings.find(f => f.segmentTag === '152_frozen_brush_mice');
     expect(f, 'item 7 must fire').toBeDefined();
     expect(f!.committedValue).toBeCloseTo(449.20, 2);
@@ -214,7 +214,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
   it('v6: fires on 226_four_scouts at its exact ear-correct value', () => {
     const { segments: raw, tokens, silences } = loadCorpus('v6');
     const segments = resetToPreR11(raw, V6_PRE_R11);
-    const findings = detectSeamFitDefects(segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
+    const findings = detectSeamFitDefects(segments, segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
     const f = findings.find(f => f.segmentTag === '226_four_scouts');
     expect(f, '226_four_scouts must fire').toBeDefined();
     expect(f!.committedValue).toBeCloseTo(670.24, 2);
@@ -229,14 +229,14 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     // for the same reason, the real 0.0301 word in the span, which is what
     // keeps the two rules exclusive.
     const { segments, tokens, silences } = loadCorpus('v6');
-    const findings = detectSeamFitDefects(segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
+    const findings = detectSeamFitDefects(segments, segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
     expect(findings.find(f => f.segmentTag === '125_night_circle')).toBeUndefined();
   }, V6_TIMEOUT_MS);
 
   it('v6: DOES fire on 192_scout_listening — a new, structurally identical, unverified candidate', () => {
     const { segments: raw, tokens, silences } = loadCorpus('v6');
     const segments = resetToPreR11(raw, V6_PRE_R11);
-    const findings = detectSeamFitDefects(segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
+    const findings = detectSeamFitDefects(segments, segments, tokens, V6_FA_WORDS, silences, AUDIO_DURATION.v6);
     const f = findings.find(f => f.segmentTag === '192_scout_listening');
     expect(f, '192_scout_listening must fire').toBeDefined();
     expect(f!.committedValue).toBeCloseTo(570.18, 2);
@@ -247,7 +247,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
   it('173: fires on abysmal_opinion at its exact ear-correct value', () => {
     const { segments: raw, tokens, silences } = loadCorpus('173');
     const segments = resetToPreR11(raw, CORPUS_173_PRE_R11);
-    const findings = detectSeamFitDefects(segments, tokens, CORPUS_173_FA_WORDS, silences, AUDIO_DURATION['173']);
+    const findings = detectSeamFitDefects(segments, segments, tokens, CORPUS_173_FA_WORDS, silences, AUDIO_DURATION['173']);
     const f = findings.find(f => f.segmentTag === 'abysmal_opinion');
     expect(f, 'abysmal_opinion must fire').toBeDefined();
     expect(f!.committedValue).toBeCloseTo(16.50, 2);
@@ -267,7 +267,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     // the apply-time exclusion (index 0 in the FINAL array) is verified
     // separately below.
     const { segments, tokens, silences } = loadCorpus('173');
-    const findings = detectSeamFitDefects(segments, tokens, CORPUS_173_FA_WORDS, silences, AUDIO_DURATION['173']);
+    const findings = detectSeamFitDefects(segments, segments, tokens, CORPUS_173_FA_WORDS, silences, AUDIO_DURATION['173']);
     const f = findings.find(f => f.segmentTag === 'hostile_landscape');
     // May or may not structurally fire at the DETECTOR level (its own
     // chunk-fit evidence is real and contaminated by R.10's own defect) —
@@ -282,7 +282,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
       { text: 'scylla', startSec: 0.32, endSec: 0.68, confidence: 0.014653 },
       { text: 'scylla', startSec: 1.48, endSec: 1.76, confidence: 0.01202 },
     ];
-    const findings = detectSeamFitDefects(segments, tokens, spanishFaWords, silences, AUDIO_DURATION.spanish);
+    const findings = detectSeamFitDefects(segments, segments, tokens, spanishFaWords, silences, AUDIO_DURATION.spanish);
     expect(findings.find(f => f.segmentIndex === 0)).toBeUndefined();
     expect(findings.find(f => f.segmentTag === '001_scylla_intro')).toBeUndefined();
   });

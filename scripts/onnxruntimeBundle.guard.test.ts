@@ -132,7 +132,7 @@ describe('GUARD 2 — the bundled onnxruntime version matches what the pinned or
     const ortLine = CARGO_TOML.split('\n').find((l) => l.trimStart().startsWith('ort ='));
     if (!ortLine) throw new Error('no `ort =` dependency line in Cargo.toml');
     const featuresMatch = /features\s*=\s*\[([^\]]*)\]/.exec(ortLine);
-    const features = featuresMatch ? featuresMatch[1] : '';
+    const features = featuresMatch?.[1] ?? '';
     const apiNumbers = [...features.matchAll(/api-(\d+)/g)].map((m) => Number(m[1]));
     return apiNumbers.length > 0 ? Math.max(...apiNumbers) : 17;
   }

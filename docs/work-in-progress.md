@@ -4211,6 +4211,59 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 
 ## Changelog
 
+- **2026-08-19 — WS1 Session N: R.11 was REACHABLE the whole time and still could
+  never fire. The defect was a one-argument wiring bug, not a missing call. R-AO
+  opens the production-path class and ships its machine-checkable gate.**
+  - **Reachability audit: ZERO unreachable rules (MEASURED).** R.5, R.10, R.11,
+    R.12, R.13, R-U and R-E are all invoked from the live entry point
+    (`App.tsx`'s `handleApplySyncFromFiles`). Session N's exit-N1 condition
+    (">1 rule unreachable") did not trigger. The live-run symptom — R.11 silent,
+    449.20 / 570.18 / 670.24 committed verbatim — had a different cause.
+  - **Root cause (MEASURED, real v6 FA-ON capture).** `detectSeamFitDefects`
+    took ONE segment array where it needed two. `App.tsx` passed `anchorTimed`
+    (the character-weight PRE-ALIGNMENT ESTIMATE) and the detector read
+    `committedValue` out of it by index. That estimate sits 15.59s / 20.49s /
+    22.38s from the real committed boundary, widening the third conjunct's
+    correction span from ~1-2s to 17.42s / 21.38s / 23.32s, which swallowed
+    48 / 56 / 58 real FA words including full-confidence (1.000) ones. Every
+    candidate then failed `spanMaxConf < R11_MAX_SPAN_WORD_CONF`. All other
+    conjuncts passed: fit deviation 1.4286 / 1.5000 / 1.3333 (threshold 1.3093),
+    end-word-aligned, `agreed-anchor`, backing-silence midpoints exactly
+    451.03 / 571.07 / 671.18.
+  - **The fix.** `detectSeamFitDefects(parsedSegments, committedSegments, ...)`
+    — the same two-array split `faRunPlacementGate.ts` (R.12/R.13) already had
+    and already documented. `committedValue` resolves **by ID**, not index, so a
+    segment dropped upstream declines instead of mis-indexing.
+  - **Why both existing gates were blind (MEASURED).** The golden replay
+    (`scripts/phase4-handoff-replay-sync.test.ts`) is an **FA-OFF** replay that
+    stops exactly where the rule block begins — it invokes none of
+    R.5/R.10/R.11/R.12/R.13. Its v6 output already reads 451.03 / 671.18 because
+    the plain Whisper snap lands there; turning FA ON is what moves those
+    boundaries to 449.20 / 670.24. `faSeamFitGate.test.ts` passed its committed
+    array in the argument production fills with `anchorTimed`, so it could not
+    see the wiring defect.
+  - **R-AO (new standing rule).** A rule is not closed until observed firing by
+    name on the real path; fixture-green is necessary, not sufficient. Machine-
+    checkable form: `scripts/ws1-production-path.test.ts`, which drives App.tsx's
+    own rule stage in App.tsx's own order with App.tsx's own arguments over the
+    real v6 capture and asserts FINAL COMMITTED boundary values plus a per-rule
+    firing count. Full text: `sync-pipeline-v2-plan.md`'s WS1 Session N section.
+  - **RED -> GREEN (MEASURED).** Under the pre-fix wiring the new gate fails with
+    `expected 449.2 to be close to 451.03` and `R.11 must fire: expected 0 to be
+    greater than 0`. After the fix all 5 cases pass, and the harness reproduces
+    the live run's shape exactly (447 parsed / 447 kept / 0 skipped, R.5 = 10).
+  - **Also fixed:** a pre-existing `tsc --noEmit` error at HEAD in
+    `scripts/onnxruntimeBundle.guard.test.ts:136` (`features` possibly
+    undefined) — lint was not clean before this session.
+  - **NOT closed, and deliberately NOT pinned as register rows.** The live-run
+    evidence's Class B (5 boundaries early 0.32-0.67s; still-playing detector
+    recall 2/5) and Class C (segs 230-233 across 680.99-689.39) are not
+    reproduced by the v6 production-path harness, and the live run's own
+    artifacts (its sync log, its in-app FA token stream) are not in the
+    repository. Pinning a register row to a number nobody in-repo can reproduce
+    is the exact failure R-AO exists to stop. Reopening the register awaits
+    those artifacts.
+
 - **2026-08-18 — WS1 Session M: THE MOST MATERIAL DISCOVERY OF THE PROGRAMME —
   forced alignment had never once executed inside the application. The runtime
   is now bundled and app-resolved (R-N), the FA error is surfaced to the user,

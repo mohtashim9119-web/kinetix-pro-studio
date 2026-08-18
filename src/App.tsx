@@ -3191,6 +3191,12 @@ export default function App() {
       if (faTokens) {
         const seamFitFindings = detectSeamFitDefects(
           anchorTimed,
+          // WS1 Session N — the COMMITTED array, the second half of the same
+          // two-array split R.12/R.13 below already had. Passing only
+          // `anchorTimed` made R.11 read a character-weight pre-alignment
+          // estimate as its `committedValue`; see faSeamFitGate.ts's doc
+          // comment for the measured consequence (it could never fire).
+          finalTimedSegments,
           projectRef.current.transcriptTokens!,
           faTokens,
           aligned.silences,
