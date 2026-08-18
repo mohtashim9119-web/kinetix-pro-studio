@@ -179,6 +179,8 @@ import {
 import {
   saveProject,
   loadProject,
+  loadProjectDetailed,
+  adoptMirroredProjects,
   loadAllMetas,
   deleteProjectData,
   migrateLegacyIfNeeded,
@@ -2006,6 +2008,28 @@ export default function App() {
       //    • Has projects but no last-opened id (e.g. first launch after
       //      migration) → show the dashboard so the user picks one.
       // -----------------------------------------------------------------------
+      // -----------------------------------------------------------------------
+      // 1b. WS1 Session O — adopt anything the durable mirror holds that this
+      //     ORIGIN does not. `localStorage` is origin-scoped, and `tauri dev`
+      //     (http://localhost:3000) and a bundled build (tauri://localhost) are
+      //     different origins with disjoint stores; the mirror lives in the
+      //     bundle-id-keyed app data dir, which is the same in both. Strictly
+      //     additive — never overwrites a project this origin already has —
+      //     so it must run BEFORE the registry is read.
+      // -----------------------------------------------------------------------
+      try {
+        const adoption = await adoptMirroredProjects();
+        if (adoption.adopted.length > 0) {
+          // `showToast` is a useCallback with [] deps — stable, so reading it
+          // from this mount-only effect's closure is not a staleness hazard.
+          showToast(
+            `Recovered ${adoption.adopted.length} project${adoption.adopted.length === 1 ? '' : 's'} from this app's durable storage.`,
+          );
+        }
+      } catch (err) {
+        console.error('[kinetix] Mirror adoption failed; continuing with local storage only:', err);
+      }
+
       const allMetas = loadAllMetas();
       const lastId = getLastOpenedProjectId();
 
@@ -4693,11 +4717,25 @@ export default function App() {
       saveNow();
     }
 
-    const saved = loadProject(id);
-    if (!saved) {
+    // WS1 Session O — distinguish "no such project" from "present but broken",
+    // and surface the latter instead of failing silently. `loadProjectDetailed`
+    // has already recorded a poison flag for this id, which makes `saveProject`
+    // refuse every subsequent write to it, so the unreadable raw bytes stay on
+    // disk exactly as they are rather than being autosaved over.
+    const outcome = loadProjectDetailed(id);
+    if (outcome === null) {
       console.error('[kinetix] Cannot switch to project — not found in storage:', id);
+      showToast('That project could not be found in storage.');
       return;
     }
+    if (!outcome.ok) {
+      console.error('[kinetix] Cannot switch to project — load failed:', id, outcome);
+      showToast(
+        `This project could not be opened (${outcome.reason}). Its ${outcome.rawLength} bytes of saved data have been left untouched, and saving is blocked for it so nothing overwrites them.`,
+      );
+      return;
+    }
+    const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
     // Revoke current project's blob URLs.
     project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });

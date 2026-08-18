@@ -6291,3 +6291,99 @@ still-playing detector that caught only 2 of those 5, and segments 230-233 shift
 and the live run's own artifacts (its sync log, its in-app FA token stream) are not in the
 repository. They are NOT recorded as register rows here: a register row pinned to a number
 nobody in-repo can reproduce is exactly the failure R-AO exists to stop.
+
+---
+
+## WS1 SESSION O (2026-08-19) — THE REPORTED DATA LOSS WAS NOT DATA LOSS; THE REAL DEFECT IS THAT `localStorage` IS ORIGIN-SCOPED AND DEV AND RELEASE ARE DIFFERENT ORIGINS
+
+**(a) The report, and what the bytes actually said.** The symptom was "after running
+`npm run tauri:dev:fa` and reopening the app, the v6 project shows 0 segments and no
+content." Forensics ran before any code was read and before the app was launched even
+once, because a single launch could have autosaved empty state over surviving data.
+Every candidate store was snapshotted read-only to `.work-phase4/forensics-20260819-033211/`
+(2.2 GB, gitignored, nothing modified).
+
+**Verdict: MEASURED — no data was lost, and nothing needed recovering.** Every project in
+both stores hydrates cleanly through the production `loadProject` path, with the registry's
+`segmentCount` matching the hydrated `segments.length` for all 12:
+
+| Store | Origin | Projects | Notable |
+|---|---|---|---|
+| `~/Library/WebKit/app` | `http://localhost:3000` | 8 | `V6 New Audio Long Pauses` **447 segments / 448 assets, intact** |
+| `~/Library/WebKit/com.kinetix.pro-studio` | `tauri://localhost` | 4 | `V6` 447 segments / 448 assets, intact |
+
+The project the user opened, `FINAL TEST V6` (created 03:15:27), is a genuinely NEW project
+whose Apply Sync never committed — not a damaged one. Its `script` is still the 150-character
+default placeholder, so the v6 script was never pasted into it. It carries 4556
+`transcriptTokens` (transcription did run) and `segments: []` / `assets: []`. Its 448 asset
+BLOBS are present in IndexedDB under its own project id, with **zero id overlap** with the
+intact project's 448 — a genuine re-import, not a copy. That combination is exactly what the
+staging contract produces: `persistFileToAsset` / `extractZipToAssets` (`App.tsx:300-370`)
+write blobs to IndexedDB and explicitly "Do NOT call setProject", so assets enter
+`project.assets` only when Apply Sync commits.
+
+**(b) Exits.** **O1 did NOT trigger** — `tauri:dev` and `tauri:dev:fa` resolve to the SAME
+store. There is exactly one `tauri.conf.json` (byte-identical to HEAD), one `identifier`
+(`com.kinetix.pro-studio`), one `devUrl` (`http://localhost:3000`); the scripts differ ONLY
+by the `-f fa-inference` Cargo feature. **O2 did NOT trigger** — all 15 preserved
+`localStorage` keys parse as valid JSON. **O3 and O4 did not arise.**
+
+**(c) The real divergence, which is dev-vs-RELEASE, not dev-vs-dev:fa (MEASURED).**
+`localStorage` is scoped by ORIGIN. Tauri serves dev from `devUrl` (`http://localhost:3000`)
+and a bundled build from the custom protocol (`tauri://localhost`). Those are two origins and
+therefore two disjoint stores — the 8-project and 4-project sets above, with no overlap and no
+way for either build to see the other's work. The Rust side does NOT have this problem:
+`app_local_data_dir()` is keyed by BUNDLE IDENTIFIER, which is why `fa-models/` is already
+shared across all three configs. The asymmetry — shared native data, split webview data — is
+the trap.
+
+*(Incidental, and the reason the dev store's directory is literally named `app`: the crate is
+named `app` in `src-tauri/Cargo.toml`, so the un-bundled dev binary's WebKit data directory
+takes that name.)*
+
+**(d) The mechanism behind the reported symptom (MEASURED).** `setLastOpenedProjectId` wrote
+to **`sessionStorage`**, which survives a page reload but NOT an app restart. So every relaunch
+resolved `lastId` to null and dropped the user at the dashboard with no project open — the state
+that reads as "my project is gone", and from which creating a new project instead of reopening
+the real one is a single misclick. Now `localStorage`, with a one-way promotion of any legacy
+`sessionStorage` value.
+
+**(e) The guard that ships (Step 5, shipped regardless of the verdict).** The point is NOT that
+a corruption was found — none was. It is that the store had three failure modes that were
+**silent**, and "fail-clean must not mean fail-silent" (the same principle `types.ts`'s
+`fa-fallback` entry states for the FA path):
+
+1. **Empty-over-non-empty is refused.** `saveProject` reads the stored segment count first and
+   refuses a 0-segment write over a stored non-empty project, logging both counts. A deliberate
+   emptying opts in via `saveProject(p, { allowEmptying: true })`. A first save of a new empty
+   project is unaffected — that is not an overwrite.
+2. **Load failures are loud and non-destructive.** `loadProjectDetailed` distinguishes absent
+   (`null`) from broken (`parse-error` / `shape-invalid`), never rewrites or deletes the raw
+   bytes, surfaces the reason in the UI, and records a **poison flag** that makes `saveProject`
+   refuse every subsequent write to that id — closing the window in which the 500 ms debounced
+   autosave would otherwise overwrite the very bytes that failed to parse. `clearLoadFailure`
+   is the escape hatch; a later clean load un-poisons automatically. **This was a real
+   destructive path: the RED proof showed the pre-change store overwriting corrupt raw bytes
+   with an empty project.**
+3. **Write failures are reported, not swallowed.** The old bare `catch {}` hid quota exhaustion
+   entirely. Quota and store-unavailable are now distinct outcomes, and every write is verified
+   by read-back (`verify-failed`).
+4. **Atomic writes + rotating backups**, in `src-tauri/src/project_mirror.rs`: temp file in the
+   same directory → `write_all` → `flush` → `fsync` → `rename(2)`. An interrupted write leaves
+   the destination whole; the inode is replaced, never truncated in place. The previous good
+   state rotates into `backups/<id>/<unix_ms>.json`, 10 deep.
+5. **One store across all configs**, via the durable mirror in `app_local_data_dir()`. Every
+   save mirrors there (fire-and-forget — a mirror failure never blocks or fails a local save),
+   and `adoptMirroredProjects()` runs at boot before the registry is read.
+
+**(f) Adoption is STRICTLY ADDITIVE, and that is the whole safety argument.** A project id that
+already exists in this origin is never touched, never compared, never overwritten — not even
+when the mirror's copy is newer and larger. The mirror is shared by `tauri dev`,
+`tauri dev -f fa-inference` and the bundled build, so any "newest wins" rule would let launching
+an older build silently roll a project backwards. Adoption can therefore only ever increase what
+an origin can see.
+
+**(g) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`), `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` were not touched. Nothing on §3's Master Phase Board
+advances: this session touched persistence, not sync timing. Golden replay 6/6 unchanged.

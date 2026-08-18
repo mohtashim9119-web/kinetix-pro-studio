@@ -15,6 +15,7 @@ mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
+mod project_mirror;
 mod sha256;
 mod whisper;
 
@@ -148,6 +149,9 @@ pub fn run() {
             fa_dev::fa_align_dev,
             fa_production::fa_align_production,
             fa_preflight::fa_preflight,
+            project_mirror::project_mirror_read_all,
+            project_mirror::project_mirror_write_project,
+            project_mirror::project_mirror_delete_project,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,

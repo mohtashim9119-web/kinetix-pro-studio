@@ -111,6 +111,13 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-19 (WS1 SESSION O) — NOTHING ON THIS BOARD ADVANCES.** Stated explicitly.
+Session O was a data-loss forensics + persistence-guard session: it read the real on-disk
+stores, established that **no data was lost** (12/12 projects hydrate through the production
+`loadProject`), and shipped the store guard + durable mirror. It touched persistence, never
+sync timing — `faAnchors.ts`, `snapBoundaries.ts`, `silenceDetector.ts` and the Hirschberg
+aligner are all unmodified, and the golden replay is 6/6 unchanged. No row here moves.
+
 **2026-08-16 (WS1 Session B.1) — NOTHING ON THIS BOARD ADVANCES EITHER.** Stated
 explicitly, same as Session B below and for the same reason: owner ruling R-AA narrowed
 R-U's seam definition (16 moved boundaries → 4) and changed real production code in
@@ -654,6 +661,12 @@ cross-referenced against `src/types.ts` live:
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
+**2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
+in the persistence layer (`projectStore.ts`, `projectMirror.ts`, `project_mirror.rs`), which sits
+downstream of Contract 1→2 and is not one of its inputs or outputs. P4 and P8 remain the open
+Phase 4 items they were. Recorded here only so a reader does not have to re-derive that a
+session touching `Project` persistence left the contract untouched — it did.
+
 **6 of 8 met as of 2026-08-18 (WS1 Session J)** — P1, P2, P3, P5, **P6**, P7-partial. P6 moved
 ❌ → ✅ by measurement, not by acceptance: it was the one row that could not be scheduled away,
 because the plan's own enforcement text for it is "symmetry property manually-verified", i.e.
@@ -986,6 +999,46 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-19 (WS1 SESSION O) — THE REPORTED DATA LOSS WAS NOT DATA LOSS. THE REAL DEFECT IS
+STRUCTURAL: `localStorage` IS ORIGIN-SCOPED, AND DEV AND RELEASE ARE DIFFERENT ORIGINS.**
+
+**(a) Verdict first, because it reorders everything below it: nothing was lost (MEASURED).**
+Forensics ran before any code was read and before the app was launched even once. Every project
+in both stores hydrates cleanly through the production `loadProject` path — 12/12, registry
+`segmentCount` equal to hydrated `segments.length` in every case. `V6 New Audio Long Pauses`
+(447 segments, 448 assets, all 448 blobs present in IndexedDB) was intact the whole time. The
+project the user opened, `FINAL TEST V6`, is a NEW project whose Apply Sync never committed: its
+`script` is still the 150-character default placeholder, and its 448 IndexedDB blobs have **zero
+id overlap** with the intact project's — a genuine re-import held in the staging state that
+`persistFileToAsset`/`extractZipToAssets` (`App.tsx:300-370`) produce by contract, since both
+write blobs but explicitly "Do NOT call setProject".
+
+**(b) The two stores (MEASURED).** `~/Library/WebKit/app` (origin `http://localhost:3000`,
+8 projects) and `~/Library/WebKit/com.kinetix.pro-studio` (origin `tauri://localhost`,
+4 projects) — disjoint, no overlap. `tauri:dev` and `tauri:dev:fa` share one store (exit **O1
+did not trigger**: one config, one identifier, one `devUrl`; the scripts differ only by
+`-f fa-inference`). The split is dev-vs-RELEASE and it is structural: Tauri serves dev from
+`devUrl` and release from the custom protocol. `app_local_data_dir()` is bundle-id-keyed and does
+NOT have this problem, which is why `fa-models/` is already shared across all three configs.
+
+**(c) Why it presented as loss.** `setLastOpenedProjectId` wrote to `sessionStorage`, which does
+not survive an app restart — so every relaunch dropped the user at the dashboard with nothing
+open. Now `localStorage`, with a one-way promotion of any legacy value.
+
+**(d) What ships.** The guard at the single choke point (`projectStore.ts`): empty-over-non-empty
+refused; load failures loud, non-destructive, and poisoning the id so the debounced autosave
+cannot overwrite unparseable bytes; quota/verify failures reported instead of swallowed by the
+old bare `catch {}`. Plus `project_mirror.rs` — atomic temp+fsync+rename writes, 10-deep
+timestamped rotating backups, in the bundle-id-keyed app data dir — and a **strictly additive**
+`adoptMirroredProjects()` boot pass that can only ever add ids this origin lacks, never
+reconcile or overwrite (a "newest wins" rule across shared dev/release storage would let an
+older build roll a project backwards).
+
+**(e) The RED proof matters here.** The pre-change store, driven by the same assertions, was
+measured **overwriting corrupt raw bytes with an empty project**. That path was real, and it is
+now closed.
+
 
 **2026-08-18 (WS1 SESSION M) — THE MOST MATERIAL DISCOVERY OF THE PROGRAMME: FORCED ALIGNMENT
 HAD NEVER ONCE EXECUTED INSIDE THE APPLICATION. RUNTIME BUNDLED PER R-N, ERROR SURFACED,
@@ -4210,6 +4263,54 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-19 — WS1 Session O: the reported data loss was NOT data loss. Every project was
+  intact; the real defect is that `localStorage` is origin-scoped, so dev and release are two
+  disjoint stores. Guard + durable mirror ship.**
+  - **Forensics before anything else.** Every candidate store snapshotted read-only to
+    `.work-phase4/forensics-20260819-033211/` (2.2 GB, gitignored) before a line of code was
+    read and before the app was launched once — a single launch could have autosaved empty
+    state over surviving data.
+  - **Verdict (MEASURED): nothing lost, nothing to recover.** All 12 projects across both
+    stores hydrate through the production `loadProject`, registry `segmentCount` matching
+    hydrated `segments.length` in every case. `V6 New Audio Long Pauses` — 447 segments,
+    448 assets, all 448 blobs in IndexedDB — was intact throughout. The opened project
+    (`FINAL TEST V6`) is a NEW one whose Apply Sync never committed: default 150-char
+    placeholder script, and 448 IndexedDB blobs with **zero id overlap** with the intact
+    project's, i.e. a real re-import sitting in the documented staging state.
+  - **Exits: O1 did NOT trigger** (`tauri:dev` and `tauri:dev:fa` resolve to the same store —
+    one `tauri.conf.json` byte-identical to HEAD, one identifier, one `devUrl`, differing only
+    by the `-f fa-inference` Cargo feature). **O2 did NOT trigger** (all 15 preserved keys parse
+    as valid JSON). O3/O4 did not arise.
+  - **The real divergence is dev-vs-RELEASE (MEASURED).** `~/Library/WebKit/app`
+    (`http://localhost:3000`, 8 projects) vs `~/Library/WebKit/com.kinetix.pro-studio`
+    (`tauri://localhost`, 4 projects) — disjoint. `localStorage` is origin-scoped; Tauri serves
+    dev from `devUrl` and release from the custom protocol. The Rust side is unaffected because
+    `app_local_data_dir()` is bundle-id-keyed — the same property `fa-models/` already relies on.
+  - **Why it presented as loss.** `setLastOpenedProjectId` used `sessionStorage`, which survives
+    a reload but not an app restart, so every relaunch landed on the dashboard with nothing open.
+    Moved to `localStorage` with a one-way promotion of any legacy value.
+  - **The guard (ships regardless of the verdict — three previously SILENT failure modes).**
+    (1) `saveProject` refuses a 0-segment write over a stored non-empty project, logging both
+    counts; `{ allowEmptying: true }` is the deliberate opt-in. (2) `loadProjectDetailed`
+    separates absent from broken, never rewrites the raw bytes, surfaces the reason in the UI,
+    and poisons the id so the 500 ms debounced autosave cannot overwrite what failed to parse.
+    (3) Quota and verify-failure are distinct reported outcomes instead of a bare `catch {}`.
+  - **`project_mirror.rs`** — atomic temp-file + `flush` + `fsync` + `rename(2)` (inode replaced,
+    never truncated in place), 10-deep timestamped rotating backups, rooted in
+    `app_local_data_dir()` so one store serves dev, dev:fa and release. `adoptMirroredProjects()`
+    is **strictly additive** — never touches an id this origin already has, because a
+    "newest wins" rule across shared storage would let an older build roll a project backwards.
+  - **RED before GREEN.** The same assertions run against the pre-change store failed 4/4, and
+    GUARD 3 showed it **overwriting corrupt raw bytes with an empty project** — a real
+    destructive path, now closed.
+  - **Six numbers.** `npm test` 97 files / 2424 passed / 1 skipped (floor 94/2392/1; +32 tests =
+    22 guard + 4 store-location + 6 adoption); `tsc --noEmit` clean; `cargo check --features
+    fa-inference` clean; `cargo test --features fa-inference` 215 passed / 20 ignored (floor
+    209/20, +6 mirror tests); golden replay 6/6; FA gate 31/31 green at rest.
+  - **Scope.** `faAnchors.ts` (sha256 `b61e94cb…`), `snapBoundaries.ts`, `silenceDetector.ts`,
+    the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+    `scripts/fixtures/phase4-baseline-*.csv` untouched. No sync-timing behaviour changed.
 
 - **2026-08-19 — WS1 Session N: R.11 was REACHABLE the whole time and still could
   never fire. The defect was a one-argument wiring bug, not a missing call. R-AO
