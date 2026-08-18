@@ -738,9 +738,9 @@ describe('R.13 — the atomic-utterance invariant: detection (synthetic)', () =>
   it('only the segment CONTAINING the run onset is a carrier — a neighbour is never one', () => {
     // seg0's words end at 2.00, before the run starts at 3.00, and its span
     // stops at 2.50 so it does not contain the run onset either. The
-    // containment scan — not the after-the-run guard — is what excludes it;
-    // the guard is a defensive restatement of R.12's precedence and is
-    // unreachable in the shipped order (see its own comment, and M8-B).
+    // containment scan — not the after-the-run guard — is what excludes it.
+    // The guard has its own reachability case and its own tests below; it is
+    // unreachable in the shipped order but NOT uncovered (M8-B is RED).
     const { parsed, tokens, silences, audioDuration } = closingFixture();
     const committed = [
       seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
@@ -749,6 +749,99 @@ describe('R.13 — the atomic-utterance invariant: detection (synthetic)', () =>
     ];
     const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
     expect(findings.some(f => f.carrierId === 'seg0')).toBe(false);
+  });
+
+  /**
+   * THE AFTER-THE-RUN GUARD, covered rather than accepted as uncoverable
+   * (WS1 Session L, debt 1 — M8-B was reported GREEN in Session K).
+   *
+   * The guard is `utteranceEndSec > run.endSec`. Reaching it needs the
+   * carrier's own line to end at or before the run does, and the reachability
+   * argument is narrower than Session K's comment claimed. `claimed[]` in
+   * `detectUnscriptedRuns` marks a segment's WHOLE matched span, so no
+   * segment's `lastTokenIdx` can ever fall inside a run's token range: the
+   * carrier's last token is strictly before `run.tokenLo` or strictly after
+   * `run.tokenHi`. Before the run, monotonic token times put
+   * `utteranceEndSec <= run.startSec`, which the detection test below then
+   * contradicts. After the run, `utteranceEndSec >= run.endSec` — so
+   * EQUALITY is the only value that reaches the guard, and it needs a
+   * zero-width token at `run.endSec`, which Whisper does emit.
+   *
+   * That makes the guard reachable exactly once: on an UNCORRECTED array,
+   * where the successor still opens strictly inside the run. R.12 owns that
+   * boundary. Without the guard the two rules disagree on the same edge —
+   * measured on this fixture: R.13 proposes 4.825, R.12 proposes 2.50.
+   */
+  function equalityBoundaryFixture() {
+    return {
+      parsed: [
+        seg('seg0', 'alpha bravo charlie delta', 0, 3.5),
+        seg('seg1', 'echo', 3.5, 3.5),
+        seg('seg2', 'india juliett kilo lima', 7.0, 3.0),
+      ],
+      tokens: [
+        tok('alpha', 0.10, 0.50), tok('bravo', 0.60, 1.00),
+        tok('charlie', 1.10, 1.50), tok('delta', 1.60, 2.00),
+        // the run — indices 4..7, [3.00, 4.60].
+        tok('level', 3.00, 3.30), tok('nine', 3.40, 3.70),
+        tok('recitation', 3.80, 4.20), tok('here', 4.30, 4.60),
+        // the carrier's single own word, zero-width, ending EXACTLY at the
+        // run's end. This is what puts `utteranceEndSec === run.endSec`.
+        tok('echo', 4.60, 4.60),
+        tok('india', 7.50, 7.90), tok('juliett', 8.00, 8.40),
+        tok('kilo', 8.50, 8.90), tok('lima', 9.00, 9.40),
+      ],
+      silences: [{ startSec: 2.20, endSec: 2.80 }, { startSec: 4.70, endSec: 4.95 }] as SilenceInterval[],
+      audioDuration: 10.0,
+    };
+  }
+
+  /** The committed array BEFORE R.12 has run: `seg2` opens at 4.00, strictly
+   *  inside the run [3.00, 4.60], and `seg1` (the carrier) contains 3.00. */
+  const uncorrectedCommitted = () => [
+    seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+    seg('seg1', 'echo', 2.50, 1.50),
+    seg('seg2', 'india juliett kilo lima', 4.00, 6.00),
+  ];
+
+  it('the fixture really does put utteranceEndSec EXACTLY at run.endSec', () => {
+    const { parsed, tokens, silences, audioDuration } = equalityBoundaryFixture();
+    const runs = computeUnscriptedRuns(parsed, tokens, silences, audioDuration);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]!.startSec).toBeCloseTo(3.00, 6);
+    expect(runs[0]!.endSec).toBeCloseTo(4.60, 6);
+    // The carrier's own (only) word is index 8, zero-width at the run's end.
+    expect(tokens[8]!.endSec).toBeCloseTo(runs[0]!.endSec, 12);
+    // And the uncorrected boundary really is strictly inside that run.
+    expect(uncorrectedCommitted()[2]!.startTime).toBeGreaterThan(runs[0]!.startSec);
+    expect(uncorrectedCommitted()[2]!.startTime).toBeLessThan(runs[0]!.endSec);
+  });
+
+  it('declines when the carrier own line ends exactly where the run ends — the guard', () => {
+    const { parsed, tokens, silences, audioDuration } = equalityBoundaryFixture();
+    expect(
+      detectUtterancePlacementDefects(parsed, uncorrectedCommitted(), tokens, silences, audioDuration),
+    ).toEqual([]);
+  });
+
+  it('and that declined boundary is R.12 own — the guard keeps the two rules from disagreeing', () => {
+    const { parsed, tokens, silences, audioDuration } = equalityBoundaryFixture();
+    const r12 = detectRunPlacementDefects(parsed, uncorrectedCommitted(), tokens, silences, audioDuration);
+    expect(r12).toHaveLength(1);
+    expect(r12[0]!.segmentId).toBe('seg2');
+    expect(r12[0]!.committedValue).toBeCloseTo(4.00, 6);
+    expect(r12[0]!.correctedValue).toBeCloseTo(2.50, 6);
+  });
+
+  it('once R.12 has corrected it, R.13 still declines — and for the containment reason', () => {
+    const { parsed, tokens, silences, audioDuration } = equalityBoundaryFixture();
+    const corrected = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.50),
+      seg('seg1', 'echo', 2.50, 7.50),
+    ];
+    expect(
+      detectUtterancePlacementDefects(parsed, corrected, tokens, silences, audioDuration),
+    ).toEqual([]);
   });
 
   it('is a NO-OP when the closing boundary already sits after the carrier own line', () => {

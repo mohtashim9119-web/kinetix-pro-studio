@@ -38,7 +38,8 @@
     ],
     "externalBin": ["binaries/ffmpeg", "binaries/whisper"],
     "resources": {
-      "models/*": "models/"
+      "models/*": "models/",
+      "onnxruntime/*": "onnxruntime/"
     },
     "android": {
       "debugApplicationIdSuffix": ".debug"

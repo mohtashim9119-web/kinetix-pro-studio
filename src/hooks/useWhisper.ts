@@ -328,6 +328,13 @@ export function useWhisper(): UseWhisperApi {
           // (see the language param above), so detectedLanguage is undefined
           // on that path anyway and this branch is a no-op by construction.
           language: p.language ?? detectedLanguage,
+          // WS1 Session M — the durable, non-sticky record of what `-l auto`
+          // detected, for the FA gate to read even when the sticky `language`
+          // above stayed undefined. Written whenever THIS run detected
+          // something; never erased by an explicit-language run (which detects
+          // nothing, leaving `detectedLanguage` undefined here) — the prior
+          // detection still describes the current transcript.
+          detectedLanguage: detectedLanguage ?? p.detectedLanguage,
         }));
 
         if (segmentSetStillValid(finalSegments)) {

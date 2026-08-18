@@ -246,6 +246,147 @@ fn log_softmax_row(row: &mut [f32]) {
 /// `Session` across calls to [`run_forward_pass_with_session`]; callers that
 /// only ever need a single pass can still use [`run_forward_pass`] below,
 /// unchanged in behavior.
+// ---------------------------------------------------------------------------
+// Bundled onnxruntime C runtime resolution (WS1 Session M, ruling R-N)
+//
+// The single most material discovery of the programme: before Session M, the
+// onnxruntime C library was resolved PURELY via the `ORT_DYLIB_PATH`
+// environment variable, and nothing in the shipped app ever set it. Every
+// in-app FA run therefore failed at `load_session`'s first line with "failed to
+// initialize onnxruntime: ORT_DYLIB_PATH not set" and fell back to Whisper
+// timing — forced alignment had NEVER executed inside the application. Every
+// prior fixture/measurement came from the `cargo test` / Python-spike driver,
+// which set `ORT_DYLIB_PATH` to a dylib inside `.work-phase4/` (gitignored
+// scratch, outside the repo's control and never on a shipped path).
+//
+// R-N's implementation: `load-dynamic` PLUS bundle the dylib. The app resolves
+// its own runtime at a stable location (a Tauri resource — see
+// `tauri.conf.json`'s `bundle.resources` and `src-tauri/onnxruntime/`), with no
+// dependence on any shell-set variable. `ORT_DYLIB_PATH` survives as a
+// test/override escape hatch ONLY: when it is already set we honor it and skip
+// the bundled lookup entirely — the whole existing test-skip convention
+// (`ort_dylib_or_skip`, the `missing_dylib` module, every `#[ignore]`d live
+// test) rests on that env var being the switch, and this must not disturb it.
+// ---------------------------------------------------------------------------
+
+/// Filename of the bundled onnxruntime C library. Kept in sync with
+/// `src-tauri/onnxruntime/onnxruntime.manifest.json` (`filename`) and the guard
+/// test `scripts/onnxruntimeBundle.guard.test.ts`. Only an osx-x86_64 build is
+/// bundled today; [`resolve_bundled_ort_dylib`] fails loudly on any other
+/// target rather than loading an incompatible binary.
+const ORT_DYLIB_FILENAME: &str = "libonnxruntime.1.23.2.dylib";
+
+/// Ensures `ORT_DYLIB_PATH` names a loadable onnxruntime C library before the
+/// first `ort::init_from`. Idempotent and cheap on repeat calls.
+///
+/// - If `ORT_DYLIB_PATH` is already set to a non-empty value, it is honored
+///   verbatim and NOTHING is resolved or overwritten — this is the test/manual
+///   override path (see the module comment above). We do not even stat it; a
+///   caller who set it owns its correctness, exactly as before Session M.
+/// - Otherwise the bundled library is resolved via the app's resource
+///   directory (with dev/exe-dir fallbacks mirroring `whisper.rs::model_path`),
+///   the running target is checked against the one the bundled binary was built
+///   for, and `ORT_DYLIB_PATH` is set to the resolved path for `load_session`
+///   to read unchanged.
+///
+/// Setting a process-global env var here is safe in production: a real FA run
+/// is single-flight, the value resolved is deterministic (same bundled path
+/// every time), and `load_session` reads it immediately after on the same
+/// logical path. Test builds serialize all `ORT_DYLIB_PATH` access through
+/// `require_ort::ORT_ENV_LOCK` (see `with_ort_env_lock`); this function is only
+/// ever reached in production via `align_chunked_for_language`, never from a
+/// test (tests set the override themselves and take the early return above).
+pub fn ensure_ort_dylib(app: &tauri::AppHandle) -> Result<(), FaOnnxError> {
+    if let Ok(existing) = std::env::var("ORT_DYLIB_PATH") {
+        if !existing.trim().is_empty() {
+            return Ok(());
+        }
+    }
+    let resolved = resolve_bundled_ort_dylib(app)?;
+    std::env::set_var("ORT_DYLIB_PATH", &resolved);
+    Ok(())
+}
+
+/// Resolves the bundled onnxruntime C library's path, or returns a loud,
+/// actionable `OrtInit` error. Arch/OS is a HARD gate: only the target the
+/// bundled binary was built for (macOS x86_64) is accepted — any other target
+/// fails with a message naming the running target rather than silently loading
+/// an incompatible library (the explicit-architecture requirement in R-N).
+fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxError> {
+    // Compile-time gate: a build for a target we have no bundled binary for must
+    // fail loudly at runtime, not fall through to a missing-file error that
+    // reads as "provision the dylib" when the real problem is "wrong platform".
+    if !cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return Err(FaOnnxError::OrtInit(format!(
+            "no bundled onnxruntime C runtime for this target ({}-{}). Only macOS x86_64 is \
+             bundled today ({ORT_DYLIB_FILENAME}); high-precision sync cannot run here. Build/run \
+             on macOS x86_64, or set ORT_DYLIB_PATH to a compatible onnxruntime library for this \
+             target.",
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+        )));
+    }
+
+    use tauri::Manager;
+    let mut tried: Vec<PathBuf> = Vec::new();
+
+    // Production: the Tauri-bundled resource directory.
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let cand = resource_dir.join("onnxruntime").join(ORT_DYLIB_FILENAME);
+        if cand.exists() {
+            return Ok(cand);
+        }
+        tried.push(cand);
+    }
+
+    // Dev / exe-dir fallbacks, mirroring `whisper.rs::model_path`:
+    //   target/debug/<exe> → target/debug → target → src-tauri → onnxruntime/
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
+        // Production macOS bundle: <bundle>/Contents/MacOS/../Resources handled
+        // above via resource_dir(); this covers a loose exe-adjacent layout.
+        let adj = exe_dir.join("onnxruntime").join(ORT_DYLIB_FILENAME);
+        if adj.exists() {
+            return Ok(adj);
+        }
+        tried.push(adj);
+
+        let dev = exe_dir
+            .parent().unwrap_or(&exe_dir)   // target/
+            .parent().unwrap_or(&exe_dir)   // src-tauri/
+            .join("onnxruntime")
+            .join(ORT_DYLIB_FILENAME);
+        if dev.exists() {
+            return Ok(dev);
+        }
+        tried.push(dev);
+    }
+
+    Err(FaOnnxError::OrtInit(format!(
+        "bundled onnxruntime C runtime '{ORT_DYLIB_FILENAME}' not found (looked in: {}). \
+         Re-provision it per src-tauri/onnxruntime/README.md, or set ORT_DYLIB_PATH to a \
+         compatible onnxruntime library.",
+        tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "),
+    )))
+}
+
+/// Pre-flight runtime probe (WS1 Session M): resolve + actually load-and-init
+/// the onnxruntime C library WITHOUT touching any model, returning the resolved
+/// dylib path on success. This is the "runtime library load" line of the FA
+/// pre-flight report — it proves `load_session`'s first two lines would succeed
+/// (dylib resolvable AND ort can dlopen+init it) before the app commits to a
+/// multi-minute sync. Cheap and idempotent: `ort::init_from(..).commit()` is a
+/// try-insert-once against a process-global static (see `load_session`), so a
+/// probe here never conflicts with the real run that follows.
+pub fn probe_ort_runtime(app: &tauri::AppHandle) -> Result<String, FaOnnxError> {
+    ensure_ort_dylib(app)?;
+    let dylib_path = std::env::var("ORT_DYLIB_PATH")
+        .map_err(|_| FaOnnxError::OrtInit("ORT_DYLIB_PATH unset after ensure_ort_dylib".to_string()))?;
+    let builder = ort::init_from(&dylib_path).map_err(|e| FaOnnxError::OrtInit(e.to_string()))?;
+    builder.commit();
+    Ok(dylib_path)
+}
+
 pub fn load_session(model_path: &Path) -> Result<Session, FaOnnxError> {
     let dylib_path = std::env::var("ORT_DYLIB_PATH")
         .map_err(|_| FaOnnxError::OrtInit("ORT_DYLIB_PATH not set".to_string()))?;
@@ -776,6 +917,14 @@ pub fn align_chunked_for_language(
     is_cancelled: impl Fn() -> bool,
     on_progress: impl FnMut(u32),
 ) -> Result<Vec<WordSpan>, FaOnnxError> {
+    // WS1 Session M (R-N): make the bundled onnxruntime C runtime loadable
+    // before any `load_session` runs. In production this sets `ORT_DYLIB_PATH`
+    // from the bundled resource; under tests/manual override it is already set
+    // and this is a no-op. Runs BEFORE model resolution so a runtime-library
+    // failure surfaces as its own actionable error rather than masquerading as
+    // a missing model. This is the ONE production code path that owns runtime
+    // resolution — nothing resolves into `.work-phase4/` or any gitignored dir.
+    ensure_ort_dylib(app)?;
     let model_path = crate::fa::fa_model_path(app, language).map_err(FaOnnxError::ModelNotFound)?;
     align_chunked(cache, &model_path, audio_path, chunks, language, is_cancelled, on_progress)
 }

@@ -30,6 +30,7 @@ import {
   buildRunPlacementLogEntries,
   buildUtterancePlacementLogEntries,
   buildUnspokenScriptLogEntries,
+  buildUnscriptedRunLogEntries,
 } from './syncLog';
 import type { VideoSegment } from '../types';
 
@@ -137,5 +138,80 @@ describe('R-AO — rule-correction entries carry a COMMITTED index, resolved in 
     // different scene than the timeline holds.
     expect(SRC).toContain('committedSegments: readonly VideoSegment[]');
     expect(SRC).not.toContain('const owner = idx >= 0 ? segments[idx] : undefined;');
+  });
+
+  // WS1 Session L — THE R.5 DIVERGENCE, CONSTRUCTED AND MEASURED.
+  //
+  // The debt Session K left open, stated plainly: R.5's containment scan was
+  // MOVED to the committed array, but the move was never measured for a live
+  // divergence, because R.5 only fires on v6 — and v6 drops zero scenes, so on
+  // v6 the parse and committed index spaces COINCIDE and the change is a no-op
+  // by input. The source assertion above pins that the code reads
+  // `committedSegments`; it cannot show the two conventions actually disagree
+  // on a real run, because no real corpus makes them.
+  //
+  // This test builds the input v6 cannot: an earlier scene is dropped (as R.10
+  // drops two on 173), so the owning scene's committed index (2) is strictly
+  // less than its parse index (3). An unscripted run sits inside the owning
+  // scene. We run R.5's real builder AND a parse-space scan of the identical
+  // shape, and require them to DISAGREE — 2 vs 3 — with R.5 reporting the
+  // committed 2. The claim stops being inferred from the parameter name.
+  it('on a dropped-scene input, R.5 reports the COMMITTED index and it DIVERGES from the parse index', () => {
+    const sc = (id: string, tag: string, startTime: number, duration: number): VideoSegment =>
+      ({ id, tag, text: `${tag} words`, startTime, duration, transition: 'none', animation: 'none' }) as unknown as VideoSegment;
+
+    // PARSE array — the pre-skip order, five scenes. `p_drop` is R.10-refused.
+    const parse: VideoSegment[] = [
+      sc('p0', 'intro', 0, 10),
+      sc('p1', 'second', 10, 10),
+      sc('p_drop', 'dropped', 20, 10), // never reaches the timeline
+      sc('p3', 'carrier', 30, 10),     // parse index 3
+      sc('p4', 'last', 40, 10),
+    ];
+    // COMMITTED array — `p_drop` gone, the rest re-timed into a gapless
+    // partition. `p3` (the carrier) is now at committed index 2, and its
+    // committed span is [22.5, 33.75).
+    const committedArr: VideoSegment[] = [
+      sc('p0', 'intro', 0, 11.25),
+      sc('p1', 'second', 11.25, 11.25),
+      sc('p3', 'carrier', 22.5, 11.25), // committed index 2
+      sc('p4', 'last', 33.75, 11.25),
+    ];
+
+    // A run whose onset falls inside the carrier's span under BOTH timings —
+    // committed p3 is [22.5, 33.75), parse p3 is [30, 40), overlap [30, 33.75).
+    // 31.0 sits in the carrier either way, so the two scans name the SAME
+    // scene (p3) and differ ONLY in the index number they give it. That is the
+    // 173 mechanism exactly: `abysmal_opinion` was one scene reported under two
+    // numbers, not two scenes.
+    const run = { tokenLo: 40, tokenHi: 44, startSec: 31.0, endSec: 33.4, qiSplit: 30 };
+
+    const [entry] = buildUnscriptedRunLogEntries('run-L', [run], committedArr, 0);
+    expect(entry).toBeDefined();
+    expect(entry!.owningRule).toBe('R.5');
+
+    // What R.5 actually reports: the committed position of the carrier.
+    expect(entry!.segmentIndex).toBe(2);
+
+    // The SAME containment scan over the PARSE array (its `startTime`s are the
+    // parse-space estimates) names parse index 3 — because `p_drop` still sits
+    // between `p1` and the carrier there. This is the number the pre-Session-K
+    // code produced.
+    const parseIdx = parse.findIndex(s => run.startSec >= s.startTime && run.startSec < s.startTime + s.duration);
+    expect(parseIdx).toBe(3);
+
+    // THE DIVERGENCE, asserted rather than assumed: on this input the two
+    // conventions give different scene NUMBERS for the same carrier, and R.5
+    // takes the committed one.
+    expect(entry!.segmentIndex).not.toBe(parseIdx);
+    expect(parse[parseIdx]!.id).toBe('p3');            // parse #3 IS the carrier...
+    expect(committedArr[entry!.segmentIndex!]!.id).toBe('p3'); // ...and committed #2 is too.
+
+    // THE HARM, made concrete: the log renders `segmentIndex` against the
+    // COMMITTED timeline the user is looking at. Had R.5 emitted the parse
+    // number 3, the reader would have been pointed at committed scene 3 —
+    // `p4`, the WRONG scene. Committed 2 points at the carrier they can see.
+    expect(committedArr[parseIdx]!.id).toBe('p4');     // parse number vs committed timeline → wrong scene
+    expect(committedArr[parseIdx]!.id).not.toBe('p3');
   });
 });

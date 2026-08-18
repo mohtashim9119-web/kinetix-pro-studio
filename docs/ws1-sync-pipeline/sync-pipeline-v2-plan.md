@@ -5383,6 +5383,68 @@ yet accepted in writing.**
 
 Near-term sequence: Phase 2b is read-only and measurement-exempt from stage ordering, so it can proceed in parallel with the owner's Phase 2a listening pass.
 
+## WS1 SESSION M (2026-08-18) — R-N IMPLEMENTED: forced alignment had never once executed inside the application
+
+**THE FINDING.** Three live runs, three FA fallbacks. Every FA measurement, capture and
+fixture in this document's own record — the Step 2b table, D2/D10/D11's own bench numbers,
+every mutation-matrix entry M1-M8 in `scripts/phase4-fa-replay.test.ts` — was produced
+through the `cargo test` / Python-spike driver, which sets `ORT_DYLIB_PATH` to a dylib inside
+`.work-phase4/spike-runtime`, a gitignored scratch directory outside the repo's control and
+never on a shipped code path. The app process never set that variable. **`fa_onnx.rs::load_session`
+failed on every in-app FA run with `failed to initialize onnxruntime: ORT_DYLIB_PATH not set`**,
+before any model or dylib version was ever consulted — the fallback then silently absorbed the
+error (fixed, Step 1 below), and Whisper timing shipped under the user's explicit
+high-precision-sync choice. This changes the standing of every fixture-based FA claim in this
+document until the live run (owed, `docs/work-in-progress.md`'s Session M changelog entry)
+reproduces it against the bundled runtime.
+
+**Required vs. available runtime, resolved authoritatively (not from memory).** ort-sys
+`=2.0.0-rc.13`'s `version.rs`, read directly: `ORT_API_VERSION = 17 + Σ(enabled api-NN
+features)`. This crate's `ort` dependency (`Cargo.toml`) is `default-features = false` with no
+`api-NN` feature, so the required onnxruntime C-API version is **17 (≥ 1.17.0)**. Both dylibs
+present on the investigating machine (1.22.0, minor 22; 1.23.2, minor 23) clear it —
+onnxruntime's C API is backward-compatible. **The version pair was never the cause.**
+
+**R-N IMPLEMENTED, closing the ruling R-AL made under delegation (Session G, `:2641` above):
+"ship and sign the dylib as a bundled resource, and set `ORT_DYLIB_PATH` at runtime to that
+resource path."** `libonnxruntime.1.23.2.dylib` (osx-x86_64, sha256 `8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054`,
+39,742,608 bytes) is provisioned under `src-tauri/onnxruntime/` — gitignored itself (same
+policy as the whisper `.bin` model: too large for git, re-provisioned per its own `README.md`),
+with a committed `onnxruntime.manifest.json` recording the version/hash/API-version contract
+and a committed `README.md` with exact re-provisioning steps. Bundled via `tauri.conf.json`'s
+`bundle.resources` (`"onnxruntime/*": "onnxruntime/"`, alongside the existing `models/*`
+mapping). `fa_onnx.rs::ensure_ort_dylib` — called from `align_chunked_for_language`, the one
+production code path holding a live `AppHandle` — resolves `resource_dir()/onnxruntime/<file>`
+with dev/exe-dir fallbacks mirroring `whisper.rs::model_path`'s own established pattern, HARD-gates
+the running target (macOS x86_64 only is bundled; any other target fails loudly with actionable
+text, never silently loads an incompatible binary — the explicit-architecture requirement this
+ruling's implementation owed), and sets `ORT_DYLIB_PATH` to the resolved path ONLY when a shell
+has not already set it. The env var survives, unmodified in meaning, as the test/manual-override
+escape hatch the entire existing skip convention (`ORT_DYLIB_PATH`, `ort_dylib_or_skip`, the
+20 `#[ignore]`d live tests) is built on. Nothing on this path resolves into `.work-phase4/` or
+any other gitignored scratch directory — enforced going forward by
+`scripts/onnxruntimeBundle.guard.test.ts` (two guards: no shipped resolver names scratch; the
+bundled runtime's API version matches what the pinned `ort` computes).
+
+**The auto-detect gap, closed the same session.** `runForcedAlignmentForSync` read
+`project.language` alone, which stays `undefined` on a project whose `-l auto` detection never
+made it into the STICKY field (H.7's "written only once" rule) — sending an auto-detect run to
+an `unsupported-language` fallback despite Whisper having detected the language correctly
+(confirmed by the "Timing engine: Whisper transcript" log line and the ~7s wall-clock, both
+present on the reported v6 auto-detect failure). Fixed with a new non-sticky
+`Project.detectedLanguage`, written unconditionally by every `-l auto` run, and
+`faGate.ts::resolveFaLanguage` (`language ?? detectedLanguage`) feeding the gate the detection
+instead of discarding it. A new pre-flight (`fa_preflight.rs` + `faPreflight.ts`) reports FA
+readiness — capability, resolved language, runtime load, model presence — as a durable
+`fa-preflight` sync-log entry before inference runs, so a doomed run is visible up front rather
+than after several minutes of Whisper work.
+
+**Status:** Steps 1-4 and 7-8 (surface the error, determine the version, bundle+resolve the
+runtime, fix auto-detect + pre-flight, guard tests, verify/ledger/commit) are DONE this session.
+**Steps 5-6 (prove FA runs end-to-end in the app; compare live boundaries against the frozen
+fixtures) are OWED to the owner's own hands** — no GUI automation was used. Exact click steps:
+`docs/ws1-sync-pipeline/stage1-live-run-prep.md`.
+
 ## Phase 4 — Restructure into four stages (structural only, timing held identical; neutrality-gated)
 Reorganize into the four stages of Part B. Move the coverage partition to the end of Stage 2. Make Stage 2’s return type timing-free (as precisely scoped in Part B / K5 — token indices, counts, and provenance enums only; `audioRegion`/`recoveredRegion` do not survive; Stage 4 derives display ranges from indices). Thread Stage 1’s output as one object so tokens/silences cannot be sourced from anywhere else (closes R7 at the type level). Collapse distributeSegmentTimes and applyAnchorBasedTiming into Stage 3, carrying forward their lock handling and backstop monotonic clamp — and preserving the one consumer OUTSIDE the sync pipeline: `App.tsx`’s `handleToggleLock` (App.tsx:1686) re-derives timing via `applyAnchorBasedTiming` on every lock toggle, so Stage 3’s placement must remain callable as a pure function from that handler (K4). Add the cheap Stage 2 output-order assertion (closes R13). Rename the two colliding MIN_SEGMENT_DURATION constants to ENGINE_MIN_SEGMENT_DURATION_SEC and UI_MIN_SLOT_DURATION_SEC — rename, do not merge, do not change either value. syncConstants.ts documents the non-consolidation as deliberate and it is correct: one governs timing output, the other governs drag-handle UX, and 0.15 would silently move both. Delete the statically-dead staging-path consumer (`useWhisper.ts:286` runs only with `segments: []` — audit §B.4). Update or retire the DEV harnesses (`__calibrateBoundaryQuality`, `__ALIGN_INSTRUMENT__`, the Phase 1b inspector) in this same commit — they read pipeline internals and a silent break here is how instrument rot starts (K11).
 The boundary logic in this phase is a move, not a change. Same algorithm, new location.

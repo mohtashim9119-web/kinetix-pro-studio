@@ -378,6 +378,25 @@ export interface Project {
    *  log entry + banner, since whitespace word-splitting and normalization
    *  are only verified for the supported five. */
   language?: string;
+  /** WS1 Session M — the language Whisper actually DETECTED for the current
+   *  transcript, recorded verbatim from every `-l auto` run (useWhisper.ts),
+   *  UNCONDITIONALLY and independently of the sticky `language` field above.
+   *
+   *  WHY IT IS SEPARATE FROM `language`. `language` is the user's sticky choice
+   *  and is only ever written when it was previously unset (H.7). That makes it
+   *  an unreliable input for the FA gate on the auto path: a project can carry a
+   *  cached transcript whose detected language never made it into `language`
+   *  (a pre-Session-M transcript, a detection that didn't persist), leaving the
+   *  gate to read `undefined` and fall back with 'unsupported-language' AFTER
+   *  the sync — the exact "the information exists and is being thrown away"
+   *  failure Session M closes. This field is that information, kept durable and
+   *  never conflated with the user's choice, so `resolveFaLanguage` (faGate.ts)
+   *  can feed it to the FA gate when `language` is absent. Overwritten by each
+   *  new detection (the transcript it describes is what's current); never
+   *  overwritten with `undefined` (an explicit-language run detects nothing and
+   *  must not erase a prior detection). Undefined until the first `-l auto`
+   *  transcription; not a user-editable field. */
+  detectedLanguage?: string;
   /** WS1 Session G (owner ruling R-AK) — PER-PROJECT high-precision sync
    *  (forced alignment) switch, replacing the former per-MACHINE global
    *  `uiStateStore` key. Three states, and the distinction matters:
@@ -549,7 +568,20 @@ export type SyncLogEntryType =
    *  severity:'warning', unlike 'rule-correction': the user asked for
    *  high-precision sync in Project Settings and did not get it, and the
    *  fixHint names what to check. */
-  | 'fa-fallback';
+  | 'fa-fallback'
+  /** 'fa-preflight' — WS1 Session M. Emitted ONCE per Apply Sync when the FA
+   *  gate is OPEN, BEFORE inference runs, recording whether forced alignment is
+   *  actually ready: runtime library load, model presence, and the resolved
+   *  language. It answers, up front and cheaply, the question the FA-fallback
+   *  entry used to answer only AFTER several minutes of Whisper work — so a run
+   *  that is going to fall back is visible as such before it starts.
+   *
+   *  severity:'info' when ready (the pipeline is set up correctly — nothing to
+   *  do); severity:'warning' when NOT ready, with `errorMessage` carrying the
+   *  first blocking cause (verbatim runtime/model detail) and `fixHint` the
+   *  action. A gate-closed run emits no pre-flight entry at all — there is
+   *  nothing to be ready for. */
+  | 'fa-preflight';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

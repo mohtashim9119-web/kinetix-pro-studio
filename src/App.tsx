@@ -105,8 +105,9 @@ import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunk
 import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
-import { isFaGateOpenForProject, isFaEnabledForProject } from './services/faGate';
+import { isFaGateOpenForProject, isFaEnabledForProject, resolveFaLanguage } from './services/faGate';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
+import { runFaPreflight } from './services/faPreflight';
 import {
   detectUnspokenScriptSegmentsFromWhisper,
   applyUnspokenScriptGate,
@@ -155,6 +156,7 @@ import {
   // WS1 Session J — rule-firing / engine / FA-fallback log builders.
   buildSyncEngineEntry,
   buildFaFallbackEntry,
+  buildFaPreflightEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -2912,13 +2914,31 @@ export default function App() {
       // Read off `projectRef.current`, the same snapshot every other input in
       // this branch comes from — never off the module-global it replaced, so
       // two projects open in two windows can disagree.
-      const faRun = isFaGateOpenForProject(projectRef.current)
+      const faGateOpen = isFaGateOpenForProject(projectRef.current);
+      // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
+      // is open, report up front whether forced alignment can actually run
+      // (runtime library load, model presence, resolved language) so a run that
+      // is going to fall back is visible as such BEFORE the multi-minute sync,
+      // not only after. Purely observational: it never changes whether FA is
+      // attempted — `runForcedAlignmentForSync` stays the single fail-clean
+      // authority on what actually happened.
+      if (faGateOpen) {
+        const preflight = await runFaPreflight(projectRef.current);
+        ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
+      }
+      const faRun = faGateOpen
         ? await runForcedAlignmentForSync(
             voiceoverAsset!,
             anchorTimed,
             projectRef.current.transcriptTokens!,
             audioDuration,
-            projectRef.current.language,
+            // WS1 Session M — resolve the FA language durably: the sticky
+            // `language` when set, else Whisper's own `-l auto` detection. The
+            // auto path used to pass `projectRef.current.language` alone, which
+            // could be undefined even after a correct detection, sending the run
+            // to an 'unsupported-language' fallback the pre-flight now catches
+            // first.
+            resolveFaLanguage(projectRef.current),
           )
         : null;
       const faTokens = faRun?.status === 'ok' ? faRun.tokens : null;

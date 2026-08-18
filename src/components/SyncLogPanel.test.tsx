@@ -156,6 +156,49 @@ describe('SyncLogPanel — WS4 entry kinds', () => {
     expect(html).not.toContain('undefined');
   });
 
+  // WS1 Session M — THE FA FALLBACK's underlying error must reach the panel.
+  it('renders an fa-fallback entry with its verbatim backend error and fix hint', () => {
+    const html = renderPanel([{
+      id: 'e-fa',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'fa-fallback',
+      message: 'High-precision sync was ON but did not run — the alignment engine reported an error. This run used Whisper timing instead.',
+      owningRule: 'FA',
+      reason: 'inference-error',
+      severity: 'warning',
+      errorMessage: 'failed to initialize onnxruntime: ORT_DYLIB_PATH not set',
+      fixHint: 'Check that the alignment model is installed for this language, then run Apply Sync again.',
+    }]);
+
+    expect(html).toContain('FA FALLBACK');
+    expect(html).toContain('did not run');
+    // The whole point of Session M: the raw backend cause is on screen, not
+    // only on stderr.
+    expect(html).toContain('error: failed to initialize onnxruntime: ORT_DYLIB_PATH not set');
+    expect(html).toContain('Check that the alignment model is installed');
+    expect(html).not.toContain('undefined');
+  });
+
+  it('renders an fa-fallback entry with no errorMessage without printing undefined', () => {
+    const html = renderPanel([{
+      id: 'e-fa2',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'fa-fallback',
+      message: 'High-precision sync was ON but did not run — the chunk plan came out empty. This run used Whisper timing instead.',
+      owningRule: 'FA',
+      reason: 'empty-chunk-plan',
+      severity: 'warning',
+      fixHint: 'Check that the scene document has text for at least one scene, then run Apply Sync again.',
+    }]);
+
+    expect(html).toContain('FA FALLBACK');
+    expect(html).not.toContain('error:');
+    expect(html).toContain('Check that the scene document has text');
+    expect(html).not.toContain('undefined');
+  });
+
   it('still renders pre-WS4 entry kinds unchanged', () => {
     const html = renderPanel([
       { id: 'a', timestamp: AT, syncRunId: 'run-1', type: 'info', message: 'Sync completed: 8 of 8 segments matched.' },

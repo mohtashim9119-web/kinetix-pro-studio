@@ -461,22 +461,32 @@ export function detectUtterancePlacementDefects(
     // DEFENSIVE, AND SAID TO BE: the carrier's own line must come AFTER the
     // run, or this is not the shape R.13 describes.
     //
-    // In the shipped pipeline this branch is UNREACHABLE, and the proof is
-    // short enough to keep here. The carrier contains the run's onset, so the
-    // successor's start is after it; if the carrier's own line ended at or
-    // before the run's end, the detection test below would additionally put
-    // that start before the run's end — i.e. strictly inside the run, which is
-    // R.12's territory and R.12 has already corrected it by the time R.13
-    // runs. So the guard is a restatement of R.12's precedence, not a second
-    // decision. It is kept because R.13 is a public function that can be
-    // called on an uncorrected array (its own tests do exactly that), and
-    // declining is the right answer there.
+    // WHEN IT IS REACHABLE, exactly — corrected in WS1 Session L, because
+    // Session K's version of this comment was too generous to itself. It said
+    // the guard was reachable because R.13 "is a public function that can be
+    // called on an uncorrected array". That is not sufficient, and the reason
+    // is worth keeping: `detectUnscriptedRuns` marks a segment's WHOLE matched
+    // token span in `claimed[]`, so no segment's `lastTokenIdx` can lie inside
+    // a run's token range at all. The carrier's last token is therefore
+    // strictly before `run.tokenLo` or strictly after `run.tokenHi`:
+    //   - before  -> monotonic token times give `utteranceEndSec <=
+    //     run.startSec`, and the carrier contains the run's onset, so the
+    //     detection test below (`committedValue < utteranceEndSec`) demands a
+    //     successor start that is simultaneously after `run.startSec` and
+    //     before it. Unreachable, on any array, corrected or not.
+    //   - after   -> `utteranceEndSec >= run.endSec`.
+    // So the ONLY value that reaches this guard is EQUALITY, and it requires a
+    // zero-width token ending exactly at `run.endSec` — which Whisper does
+    // emit. On that input, with an UNCORRECTED array whose successor still
+    // opens strictly inside the run, both rules want the same edge and want
+    // different values for it. The guard is what makes R.12's claim win.
     //
-    // MEASURED, not assumed: removing this line leaves the whole suite GREEN
-    // (WS1 Session K's M8-B mutation). That is reported as a green mutation in
-    // `scripts/phase4-fa-replay.test.ts` rather than dressed up as a red one —
-    // an unreachable guard with no failing mutation is exactly the kind of
-    // thing a mutation matrix exists to tell the truth about.
+    // MEASURED, not assumed, and now COVERED: Session K reported M8-B (drop
+    // this line) GREEN and recorded it as an uncovered guard. Session L built
+    // the equality-boundary fixture above's shape in
+    // `faRunPlacementGate.test.ts` ("the guard"), and M8-B is now RED — 1
+    // failure, R.13 emitting 4.825 against R.12's 2.50 on the same boundary.
+    // The green mutation is retired; nothing here is uncovered-by-design.
     if (!(utteranceEndSec > run.endSec + 1e-9)) continue;
 
     const successor = committedSegments[ci + 1]!;

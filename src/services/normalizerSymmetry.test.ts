@@ -178,11 +178,18 @@ describe('Contract 1→2 P6 — the two text sides share one normalizer', () => 
     // The English corpora genuinely exercise the property. THE SPANISH CORPUS
     // EXERCISES NOTHING: 363 tokens, none of which expands, no contraction, no
     // digit, no hyphen. Its compositionality result is therefore VACUOUSLY
-    // true, and P6's Spanish half rests on a corpus containing no construct
-    // capable of falsifying it. That is a corpus-coverage limitation, not an
-    // asymmetry — no disagreement was found anywhere — but it bounds what this
-    // discharge is entitled to claim, so it is asserted here rather than
+    // true on the CORPUS. That is a corpus-coverage limitation, not an
+    // asymmetry — no disagreement was found anywhere — but it bounds what the
+    // corpus pass is entitled to claim, so it is asserted here rather than
     // written in a paragraph somebody has to remember.
+    //
+    // WS1 Session L closed the other half of this: the property is NOT
+    // non-falsifiable in Spanish — the test below ("the Spanish half is
+    // EXERCISED on constructed digit material") runs the es-keyed normalizer on
+    // real Spanish sentences carrying an expanding digit and confirms both
+    // expansion and compositionality. What stays corpus-vacuous is only what a
+    // Spanish corpus WITHOUT digits can reach; the machinery itself is
+    // exercised. Full bound in that test's header.
     const englishExpanding = CORPORA.filter(c => c.lang === 'en')
       .map(c => c.tokenTexts.filter(t => normalize(t, c.lang).length > 1).length);
     expect(englishExpanding.every(n => n > 0), 'no English corpus exercises multi-word expansion').toBe(true);
@@ -200,6 +207,73 @@ describe('Contract 1→2 P6 — the two text sides share one normalizer', () => 
     // English result cannot quietly become vacuous either.
     expect(canonicalize('1985', 'en')).toEqual(['nineteen', 'eighty', 'five']);
     expect(canonicalize("don't", 'en')).toEqual(['do', 'not']);
+  });
+
+  // WS1 Session L — THE SPANISH HALF, MOVED FROM VACUOUS TO EXERCISED.
+  //
+  // The debt Session J left open, stated plainly: the Spanish CORPUS contains
+  // no expanding token, so the compositionality pass over it proves nothing,
+  // and P6's es half rested on non-falsifying material. Session L was asked to
+  // either construct material that exercises the property, or record what would
+  // be needed. This is the construction — and the precise bound on what it can
+  // and cannot claim, measured against the production normalizer rather than
+  // asserted.
+  //
+  // WHAT IS AND IS NOT AVAILABLE ON THE `es` PATH, measured:
+  //   - The digit reader DOES expand under the 'es' key: canonicalize('1985',
+  //     'es') = [nineteen, eighty, five], '26' -> [twenty, six], '2000' ->
+  //     [two, thousand]. This is the SAME output English produces — the
+  //     digit->words reading is language-INDEPENDENT, not an es-specific rule.
+  //   - Every SPANISH-LEXICAL rule Phase 3b built is 1->1 and expands nothing:
+  //     'veintiseis' -> [veintiseis], the del/al contractions -> [del]/[al]
+  //     (not split into de-el/a-el). So there is NO Spanish WORD that expands
+  //     to multiple output words; the only multi-word construct reachable on
+  //     the es path at all is the shared digit reader.
+  //   - The Spanish corpus contains no digits, which is the whole reason its
+  //     natural coverage is zero.
+  //
+  // So the honest discharge is: the property is NOT non-falsifiable in Spanish
+  // (constructed digit material exercises expansion AND compositionality under
+  // the es key, below), but it IS un-exercisable by any Spanish-LEXICAL
+  // construct, because none expands. What would move the natural-corpus number
+  // off zero: a Spanish corpus carrying digit tokens, OR a future Phase 3b rule
+  // that makes a Spanish word expand (e.g. writing out del -> "de el"), which
+  // is currently out of scope by decision (b).
+  it('the Spanish half is EXERCISED on constructed digit material — expansion is real and compositional', () => {
+    // Real Spanish sentences carrying a digit that expands. Every non-digit
+    // word is genuine Spanish the es normalizer must pass through untouched.
+    const spanishWithDigits = [
+      'Nací en 1985 cerca del río',
+      'Tengo 26 años y 100 libros',
+      'En el año 2000 había 21 casas',
+    ];
+
+    for (const s of spanishWithDigits) {
+      const tokens = s.split(/\s+/);
+
+      // NOT VACUOUS: at least one token genuinely expands under the es key.
+      const expanded = tokens.some(t => normalize(t, 'es').length > 1);
+      expect(expanded, `constructed Spanish "${s}" must contain an expanding token`).toBe(true);
+
+      // THE PROPERTY, on Spanish: the transcript side (per token) and the
+      // script side (whole text) produce the identical stream under 'es'.
+      const perToken = tokens.flatMap(t => normalize(t, 'es'));
+      const wholeText = normalize(s, 'es');
+      expect(perToken.join(' '), `es compositionality on "${s}"`).toBe(wholeText.join(' '));
+
+      // And the Spanish words really did survive the pass (not an all-digits
+      // string that would dodge the es lexical rules entirely).
+      expect(
+        wholeText.some(w => /[a-zñáéíóú]/i.test(w)),
+        `"${s}" must keep at least one real Spanish word through the es pass`,
+      ).toBe(true);
+    }
+
+    // The measured bound, pinned so it cannot rot: es-lexical rules are 1->1,
+    // only the shared digit reader expands on the es path.
+    expect(canonicalize('1985', 'es')).toEqual(['nineteen', 'eighty', 'five']); // digit reader, es key
+    expect(canonicalize('veintiseis', 'es')).toEqual(['veintiseis']);           // es cardinal: 1->1
+    expect(canonicalize('del', 'es')).toEqual(['del']);                          // es contraction: not expanded
   });
 
   it('canonicalize is COMPOSITIONAL: per-token normalization equals whole-text normalization', () => {

@@ -17,6 +17,12 @@ src-tauri/binaries/whisper-*
 # Whisper model files — too large for git (141 MB+); see src-tauri/models/README.md
 src-tauri/models/*.bin
 
+# Bundled onnxruntime C runtime for forced alignment — too large for git (~39 MB,
+# platform-specific); manifest + README committed, dylib re-provisioned. See
+# src-tauri/onnxruntime/README.md (WS1 Session M, ruling R-N).
+src-tauri/onnxruntime/*.dylib
+src-tauri/onnxruntime/onnxruntime-osx-*
+
 # WebCodecs Phase 0 spike — throwaway test asset, never committed (see docs/webcodecs-architecture-plan.md)
 public/_spike/
 

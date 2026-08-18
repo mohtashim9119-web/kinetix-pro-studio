@@ -64,6 +64,10 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // for forced alignment and got Whisper timing, which they would otherwise
   // have no way to find out.
   'fa-fallback': { label: 'FA FALLBACK', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
+  // WS1 Session M — the FA readiness pre-flight. Neutral badge; the entry's own
+  // severity (info when ready, warning when not) and detail line carry the
+  // meaning. Emitted before inference so the user sees readiness up front.
+  'fa-preflight': { label: 'FA PRE-FLIGHT', className: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be
@@ -113,6 +117,33 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
     const total = entry.totalTokenCount;
     if (skipped === undefined || total === undefined) return undefined;
     return `${skipped} of ${total} tokens had invalid timestamps`;
+  }
+  // WS1 Session M — THE FA FALLBACK's underlying error, surfaced. Before this,
+  // `buildFaFallbackEntry` stored the backend's verbatim message in
+  // `errorMessage` (e.g. "failed to initialize onnxruntime: ORT_DYLIB_PATH not
+  // set") but this function returned undefined for 'fa-fallback', so it landed
+  // only on stderr — the whole point of the durable log was defeated for the
+  // one entry a user most needs the cause of. `errorMessage` is the raw
+  // backend text; `fixHint` is the actionable next step. Both defended for
+  // pre-Session-M entries that carry neither.
+  if (entry.type === 'fa-fallback') {
+    const detail = entry.errorMessage?.trim();
+    const fix = entry.fixHint?.trim();
+    const parts: string[] = [];
+    if (detail) parts.push(`error: ${detail}`);
+    if (fix) parts.push(fix);
+    return parts.length > 0 ? parts.join(' — ') : undefined;
+  }
+  // WS1 Session M — the pre-flight's own detail: the first blocking cause
+  // (verbatim runtime/model text in `errorMessage`) plus the action (`fixHint`)
+  // when NOT ready; the readiness summary otherwise already lives in `message`.
+  if (entry.type === 'fa-preflight') {
+    const detail = entry.errorMessage?.trim();
+    const fix = entry.fixHint?.trim();
+    const parts: string[] = [];
+    if (detail) parts.push(detail);
+    if (fix) parts.push(fix);
+    return parts.length > 0 ? parts.join(' — ') : undefined;
   }
   return undefined;
 }

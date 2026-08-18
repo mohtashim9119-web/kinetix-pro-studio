@@ -1,0 +1,13 @@
+{
+  "_comment": "WS1 Session M — the onnxruntime C runtime the bundled FA path loads. This file is the COMMITTED source of truth for which runtime the app ships; the .dylib itself is gitignored (39 MB, platform-specific) and re-provisioned from README.md. The guard test scripts/onnxruntimeBundle.guard.test.ts asserts (a) apiVersion here == the ORT_API_VERSION the pinned `ort` in Cargo.toml computes, and (b) minorVersion >= apiVersion, so a future `ort` bump that raises the required C-API version fails loudly here instead of silently at runtime.",
+  "filename": "libonnxruntime.1.23.2.dylib",
+  "version": "1.23.2",
+  "minorVersion": 23,
+  "apiVersion": 17,
+  "os": "macos",
+  "arch": "x86_64",
+  "sha256": "8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054",
+  "sizeBytes": 39742608,
+  "ortCrate": "ort =2.0.0-rc.13 (default-features = false, features = [\"std\", \"load-dynamic\"])",
+  "apiVersionRationale": "With no `api-NN` feature enabled, ort-sys rc.13's version.rs computes ORT_API_VERSION = 17 (the floor). onnxruntime's C API is backward-compatible, so any runtime whose minor version is >= 17 satisfies it; 1.23.2 (minor 23) is the newest osx-x86_64 build published and comfortably clears the floor."
+}

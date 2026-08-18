@@ -26,6 +26,7 @@ import {
   makeSyncLogEntry,
   buildSyncEngineEntry,
   buildFaFallbackEntry,
+  buildFaPreflightEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -846,6 +847,32 @@ describe('buildFaFallbackEntry — fail-clean stops meaning fail-silent', () => 
 
   it('omits errorMessage entirely when there is no backend detail to carry', () => {
     expect(buildFaFallbackEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+  });
+});
+
+describe('buildFaPreflightEntry — readiness reported before the run (WS1 Session M)', () => {
+  it('is an INFO entry with no blocking detail when ready', () => {
+    const entry = buildFaPreflightEntry(RUN_ID, {
+      ready: true,
+      summary: 'FA pre-flight: ready — runtime loaded and model present for "en".',
+    }, AT);
+    expect(entry.type).toBe('fa-preflight');
+    expect(entry.severity).toBe('info');
+    expect(entry.owningRule).toBe('FA');
+    expect(entry.errorMessage).toBeUndefined();
+    expect(entry.message).toContain('ready');
+  });
+
+  it('is a WARNING carrying the verbatim blocking cause and a fix when NOT ready', () => {
+    const entry = buildFaPreflightEntry(RUN_ID, {
+      ready: false,
+      summary: 'FA pre-flight: not ready — the alignment runtime did not load for "en".',
+      blockingDetail: 'failed to initialize onnxruntime: ORT_DYLIB_PATH not set',
+      fixHint: 'The onnxruntime library could not load — re-provision it per src-tauri/onnxruntime/README.md.',
+    }, AT);
+    expect(entry.severity).toBe('warning');
+    expect(entry.errorMessage).toBe('failed to initialize onnxruntime: ORT_DYLIB_PATH not set');
+    expect(entry.fixHint).toBeTruthy();
   });
 });
 

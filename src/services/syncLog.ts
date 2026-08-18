@@ -444,6 +444,42 @@ export function buildFaFallbackEntry(
   );
 }
 
+/**
+ * THE FA PRE-FLIGHT ENTRY (WS1 Session M). Emitted once per Apply Sync when the
+ * FA gate is OPEN, BEFORE inference, recording whether forced alignment is ready
+ * (runtime + model + resolved language). `info` when ready — the pipeline is set
+ * up and there is nothing to do; `warning` when not, carrying the first blocking
+ * cause verbatim (`errorMessage`) and the action (`fixHint`), so the user learns
+ * a doomed run is doomed before it starts rather than after it finishes.
+ *
+ * Shape mirrors the `FaPreflightResult` fields the caller already computed; kept
+ * in `syncLog.ts` (not `faPreflight.ts`) so every durable-log builder lives in
+ * one file, exactly like `buildFaFallbackEntry` above.
+ */
+export function buildFaPreflightEntry(
+  syncRunId: string,
+  result: {
+    ready: boolean;
+    summary: string;
+    blockingDetail?: string;
+    fixHint?: string;
+  },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-preflight',
+    result.summary,
+    {
+      owningRule: 'FA',
+      severity: result.ready ? 'info' : 'warning',
+      ...(result.blockingDetail !== undefined ? { errorMessage: result.blockingDetail } : {}),
+      ...(result.fixHint !== undefined ? { fixHint: result.fixHint } : {}),
+    },
+    timestamp,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // THE ONE INDEX CONVENTION FOR RULE-CORRECTION ENTRIES (WS1 Session K, ruling
 // R-AO).

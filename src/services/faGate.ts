@@ -127,6 +127,23 @@ export function isFaEnabledForProject(
 }
 
 /**
+ * The language the FA gate should attempt alignment in, resolved durably
+ * (WS1 Session M). The user's sticky `language` wins when present; otherwise
+ * the last `-l auto` detection (`detectedLanguage`) is used. This is the fix
+ * for the auto-detect fallback: Whisper detects the language and transcribes
+ * correctly, so the information exists — this is where it is fed to the gate
+ * instead of being thrown away. Returns `undefined` only when NEITHER a choice
+ * nor a detection exists (a project that has never been transcribed), which the
+ * pre-flight check reports up front rather than discovering after a multi-minute
+ * sync. Pure and read-only, like everything else in this module.
+ */
+export function resolveFaLanguage(
+  project: Pick<Project, 'language' | 'detectedLanguage'> | null | undefined,
+): string | undefined {
+  return project?.language ?? project?.detectedLanguage ?? undefined;
+}
+
+/**
  * Project Settings' Save decision, extracted from the JSX handler so it can
  * be tested directly (CLAUDE.md §6 layering: decisions live in a service,
  * not inline in a component handler).

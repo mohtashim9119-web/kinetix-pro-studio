@@ -10,6 +10,7 @@ import {
   isFaEnabledForProject,
   isFaGateOpenForProject,
   shouldPersistFaChoice,
+  resolveFaLanguage,
   FA_PROJECT_DEFAULT_ON,
   LEGACY_GLOBAL_FA_TOGGLE_KEY,
 } from './faGate';
@@ -176,6 +177,25 @@ describe('shouldPersistFaChoice — Project Settings only writes on an actual ch
 
   it('writes when the user turns it back ON', () => {
     expect(shouldPersistFaChoice(true, false)).toBe(true);
+  });
+});
+
+describe('resolveFaLanguage — the auto-detect fix (WS1 Session M)', () => {
+  it('prefers the sticky user choice when set', () => {
+    expect(resolveFaLanguage({ language: 'es', detectedLanguage: 'en' })).toBe('es');
+  });
+
+  it('falls back to the detected language when the sticky choice is unset', () => {
+    // The exact gap that sent auto-detect runs to an unsupported-language
+    // fallback: Whisper detected the language, but the sticky field was
+    // undefined, so the gate saw nothing. Now the detection feeds the gate.
+    expect(resolveFaLanguage({ language: undefined, detectedLanguage: 'en' })).toBe('en');
+  });
+
+  it('returns undefined only when neither a choice nor a detection exists', () => {
+    expect(resolveFaLanguage({ language: undefined, detectedLanguage: undefined })).toBeUndefined();
+    expect(resolveFaLanguage(null)).toBeUndefined();
+    expect(resolveFaLanguage(undefined)).toBeUndefined();
   });
 });
 

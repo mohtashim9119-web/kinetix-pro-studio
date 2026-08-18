@@ -7,6 +7,52 @@
 > **Prepared at HEAD `726112b` (Session I); REFRESHED at Session J's HEAD.** Run this only
 > after `stage1-mover-audit.md` scores clean — the audit is pass one, this walkthrough is
 > pass two.
+
+---
+
+## ⚠ CRITICAL CORRECTION — WS1 SESSION M, READ THIS FIRST
+
+Everything below this notice was written on the assumption that following it would make FA
+actually run. **It would not have.** Reproduced directly from the code: `fa_onnx.rs::load_session`
+reads the `ORT_DYLIB_PATH` environment variable first and returns `OrtInit("ORT_DYLIB_PATH not
+set")` when it is absent — and the app process **never set it**. Every prior session's FA
+measurements were produced by the `cargo test`/Python-spike driver, which set that variable
+itself, pointing at a dylib inside `.work-phase4/spike-runtime` (gitignored scratch). Any walkthrough
+run against a pre-Session-M build would have hit an FA fallback on all three projects, exactly
+as three real attempts on the owner's own machine did (`unsupported-language` on v6 auto-detect,
+`inference-error` — silently, before this session — on v6 English and Spanish).
+
+**Session M fixes this.** As of this HEAD, the onnxruntime C runtime is bundled as a Tauri
+resource and the app resolves it itself (ruling R-N, `sync-pipeline-v2-plan.md`'s new "WS1
+SESSION M" section) — no shell-set variable required. Two things change what to expect below:
+
+1. **§3's toggle steps and §6's "what a clean run looks like" now have a real chance of
+   matching**, where before every run in the walkthrough would have silently landed on Whisper
+   timing regardless of the toggle.
+2. **A new pre-flight entry appears in the Sync Log before FA runs**, `type: 'fa-preflight'` —
+   check it FIRST. `severity: 'info'` and "ready" in the message means runtime + model + language
+   are all confirmed before inference starts; `severity: 'warning'` names the exact blocking
+   cause (verbatim backend text) and the fix. If pre-flight says "ready" and an `fa-fallback`
+   entry still appears afterward, that is a new, more surprising finding worth its own report —
+   it means readiness was confirmed but the actual run still failed.
+3. **If any `fa-fallback` entry appears at all, read its detail line before treating it as "the
+   toggle didn't take."** As of Session M's Step 1 fix, the panel now shows the backend's
+   verbatim error (`error: ...`) plus the fix hint — the fallback is no longer a dead end.
+
+**§1's numbers table below is now STALE** (89 files / 2314 passed / 45/45 gate — the Session J
+snapshot). Current numbers, HEAD after Session M: **93 files / 2387 passed / 1 skipped; `cargo
+test --features fa-inference` 209 passed / 20 ignored; golden replay 6/6; FA replay gate 50/50
+green at rest, RED under M5/M6/M7/M8-A/M8-B/M9/M10.** Wall-clock expectations in §1 (~5 min v6
+debug, ~2.5 min 173) are **unchanged in shape** — the runtime-load fix adds milliseconds, not
+minutes, to a run; `verify_model_manifest`'s per-call SHA-256 is still the dominant cost in a
+debug build. If a run's wall-clock comes in far under that budget, treat it as a signal FA did
+not actually run (the fallback path is fast) and check the `fa-preflight`/engine log entries.
+
+**Everything else in this file — the toggle mechanics, the source-project paths, the per-project
+walkthrough tables, the fixture cross-references — is unchanged and still the correct procedure.
+Follow it as written; only the framing above changes.**
+
+---
 >
 > **WHAT SESSION J CHANGED, so a reader knows which parts are new:**
 >

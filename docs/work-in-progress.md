@@ -205,6 +205,24 @@ fixture hygiene, doc integrity). Phase 3 does not advance because Session B — 
 see §11 item 6's ADDENDUM 4 and `sync-pipeline-v2-plan.md`'s "R-R FEASIBILITY FINDINGS"
 block for the open question. No `src/`/`src-tauri/` behavior-bearing file changed.
 
+**2026-08-18 (WS1 Session M) — the Task 5 row's status text ("PRODUCTION PATH WIRED") is
+now KNOWN TO HAVE NEVER RUN IN THE APP.** Every FA measurement/fixture in this board and the
+plan document was produced through the `cargo test`/spike-driver path, which set
+`ORT_DYLIB_PATH` outside the app's control; the app itself never set it, so
+`load_session` failed on line one of every in-app attempt and every run fell back to
+Whisper timing. R-N (Session G's ruling, `sync-pipeline-v2-plan.md:2641`) is now
+IMPLEMENTED — the onnxruntime dylib is bundled as a real Tauri resource and the app resolves
+it itself, no shell dependency, nothing resolving into `.work-phase4/` (two new guard tests
+lock the class shut). The FA-fallback entry now surfaces the underlying error verbatim
+instead of discarding it; auto-detect is fixed (Whisper's detected language now reaches the
+gate); a pre-flight readiness check reports capability/language/model/runtime up front. Full
+detail: this document's own Changelog entry and `sync-pipeline-v2-plan.md`'s new "WS1 SESSION
+M" section. **No phase on this board moves** — Task 5 stays "PRODUCTION PATH WIRED" as a
+description of the CODE PATH's shape, and that description was already correct; what changes
+is that the path can now actually execute, which the live acceptance run (owed, Steps 5-6)
+must confirm before any fixture-based claim elsewhere in this document is trusted at face
+value.
+
 ---
 
 ### §4. Phase 3 (Task 5) Component Ledger
@@ -632,7 +650,7 @@ cross-referenced against `src/types.ts` live:
 | P3 | Drop-distribution reporting | ✅ | `syncContracts.ts:102` `analyzeDropDistribution` |
 | P4 | Silence ascending/disjoint runtime assertion | ❌ | grepped `silence-scan-anomaly` across `src/` — zero hits; Phase 4, REQUIRED ADDITION, not built |
 | P5 | Silence-scan-failed vs. no-silence-found, type-level | ✅ | `silenceDetector.ts:21-22` — `{status:'ok', silences}` \| `{status:'error', errorMessage}` |
-| P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J)** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (7 tests, in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Two coverage limits recorded, both pinned as assertions:** the Spanish corpus has ZERO expanding tokens so its result is vacuous, and `stripStageDirections` fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
+| P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J); Spanish vacuity closed WS1 Session M** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Session M closed the debt Session L was left holding open (reconciled into this session's commit):** the Spanish CORPUS has zero expanding tokens (vacuous on real material, unchanged), but the property is NOT non-falsifiable in Spanish — a new test runs the `es`-keyed normalizer on constructed digit material (the digit→words reading is language-independent) and confirms both expansion and compositionality. What stays corpus-vacuous is only what a digit-free Spanish corpus can reach; the machinery itself is now exercised. `stripStageDirections` still fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
@@ -968,6 +986,76 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-18 (WS1 SESSION M) — THE MOST MATERIAL DISCOVERY OF THE PROGRAMME: FORCED ALIGNMENT
+HAD NEVER ONCE EXECUTED INSIDE THE APPLICATION. RUNTIME BUNDLED PER R-N, ERROR SURFACED,
+AUTO-DETECT FIXED, PRE-FLIGHT SHIPS, THE CLASS IS SHUT.**
+
+**(a) The finding, and why it outranks item 1's own "PRODUCTION PATH WIRED" status below.**
+Three live app runs (v6 auto-detect, v6 English, spanish) all produced an FA fallback. The
+first was `unsupported-language` (the auto-detect gap, (c) below); the other two were
+`inference-error` with a discarded detail. Reproducing directly against the code: `load_session`
+(`fa_onnx.rs`) reads `ORT_DYLIB_PATH` first and returns `OrtInit("ORT_DYLIB_PATH not set")` when
+absent — and the app process never sets it. Every fixture, every mutation-matrix number
+(M1-M8), every measurement this document cites for FA was produced by the `cargo test`/Python-
+spike driver, which set that variable to a dylib inside `.work-phase4/spike-runtime`, gitignored
+scratch outside the repo's control. **Everything "PRODUCTION PATH WIRED" (item 1's own status
+line, §3's Task 5 row) has meant, up to this session, is that the code compiles and the IPC
+plumbing is reachable — never that it has run.** This is stated as MEASURED fact (the error is
+reproduced from the code path directly), not inferred.
+
+**(b) Runtime version, resolved authoritatively.** ort-sys `=2.0.0-rc.13`'s `version.rs`
+(read directly, not from memory): `ORT_API_VERSION = 17` under this crate's feature set (no
+`api-NN` enabled). Requires onnxruntime C-API **≥ 17 (≥ 1.17.0)**. Both dylibs on the
+investigating machine (1.22.0, 1.23.2) clear it. **The version pair was never the cause** —
+confirmed by the fact that `load_session` fails on the `ORT_DYLIB_PATH` line, before any
+dylib is opened or its version read.
+
+**(c) Auto-detect was throwing away information Whisper already had.** `runForcedAlignmentForSync`
+read `project.language` alone; an auto-detect run's detection lands there only when the STICKY
+field was previously unset (H.7's "written once" rule), so a project could carry a correct
+detection the gate never saw. Fixed with a new non-sticky `Project.detectedLanguage` (written
+unconditionally by every `-l auto` run) and `faGate.ts::resolveFaLanguage` feeding it to the
+gate as a fallback behind the sticky choice.
+
+**(d) R-N (Session G's ruling, `sync-pipeline-v2-plan.md:2641`, "ship and sign the dylib as a
+bundled resource, and set `ORT_DYLIB_PATH` at runtime to that resource path") is IMPLEMENTED.**
+`src-tauri/onnxruntime/` bundles `libonnxruntime.1.23.2.dylib` (osx-x86_64, sha256
+`8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054`) via `tauri.conf.json`'s
+`bundle.resources`; `fa_onnx.rs::ensure_ort_dylib` resolves it from `resource_dir()` (dev/exe-dir
+fallbacks mirroring `whisper.rs::model_path`), hard-gates architecture (macOS x86_64 only; any
+other target fails loudly, never silently), and sets `ORT_DYLIB_PATH` only when unset —
+preserving the entire existing `ORT_DYLIB_PATH`-based test-skip convention as an override, not
+replacing it. `ensure_ort_dylib` runs from `align_chunked_for_language`, the one production
+choke point holding a live `AppHandle`.
+
+**(e) A new pre-flight (`fa_preflight.rs` + `faPreflight.ts`) reports FA readiness** —
+capability, resolved language, runtime library load, model presence — as a durable
+`fa-preflight` sync-log entry BEFORE inference, so a doomed run is visible before several
+minutes of Whisper work rather than after. The FA-fallback entry itself now surfaces its
+backend `errorMessage`/`fixHint` in the Sync Log panel — `SyncLogPanel.tsx`'s
+`formatDetailLine` silently dropped it for this one entry type before this session.
+
+**(f) The class is shut.** `scripts/onnxruntimeBundle.guard.test.ts`: GUARD 1 fails the build
+if any shipped runtime resolver or bundle config names throwaway scratch
+(`.work-phase4`/`spike-runtime`/the phase-4 venvs/listening-clip stores); GUARD 2 fails if the
+committed manifest's onnxruntime API version drifts from what the pinned `ort` computes, or the
+pin itself moves without a re-derivation. Same shape as `faDefaultDrift.test.ts`.
+
+**(g) Four debts Session L left open are disposed, reconciled into this session's commit (not
+reverted):** M8-B (R.13's carrier-line guard, green/uncovered → red/covered, both
+`faRunPlacementGate.ts`/`.test.ts` and `scripts/phase4-fa-replay.test.ts`); the R.5
+parse/committed index-convention divergence (measured with a constructed dropped-scene input,
+`syncLog.indexConvention.test.ts`); Contract 1→2 P6's Spanish-corpus vacuity (closed above,
+§9's P6 row); the runtime's own scratch-directory dependency (this session, (d)/(f) above).
+
+**Status: Steps 1-4 and 7-8 of this session's brief are DONE. Steps 5-6 — prove FA runs
+end-to-end in the app with per-project wall-clock, and compare live boundaries against the
+frozen fixtures — are OWED to the owner's own hands (no GUI automation used).** Full numbers,
+file list and exact click steps: this document's Changelog entry and
+`docs/ws1-sync-pipeline/stage1-live-run-prep.md`.
+
+---
 
 **2026-08-18 (WS1 SESSION K) — THE 24-ROW MOVER AUDIT SCORED 22/24; BOTH FAILURES
 ROOT-CAUSED; R.13 SHIPPED; A THIRD DEFECT FOUND IN THE DISPLAY PATH; RULING R-AO RECORDED.**
@@ -4122,6 +4210,106 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-18 — WS1 Session M: THE MOST MATERIAL DISCOVERY OF THE PROGRAMME —
+  forced alignment had never once executed inside the application. The runtime
+  is now bundled and app-resolved (R-N), the FA error is surfaced to the user,
+  auto-detect is fixed, a pre-flight readiness check ships, and two guard tests
+  shut the class. The four Session L debts are disposed. Live acceptance run is
+  now UNBLOCKED pending the owner's one-click walkthrough.**
+  - **THE FINDING, stated plainly.** Every FA measurement, capture and fixture in
+    the record was produced through the `cargo test` / Python-spike driver, which
+    sets `ORT_DYLIB_PATH` to a dylib inside `.work-phase4/spike-runtime` — a
+    gitignored scratch directory outside the repo's control and never on a
+    shipped code path. The app process never set that variable. So
+    `fa_onnx.rs::load_session`'s first line failed on every in-app FA run with
+    `failed to initialize onnxruntime: ORT_DYLIB_PATH not set`, the run fell back
+    to Whisper timing, and the fallback's underlying error was rendered nowhere.
+    This changes the standing of every fixture-based FA claim until the live run
+    reproduces it — **flagged: the fixtures are MEASURED under the spike driver,
+    INFERRED to hold under the bundled runtime until the live run confirms.**
+  - **The verbatim error (MEASURED from code + the fail path).**
+    `failed to initialize onnxruntime: ORT_DYLIB_PATH not set` for the two runs
+    that fell back with "the alignment engine reported an error"; the auto-detect
+    run fell back earlier with `unsupported-language` because `project.language`
+    was undefined at the gate (Step 4). The English/Spanish explicit-language
+    runs prove the language wiring is correct when a language is set — their
+    fallback was purely the runtime.
+  - **Required vs available runtime (MEASURED from the crate).** ort-sys
+    `=2.0.0-rc.13` with our feature set (`default-features=false`, no `api-NN`
+    feature) computes `ORT_API_VERSION = 17` (`version.rs`: `17 + Σ api-NN`). It
+    therefore requires onnxruntime C-API **≥ 17 (≥ 1.17.0)**. Both dylibs present
+    (1.22.0 → minor 22, 1.23.2 → minor 23) clear it; onnxruntime's C API is
+    backward-compatible. **The version mismatch was NOT the cause** — the env var
+    was unset, so no dylib version was ever consulted.
+  - **R-N implemented.** `load-dynamic` PLUS bundle the dylib. `libonnxruntime.1.23.2.dylib`
+    (osx-x86_64, sha256 `8c9c78de…`, 39,742,608 B) lives under `src-tauri/onnxruntime/`
+    (gitignored + committed manifest/README, same policy as the whisper `.bin`),
+    bundled via `tauri.conf.json`'s `bundle.resources` (`onnxruntime/*`).
+    `fa_onnx.rs::ensure_ort_dylib` (called from `align_chunked_for_language`,
+    the one production choke point with an `AppHandle`) resolves it from
+    `resource_dir()` with dev/exe-dir fallbacks mirroring `whisper.rs::model_path`,
+    HARD-gates the arch (macOS x86_64 only; any other target fails loudly, never
+    silently loads an incompatible binary), and sets `ORT_DYLIB_PATH` only when a
+    shell has not already set it — the env var survives as a test/override
+    escape hatch, which the entire existing test-skip convention rests on.
+    Nothing resolves into `.work-phase4/`.
+  - **Step 1 — the FA error is surfaced.** `SyncLogPanel.tsx`'s `formatDetailLine`
+    now renders `fa-fallback` (and `fa-preflight`) entries' `errorMessage`
+    (verbatim backend text) and `fixHint`. `buildFaFallbackEntry` already carried
+    the detail into `errorMessage`; the render layer had silently dropped it for
+    exactly the one entry a user most needs the cause of.
+  - **Step 4 — auto-detect fixed + pre-flight.** New non-sticky `Project.detectedLanguage`
+    (written unconditionally from every `-l auto` run, `useWhisper.ts`) + `faGate.ts::resolveFaLanguage`
+    (`language ?? detectedLanguage`) feed the gate the detection instead of
+    throwing it away. New `fa_preflight.rs` command + `faPreflight.ts::runFaPreflight`
+    report FA readiness — capability, resolved language, runtime library load,
+    model presence — as a durable `fa-preflight` sync-log entry (info when ready,
+    warning + verbatim blocking cause when not) BEFORE inference, so a doomed run
+    is visible as such up front. Observational: it never changes whether FA is
+    attempted; `runForcedAlignmentForSync` stays the fail-clean authority.
+  - **Step 7 — the class is shut.** `scripts/onnxruntimeBundle.guard.test.ts`:
+    GUARD 1 fails if any production runtime-resolver body or the bundle config
+    names a throwaway scratch dir; GUARD 2 fails if the manifest's onnxruntime
+    API version drifts from what the pinned `ort` computes (or the pin moves).
+    Same shape as `faDefaultDrift.test.ts`.
+  - **Four Session L debts disposed (reconciled into this commit, not reverted).**
+    (1) **M8-B** (R.13's carrier-line guard) — Session K reported it green/uncovered;
+    Session L built the equality-boundary fixture in `faRunPlacementGate.test.ts`,
+    corrected the reachability comment in `faRunPlacementGate.ts`, and flipped
+    M8-B RED in `scripts/phase4-fa-replay.test.ts`. (2) **R.5 index-convention
+    divergence** — the committed-array move was never measured against a live
+    parse/committed disagreement (v6 drops zero scenes); `syncLog.indexConvention.test.ts`
+    now constructs the dropped-scene input v6 cannot and measures it. (3) **P6
+    Spanish-half vacuity** — the Spanish corpus carries no expanding token;
+    `normalizerSymmetry.test.ts` now exercises the `es` normalizer on constructed
+    digit material with the precise bound on what it can claim. (4) The
+    `.gitignore` + bundle wiring for the runtime (this session) closes the last
+    "runtime lives only in scratch" debt the driver era left.
+  - **Production code:** `src-tauri/src/fa_onnx.rs` (`ensure_ort_dylib`,
+    `resolve_bundled_ort_dylib`, `probe_ort_runtime`, wired into
+    `align_chunked_for_language`), `src-tauri/src/fa_preflight.rs` (new command),
+    `src-tauri/src/lib.rs` (module + handler), `src-tauri/tauri.conf.json`
+    (resource), `.gitignore`, `src-tauri/onnxruntime/` (manifest + README + dylib),
+    `src/components/SyncLogPanel.tsx`, `src/services/faGate.ts` (`resolveFaLanguage`),
+    `src/services/faPreflight.ts` (new), `src/services/syncLog.ts`
+    (`buildFaPreflightEntry`), `src/hooks/useWhisper.ts`, `src/App.tsx`
+    (pre-flight wiring + durable language resolution), `src/types.ts`
+    (`detectedLanguage`, `fa-preflight` entry type).
+    New tests: `scripts/onnxruntimeBundle.guard.test.ts`, `src/services/faPreflight.test.ts`,
+    plus additions to `faGate.test.ts`, `syncLog.test.ts`, `SyncLogPanel.test.tsx`.
+  - **No changes to** `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg
+    aligner, `faAnchors.ts` (hash `b61e94cb…` unchanged), `project-state.md`,
+    `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv`.
+  - **Numbers:** 93 files / 2387 passed / 1 skipped; lint clean;
+    `cargo check --features fa-inference` clean; `cargo test --features fa-inference`
+    209 passed / 20 ignored; golden replay 6/6; FA replay gate 50/50 green at rest, RED
+    under M5/M6/M7/M8-A/M8-B/M9/M10 (M8-B now RED after Session L).
+  - **STILL OWED (owner's hands only, no GUI automation this session):** Step 5
+    (prove FA runs end-to-end in the app, per-project wall-clock) and Step 6
+    (first fixture-vs-live boundary comparison; R.5/R.10/R.11/R.12/R.13 fire on the
+    predicted segments; whether the ten "landed on audio still playing" warnings
+    shrink). Exact click steps are in `docs/ws1-sync-pipeline/stage1-live-run-prep.md`.
 
 - **2026-08-18 — WS1 Session K: the 24-row mover audit scored 22/24; both failures root-caused;
   R.13 (the atomic-utterance invariant) ships and closes the one real defect; a THIRD defect

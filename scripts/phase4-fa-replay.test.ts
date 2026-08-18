@@ -1205,15 +1205,28 @@ describe('WS1 Session K — R.13: the atomic-utterance invariant', () => {
     // row, the blast radius, the no-op nine, the apply-scope test, and the
     // R.12 disjointness test).
     //
-    // A SECOND MUTATION WAS RUN AND IS GREEN, REPORTED AS SUCH RATHER THAN
-    // QUIETLY DROPPED. M8-B: dropping R.13's "the carrier's own line must come
-    // after the run" guard leaves the whole suite passing. That is a true
-    // result about a real property — the guard is provably unreachable once
-    // R.12 has run (see its own comment in `faRunPlacementGate.ts` for the
-    // two-line proof), so no corpus or synthetic input can distinguish its
-    // presence. It is kept as a defensive restatement of R.12's precedence for
-    // callers that pass an uncorrected array, and it is NOT claimed to be
-    // covered. A mutation matrix that only ever reports red is not a matrix.
+    // M8-B — REPORTED GREEN IN SESSION K, NOW RED. DISPOSED, WS1 SESSION L.
+    // Session K ran M8-B (drop R.13's "the carrier's own line must come after
+    // the run" guard), found the whole suite still passing, and reported it as
+    // green with the guard recorded as uncovered-by-design. Session L was
+    // asked to dispose of that honestly — delete the guard, or keep it and
+    // mark it uncovered with a reason — and found a third answer: the guard IS
+    // coverable, and Session K's reachability argument was the thing at fault.
+    //
+    // Session K said the guard was reachable "for callers that pass an
+    // uncorrected array". Not sufficient: `detectUnscriptedRuns` claims a
+    // segment's whole matched token span, so a carrier's last token never lies
+    // inside a run, and monotonic times then make the pre-run side unreachable
+    // on ANY array. EQUALITY (`utteranceEndSec === run.endSec`, from a
+    // zero-width token at the run's end, which Whisper emits) is the only way
+    // in. On that input with an uncorrected array, R.13 wants 4.825 and R.12
+    // wants 2.50 for the SAME boundary; the guard is what makes R.12 win.
+    //
+    // `faRunPlacementGate.test.ts`'s four "the guard" tests pin it, and M8-B
+    // is now RED — 1 failure. Nothing about R.13 is uncovered-by-design, and
+    // the matrix carries no green row. Recorded here rather than deleted so
+    // the correction is visible: a green mutation was a gap in the TEST, not a
+    // property of the code, and it took a constructed input to tell them apart.
     //
     // The standing half of M8 lives in `faRunPlacementGate.test.ts`'s
     // "declines a correction that would reach or pass the NEXT boundary",
