@@ -1000,6 +1000,114 @@ code ships (Phase 3b).
 
 ### §11. Terminal Path to WS1 Completion
 
+**2026-08-19 (WS1 SESSION P) — THE STALE-VINTAGE HYPOTHESIS IS CONFIRMED, AND R.12'S ZERO
+FINDINGS WERE A DETECTION FAILURE WITH A SINGLE STRUCTURAL CAUSE. R.12 IS FIXED; CLASS A IS
+RULED OUT AS A THRESHOLD PROBLEM ON MEASURED EVIDENCE.**
+
+**(a) Regeneration: the engine ruling was corrected before it was executed (MEASURED).** The
+session ruling said to regenerate FA in `.venv-phase4-fa` (torch 2.2.2 / torchaudio 2.2.2,
+"matching `meta_fa.json`"). `meta_fa.json` does **not** describe the arm the rules consume. It
+describes `tokens_fa.json` — 3857 tokens over 444 **segments**, the per-segment Python MMS_FA
+reference. The arm R.11/R.12/R.13 actually read is `fa_production_words.json`, whose own
+`_provenance.engine` reads "real Rust `fa_onnx::align_chunked` via `fa::fa_align` (production
+path, direct call)" — 3874 words over a **280-chunk plan**, the jonatasgrosman ONNX model via
+`ort`. Regenerating with MMS_FA would have changed two variables at once (chunk plan **and**
+model vocabulary/class count) and made a non-converging result uninterpretable. Owner approved
+the correction; regeneration ran on the **Rust ONNX production path**, leaving the chunk plan as
+the only changed variable.
+
+**(b) The vintage hypothesis is CONFIRMED, with the predicted signature exactly (MEASURED).**
+Live plan = **277** chunks vs the captured **280**; first divergence at chunk 0 (live
+`[3.57, 4.16]` vs stale `[0, 4.16]` — R.5 excising the leading unscripted run). Regenerated FA:
+3874 words, 563 `needsReview`, 137.2 s, via the new `#[ignore]`d
+`fa_onnx.rs::session_p_regen::regenerate_fa_against_live_plan`. R.11's six-tag set moved exactly
+as predicted: **`266_forty_one_burden` started firing, `043_night_migration` stopped**, and the
+other four are unchanged in tag *and* value. Residual delta: none.
+
+**(c) The run id, and why it is not content-derived.** Every arm — silences, raw Whisper tokens,
+chunk plan, FA words — now carries one shared `_runId`, with each arm's post-stamp sha256 in
+`run_manifest.json` (`scripts/ws1-runid.ts`). Two distinct failures are now machine-detectable:
+**mixed vintage** (arms carrying different ids) and **silent edit** (id matches, sha256 does
+not). The id is deliberately *not* a content hash — a content hash changes whenever an arm
+legitimately changes, which would let a restamp launder a stale arm. The guard proved itself
+twice during the session: it caught the dump generator rewriting an arm unstamped inside a plain
+`npm test`, and it caught a real bug in the stamper itself (`{ [K]: id, ...json }` silently
+re-applying the OLD id on restamp).
+
+**(d) R.12 ROOT CAUSE — one mechanism, unanimous across every row (MEASURED).** All 8
+post-R.11 interior boundaries (9 pre-R.11) decline at the **same** condition:
+`gapEndSec - gapStartSec > 0` (`faRunPlacementGate.ts:180`), with gap width **exactly 0** in
+every case. The cause: Whisper's raw output is a **contiguous partition of the timeline** —
+**97.76%** of adjacent raw-token pairs have exactly zero gap (4453 of 4555), because punctuation
+tokens occupy the inter-word pauses. `computeUnscriptedRuns` sets `startSec = tokens[lo].startSec`
+for the first *unclaimed* token, and that token is the full stop preceding the recitation — so
+`run.startSec` is pinned to the END of the previous word and R.12's placement gap is empty **by
+construction, on every corpus**. Direct counterfactual: RAW → **0 of 9** runs have a usable gap;
+FILTERED → **9 of 9** (widths 0.25–2.06 s). R.12's nine historical firings were all measured on
+the pre-filtered array, so its own invariant had been failing in production since it shipped.
+
+**(e) The count is 9, not 10 — and the 9-vs-8 split is now explained.** **9** boundaries sit
+strictly inside runs pre-R.11; **8** post-R.11, because R.11 fires on `266_forty_one_burden`
+(790.33 → 792.18) and moves it past run 6's end (791.94) before R.12 ever sees the array. Both
+numbers are correct, for different arrays. R.12's green assertions in Session H were an artifact
+of pre-filtered tokens, as suspected.
+
+**(f) THE FIX IS STRUCTURAL, WITH NO NEW CONSTANT.** `acousticRunExtent` reads a run's extent in
+**substantive-token space** (first-to-last token whose text normalizes non-empty), and the
+backward scan for `prevToken` does the same. That single change repairs three coupled symptoms:
+the empty gap, an onset earlier than any unscripted speech, and the H7 guard rejecting the rule's
+own correct output because it landed inside the punctuation token's span. This is the principle
+CLAUDE.md already states for this pipeline — identity is decided on token content, never on
+raw-timestamp adjacency — and it is the same distinction `filterMalformedTokens` makes at its own
+`empty-text` drop site ("its timestamps can still be picked as a segment edge"). **No threshold
+moved**; `R12_MIN_CORRECTION_SEC` (0.05) is untouched and every correction clears it by 1.6–2.9 s.
+
+**(g) RED before, GREEN after.** `scripts/ws1-session-p-invariants.test.ts` asserts R.12's own
+invariant against the real production path on the stamped bundle. **RED: 7 violations**
+(042/125/176/224/307/340/383). **GREEN after the fix.** R.12 now fires **7**; the corrected values
+reproduce the Session H figures exactly (127.17→125.54, 372.35→370.75, 524.42→521.71,
+666.08→663.785, 926.97→924.92, 1047.57→1044.67, 1190.81→1188.95). `085_the_spear_bearer` correctly
+drops out — at 250.81 it lies in the **gap**, before the run's acoustic onset (251.56), so it was
+never a genuine interior violation. Firing table unchanged elsewhere: R.5 10, R.10 0, R.11 6,
+R.13 0. The four regression pins (571.07 / 671.17 / 684.09 / 686.54) all hold.
+
+**(h) STRICT MONOTONIC ORDERING now asserted in production (Step 8).** Across all 447 committed
+boundaries, after every rule has applied: strictly increasing starts, gapless to 1e-6, all
+durations positive. **It was already GREEN before the R.12 fix and stayed GREEN after** — so the
+230–233 chain resolves with no duplicate or inverted boundary, and rule composition (R.11 + R.12
++ R.13 + the R.10 skip) is now guarded rather than assumed.
+
+**(i) CLASS A IS NOT A THRESHOLD PROBLEM — a measured negative result that redirects Step 7.**
+Per-conjunct probe over the live bundle (291 candidates, 277 chunks):
+
+| Row | committed → ear | fitDeviation | declines at | margin vs 1.3093 |
+|---|---|---|---|---|
+| `152_frozen_brush_mice` | 449.20 → 450.99 | **1.0000** (perfect fit) | C1 | −0.3093 |
+| `214_solitary_fire` | 629.01 → 630.09 | 1.2727 | C1 | **−0.0366** |
+| `231_slowing_pace` | 681.63 → 682.74 | — | **never a candidate** | n/a |
+| `447_scout_facing_dark` | 1417.12 → 1418.53 | **1.0000** (perfect fit) | C1 | −0.3093 |
+
+Sensitivity, both sides: C1 passes **56 of 291** today. Admitting `214` needs the threshold below
+1.2727 → **77 of 291** (+21, a 37.5% widening of what reaches C2/C3). Admitting `152` or `447`
+needs it below **1.0000** → **291 of 291 (100%)**, degenerate — **37** candidates sit at exactly
+1.0. **So no value of `R11_MIN_FIT_DEVIATION` can separate 2 of the 4 rows: their chunks fit
+perfectly and the boundary is still wrong.** R.11's fit signal is structurally blind to them, and
+`231` is invisible to candidate generation itself. Class A therefore needs a different detector,
+not a re-derived constant — re-deriving one would have been fitting noise. This is why no Class A
+fix ships in this session.
+
+**(j) WHAT THIS SESSION DID NOT DO, stated plainly.** Class A (4 rows) and Class B (5 rows)
+remain **open and unfixed**; only Class C (R.12, the unscripted-run class) is fixed. Not done:
+Step 6's Class-B mechanism table and still-playing detector recall/margins; Step 7's Class A/B
+fixes; Step 7b(b) FITTED/GEOMETRIC labelling beyond the R.11 C1 analysis above, 7b(c) hold-out,
+7b(d) the 173/Spanish cross-corpus sweep (both corpora still lack regenerated live bundles — the
+harness is corpus-parameterised and ready, the inference passes were not run), 7b(e)'s
+structural-vs-v6-tuned statement beyond (f) and (i); Step 9's 18-value regression pin set; Step
+10's register reopen. The register is **unchanged** by this session — no row was closed.
+
+---
+
+
 **2026-08-19 (WS1 SESSION O) — THE REPORTED DATA LOSS WAS NOT DATA LOSS. THE REAL DEFECT IS
 STRUCTURAL: `localStorage` IS ORIGIN-SCOPED, AND DEV AND RELEASE ARE DIFFERENT ORIGINS.**
 
@@ -4263,6 +4371,39 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-19 — WS1 Session P: the stale-vintage hypothesis is CONFIRMED; R.12's zero findings
+  were a detection failure with one structural cause, now fixed. Class A ruled out as a threshold
+  problem on measured evidence.**
+  - **Engine ruling corrected before execution.** `meta_fa.json` (torch 2.2.2 MMS_FA, 3857 tokens
+    / 444 segments) does not describe the arm the rules read; `fa_production_words.json` (3874
+    words / 280-chunk plan) came from the Rust `fa_onnx::align_chunked` ONNX production path.
+    Regenerated on that path so the chunk plan was the only changed variable.
+  - **Convergence exact.** Live plan 277 chunks vs stale 280. R.11's six-tag set moved as
+    predicted — `266_forty_one_burden` in, `043_night_migration` out, other four unchanged in tag
+    and value. Residual delta: none.
+  - **Run-id bundle (R-AO).** All four arms carry one `_runId` + per-arm sha256 in
+    `run_manifest.json`; `loadLiveBundle` refuses a mixed-vintage bundle at the point of use. The
+    guard caught two real defects during the session, one of them in the stamper itself.
+  - **R.12 root cause.** Raw Whisper output is a contiguous timeline partition — 97.76% of
+    adjacent token pairs have exactly zero gap, punctuation tokens occupying the pauses — so
+    R.12's placement gap was empty by construction on every run, on every corpus. RAW: 0/9 runs
+    with a usable gap; FILTERED: 9/9. Its nine historical firings were an artifact of pre-filtered
+    tokens. Count is **9** interior boundaries pre-R.11, **8** post-R.11 (R.11 moves 266 out first).
+  - **Fix is structural, no new constant.** `acousticRunExtent` reads run extent, gap and the H7
+    guard in substantive-token space. `R12_MIN_CORRECTION_SEC` untouched. RED (7 violations) →
+    GREEN; R.12 fires 7, reproducing the Session H values exactly; the four pins hold.
+  - **Strict monotonic ordering** across all 447 boundaries now asserted in production (green
+    before and after — the 230–233 chain resolves cleanly).
+  - **Class A is not tunable.** 2 of 4 rows have fitDeviation exactly 1.0 (perfect chunk fit,
+    wrong boundary) — admitting them needs C1 to pass 291/291. `214`'s margin is −0.0366; `231`
+    is never a candidate. No Class A fix ships; it needs a different detector.
+  - **Not done, explicitly:** Class A/B fixes, Step 6, 7b(b)–(e), the 173/Spanish sweep, Step 9's
+    18-value pin set, Step 10's register reopen. Register unchanged; no row closed.
+  - Floors: `npm test` 104 passed / 3 skipped (107 files), 2435 passed / 4 skipped; `tsc --noEmit`
+    clean (**was already failing at HEAD `4b9bea9`** — `storeLocationInvariant.test.ts:48`,
+    TS18048; fixed here); `cargo check --features fa-inference` clean; `cargo test --features
+    fa-inference` 216 passed / 21 ignored; golden replay **6/6 byte-identical**.
 
 - **2026-08-19 — WS1 Session O: the reported data loss was NOT data loss. Every project was
   intact; the real defect is that `localStorage` is origin-scoped, so dev and release are two

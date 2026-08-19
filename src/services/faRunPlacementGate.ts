@@ -94,7 +94,7 @@
 // ---------------------------------------------------------------------------
 
 import { computeUnscriptedRuns } from './faChunkPlan';
-import { alignScenestoTranscript } from './whisperService';
+import { alignScenestoTranscript, normalize } from './whisperService';
 import type { UnscriptedRun } from './faChunkPlan';
 import { R12_MIN_CORRECTION_SEC } from './syncConstants';
 import type { SilenceInterval } from './silenceDetector';
@@ -131,6 +131,66 @@ export interface RunPlacementFinding {
   delta: number;
 }
 
+/** A token that carries real speech. Whisper's raw output is a CONTIGUOUS
+ *  partition of the timeline — punctuation tokens occupy the inter-word
+ *  pauses, so `tokens[i].endSec === tokens[i+1].startSec` for 97.8% of
+ *  adjacent pairs on the v6 corpus (measured, WS1 Session P Step 5b). A token
+ *  whose text normalizes to nothing is that pause, not a word; it is exactly
+ *  what `filterMalformedTokens` drops with reason `empty-text`, for the reason
+ *  stated at its own drop site: "its timestamps can still be picked as a
+ *  segment edge". */
+const isSubstantiveToken = (t: TranscriptToken | undefined): boolean =>
+  t !== undefined && normalize(t.text).length > 0;
+
+/** An unscripted run's ACOUSTIC extent: first to last token in it that carries
+ *  speech, rather than the raw token span's own edges.
+ *
+ *  WHY THIS EXISTS (WS1 Session P Step 5b — a measured production defect, not
+ *  a refinement). `computeUnscriptedRuns` sets `startSec = tokens[lo].startSec`
+ *  where `lo` is the first UNCLAIMED token index. When the token immediately
+ *  preceding an unscripted utterance is the punctuation that represents the
+ *  pause before it — the common case, since a recitation is preceded by a full
+ *  stop — that punctuation token is itself unclaimed, so it becomes the run's
+ *  first token and the run's `startSec` is pinned to the END of the previous
+ *  word. Three consequences, all measured on the live production bundle:
+ *
+ *    1. R.12's placement gap `[prevToken.endSec, run.startSec]` is EMPTY by
+ *       construction (width exactly 0 on 9 of 9 runs), so the rule declined
+ *       every run and reported zero findings while nine boundaries sat inside
+ *       runs. R.12's nine historical firings were all measured on a
+ *       pre-FILTERED token array, in which the punctuation token is absent and
+ *       the gap is therefore real (width 0.25-2.06 s on the same nine runs).
+ *    2. The run's reported onset is earlier than any unscripted speech, so a
+ *       correctly-placed boundary looks like it is "inside" the run.
+ *    3. The H7 guard (a correction may not land inside a run) then rejects the
+ *       rule's own correct output, because that output sits in the punctuation
+ *       token's span.
+ *
+ *  Reading the run in substantive-token space fixes all three at once, and it
+ *  is the same principle CLAUDE.md already states for this pipeline: identity
+ *  is decided on token content, never on raw-timestamp adjacency. No constant
+ *  is introduced — this changes WHICH tokens bound the interval, not any
+ *  threshold.
+ *
+ *  Falls back to the run's raw span when it contains no substantive token at
+ *  all (structurally possible, never observed) — declining to guess rather
+ *  than fabricating an extent. */
+function acousticRunExtent(
+  run: UnscriptedRun,
+  tokens: readonly TranscriptToken[],
+): { startSec: number; endSec: number; onsetIndex: number } {
+  let lo = run.tokenLo;
+  while (lo <= run.tokenHi && !isSubstantiveToken(tokens[lo])) lo++;
+  let hi = run.tokenHi;
+  while (hi >= run.tokenLo && !isSubstantiveToken(tokens[hi])) hi--;
+  const onset = tokens[lo];
+  const offset = tokens[hi];
+  if (!onset || !offset || lo > hi) {
+    return { startSec: run.startSec, endSec: run.endSec, onsetIndex: run.tokenLo };
+  }
+  return { startSec: onset.startSec, endSec: offset.endSec, onsetIndex: lo };
+}
+
 /**
  * R.12's detector. Pure — no React, no DOM, no IPC.
  *
@@ -162,21 +222,32 @@ export function detectRunPlacementDefects(
   const runs: UnscriptedRun[] = computeUnscriptedRuns(parsedSegments, tokens, silences, audioDuration);
   if (runs.length === 0) return [];
 
+  // Every run's acoustic extent, computed once — see `acousticRunExtent` for
+  // why the raw token span's own edges cannot be used here. Both the interior
+  // test and the H7 guard below read THIS view, not `run.startSec`/`endSec`;
+  // mixing the two is what made the rule reject its own correct output.
+  const extents = runs.map(run => acousticRunExtent(run, tokens));
+
   const findings: RunPlacementFinding[] = [];
 
   for (let ri = 0; ri < runs.length; ri++) {
     const run = runs[ri]!;
+    const extent = extents[ri]!;
 
     // A run at CORPUS START has no preceding token, so the legal placement
     // interval does not exist and there is nothing to correct toward. This is
     // structural, not a special case bolted on — V6's tenth recitation is
     // exactly this shape (`exciseUnscriptedRuns` trims rather than splits it
-    // for the mirror-image reason).
-    const prevToken = tokens[run.tokenLo - 1];
+    // for the mirror-image reason). Scanning backward for a SUBSTANTIVE token
+    // (not simply `tokens[run.tokenLo - 1]`) is the same content-not-adjacency
+    // rule `acousticRunExtent` applies at the other end of the gap.
+    let prevIndex = run.tokenLo - 1;
+    while (prevIndex >= 0 && !isSubstantiveToken(tokens[prevIndex])) prevIndex--;
+    const prevToken = tokens[prevIndex];
     if (!prevToken) continue;
 
     const gapStartSec = prevToken.endSec;
-    const gapEndSec = run.startSec;
+    const gapEndSec = extent.startSec;
     if (!(gapEndSec - gapStartSec > 0)) continue; // no room between the last word and the run.
 
     // The clamped candidate: every silence with POSITIVE overlap with the gap,
@@ -208,7 +279,7 @@ export function detectRunPlacementDefects(
     // between a CLAIMED token and the run's own onset — but Whisper token
     // spans can overlap in principle, which would let an earlier run's `endSec`
     // reach past `gapStartSec`. R.12 declines rather than relocating a defect.
-    if (runs.some(u => correctedValue > u.startSec + 1e-9 && correctedValue < u.endSec - 1e-9)) continue;
+    if (extents.some(u => correctedValue > u.startSec + 1e-9 && correctedValue < u.endSec - 1e-9)) continue;
 
     for (let i = 0; i < committedSegments.length; i++) {
       // Index 0 is never a candidate: `headExtendFirstSegment` unconditionally
@@ -216,7 +287,7 @@ export function detectRunPlacementDefects(
       // could survive to be observed. Same exclusion, same reason, as R.11's.
       if (i === 0) continue;
       const committedValue = committedSegments[i]!.startTime;
-      if (!(committedValue > run.startSec + 1e-9 && committedValue < run.endSec - 1e-9)) continue;
+      if (!(committedValue > extent.startSec + 1e-9 && committedValue < extent.endSec - 1e-9)) continue;
       if (Math.abs(correctedValue - committedValue) <= R12_MIN_CORRECTION_SEC) continue;
 
       findings.push({
@@ -224,8 +295,8 @@ export function detectRunPlacementDefects(
         segmentId: committedSegments[i]!.id,
         segmentTag: (committedSegments[i] as unknown as { tag?: string }).tag,
         runIndex: ri,
-        runStartSec: run.startSec,
-        runEndSec: run.endSec,
+        runStartSec: extent.startSec,
+        runEndSec: extent.endSec,
         runTokenLo: run.tokenLo,
         runTokenHi: run.tokenHi,
         gapStartSec,

@@ -39,6 +39,12 @@ describe('dev, dev:fa and release resolve to the same store', () => {
     const fa = pkg.scripts['tauri:dev:fa'];
     expect(dev).toBe('tauri dev');
     expect(fa).toBe('tauri dev -f fa-inference');
+    // WS1 Session P: `expect(...).toBe(...)` is not a type guard, so `fa` stays
+    // `string | undefined` for tsc even though the assertion above has already
+    // proved it present. Narrow explicitly — this was a pre-existing
+    // `tsc --noEmit` failure at HEAD 4b9bea9 (TS18048), unrelated to Session P
+    // but blocking its stated clean-typecheck floor.
+    if (fa === undefined) throw new Error('unreachable: asserted above');
     // Neither may introduce its own config file, identifier or port — that is
     // exactly the divergence Step 2 went looking for.
     for (const script of [dev, fa]) {

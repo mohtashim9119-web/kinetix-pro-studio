@@ -6387,3 +6387,57 @@ an origin can see.
 `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` were not touched. Nothing on §3's Master Phase Board
 advances: this session touched persistence, not sync timing. Golden replay 6/6 unchanged.
+
+---
+
+## Part N — R.12's Input Contract (WS1 Session P, 2026-08-19, append-only)
+
+**(a) The contract that was never written down, and the defect that followed.** R.12
+(`faRunPlacementGate.ts`) was specified against "the Whisper token array" without saying WHICH
+Whisper token array. Two exist and they are not interchangeable: the RAW array
+(`projectRef.current.transcriptTokens`, 4556 entries on v6) and the FILTERED array
+(`filterMalformedTokens`'s output, 3989). R.12 was designed, measured and closed against the
+FILTERED array, then wired into production receiving the RAW one.
+
+**(b) Why the substitution is not benign.** Whisper's raw output is a **contiguous partition of
+the timeline**: punctuation tokens occupy the inter-word pauses, so `tokens[i].endSec ===
+tokens[i+1].startSec` for **97.76%** of adjacent pairs (measured, v6). Any rule that derives an
+INTERVAL from adjacency in that array gets an empty interval. R.12 derives its entire legal
+placement window that way — `[prevToken.endSec, run.startSec]` — so the window was empty on 9 of
+9 runs and the rule declined every one of them while its own invariant was being violated nine
+times. The FILTERED array, having dropped 493 punctuation-only tokens with drop reason
+`empty-text`, exposes the real acoustic gaps (0.25–2.06 s on those same nine runs).
+
+**(c) The standing rule this establishes.** *A rule that measures an interval between tokens must
+locate its endpoints by token CONTENT, not by array adjacency.* This is the interval-valued
+corollary of the invariant CLAUDE.md already carries ("timestamps may measure distance; they must
+never decide identity") — adjacency in the raw array is a timestamp fact, not a linguistic one.
+`filterMalformedTokens` already states the same thing at its `empty-text` drop site: a token that
+normalizes to nothing "can never match a scene-doc word, but its timestamps can still be picked as
+a segment edge."
+
+**(d) How it is enforced now.** `acousticRunExtent` + `isSubstantiveToken` in
+`faRunPlacementGate.ts` resolve the run's extent, the backward `prevToken` scan, the interior
+test and the H7 guard in substantive-token space. No constant was added or moved — the change is
+to WHICH tokens bound the interval. `scripts/ws1-session-p-invariants.test.ts` asserts R.12's own
+invariant against the real production path over a run-id-stamped live bundle, so a future
+regression surfaces as a failing invariant rather than as a silently idle rule.
+
+**(e) OPEN — R.13 is exposed at the OTHER end, and has NOT been audited.**
+`detectUtterancePlacementDefects` sits in the same file and reads the same raw array, and also
+reports zero findings on the live bundle. Its mechanism is **not** the same: it anchors on the
+carrier segment's own `utteranceEndSec` (a single token's `endSec`) and places on the first
+detected silence at or after it, so it never derives an interval from array adjacency and the
+Part N(b) failure cannot occur there verbatim. But its admission guard is
+`utteranceEndSec > run.endSec + 1e-9`, and `run.endSec` is the RAW run end — which, when a run
+terminates in a punctuation token, sits LATER than the last spoken word. Raw-token inflation
+therefore makes R.13's guard strictly harder to satisfy, at the run's TAIL rather than its head.
+Whether R.13's zero is genuine idleness or a tail-side suppression of the same kind is
+**unresolved**; it was deliberately left untouched this session (only R.12's guard was rewired,
+so `applyUtterancePlacementCorrections` and every R.13 test stay on their existing behaviour) and
+must be settled before R.13 is treated as exercised in production.
+
+**(f) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`), `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6 byte-identical.
+Nothing on §3's Master Phase Board advances — Class A and Class B remain open.

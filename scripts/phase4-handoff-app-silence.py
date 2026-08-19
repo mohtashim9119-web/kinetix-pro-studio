@@ -16,14 +16,39 @@ committed-segment replay harness (phase4-handoff-replay-sync.mjs /
 .test.ts) snaps against the same shape of silence array the real app would
 produce.
 
-Known, disclosed approximation: the app decodes the ORIGINAL voiceover file
-(m4a, native sample rate) via AudioContext.decodeAudioData; this script reads
-the already-produced 16kHz mono WAV transcode instead (the same file
-measure-word-onset.py's `prepare` step already made, reused rather than
-re-decoded a second way). Since every threshold in the algorithm is
-time-based (ms/seconds), not sample-based, results at 16kHz vs. the source's
-native rate differ only by sub-frame quantization noise -- not a source of
-disagreement large enough to move a boundary discussion.
+KNOWN DIVERGENCE FROM THE LIVE APP -- CORRECTED 2026-08-19 (WS1 Session P).
+The app decodes the ORIGINAL voiceover file (m4a, native sample rate) via
+AudioContext.decodeAudioData and reads getChannelData(0); this script reads
+the already-produced 16kHz MONO WAV transcode instead.
+
+This docstring previously claimed the two "differ only by sub-frame
+quantization noise". THAT CLAIM WAS WRONG and is retired. It reasoned about
+TIME quantization (every threshold here is indeed ms/seconds-based, and the
+20ms frame grid is in fact exact at 16000/44100/48000 Hz alike) while the
+actual divergence is in AMPLITUDE:
+
+  * Resampling to 16 kHz low-passes at 8 kHz, removing high-frequency energy
+    from each frame's RMS.
+  * `-ac 1` AVERAGES L+R. The app reads the LEFT channel alone. All three
+    corpus voiceovers are stereo (v6 44100 Hz, 173 48000 Hz, Spanish
+    44100 Hz), so these are two different signals, not two renderings of one.
+
+Both shift per-frame RMS across the -45 dB threshold. MEASURED on v6
+(Session P, Step 1): 547 silences here vs 546 from a native-rate left-channel
+decode; 33 of 546 matched entries differ, start deltas up to 180 ms; one
+phantom silence here at [1128.68, 1129.04] that the live app does not
+produce. That is large enough to move a boundary: R.11's corrected value IS a
+silence midpoint, so a 20 ms shift in a silence edge is a 10 ms shift in a
+committed boundary -- exactly why this arm commits 671.18 where the live app
+commits 671.17.
+
+THIS SCRIPT IS NONETHELESS UNCHANGED AND CORRECT FOR ITS OWN JOB (ruling:
+Session P, Option 2). The Step M golden replay is baselined against this
+16 kHz array, and `scripts/fixtures/phase4-baseline-*-silences.csv` must stay
+byte-identical, so this arm is frozen deliberately. The LIVE-FIDELITY arm is a
+SEPARATE, ADDITIVE input produced by `scripts/ws1-native-silences.py` and is
+consumed only by the R-AO production-path gate. Do not "fix" this script to
+match the app -- that would re-baseline the golden replay.
 
 Usage (normally invoked for you by scripts/phase4-restore-replay-inputs.py,
 which also verifies the output against the committed Step M baseline):

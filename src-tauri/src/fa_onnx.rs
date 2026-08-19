@@ -5725,3 +5725,229 @@ mod missing_dylib {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// WS1 SESSION P — FA REGENERATION AGAINST THE LIVE CHUNK PLAN.
+//
+// WHY (measured). `.work-phase4/replay/v6/fa_production_words.json` was
+// aligned against a 280-chunk plan; the current code computes 277 chunks from
+// the same corpus. Every rule that reads those words (R.11/R.12/R.13, and
+// every boundary they correct) has therefore been reading FA output produced
+// against windows the app no longer builds — a stale vintage, and the reason
+// Session P's R.11 firing set would not converge with the live run's.
+//
+// This regenerates the FA arm with the SAME ENGINE that produced the stale
+// capture — `align_chunked`, the real production path, jonatasgrosman ONNX via
+// `ort` — so the ONLY variable changed is the chunk plan. Regenerating with a
+// different engine (torchaudio MMS_FA, whose per-segment output
+// `meta_fa.json`/`tokens_fa.json` describes) would swap a vintage mismatch for
+// a MODEL mismatch and make a non-converging result uninterpretable: MMS_FA
+// and jonatasgrosman have different vocabularies and different class counts
+// (see `capture-fa-onnx-reference.py`'s own header on exactly this point).
+//
+// PRODUCTION FIDELITY. `align_chunked` is called ONCE with the WHOLE chunk
+// slice, which is what `fa.rs::fa_align` does — NOT one chunk per call like
+// `d12_measurement::run_windowed_fault_tolerant`, whose per-chunk loop drops
+// failures on the floor and so cannot reproduce production's own
+// CTC-infeasible fallback words. The DTO conversion below (`score.exp()`,
+// `needs_review = confidence < 0.3`, `word_index` across the whole run)
+// duplicates `fa.rs::word_span_to_dto`/`word_spans_to_dtos` rather than
+// calling them because those are `fn`-private to `fa.rs`; the formulas are
+// asserted identical by this module's own `dto_formula_matches_production`
+// test, which needs no model and always runs.
+//
+// RUN (per corpus — v6 is the load-bearing one; 173/spanish serve Step 7b(d)):
+//   ORT_DYLIB_PATH=<repo>/src-tauri/onnxruntime/libonnxruntime.1.23.2.dylib \
+//   FA_REGEN_CORPUS=v6 FA_REGEN_LANG=en FA_REQUIRE_ORT=1 \
+//   cargo test --features fa-inference -- --ignored --nocapture --exact \
+//     fa_onnx::session_p_regen::regenerate_fa_against_live_plan
+//
+// Reads  `.work-phase4/replay/<corpus>/fa_live_chunks.json` + `audio_16k.wav`.
+// Writes `.work-phase4/replay/<corpus>/fa_live_words.json`.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod session_p_regen {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Mirrors `fa.rs`'s own `CONF_MIN` (0.3), which mirrors
+    /// `syncConstants.ts`'s. Duplicated here only because it is private to
+    /// `fa.rs`; `dto_formula_matches_production` pins the duplication.
+    const CONF_MIN_MIRROR: f32 = 0.3;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("session_p_regen's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[derive(serde::Deserialize)]
+    struct LivePlanFile {
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<LivePlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct LivePlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    /// The production DTO formula, isolated so it has a test of its own.
+    /// Returns `(confidence, needs_review)` for one raw CTC score.
+    fn dto_confidence(score: f32) -> (f32, bool) {
+        let confidence = score.exp();
+        (confidence, confidence < CONF_MIN_MIRROR)
+    }
+
+    /// Runs with no model and no ORT: pins that this module's duplicated DTO
+    /// formula still matches `fa.rs::word_span_to_dto`'s documented behaviour
+    /// (`confidence = score.exp()`, `needs_review = confidence < CONF_MIN`),
+    /// including the `NEG_INFINITY -> 0.0` CTC-infeasible placeholder case
+    /// `CTC_INFEASIBLE_FALLBACK_SCORE` relies on.
+    #[test]
+    fn dto_formula_matches_production() {
+        let (c, r) = dto_confidence(0.0);
+        assert_eq!(c, 1.0);
+        assert!(!r, "a perfect score must not be flagged for review");
+
+        let (c, r) = dto_confidence(f32::NEG_INFINITY);
+        assert_eq!(c, 0.0, "CTC-infeasible placeholder must underflow to exactly 0.0, never NaN");
+        assert!(r, "a placeholder word must always surface as needs_review");
+
+        // Either side of CONF_MIN, via the same exp() the boundary applies.
+        let (c, r) = dto_confidence(CONF_MIN_MIRROR.ln() - 1e-3);
+        assert!(c < CONF_MIN_MIRROR && r);
+        let (c, r) = dto_confidence(CONF_MIN_MIRROR.ln() + 1e-3);
+        assert!(c > CONF_MIN_MIRROR && !r);
+    }
+
+    #[test]
+    #[ignore]
+    fn regenerate_fa_against_live_plan() {
+        const CONTEXT: &str = "session_p_regen";
+        let corpus = std::env::var("FA_REGEN_CORPUS").unwrap_or_else(|_| "v6".to_string());
+        let language = std::env::var("FA_REGEN_LANG").unwrap_or_else(|_| "en".to_string());
+
+        if !require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        let model_path = fa_models_dir().join(&language).join("model.onnx");
+        if !require_ort::path_exists_or_skip(CONTEXT, &model_path) {
+            return;
+        }
+        let dir = repo_root().join(".work-phase4/replay").join(&corpus);
+        let plan_path = dir.join("fa_live_chunks.json");
+        let audio_path = dir.join("audio_16k.wav");
+        if !require_ort::path_exists_or_skip(CONTEXT, &plan_path)
+            || !require_ort::path_exists_or_skip(CONTEXT, &audio_path)
+        {
+            return;
+        }
+
+        let plan: LivePlanFile = serde_json::from_str(
+            &std::fs::read_to_string(&plan_path).unwrap_or_else(|e| panic!("read {}: {e}", plan_path.display())),
+        )
+        .unwrap_or_else(|e| panic!("parse {}: {e}", plan_path.display()));
+        let chunks: Vec<crate::fa::FaChunkInput> = plan
+            .chunks
+            .iter()
+            .map(|c| crate::fa::FaChunkInput {
+                start_sec: c.start_sec,
+                end_sec: c.end_sec,
+                text: c.text.clone(),
+            })
+            .collect();
+
+        eprintln!(
+            "{CONTEXT}: corpus={corpus} lang={language} chunks={} audio={:.2}s model={}",
+            chunks.len(),
+            plan.audio_duration,
+            model_path.display()
+        );
+
+        // ONE call, whole slice — production's own shape.
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let started = std::time::Instant::now();
+        let mut last_progress = 0u32;
+        let words = align_chunked(
+            &cache,
+            &model_path,
+            audio_path.to_str().expect("audio path is UTF-8"),
+            &chunks,
+            &language,
+            || false,
+            // `on_progress` reports the CHUNK INDEX, not a percentage —
+            // log it as what it is.
+            |p| {
+                if p >= last_progress + 25 {
+                    last_progress = p;
+                    eprintln!("{CONTEXT}: chunk {p}/{}", chunks.len());
+                }
+            },
+        )
+        .unwrap_or_else(|e| panic!("{CONTEXT}: align_chunked failed: {e:?}"));
+        let elapsed = started.elapsed().as_secs_f64();
+
+        assert!(!words.is_empty(), "{CONTEXT}: alignment produced zero words");
+
+        let mut needs_review = 0usize;
+        let dtos: Vec<serde_json::Value> = words
+            .iter()
+            .enumerate()
+            .map(|(i, w)| {
+                let (confidence, review) = dto_confidence(w.score);
+                if review {
+                    needs_review += 1;
+                }
+                serde_json::json!({
+                    "word": w.text,
+                    "startSec": w.start_seconds,
+                    "endSec": w.end_seconds,
+                    "confidence": confidence,
+                    "needsReview": review,
+                    "wordIndex": i,
+                })
+            })
+            .collect();
+
+        let out = serde_json::json!({
+            "_provenance": {
+                "engine": "real Rust fa_onnx::align_chunked (production path, whole-slice call) — WS1 Session P regeneration",
+                "corpus": corpus,
+                "language": language,
+                "audio_duration_sec": plan.audio_duration,
+                "audio": audio_path.file_name().and_then(|s| s.to_str()),
+                "model": model_path.to_str(),
+                "chunk_plan": "fa_live_chunks.json",
+                "chunk_count": chunks.len(),
+                "word_count": dtos.len(),
+                "needs_review_count": needs_review,
+                "elapsed_sec": elapsed,
+            },
+            "words": dtos,
+        });
+        let out_path = dir.join("fa_live_words.json");
+        std::fs::write(&out_path, format!("{}\n", serde_json::to_string_pretty(&out).expect("serialize")))
+            .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
+
+        eprintln!(
+            "{CONTEXT}: wrote {} ({} words, {} needs_review, {:.1}s)",
+            out_path.display(),
+            dtos.len(),
+            needs_review,
+            elapsed
+        );
+    }
+}
