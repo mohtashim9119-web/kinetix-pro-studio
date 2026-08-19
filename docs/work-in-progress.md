@@ -1225,6 +1225,16 @@ sittings have rejected values at that boundary and neither heard 788.65.
 
 **(h) MUTATION MATRIX M1-M13.** See the changelog entry for the full table and counts.
 
+**(h2) THE COST R-AP ADDS, MEASURED.** `computeRunExtents` runs `computeUnscriptedRuns`, whose
+Hirschberg alignment dominates. Five consecutive calls on the 447-segment v6 corpus: **2715 / 2699
+/ 2703 / 2690 / 2726 ms** — ~2.70 s, and it is a FOURTH full run derivation per Apply Sync beside
+the three the stage already does. **Apply Sync on a corpus this size is ~2.7 s slower than before
+this commit.** Recorded rather than absorbed. The fix is a memo on `computeUnscriptedRuns` (a pure
+function called four times with identical arguments), which removes three of the four passes; it
+touches `faChunkPlan.ts`, a shared module every rule depends on, and belongs with the
+propose/arbitrate rebuild in (f) where the stage derives the run structure once — not bolted on
+beside an invariant landing in the same commit. Plan doc Part Q (k0).
+
 **(i) WHAT THIS SESSION DID NOT DO, stated plainly.** No R.12 value change. No Class A or Class B
 work. No `silenceDetector.ts` change (unmodifiable this session, and the measurement was designed
 around that). No propose/arbitrate refactor. No fixture regeneration. The five EARLY rows and L7

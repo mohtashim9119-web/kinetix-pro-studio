@@ -6702,6 +6702,23 @@ reason: a naive "first frame at or above -45 dBFS" returns the BREATH on `042` (
 (370.06), because a breath crosses the same threshold speech does, while a detected silence only
 ends after 0.25s of continuous sub-threshold audio.
 
+**(k0) THE COST R-AP ADDS, MEASURED, NOT ESTIMATED — and it is not small.** `computeRunExtents`
+runs `computeUnscriptedRuns`, whose Hirschberg alignment over the full corpus dominates it.
+Measured on the 447-segment v6 corpus, five consecutive calls: **2715 / 2699 / 2703 / 2690 / 2726
+ms** — a tight ~2.70 s. That is a FOURTH full run derivation per Apply Sync, on top of the three
+the stage already performs (`forcedAlignmentRun.ts`'s own, R.12's detector, R.13's detector), so
+Apply Sync on a corpus this size is ~2.7 s slower than before this commit. Recorded rather than
+absorbed: it is a user-visible cost paid for a correctness invariant, which is the right trade, but
+it is not free and it should not be discovered later as a mystery regression.
+
+**The fix is available and deliberately not taken this session.** `computeUnscriptedRuns` is a pure
+function of `(parsedSegments, tokens, silences, audioDuration)` and is called four times per run
+with identical arguments; memoizing it on argument identity removes three of the four passes
+outright, R-AP's included. That is a change to `faChunkPlan.ts` — a shared module on the FA path
+whose output every rule depends on — and it belongs with the propose-then-arbitrate rebuild in (f),
+where the stage computes the run structure ONCE and hands it to every rule, rather than being
+bolted on beside an invariant landing in the same commit.
+
 **(k) SCOPE — Class A/B versus the R.12 population, recorded so the two are never merged again.**
 Session R's finding (Part P) is that the defect in Class A + Class B is WORD ATTRIBUTION, not
 boundary placement: every FA word in every disputed span is attributed to the incoming segment, so
