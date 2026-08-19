@@ -6539,3 +6539,64 @@ mutation-matrix revert), `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschbe
 Golden replay 6/6 byte-identical. `src/services/faRunPlacementGate.ts` IS touched (the R.13 fix) —
 the one deliberate exception, RED-before/GREEN-after verified, full 57/57 suite green including
 every pre-existing corpus regression pin.
+
+---
+
+## Part P — The Defect Is Attribution, Not Placement (WS1 Session R, 2026-08-20, append-only)
+
+**(a) Word containment measured, and its exit condition honoured.** Session Q's reframe ("the
+boundary is at the midpoint of the WRONG silence") pointed at word containment as the next
+discriminator: a boundary should sit between the outgoing segment's last FA word and the incoming
+segment's first. Measured over all 446 v6 boundaries on the run-id-stamped live bundle, the
+confidence-filtered arm returns **zero violations anywhere** — controls, pins, and all 9 open
+defect rows alike. The unfiltered arm returns 160 violations that are anti-correlated with the
+defect set (155/426 controls, 3/4 ear-verified-correct pins, 1/4 Class A). No fix was designed on
+it. Full numbers: `docs/work-in-progress.md` §11's Session R entry (a).
+
+**(b) The finding that matters is WHY the zero, and it relocates the defect.** Every FA word in
+every disputed span `[committed, ear-correct]`, on all 9 rows, is attributed to the INCOMING
+segment, and on all 9 rows the ear value is LATER than committed. The boundary therefore sits
+before those words — precisely what containment requires — so the test is satisfied by exactly the
+rows it was built to catch. **The defect is not where the boundary was placed given the word
+attribution; it is the word attribution.** The Hirschberg pass gives the incoming segment 1-5
+words the ear assigns to the outgoing one, and every downstream rule then places a boundary that
+is correct with respect to a corrupted premise.
+
+**(c) The standing consequence — a whole family of candidate signals is retired at once.** Any
+rule that evaluates a committed boundary against the segment SPANS (containment, span-relative
+distance, span-edge confidence, "does the boundary fall inside its own segment's speech") is
+testing the pipeline's output against the very corruption that produced it, and is blind for this
+structural reason rather than for a tunable one. A discriminator for Class A + B must draw on
+evidence INDEPENDENT of the segment spans — the audio, the silence structure, or the script's own
+sentence/clause structure — or it must attack the attribution directly. This is the span-valued
+sibling of the invariant CLAUDE.md already carries about timestamps and identity: a derived
+quantity cannot adjudicate the correctness of the thing it was derived from.
+
+**(d) A second candidate measured and rejected, so the next session inherits a verdict rather
+than a hypothesis.** The disputed spans are conspicuously low-confidence (1e-8 to 1e-3), which
+suggested "the incoming segment's leading run of sub-`R10_MAX_WORD_CONF` words" as a detector —
+reusing R.10's existing derived constant, minting nothing. It does not separate: 161/404 healthy
+snapped controls fire, 3/4 ear-pass pins fire, 5/9 defects fire. A leading low-confidence run is
+an ordinary property of FA output at segment heads. Both this and (a) are recorded as assertions
+in their own files so neither can be quietly re-attempted unchanged, the same discipline Session
+Q's `correctionIsUsable` negative result established.
+
+**(e) The still-playing checker: a confirmed sample-rate artefact, and a control arm that turns
+out not to be one.** Session Q's 1/5 Class B recall was measured on the replay bundle's 16 kHz
+capture. Re-measured on the real source audio at 16k/44.1k/48k (the app decodes through
+`AudioContext`, which resamples to the device rate — typically 48000 — not the file's 44100):
+`403_vigilant_embers` moves 0.0433 → 0.0540 → 0.0544 against the 0.05 floor, restoring recall to
+**2/5 and reproducing the previously documented figure exactly**. The 1/5 was the artefact; the
+documented 2/5 was never wrong. **The floor still cannot be retuned, for a newly measured reason:**
+a sweep shows 0.025 would give 5/5 recall at zero false positives on 173, but all 19 of 173's
+fallback pairs fail the loudness-RATIO conjunct outright and its loudest fallback boundary is
+0.0248, so the floor never binds there at any swept value. 173's zero is not evidence about the
+floor, and cannot validate lowering it. A genuine re-derivation needs a control corpus that
+exercises the floor conjunct — neither committed corpus does.
+
+**(f) Scope discipline.** No production code touched. `faAnchors.ts` (sha256 `b61e94cb…`),
+`faRunPlacementGate.ts`, `faSeamFitGate.ts`, `snapBoundaries.ts`, `silenceDetector.ts`,
+`syncConstants.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` unchanged. One additive harness change
+(`ws1-session-p-pipeline.ts` returns `keptAlignments`). Nothing on §3's Master Phase Board
+advances — Class A and Class B remain open, register unchanged at 8, no ear pass ran.

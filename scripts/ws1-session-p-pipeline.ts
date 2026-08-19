@@ -41,6 +41,7 @@ import {
 import { detectUnspokenScriptSegmentsFromWhisper, applyUnspokenScriptGate } from '../src/services/faUnspokenGate';
 import { computeUnscriptedRuns, computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
 import type { TranscriptToken, VideoSegment } from '../src/types';
+import type { SegmentAlignment } from '../src/services/whisperService';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 import { verifyBundle, V6_BUNDLE_ARMS } from './ws1-runid.js';
 
@@ -132,6 +133,15 @@ export function loadLiveBundle(key: string, requireStamp = true): LiveBundle {
 export interface ProductionRun {
   runId?: string;
   committed: VideoSegment[];
+  /** Index-parallel with `committed`: the alignment `snapCoveredBoundaries`
+   *  itself was given for each committed segment, straight out of
+   *  `filterToCoveredSegments`. Exposed (WS1 Session R) so a consumer reads the
+   *  SAME per-segment token attribution production snapped against, rather than
+   *  recomputing an alignment over a different array and hoping the indices
+   *  still line up — a segment skipped by R.10/the coverage filter shifts every
+   *  later index, so `alignments[i]` from a fresh full-array pass is NOT
+   *  `committed[i]`'s alignment whenever anything was skipped. */
+  keptAlignments: SegmentAlignment[];
   preRuleSegments: VideoSegment[];
   fired: Record<string, number>;
   kept: number;
@@ -206,7 +216,7 @@ export async function runProductionPath(spec: CorpusSpec, requireStamp = true): 
   committed = applyUtterancePlacementCorrections(committed, r13);
 
   return {
-    runId, committed, preRuleSegments, fired, kept: kept.length, skipped: skipped.length,
+    runId, committed, keptAlignments, preRuleSegments, fired, kept: kept.length, skipped: skipped.length,
     aborted: gate.aborted,
     whisperFilter: { total: wFilter.totalTokens, skipped: wFilter.skippedCount, kept: wFilter.tokens.length, dropReasons },
     r5runs, r11, r12, r13, unspoken, anchorTimed, whisperTokens, faTokens, usableFaTokens: usable, silences,

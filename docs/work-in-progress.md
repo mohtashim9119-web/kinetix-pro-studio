@@ -1000,6 +1000,88 @@ code ships (Phase 3b).
 
 ### §11. Terminal Path to WS1 Completion
 
+**2026-08-20 (WS1 SESSION R) — WORD CONTAINMENT IS STRUCTURALLY BLIND TO THIS DEFECT CLASS, NOT
+MERELY WEAK: IT RETURNS ZERO VIOLATIONS ON ALL 446 BOUNDARIES. THE ROOT CAUSE IS NOW LOCATED —
+THE DEFECT IS IN WORD ATTRIBUTION, NOT BOUNDARY PLACEMENT. A SECOND CANDIDATE WAS MEASURED AND
+ALSO FAILED. STEP 5 IS A REAL POSITIVE: THE 1/5-VS-2/5 RECALL DISCREPANCY IS A CONFIRMED
+SAMPLE-RATE ARTEFACT, AND THE FLOOR STILL CANNOT BE RETUNED — FOR A NEWLY MEASURED REASON.**
+
+**(a) STEP 1 — the hypothesis, and its exit condition, both honoured.** Word containment
+(`lastWordEnd > boundary` or `firstWordStart < boundary`, FA word timings, confidence-filtered at
+the corpus median) was measured over all 446 v6 boundaries against the run-id-stamped live bundle
+(`p-20260819T120922Z-cbb403c1`). **Result: 0 violations. Not 0 among controls — 0 everywhere**,
+including all 9 open defect rows. The unfiltered arm produces 160 violations, but they are
+anti-correlated with the defect set: 155 of 426 controls fire, **3 of 4 ear-verified-CORRECT pins
+fire**, and only 1 of 4 Class A rows does. Exit R1 therefore fires on both arms and no fix was
+designed on this signal. Full distribution + per-row audit:
+`scripts/ws1-session-r-containment.test.ts`, `.work-phase4/session-p/stepR1-word-containment.json`.
+
+**(b) WHY the zero — the most material finding of the session.** The measurement's own audit block
+dumps every FA word in each disputed span `[committed, ear-correct]`. On **all 9 rows** the ear
+value is LATER than committed, and **every word in every disputed span is attributed to the
+INCOMING segment**. The boundary sits before those words — which is exactly what containment
+demands. So containment cannot fire, by construction. **The defect is not boundary placement given
+the attribution; the defect IS the attribution.** Hirschberg hands the incoming segment 1-5 words
+that the ear says belong to the outgoing one, and every downstream rule then places a boundary
+that is correct with respect to a wrong premise. This reframes Class A + B and retires a whole
+family of candidate signals at once: any rule that tests a boundary against the segment spans is
+testing the output against the corruption, and is blind for the same structural reason. Worked
+example — `231_slowing_pace`: its incoming span is tokens 1798-1799 (`they`, `slow`), the second
+at confidence 1.000 ending 682.34; the ear-correct boundary 682.74 sits AFTER both, i.e. neither
+word is segment 231's.
+
+**(c) The next candidate, measured rather than proposed.** Exit R1 asks for the next measurable
+discriminator; it was measured rather than suggested, so the next session inherits a verdict.
+Candidate: the incoming segment's leading run of FA words below `R10_MAX_WORD_CONF` (5e-4 — R.10's
+existing DERIVED constant, reused, no new constant minted). **It does not separate:** 161 of 404
+healthy snapped controls fire, **3 of 4 ear-pass pins fire**, and only 5 of 9 defects do. A
+leading low-confidence run is a ubiquitous property of FA output at segment heads, not a defect
+marker. `scripts/ws1-session-r-leading-garbage.test.ts`,
+`.work-phase4/session-p/stepR1b-leading-garbage.json`.
+
+**(d) STEP 5 — CONFIRMED: the recall discrepancy was a sample-rate artefact, and the documented
+2/5 was never wrong.** Session Q measured 1/5 Class B recall on the replay bundle's 16 kHz capture
+and flagged, without being able to test it, that the app decodes at a different rate.
+Measured here on the real source audio (`6.m4a`, 44100/stereo) decoded to channel-0 mono at three
+rates. `waveformPipeline.ts` decodes via `new AudioContext()` + `decodeAudioData`, which resamples
+to the CONTEXT rate (the output device rate, typically 48000 on macOS) — not the file's own rate —
+so 16k/44.1k/48k were all measured rather than picking one. **`403_vigilant_embers` crosses the
+floor at native rate** (0.0433 at 16 kHz → 0.0540 at 44.1 kHz → 0.0544 at 48 kHz, against the 0.05
+floor), taking recall from 1/5 to **2/5 and exactly reproducing the previously documented figure**.
+44.1k and 48k agree to ~0.0004, so the result is insensitive to which native rate the AudioContext
+picks; only the 16 kHz decimation moves it. Not a code regression — a measurement-arm artefact,
+as Session Q suspected. The other three misses (0.028-0.031) are genuine at every rate.
+
+**(e) The floor is STILL not retuned — but now for a measured reason, not a budget one.** A sweep
+of candidate floors shows 0.025 would give 5/5 Class B recall at **zero** false positives on 173,
+the corpus whose zero-false-positive property the floor was calibrated against. **That column is
+vacuous and the retune must not be made on it.** Measured directly: all 19 of 173's fallback pairs
+fail the RATIO conjunct (0/19 pass `amp > 2 × quietestMean`), and 173's loudest fallback boundary
+anywhere is 0.0248 — so the amplitude floor never binds on that corpus at any swept value, and it
+reports zero at every floor for a reason that has nothing to do with the floor. **173 cannot
+validate a floor change.** A real re-derivation needs a control corpus whose fallback boundaries
+actually exercise the floor conjunct, which neither committed corpus provides. Recorded so the
+0.025 figure cannot later be picked up as "validated, zero false positives."
+`scripts/ws1-session-r-native-rate.test.ts`, `.work-phase4/session-p/stepR5-native-rate.json`.
+
+**(f) Steps 2, 3 and 4 were not run, by the brief's own construction.** Each is explicitly
+conditional on Step 1 separating (silence selection between the two words; the one rule for Class
+A + B; the R.11 subsumption question). Step 1 did not separate, so no rule was specified, no
+mutation M13 was added, and no mutual-exclusion matrix was produced — there is no rule for them to
+be about. R.11 is untouched and its 6 firings stand.
+
+**(g) Scope discipline.** No production code was touched at all this session. `faAnchors.ts`
+(sha256 `b61e94cb…`), `faRunPlacementGate.ts`, `faSeamFitGate.ts`, `snapBoundaries.ts`,
+`silenceDetector.ts`, `syncConstants.ts`, the Hirschberg aligner, `project-state.md`,
+`docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` all unchanged. The one edit outside
+new files is additive: `scripts/ws1-session-p-pipeline.ts` now also returns `keptAlignments`, so a
+consumer reads the SAME per-segment attribution `snapCoveredBoundaries` was given instead of
+recomputing an alignment whose indices would silently diverge if anything were ever skipped.
+Register unchanged at 8 open rows — no ear pass ran, and the register's rule is "close only rows
+with an ear pass." Full suite green at rest before and after.
+
+---
+
 **2026-08-19 (WS1 SESSION Q) — THE R.12 MUTATION MATRIX WAS NEVER RUN; RUNNING IT FOUND A REAL
 GATE HOLE (M1) AND FIXED IT. R.13 IS GENUINELY IDLE, NOT SUPPRESSED — BUT A REAL CARRIER-
 IDENTIFICATION BUG WAS FOUND AND FIXED ANYWAY. SILENCE-DISTANCE SEPARATES 7 OF 9 KNOWN DEFECTS
