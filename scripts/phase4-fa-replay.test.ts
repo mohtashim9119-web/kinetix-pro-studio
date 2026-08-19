@@ -137,6 +137,7 @@
 // is the causally complete cut point, and for the one leg that provably
 // cannot be replayed offline.
 import { describe, it, expect } from 'vitest';
+import { earPassAuthorising, earPassRejects, describeEarHistory } from './ws1-ear-pass-ledger.js';
 import { readFileSync } from 'fs';
 import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
@@ -268,8 +269,12 @@ interface KnownBadRow {
    *  = WS1 Session P's per-conjunct live-bundle probe (`sync-pipeline-v2-plan.md`
    *  Part N's own Class A table) — an ear pass ALREADY on record for these
    *  rows, just never before entered into this register. A future origin
-   *  adds a member here rather than being forced into one of these. */
-  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural' | 'session-p-live';
+   *  `'live-runs-s'` = WS1 Session S's live listening pass over all ten v6
+   *  unscripted-run boundaries, scored by the owner in the app on the shipped
+   *  production path (`scripts/ws1-ear-pass-ledger.ts`, sitting
+   *  `live-runs-s`). A future origin adds a member here rather than being
+   *  forced into one of these. */
+  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural' | 'session-p-live' | 'live-runs-s';
   /** The ear-pass item number — ONLY for `origin: 'ear-12'`. */
   item?: number;
   corpus: Corpus;
@@ -292,10 +297,21 @@ interface KnownBadRow {
   closingCommit: string;
   /** FA's currently committed value, as of this session's HEAD. */
   faValue: number;
-  /** The ear-verified correct value, or `null` when the correct behavior is
+  /** The ear-verified correct value; `null` when the correct behavior is
    *  "not committed as a timed segment at all" (Whisper drops it and the
-   *  ear agreed that was right — item 11). */
-  earCorrect: number | null;
+   *  ear agreed that was right — item 11); `'unknown'` when an ear pass has
+   *  scored the CURRENT value WRONG but has NOT established the right one.
+   *
+   *  WS1 Session S added `'unknown'`, and the distinction is the whole point
+   *  of the demotion that introduced it: the owner's live pass scored five of
+   *  R.12's corrected boundaries EARLY. "Early" is a verdict on the committed
+   *  value, not a measurement of the correct one, and writing a guessed target
+   *  into this field would be exactly the suspicion-becomes-guilt move the
+   *  register exists to prevent (R-AG). Session S's own candidate table
+   *  (`docs/work-in-progress.md` §11) measured five principled placements for
+   *  each row and shipped NONE of them, because no candidate reproduces both
+   *  ear-CORRECT rows. Until a listening pass names a value, it is unknown. */
+  earCorrect: number | null | 'unknown';
   mechanism: string;
   status: 'open' | 'fixed';
   note: string;
@@ -399,6 +415,136 @@ const KNOWN_BAD: KnownBadRow[] = [
     status: 'open',
     note: '',
   },
+  // -------------------------------------------------------------------------
+  // WS1 SESSION S — REOPENED (DEMOTION). Five of R.12's nine Session H
+  // closures are back, because the owner's live listening pass over all ten v6
+  // unscripted-run boundaries scored their committed values audibly EARLY.
+  //
+  // Three of the five (042, 176, 340) were closed with `verification: 'ear'`
+  // on Session H's own 12-row pass; two (224, 307) were closed
+  // `'structural'`. The later sitting governs — see
+  // `scripts/ws1-ear-pass-ledger.ts`, which now holds BOTH verdicts for each
+  // row so the disagreement is data rather than an edit.
+  //
+  // `earCorrect: 'unknown'` on all five, deliberately. EARLY is a verdict on
+  // the committed value; it is not a measurement of the right one. Session S's
+  // candidate table computed five principled placements per row and shipped
+  // none, because no candidate reproduces BOTH ear-CORRECT rows (125 -> 370.75
+  // and 383 -> 1188.95). The five values below are pinned as change detectors
+  // only, here and in `scripts/ws1-session-q-production-pins.test.ts`.
+  //
+  // THE MEASURED MECHANISM, common to all five (Session S Step 2, native-rate
+  // 44.1 kHz RMS profile off channel 0): R.12 clamps its placement interval at
+  // the run's acoustic onset, which is a WHISPER TOKEN TIMESTAMP. On these
+  // five rows that timestamp lands 0.28s-1.90s EARLIER than any 20 ms frame
+  // above the silence detector's own -45 dBFS threshold — i.e. inside the
+  // silence, not at the speech. The clamp therefore truncates the real silence
+  // and the midpoint of what is left sits at 2-15% of the way through it. On
+  // the two ear-CORRECT rows the same value sits at 44-50%.
+  // -------------------------------------------------------------------------
+  {
+    id: 'r12-042-eleven-years', origin: 'live-runs-s', corpus: 'v6', tag: '042_eleven_years',
+    owningRule: 'R.12', closingCommit: '',
+    faValue: 125.54, earCorrect: 'unknown',
+    mechanism: 'THE ONE FALLBACK ROW of the seven (`run-start-fallback`): no detected silence intersects the ' +
+      'placement gap [125.25, 125.54] at all, so the value goes to the run\'s acoustic onset itself. Measured ' +
+      'RMS: real speech does not begin until 125.90, and the detector\'s own silence [125.62, 125.90] sits ' +
+      'ENTIRELY AFTER the gap, so R.12 cannot see it. A -41 dBFS, 80 ms breath band at [125.52, 125.62] is ' +
+      'what the Whisper onset was pinned to, and it is EXCLUDED from silence because it crosses -45 dBFS.',
+    status: 'open',
+    note: 'L2 of the Session S live pass. The only row where candidate (c) — the run\'s acoustic onset — is ' +
+      'already the committed value, and it is still early.',
+  },
+  {
+    id: 'r12-176-twenty-six-scout', origin: 'live-runs-s', corpus: 'v6', tag: '176_twenty_six_scout',
+    owningRule: 'R.12', closingCommit: '',
+    faValue: 521.71, earCorrect: 'unknown',
+    mechanism: 'Backing silence [521.42, 523.50] overhangs the run\'s Whisper-derived onset (522.00) by 1.50s; ' +
+      'clamped to [521.42, 522.00] the midpoint is 521.71, at 13.9% of the real silence. Speech begins at ' +
+      '523.50 — the silence\'s own end.',
+    status: 'open',
+    note: 'L5. The owner\'s note — "cuts between breath and prev segment" — is CONFIRMED by the RMS profile: a ' +
+      '-53 dBFS breath band sits at ~[521.88, 522.12], MERGED into silence (it never crosses -45 dBFS), and ' +
+      '521.71 sits between the previous segment\'s last word (521.25) and that breath.',
+  },
+  {
+    id: 'r12-224-thirty-three', origin: 'live-runs-s', corpus: 'v6', tag: '224_thirty_three',
+    owningRule: 'R.12', closingCommit: '',
+    faValue: 663.785, earCorrect: 'unknown',
+    mechanism: 'Backing silence [663.66, 665.00] overhangs the onset (663.91) by 1.09s; clamped midpoint ' +
+      '663.785 sits at 9.3% of the real silence. Speech begins at 665.00. NO breath band: the whole interval ' +
+      'is floor (-56 to -91 dBFS), so the Whisper onset at 663.91 is pinned to nothing acoustic at all.',
+    status: 'open',
+    note: 'L6. Was closed `verification: \'structural\'` — Session S is the first ear pass to score it, and it ' +
+      'FAILS. The structural marker did its job: this row was never claimed as ear-verified.',
+  },
+  {
+    id: 'r12-307-forty-nine-years', origin: 'live-runs-s', corpus: 'v6', tag: '307_forty_nine_years',
+    owningRule: 'R.12', closingCommit: '',
+    faValue: 924.92, earCorrect: 'unknown',
+    mechanism: 'Backing silence [924.70, 926.16] overhangs the onset (925.14) by 1.02s; clamped midpoint ' +
+      '924.92 sits at 15.1% of the real silence. Speech begins at 926.16. A -33 dBFS breath band at ' +
+      '[924.58, 924.70] is EXCLUDED from silence (it crosses -45 dBFS) and is why the silence starts where ' +
+      'it does; the committed value is already past it.',
+    status: 'open',
+    note: 'L8. Previously `verification: \'structural\'`.',
+  },
+  {
+    id: 'r12-340-fifty-eight', origin: 'live-runs-s', corpus: 'v6', tag: '340_fifty_eight',
+    owningRule: 'R.12', closingCommit: '',
+    faValue: 1044.67, earCorrect: 'unknown',
+    mechanism: 'The most extreme of the five: backing silence [1044.62, 1046.62] overhangs the onset ' +
+      '(1044.72) by 1.90s, so the clamped midpoint 1044.67 sits at 2.5% of the real silence — 50 ms after ' +
+      'the silence begins. Speech begins at 1046.62. A -38 dBFS breath band at [1044.50, 1044.60] is ' +
+      'EXCLUDED from silence and sits BEFORE the committed value.',
+    status: 'open',
+    note: 'L9. 1.26s of the interval is literal digital silence (all-zero samples, -inf dBFS).',
+  },
+  // -------------------------------------------------------------------------
+  // WS1 SESSION S — L7, THE R.11/R.12 COLLISION. Held OPEN pending an ear pass
+  // on the live path, per the register's own rule.
+  //
+  // THIS ROW IS A LIVE-PATH DEFECT THE FROZEN FIXTURE NEVER SHOWED, and it is
+  // entered under its own id rather than reopening `r12-266-forty-one-burden`
+  // for exactly that reason: that closure is a claim about the FIXTURE
+  // (788.65, never regressed, still green). This row is the claim about the
+  // PRODUCTION PATH, where R.11 ran first, saw the same boundary at 790.33 —
+  // strictly inside R.5 run 6 — and moved it to 792.18, past the run's end.
+  // The owner scored the result MAJOR: the whole recitation landed in the
+  // previous scene.
+  //
+  // The precedent for keeping the two claims apart is `item-7`
+  // (`152_frozen_brush_mice`), whose live value diverges from its fixture
+  // value; Session Q declined to open a row there because no ear pass had
+  // scored the live value. Here one has, which is the difference.
+  //
+  // FIXED STRUCTURALLY IN THIS COMMIT by R-AP (`faRuleStageExclusion.ts`): the
+  // live path now commits 788.65 again. It stays OPEN because the register
+  // closes rows on ear passes, not on green tests, and no ear pass has scored
+  // the post-fix live value.
+  // -------------------------------------------------------------------------
+  {
+    id: 's-266-live-path-collision', origin: 'live-runs-s', corpus: 'v6', tag: '266_forty_one_burden',
+    owningRule: 'R.12', closingCommit: '',
+    // `'unknown'`, caught by R-AM's own machine check while this row was being
+    // written: TWO ear passes have rejected values at this boundary (790.33
+    // in Session H, 792.18 in Session S) and NEITHER has scored 788.65. The
+    // value is R.12's structural output and shipping it is well-founded;
+    // calling it ear-correct would be the same overclaim this session spent
+    // its Step 0 undoing.
+    faValue: 788.65, earCorrect: 'unknown',
+    mechanism: 'R.11 and R.12 both claimed one boundary and ordering decided it silently: the rule stage ' +
+      'applies corrections to a shared array in sequence, so R.11 (first) moved 790.33 -> 792.18 and R.12 ' +
+      '(second) then saw a boundary correctly outside the run and declined. A current-state check CANNOT see ' +
+      'this — the invariant has to be evaluated on the (origin, target) PAIR against the pre-rule-stage array. ' +
+      'R-AP: no rule but R.12 may move a boundary across an R.5 run edge, and R.12 owns any boundary whose ' +
+      'ORIGIN lies strictly inside a run.',
+    status: 'open',
+    note: 'L7 of the Session S live pass, the only MAJOR. faValue is the POST-FIX live value, which is also ' +
+      'the fixture value and the value the ear-12-h sitting scored CORRECT. Closes on an ear pass over the ' +
+      'live path. RED-before/GREEN-after is executed, not described, in ' +
+      '`scripts/ws1-session-s-exclusion.test.ts`.',
+  },
   {
     id: 'classB-403-vigilant-embers', origin: 'session-p-live', corpus: 'v6', tag: '403_vigilant_embers',
     owningRule: 'unassigned', closingCommit: '',
@@ -491,6 +637,17 @@ const REGISTER_ROSTER = [
   'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
   'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
   'classB-400-endless-dark', 'classB-403-vigilant-embers',
+  // WS1 Session S — the register REOPENS at 14 and STAYS open. FIVE of the
+  // fourteen are REOPENED roster members, not new ones: R.12's `042`, `176`,
+  // `224`, `307` and `340` moved back out of `CLOSED_BY_POSITIVE_ASSERTION`
+  // when the owner's live ear pass scored their values EARLY, so the roster
+  // does not grow for them — which is the roster doing its job (an entry is
+  // converted, never deleted, in EITHER direction). The one genuinely new
+  // member is the R.11/R.12 collision on the LIVE path, which the frozen
+  // fixture has never shown and which therefore cannot be represented by
+  // reopening `r12-266-forty-one-burden` (a claim about the fixture, still
+  // green). See that entry's own comment in KNOWN_BAD.
+  's-266-live-path-collision',
 ] as const;
 
 /** High-water mark for the OPEN manifest.
@@ -633,8 +790,38 @@ const REGISTER_ROSTER = [
  *  cannot reach a row would misattribute suspicion as guilt (R-AG). None are
  *  closed. This may be lowered when entries close. Raising it is allowed
  *  only with the full ceremony above — see the failure message on the
- *  shrink-only test. */
-const REGISTER_HIGH_WATER = 8;
+ *  shrink-only test.
+ *
+ *  WS1 SESSION S RAISED it 8 -> 14, and this is the first raise driven by a
+ *  DEMOTION rather than a discovery. Full ceremony:
+ *
+ *  FIVE rows return from `CLOSED_BY_POSITIVE_ASSERTION`: R.12's
+ *  `042_eleven_years`, `176_twenty_six_scout`, `224_thirty_three`,
+ *  `307_forty_nine_years` and `340_fifty_eight`. The owner's live listening
+ *  pass over all ten v6 unscripted-run boundaries scored every one of them
+ *  audibly EARLY. Three had been closed as `verification: 'ear'` on Session
+ *  H's own 12-row pass; the two closed `'structural'` are the marker working
+ *  as designed — they never claimed an ear pass, and the first one to reach
+ *  them failed them. All five carry `earCorrect: 'unknown'`, because "early"
+ *  is a verdict on the committed value and not a measurement of the correct
+ *  one; Session S's Step 3 candidate table computed five principled
+ *  placements per row and shipped NONE, since no candidate reproduces both
+ *  ear-CORRECT rows (`125_night_circle` -> 370.75, `383_sixty_four` ->
+ *  1188.95). Their pins survive only as change detectors, and R-AM is now
+ *  machine-checked (`scripts/ws1-ear-pass-ledger.ts`) so a value cannot be
+ *  pinned as a positive assertion again without a sitting behind it.
+ *
+ *  ONE row is new: `s-266-live-path-collision`. R.11 and R.12 both claimed
+ *  `266_forty_one_burden`; ordering decided it silently and the owner scored
+ *  the result MAJOR. It is fixed structurally in this same commit (R-AP,
+ *  `src/services/faRuleStageExclusion.ts`) and stays open only because the
+ *  register closes rows on ear passes, not on green tests.
+ *
+ *  ONE row moved the other way in the same sitting: `r12-383-sixty-four` was
+ *  promoted `'structural'` -> `'ear'`. It does not change any count; it is
+ *  recorded because a sitting that only ever demotes would be worth
+ *  distrusting. */
+const REGISTER_HIGH_WATER = 14;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
  *  that replaced its known-bad pin. This is what makes deletion impossible:
@@ -777,14 +964,6 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   // corpus rather than an exception in the rule.
   // -------------------------------------------------------------------------
   {
-    id: 'r12-042-eleven-years', item: undefined, corpus: 'v6', tag: '042_eleven_years', earCorrect: 125.54,
-    verification: 'ear', closingCommit: 'WS1-SESSION-H',
-    why: 'R.12. Committed 127.17 — the exact midpoint of silence [126.52, 127.82], which lies strictly inside ' +
-      'the recitation "Level two. The boy who carries fire." [125.54, 129.01]. THE ONE FALLBACK ROW of the nine: ' +
-      'no detected silence overlaps the pre-run gap [125.25, 125.54] at all, so the boundary goes to the run\'s ' +
-      'own onset. Ear-scored WRONG at 127.17 in Session H\'s 12-row listening pass. Provenance: an R.5 mover.',
-  },
-  {
     id: 'r12-085-the-spear-bearer', item: undefined, corpus: 'v6', tag: '085_the_spear_bearer', earCorrect: 250.69,
     verification: 'structural', closingCommit: 'WS1-SESSION-H',
     why: 'R.12. Committed 252.74 — midpoint of silence [252.50, 252.98] inside "Level three. The scout." ' +
@@ -795,6 +974,9 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
   },
   {
     id: 'r12-125-night-circle', item: undefined, corpus: 'v6', tag: '125_night_circle', earCorrect: 370.75,
+    // WS1 SESSION S — the 'ear' marker STAYS, but its warrant changed. Session
+    // H heard only the pre-correction 372.35; the live-runs-s sitting (L4) is
+    // the first pass to hear 370.75 itself, and it PASSES.
     verification: 'ear', closingCommit: 'WS1-SESSION-H',
     why: 'R.12. Committed 372.35 — midpoint of silence [371.94, 372.76] inside "Level four. The night guard." ' +
       '[371.54, 373.27]. Corrected to the midpoint of [370.14, 371.36], which lies wholly inside the pre-run ' +
@@ -804,50 +986,26 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'what keeps it out of R.12\'s way. Ear-scored WRONG. Provenance: an R.5 mover.',
   },
   {
-    id: 'r12-176-twenty-six-scout', item: undefined, corpus: 'v6', tag: '176_twenty_six_scout', earCorrect: 521.71,
-    verification: 'ear', closingCommit: 'WS1-SESSION-H',
-    why: 'R.12. Committed 524.39 — midpoint of silence [524.14, 524.64] inside "Level 5. The hunter who fights ' +
-      'at night." [522.00, 525.63]. Corrected to the midpoint of [521.42, 523.50] ∩ [521.25, 522.00]. A CLAMP ' +
-      'CASE: unclamped, that silence\'s own midpoint is 522.46 — back inside the run. Ear-scored WRONG. ' +
-      'Provenance: an R.5 mover.',
-  },
-  {
-    id: 'r12-224-thirty-three', item: undefined, corpus: 'v6', tag: '224_thirty_three', earCorrect: 663.785,
-    verification: 'structural', closingCommit: 'WS1-SESSION-H',
-    why: 'R.12. Committed 664.33 — midpoint of silence [663.66, 665.00] inside "Level 6. The one they follow." ' +
-      '[663.91, 666.48]. THE CLAMP\'S OWN PROOF: unclamped, that silence\'s midpoint IS 664.33, reproducing the ' +
-      'defect exactly; clamped to [663.66, 663.91] it gives 663.785. The smallest correction of the nine ' +
-      '(0.545s) and the only one whose value is not a 2dp number. STRUCTURALLY DERIVED — not in Session H\'s ' +
-      'ear list. Provenance: net-unmoved (out under R-U, back under R-AA).',
-  },
-  {
     id: 'r12-266-forty-one-burden', item: undefined, corpus: 'v6', tag: '266_forty_one_burden', earCorrect: 788.65,
-    verification: 'ear', closingCommit: 'WS1-SESSION-H',
+    // WS1 SESSION S — DOWNGRADED 'ear' -> 'structural'. The Session H sitting
+    // scored the PRE-correction 790.33 WRONG; nobody has ever listened to
+    // 788.65. That is the same distinction R.13's own closure drew for
+    // `225_night_scouts` and refused to blur, and this row should have carried
+    // it from the start. The value is unchanged and still correct as far as
+    // anything measures — what changes is the claim made about it.
+    verification: 'structural', closingCommit: 'WS1-SESSION-H',
     why: 'R.12. Committed 790.33 — midpoint of silence [790.06, 790.60] inside "Level 7. The one the band ' +
       'depends on." [789.26, 791.69]. Corrected to the midpoint of [788.04, 789.46] ∩ [787.85, 789.26]. ' +
       'Ear-scored WRONG. Provenance: an R.5 mover.',
   },
   {
-    id: 'r12-307-forty-nine-years', item: undefined, corpus: 'v6', tag: '307_forty_nine_years', earCorrect: 924.92,
-    verification: 'structural', closingCommit: 'WS1-SESSION-H',
-    why: 'R.12. Committed 926.97 — midpoint of silence [926.76, 927.18] inside "Level 8. The one who teaches ' +
-      'what cannot be taught easily." [925.14, 928.93]. Corrected to the midpoint of [924.70, 926.16] ∩ ' +
-      '[924.50, 925.14] — a clamp case. STRUCTURALLY DERIVED — not in Session H\'s ear list. Note this segment ' +
-      'sits in the SAME recitation as ear-pass item 4, whose own ear-correct 931.40 (`308_scouts_leading`, R.5) ' +
-      'is unmoved: the run\'s trailing boundary was always right, its leading one never was. Provenance: an ' +
-      'unmoved control predating all Stage 1 work.',
-  },
-  {
-    id: 'r12-340-fifty-eight', item: undefined, corpus: 'v6', tag: '340_fifty_eight', earCorrect: 1044.67,
-    verification: 'ear', closingCommit: 'WS1-SESSION-H',
-    why: 'R.12. Committed 1047.57 — midpoint of silence [1047.18, 1047.96] inside "Level 9. The one whose name ' +
-      'the stories use." [1044.72, 1050.00]. Corrected to the midpoint of [1044.62, 1046.62] ∩ [1044.47, ' +
-      '1044.72] — a clamp case, and the LARGEST correction of the nine at 2.90s. Ear-scored WRONG. Provenance: ' +
-      'an R.5 mover.',
-  },
-  {
     id: 'r12-383-sixty-four', item: undefined, corpus: 'v6', tag: '383_sixty_four', earCorrect: 1188.95,
-    verification: 'structural', closingCommit: 'WS1-SESSION-H',
+    // WS1 SESSION S — PROMOTED 'structural' -> 'ear'. This row was admitted on
+    // R.12's mechanism alone; the Session S live pass (L10) is the first ear
+    // pass to score it, and it PASSES. The promotion is the register working
+    // in the direction it is usually not asked to: the same sitting demoted
+    // five rows and confirmed this one.
+    verification: 'ear', closingCommit: 'WS1-SESSION-H',
     why: 'R.12. Committed 1190.81 — midpoint of silence [1190.56, 1191.06] inside "Level 10. The one the fire ' +
       'remembers." [1189.76, 1192.17]. Corrected to the midpoint of [1188.14, 1189.96] ∩ [1188.05, 1189.76]. ' +
       'STRUCTURALLY DERIVED — not in Session H\'s ear list. Provenance: an unmoved control predating all Stage ' +
@@ -905,11 +1063,17 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // KNOWN_BAD (the shrink-only guard below should have caught it first) or a
   // row this test expects still open was silently closed without moving to
   // CLOSED_BY_POSITIVE_ASSERTION.
-  it('the Zero-Defect Register holds exactly the eight rows WS1 Session Q left open', () => {
+  it('the Zero-Defect Register holds exactly the fourteen rows WS1 Session S left open', () => {
     const EXPECTED_OPEN = [
+      // Session Q's eight, untouched this session by scope discipline.
       'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
       'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
       'classB-400-endless-dark', 'classB-403-vigilant-embers',
+      // Session S's five demotions...
+      'r12-042-eleven-years', 'r12-176-twenty-six-scout', 'r12-224-thirty-three',
+      'r12-307-forty-nine-years', 'r12-340-fifty-eight',
+      // ...and the one live-path collision it found and fixed structurally.
+      's-266-live-path-collision',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),
@@ -1009,6 +1173,49 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
       ).toBeLessThan(0.005);
     });
   }
+
+  // (3c) R-AM, MACHINE-CHECKED (WS1 Session S). `verification: 'ear'` is a
+  //      claim about a listening pass, and until this session nothing checked
+  //      it: five R.12 rows carried the marker on the strength of a sitting
+  //      that had scored their PRE-correction values wrong and never heard the
+  //      replacements. The claim now has to be cashable against
+  //      `ws1-ear-pass-ledger.ts`, in BOTH directions — an 'ear' row must be
+  //      authorised there, and a 'structural' row must NOT be (or it is
+  //      understating what is known and should be promoted).
+  it('R-AM: every closed entry\'s verification marker is cashable against the ear-pass ledger', () => {
+    for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
+      if (c.earCorrect === null) continue; // an ABSENCE has no value to score.
+      const auth = earPassAuthorising(c.corpus, c.tag, c.earCorrect);
+      if (c.verification === 'ear') {
+        expect(
+          auth,
+          `${c.id} claims verification: 'ear' at ${c.earCorrect}, but no ear pass authorises that VALUE. ` +
+          `Ledger history — ${describeEarHistory(c.corpus, c.tag)}. An ear pass that scored the PREVIOUS ` +
+          `value wrong is not an ear pass on the replacement: mark the row 'structural' instead.`,
+        ).toBeDefined();
+      } else {
+        expect(
+          auth,
+          `${c.id} is marked 'structural' but the ear ledger DOES authorise ${c.earCorrect} — promote it. ` +
+          `Ledger history: ${describeEarHistory(c.corpus, c.tag)}.`,
+        ).toBeUndefined();
+      }
+    }
+  });
+
+  // (3d) ...and the same rule applied to the OPEN rows: a row cannot sit open
+  //      with a numeric `earCorrect` that no ear pass ever produced, and it
+  //      cannot sit open at a value an ear pass has AUTHORISED.
+  it('R-AM: no open entry claims an ear-correct target the ledger does not support', () => {
+    for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
+      if (typeof kb.earCorrect !== 'number') continue;
+      expect(
+        earPassAuthorising(kb.corpus, kb.tag, kb.earCorrect) ?? earPassRejects(kb.corpus, kb.tag, kb.faValue),
+        `${kb.id} names an ear-correct ${kb.earCorrect} with nothing in the ear ledger behind it, and no ` +
+        `ear pass rejecting its current ${kb.faValue} either. Ledger: ${describeEarHistory(kb.corpus, kb.tag)}.`,
+      ).toBeDefined();
+    }
+  });
 
   // (4) BOOKKEEPING CONSISTENCY.
   it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
@@ -1122,15 +1329,17 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest held EIGHT open entries as of WS1 Session Q', () => {
+  it('the manifest holds FOURTEEN open entries as of WS1 Session S', () => {
     // Item 6 left this table in WS1 Session B; item 9 in Session C; items 4/5
     // in Session D (R.5); items 10/11 in Session E (R.10); item 7 and both
     // OV3 triage entries in Session F (R.11) — the manifest WAS empty from
-    // Session F through Session P. WS1 SESSION Q REOPENED it with eight new
+    // Session F through Session P. WS1 Session Q REOPENED it with eight new
     // rows (Session P's Class A minus item-7, which stays closed — see
     // `REGISTER_HIGH_WATER`'s own comment for that one's separate story —
-    // plus Class B). See the top-level register describe block for the
-    // exact open set this test does not duplicate.
+    // plus Class B). WS1 SESSION S took it 8 -> 14: five R.12 rows DEMOTED
+    // back out of the closed list by the owner's live ear pass, plus the
+    // R.11/R.12 live-path collision. See the top-level register describe
+    // block for the exact open set this test does not duplicate.
     expect(KNOWN_BAD).toHaveLength(REGISTER_HIGH_WATER);
   });
 
@@ -1282,20 +1491,38 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     }
   });
 
-  it('the nine R.12 rows are all in the register, five ear-verified and four structurally derived', () => {
-    const nine = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'));
-    expect(nine).toHaveLength(9);
-    expect(nine.filter(c => c.verification === 'ear').map(c => c.tag).sort()).toEqual([
-      '042_eleven_years', '125_night_circle', '176_twenty_six_scout', '266_forty_one_burden', '340_fifty_eight',
-    ]);
-    expect(nine.filter(c => c.verification === 'structural').map(c => c.tag).sort()).toEqual([
-      '085_the_spear_bearer', '224_thirty_three', '307_forty_nine_years', '383_sixty_four',
-    ]);
-    // Every ear-verified R.12 row must also appear in the ear-12 table above —
-    // the two lists cannot drift apart without this going red.
+  it('the nine R.12 rows are all still accounted for — four closed, five demoted open (WS1 Session S)', () => {
+    // Session H closed all nine. Session S's live listening pass sent five
+    // back: this test is the guard that the NINE never becomes eight by an
+    // entry going missing in either direction.
+    const closed = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'));
+    const open = KNOWN_BAD.filter(k => k.id.startsWith('r12-') && k.status === 'open');
+    expect(closed.length + open.length, 'R.12 owns nine rows and always will').toBe(9);
+
+    expect(open.map(k => k.tag).sort()).toEqual([
+      '042_eleven_years', '176_twenty_six_scout', '224_thirty_three', '307_forty_nine_years', '340_fifty_eight',
+    ].sort());
+    // Of the four still closed, exactly TWO have had an ear pass score their
+    // own committed value: `125_night_circle` and `383_sixty_four`, both in
+    // the Session S live sitting. The other two are structural.
+    expect(closed.filter(c => c.verification === 'ear').map(c => c.tag).sort())
+      .toEqual(['125_night_circle', '383_sixty_four']);
+    expect(closed.filter(c => c.verification === 'structural').map(c => c.tag).sort())
+      .toEqual(['085_the_spear_bearer', '266_forty_one_burden']);
+
+    // THE DEMOTION SPLITS 3/2, and the split is the point. THREE of the five
+    // (042, 176, 340) were in Session H's own 12-row sitting, which scored
+    // their PRE-R.12 values wrong and was then read as licensing the post-R.12
+    // ones; TWO (224, 307) were closed `'structural'` and never claimed an ear
+    // pass at all. The structural marker cost those two nothing when Session S
+    // failed them — which is what it is for.
     const earScoredWrong = new Set(SESSION_H_EAR_12.filter(r => r.verdict === 'wrong').map(r => r.tag));
-    for (const c of nine.filter(c => c.verification === 'ear')) {
-      expect(earScoredWrong.has(c.tag), `${c.tag} claims ear verification but is not in SESSION_H_EAR_12`).toBe(true);
+    expect(open.filter(k => earScoredWrong.has(k.tag)).map(k => k.tag).sort())
+      .toEqual(['042_eleven_years', '176_twenty_six_scout', '340_fifty_eight']);
+    expect(open.filter(k => !earScoredWrong.has(k.tag)).map(k => k.tag).sort())
+      .toEqual(['224_thirty_three', '307_forty_nine_years']);
+    for (const k of open) {
+      expect(k.earCorrect, `${k.tag}: EARLY is a verdict, not a target`).toBe('unknown');
     }
   });
 
@@ -1310,11 +1537,20 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
       '176_twenty_six_scout': 524.39, '224_thirty_three': 664.33, '266_forty_one_burden': 790.33,
       '307_forty_nine_years': 926.97, '340_fifty_eight': 1047.57, '383_sixty_four': 1190.81,
     };
+    // WS1 Session S: iterate the NINE rows wherever they now live — five
+    // moved back into KNOWN_BAD, and the claim being made here is about the
+    // FIXTURE, which this session did not touch, so it must not narrow to
+    // whichever rows happen to be closed today.
+    const nineTags = [
+      ...CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-')).map(c => c.tag),
+      ...KNOWN_BAD.filter(k => k.id.startsWith('r12-') && k.status === 'open').map(k => k.tag),
+    ];
+    expect(nineTags).toHaveLength(9);
     let maxDelta = 0;
-    for (const c of CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'))) {
-      const row = v6.find(r => r.tag === c.tag)!;
-      const delta = row.startTime - WAS[c.tag]!;
-      expect(delta, `${c.tag}: R.12 must move the boundary earlier`).toBeLessThan(0);
+    for (const tag of nineTags) {
+      const row = v6.find(r => r.tag === tag)!;
+      const delta = row.startTime - WAS[tag]!;
+      expect(delta, `${tag}: R.12 must move the boundary earlier`).toBeLessThan(0);
       maxDelta = Math.max(maxDelta, Math.abs(delta));
     }
     expect(maxDelta).toBeCloseTo(2.90, 2);

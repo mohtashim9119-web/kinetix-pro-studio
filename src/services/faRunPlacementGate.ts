@@ -174,8 +174,13 @@ const isSubstantiveToken = (t: TranscriptToken | undefined): boolean =>
  *
  *  Falls back to the run's raw span when it contains no substantive token at
  *  all (structurally possible, never observed) — declining to guess rather
- *  than fabricating an extent. */
-function acousticRunExtent(
+ *  than fabricating an extent.
+ *
+ *  EXPORTED (WS1 Session S) so `faRuleStageExclusion.ts` states R-AP against
+ *  the IDENTICAL interval R.12 and R.13 use. A second, independently-derived
+ *  notion of "the run" in the rule that arbitrates between the two would be
+ *  the same category of defect this helper was introduced to fix. */
+export function acousticRunExtent(
   run: UnscriptedRun,
   tokens: readonly TranscriptToken[],
 ): { startSec: number; endSec: number; onsetIndex: number } {

@@ -115,6 +115,12 @@ import {
 } from './services/faUnspokenGate';
 import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
 import {
+  computeRunExtents,
+  excludeRunEdgeViolations,
+  findRunEdgeViolations,
+  describeRunEdgeViolation,
+} from './services/faRuleStageExclusion';
+import {
   detectRunPlacementDefects,
   applyRunPlacementCorrections,
   detectUtterancePlacementDefects,
@@ -3213,6 +3219,28 @@ export default function App() {
       // real chunk plan FA was run against — required for the detector's
       // own word-index attribution to mean anything.
       if (faTokens) {
+        // WS1 Session S, ruling R-AP — THE RUN-EDGE EXCLUSION INVARIANT.
+        //
+        // `preRuleSegments` is the ORIGIN array: the committed boundaries as
+        // they stood before ANY rule in this stage ran. Every R-AP verdict is
+        // reached against it, never against the running array, because a
+        // current-state check provably cannot see the defect R-AP exists for:
+        // once R.11 has moved a boundary out of a run, asking "is this
+        // boundary inside a run?" truthfully answers no, and R.12 correctly
+        // declines a row it should have owned. See
+        // `faRuleStageExclusion.ts`'s header for the measured instance
+        // (`266_forty_one_burden`, 790.33 -> 792.18, past the end of R.5
+        // run 6).
+        //
+        // The extents are derived from the SAME inputs R.12 and R.13 give
+        // their own run derivation, so all three rules are talking about one
+        // interval.
+        const preRuleSegments = finalTimedSegments.map(s => ({ ...s }));
+        const runExtents = computeRunExtents(
+          anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+        );
+        const originById = new Map(preRuleSegments.map(s => [s.id, s.startTime]));
+
         const seamFitFindings = detectSeamFitDefects(
           anchorTimed,
           // WS1 Session N — the COMMITTED array, the second half of the same
@@ -3226,14 +3254,26 @@ export default function App() {
           aligned.silences,
           audioDuration,
         );
-        if (seamFitFindings.length > 0) {
+        // R-AP, clause (1) and (2), applied to R.11: it may not touch a
+        // boundary whose ORIGIN lies inside a run (that row is R.12's), and it
+        // may not move any boundary across a run edge.
+        const seamFitVerdict = excludeRunEdgeViolations(seamFitFindings, originById, runExtents);
+        if (seamFitVerdict.excluded.length > 0) {
           console.warn(
-            `[sync] R.11 — ${seamFitFindings.length} chunk-fit boundary correction(s):`,
-            seamFitFindings,
+            `[sync] R-AP — declined ${seamFitVerdict.excluded.length} R.11 correction(s) that would ` +
+            `have crossed or claimed an unscripted-run edge:`,
+            seamFitVerdict.excluded,
           );
-          ruleLogEntries.push(...buildSeamFitLogEntries(syncRunId, seamFitFindings, finalTimedSegments, syncRunAt));
         }
-        finalTimedSegments = applySeamFitCorrections(finalTimedSegments, seamFitFindings);
+        const keptSeamFit = seamFitVerdict.kept;
+        if (keptSeamFit.length > 0) {
+          console.warn(
+            `[sync] R.11 — ${keptSeamFit.length} chunk-fit boundary correction(s):`,
+            keptSeamFit,
+          );
+          ruleLogEntries.push(...buildSeamFitLogEntries(syncRunId, keptSeamFit, finalTimedSegments, syncRunAt));
+        }
+        finalTimedSegments = applySeamFitCorrections(finalTimedSegments, keptSeamFit);
 
         // WS1 R.12 (faRunPlacementGate.ts) — THE ATOMIC-RUN INVARIANT. No
         // committed boundary may lie strictly inside an unscripted run.
@@ -3279,16 +3319,48 @@ export default function App() {
           aligned.silences,
           audioDuration,
         );
-        if (utteranceFindings.length > 0) {
+        // R-AP applies to R.13 too — it is not R.12, and the invariant is
+        // universal. On every committed corpus R.13's one firing is already
+        // legal (its origin and target both sit past the run's end), so this
+        // is a guard against a future shape, not a live filter.
+        const utteranceVerdict = excludeRunEdgeViolations(utteranceFindings, originById, runExtents);
+        if (utteranceVerdict.excluded.length > 0) {
           console.warn(
-            `[sync] R.13 — ${utteranceFindings.length} atomic-utterance boundary correction(s):`,
-            utteranceFindings,
-          );
-          ruleLogEntries.push(
-            ...buildUtterancePlacementLogEntries(syncRunId, utteranceFindings, finalTimedSegments, syncRunAt),
+            `[sync] R-AP — declined ${utteranceVerdict.excluded.length} R.13 correction(s) that would ` +
+            `have crossed or claimed an unscripted-run edge:`,
+            utteranceVerdict.excluded,
           );
         }
-        finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, utteranceFindings);
+        const keptUtterance = utteranceVerdict.kept;
+        if (keptUtterance.length > 0) {
+          console.warn(
+            `[sync] R.13 — ${keptUtterance.length} atomic-utterance boundary correction(s):`,
+            keptUtterance,
+          );
+          ruleLogEntries.push(
+            ...buildUtterancePlacementLogEntries(syncRunId, keptUtterance, finalTimedSegments, syncRunAt),
+          );
+        }
+        finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, keptUtterance);
+
+        // R-AP, ASSERTED IN PRODUCTION over the whole stage, on the (origin,
+        // final) PAIR. This is not a restatement of the two filters above: a
+        // filter can only decline what its own rule proposes, while this sees
+        // the composed result of every rule — including a future rule added
+        // without an R-AP filter, and including two individually-legal moves
+        // that compose into an illegal one. R.12's own ids are exempt by name.
+        const runEdgeViolations = findRunEdgeViolations(
+          preRuleSegments, finalTimedSegments, runExtents,
+          new Set(runPlacementFindings.map(f => f.segmentId)),
+        );
+        if (runEdgeViolations.length > 0) {
+          console.error(
+            `[sync] R-AP VIOLATED — ${runEdgeViolations.length} boundary/boundaries moved across an ` +
+            `unscripted-run edge by a rule that does not own them:\n  ` +
+            runEdgeViolations.map(describeRunEdgeViolation).join('\n  '),
+            runEdgeViolations,
+          );
+        }
       }
 
       // R.5's staged entries, built now that `finalTimedSegments` is final and

@@ -232,6 +232,14 @@ value.
 
 ---
 
+**2026-08-20 (WS1 Session S) — nothing on this board advances, and the reason is the register.**
+Phase 3 (= Task 5) stays **"PRODUCTION PATH WIRED, gate PER-PROJECT, DEFAULT OFF"**. Session S
+landed a real production rule-stage invariant (R-AP) and closed the R.11/R.12 collision that
+produced the owner's only MAJOR, which is progress on the FA path — but the Stage 1 lock gate's own
+criterion is an EMPTY Zero-Defect Register, and this session took it **8 -> 14 open**: five R.12
+rows demoted by the live ear pass, plus the L7 row. A session that finds more than it closes moves
+the board backwards or not at all; it does not move it forwards. The FA gate default stays OFF.
+
 ### §4. Phase 3 (Task 5) Component Ledger
 
 Re-verified live against `main` during this consolidation pass (2026-08-14). Status values:
@@ -661,6 +669,15 @@ cross-referenced against `src/types.ts` live:
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
+**2026-08-20 (WS1 Session S) — no row in this table moves, and P4 is worth naming.** Session S's
+production change is R-AP (`faRuleStageExclusion.ts`), a post-inference arbitration invariant over
+the rule stage; it sits well downstream of Contract 1→2 and reads none of its inputs. P4 (the
+silence ascending/disjoint runtime assertion, still ❌ and still Phase 4) is the row a reader might
+expect to move, because this session leaned hard on the silence array — it does not: Session S
+CONSUMED that array and asserted nothing new about its own shape, deliberately, since
+`silenceDetector.ts` was unmodifiable for the session. Recorded so the omission is visible as a
+scope boundary rather than an oversight. P4/P8 remain the open Phase 4 items they were.
+
 **2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
 in the persistence layer (`projectStore.ts`, `projectMirror.ts`, `project_mirror.rs`), which sits
 downstream of Contract 1→2 and is not one of its inputs or outputs. P4 and P8 remain the open
@@ -999,6 +1016,223 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-20 (WS1 SESSION S) — TWO RULES CLAIMED ONE BOUNDARY AND ORDERING DECIDED IT SILENTLY;
+R-AP CLOSES IT STRUCTURALLY AND R.12 REACHES ITS EIGHTH ROW. FIVE PINS WERE ASSERTING DEFECTIVE
+VALUES AS CORRECT AND ARE DEMOTED; R-AM IS NOW MACHINE-CHECKED AND CAUGHT TWO MORE OVERCLAIMS
+WHILE BEING WRITTEN. R.12'S EARLY VALUES ARE ROOT-CAUSED TO A CLAMP ANCHORED ON A WHISPER
+TIMESTAMP INSIDE THE SILENCE — AND NO CANDIDATE PLACEMENT SHIPS, MEASURED.**
+
+**(0) LIVE EAR GROUND TRUTH — all ten v6 unscripted runs, post-fix, MEASURED BY THE OWNER,
+AUTHORITATIVE. Recorded verbatim:**
+
+```
+  L1  scene 1    0.08     PASS
+  L2  scene 42   125.54   EARLY (R.12 corrected value)
+  L3  scene 84   249.50   PASS
+  L4  scene 125  370.75   PASS (R.12)
+  L5  scene 176  521.71   EARLY (R.12) - cuts between breath and prev segment
+  L6  scene 224  663.78   EARLY (R.12)
+  L7  scene 266  792.18   MAJOR - whole run landed in previous segment (R.11)
+  L8  scene 307  924.92   EARLY (R.12)
+  L9  scene 340  1044.67  EARLY (R.12)
+  L10 scene 383  1188.95  PASS (R.12)
+Score 4 PASS / 5 EARLY / 1 MAJOR.
+```
+
+Mapping to the committed timeline, measured on the live bundle (`p-20260819T120922Z-cbb403c1`) and
+recorded because two of the ten rows carry no segment boundary at the value listened to: **L1
+(0.08) and L3 (249.50) are RUN ONSETS, not boundaries** — run 0 sits at corpus start (no preceding
+token, so R.12 has no legal placement interval) and run 2's carrier `085_the_spear_bearer` already
+commits outside its run at 250.69/250.81. They authorise no pin. The remaining eight are R.12's own
+firing set. Full ledger: `scripts/ws1-ear-pass-ledger.ts`, sitting `live-runs-s`.
+
+**(a) STEP 0 — the demotion, done first, and it grew once R-AM was executable.** Session Q pinned
+all seven R.12 corrections as positive regression assertions. The ear scored five of them EARLY, so
+for a full session the suite asserted defective values as correct and went green doing it.
+
+*Demoted to open register rows + change-detector pins* (`earCorrect: 'unknown'` — EARLY is a
+verdict on the committed value, not a measurement of the correct one):
+`042_eleven_years` 125.54, `176_twenty_six_scout` 521.71, `224_thirty_three` 663.785,
+`307_forty_nine_years` 924.92, `340_fifty_eight` 1044.67.
+*Kept as positive assertions* (both scored CORRECT at their own committed value by this sitting):
+`125_night_circle` 370.75, `383_sixty_four` 1188.95.
+
+**THE PIN AUDIT FOUND A DEEPER PROBLEM THAN THE FIVE ROWS.** Session H's 12-row sitting scored the
+**PRE-correction** values wrong (127.17 / 372.35 / 524.39 / 790.33 / 1047.57) — it never heard
+R.12's replacements at all — yet five rows were closed `verification: 'ear'` on that basis. That is
+the overclaim R.13's own closure explicitly refused to make ("the owner scored the OLD value wrong,
+which is not the same as scoring the NEW one right"). Two further corrections followed, in opposite
+directions: **`r12-266-forty-one-burden` DOWNGRADED `'ear'` -> `'structural'`** (nobody has ever
+heard 788.65) and **`r12-383-sixty-four` PROMOTED `'structural'` -> `'ear'`** (this sitting is the
+first to hear 1188.95, and it passes).
+
+**Every other pin in the suite, audited. Positive assertions WITH an ear pass behind them:**
+`152_frozen_brush_mice` 451.03, `192_scout_listening` 571.07, `226_four_scouts` 671.18/671.17
+(0.01 = the documented native-vs-16 kHz silence-arm difference, carried in the ledger as an
+explicit `armToleranceSec`), `vessel_damage_clue` 174.74, `abysmal_opinion` 17.88,
+`308_scouts_leading` 931.40, `043_night_migration` 130.96, `hostile_landscape` 0.00, `blue_monkey`
+(absence), spanish `023_scylla_six_sailors` 65.12, `protection_failure` 603.69, plus the two R.12
+rows above. **Positive-looking pins WITHOUT one, now labelled change detectors:**
+`232_sudden_halt` 684.09, `233_firelight_speech` 686.54 (both pinned by Session Q as if verified),
+`322_body_readiness` 986.88 (R.11 was firing here entirely unpinned — now covered),
+`266_forty_one_burden` 788.65, `225_night_scouts` 669.05 and `085_the_spear_bearer` 250.69 (both
+already correctly marked `'structural'`), and the V6 seam 150/151 control 457.81 (a control, never
+a correctness claim). **R-AM is now executable**: `scripts/ws1-ear-pass-ledger.ts` records what each
+sitting HEARD, `pinEarVerified`/`pinChangeDetector` refuse to run without the matching
+authorisation, and the register asserts its `verification` marker against the same ledger in both
+directions.
+
+**(b) STEP 1 — L7, fixed structurally, not by re-ordering.** R.5 run 6's acoustic extent is
+`[789.26, 791.69]`; `snapCoveredBoundaries` committed `266_forty_one_burden` at **790.33, strictly
+inside it**. R.11 ran first, saw the same boundary, moved it to **792.18 — past the run's end** —
+and R.12 then correctly found nothing. **Ruling R-AP** (`src/services/faRuleStageExclusion.ts`,
+plan doc Part Q): no rule but R.12 may move a boundary across an R.5 run edge in either direction,
+and R.12 owns any boundary whose ORIGIN lies strictly inside a run. Evaluated on the PAIR
+`(origin, target)` against the pre-rule-stage array — **a current-state check provably cannot see
+this**, and that blindness is pinned as an assertion (current-state answer: 0 findings;
+origin-based answer: 1 violation) so a future refactor cannot revert to it and stay green.
+Asserted in production (`App.tsx` logs `R-AP VIOLATED` over the whole stage, R.12's ids exempt by
+name) and mirrored in the harness.
+
+**Measured effect.** R.11 still DETECTS six candidates and KEEPS five; the one declined is
+`266_forty_one_burden`, reason `origin-inside-run`, run 6. **R.11's other five are unchanged in tag
+AND value** — `192_scout_listening` 571.07, `226_four_scouts` 671.17, `232_sudden_halt` 684.09,
+`233_firelight_speech` 686.54, `322_body_readiness` 986.88. **R.12 goes 7 -> 8**; its eighth row
+commits **788.65**, the frozen fixture's own long-standing value. R.5 (10) and R.13 (0) unchanged.
+**R-AP violations at rest: 0 on all three corpora.** RED-before is EXECUTED, not described:
+`scripts/ws1-session-s-exclusion.test.ts` rebuilds the pre-Session-S stage (all six R.11 findings
+applied) and asserts exactly one violation naming 266, plus R.12 finding only seven.
+
+**Mutual exclusion, re-measured.** R.11-kept ∩ R.12 = 0, R.12 ∩ R.13 = 0, R.11 ∩ R.13 = 0 — **0 by
+construction now, not by observation**. R.11's RAW proposal set still intersects R.12's in exactly
+one row (266), which is the whole finding: every prior session's exclusion claim was the accurate
+observation that the sets happened not to overlap. `faSeamFitGate.ts`'s header even records its
+third conjunct as "load-bearing for rule exclusion" because it declined 372.35 — true, and luck: a
+confidence test has no reason to decline a run-interior boundary in general, and it did not decline
+790.33. **New mutation M13** (neuter the exclusion) is RED.
+
+**(c) STEP 2 — WHY R.12's VALUE LANDS EARLY. Measured, native rate, on the detector's own grid.**
+Frame-level RMS at the source's 44.1 kHz off channel 0 (`pan=mono|c0=c0`, never an L+R downmix),
+20 ms frames, `sqrt(mean(x^2))`, the same frame origin `silenceDetector.ts` uses — so the profile
+sees what the detector saw. **The cause, unambiguous: R.12 clamps its placement interval at the
+run's acoustic onset, which is a WHISPER TOKEN TIMESTAMP, and that timestamp lands INSIDE the
+silence.**
+
+| row | ear | prev word end | Whisper onset | detected silence | first frame >= -45 dBFS | onset error | committed | position in silence |
+|---|---|---|---|---|---|---|---|---|
+| `042_eleven_years` | EARLY | 125.250 | 125.540 | **none intersects the gap**; [125.62, 125.90] lies AFTER it | 125.900 | +0.360 | 125.540 | n/a (fallback) |
+| `125_night_circle` | PASS | 369.750 | 371.540 | [370.14, 371.36] | 371.360 | **-0.180** | 370.750 | **50.0%** |
+| `176_twenty_six_scout` | EARLY | 521.250 | 522.000 | [521.42, 523.50] | 523.500 | +1.500 | 521.710 | 13.9% |
+| `224_thirty_three` | EARLY | 663.630 | 663.910 | [663.66, 665.00] | 665.000 | +1.090 | 663.785 | 9.3% |
+| `307_forty_nine_years` | EARLY | 924.500 | 925.140 | [924.70, 926.16] | 926.160 | +1.020 | 924.920 | 15.1% |
+| `340_fifty_eight` | EARLY | 1044.470 | 1044.720 | [1044.62, 1046.62] | 1046.620 | +1.900 | 1044.670 | **2.5%** |
+| `383_sixty_four` | PASS | 1188.050 | 1189.760 | [1188.14, 1189.96] | 1189.960 | +0.200 | 1188.950 | **44.5%** |
+
+**The two ear-CORRECT rows sit at 44-50% of the real silence; the five EARLY rows sit at 2-15%.**
+On `125` the Whisper onset is LATE (-0.180) so the clamp never binds and the value is the full
+silence midpoint. `042` is the one row no silence-based candidate the shipped rule can see could
+ever reach: its real pre-speech silence [125.62, 125.90] begins AFTER its placement gap ends.
+
+**BREATH: present, measured, and NOT the discriminator.** Separated pre-speech bands, on both sides
+of the detector's threshold: `042` [125.54, 125.62] max **-40.8 dBFS**, `125` [370.06, 370.14] max
+**-39.9**, `307` [924.58, 924.70] max **-32.0** and [925.96, 926.02] max **-58.3**, `340`
+[1044.50, 1044.62] max **-36.9** — all four of the first group CROSS -45 dBFS and are therefore
+**EXCLUDED** from every detected silence (they are why each silence starts where it does). `176`
+[521.88, 522.12] max **-52.8** does NOT cross, and is **MERGED** into silence invisibly. `224` and
+`383` have no separated band at all. **The owner's L5 note is CONFIRMED, not refuted:** 176's
+committed 521.71 sits between the previous segment's last word (521.25) and that breath (521.88).
+But `125` (PASS) carries a breath just like `042` (EARLY), and `224`/`383` carry none, so breath
+does not separate the populations — the onset error does.
+
+**`silenceDetector.ts` is untouched, and the measurement was built to keep it that way.** Where the
+measurement needed "where does speech really start", it took the END of the first detected silence
+rather than re-scanning frames: a naive "first frame at or above -45 dBFS" returns the BREATH on
+`042` (125.54) and `125` (370.06), because a breath crosses the same threshold speech does, while a
+detected silence only ends after 0.25s of continuous sub-threshold audio. Measured both ways before
+choosing. `scripts/ws1-session-s-measure.test.ts`,
+`.work-phase4/session-p/stepS2-rms-profile.json`.
+
+**(d) STEP 3 — THE CANDIDATE TABLE, AND EXIT S1 FIRES. NO VALUE CHANGE SHIPS.**
+
+| row | ear | committed | (a) clamped mid | (a) full mid | (b) silence end | (c) onset, Whisper | (c) onset, waveform | (d) breath-end→onset mid | (e) prev-word→breath mid |
+|---|---|---|---|---|---|---|---|---|---|
+| `042_eleven_years` | EARLY | 125.540 | 125.540 | 125.760 | 125.900 | 125.540 | 125.900 | 125.760 | 125.395 |
+| `125_night_circle` | **PASS** | **370.750** | **370.750** | **370.750** | 371.360 | 371.540 | 371.360 | **370.750** | 369.905 |
+| `176_twenty_six_scout` | EARLY | 521.710 | 521.710 | 522.460 | 523.500 | 522.000 | 523.500 | 522.810 | 521.565 |
+| `224_thirty_three` | EARLY | 663.785 | 663.785 | 664.330 | 665.000 | 663.910 | 665.000 | n/a | n/a |
+| `266_forty_one_burden` | (unscored) | 788.650 | 788.650 | 788.750 | 789.460 | 789.260 | 789.460 | 788.750 | 787.915 |
+| `307_forty_nine_years` | EARLY | 924.920 | 924.920 | 925.430 | 926.160 | 925.140 | 926.160 | 926.090 | 925.230 |
+| `340_fifty_eight` | EARLY | 1044.670 | 1044.670 | 1045.620 | 1046.620 | 1044.720 | 1046.620 | 1045.620 | 1044.485 |
+| `383_sixty_four` | **PASS** | **1188.950** | **1188.950** | 1189.050 | 1189.960 | 1189.760 | 1189.960 | n/a | n/a |
+
+Exit condition, fixed in advance: reproduce **both** ear-CORRECT rows to 0.005s **and** move all
+five EARLY rows later.
+
+| candidate | reproduces both correct | moves all five later |
+|---|---|---|
+| (a) clamped midpoint — **shipped** | **YES** | **no** |
+| (a) full (unclamped) midpoint | no — `383` misses by **0.100s** | **YES** (+0.22 to +0.95) |
+| (b) silence end | no (both miss) | YES |
+| (c) onset, Whisper-derived | no (both miss) | no |
+| (c) onset, waveform-derived | no (both miss) | YES |
+| (d) breath-end → onset midpoint | no — `125` **exact**, `383` n/a | no |
+| (e) prev-word → breath-start midpoint | no (both miss) | no |
+
+**NONE satisfies both. Exit S1 fires as written: no value change ships, and no additive offset was
+invented to force agreement** — an offset that made a candidate fit would be a corpus-fitted
+constant wearing a rule's clothes. The closest alternative is the UNCLAMPED midpoint, which is
+also **blocked by R.12's own atomic-run invariant on four of the five** (522.46 / 664.33 / 925.43 /
+1045.62 all land inside their run's Whisper-derived acoustic extent, and H7 rejects them) — which
+is the same finding from the other side: the run's acoustic extent is itself derived from the
+onset timestamp that is wrong. Its single miss is 0.100s on `383`, where BOTH values sit inside
+1.26s of literal all-zero samples; whether that is audible is exactly what the ear list settles.
+The negative is asserted in `ws1-session-s-measure.test.ts` (audio-free arm, runs every sweep) so a
+future run cannot flip it silently. `.work-phase4/session-p/stepS3-candidates.json`,
+`stepS3-verdicts.json`.
+
+**(e) STEP 5 — SCOPE: the R.12 population is NOT Session R's attribution class, and the two must
+never be merged.** Session R found that Class A + Class B are WORD-ATTRIBUTION defects — every FA
+word in every disputed span is attributed to the incoming segment, so any rule testing a boundary
+against segment SPANS is structurally blind. **That finding does not transfer here.** R.12's
+placement never consults segment spans at all; it reads unscripted-run structure and detected
+silences, and the measured cause is a clamp anchored on a Whisper timestamp inside a silence. The
+two populations share a symptom ("the ear says later") and nothing else. Recorded in plan doc Part
+Q (k). Class A (4 rows analytically, 3 open) and Class B (5 rows) were not touched.
+
+**(f) THE ROOT CLASS, and the scheduled follow-up.** Rules currently mutate a shared array in
+sequence, so a conflict resolves by ordering with no record that a conflict occurred. L7 is one
+instance, not the class. **Scheduled, explicitly NOT this session: rebuild the rule stage as
+PROPOSE-then-ARBITRATE** — every rule emits proposals against the single origin array, an
+arbitrator resolves competing claims on stated ownership, and logs the resolution. R-AP is written
+so that arbitrator can adopt it unchanged as its ownership rule.
+
+**(g) REGISTER: 8 -> 14 open, and the arithmetic is stated because it is not the brief's 15.**
+`REGISTER_HIGH_WATER` 8 -> 14. Composition: **3 Class A** (`214_solitary_fire`,
+`231_slowing_pace`, `447_scout_facing_dark`) + **5 Class B** + **5 demoted R.12-value rows** + **1
+L7 row** (`s-266-live-path-collision`). The brief's arithmetic assumed **4** open Class A rows;
+there are 3, because Class A's fourth member `152_frozen_brush_mice`/item-7 is CLOSED and was
+deliberately kept closed by Session Q (its live-vs-fixture divergence is recorded in its own `why`
+field), and reopening it would be touching Class A, which (e) forbids. 3 + 5 + 5 + 1 = **14**.
+
+L7 enters under a NEW id rather than reopening `r12-266-forty-one-burden`, because that closure is
+a claim about the FROZEN FIXTURE (788.65, never regressed, still green) while this is a claim about
+the LIVE PATH. The precedent for keeping the two apart is item-7's own; the difference is that an
+ear pass HAS scored the live value here. It is fixed structurally in this commit and stays open
+because the register closes rows on ear passes, not on green tests. Its `earCorrect` is
+`'unknown'` — caught by R-AM's own machine check while the row was being written, since two
+sittings have rejected values at that boundary and neither heard 788.65.
+
+**(h) MUTATION MATRIX M1-M13.** See the changelog entry for the full table and counts.
+
+**(i) WHAT THIS SESSION DID NOT DO, stated plainly.** No R.12 value change. No Class A or Class B
+work. No `silenceDetector.ts` change (unmodifiable this session, and the measurement was designed
+around that). No propose/arbitrate refactor. No fixture regeneration. The five EARLY rows and L7
+all remain open pending the ear list in (j) — R.12's value change is **blocked on it**.
+
+**(j) THE 5-CLIP EAR LIST.** Delivered as the final section of the session report.
+
+---
 
 **2026-08-20 (WS1 SESSION R) — WORD CONTAINMENT IS STRUCTURALLY BLIND TO THIS DEFECT CLASS, NOT
 MERELY WEAK: IT RETURNS ZERO VIOLATIONS ON ALL 446 BOUNDARIES. THE ROOT CAUSE IS NOW LOCATED —
@@ -4603,6 +4837,92 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-20 — WS1 Session S: two rules claimed one boundary and ordering decided it silently;
+  R-AP closes it structurally. Five pins were asserting defective values as correct and are
+  demoted; R-AM is now machine-checked and caught two more overclaims while being written. R.12's
+  early placement is root-caused to a clamp anchored on a Whisper timestamp that sits inside the
+  silence — and NO candidate placement ships, measured.**
+  - **Live ear ground truth, all ten v6 unscripted runs, owner-measured and authoritative: 4 PASS
+    / 5 EARLY / 1 MAJOR.** Recorded verbatim in §11's Session S entry (0) and as a first-class
+    sitting (`live-runs-s`) in the new `scripts/ws1-ear-pass-ledger.ts`.
+  - **STEP 0 — the demotion, done first.** Session Q pinned all seven R.12 corrections as positive
+    regression assertions; the ear scored five EARLY. `042_eleven_years` 125.54,
+    `176_twenty_six_scout` 521.71, `224_thirty_three` 663.785, `307_forty_nine_years` 924.92 and
+    `340_fifty_eight` 1044.67 are demoted to open register rows and change-detector pins, with
+    `earCorrect: 'unknown'` — EARLY is a verdict on the committed value, not a measurement of the
+    correct one. `125_night_circle` 370.75 and `383_sixty_four` 1188.95 stay pinned (both scored
+    CORRECT at their own committed value by this sitting).
+  - **R-AM made executable, and it immediately found more than the five.** Session H's sitting
+    scored the PRE-correction values wrong (127.17 / 372.35 / 524.39 / 790.33 / 1047.57) and never
+    heard R.12's replacements, yet five rows were closed `verification: 'ear'` on that basis — the
+    overclaim R.13's own closure explicitly refused to make. The ledger now records what each
+    sitting HEARD; `pinEarVerified`/`pinChangeDetector` refuse to run without matching
+    authorisation, and the register asserts its `verification` marker against the ledger in BOTH
+    directions. Two further corrections followed: `r12-266-forty-one-burden` DOWNGRADED
+    `'ear'` -> `'structural'` (nobody ever heard 788.65); `r12-383-sixty-four` PROMOTED
+    `'structural'` -> `'ear'` (this sitting is the first to hear 1188.95, and it passes). Full pin
+    audit — including the three positive-looking pins that never had an ear pass
+    (`232_sudden_halt` 684.09, `233_firelight_speech` 686.54, `322_body_readiness` 986.88, the last
+    previously unpinned entirely) — in §11's Session S entry (a).
+  - **STEP 1 — L7 fixed structurally (ruling R-AP, `src/services/faRuleStageExclusion.ts`).** R.5
+    run 6's acoustic extent is [789.26, 791.69]; the committed boundary for `266_forty_one_burden`
+    was 790.33, strictly inside it — R.12's own defect signature. R.11 ran first and moved it to
+    792.18, PAST the run's end; the owner scored the result MAJOR (whole recitation in the previous
+    scene). **R-AP: no rule but R.12 may move a boundary across an R.5 run edge in either
+    direction, and R.12 owns any boundary whose ORIGIN lies strictly inside a run** — evaluated on
+    the PAIR (origin, target) against the pre-rule-stage array, never the running one, because a
+    current-state check provably cannot see this. That blindness is itself pinned as an assertion
+    (current-state: 0 findings; origin-based: 1 violation). Asserted in production over the whole
+    stage and mirrored in the harness.
+  - **Measured effect.** R.11 still DETECTS 6 and KEEPS 5; the declined one is
+    `266_forty_one_burden` (`origin-inside-run`, run 6). **R.11's other five are unchanged in tag
+    AND value** (192 → 571.07, 226 → 671.17, 232 → 684.09, 233 → 686.54, 322 → 986.88). **R.12
+    goes 7 → 8**, committing 788.65 — the frozen fixture's own long-standing value. R.5 (10) and
+    R.13 (0) unchanged. R-AP violations at rest: **0 on all three corpora**. RED-before is
+    EXECUTED, not described (`scripts/ws1-session-s-exclusion.test.ts` rebuilds the pre-Session-S
+    stage and asserts exactly one violation).
+  - **Mutual exclusion is now structural, not incidental.** R.11∩R.12 = R.12∩R.13 = R.11∩R.13 =
+    **0 by construction**. R.11's RAW proposal set still meets R.12's in exactly one row, which is
+    the whole finding: every prior exclusion claim was the accurate observation that the sets
+    happened not to overlap on the committed corpora.
+  - **STEP 2 — why R.12's value lands early, measured at native rate on the detector's own grid.**
+    **R.12 clamps its placement interval at the run's acoustic onset, which is a WHISPER TOKEN
+    TIMESTAMP, and on the five EARLY rows that timestamp lands 0.36s-1.90s earlier than the first
+    frame above the detector's own -45 dBFS threshold.** The clamp truncates the real silence and
+    the midpoint of what remains sits at **2%-15%** of the way through it; on the two ear-CORRECT
+    rows the same value sits at **44%-50%**. Breath IS present and measured on 5 of 7 rows, on both
+    sides of the threshold (-33 to -43 dBFS breaths are EXCLUDED from silence, `176`'s -53 dBFS one
+    is MERGED into it), and the owner's L5 note "cuts between breath and prev segment" is
+    **CONFIRMED** — but breath is NOT the discriminator, since a PASS row carries one and two rows
+    carry none. `silenceDetector.ts` untouched; the profile reproduces its frame grid exactly and
+    consumes its output unchanged.
+  - **STEP 3 — the candidate table, and EXIT S1 FIRES. No value change ships.** Five principled
+    placements computed for all eight R.12 rows. Exit condition fixed in advance: reproduce BOTH
+    ear-CORRECT rows to 0.005s AND move all five EARLY rows later. **None does.** The closest,
+    the UNCLAMPED silence midpoint, moves all five later by 0.22s-0.95s and reproduces
+    `125_night_circle` → 370.75 exactly but misses `383_sixty_four` by **0.100s** — and is
+    separately blocked by R.12's own atomic-run invariant on four of the five. No additive offset
+    was invented. The negative is asserted in an audio-free arm that runs every sweep. Five rows go
+    to `docs/ws1-sync-pipeline/stage1-session-s-ear-list.md`; **R.12's value change is blocked on
+    that pass**.
+  - **Scope.** Class A and Class B untouched. Session R's attribution finding is recorded as NOT
+    transferring to the R.12 population (plan doc Part Q (k)): R.12's placement never consults
+    segment spans at all, so the two share a symptom and nothing else. The propose/arbitrate
+    rule-stage refactor — L7's root class, since rules currently mutate a shared array in sequence
+    — is recorded as the scheduled follow-up and deliberately not started.
+  - **Register 8 → 14 open** (`REGISTER_HIGH_WATER` raised with full ceremony): 3 Class A + 5
+    Class B + 5 demoted R.12-value rows + 1 L7 row (`s-266-live-path-collision`, a LIVE-PATH claim
+    entered under its own id because the frozen fixture never showed the defect). **14, not the
+    brief's 15** — Class A has 3 open rows, not 4, because its fourth member `152_frozen_brush_mice`
+    is closed and Session Q deliberately kept it closed.
+  - **A process defect this session produced and caught in itself.** The first mutation-matrix run
+    was contaminated: the new ear-list `.md` tripped `ws1-single-tracker.test.ts`'s allowlist
+    mid-run, adding a spurious +1 failure to every mutation after it and flipping M4 and M11-B from
+    GREEN to RED. Caught by capturing the failing test NAME rather than trusting the count. The
+    allowlist was fixed, a clean at-rest baseline re-established, and **the entire matrix re-run
+    from scratch** — the numbers reported are the second run's. Recorded because "RED" from a
+    failure count alone is not evidence that the mutation is what turned it red.
 
 - **2026-08-19 — WS1 Session Q: the R.12 mutation matrix (never run) found and fixed a real gate
   hole; R.13 is confirmed genuinely idle after fixing a real head-side carrier bug; silence-

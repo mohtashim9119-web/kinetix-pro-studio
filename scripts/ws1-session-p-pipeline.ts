@@ -40,6 +40,10 @@ import {
 } from '../src/services/faRunPlacementGate';
 import { detectUnspokenScriptSegmentsFromWhisper, applyUnspokenScriptGate } from '../src/services/faUnspokenGate';
 import { computeUnscriptedRuns, computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
+import {
+  computeRunExtents, excludeRunEdgeViolations, findRunEdgeViolations,
+} from '../src/services/faRuleStageExclusion';
+import type { RunEdgeViolation, RunExtent } from '../src/services/faRuleStageExclusion';
 import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SegmentAlignment } from '../src/services/whisperService';
 import type { SilenceInterval } from '../src/services/silenceDetector';
@@ -149,6 +153,18 @@ export interface ProductionRun {
   aborted: boolean;
   whisperFilter: { total: number; skipped: number; kept: number; dropReasons: Record<string, number> };
   r5runs: ReturnType<typeof computeUnscriptedRuns>;
+  /** WS1 Session S — the acoustic run extents R-AP is stated against, and
+   *  everything the invariant produced this run. `r11` / `r13` below are the
+   *  rules' RAW proposals (what the detector found); `r11Kept` / `r13Kept` are
+   *  what actually reached the array after R-AP declined the rest. A consumer
+   *  that wants "what fired" wants the KEPT list; a consumer studying the
+   *  collision wants both. */
+  runExtents: RunExtent[];
+  r11Excluded: ReturnType<typeof excludeRunEdgeViolations<ReturnType<typeof detectSeamFitDefects>[number]>>['excluded'];
+  r13Excluded: ReturnType<typeof excludeRunEdgeViolations<ReturnType<typeof detectUtterancePlacementDefects>[number]>>['excluded'];
+  r11Kept: ReturnType<typeof detectSeamFitDefects>;
+  r13Kept: ReturnType<typeof detectUtterancePlacementDefects>;
+  runEdgeViolations: RunEdgeViolation[];
   r11: ReturnType<typeof detectSeamFitDefects>;
   r12: ReturnType<typeof detectRunPlacementDefects>;
   r13: ReturnType<typeof detectUtterancePlacementDefects>;
@@ -203,20 +219,36 @@ export async function runProductionPath(spec: CorpusSpec, requireStamp = true): 
   );
   const preRuleSegments = committed.map(s => ({ ...s }));
 
+  // WS1 Session S, R-AP — the same origin array and the same run extents
+  // App.tsx builds, at the same point in the stage. Mirroring this is the
+  // whole contract of this file: a harness that skipped the exclusion would
+  // measure a pipeline the app does not run.
+  const runExtents = computeRunExtents(anchorTimed, whisperTokens, silences, audioDuration);
+  const originById = new Map(preRuleSegments.map(s => [s.id, s.startTime]));
+
   const r11 = detectSeamFitDefects(anchorTimed, committed, whisperTokens, faTokens, silences, audioDuration);
-  fired['R.11'] = r11.length;
-  committed = applySeamFitCorrections(committed, r11);
+  const r11Verdict = excludeRunEdgeViolations(r11, originById, runExtents);
+  fired['R.11'] = r11Verdict.kept.length;
+  committed = applySeamFitCorrections(committed, r11Verdict.kept);
 
   const r12 = detectRunPlacementDefects(anchorTimed, committed, whisperTokens, silences, audioDuration);
   fired['R.12'] = r12.length;
   committed = applyRunPlacementCorrections(committed, r12);
 
   const r13 = detectUtterancePlacementDefects(anchorTimed, committed, whisperTokens, silences, audioDuration);
-  fired['R.13'] = r13.length;
-  committed = applyUtterancePlacementCorrections(committed, r13);
+  const r13Verdict = excludeRunEdgeViolations(r13, originById, runExtents);
+  fired['R.13'] = r13Verdict.kept.length;
+  committed = applyUtterancePlacementCorrections(committed, r13Verdict.kept);
+
+  const runEdgeViolations = findRunEdgeViolations(
+    preRuleSegments, committed, runExtents, new Set(r12.map(f => f.segmentId)),
+  );
 
   return {
     runId, committed, keptAlignments, preRuleSegments, fired, kept: kept.length, skipped: skipped.length,
+    runExtents, runEdgeViolations,
+    r11Excluded: r11Verdict.excluded, r13Excluded: r13Verdict.excluded,
+    r11Kept: r11Verdict.kept, r13Kept: r13Verdict.kept,
     aborted: gate.aborted,
     whisperFilter: { total: wFilter.totalTokens, skipped: wFilter.skippedCount, kept: wFilter.tokens.length, dropReasons },
     r5runs, r11, r12, r13, unspoken, anchorTimed, whisperTokens, faTokens, usableFaTokens: usable, silences,

@@ -69,6 +69,14 @@ const ALLOWLIST = new Set<string>([
   // index worked through against the running app, not a status file. Its
   // RESULTS go to docs/work-in-progress.md §11.
   'docs/ws1-sync-pipeline/stage1-live-run-prep.md',
+  // WS1 Session S's R.12 placement ear list — the same class again: a run
+  // sheet worked THROUGH against the audio, five clips with a play command per
+  // row, whose RESULT (which candidate placement is right) goes to
+  // docs/work-in-progress.md §11. It is deliberately NOT blinded — the owner
+  // has already scored all five of these EARLY, and the question this pass
+  // asks is which of two or three named timestamps is correct, which cannot be
+  // asked without naming them. R.12's value change is blocked on it.
+  'docs/ws1-sync-pipeline/stage1-session-s-ear-list.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -6600,3 +6600,125 @@ exercises the floor conjunct — neither committed corpus does.
 `scripts/fixtures/phase4-baseline-*.csv` unchanged. One additive harness change
 (`ws1-session-p-pipeline.ts` returns `keptAlignments`). Nothing on §3's Master Phase Board
 advances — Class A and Class B remain open, register unchanged at 8, no ear pass ran.
+
+
+## Part Q — Two Rules Wanted One Boundary, and Ordering Decided It Silently (WS1 Session S, 2026-08-20, append-only)
+
+**(a) THE RULING: R-AP, the run-edge exclusion invariant.** Stated in two clauses, both evaluated
+against the PRE-RULE-STAGE origin array:
+
+  1. **OWNERSHIP.** If a boundary's ORIGIN lies strictly inside an R.5 unscripted run, that
+     boundary belongs to R.12 alone. Every other rule declines it.
+  2. **NO CROSSING.** No rule other than R.12 may move a boundary to the far side of a run edge
+     from its ORIGIN, in either direction.
+
+R.12 is the named exception, and only R.12, because evicting a boundary from a run is its
+definition: its target interval is pinned to `[prevToken.endSec, run.startSec]`, so its own move
+crosses the run's start edge by construction, and its existing H7 guard already forbids its
+corrected value landing inside any run. Implemented in `src/services/faRuleStageExclusion.ts`,
+wired into `App.tsx`'s rule stage and mirrored in `scripts/ws1-session-p-pipeline.ts`.
+
+**(b) THE MEASURED DEFECT (v6 L7, the owner's only MAJOR).** R.5 run 6 has acoustic extent
+`[789.26, 791.69]`. `snapCoveredBoundaries` committed `266_forty_one_burden` at **790.33 —
+strictly inside it**, which is R.12's exact defect signature. R.11 runs first, saw the same
+boundary, and moved it to **792.18, past the run's end**. The owner scored the result MAJOR: the
+entire spoken recitation landed in the previous scene. R.12 then found nothing to do, correctly,
+because by the time it looked the boundary was outside the run.
+
+**(c) WHY A CURRENT-STATE CHECK CANNOT WORK, and why this is the load-bearing part of the
+ruling.** The obvious implementation — have R.12 ask "is this boundary inside a run?" — is already
+what R.12 does, and it is what fails. Once R.11 has moved the boundary out, the honest answer is
+NO. The invariant has to be evaluated on the **PAIR** `(origin, target)` against the array as it
+stood before any rule in the stage ran. `faRuleStageExclusion.test.ts` asserts the blindness
+directly — the current-state answer is pinned at **0 findings** beside the origin-based answer's
+**1 violation** — so a future refactor that quietly reverts to a current-state test fails on the
+blindness assertion rather than passing vacuously.
+
+**(d) MEASURED EFFECT, live v6 bundle `p-20260819T120922Z-cbb403c1`.** R.11 still DETECTS six
+candidates (the filter is at the stage, not in the detector) and KEEPS five; the one declined is
+`266_forty_one_burden`, reason `origin-inside-run`, run 6. R.11's other five firings are unchanged
+in tag AND value (`192_scout_listening` 571.07, `226_four_scouts` 671.17, `232_sudden_halt` 684.09,
+`233_firelight_speech` 686.54, `322_body_readiness` 986.88). R.12 goes **7 -> 8** and its eighth
+row commits 788.65 — the frozen fixture's own long-standing value. R.5 (10) and R.13 (0) are
+unchanged. R-AP violations at rest: **0 on all three corpora**. New mutation **M13** (neuter the
+exclusion) is RED.
+
+**(e) MUTUAL EXCLUSION IS NOW STRUCTURAL RATHER THAN INCIDENTAL.** Every prior session's exclusion
+claim was an observation that the firing sets happened not to overlap on the committed corpora —
+`faSeamFitGate.ts`'s own header even records R.11's third conjunct as "load-bearing for rule
+exclusion" because it declined 372.35. That was true and it was luck: the conjunct is a
+confidence test, and nothing made it decline a run-interior boundary in general. It did not
+decline 790.33, and the collision followed. R-AP replaces the coincidence with a construction, and
+the measured overlap after it is 0 by definition rather than by observation.
+
+**(f) THE ROOT CLASS, and the scheduled follow-up.** The rule stage applies each rule's
+corrections to a SHARED ARRAY IN SEQUENCE, so a later rule reads an earlier rule's output as if it
+were the pipeline's own committed value, and a conflict between two rules resolves by whoever ran
+first — with no record anywhere that a conflict occurred. L7 is one instance of that class, not
+the class. **Scheduled follow-up (NOT this session, by the session brief's own scope): rebuild the
+rule stage as PROPOSE-then-ARBITRATE** — every rule emits proposals against the single origin
+array, an arbitrator resolves competing claims on stated ownership, and the resolution is logged.
+R-AP is written so that arbitrator can adopt it unchanged as its ownership rule.
+
+**(g) R.12'S VALUE IS EARLY ON FIVE OF SEVEN ROWS, AND THE MECHANISM IS MEASURED.** The owner's
+live pass over all ten v6 unscripted runs scored 4 PASS / 5 EARLY / 1 MAJOR. Frame-level RMS at
+the source's native 44.1 kHz off channel 0, on `silenceDetector.ts`'s own 20 ms grid, gives the
+cause without ambiguity: **R.12 clamps its placement interval at the run's acoustic onset, which
+is a WHISPER TOKEN TIMESTAMP, and on the five EARLY rows that timestamp lands 0.36s-1.90s earlier
+than the first frame above the detector's own -45 dBFS threshold.** The clamp therefore truncates
+the real silence, and the midpoint of what remains sits at 2%-15% of the way through it. On the
+two ear-CORRECT rows the same value sits at 44%-50%. The discriminator is not breath and not
+confidence — it is how far Whisper's run onset sits inside the silence.
+
+**(h) BREATH IS PRESENT, MEASURED, AND IS NOT THE DISCRIMINATOR.** Separated pre-speech energy
+bands exist on both PASS rows and on three of the five EARLY rows, on BOTH sides of the detector's
+threshold: `042`/`125`/`307`/`340` carry breaths at -33 to -43 dBFS, which CROSS -45 and are
+therefore EXCLUDED from every detected silence; `176` carries one at -53 dBFS, which does not
+cross and is MERGED into silence invisibly. The owner's note on L5 — "cuts between breath and prev
+segment" — is **CONFIRMED**: 176's breath sits at ~[521.88, 522.12] and the committed 521.71 lies
+between the previous segment's last word (521.25) and that breath. But `224` and `383` have no
+separated band at all, and `125` (PASS) has one just like `042` (EARLY), so breath does not
+separate the two populations.
+
+**(i) NO VALUE CHANGE SHIPS — the candidate table's own exit condition, measured.** Five
+principled placements were computed for all eight R.12 rows (midpoint of the leading silence,
+clamped and unclamped; silence end; run onset, Whisper-derived and waveform-derived; breath-end to
+onset midpoint; prev-word to breath-start midpoint). Exit condition, fixed in advance: a candidate
+ships only if it reproduces BOTH ear-CORRECT rows to the register's 0.005s tolerance AND moves all
+five EARLY rows later. **None does.** The shipped clamped midpoint reproduces both correct rows by
+construction and moves none of the five. The closest alternative, the UNCLAMPED midpoint, moves
+all five later by 0.22s-0.95s and reproduces `125_night_circle` -> 370.75 exactly, but misses
+`383_sixty_four` by **0.100s** — and it is also blocked by R.12's own atomic-run invariant on four
+of the five, because it lands inside the run's Whisper-derived acoustic extent. No additive offset
+was considered: an offset that forced agreement would be a corpus-fitted constant wearing a rule's
+clothes. The five rows go to an ear list; the value change is blocked on it.
+
+**(j) `silenceDetector.ts` IS UNTOUCHED, and the measurement was built to keep it that way.** The
+RMS profile reproduces the detector's frame grid, RMS definition, dB conversion and frame origin
+exactly, so it sees what the detector saw; it consumes the shipped silence array unchanged and
+changes no threshold. The one place the measurement needed a "where does speech really start"
+answer, it took the END of the first detected silence rather than re-scanning frames — measured
+reason: a naive "first frame at or above -45 dBFS" returns the BREATH on `042` (125.54) and `125`
+(370.06), because a breath crosses the same threshold speech does, while a detected silence only
+ends after 0.25s of continuous sub-threshold audio.
+
+**(k) SCOPE — Class A/B versus the R.12 population, recorded so the two are never merged again.**
+Session R's finding (Part P) is that the defect in Class A + Class B is WORD ATTRIBUTION, not
+boundary placement: every FA word in every disputed span is attributed to the incoming segment, so
+any rule testing a boundary against segment SPANS is blind by construction. **That finding does
+not transfer to the R.12 population.** These five rows are not attribution defects: R.12's
+placement never consults segment spans at all — it reads the unscripted-run structure and the
+detected silences — and the measured cause here is a clamp anchored to a Whisper timestamp that
+sits inside a silence. The two populations share a symptom ("the ear says later") and nothing
+else. Class A/B needs evidence independent of the segment spans; the R.12 rows need a placement
+that does not trust Whisper's run onset. Neither line of work constrains the other.
+
+**(l) R-AM, MADE EXECUTABLE.** "Close only rows with an ear pass" was a rule in prose, and prose
+did not hold: five values were pinned as positive regression assertions for a full session on the
+strength of a sitting that had scored their PREDECESSORS wrong. `scripts/ws1-ear-pass-ledger.ts`
+now records what each sitting actually HEARD, and a positive pin must be cashable against it — in
+the register (`verification: 'ear'` must be authorised, `'structural'` must not be) and at every
+pin site (`pinEarVerified` vs `pinChangeDetector`). The check found two more overclaims while
+being written, both corrected: `r12-266-forty-one-burden` is downgraded `'ear'` -> `'structural'`
+(nobody ever heard 788.65), and `r12-383-sixty-four` is promoted `'structural'` -> `'ear'` (the
+Session S sitting is the first to hear 1188.95, and it passes).

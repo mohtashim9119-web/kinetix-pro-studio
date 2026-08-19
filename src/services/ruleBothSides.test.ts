@@ -44,6 +44,12 @@ const RULES: Array<{ rule: string; module: string; testFile: string }> = [
   { rule: 'R.11', module: 'faSeamFitGate.ts', testFile: 'faSeamFitGate.test.ts' },
   { rule: 'R.12', module: 'faRunPlacementGate.ts', testFile: 'faRunPlacementGate.test.ts' },
   { rule: 'R.13', module: 'faRunPlacementGate.ts', testFile: 'faRunPlacementGate.test.ts' },
+  // WS1 Session S. R-AP is not a rule that moves a boundary — it is the
+  // invariant that decides which rule MAY. R-AO applies to it for the same
+  // reason and more sharply: an arbitrator that only policed the direction
+  // somebody had already been bitten by would leave the mirror open, which is
+  // precisely the failure mode R-AO names.
+  { rule: 'R-AP', module: 'faRuleStageExclusion.ts', testFile: 'faRuleStageExclusion.test.ts' },
 ];
 
 describe('R-AO — every rule declares both sides of what it constrains', () => {
