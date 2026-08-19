@@ -715,6 +715,77 @@ describe('R.13 — the atomic-utterance invariant: detection (synthetic)', () =>
     };
   }
 
+  /**
+   * WS1 SESSION Q — carrier identification, not `run.startSec`, is where the
+   * head-side punctuation-inflation defect Session P found for R.12 recurs
+   * for R.13. `baseFixture()`'s tokens are all substantive (real words), so
+   * the base fixture cannot exercise this: the run's raw and acoustic onsets
+   * coincide there. This fixture inserts a leading PUNCTUATION-ONLY token
+   * (normalizes to nothing, so it is UNCLAIMED and becomes the run's own
+   * `tokenLo`) immediately before the recitation, exactly the shape
+   * `acousticRunExtent`'s own doc comment describes: "a recitation is
+   * preceded by a full stop... that punctuation token becomes the run's
+   * first token and the run's `startSec` is pinned to the END of the
+   * previous word."
+   *
+   * `seg1`'s COMMITTED span starts at the run's ACOUSTIC onset (2.05) —
+   * simulating what R.12 has already done to it by the time R.13 runs — which
+   * is strictly AFTER the run's RAW onset (2.00, the punctuation token's own
+   * start). A carrier lookup keyed on `run.startSec` therefore finds `seg0`
+   * (2.00 sits inside `seg0`'s own [0, 2.05) span) — an unrelated, PRECEDING
+   * segment whose own line trivially ends at 2.00, long before the run even
+   * finishes — and R.13 silently declines a real defect. Measured on the live
+   * v6 bundle, not merely constructed: this is the exact shape all nine of
+   * v6's R.12-corrected runs took, and it declined via the SAME early-exit
+   * (`ws1-session-q-r13-tail.test.ts`, `guard-utterance-not-after-run`, guard
+   * deficits of 2.98s-5.61s — orders of magnitude past what any tail-side
+   * `run.endSec` inflation could produce).
+   */
+  function headInflationFixture(): {
+    parsed: VideoSegment[]; tokens: TranscriptToken[]; silences: SilenceInterval[]; audioDuration: number;
+  } {
+    return {
+      parsed: [
+        seg('seg0', 'alpha bravo charlie delta', 0, 2.05),
+        seg('seg1', 'echo foxtrot golf hotel', 2.05, 2.95),
+        seg('seg2', 'india juliett kilo lima', 5.00, 3.40),
+      ],
+      tokens: [
+        tok('alpha', 0.10, 0.50), tok('bravo', 0.60, 1.00),
+        tok('charlie', 1.10, 1.50), tok('delta', 1.60, 2.00),
+        tok('.', 2.00, 2.02), // unclaimed — pins the run's RAW onset to 2.00.
+        // the unscripted run — ACOUSTIC onset 2.05, not the punctuation's 2.00.
+        tok('level', 2.05, 2.35), tok('nine', 2.40, 2.70),
+        tok('recitation', 2.75, 3.05), tok('here', 3.10, 3.40),
+        tok('echo', 3.80, 4.20), tok('foxtrot', 4.30, 4.70),
+        tok('golf', 4.80, 5.20), tok('hotel', 5.30, 5.70),
+        tok('india', 6.50, 6.90), tok('juliett', 7.00, 7.40),
+        tok('kilo', 7.50, 7.90), tok('lima', 8.00, 8.40),
+      ],
+      // The only silence at/after seg1's true utterance end (hotel, 5.70) —
+      // the sole legal placement for the closing correction.
+      silences: [{ startSec: 5.80, endSec: 6.00 }],
+      audioDuration: 10.0,
+    };
+  }
+
+  it('the carrier is found by the run\'s ACOUSTIC onset, not run.startSec — a punctuation-inflated raw onset must not walk the lookup back into an unrelated preceding segment', () => {
+    const { parsed, tokens, silences, audioDuration } = headInflationFixture();
+    // Committed span mirrors what R.12 already did: seg1 starts exactly at
+    // the run's acoustic onset (2.05), strictly after the raw one (2.00).
+    const committed = [
+      seg('seg0', 'alpha bravo charlie delta', 0, 2.05),
+      seg('seg1', 'echo foxtrot golf hotel', 2.05, 2.95), // ends 5.00 — its OWN words run to 5.70.
+      seg('seg2', 'india juliett kilo lima', 5.00, 3.40), // the real defect: opens 0.70s early.
+    ];
+    const findings = detectUtterancePlacementDefects(parsed, committed, tokens, silences, audioDuration);
+    expect(findings, 'a carrier lookup keyed on the raw run onset misses this defect entirely').toHaveLength(1);
+    expect(findings[0]!.carrierId, 'the carrier must be seg1 (the true owner), not seg0 (an unrelated neighbour)').toBe('seg1');
+    expect(findings[0]!.segmentId).toBe('seg2');
+    expect(findings[0]!.utteranceEndSec).toBeCloseTo(5.70, 6);
+    expect(findings[0]!.correctedValue).toBeCloseTo(5.90, 6); // midpoint of [5.80, 6.00]
+  });
+
   it('fires when the closing boundary sits before the carrier finished its own line', () => {
     const { parsed, tokens, silences, audioDuration } = closingFixture();
     // The run [3.00, 4.60] sits between seg0's words (end 2.00) and seg1's

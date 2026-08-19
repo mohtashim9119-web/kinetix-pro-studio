@@ -6441,3 +6441,101 @@ must be settled before R.13 is treated as exercised in production.
 `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6 byte-identical.
 Nothing on §3's Master Phase Board advances — Class A and Class B remain open.
+
+---
+
+## Part O — R.13's Own Head-Side Defect, and Silence-Distance as a Detector (WS1 Session Q,
+2026-08-19, append-only)
+
+**(a) The mutation matrix Part N left unrun, run.** Session P built R.12's fix but never ran the
+existing 10-mutation matrix against it, and Part N(e) left open whether R.13's zero live firings
+were the SAME raw-token-inflation defect. Both are settled here. The matrix itself needed a fix
+first: the 12-file gate could not see a mutation to `FaAnchor.tokenIdx` (zero production
+consumers; the pinned digest covers times only) — expanded to 16 files before the matrix could be
+trusted. Full results, M1-M12: `docs/work-in-progress.md` §11's Session Q entry (a).
+
+**(b) R.13's zero is NOT Part N(e)'s hypothesized mechanism.** Measured directly: the raw-vs-
+acoustic `run.endSec` delta Part N(e) worried about is 0.08s-0.40s on all ten v6 runs, while the
+guard actually declined by 2.98s-5.61s on nine of them — two orders of magnitude too small to be
+the cause. **The real defect is on the HEAD side, in carrier identity, not the tail.** R.13's
+carrier lookup (`committedSegments.findIndex(s => run.startSec >= s.startTime && ...)`) used
+`run.startSec` — the same punctuation-inflated raw quantity Part N already diagnosed and R.12
+already stopped using. Once R.12 runs, a run's true carrier (the successor R.12 already pulled
+back) starts strictly AFTER `run.startSec`, so this lookup walks backward past it into an
+unrelated PRECEDING segment, whose own line trivially ends before the run even starts — hence the
+multi-second guard failures, scaling with each recitation's own length.
+
+**(c) Fixed the same structural way as R.12, no new constant.** The lookup now uses
+`acousticRunExtent(run, tokens).startSec` — the SAME helper R.12 already computes, called once
+per run and reused. `faRunPlacementGate.ts`'s own header carries the full account (its "WS1
+SESSION Q" addendum to the R.13 block). RED-before/GREEN-after: a new synthetic fixture
+(`headInflationFixture`, `faRunPlacementGate.test.ts`) with a leading punctuation-only token
+reproduces the live-bundle shape exactly — a hand-built proof, not merely a corpus observation.
+
+**(d) After the fix, R.13 is CONFIRMED genuinely idle, not merely unproven.**
+`scripts/ws1-session-q-invariants.test.ts` asserts the invariant directly, using the CORRECT
+(acoustic) carrier identification independently of R.13's own code, and it is green: all nine
+runs where the shape applies are already legal once the true carrier is used. R.12's Session P
+fix, by placing each successor at the run's acoustic onset, empirically ALSO satisfies R.13's own
+closing-edge requirement on this corpus — the two constraints turn out not to be independent here,
+though nothing GUARANTEES that in general, which is exactly why R.13 still exists as its own rule
+rather than being folded into R.12.
+
+**(e) Silence-distance, measured as a candidate discriminator for Class A + B, and why it does
+not ship.** `d = |committed - nearest detected-silence midpoint|`, computed over all 447 v6
+boundaries. The naive reading is noisy; splitting by `boundaryUsedFallback` resolves it
+completely: among the 403 SNAPPED, rule-untouched boundaries, max `d` is 2.27e-13 (exactly zero).
+Class A's `152_frozen_brush_mice` (d=1.18) and `231_slowing_pace` (d=0.64) stand infinitely
+outside that population; `214_solitary_fire` and `447_scout_facing_dark` sit AT d=0, the identical
+blind spot R.11's `fitDeviation` independently has. Class B lives entirely in the FALLBACK
+population, where `d` does not discriminate at all (0 to 2.28s over many unverified boundaries) —
+a different question (loudness), not this one.
+
+**THE DECISIVE NEGATIVE RESULT: the detector's own PROPOSED CORRECTION is wrong on both rows it
+can reach.** 152's nearest silence gives 448.02; ear-correct is 450.99 (a farther, different
+silence — the one R.11's own chunk-fit logic already anchors the chunk's end to). 231's nearest
+silence gives 680.99 (behind the committed value); ear-correct is 682.74 (ahead, a different
+silence again). Naive nearest-silence-to-the-wrong-value is not chunk-edge-based, and has no
+reason to agree with the silence a chunk boundary actually anchors to. **No detector ships.**
+`scripts/ws1-session-q-detector-validate.test.ts` records the negative result as an assertion
+(`correctionIsUsable` must be `false`) specifically so it cannot be quietly re-tried unchanged. 231
+DOES reach as a detection where R.11 never made it a candidate at all — the session's own question,
+answered — but detection is not correction.
+
+**(f) Generalization: 173 and Spanish regenerated for the first time since Session B's fixtures.**
+Both corpora's raw Whisper arms recovered and verified byte-identical (post crude-filter) against
+the existing filtered-token fixtures — 173: 1836/1836; Spanish: 363/363 — confirming same
+transcription vintage. Live chunk plans and FA regenerated on the real Rust ONNX path, both
+bundles stamped. v6/Spanish firings stable and reproducible across repeated runs; 173 R.12/R.13
+correctly zero (zero unscripted runs, as every prior session found). One transient 173 anomaly
+(27 R.11 firings + a Model-P violation) under simultaneous heavy concurrent load did not reproduce
+across 5 subsequent clean runs — recorded as measured-but-unresolved, most consistent with
+harness resource contention rather than a pipeline defect.
+
+**(g) The still-playing checker: all 5 Class B rows examined, 1 flagged, 4 fail one conjunct.**
+All five are fallback pairs the checker sees. Four fail ONLY
+`BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` (0.05) — by 0.007-0.035 — while BOTH other conjuncts
+(distance, loudness ratio) pass by wide margins (ratio 34x-97x above its own 2x floor) on the
+same four. Recall measured 1/5, not the previously documented 2/5; plausibly explained by this
+measurement using the replay bundle's 16kHz capture rather than the app's native-rate decode (the
+margins are small enough that resampling could move 1-2 across the line). Not retuned: the floor
+is calibrated against two OTHER projects' false-positive rates, and retuning needs validation this
+session did not budget for.
+
+**(h) The register reopens at 8, deliberately not 9.** `152_frozen_brush_mice`/item-7 measured
+the SAME live-fidelity regression as (e)'s Class A analysis (fitDeviation exactly 1.0 in
+production) — but its Session F closure is checked against the FROZEN FIXTURE
+(`phase4-fa-second-baseline-v6-segments.csv`), untouched this session, which still correctly
+shows 451.03. The register's own source of truth is that fixture; item-7 stays CLOSED, with the
+live-bundle finding recorded in its own entry for a future session's deliberate fixture
+regeneration — not silently reopened against a value nothing in the checked artifacts shows.
+Three new Class A rows and all five Class B rows enter as new, genuinely open roster members
+(`owningRule: 'unassigned'` — a new register value, since naming a rule that cannot reach a row
+would misattribute suspicion as guilt).
+
+**(i) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`, verified unchanged after every
+mutation-matrix revert), `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner,
+`project-state.md`, `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` untouched.
+Golden replay 6/6 byte-identical. `src/services/faRunPlacementGate.ts` IS touched (the R.13 fix) —
+the one deliberate exception, RED-before/GREEN-after verified, full 57/57 suite green including
+every pre-existing corpus regression pin.

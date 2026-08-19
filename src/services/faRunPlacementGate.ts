@@ -445,6 +445,46 @@ export function applyRunPlacementCorrections(
 //            through `computeFaChunkPlan` reproduces the plan byte for byte.
 //   - R.10 — 173-only; 173 has zero unscripted runs.
 //   - R-U/R-AA — item 6 lives in 173; no runs, no overlap.
+//
+// WS1 SESSION Q — R.13 FIRED ZERO ON THE LIVE V6 BUNDLE FOR A REAL, DIFFERENT
+// REASON THAN R.12'S PART N(e) HYPOTHESIS, NOW FIXED.
+//
+// `sync-pipeline-v2-plan.md` Part N(e) left open whether R.13's zero live
+// firings were the same raw-token-inflation defect Session P found for R.12
+// (there, `run.endSec`'s raw value sits LATER than the run's true acoustic end
+// when the run terminates in a punctuation token, making the guard below
+// harder to satisfy). MEASURED, not assumed: it is not — the raw-vs-acoustic
+// `run.endSec` delta is 0.08s-0.40s on all ten v6 runs
+// (`scripts/ws1-session-q-r13-tail.test.ts`), while the guard actually failed
+// by 2.98s-5.61s on nine of them. Two orders of magnitude too small to be the
+// explanation.
+//
+// THE REAL DEFECT was in the CARRIER lookup just below, not the guard: it used
+// `run.startSec` (raw), the same punctuation-inflated quantity R.12's own fix
+// replaced for its OWN purposes. Once R.12 has run, a run's true carrier (its
+// successor, whose start R.12 corrected to the run's ACOUSTIC onset) begins
+// AFTER `run.startSec` — so a lookup keyed on `run.startSec` finds that
+// successor's own PRECEDING, UNRELATED neighbour instead (its span still
+// contains the punctuation-inflated raw onset). That neighbour's own line
+// trivially ends before the run even starts, so the guard below declines by
+// roughly the recitation's own length — exactly the 2.98s-5.61s measured.
+// Fixed the same structural way R.12 was: the lookup now uses `extent`
+// (`acousticRunExtent(run, tokens)`, the same helper R.12 already computes),
+// not `run.startSec`. RED-before/GREEN-after:
+// `faRunPlacementGate.test.ts`'s "the carrier is found by the run's ACOUSTIC
+// onset" case.
+//
+// AFTER THE FIX, R.13 STILL FIRES ZERO ON V6 — and this time for a verified
+// reason, not a suppressed one: `scripts/ws1-session-q-invariants.test.ts`
+// asserts the CORRECTLY-carrier-identified invariant directly (not through
+// this file's own — now also fixed — lookup) and it is GREEN. All nine v6
+// runs where the shape applies (`utteranceEndSec > run's acoustic end`) are
+// ALREADY legal once the true carrier is used: R.12's Session P fix, by
+// placing each successor at the run's acoustic onset, empirically also
+// leaves that successor's OWN closing boundary past its own utterance end on
+// this corpus. R.13 has real work only when that does not hold — as it did
+// not for `225_night_scouts` on the pre-Session-P vintage this file's
+// fixture-based corpus tests still pin.
 // ---------------------------------------------------------------------------
 
 /** One closing boundary R.13 proposes to correct. */
@@ -512,15 +552,41 @@ export function detectUtterancePlacementDefects(
   const alignById = new Map<string, (typeof alignments)[number]>();
   parsedSegments.forEach((s, i) => { const a = alignments[i]; if (a) alignById.set(s.id, a); });
 
+  // Every run's ACOUSTIC onset (WS1 Session Q) — see `acousticRunExtent`'s own
+  // doc comment for why `run.startSec` is not it: it is pinned to the END of
+  // the token immediately before the run, which is the pause-marking
+  // punctuation token when one exists, not the run's own first spoken word.
+  // R.12 already had to make this same correction for its own placement gap;
+  // R.13's carrier lookup below needed the identical fix for a different
+  // reason — see that lookup's own comment.
+  const extents = runs.map(run => acousticRunExtent(run, tokens));
+
   const findings: UtterancePlacementFinding[] = [];
 
   for (let ri = 0; ri < runs.length; ri++) {
     const run = runs[ri]!;
+    const extent = extents[ri]!;
 
-    // The carrier is the committed segment whose span holds the run's onset.
-    // Model P makes this unambiguous — exactly one segment contains any time.
+    // The carrier is the committed segment whose span holds the run's
+    // ACOUSTIC onset — NOT `run.startSec` (WS1 Session Q, measured, not
+    // theoretical). Once R.12 has run, a run-carrying segment's SUCCESSOR is
+    // corrected to start AT or after the run's acoustic onset, which sits
+    // strictly after the punctuation-inflated `run.startSec` on every v6 run
+    // that has a leading punctuation token. Looking the committed array up by
+    // `run.startSec` then finds the SUCCESSOR's own PREDECESSOR instead — an
+    // unrelated segment whose own line trivially ends before the run starts,
+    // whose guard below therefore always declines by multiple seconds. This
+    // is not the tail-side `run.endSec` inflation `sync-pipeline-v2-plan.md`
+    // Part N(e) asked about — it is a head-side effect on carrier IDENTITY,
+    // measured over all ten v6 runs: the pre-fix lookup names the wrong
+    // carrier on ten of ten, nine of which decline on the guard below by
+    // 2.98s-5.61s (`scripts/ws1-session-q-r13-tail.test.ts`), and the tenth
+    // (run 0, corpus start) happens to still land on the right segment only
+    // because there is no predecessor to misfire into. Model P still makes
+    // the corrected lookup unambiguous — exactly one segment contains any
+    // time.
     const ci = committedSegments.findIndex(
-      s => run.startSec >= s.startTime && run.startSec < s.startTime + s.duration,
+      s => extent.startSec >= s.startTime && extent.startSec < s.startTime + s.duration,
     );
     if (ci < 0 || ci + 1 >= committedSegments.length) continue;
 

@@ -264,18 +264,29 @@ interface KnownBadRow {
    *  list, and reusing those numbers would make the register lie about which
    *  sitting produced the row); `'r12-structural'` = a row R.12's structural
    *  invariant identifies that NO ear pass has scored — admitted deliberately
-   *  and marked as such, never dressed up as ear-verified. A future origin
+   *  and marked as such, never dressed up as ear-verified. `'session-p-live'`
+   *  = WS1 Session P's per-conjunct live-bundle probe (`sync-pipeline-v2-plan.md`
+   *  Part N's own Class A table) — an ear pass ALREADY on record for these
+   *  rows, just never before entered into this register. A future origin
    *  adds a member here rather than being forced into one of these. */
-  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural';
+  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural' | 'session-p-live';
   /** The ear-pass item number — ONLY for `origin: 'ear-12'`. */
   item?: number;
   corpus: Corpus;
   tag: string;
   /** The owning rule this entry closes under — the rule that must be BUILT
-   *  before this row can be converted. WS1 Session C: made an explicit field
-   *  rather than prose inside `mechanism`, so the register can be grouped by
-   *  owning rule without parsing English. */
-  owningRule: 'R.5' | 'R.10' | 'R.11' | 'R.12';
+   *  (or, for `'unassigned'`, has not yet been DESIGNED) before this row can
+   *  be converted. WS1 Session C: made an explicit field rather than prose
+   *  inside `mechanism`, so the register can be grouped by owning rule
+   *  without parsing English. WS1 Session Q added `'unassigned'`: Class A's
+   *  measured blind spot (perfect chunk fit, R.11's own signal structurally
+   *  cannot see it) and Class B's mechanism (loud-fallback boundaries — the
+   *  still-playing checker sees them but its calibrated amplitude floor
+   *  declines 4 of 5, `scripts/ws1-session-q-still-playing.test.ts`) both
+   *  measurably fail every existing rule; naming a rule that cannot reach a
+   *  row would misrepresent suspicion about which rule as the row's own
+   *  guilt, the same distinction R-AG's ruling draws for evidence itself. */
+  owningRule: 'R.5' | 'R.10' | 'R.11' | 'R.12' | 'unassigned';
   /** The commit that closed this entry. EMPTY until closed — filled in by the
    *  same commit that converts the row into a positive assertion below. */
   closingCommit: string;
@@ -294,7 +305,111 @@ interface KnownBadRow {
 // R.11 landed (`src/services/faSeamFitGate.ts`) and all three converted to
 // positive assertions below, each at its exact ear-correct value. The
 // register is EMPTY.
-const KNOWN_BAD: KnownBadRow[] = [];
+const KNOWN_BAD: KnownBadRow[] = [
+  // -------------------------------------------------------------------------
+  // WS1 SESSION Q — REOPENED. All eight measured on the live-fidelity bundle
+  // (`.work-phase4/replay/v6`, run id `p-20260819T120922Z-cbb403c1`) AND
+  // confirmed to match the frozen fixture's own currently-committed value
+  // (verified directly against `phase4-fa-second-baseline-v6-segments.csv`
+  // before adding these rows — the two vintages agree here, unlike item-7;
+  // see REGISTER_HIGH_WATER's own comment for that one's separate story and
+  // why it stays closed, only annotated, rather than reopening). Full
+  // measurements: `docs/work-in-progress.md` §11's Session Q entry.
+  // -------------------------------------------------------------------------
+  {
+    id: 'classA-214-solitary-fire', origin: 'session-p-live', corpus: 'v6', tag: '214_solitary_fire',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 629.01, earCorrect: 630.09,
+    mechanism: 'fitDeviation 1.2727 — BELOW C1 (1.3093), the narrowest of Class A\'s four margins ' +
+      '(-0.0366). Unlike 152/447, this row is a genuine THRESHOLD miss, not a structural blind spot: ' +
+      'admitting it needs C1 lowered to 77/291 candidates (+21, a 37.5% widening of what reaches C2/C3) ' +
+      '— re-deriving the threshold on this one row alone would be fitting noise, per this session\'s own ' +
+      'sensitivity sweep (`docs/work-in-progress.md` §11 Session P (i)).',
+    status: 'open',
+    note: 'Silence-distance from committed value: 0 (sits exactly on a real silence midpoint) — the ' +
+      'SAME structural blind spot as 152/447 on that second signal too, for a different reason (the ' +
+      'committed value already IS a silence midpoint, just the wrong one\'s).',
+  },
+  {
+    id: 'classA-231-slowing-pace', origin: 'session-p-live', corpus: 'v6', tag: '231_slowing_pace',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 681.63, earCorrect: 682.74,
+    mechanism: 'Never a CANDIDATE for R.11 at all — no chunk boundary measures a fit deviation for this ' +
+      'seam. Silence-distance (Session Q Step 3) DOES separate it: committed value sits 0.64s from its ' +
+      'nearest silence, against a 403-boundary clean-control population whose max is 2.3e-13 — but the ' +
+      'nearest silence to the WRONG value (mid 680.99) is not the silence the ear-correct value sits on ' +
+      '(mid 682.74, a DIFFERENT, later silence) — the correction needs chunk-edge selection, not ' +
+      'proximity to wherever the pipeline currently, wrongly, sits.',
+    status: 'open',
+    note: 'Confirms the session brief\'s own question: a silence-based (not chunk-edge-based) detector ' +
+      'DOES reach 231 as a detection, but its proposed correction is the wrong silence — measured, not ' +
+      'assumed (`scripts/ws1-session-q-detector-validate.test.ts`).',
+  },
+  {
+    id: 'classA-447-scout-facing-dark', origin: 'session-p-live', corpus: 'v6', tag: '447_scout_facing_dark',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 1417.12, earCorrect: 1418.53,
+    mechanism: 'fitDeviation exactly 1.0 — the same perfect-fit blind spot as 152, independently. ' +
+      'Silence-distance from committed value: 0, same reason as 214.',
+    status: 'open',
+    note: '2 of Class A\'s 4 rows (152, 447) share this exact signature: fitDeviation 1.0 AND ' +
+      'silence-distance 0. Neither of Session Q\'s two independent signals separates them from a healthy ' +
+      'boundary; a third, not-yet-identified discriminator is needed.',
+  },
+  {
+    id: 'classB-056-dropping-torch', origin: 'session-p-live', corpus: 'v6', tag: '056_dropping_torch',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 167.03, earCorrect: 167.70,
+    mechanism: 'FALLBACK boundary (`boundaryUsedFallback` true — no silence was ever assignable in ' +
+      'this pair\'s search window). The shipped still-playing checker examines it (it is a fallback pair) ' +
+      'but declines: boundary amplitude 0.029 sits BELOW `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` ' +
+      '(0.05) by 0.021, even though the OTHER two conjuncts (distance 0.53s past the 0.10s floor; ' +
+      'loudness ratio 34.3x past the 2x floor) pass with wide margins.',
+    status: 'open',
+    note: 'Measured on the replay bundle\'s 16kHz capture, not the app\'s native-rate decode — see ' +
+      '`scripts/ws1-session-q-still-playing.test.ts`\'s own header for the caveat this implies.',
+  },
+  {
+    id: 'classB-167-smell-of-butchery', origin: 'session-p-live', corpus: 'v6', tag: '167_smell_of_butchery',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 494.43, earCorrect: 494.75,
+    mechanism: 'The ONE Class B row the shipped still-playing checker DOES flag: amplitude 0.256, ' +
+      'clearing the 0.05 floor by 0.206. Still open because the checker WARNS, it does not CORRECT — ' +
+      'no rule moves the boundary.',
+    status: 'open',
+    note: 'Recall on the still-playing checker measured 1/5 on Class B this session, not the previously ' +
+      'documented 2/5 — see REGISTER_HIGH_WATER\'s own comment on the likely 16kHz-capture cause.',
+  },
+  {
+    id: 'classB-286-fact-to-act', origin: 'session-p-live', corpus: 'v6', tag: '286_fact_to_act',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 856.09, earCorrect: 856.52,
+    mechanism: 'Fallback boundary; still-playing checker declines on the amplitude floor (measured ' +
+      '0.0295, floor 0.05, deficit 0.0205) — distance (0.685s) and ratio (92.0x) conjuncts pass.',
+    status: 'open',
+    note: '',
+  },
+  {
+    id: 'classB-400-endless-dark', origin: 'session-p-live', corpus: 'v6', tag: '400_endless_dark',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 1266.21, earCorrect: 1266.66,
+    mechanism: 'Fallback boundary; still-playing checker declines on the amplitude floor (measured ' +
+      '0.0152, floor 0.05, deficit 0.0348 — the widest floor miss of the four) — distance (0.205s) and ' +
+      'ratio (39.3x) conjuncts pass.',
+    status: 'open',
+    note: '',
+  },
+  {
+    id: 'classB-403-vigilant-embers', origin: 'session-p-live', corpus: 'v6', tag: '403_vigilant_embers',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 1273.14, earCorrect: 1273.55,
+    mechanism: 'Fallback boundary; still-playing checker declines on the amplitude floor (measured ' +
+      '0.0433, floor 0.05, deficit 0.0067 — the narrowest floor miss of the four) — distance (0.705s) ' +
+      'and ratio (96.9x) conjuncts pass.',
+    status: 'open',
+    note: '',
+  },
+];
 
 // ===========================================================================
 // WS1 SESSION C — THE ZERO-DEFECT REGISTER.
@@ -364,6 +479,18 @@ const REGISTER_ROSTER = [
   // scoring the NEW one right, and R-AM's distinction between suspicion and
   // guilt cuts both ways. It is row 1 of `stage1-session-k-ear-list.md`.
   'r13-225-night-scouts',
+  // WS1 Session Q — the register REOPENS at 8 and STAYS open: no ear pass was
+  // run this session (an autonomous session cannot listen), so per the
+  // register's own "close only rows with an ear pass" rule, nothing here
+  // converts. All 8 are new roster members: Session P's Class A (3 of its 4
+  // rows — `152_frozen_brush_mice`/item-7 has its own, separate live-vs-
+  // fixture story and stays CLOSED, annotated rather than reopened; see
+  // item-7's own entry above and REGISTER_HIGH_WATER's comment) and Class B
+  // (5 rows), both measured but neither owned by an existing rule
+  // (`docs/work-in-progress.md` §11's Session Q entry).
+  'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
+  'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
+  'classB-400-endless-dark', 'classB-403-vigilant-embers',
 ] as const;
 
 /** High-water mark for the OPEN manifest.
@@ -443,10 +570,71 @@ const REGISTER_ROSTER = [
  *  excluded, so that FA's handling of boundary edge cases keeps being checked.
  *  It is pinned below as an owner-verified control.
  *
- *  This may be lowered when entries close. Raising it is allowed only with
- *  the full ceremony above — see the failure message on the shrink-only
- *  test. */
-const REGISTER_HIGH_WATER = 0;
+ *  WS1 Session Q RAISED it 0 -> 8, and — unlike every prior raise — did NOT
+ *  lower it back in the same commit, because there is no rule in this commit
+ *  that closes any of the eight. Full ceremony, stated plainly:
+ *
+ *  `item-7` (152_frozen_brush_mice) is NOT among the eight, and deliberately
+ *  so, though it came close: Session P's live-fidelity bundle (raw Whisper
+ *  tokens, regenerated FA, live chunk plan — none of which existed in
+ *  Session F, which closed this row) reproduces the identical chunk at
+ *  `fitDeviation` exactly 1.0, a perfect-fit read the filtered-token
+ *  measurement never produced, so R.11's own C1 conjunct no longer clears it
+ *  and the committed value reverts to 449.20 in PRODUCTION. But the
+ *  register's source of truth is the FROZEN FIXTURE
+ *  (`phase4-fa-second-baseline-v6-segments.csv`), which Session Q did not
+ *  touch and which still, correctly, shows 451.03 — so the closed entry
+ *  above stays closed, with the live-bundle finding recorded in its own
+ *  `why` field and in `docs/work-in-progress.md` §11's Session Q entry,
+ *  rather than manufacturing an open row keyed to a value (449.20) nothing
+ *  in this register's own checked artifacts shows. A future session that
+ *  deliberately regenerates this fixture is the right place to act on it.
+ *
+ *  THREE Class A rows join for the first time: `214_solitary_fire`,
+ *  `231_slowing_pace`, `447_scout_facing_dark`. All four sit in R.11's own
+ *  domain (chunk-fit boundary correction) but are NOT owned by it: two
+ *  (152, 447) have `fitDeviation` exactly 1.0 — R.11's fit signal is
+ *  STRUCTURALLY blind to a perfect-fit chunk with a wrong boundary, not
+ *  merely under-threshold — and `231` is never even a CANDIDATE (its chunk
+ *  carries no measurable fit deviation at all). Session Q measured a second,
+ *  independent signal (distance from the committed value to the nearest
+ *  detected silence) against all 447 v6 boundaries: it separates 152 and 231
+ *  from a 403-boundary clean-control population by an unbounded margin
+ *  (control max 2.3e-13, both rows d >= 0.64), but proposes the WRONG
+ *  silence as the correction on both (verified against the same ear-correct
+ *  values below — a nearer silence sits close to the wrong side of the seam
+ *  in both cases) and is exactly as blind to 214/447 as R.11's own signal
+ *  is. No detector ships from this measurement; `scripts/
+ *  ws1-session-q-detector-validate.test.ts` records the negative result so
+ *  it cannot be quietly re-tried unchanged.
+ *
+ *  FIVE Class B rows join: `056_dropping_torch`, `167_smell_of_butchery`,
+ *  `286_fact_to_act`, `400_endless_dark`, `403_vigilant_embers` — all
+ *  FALLBACK boundaries (`boundaryUsedFallback` true; no silence was ever
+ *  assignable, so silence-distance cannot apply to them by construction).
+ *  The shipped still-playing checker (`syncContracts.ts`'s
+ *  `validateBoundaryQuality`) already SEES all five as fallback pairs, but
+ *  its calibrated `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` (0.05) only
+ *  flags one of them (`167_smell_of_butchery`) — the other four sit BELOW
+ *  the floor by 0.007-0.035 (measured amplitude 0.015-0.043), with the OTHER
+ *  two conjuncts (distance, loudness ratio) passing by wide margins in every
+ *  case. `scripts/ws1-session-q-still-playing.test.ts` records the margins.
+ *  Retuning the floor is explicitly NOT done this session: it is corpus-
+ *  calibrated against two other projects' false-positive rates
+ *  (`syncConstants.ts`'s own header), and lowering it needs the same
+ *  broader validation this session did not have budget for — the near-miss
+ *  margins are small enough that this may partly be 16kHz-replay-capture
+ *  resampling noise rather than a floor miscalibration (this session
+ *  measured against the replay bundle's 16kHz capture, not the app's
+ *  native-rate decode — see that file's own header).
+ *
+ *  All eight carry `owningRule: 'unassigned'` for the same reason R.12/R.13
+ *  never carried a guessed rule name before they existed: naming a rule that
+ *  cannot reach a row would misattribute suspicion as guilt (R-AG). None are
+ *  closed. This may be lowered when entries close. Raising it is allowed
+ *  only with the full ceremony above — see the failure message on the
+ *  shrink-only test. */
+const REGISTER_HIGH_WATER = 8;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
  *  that replaced its known-bad pin. This is what makes deletion impossible:
@@ -537,7 +725,20 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'carries 10 script words against 7 Whisper token onsets (fit 1.4286) — FA crushes "when the brush mice ' +
       'stop" into near-zero-confidence garbage (max 1.49e-3 in the correction span) instead of the real ' +
       'silence [450.36, 451.70] that already, correctly, anchors the chunk\'s own end (an untouched R.1 ' +
-      'agreed anchor). Corrected to that silence\'s midpoint, residual 0.000s against the ear-correct 451.03.',
+      'agreed anchor). Corrected to that silence\'s midpoint, residual 0.000s against the ear-correct 451.03. ' +
+      'WS1 SESSION Q — STILL CLOSED, WITH A CAVEAT RECORDED RATHER THAN ACTED ON: this closure is real ' +
+      'against the FIXTURE it was measured on (nothing about the fixture changed, and the assertion below ' +
+      'still holds it). But Session Q measured that the SAME chunk, on the live-fidelity bundle (raw ' +
+      'Whisper tokens, regenerated FA, live chunk plan — none of which existed in Session F), has ' +
+      'fitDeviation exactly 1.0 — a perfect-fit read the filtered-token measurement never produced — so ' +
+      'R.11\'s own C1 conjunct no longer clears it in production and the committed value there reverts to ' +
+      '449.20. This is NOT reopened in the register: the register\'s source of truth is this fixture, ' +
+      'which has not regressed, and "close only rows with an ear pass" cuts against inventing a NEW open ' +
+      'row keyed to a value (449.20) no fixture here shows. Recorded instead in ' +
+      '`docs/work-in-progress.md` §11\'s Session Q entry as an open finding for a future session: R.11\'s ' +
+      'fitDeviation signal is sensitive to the same raw-vs-filtered-token substitution R.12 and R.13 both ' +
+      'were, and this fixture needs deliberate regeneration (a decision, not a silent edit) before this ' +
+      'closure can be trusted as still describing production.',
   },
   {
     id: 'ov3-abysmal-opinion', item: undefined, corpus: '173', tag: 'abysmal_opinion', earCorrect: 17.88,
@@ -690,33 +891,45 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
 ];
 
 describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
-  // (1) THE STAGE 1 LOCK'S MACHINE CHECK. UN-SKIPPED since WS1 Session F.
+  // (1) THE STAGE 1 LOCK'S MACHINE CHECK.
   //
-  // WS1 SESSION H re-opened the register at 9 (R.12) and closed it again in
-  // the same commit, so this is empty for the SECOND time — and the second
-  // time means something different from the first. Session F's zero meant
-  // "every defect any built rule can see is fixed"; Session H found nine that
-  // had been committed the whole time and that no built rule could see. Read
-  // this test as "nothing currently known", never as "nothing there".
-  //
-  // Red here means a NEW defect entered KNOWN_BAD without the shrink-only
-  // guard below catching it first, which should not be possible — treat a
-  // failure here as a bug in the guard.
-  it('the Zero-Defect Register is EMPTY', () => {
+  // WS1 SESSION Q left the register OPEN across a session boundary for the
+  // FIRST TIME. Every prior reopening (Sessions D, H, K) raised and lowered
+  // this same commit because the session that found the defects also built
+  // the rule that closed them. Session Q found eight (`REGISTER_HIGH_WATER`'s
+  // own comment has the full account, including why item-7 came close but is
+  // NOT among them) and closed none — an autonomous session cannot run an
+  // ear pass, and the register's OWN rule is "close only rows with an ear
+  // pass." This test therefore asserts the EXACT open set by id, not
+  // emptiness — a red here means either a new, undocumented defect entered
+  // KNOWN_BAD (the shrink-only guard below should have caught it first) or a
+  // row this test expects still open was silently closed without moving to
+  // CLOSED_BY_POSITIVE_ASSERTION.
+  it('the Zero-Defect Register holds exactly the eight rows WS1 Session Q left open', () => {
+    const EXPECTED_OPEN = [
+      'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
+      'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
+      'classB-400-endless-dark', 'classB-403-vigilant-embers',
+    ];
     expect(
-      KNOWN_BAD.filter(k => k.status === 'open').map(k => `${k.id} (${k.owningRule}, ${k.corpus} ${k.tag})`),
-      'the Zero-Defect Register still has open entries',
-    ).toEqual([]);
+      KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),
+      'the register\'s open set drifted from what WS1 Session Q left it at',
+    ).toEqual([...EXPECTED_OPEN].sort());
   });
 
-  // (1b) ...and EMPTY is asserted in its OWN right, not only as a by-product
-  // of the shrink-only guard. Session H's reopening showed the two can drift:
-  // the roster and the closed list both grew by ten while the open count
-  // never left zero, so an assertion that only watches the open count says
-  // nothing about whether the register is still telling the truth.
-  it('the empty state is coherent: every roster member is closed, and every closure names its verification', () => {
-    expect(KNOWN_BAD).toHaveLength(0);
-    expect(CLOSED_BY_POSITIVE_ASSERTION).toHaveLength(REGISTER_ROSTER.length);
+  // (1b) Coherence, asserted in its OWN right, not only as a by-product of
+  // the shrink-only guard below. Session H's reopening showed roster and
+  // closed-list growth can drift from the open count independently — an
+  // assertion that only watches `open.length` says nothing about whether the
+  // register is still telling the truth about WHICH rows are open.
+  it('the register state is coherent: every roster member is exactly open XOR closed, and every closure names its verification', () => {
+    expect(KNOWN_BAD).toHaveLength(REGISTER_HIGH_WATER);
+    expect(CLOSED_BY_POSITIVE_ASSERTION.length + KNOWN_BAD.length).toBe(REGISTER_ROSTER.length);
+    for (const kb of KNOWN_BAD) {
+      expect(REGISTER_ROSTER as readonly string[], `${kb.id} is open but missing from REGISTER_ROSTER`).toContain(kb.id);
+      // No roster member may be BOTH open and closed at once.
+      expect(CLOSED_BY_POSITIVE_ASSERTION.some(c => c.id === kb.id), `${kb.id} is in both KNOWN_BAD and CLOSED_BY_POSITIVE_ASSERTION`).toBe(false);
+    }
     for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
       expect(REGISTER_ROSTER as readonly string[], `${c.id} is closed but missing from REGISTER_ROSTER`).toContain(c.id);
       expect(['ear', 'structural'], `${c.id}: verification`).toContain(c.verification);
@@ -724,7 +937,7 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
     const structural = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.verification === 'structural');
     // eslint-disable-next-line no-console
     console.log(
-      `[fa-replay:register] EMPTY — ${CLOSED_BY_POSITIVE_ASSERTION.length} closed ` +
+      `[fa-replay:register] OPEN ${KNOWN_BAD.length} / CLOSED ${CLOSED_BY_POSITIVE_ASSERTION.length} ` +
       `(${CLOSED_BY_POSITIVE_ASSERTION.length - structural.length} ear-verified, ${structural.length} structurally derived: ` +
       `${structural.map(c => `${c.corpus} ${c.tag}`).join(', ')})`,
     );
@@ -800,7 +1013,7 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (4) BOOKKEEPING CONSISTENCY.
   it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
     for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
-      expect(['R.5', 'R.10', 'R.11', 'R.12'], `${kb.id}: owningRule`).toContain(kb.owningRule);
+      expect(['R.5', 'R.10', 'R.11', 'R.12', 'unassigned'], `${kb.id}: owningRule`).toContain(kb.owningRule);
       expect(kb.closingCommit, `${kb.id} is still open but already names a closing commit`).toBe('');
       // WS1 Session D — the origin/item pairing must stay honest in both
       // directions: an ear-pass entry carries its item number, and a triage
@@ -909,13 +1122,16 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest is EMPTY — WS1 Session F closed the last three entries via R.11', () => {
+  it('the manifest held EIGHT open entries as of WS1 Session Q', () => {
     // Item 6 left this table in WS1 Session B; item 9 in Session C; items 4/5
     // in Session D (R.5); items 10/11 in Session E (R.10); item 7 and both
-    // OV3 triage entries in Session F (R.11). KNOWN_BAD is now empty — every
-    // roster member is accounted for in CLOSED_BY_POSITIVE_ASSERTION instead
-    // (test (3) above already enforces this pairing).
-    expect(KNOWN_BAD.map(k => k.id)).toEqual([]);
+    // OV3 triage entries in Session F (R.11) — the manifest WAS empty from
+    // Session F through Session P. WS1 SESSION Q REOPENED it with eight new
+    // rows (Session P's Class A minus item-7, which stays closed — see
+    // `REGISTER_HIGH_WATER`'s own comment for that one's separate story —
+    // plus Class B). See the top-level register describe block for the
+    // exact open set this test does not duplicate.
+    expect(KNOWN_BAD).toHaveLength(REGISTER_HIGH_WATER);
   });
 
   it('ear-pass item 6 (R-U, fixed): 173 vessel_damage_clue is pinned at its EAR-CORRECT 174.74', () => {
@@ -936,7 +1152,18 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
 });
 
 describe('WS1 Session F — R.11: chunk-fit boundary correction', () => {
-  it('item 7, ov3-abysmal-opinion, ov3-226-four-scouts are pinned at their EAR-CORRECT values', () => {
+  // WS1 SESSION Q NOTE on item 7 specifically: this still passes, and should
+  // — it pins the FROZEN FIXTURE (`phase4-fa-second-baseline-v6-segments.csv`,
+  // untouched this session), which still shows R.11 correctly reaching
+  // 451.03 on the vintage it was measured against. That is a different claim
+  // from "R.11 reaches this boundary in production today" — Session Q's
+  // live-fidelity bundle shows it does not (see item-7's own `why` field,
+  // above in this file, for the measurement). Both are true at once: the
+  // fixture has not regressed, and the live pipeline no longer reproduces
+  // what the fixture shows. A future session correcting THIS test's own
+  // 451.03 needs to regenerate the fixture deliberately, not merely edit the
+  // number here.
+  it('item 7, ov3-abysmal-opinion, ov3-226-four-scouts are pinned at their EAR-CORRECT values (frozen fixture)', () => {
     const v6 = loadFaSecondBaseline('v6');
     const c173 = loadFaSecondBaseline('173');
     const item7 = v6.find(r => r.tag === '152_frozen_brush_mice');

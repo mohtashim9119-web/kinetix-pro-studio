@@ -1000,6 +1000,156 @@ code ships (Phase 3b).
 
 ### §11. Terminal Path to WS1 Completion
 
+**2026-08-19 (WS1 SESSION Q) — THE R.12 MUTATION MATRIX WAS NEVER RUN; RUNNING IT FOUND A REAL
+GATE HOLE (M1) AND FIXED IT. R.13 IS GENUINELY IDLE, NOT SUPPRESSED — BUT A REAL CARRIER-
+IDENTIFICATION BUG WAS FOUND AND FIXED ANYWAY. SILENCE-DISTANCE SEPARATES 7 OF 9 KNOWN DEFECTS
+BUT PROPOSES THE WRONG CORRECTION ON BOTH IT CAN REACH — NO DETECTOR SHIPS. THE REGISTER REOPENS
+AT 8 AND STAYS OPEN.**
+
+**(a) STEP 1 — the mutation matrix, corrected before it could be trusted.** The 12-file gate
+Session P's own mutation-matrix convention used could not see M1 (anchor `tokenIdx` shifted +1):
+`FaAnchor.tokenIdx` has ZERO production consumers — only `faAnchors.test.ts` asserts it, and the
+pinned `anchorDigest` covers anchor TIMES only — so M1 came back green (155/155) against the
+12-file gate. Expanded to 16 files (added `faAnchors.test.ts`, `faChunkPlan.test.ts`,
+`faUnspokenGate.test.ts`, `syncLog.test.ts` — the suites that own the mutated code). Full matrix,
+re-run against the corrected gate (320 tests at rest before this session's own fixes; 322 after):
+M1 RED (5), M2 RED (22), M3 RED (23), M4 GREEN (0 — true no-op, unchanged from prior sessions),
+M5 RED (6), M6 RED (2), M7 RED (11), M8-A RED (7), M8-B RED (1), M9 RED (4), M10 RED (1). `faAnchors.ts`
+sha256 `b61e94cb…` verified unchanged after every single revert.
+
+**(b) The new mutation Step 1 asked for.** Two candidates targeted R.12's Session P repaired path
+(`acousticRunExtent` / the `prevToken` backward scan). M11-A (revert `acousticRunExtent` to the
+run's raw token span) is **RED (1 failure, `ws1-session-p-invariants.test.ts`)** — this is the
+mutation that matters, confirming the forward-scan fix is covered. M11-B (remove the backward
+`prevToken` substantive scan) is **GREEN — a true no-op, PROVEN not merely reported**: direct
+inspection of all 9 real v6 runs (`run.tokenLo - 1`'s own token) shows every one already
+substantive before the scan runs at all (the ONE run at corpus start has no `prevIndex`).
+Removing a loop that never iterates changes nothing measurable, the same character as M4.
+
+**(c) STEP 2 — R.13's zero is genuinely idle, and NOT for the reason Part N(e) guessed.**
+Measured the raw-vs-acoustic `run.endSec` gap Part N(e) hypothesized: 0.08s-0.40s across all ten
+v6 runs (`scripts/ws1-session-q-r13-tail.test.ts`) — while the guard actually declined by
+2.98s-5.61s on nine of them. Two orders of magnitude too small to be the explanation. THE REAL
+CAUSE: R.13's carrier lookup used `run.startSec` (raw, punctuation-inflated) — the SAME quantity
+R.12's own Session P fix replaced. Once R.12 runs, a run's true carrier (its successor) starts AT
+the run's ACOUSTIC onset, strictly AFTER the punctuation-inflated raw one — so a lookup keyed on
+`run.startSec` finds the successor's own PRECEDING, UNRELATED neighbour instead, whose own line
+trivially ends before the run even starts. **Fixed the same structural way as R.12** — the
+carrier lookup now uses `extent.startSec` (the same `acousticRunExtent` helper R.12 already
+computes), no new constant. RED-before/GREEN-after: `faRunPlacementGate.test.ts`'s "the carrier
+is found by the run's ACOUSTIC onset" case (a hand-built fixture with a leading punctuation
+token, reproducing the live-bundle shape exactly). **After the fix, R.13 still fires 0 on v6** —
+now confirmed correct rather than merely unproven: `ws1-session-q-invariants.test.ts` asserts the
+CORRECTLY-carrier-identified invariant directly and it is GREEN. All nine runs where the shape
+applies are already legal once the true carrier is used — R.12's fix, by placing each successor
+at the run's acoustic onset, empirically also leaves that successor's own closing boundary past
+its own utterance end on this corpus. New mutation M12 (revert the carrier lookup to
+`run.startSec`) is RED (1 failure) in the full re-run matrix. Full 57/57 `faRunPlacementGate.test.ts`
+green throughout, including the pre-existing fixture-based 225_night_scouts regression pin
+(unaffected — filtered-token fixtures never exposed this raw-token defect in the first place, the
+same reason R.12's own fixture tests never caught ITS raw-token defect either).
+
+**(d) STEP 3 — the 447-boundary distance distribution: separates cleanly, with one large
+confound identified and controlled for.** `d = |committed - nearest detected-silence midpoint|`
+computed for all 447 v6 committed boundaries. RAW distribution looked noisy (many mid-range `d`
+values outside the known 9 defects) until split by `boundaryUsedFallback`: **among the 403
+boundaries that SNAPPED to a real silence and were untouched by R.11/R.12/R.13 this run, max `d`
+is 2.27e-13 — machine-epsilon, i.e. exactly zero.** Class A's 4 rows live entirely in this
+population: `152_frozen_brush_mice` (d=1.18) and `231_slowing_pace` (d=0.64) stand infinitely
+outside it; `214_solitary_fire` and `447_scout_facing_dark` sit AT d=0, indistinguishable from
+the 403 healthy controls — the same blind spot R.11's `fitDeviation` independently has (both
+measure exactly 1.0 there too). Class B's 5 rows live entirely in the FALLBACK population
+(`usedFallback` true — no silence was ever assignable), where `d` ranges 0 to 2.28s over many
+unverified boundaries with no ground truth and does not discriminate at all — this is the
+still-playing checker's domain (loudness), not a silence-distance question. **Verdict: 7 of 9
+known defects separate from a clean 403-boundary control by an unbounded margin; 2 of 9 do not
+separate at all by this signal, matching R.11's own blind spot exactly.**
+
+**(e) STEP 4 — caught before shipping: the detector's proposed CORRECTION is wrong on both rows
+it can even reach. NO DETECTOR SHIPS.** 152 and 231 both have their firing confirmed
+(blast-radius prediction matched measurement exactly; sensitivity-stable across the whole
+(0.001, 0.63) threshold interval; hold-out both directions — deriving on either row alone still
+reaches the other). But the PROPOSED correction (nearest silence to the wrong committed value) is
+NOT the ear-correct target: 152's nearest silence gives 448.02, but ear-correct is 450.99 (a
+DIFFERENT, farther silence — the same one R.11's own chunk-fit logic already identifies as the
+chunk's own end anchor); 231's nearest silence gives 680.99 (BEHIND the committed value), but
+ear-correct is 682.74 (a different silence, AHEAD of it). This is exactly the distinction the
+session brief itself flagged — "if the new detector is silence-based rather than chunk-edge-based,
+confirm it reaches 231": it reaches 231 as a DETECTION, but naive nearest-silence proximity is
+not chunk-edge-based, and picks the wrong side on both rows it fires on. `scripts/
+ws1-session-q-detector-validate.test.ts` asserts this negative result explicitly
+(`correctionIsUsable` must be `false`) so it cannot silently flip back to "ship it" on a future
+re-run without someone noticing. **231 does reach as a detection where R.11's fit signal never
+made it a candidate at all — confirmed, as asked — but reaching is not the same as correcting.**
+
+**(f) STEP 5 — generalization: 173 and Spanish regenerated for the first time.** Raw Whisper
+tokens recovered via fresh `whisper-cli -ml 1` runs for both corpora and verified BYTE-IDENTICAL
+(text and timestamps) against the existing filtered-token fixtures after crude punctuation
+filtering — 173: 1836/1836 tokens; Spanish: 363/363 — confirming the raw arm is the SAME
+transcription vintage, not a re-transcription. Live chunk plans dumped (173: 126 chunks vs 118
+stale; Spanish: 5 vs 5, differing at the one pre-616abb2 forced-split chunk already documented).
+FA regenerated on the real Rust ONNX production path (173: 1660 words / 126 chunks / 109s;
+Spanish: 249 words / 5 chunks / 16s) and both bundles stamped (173 run id
+`p-20260819T133910Z-5bf038bb`; Spanish `p-20260819T134528Z-89e8823a`). **Firings, confirmed stable
+across 3+ repeated runs each: v6 R.5=10/R.10=0/R.11=6/R.12=7/R.13=0 (unchanged from Session P);
+Spanish all-zero (5-chunk corpus, nothing to fire on); 173 R.5=0/R.10=2/R.11=0/R.12=0/R.13=0 on
+the live bundle** (R.12/R.13 correctly zero — 173 has zero unscripted runs, matching every prior
+session's finding). **One transient anomaly recorded rather than hidden:** a single 173 run,
+executed under simultaneous heavy load (the Session Q mutation matrix's own vitest process plus a
+concurrent Spanish FA regeneration both running), reported R.11=27 firings and one Model-P
+violation (`seg 83 not strictly after seg 82`); five immediately subsequent clean re-runs (and v6
+and Spanish's own repeated clean runs across the same window) were all stable and reproduced
+nothing like it. Root cause not conclusively identified within this session's budget; most
+consistent with resource-contention-induced flakiness in the measurement harness rather than a
+sync-pipeline defect, since the SAME code path was stable both before and after under normal
+load. Flagged as measured-but-unresolved rather than dismissed. The generalization guard
+(`ws1-generalization.test.ts`, tier 1/2/3 corpus-identifier bans) passes unchanged.
+
+**(g) STEP 6 — the still-playing detector: all 5 Class B rows examined, 1/5 flagged, all 4 misses
+fail the SAME conjunct.** `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` (0.05), `_MIN_DISTANCE_SEC`
+(0.10), `_LOUDNESS_RATIO_K` (2×). Measured (real `buildWaveformSource` over the replay bundle's
+`audio_16k.wav`, real `validateBoundaryQuality`): all five are FALLBACK pairs the checker
+examines. `167_smell_of_butchery` clears every conjunct (amplitude 0.256, 5.1x the floor) and is
+flagged. The other four — `056_dropping_torch`, `286_fact_to_act`, `400_endless_dark`,
+`403_vigilant_embers` — pass BOTH the distance and loudness-ratio conjuncts by wide margins
+(ratio margins 34x-97x above the 2x floor) but fail the ABSOLUTE amplitude floor alone, by
+0.007-0.035 (measured amplitude 0.015-0.043 against the 0.05 floor). **Recall measured 1/5, not
+the previously documented 2/5** — plausibly a 16kHz-replay-capture-vs-native-rate-decode
+discrepancy (this session measured the replay bundle's downsampled capture, never the app's own
+native-rate decode; the miss margins are small enough that resampling could flip 1-2 of them, per
+this file's own header caveat), not necessarily a code regression. **Not retuned**: the floor is
+corpus-calibrated against two OTHER projects' false-positive rates (`syncConstants.ts`'s own
+header); lowering it needs the same broader validation this session did not have budget for.
+Documented, not fixed, per the session's own "fix or document why not" instruction.
+
+**(h) STEP 7 — the production-path pin set, and the register reopens at 8, stays open.** New
+`scripts/ws1-session-q-production-pins.test.ts` pins, on the live-fidelity bundle: all 7 of
+R.12's post-fix corrected values, plus the 4 already-closed ear-pass pins (`192_scout_listening`
+571.07, `226_four_scouts` 671.17, `232_sudden_halt` 684.09, `233_firelight_speech` 686.54).
+RED-before/GREEN-after verified by reapplying M11-A (7 pins fail; reverted, reconfirmed green).
+**Register: REOPENED 0 -> 8, stays open — no ear pass ran this session, and the register's own
+rule is "close only rows with an ear pass."** 3 new Class A rows (`214_solitary_fire`,
+`231_slowing_pace`, `447_scout_facing_dark`) and all 5 Class B rows enter as new roster members,
+`owningRule: 'unassigned'` (a new register value — naming a rule that cannot reach a row would
+misattribute suspicion as guilt, R-AG). **`152_frozen_brush_mice`/item-7 is NOT among the eight,
+deliberately**: Session Q measured that this SAME chunk, on the live-fidelity bundle, has
+`fitDeviation` exactly 1.0 (a perfect-fit read the pre-Session-P filtered-token fixture never
+produced), so R.11 no longer reaches it in PRODUCTION even though its Session F closure remains
+100% correct against the FROZEN FIXTURE (`phase4-fa-second-baseline-v6-segments.csv`, untouched
+this session, still shows 451.03). The register's source of truth is that fixture, which has not
+regressed — so item-7 stays CLOSED, with the live-bundle finding recorded in its own `why` field
+for a future session to act on by deliberately regenerating the fixture, not by silently editing
+a number. **R.12's historical greens were a pre-filtered-token artifact** (Session P's own
+finding, reconfirmed): the count is **9 pre-R.11 / 8 post-R.11** interior boundaries.
+
+**(i) WHAT THIS SESSION DID NOT DO, stated plainly.** No detector ships for Class A or Class B —
+Step 4's negative result stands. `214_solitary_fire`/`447_scout_facing_dark` (Class A) and all 5
+Class B rows remain genuinely open with no rule reaching them. Item-7's fixture is not
+regenerated (a deliberate scope boundary, not an oversight — see (h)). The 173 anomaly (f) is not
+root-caused. The still-playing checker's amplitude floor is not retuned (g).
+
+---
+
 **2026-08-19 (WS1 SESSION P) — THE STALE-VINTAGE HYPOTHESIS IS CONFIRMED, AND R.12'S ZERO
 FINDINGS WERE A DETECTION FAILURE WITH A SINGLE STRUCTURAL CAUSE. R.12 IS FIXED; CLASS A IS
 RULED OUT AS A THRESHOLD PROBLEM ON MEASURED EVIDENCE.**
@@ -4371,6 +4521,68 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-19 — WS1 Session Q: the R.12 mutation matrix (never run) found and fixed a real gate
+  hole; R.13 is confirmed genuinely idle after fixing a real head-side carrier bug; silence-
+  distance separates 7 of 9 known defects but proposes the wrong correction on both it can reach,
+  so no detector ships; register reopens at 8 and stays open for the first time.**
+  - **Mutation matrix, corrected then run in full.** 12-file gate missed M1 (anchor `tokenIdx`
+    shifted +1 — zero production consumers, pinned digest covers times only); expanded to 16
+    files. M1-M10 all RED against the corrected gate except M4 (confirmed true no-op). New M11-A
+    (revert R.12's `acousticRunExtent` fix) RED — the mutation Step 1 asked for. New M11-B (remove
+    the backward `prevToken` substantive scan) GREEN, PROVEN a true no-op by direct inspection (all
+    9 real runs already substantive there). `faAnchors.ts` sha256 `b61e94cb…` unchanged after every
+    revert.
+  - **R.13: not Part N(e)'s hypothesized mechanism.** Measured the tail-side `run.endSec`
+    inflation (0.08s-0.40s) — two orders of magnitude too small to explain the 2.98s-5.61s guard
+    failures. Real cause: carrier lookup used the same punctuation-inflated `run.startSec` R.12
+    already stopped using, walking backward into an unrelated preceding segment on 9 of 10 runs.
+    **Fixed the same structural way as R.12**, reusing `acousticRunExtent`, no new constant.
+    RED-before/GREEN-after (`faRunPlacementGate.test.ts`'s new synthetic fixture). After the fix,
+    R.13 still fires 0 on v6 — now CONFIRMED correct (`ws1-session-q-invariants.test.ts`), not
+    merely unproven. New mutation M12 (revert the carrier fix) RED. Full 57/57
+    `faRunPlacementGate.test.ts` green, including the pre-existing 225_night_scouts pin.
+  - **447-boundary silence-distance measured; negative result on correction, not detection.**
+    Split by `boundaryUsedFallback` resolves a real confound: 403 snapped, rule-untouched
+    boundaries have max `d` = 2.27e-13 (exact zero). 7 of 9 known defects separate from that
+    population by an unbounded margin; 2 (both Class A) sit at d=0, the same blind spot R.11's
+    `fitDeviation` independently has. **Decisive catch before shipping:** the detector's own
+    proposed correction (nearest silence to the WRONG committed value) is the wrong silence on
+    BOTH rows it can reach — verified against the already-ear-verified targets. No detector ships;
+    the negative result is itself asserted (`ws1-session-q-detector-validate.test.ts`) so it
+    cannot silently resurface. 231 does reach as a detection where R.11's fit signal never made it
+    a candidate — confirmed, as the session asked — but detection is not correction.
+  - **Generalization: 173 and Spanish regenerated for the first time.** Raw Whisper arms recovered
+    and verified byte-identical to existing fixtures. Live chunk plans + FA regenerated on the real
+    Rust ONNX path, both bundles stamped. v6/Spanish firings stable across repeated runs; 173
+    R.12/R.13 correctly zero. One transient 173 anomaly under simultaneous heavy load did not
+    reproduce across 5 clean re-runs — recorded, not root-caused.
+  - **Still-playing checker: 1/5 Class B recall measured (not the documented 2/5), all 4 misses
+    fail the SAME conjunct** (amplitude floor, by 0.007-0.035, while distance and loudness-ratio
+    both pass with wide margins) — plausibly the 16kHz replay capture vs. the app's native-rate
+    decode. Not retuned (floor is calibrated against two other projects; retuning needs validation
+    out of this session's budget).
+  - **Production code:** `src/services/faRunPlacementGate.ts` (R.13 carrier-lookup fix only —
+    `faAnchors.ts`, `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner untouched).
+    New tests: `faRunPlacementGate.test.ts` (+1), `scripts/ws1-session-q-*.test.ts` (8 new files —
+    invariants and production-pins run unconditionally; cross-corpus, detector-validate,
+    dump-live-plan, r13-tail, silence-distance, still-playing are measurement generators gated
+    behind `WS1_SESSION_Q_MEASURE=1`, never in the default sweep).
+  - **Register:** reopened 0 -> 8 (`docs/work-in-progress.md` §11's own entry and
+    `scripts/phase4-fa-replay.test.ts` have the full account) — 3 new Class A rows, 5 new Class B
+    rows, all `owningRule: 'unassigned'`. `item-7` (152_frozen_brush_mice) deliberately NOT
+    reopened: its Session F closure is checked against the frozen fixture, which has not
+    regressed, even though the live-fidelity bundle shows R.11 no longer reaching it in
+    production — recorded in that entry's own `why` field for a future session's deliberate
+    fixture regeneration.
+  - **Six numbers.** `npm test` 114 files / 104 passed / 10 skipped; 2438 passed / 14 skipped
+    (zero regressions — every prior-passing test still passes); `tsc --noEmit` clean; `cargo check
+    --features fa-inference` clean; `cargo test --features fa-inference` 216 passed / 21 ignored
+    (unchanged — no Rust file touched); golden replay 6/6 byte-identical; FA gate green at rest,
+    RED under the full M1-M12 matrix (M4/M11-B confirmed true no-ops).
+  - **Not done, explicitly:** no detector for Class A/B (see above — a negative result, not an
+    oversight); item-7's fixture not regenerated; the 173 anomaly not root-caused; the still-
+    playing floor not retuned.
 
 - **2026-08-19 — WS1 Session P: the stale-vintage hypothesis is CONFIRMED; R.12's zero findings
   were a detection failure with one structural cause, now fixed. Class A ruled out as a threshold
